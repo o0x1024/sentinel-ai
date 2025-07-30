@@ -1,0 +1,105 @@
+[package]
+name = "sentinel-ai"
+version = "0.1.0"
+description = "AI+MCP漏洞挖掘应用"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "sentinel_ai_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri 核心依赖
+tauri = { version = "2.0", features = ["devtools", "protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-http = "2"
+tauri-plugin-shell = "2"
+
+# MCP协议支持 - 使用官方Rust SDK
+rmcp = { version = "0.2.0", features = ["client", "macros", "transport-async-rw", "transport-child-process", "transport-sse-client", "reqwest"] }
+
+# AI服务 - 使用 genai
+genai = "0.4.0-alpha.3"
+
+# 数据库支持
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+
+# HTTP客户端
+reqwest = { version = "0.12.0", features = ["json"] }
+http = "1"
+
+# 序列化/反序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 目录路径
+dirs = "5.0"
+
+# 异步trait支持
+async-trait = "0.1"
+
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+
+# UUID生成
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# 任何错误处理
+anyhow = "1.0"
+
+# 随机数生成
+rand = "0.8"
+
+# 正则表达式
+regex = "1"
+
+# once_cell 用于全局单例
+once_cell = "1.19"
+
+# 异步操作
+futures = "0.3"
+
+# 时间处理
+chrono = { version = "0.4", features = ["serde"] }
+
+# 额外的 AI 相关依赖
+base64 = "0.22"
+url = "2.4"
+derive_more = "2.0.1"
+
+[profile.dev]
+# 开发环境优化
+opt-level = 1          # 基本优化，提升编译速度
+debug = true           # 保留调试信息
+split-debuginfo = "unpacked"  # 调试信息优化
+
+[profile.release]
+panic = "abort"       # 在发布版本中遇到panic时中止
+codegen-units = 1     # 生成更优化的代码
+lto = true            # 启用链接时优化
+opt-level = "s"       # 优化代码大小
+strip = true          # 从二进制文件中剥离符号信息
+
+[profile.dev-release]
+inherits = "release"
+debug = true          # 生产环境但保留调试信息
+
+[features]
+# this feature is used for production builds or when `devPath` points to the filesystem
+# DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+

@@ -1,0 +1,273 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定义样式 */
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply min-h-screen bg-base-100 text-base-content;
+  }
+
+  /* 全局滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--fallback-b3,oklch(var(--b3)/1));
+    border-radius: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--fallback-b2,oklch(var(--b2)/1));
+    border-radius: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--fallback-n,oklch(var(--n)/1));
+  }
+}
+
+@layer components {
+  /* 活动路由样式 */
+  .router-link-active {
+    @apply bg-primary/10 text-primary;
+  }
+
+  /* 悬浮聊天框样式 */
+  .floating-chat {
+    @apply fixed z-50 bg-base-100 border border-base-300 rounded-lg shadow-xl;
+    transition: all 0.3s ease;
+  }
+  
+  .floating-chat.minimized {
+    @apply w-32 h-12;
+  }
+  
+  .floating-chat.collapsed {
+    @apply w-80 h-16;
+  }
+  
+  .floating-chat.normal {
+    @apply w-96 h-96;
+    resize: both;
+    overflow: auto;
+    min-width: 320px;
+    min-height: 200px;
+    max-width: 600px;
+    max-height: 80vh;
+  }
+  
+  /* 拖拽手柄 */
+  .drag-handle {
+    @apply cursor-move select-none;
+  }
+  
+  /* 统计卡片 */
+  .stat-card {
+    @apply bg-base-100 rounded-lg p-4 shadow border border-base-300;
+  }
+  
+  /* 卡片布局 */
+  .card-grid {
+    @apply grid gap-4;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+  
+  /* 表格样式 */
+  .table-container {
+    @apply overflow-x-auto rounded-lg border border-base-300;
+  }
+  
+  /* 表单样式 */
+  .form-group {
+    @apply mb-4;
+  }
+  
+  .form-label {
+    @apply block mb-2 text-sm font-medium;
+  }
+  
+  /* 徽章样式 */
+  .badge-severity-critical {
+    @apply badge badge-error;
+  }
+  
+  .badge-severity-high {
+    @apply badge badge-warning;
+  }
+  
+  .badge-severity-medium {
+    @apply badge badge-info;
+  }
+  
+  .badge-severity-low {
+    @apply badge badge-success;
+  }
+  
+  .badge-severity-info {
+    @apply badge badge-ghost;
+  }
+  
+  /* 状态徽章 */
+  .badge-status-active {
+    @apply badge badge-success;
+  }
+  
+  .badge-status-pending {
+    @apply badge badge-warning;
+  }
+  
+  .badge-status-error {
+    @apply badge badge-error;
+  }
+  
+  .badge-status-completed {
+    @apply badge badge-info;
+  }
+
+  /* 页面容器 */
+  .page-container {
+    @apply container mx-auto p-4;
+  }
+
+  /* 页面标题 */
+  .page-title {
+    @apply text-2xl font-bold mb-6;
+  }
+
+  /* 页面内容 */
+  .page-content {
+    @apply bg-base-100 rounded-lg shadow p-6;
+  }
+}
+
+@layer utilities {
+  /* 滚动条样式 */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-base-200;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-base-300 rounded-full;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-base-content/20;
+  }
+  
+  /* 动画 */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+  
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+  
+  .animate-bounce-in {
+    animation: bounceIn 0.5s ease-out;
+  }
+
+  /* 间距辅助类 */
+  .gap-xs {
+    gap: 0.25rem;
+  }
+
+  .gap-sm {
+    gap: 0.5rem;
+  }
+
+  .gap-md {
+    gap: 1rem;
+  }
+
+  .gap-lg {
+    gap: 1.5rem;
+  }
+
+  /* 文本截断 */
+  .text-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 过渡效果 */
+  .transition-all-300 {
+    transition: all 0.3s ease;
+  }
+}
+
+/* 动画定义 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes bounceIn {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  70% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .floating-chat.normal {
+    @apply w-full h-80;
+    position: fixed !important;
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    border-radius: 0.5rem 0.5rem 0 0;
+  }
+
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  }
+
+  .page-content {
+    @apply p-4;
+  }
+} 

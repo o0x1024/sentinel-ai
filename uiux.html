@@ -1,0 +1,2203 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI漏洞挖掘平台</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.4.19/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .sidebar { min-height: calc(100vh - 64px); }
+        .data-grid { max-height: 400px; overflow-y: auto; }
+        .page-content { display: none; }
+        .page-content.active { display: block; }
+        .mcp-tool { transition: all 0.3s ease; }
+        .mcp-tool:hover { transform: translateY(-2px); }
+        
+        /* 悬浮AI聊天框样式 */
+        .floating-chat {
+            position: fixed;
+            top: 100px;
+            right: 20px;
+            width: 380px;
+            height: 500px;
+            z-index: 1000;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            resize: both;
+            min-width: 300px;
+            min-height: 200px;
+            max-width: 600px;
+            max-height: 80vh;
+        }
+        
+        .floating-chat.collapsed {
+            width: 120px;
+            height: 48px;
+            resize: none;
+            border-radius: 24px;
+        }
+        
+        .floating-chat.minimized {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            resize: none;
+        }
+        
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 16px;
+            cursor: move;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+        
+        .chat-content {
+            height: calc(100% - 50px);
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            background: #f8fafc;
+        }
+        
+        .chat-input-area {
+            padding: 12px 16px;
+            border-top: 1px solid #e2e8f0;
+            background: white;
+        }
+        
+        .floating-chat.collapsed .chat-content,
+        .floating-chat.minimized .chat-content {
+            display: none;
+        }
+        
+        .floating-chat.collapsed .chat-header {
+            border-radius: 24px;
+            padding: 8px 16px;
+            height: 48px;
+            cursor: move;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .floating-chat.collapsed .chat-header:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+        
+        .floating-chat.collapsed .chat-header:active {
+            transform: scale(0.98);
+        }
+        
+        .floating-chat.collapsed .chat-title {
+            display: flex;
+            align-items: center;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
+        .floating-chat.collapsed .chat-title span:last-child {
+            display: none; /* 隐藏模型徽章 */
+        }
+        
+        .floating-chat.collapsed .chat-controls {
+            display: flex;
+            gap: 4px;
+        }
+        
+        .floating-chat.collapsed .chat-controls .btn {
+            width: 24px;
+            height: 24px;
+            min-height: 24px;
+            padding: 0;
+            border-radius: 50%;
+            font-size: 10px;
+        }
+        
+        /* 折叠状态下隐藏其他按钮，只显示展开按钮 */
+        .floating-chat.collapsed .model-selector-btn,
+        .floating-chat.collapsed .minimize-btn,
+        .floating-chat.collapsed .close-btn {
+            display: none;
+        }
+        
+        .floating-chat.collapsed .collapse-btn {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .floating-chat.collapsed .collapse-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .floating-chat.minimized .chat-header {
+            padding: 0;
+            justify-content: center;
+            border-radius: 50%;
+        }
+        
+        .floating-chat.minimized .chat-title {
+            display: none;
+        }
+        
+        .chat-controls {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .floating-chat.minimized .chat-controls {
+            display: none;
+        }
+        
+        /* 模型选择器样式 */
+        .model-selector {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        }
+        
+        .model-btn {
+            height: auto !important;
+            padding: 8px 12px !important;
+            justify-content: flex-start !important;
+            transition: all 0.2s ease;
+        }
+        
+        .model-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .model-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .model-btn.active:hover {
+            background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+        }
+    </style>
+</head>
+<body class="bg-base-100">
+    <!-- 导航栏 -->
+    <div class="navbar bg-base-300 shadow-lg">
+        <div class="navbar-start">
+            <div class="dropdown">
+                <div tabindex="0" role="button" class="btn btn-ghost lg:hidden">
+                    <i class="fas fa-bars text-xl"></i>
+                </div>
+            </div>
+            <a class="btn btn-ghost text-xl font-bold">
+                <i class="fas fa-shield-alt mr-2 text-primary"></i>AI漏洞挖掘平台
+            </a>
+        </div>
+        <div class="navbar-center hidden lg:flex">
+            <ul class="menu menu-horizontal px-1">
+                <li><a class="nav-link active" data-page="overview"><i class="fas fa-home mr-2"></i>总览</a></li>
+                <li><a class="nav-link" data-page="bounty-projects"><i class="fas fa-trophy mr-2"></i>赏金项目</a></li>
+                <li><a class="nav-link" data-page="scan-tasks"><i class="fas fa-search mr-2"></i>扫描任务</a></li>
+                <li><a class="nav-link" data-page="vulnerabilities"><i class="fas fa-bug mr-2"></i>漏洞管理</a></li>
+                <li><a class="nav-link" data-page="submissions"><i class="fas fa-paper-plane mr-2"></i>提交记录</a></li>
+                <li><a class="nav-link" data-page="earnings"><i class="fas fa-dollar-sign mr-2"></i>收益统计</a></li>
+                <li><a class="nav-link" data-page="mcp-tools"><i class="fas fa-tools mr-2"></i>MCP工具</a></li>
+                <li><a class="nav-link" data-page="settings"><i class="fas fa-cog mr-2"></i>设置</a></li>
+            </ul>
+        </div>
+        <div class="navbar-end">
+            <!-- 主题切换 -->
+            <div class="dropdown dropdown-end mr-4">
+                <div tabindex="0" role="button" class="btn btn-ghost btn-circle">
+                    <i class="fas fa-palette text-xl"></i>
+                </div>
+                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
+                    <li><a onclick="setTheme('light')"><i class="fas fa-sun mr-2"></i>浅色主题</a></li>
+                    <li><a onclick="setTheme('dark')"><i class="fas fa-moon mr-2"></i>深色主题</a></li>
+                    <li><a onclick="setTheme('cupcake')"><i class="fas fa-heart mr-2"></i>温馨主题</a></li>
+                    <li><a onclick="setTheme('corporate')"><i class="fas fa-building mr-2"></i>商务主题</a></li>
+                </ul>
+            </div>
+            <div class="dropdown dropdown-end">
+                <div tabindex="0" role="button" class="btn btn-ghost btn-circle avatar">
+                    <div class="w-10 rounded-full bg-primary text-primary-content flex items-center justify-center">
+                        <i class="fas fa-user"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex">
+        <!-- 侧边栏 - 任务状态 -->
+        <div class="w-80 bg-base-200 sidebar p-4">
+            <!-- 任务状态 -->
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-header bg-secondary text-secondary-content p-3 rounded-t-xl">
+                    <h3 class="text-lg font-bold"><i class="fas fa-tasks mr-2"></i>当前任务状态</h3>
+                </div>
+                <div class="card-body p-4">
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm">范围验证</span>
+                            <div class="badge badge-success">完成</div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm">资产发现</span>
+                            <div class="badge badge-success">完成</div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm">端口扫描</span>
+                            <div class="badge badge-warning">进行中</div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm">漏洞扫描</span>
+                            <div class="badge">等待</div>
+                        </div>
+                        <div class="progress progress-primary w-full" value="65" max="100"></div>
+                        <div class="text-xs text-center opacity-60 mt-2">预计剩余: 1小时15分钟</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 快速操作 -->
+            <div class="card bg-base-100 shadow-lg mt-4">
+                <div class="card-header bg-accent text-accent-content p-3 rounded-t-xl">
+                    <h3 class="text-lg font-bold"><i class="fas fa-bolt mr-2"></i>快速操作</h3>
+                </div>
+                <div class="card-body p-4">
+                    <div class="space-y-2">
+                        <button class="btn btn-primary btn-sm w-full" onclick="showFloatingChat()">
+                            <i class="fas fa-robot mr-2"></i>AI助手
+                        </button>
+                        <button class="btn btn-secondary btn-sm w-full">
+                            <i class="fas fa-pause mr-2"></i>暂停扫描
+                        </button>
+                        <button class="btn btn-accent btn-sm w-full">
+                            <i class="fas fa-download mr-2"></i>导出结果
+                        </button>
+                        <button class="btn btn-info btn-sm w-full">
+                            <i class="fas fa-plus mr-2"></i>新建任务
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 实时统计 -->
+            <div class="card bg-base-100 shadow-lg mt-4">
+                <div class="card-header bg-info text-info-content p-3 rounded-t-xl">
+                    <h3 class="text-lg font-bold"><i class="fas fa-chart-bar mr-2"></i>实时统计</h3>
+                </div>
+                <div class="card-body p-4">
+                    <div class="stats stats-vertical shadow">
+                        <div class="stat py-2">
+                            <div class="stat-title text-xs">今日收益</div>
+                            <div class="stat-value text-lg text-success">$850</div>
+                        </div>
+                        <div class="stat py-2">
+                            <div class="stat-title text-xs">发现漏洞</div>
+                            <div class="stat-value text-lg text-error">3</div>
+                        </div>
+                        <div class="stat py-2">
+                            <div class="stat-title text-xs">扫描进度</div>
+                            <div class="stat-value text-lg text-primary">65%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <div class="flex-1 p-6">
+            <!-- 总览页面 -->
+            <div id="overview" class="page-content active">
+                <!-- 赏金统计卡片 -->
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
+                    <div class="card bg-success text-success-content shadow-lg">
+                        <div class="card-body">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-2xl font-bold">$12,450</h3>
+                                    <p class="opacity-80">总收益</p>
+                                </div>
+                                <i class="fas fa-dollar-sign text-3xl opacity-80"></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card bg-primary text-primary-content shadow-lg">
+                        <div class="card-body">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-2xl font-bold">156</h3>
+                                    <p class="opacity-80">发现资产</p>
+                                </div>
+                                <i class="fas fa-server text-3xl opacity-80"></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card bg-secondary text-secondary-content shadow-lg">
+                        <div class="card-body">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-2xl font-bold">89</h3>
+                                    <p class="opacity-80">有效提交</p>
+                                </div>
+                                <i class="fas fa-check-circle text-3xl opacity-80"></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card bg-error text-error-content shadow-lg">
+                        <div class="card-body">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-2xl font-bold">23</h3>
+                                    <p class="opacity-80">发现漏洞</p>
+                                </div>
+                                <i class="fas fa-bug text-3xl opacity-80"></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card bg-warning text-warning-content shadow-lg">
+                        <div class="card-body">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-2xl font-bold">7</h3>
+                                    <p class="opacity-80">高危漏洞</p>
+                                </div>
+                                <i class="fas fa-exclamation-triangle text-3xl opacity-80"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ASM和漏洞展示 -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="card bg-base-100 shadow-lg">
+                        <div class="card-header bg-accent text-accent-content p-4 rounded-t-xl">
+                            <h3 class="text-lg font-bold"><i class="fas fa-sitemap mr-2"></i>攻击面管理</h3>
+                        </div>
+                        <div class="card-body p-4">
+                            <div class="tabs tabs-bordered mb-4">
+                                <a class="tab tab-active">子域名</a>
+                                <a class="tab">IP地址</a>
+                                <a class="tab">端口服务</a>
+                            </div>
+                            
+                            <div class="data-grid">
+                                <div class="overflow-x-auto">
+                                    <table class="table table-zebra w-full">
+                                        <thead>
+                                            <tr>
+                                                <th>域名</th>
+                                                <th>IP地址</th>
+                                                <th>状态</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>www.mgtv.com</td>
+                                                <td>118.24.63.156</td>
+                                                <td><div class="badge badge-success">在线</div></td>
+                                            </tr>
+                                            <tr>
+                                                <td>api.mgtv.com</td>
+                                                <td>118.24.63.157</td>
+                                                <td><div class="badge badge-success">在线</div></td>
+                                            </tr>
+                                            <tr>
+                                                <td>m.mgtv.com</td>
+                                                <td>118.24.63.158</td>
+                                                <td><div class="badge badge-warning">超时</div></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 shadow-lg">
+                        <div class="card-header bg-error text-error-content p-4 rounded-t-xl">
+                            <h3 class="text-lg font-bold"><i class="fas fa-shield-alt mr-2"></i>最新漏洞</h3>
+                        </div>
+                        <div class="card-body p-4">
+                            <div class="space-y-3 data-grid">
+                                <div class="alert alert-error">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <div>
+                                        <h4 class="font-bold">SQL注入漏洞</h4>
+                                        <div class="text-xs">api.mgtv.com/login</div>
+                                    </div>
+                                </div>
+                                
+                                <div class="alert alert-warning">
+                                    <i class="fas fa-exclamation-circle"></i>
+                                    <div>
+                                        <h4 class="font-bold">XSS跨站脚本</h4>
+                                        <div class="text-xs">www.mgtv.com/search</div>
+                                    </div>
+                                </div>
+                                
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <div>
+                                        <h4 class="font-bold">目录遍历</h4>
+                                        <div class="text-xs">admin.mgtv.com/files</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 赏金项目页面 -->
+            <div id="bounty-projects" class="page-content">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">赏金项目</h2>
+                    <div class="flex gap-2">
+                        <select class="select select-bordered">
+                            <option>全部平台</option>
+                            <option>HackerOne</option>
+                            <option>Bugcrowd</option>
+                            <option>Intigriti</option>
+                            <option>补天</option>
+                        </select>
+                        <button class="btn btn-primary">
+                            <i class="fas fa-sync mr-2"></i>同步项目
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
+                    <!-- 项目筛选 -->
+                    <div class="card bg-base-100 shadow-lg">
+                        <div class="card-body">
+                            <h3 class="card-title text-sm">智能推荐</h3>
+                            <div class="space-y-2">
+                                <div class="form-control">
+                                    <label class="label cursor-pointer">
+                                        <span class="label-text text-xs">高ROI项目</span>
+                                        <input type="checkbox" class="checkbox checkbox-xs" checked />
+                                    </label>
+                                </div>
+                                <div class="form-control">
+                                    <label class="label cursor-pointer">
+                                        <span class="label-text text-xs">低竞争度</span>
+                                        <input type="checkbox" class="checkbox checkbox-xs" />
+                                    </label>
+                                </div>
+                                <div class="form-control">
+                                    <label class="label cursor-pointer">
+                                        <span class="label-text text-xs">适合技能</span>
+                                        <input type="checkbox" class="checkbox checkbox-xs" checked />
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <div class="text-xs opacity-60">预计奖励范围</div>
+                                <input type="range" min="100" max="10000" value="1000" class="range range-xs" />
+                                <div class="text-xs opacity-60">$100 - $10,000</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 项目列表 -->
+                    <div class="lg:col-span-3">
+                        <div class="space-y-4">
+                            <!-- 推荐项目 -->
+                            <div class="card bg-base-100 shadow-lg border-l-4 border-success">
+                                <div class="card-body">
+                                    <div class="flex justify-between items-start">
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <h3 class="card-title">TechCorp Bug Bounty</h3>
+                                                <div class="badge badge-success">推荐</div>
+                                                <div class="badge badge-outline">HackerOne</div>
+                                            </div>
+                                            <p class="text-sm opacity-70 mb-2">范围: *.techcorp.com, api.techcorp.com, mobile apps</p>
+                                            <div class="flex gap-4 text-xs">
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-dollar-sign text-success"></i>
+                                                    $500-$5,000
+                                                </span>
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-users text-info"></i>
+                                                    竞争度: 中
+                                                </span>
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-chart-line text-warning"></i>
+                                                    ROI: 85%
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="flex flex-col gap-2">
+                                            <button class="btn btn-primary btn-sm">
+                                                <i class="fas fa-play mr-1"></i>开始扫描
+                                            </button>
+                                            <button class="btn btn-ghost btn-sm">
+                                                <i class="fas fa-eye mr-1"></i>查看详情
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 普通项目 -->
+                            <div class="card bg-base-100 shadow-lg">
+                                <div class="card-body">
+                                    <div class="flex justify-between items-start">
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <h3 class="card-title">FinanceApp Security</h3>
+                                                <div class="badge badge-outline">Bugcrowd</div>
+                                            </div>
+                                            <p class="text-sm opacity-70 mb-2">范围: app.finance.com, *.finance.com (排除 blog.finance.com)</p>
+                                            <div class="flex gap-4 text-xs">
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-dollar-sign text-success"></i>
+                                                    $200-$2,000
+                                                </span>
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-users text-error"></i>
+                                                    竞争度: 高
+                                                </span>
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-chart-line text-info"></i>
+                                                    ROI: 45%
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="flex flex-col gap-2">
+                                            <button class="btn btn-primary btn-sm">
+                                                <i class="fas fa-play mr-1"></i>开始扫描
+                                            </button>
+                                            <button class="btn btn-ghost btn-sm">
+                                                <i class="fas fa-eye mr-1"></i>查看详情
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 国内平台项目 -->
+                            <div class="card bg-base-100 shadow-lg">
+                                <div class="card-body">
+                                    <div class="flex justify-between items-start">
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <h3 class="card-title">某大型互联网公司SRC</h3>
+                                                <div class="badge badge-warning">新项目</div>
+                                                <div class="badge badge-outline">补天</div>
+                                            </div>
+                                            <p class="text-sm opacity-70 mb-2">范围: *.company.com, 移动应用, 内部系统</p>
+                                            <div class="flex gap-4 text-xs">
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-yen-sign text-success"></i>
+                                                    ¥1,000-¥20,000
+                                                </span>
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-users text-warning"></i>
+                                                    竞争度: 低
+                                                </span>
+                                                <span class="flex items-center gap-1">
+                                                    <i class="fas fa-chart-line text-success"></i>
+                                                    ROI: 92%
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="flex flex-col gap-2">
+                                            <button class="btn btn-primary btn-sm">
+                                                <i class="fas fa-play mr-1"></i>开始扫描
+                                            </button>
+                                            <button class="btn btn-ghost btn-sm">
+                                                <i class="fas fa-eye mr-1"></i>查看详情
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 扫描任务页面 -->
+            <div id="scan-tasks" class="page-content">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">扫描任务管理</h2>
+                    <button class="btn btn-primary" onclick="showNewTaskModal()">
+                        <i class="fas fa-plus mr-2"></i>新建任务
+                    </button>
+                </div>
+
+                <div class="card bg-base-100 shadow-lg">
+                    <div class="card-body">
+                        <div class="overflow-x-auto">
+                            <table class="table table-zebra">
+                                <thead>
+                                    <tr>
+                                        <th>任务名称</th>
+                                        <th>目标</th>
+                                        <th>状态</th>
+                                        <th>进度</th>
+                                        <th>创建时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>MGTV全面扫描</td>
+                                        <td>mgtv.com</td>
+                                        <td><div class="badge badge-warning">进行中</div></td>
+                                        <td>
+                                            <div class="flex items-center gap-2">
+                                                <progress class="progress progress-primary w-20" value="65" max="100"></progress>
+                                                <span class="text-sm">65%</span>
+                                            </div>
+                                        </td>
+                                        <td>2024-01-15 10:30</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-ghost"><i class="fas fa-pause"></i></button>
+                                            <button class="btn btn-sm btn-ghost"><i class="fas fa-eye"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>API接口扫描</td>
+                                        <td>api.mgtv.com</td>
+                                        <td><div class="badge badge-success">已完成</div></td>
+                                        <td>
+                                            <div class="flex items-center gap-2">
+                                                <progress class="progress progress-success w-20" value="100" max="100"></progress>
+                                                <span class="text-sm">100%</span>
+                                            </div>
+                                        </td>
+                                        <td>2024-01-14 16:20</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-ghost"><i class="fas fa-download"></i></button>
+                                            <button class="btn btn-sm btn-ghost"><i class="fas fa-eye"></i></button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 漏洞管理页面 -->
+            <div id="vulnerabilities" class="page-content">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">漏洞管理</h2>
+                    <div class="flex gap-2">
+                        <select class="select select-bordered">
+                            <option>全部等级</option>
+                            <option>高危</option>
+                            <option>中危</option>
+                            <option>低危</option>
+                        </select>
+                        <button class="btn btn-primary">
+                            <i class="fas fa-download mr-2"></i>导出报告
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div class="card bg-base-100 shadow-lg border-l-4 border-error">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <h3 class="card-title text-error">SQL注入漏洞</h3>
+                                <div class="badge badge-error">高危</div>
+                            </div>
+                            <p class="text-sm opacity-70">目标: api.mgtv.com/login</p>
+                            <p class="text-sm opacity-70">参数: username</p>
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-sm btn-primary">查看详情</button>
+                                <button class="btn btn-sm btn-ghost">标记已修复</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 shadow-lg border-l-4 border-warning">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <h3 class="card-title text-warning">XSS跨站脚本</h3>
+                                <div class="badge badge-warning">中危</div>
+                            </div>
+                            <p class="text-sm opacity-70">目标: www.mgtv.com/search</p>
+                            <p class="text-sm opacity-70">参数: q</p>
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-sm btn-primary">查看详情</button>
+                                <button class="btn btn-sm btn-ghost">标记已修复</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 shadow-lg border-l-4 border-info">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <h3 class="card-title text-info">目录遍历</h3>
+                                <div class="badge badge-info">低危</div>
+                            </div>
+                            <p class="text-sm opacity-70">目标: admin.mgtv.com/files</p>
+                            <p class="text-sm opacity-70">路径: ../../../etc/passwd</p>
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-sm btn-primary">查看详情</button>
+                                <button class="btn btn-sm btn-ghost">标记已修复</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 提交记录页面 -->
+            <div id="submissions" class="page-content">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">提交记录</h2>
+                    <div class="flex gap-2">
+                        <select class="select select-bordered">
+                            <option>全部状态</option>
+                            <option>待审核</option>
+                            <option>已确认</option>
+                            <option>已修复</option>
+                            <option>重复</option>
+                            <option>无效</option>
+                        </select>
+                        <button class="btn btn-primary">
+                            <i class="fas fa-plus mr-2"></i>新建提交
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-4">
+                    <!-- 提交记录卡片 -->
+                    <div class="card bg-base-100 shadow-lg border-l-4 border-success">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <h3 class="card-title">SQL注入漏洞 - TechCorp</h3>
+                                        <div class="badge badge-success">已确认</div>
+                                        <div class="badge badge-error">高危</div>
+                                        <div class="badge badge-outline">HackerOne</div>
+                                    </div>
+                                    <p class="text-sm opacity-70 mb-2">目标: api.techcorp.com/login | 参数: username</p>
+                                    <div class="flex gap-4 text-xs mb-2">
+                                        <span>提交时间: 2024-01-15 14:30</span>
+                                        <span>响应时间: 2小时</span>
+                                        <span>修复时间: 待定</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-lg font-bold text-success">$2,500</span>
+                                        <span class="text-xs opacity-60">预计奖励</span>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col gap-2">
+                                    <button class="btn btn-ghost btn-sm">
+                                        <i class="fas fa-eye mr-1"></i>查看详情
+                                    </button>
+                                    <button class="btn btn-ghost btn-sm">
+                                        <i class="fas fa-edit mr-1"></i>编辑报告
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 shadow-lg border-l-4 border-warning">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <h3 class="card-title">XSS漏洞 - FinanceApp</h3>
+                                        <div class="badge badge-warning">待审核</div>
+                                        <div class="badge badge-warning">中危</div>
+                                        <div class="badge badge-outline">Bugcrowd</div>
+                                    </div>
+                                    <p class="text-sm opacity-70 mb-2">目标: app.finance.com/search | 参数: q</p>
+                                    <div class="flex gap-4 text-xs mb-2">
+                                        <span>提交时间: 2024-01-16 09:15</span>
+                                        <span>响应时间: 待定</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-lg font-bold text-warning">$800</span>
+                                        <span class="text-xs opacity-60">预计奖励</span>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col gap-2">
+                                    <button class="btn btn-ghost btn-sm">
+                                        <i class="fas fa-eye mr-1"></i>查看详情
+                                    </button>
+                                    <button class="btn btn-ghost btn-sm">
+                                        <i class="fas fa-edit mr-1"></i>编辑报告
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 shadow-lg border-l-4 border-error">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <h3 class="card-title">IDOR漏洞 - SocialApp</h3>
+                                        <div class="badge badge-error">重复</div>
+                                        <div class="badge badge-info">中危</div>
+                                        <div class="badge badge-outline">补天</div>
+                                    </div>
+                                    <p class="text-sm opacity-70 mb-2">目标: api.social.com/user | 参数: user_id</p>
+                                    <div class="flex gap-4 text-xs mb-2">
+                                        <span>提交时间: 2024-01-14 16:45</span>
+                                        <span>响应时间: 1天</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-lg font-bold text-error">$0</span>
+                                        <span class="text-xs opacity-60">重复提交</span>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col gap-2">
+                                    <button class="btn btn-ghost btn-sm">
+                                        <i class="fas fa-eye mr-1"></i>查看详情
+                                    </button>
+                                    <button class="btn btn-ghost btn-sm">
+                                        <i class="fas fa-redo mr-1"></i>重新提交
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 收益统计页面 -->
+            <div id="earnings" class="page-content">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">收益统计</h2>
+                    <div class="flex gap-2">
+                        <select class="select select-bordered">
+                            <option>本月</option>
+                            <option>本季度</option>
+                            <option>本年</option>
+                            <option>全部</option>
+                        </select>
+                        <button class="btn btn-primary">
+                            <i class="fas fa-download mr-2"></i>导出报表
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                    <!-- 收益概览 -->
+                    <div class="lg:col-span-2">
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h3 class="card-title mb-4">收益趋势</h3>
+                                <div class="h-64 bg-base-200 rounded-lg flex items-center justify-center">
+                                    <div class="text-center">
+                                        <i class="fas fa-chart-line text-4xl opacity-50 mb-2"></i>
+                                        <p class="opacity-70">收益趋势图表</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 收益统计 -->
+                    <div>
+                        <div class="space-y-4">
+                            <div class="card bg-success text-success-content shadow-lg">
+                                <div class="card-body">
+                                    <h3 class="text-3xl font-bold">$12,450</h3>
+                                    <p class="opacity-80">总收益</p>
+                                </div>
+                            </div>
+                            
+                            <div class="card bg-primary text-primary-content shadow-lg">
+                                <div class="card-body">
+                                    <h3 class="text-3xl font-bold">$3,200</h3>
+                                    <p class="opacity-80">本月收益</p>
+                                </div>
+                            </div>
+                            
+                            <div class="card bg-secondary text-secondary-content shadow-lg">
+                                <div class="card-body">
+                                    <h3 class="text-3xl font-bold">$1,850</h3>
+                                    <p class="opacity-80">平均月收益</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 平台收益分布 -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="card bg-base-100 shadow-lg">
+                        <div class="card-body">
+                            <h3 class="card-title mb-4">平台收益分布</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <span class="flex items-center gap-2">
+                                        <div class="w-4 h-4 bg-primary rounded"></div>
+                                        HackerOne
+                                    </span>
+                                    <span class="font-bold">$7,200 (58%)</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="flex items-center gap-2">
+                                        <div class="w-4 h-4 bg-secondary rounded"></div>
+                                        Bugcrowd
+                                    </span>
+                                    <span class="font-bold">$3,100 (25%)</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="flex items-center gap-2">
+                                        <div class="w-4 h-4 bg-accent rounded"></div>
+                                        补天
+                                    </span>
+                                    <span class="font-bold">$1,500 (12%)</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="flex items-center gap-2">
+                                        <div class="w-4 h-4 bg-info rounded"></div>
+                                        其他
+                                    </span>
+                                    <span class="font-bold">$650 (5%)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 shadow-lg">
+                        <div class="card-body">
+                            <h3 class="card-title mb-4">漏洞类型收益</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <span>SQL注入</span>
+                                    <span class="font-bold">$4,200</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span>XSS</span>
+                                    <span class="font-bold">$2,800</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span>IDOR</span>
+                                    <span class="font-bold">$1,900</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span>SSRF</span>
+                                    <span class="font-bold">$1,600</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span>其他</span>
+                                    <span class="font-bold">$1,950</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 报告页面 -->
+            <div id="reports" class="page-content">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">扫描报告</h2>
+                    <button class="btn btn-primary">
+                        <i class="fas fa-plus mr-2"></i>生成新报告
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="lg:col-span-2">
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h3 class="card-title">报告列表</h3>
+                                <div class="overflow-x-auto">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>报告名称</th>
+                                                <th>目标</th>
+                                                <th>生成时间</th>
+                                                <th>状态</th>
+                                                <th>操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>MGTV安全评估报告</td>
+                                                <td>mgtv.com</td>
+                                                <td>2024-01-15 14:30</td>
+                                                <td><div class="badge badge-success">已完成</div></td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-ghost"><i class="fas fa-download"></i></button>
+                                                    <button class="btn btn-sm btn-ghost"><i class="fas fa-eye"></i></button>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>API安全扫描报告</td>
+                                                <td>api.mgtv.com</td>
+                                                <td>2024-01-14 16:45</td>
+                                                <td><div class="badge badge-success">已完成</div></td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-ghost"><i class="fas fa-download"></i></button>
+                                                    <button class="btn btn-sm btn-ghost"><i class="fas fa-eye"></i></button>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h3 class="card-title">报告统计</h3>
+                                <div class="stats stats-vertical">
+                                    <div class="stat">
+                                        <div class="stat-title">总报告数</div>
+                                        <div class="stat-value text-primary">12</div>
+                                    </div>
+                                    <div class="stat">
+                                        <div class="stat-title">本月生成</div>
+                                        <div class="stat-value text-secondary">5</div>
+                                    </div>
+                                    <div class="stat">
+                                        <div class="stat-title">平均漏洞数</div>
+                                        <div class="stat-value text-accent">23</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MCP工具页面 -->
+            <div id="mcp-tools" class="page-content">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">MCP工具管理</h2>
+                    <button class="btn btn-primary" onclick="showAddToolModal()">
+                        <i class="fas fa-plus mr-2"></i>添加工具
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div class="card bg-base-100 shadow-lg mcp-tool">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <h3 class="card-title">
+                                    <i class="fas fa-search text-primary mr-2"></i>Subfinder
+                                </h3>
+                                <div class="badge badge-success">运行中</div>
+                            </div>
+                            <p class="text-sm opacity-70">子域名发现工具</p>
+                            <div class="mt-4">
+                                <div class="text-xs opacity-60">版本: v2.6.3</div>
+                                <div class="text-xs opacity-60">状态: 正常</div>
+                            </div>
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-sm btn-ghost">配置</button>
+                                <button class="btn btn-sm btn-error">停止</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 shadow-lg mcp-tool">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <h3 class="card-title">
+                                    <i class="fas fa-network-wired text-secondary mr-2"></i>Nmap
+                                </h3>
+                                <div class="badge badge-warning">运行中</div>
+                            </div>
+                            <p class="text-sm opacity-70">网络扫描工具</p>
+                            <div class="mt-4">
+                                <div class="text-xs opacity-60">版本: v7.94</div>
+                                <div class="text-xs opacity-60">状态: 扫描中</div>
+                            </div>
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-sm btn-ghost">配置</button>
+                                <button class="btn btn-sm btn-error">停止</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-base-100 shadow-lg mcp-tool">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start">
+                                <h3 class="card-title">
+                                    <i class="fas fa-bug text-accent mr-2"></i>Nuclei
+                                </h3>
+                                <div class="badge">等待</div>
+                            </div>
+                            <p class="text-sm opacity-70">漏洞扫描引擎</p>
+                            <div class="mt-4">
+                                <div class="text-xs opacity-60">版本: v3.1.5</div>
+                                <div class="text-xs opacity-60">状态: 待启动</div>
+                            </div>
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-sm btn-ghost">配置</button>
+                                <button class="btn btn-sm btn-primary">启动</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 添加工具卡片 -->
+                    <div class="card bg-base-100 shadow-lg border-2 border-dashed border-base-300 mcp-tool">
+                        <div class="card-body items-center text-center">
+                            <i class="fas fa-plus text-4xl opacity-50 mb-4"></i>
+                            <h3 class="card-title opacity-70">添加新工具</h3>
+                            <p class="text-sm opacity-50">从MCP仓库添加工具</p>
+                            <button class="btn btn-primary btn-sm mt-4" onclick="showAddToolModal()">
+                                <i class="fas fa-plus mr-2"></i>添加
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 工具商店 -->
+                <div class="mt-8">
+                    <h3 class="text-xl font-bold mb-4">工具商店</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h4 class="card-title text-sm">Httpx</h4>
+                                <p class="text-xs opacity-70">HTTP探测工具</p>
+                                <div class="badge badge-success badge-xs">赏金必备</div>
+                                <div class="card-actions justify-end mt-2">
+                                    <button class="btn btn-xs btn-primary">安装</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h4 class="card-title text-sm">Subjack</h4>
+                                <p class="text-xs opacity-70">子域名接管检测</p>
+                                <div class="badge badge-warning badge-xs">高收益</div>
+                                <div class="card-actions justify-end mt-2">
+                                    <button class="btn btn-xs btn-primary">安装</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h4 class="card-title text-sm">Gau</h4>
+                                <p class="text-xs opacity-70">URL收集工具</p>
+                                <div class="badge badge-info badge-xs">参数挖掘</div>
+                                <div class="card-actions justify-end mt-2">
+                                    <button class="btn btn-xs btn-primary">安装</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h4 class="card-title text-sm">SQLMap</h4>
+                                <p class="text-xs opacity-70">SQL注入检测</p>
+                                <div class="badge badge-error badge-xs">高危漏洞</div>
+                                <div class="card-actions justify-end mt-2">
+                                    <button class="btn btn-xs btn-primary">安装</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h4 class="card-title text-sm">Arjun</h4>
+                                <p class="text-xs opacity-70">参数发现工具</p>
+                                <div class="badge badge-accent badge-xs">隐藏参数</div>
+                                <div class="card-actions justify-end mt-2">
+                                    <button class="btn btn-xs btn-primary">安装</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h4 class="card-title text-sm">Corsy</h4>
+                                <p class="text-xs opacity-70">CORS漏洞检测</p>
+                                <div class="badge badge-secondary badge-xs">快速发现</div>
+                                <div class="card-actions justify-end mt-2">
+                                    <button class="btn btn-xs btn-primary">安装</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h4 class="card-title text-sm">NoSQLMap</h4>
+                                <p class="text-xs opacity-70">NoSQL注入检测</p>
+                                <div class="badge badge-warning badge-xs">新兴威胁</div>
+                                <div class="card-actions justify-end mt-2">
+                                    <button class="btn btn-xs btn-primary">安装</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card bg-base-100 shadow-lg">
+                            <div class="card-body">
+                                <h4 class="card-title text-sm">GitLeaks</h4>
+                                <p class="text-xs opacity-70">敏感信息泄露</p>
+                                <div class="badge badge-error badge-xs">信息泄露</div>
+                                <div class="card-actions justify-end mt-2">
+                                    <button class="btn btn-xs btn-primary">安装</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 设置页面 -->
+            <div id="settings" class="page-content">
+                <h2 class="text-2xl font-bold mb-6">系统设置</h2>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- 赏金平台配置 -->
+                    <div class="card bg-base-100 shadow-lg">
+                        <div class="card-header bg-success text-success-content p-4 rounded-t-xl">
+                            <h3 class="text-lg font-bold"><i class="fas fa-trophy mr-2"></i>赏金平台</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">HackerOne API Key</span>
+                                </label>
+                                <input type="password" placeholder="输入HackerOne API Key" class="input input-bordered" />
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">Bugcrowd API Key</span>
+                                </label>
+                                <input type="password" placeholder="输入Bugcrowd API Key" class="input input-bordered" />
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">补天账号</span>
+                                </label>
+                                <input type="text" placeholder="补天用户名" class="input input-bordered" />
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label cursor-pointer">
+                                    <span class="label-text">自动同步项目</span>
+                                    <input type="checkbox" class="checkbox checkbox-primary" checked />
+                                </label>
+                            </div>
+                            
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-primary">保存配置</button>
+                                <button class="btn btn-ghost">测试连接</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- AI配置 -->
+                    <div class="card bg-base-100 shadow-lg">
+                        <div class="card-header bg-primary text-primary-content p-4 rounded-t-xl">
+                            <h3 class="text-lg font-bold"><i class="fas fa-robot mr-2"></i>AI配置</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">AI服务提供商</span>
+                                </label>
+                                <select class="select select-bordered">
+                                    <option>OpenAI</option>
+                                    <option>Claude</option>
+                                    <option>Gemini</option>
+                                    <option>本地模型</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">API Key</span>
+                                </label>
+                                <input type="password" placeholder="输入您的API Key" class="input input-bordered" />
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">模型选择</span>
+                                </label>
+                                <select class="select select-bordered">
+                                    <option>gpt-4-turbo</option>
+                                    <option>gpt-3.5-turbo</option>
+                                    <option>claude-3-sonnet</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">API Base URL</span>
+                                </label>
+                                <input type="url" placeholder="https://api.openai.com/v1" class="input input-bordered" />
+                            </div>
+                            
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-primary">保存配置</button>
+                                <button class="btn btn-ghost">测试连接</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 赏金策略配置 -->
+                    <div class="card bg-base-100 shadow-lg">
+                        <div class="card-header bg-warning text-warning-content p-4 rounded-t-xl">
+                            <h3 class="text-lg font-bold"><i class="fas fa-bullseye mr-2"></i>赏金策略</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">最小ROI阈值</span>
+                                </label>
+                                <input type="number" placeholder="60" class="input input-bordered" />
+                                <label class="label">
+                                    <span class="label-text-alt">低于此值的项目不推荐</span>
+                                </label>
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">目标月收益 ($)</span>
+                                </label>
+                                <input type="number" placeholder="2000" class="input input-bordered" />
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label">
+                                    <span class="label-text">专注漏洞类型</span>
+                                </label>
+                                <div class="flex flex-wrap gap-2 mt-2">
+                                    <label class="label cursor-pointer">
+                                        <input type="checkbox" class="checkbox checkbox-xs mr-2" checked />
+                                        <span class="label-text text-xs">SQL注入</span>
+                                    </label>
+                                    <label class="label cursor-pointer">
+                                        <input type="checkbox" class="checkbox checkbox-xs mr-2" checked />
+                                        <span class="label-text text-xs">XSS</span>
+                                    </label>
+                                    <label class="label cursor-pointer">
+                                        <input type="checkbox" class="checkbox checkbox-xs mr-2" />
+                                        <span class="label-text text-xs">SSRF</span>
+                                    </label>
+                                    <label class="label cursor-pointer">
+                                        <input type="checkbox" class="checkbox checkbox-xs mr-2" />
+                                        <span class="label-text text-xs">IDOR</span>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label cursor-pointer">
+                                    <span class="label-text">启用智能推荐</span>
+                                    <input type="checkbox" class="checkbox checkbox-primary" checked />
+                                </label>
+                            </div>
+                            
+                            <div class="form-control">
+                                <label class="label cursor-pointer">
+                                    <span class="label-text">自动提交报告</span>
+                                    <input type="checkbox" class="checkbox checkbox-primary" />
+                                </label>
+                            </div>
+                            
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-primary">保存策略</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 悬浮AI聊天框 -->
+    <div id="floatingChat" class="floating-chat" style="display: none;">
+        <div class="chat-header" id="chatHeader">
+            <div class="chat-title">
+                <i class="fas fa-robot mr-2"></i>
+                <span>AI赏金助手</span>
+                <span class="badge badge-sm ml-2" id="currentModelBadge">GPT-4</span>
+            </div>
+            <div class="chat-controls">
+                <button class="btn btn-sm btn-ghost text-white model-selector-btn" onclick="showModelSelector()" title="切换模型">
+                    <i class="fas fa-brain"></i>
+                </button>
+                <button class="btn btn-sm btn-ghost text-white collapse-btn" onclick="toggleChatCollapse()" title="折叠">
+                    <i class="fas fa-minus" id="collapseIcon"></i>
+                </button>
+                <button class="btn btn-sm btn-ghost text-white minimize-btn" onclick="minimizeChat()" title="最小化">
+                    <i class="fas fa-window-minimize"></i>
+                </button>
+                <button class="btn btn-sm btn-ghost text-white close-btn" onclick="closeChat()" title="关闭">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+        
+        <div class="chat-content" id="chatContent">
+            <!-- 模型选择器 -->
+            <div class="model-selector p-3 border-b bg-gray-50" id="modelSelector" style="display: none;">
+                <div class="text-sm font-semibold mb-2">选择AI模型</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button class="btn btn-sm btn-outline model-btn active" data-model="gpt-4" onclick="selectModel('gpt-4')">
+                        <div class="text-left">
+                            <div class="font-semibold">GPT-4</div>
+                            <div class="text-xs opacity-70">最强推理能力</div>
+                        </div>
+                    </button>
+                    <button class="btn btn-sm btn-outline model-btn" data-model="gpt-3.5" onclick="selectModel('gpt-3.5')">
+                        <div class="text-left">
+                            <div class="font-semibold">GPT-3.5</div>
+                            <div class="text-xs opacity-70">快速响应</div>
+                        </div>
+                    </button>
+                    <button class="btn btn-sm btn-outline model-btn" data-model="claude-3" onclick="selectModel('claude-3')">
+                        <div class="text-left">
+                            <div class="font-semibold">Claude-3</div>
+                            <div class="text-xs opacity-70">安全分析专家</div>
+                        </div>
+                    </button>
+                    <button class="btn btn-sm btn-outline model-btn" data-model="gemini-pro" onclick="selectModel('gemini-pro')">
+                        <div class="text-left">
+                            <div class="font-semibold">Gemini Pro</div>
+                            <div class="text-xs opacity-70">多模态分析</div>
+                        </div>
+                    </button>
+                    <button class="btn btn-sm btn-outline model-btn" data-model="llama-70b" onclick="selectModel('llama-70b')">
+                        <div class="text-left">
+                            <div class="font-semibold">LLaMA-70B</div>
+                            <div class="text-xs opacity-70">开源强模型</div>
+                        </div>
+                    </button>
+                    <button class="btn btn-sm btn-outline model-btn" data-model="mixtral-8x7b" onclick="selectModel('mixtral-8x7b')">
+                        <div class="text-left">
+                            <div class="font-semibold">Mixtral-8x7B</div>
+                            <div class="text-xs opacity-70">混合专家模型</div>
+                        </div>
+                    </button>
+                </div>
+                <div class="mt-2 text-xs opacity-60">
+                    💡 提示：不同模型在不同场景下表现各异，可根据需要切换
+                </div>
+            </div>
+            
+            <div class="chat-messages" id="floatingChatMessages">
+                <div class="chat chat-start mb-4">
+                    <div class="chat-image avatar">
+                        <div class="w-8 rounded-full bg-primary text-primary-content flex items-center justify-center">
+                            <i class="fas fa-robot text-sm"></i>
+                        </div>
+                    </div>
+                    <div class="chat-bubble">
+                        您好！我是专业的赏金猎人AI助手。我可以帮您：<br>
+                        • 推荐高ROI赏金项目<br>
+                        • 制定扫描策略<br>
+                        • 生成漏洞报告<br>
+                        • 优化提交流程
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-area">
+                <div class="flex gap-2 mb-2">
+                    <button class="btn btn-xs btn-outline" onclick="quickMessageFloat('推荐高ROI项目')">推荐项目</button>
+                    <button class="btn btn-xs btn-outline" onclick="quickMessageFloat('分析当前扫描结果')">分析结果</button>
+                    <button class="btn btn-xs btn-outline" onclick="quickMessageFloat('生成漏洞报告')">生成报告</button>
+                </div>
+                <div class="flex gap-2">
+                    <input type="text" placeholder="输入您的指令..." class="input input-bordered input-sm flex-1" id="floatingChatInput" />
+                    <button class="btn btn-primary btn-sm" onclick="sendFloatingMessage()">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加工具模态框 -->
+    <dialog id="addToolModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">添加MCP工具</h3>
+            <div class="py-4">
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">工具名称</span>
+                    </label>
+                    <input type="text" placeholder="输入工具名称" class="input input-bordered" />
+                </div>
+                
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">工具描述</span>
+                    </label>
+                    <textarea class="textarea textarea-bordered" placeholder="工具描述"></textarea>
+                </div>
+                
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text">MCP服务器地址</span>
+                    </label>
+                    <input type="url" placeholder="http://localhost:3000" class="input input-bordered" />
+                </div>
+            </div>
+            <div class="modal-action">
+                <button class="btn btn-primary">添加工具</button>
+                <button class="btn" onclick="closeAddToolModal()">取消</button>
+            </div>
+        </div>
+    </dialog>
+
+    <script>
+        // 页面切换
+        function showPage(pageId) {
+            document.querySelectorAll('.page-content').forEach(page => {
+                page.classList.remove('active');
+            });
+            document.getElementById(pageId).classList.add('active');
+            
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.classList.remove('active');
+            });
+            document.querySelector(`[data-page="${pageId}"]`).classList.add('active');
+        }
+
+        // 主题切换
+        function setTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+        }
+
+        // 悬浮聊天框相关函数
+        let isDragging = false;
+        let hasDragged = false;
+        let currentX;
+        let currentY;
+        let initialX;
+        let initialY;
+        let xOffset = 0;
+        let yOffset = 0;
+        let currentModel = 'gpt-4'; // 默认模型
+
+        // 显示悬浮聊天框
+        function showFloatingChat() {
+            const chatBox = document.getElementById('floatingChat');
+            chatBox.style.display = 'block';
+            chatBox.classList.remove('minimized', 'collapsed');
+            
+            // 恢复到正常状态
+            const collapseIcon = document.getElementById('collapseIcon');
+            collapseIcon.className = 'fas fa-minus';
+        }
+
+        // 发送悬浮聊天消息
+        function sendFloatingMessage() {
+            const input = document.getElementById('floatingChatInput');
+            const message = input.value.trim();
+            if (message) {
+                addFloatingUserMessage(message);
+                input.value = '';
+                // 模拟AI回复
+                setTimeout(() => {
+                    addFloatingAIMessage(generateAIResponse(message));
+                }, 1000);
+            }
+        }
+
+        // 快捷消息（悬浮版）
+        function quickMessageFloat(message) {
+            document.getElementById('floatingChatInput').value = message;
+            sendFloatingMessage();
+        }
+
+        // 添加用户消息（悬浮版）
+        function addFloatingUserMessage(message) {
+            const chatContainer = document.getElementById('floatingChatMessages');
+            const messageHtml = `
+                <div class="chat chat-end mb-4">
+                    <div class="chat-bubble chat-bubble-primary">${message}</div>
+                </div>
+            `;
+            chatContainer.insertAdjacentHTML('beforeend', messageHtml);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // 添加AI消息（悬浮版）
+        function addFloatingAIMessage(message) {
+            const chatContainer = document.getElementById('floatingChatMessages');
+            const messageHtml = `
+                <div class="chat chat-start mb-4">
+                    <div class="chat-image avatar">
+                        <div class="w-8 rounded-full bg-primary text-primary-content flex items-center justify-center">
+                            <i class="fas fa-robot text-sm"></i>
+                        </div>
+                    </div>
+                    <div class="chat-bubble">${message}</div>
+                </div>
+            `;
+            chatContainer.insertAdjacentHTML('beforeend', messageHtml);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // 折叠/展开聊天框
+        function toggleChatCollapse() {
+            const chatBox = document.getElementById('floatingChat');
+            const collapseIcon = document.getElementById('collapseIcon');
+            const collapseBtn = document.querySelector('.collapse-btn');
+            
+            if (chatBox.classList.contains('collapsed')) {
+                // 展开聊天框
+                chatBox.classList.remove('collapsed');
+                collapseIcon.className = 'fas fa-minus';
+                collapseBtn.title = '折叠';
+            } else {
+                // 折叠聊天框
+                chatBox.classList.add('collapsed');
+                collapseIcon.className = 'fas fa-plus';
+                collapseBtn.title = '展开';
+            }
+        }
+
+        // 最小化聊天框
+        function minimizeChat() {
+            const chatBox = document.getElementById('floatingChat');
+            chatBox.classList.add('minimized');
+        }
+
+        // 关闭聊天框
+        function closeChat() {
+            const chatBox = document.getElementById('floatingChat');
+            chatBox.style.display = 'none';
+        }
+
+        // 拖拽功能
+        function dragStart(e) {
+            const chatBox = document.getElementById('floatingChat');
+            
+            // 在折叠状态下，允许整个聊天框拖拽，但不包括控制按钮
+            if (chatBox.classList.contains('collapsed')) {
+                if (e.target.closest('.collapse-btn')) return; // 不在展开按钮上拖拽
+            } else {
+                if (e.target.closest('.chat-controls')) return; // 不在控制按钮上拖拽
+            }
+            
+            if (e.type === "touchstart") {
+                initialX = e.touches[0].clientX - xOffset;
+                initialY = e.touches[0].clientY - yOffset;
+            } else {
+                initialX = e.clientX - xOffset;
+                initialY = e.clientY - yOffset;
+            }
+
+            if (e.target === document.getElementById('chatHeader') || e.target.closest('#chatHeader')) {
+                isDragging = true;
+                hasDragged = false;
+            }
+        }
+
+        function dragEnd(e) {
+            initialX = currentX;
+            initialY = currentY;
+            isDragging = false;
+            
+            // 延迟重置拖拽标记，防止点击事件误触发
+            setTimeout(() => {
+                hasDragged = false;
+            }, 100);
+        }
+
+        function drag(e) {
+            if (isDragging) {
+                e.preventDefault();
+                hasDragged = true;
+                
+                if (e.type === "touchmove") {
+                    currentX = e.touches[0].clientX - initialX;
+                    currentY = e.touches[0].clientY - initialY;
+                } else {
+                    currentX = e.clientX - initialX;
+                    currentY = e.clientY - initialY;
+                }
+
+                xOffset = currentX;
+                yOffset = currentY;
+
+                const chatBox = document.getElementById('floatingChat');
+                chatBox.style.transform = `translate(${currentX}px, ${currentY}px)`;
+            }
+        }
+
+        // 显示/隐藏模型选择器
+        function showModelSelector() {
+            const selector = document.getElementById('modelSelector');
+            if (selector.style.display === 'none') {
+                selector.style.display = 'block';
+            } else {
+                selector.style.display = 'none';
+            }
+        }
+
+        // 选择模型
+        function selectModel(modelName) {
+            // 更新当前模型
+            currentModel = modelName;
+            
+            // 更新UI
+            updateModelUI(modelName);
+            
+            // 隐藏选择器
+            document.getElementById('modelSelector').style.display = 'none';
+            
+            // 添加模型切换消息
+            addFloatingAIMessage(getModelSwitchMessage(modelName));
+            
+            // 保存到本地存储
+            localStorage.setItem('selectedModel', modelName);
+        }
+
+        // 更新模型UI
+        function updateModelUI(modelName) {
+            // 更新徽章显示
+            const badge = document.getElementById('currentModelBadge');
+            const modelInfo = getModelInfo(modelName);
+            badge.textContent = modelInfo.displayName;
+            badge.className = `badge badge-sm ml-2 ${modelInfo.badgeClass}`;
+            
+            // 更新按钮状态
+            document.querySelectorAll('.model-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`[data-model="${modelName}"]`).classList.add('active');
+        }
+
+        // 获取模型信息
+        function getModelInfo(modelName) {
+            const modelMap = {
+                'gpt-4': { displayName: 'GPT-4', badgeClass: 'badge-primary' },
+                'gpt-3.5': { displayName: 'GPT-3.5', badgeClass: 'badge-secondary' },
+                'claude-3': { displayName: 'Claude-3', badgeClass: 'badge-accent' },
+                'gemini-pro': { displayName: 'Gemini Pro', badgeClass: 'badge-info' },
+                'llama-70b': { displayName: 'LLaMA-70B', badgeClass: 'badge-success' },
+                'mixtral-8x7b': { displayName: 'Mixtral-8x7B', badgeClass: 'badge-warning' }
+            };
+            return modelMap[modelName] || modelMap['gpt-4'];
+        }
+
+        // 获取模型切换消息
+        function getModelSwitchMessage(modelName) {
+            const messages = {
+                'gpt-4': `🧠 已切换到 <strong>GPT-4</strong><br>
+                         • 最强的推理和分析能力<br>
+                         • 适合复杂的漏洞分析和策略制定<br>
+                         • 更准确的代码审计和安全建议`,
+                'gpt-3.5': `⚡ 已切换到 <strong>GPT-3.5 Turbo</strong><br>
+                           • 快速响应，高效处理<br>
+                           • 适合日常查询和快速分析<br>
+                           • 成本更低，响应更快`,
+                'claude-3': `🛡️ 已切换到 <strong>Claude-3</strong><br>
+                            • 安全分析专家<br>
+                            • 擅长风险评估和合规检查<br>
+                            • 更安全的内容处理`,
+                'gemini-pro': `🌟 已切换到 <strong>Gemini Pro</strong><br>
+                              • 多模态分析能力<br>
+                              • 可处理图片和文档<br>
+                              • 适合综合性安全评估`,
+                'llama-70b': `🦙 已切换到 <strong>LLaMA-70B</strong><br>
+                             • 开源大语言模型<br>
+                             • 数据隐私保护更好<br>
+                             • 适合敏感项目分析`,
+                'mixtral-8x7b': `🔀 已切换到 <strong>Mixtral-8x7B</strong><br>
+                                • 混合专家模型<br>
+                                • 平衡性能与效率<br>
+                                • 适合多样化任务处理`
+            };
+            return messages[modelName] || messages['gpt-4'];
+        }
+
+        // 生成AI回复
+        function generateAIResponse(userMessage) {
+            // 根据当前模型生成不同风格的回复
+            const modelPrefix = getModelResponsePrefix();
+            
+            const responses = {
+                '推荐高ROI项目': generateProjectRecommendation(),
+                '分析当前扫描结果': generateScanAnalysis(),
+                '生成漏洞报告': generateReportStatus()
+            };
+            
+            // 检查是否有预设回复
+            for (const [key, response] of Object.entries(responses)) {
+                if (userMessage.includes(key)) {
+                    return modelPrefix + response;
+                }
+            }
+            
+            // 默认回复
+            return modelPrefix + getDefaultResponse(userMessage);
+        }
+
+        // 获取模型回复前缀
+        function getModelResponsePrefix() {
+            const prefixes = {
+                'gpt-4': '🧠 <strong>[GPT-4]</strong> ',
+                'gpt-3.5': '⚡ <strong>[GPT-3.5]</strong> ',
+                'claude-3': '🛡️ <strong>[Claude-3]</strong> ',
+                'gemini-pro': '🌟 <strong>[Gemini Pro]</strong> ',
+                'llama-70b': '🦙 <strong>[LLaMA-70B]</strong> ',
+                'mixtral-8x7b': '🔀 <strong>[Mixtral]</strong> '
+            };
+            return prefixes[currentModel] || prefixes['gpt-4'];
+        }
+
+        // 生成项目推荐
+        function generateProjectRecommendation() {
+            const recommendations = {
+                'gpt-4': `
+                    基于深度分析，我为您推荐以下高价值项目：<br><br>
+                    🏆 <strong>CloudTech Security Program</strong><br>
+                    • 预计奖励: $1,000-$8,000<br>
+                    • ROI评分: 92% | 竞争指数: 低<br>
+                    • 技能匹配: SSRF, XXE, 业务逻辑<br>
+                    • 成功概率: 85% (基于历史数据)<br><br>
+                    🎯 <strong>FinanceApp Bug Bounty</strong><br>
+                    • 预计奖励: $500-$3,000<br>
+                    • ROI评分: 78% | 竞争指数: 中<br>
+                    • 技能匹配: SQL注入, 权限绕过<br><br>
+                    建议优先选择CloudTech项目，成功率更高。
+                `,
+                'gpt-3.5': `
+                    快速为您推荐高ROI项目：<br><br>
+                    💰 <strong>热门推荐</strong><br>
+                    • CloudTech: $1K-$8K, ROI 92%<br>
+                    • FinanceApp: $500-$3K, ROI 78%<br>
+                    • TechStartup: $200-$2K, ROI 65%<br><br>
+                    建议选择CloudTech，竞争度低！
+                `,
+                'claude-3': `
+                    安全评估后推荐以下项目：<br><br>
+                    🔒 <strong>合规性良好的项目</strong><br>
+                    • CloudTech: 规范完善，奖励透明<br>
+                    • FinanceApp: 响应及时，处理规范<br><br>
+                    这些项目都有良好的安全研究者保护政策。
+                `,
+                'gemini-pro': `
+                    综合多维度分析推荐：<br><br>
+                    📊 <strong>数据驱动推荐</strong><br>
+                    • 技术栈匹配度: 95%<br>
+                    • 市场趋势分析: 看涨<br>
+                    • 竞争环境: 适中<br><br>
+                    CloudTech项目最符合您的技能档案。
+                `,
+                'llama-70b': `
+                    开源模型分析推荐：<br><br>
+                    🔓 <strong>透明化推荐</strong><br>
+                    基于开放数据分析，CloudTech和FinanceApp<br>
+                    在过去6个月表现稳定，建议关注。
+                `,
+                'mixtral-8x7b': `
+                    专家混合分析：<br><br>
+                    🎯 <strong>多专家共识</strong><br>
+                    • 技术专家: 推荐CloudTech<br>
+                    • 市场专家: 推荐FinanceApp<br>
+                    • 风险专家: 两者均可<br><br>
+                    建议分配资源到两个项目。
+                `
+            };
+            return recommendations[currentModel] || recommendations['gpt-4'];
+        }
+
+        // 生成扫描分析
+        function generateScanAnalysis() {
+            const analyses = {
+                'gpt-4': `
+                    深度扫描分析报告：<br><br>
+                    📊 <strong>资产发现详情</strong><br>
+                    • 总资产: 156个 (超出预期23%)<br>
+                    • 高价值目标: 3个 (admin, api, internal)<br>
+                    • 技术栈识别: React, Node.js, MongoDB<br><br>
+                    🔍 <strong>漏洞机会评估</strong><br>
+                    • 子域名接管: 2个 (置信度85%)<br>
+                    • 版本漏洞: 3个服务存在已知CVE<br>
+                    • 敏感信息泄露: 5处潜在风险点<br><br>
+                    🎯 <strong>优先级建议</strong><br>
+                    1. 立即测试子域名接管 (预计$2,000+)<br>
+                    2. 检查API端点权限控制<br>
+                    3. 分析敏感目录访问控制
+                `,
+                'gpt-3.5': `
+                    扫描结果概览：<br><br>
+                    ✅ 发现156个资产<br>
+                    🔥 3个高价值目标<br>
+                    ⚠️ 2个子域名接管机会<br>
+                    💰 预计收益$2,000+<br><br>
+                    建议优先测试子域名接管！
+                `,
+                'claude-3': `
+                    安全扫描评估：<br><br>
+                    🛡️ <strong>风险评估</strong><br>
+                    • 发现资产符合预期范围<br>
+                    • 未发现明显的越权扫描<br>
+                    • 建议在授权范围内进行测试<br><br>
+                    请确保所有测试活动符合项目规范。
+                `,
+                'gemini-pro': `
+                    多维度扫描分析：<br><br>
+                    📈 <strong>趋势分析</strong><br>
+                    • 资产增长率: +15% (较上月)<br>
+                    • 技术栈现代化程度: 中等<br>
+                    • 安全防护水平: 标准<br><br>
+                    建议结合视觉化工具进行深度分析。
+                `,
+                'llama-70b': `
+                    开源工具扫描结果：<br><br>
+                    🔧 使用工具: subfinder, httpx, nuclei<br>
+                    📊 数据质量: 高<br>
+                    🎯 发现亮点: 子域名接管机会<br><br>
+                    所有数据基于开源情报收集。
+                `,
+                'mixtral-8x7b': `
+                    混合专家分析：<br><br>
+                    🔄 <strong>多角度评估</strong><br>
+                    • 技术角度: 发现技术债务<br>
+                    • 业务角度: 存在扩展痕迹<br>
+                    • 安全角度: 配置存在疏漏<br><br>
+                    综合建议: 重点关注配置类漏洞。
+                `
+            };
+            return analyses[currentModel] || analyses['gpt-4'];
+        }
+
+        // 生成报告状态
+        function generateReportStatus() {
+            const statuses = {
+                'gpt-4': `
+                    🔬 <strong>智能报告生成中...</strong><br><br>
+                    ✅ 漏洞详情收集完成<br>
+                    ✅ 影响分析评估完成<br>
+                    🔄 CVSS评分计算中 (v3.1标准)<br>
+                    🔄 PoC代码生成中<br>
+                    🔄 修复建议制定中<br>
+                    ⏳ 报告格式化处理中<br><br>
+                    预计2分钟完成，将生成符合OWASP标准的专业报告。
+                `,
+                'gpt-3.5': `
+                    📝 快速生成报告中...<br><br>
+                    ✅ 基础信息收集<br>
+                    🔄 模板应用中<br>
+                    ⏳ 预计1分钟完成<br><br>
+                    将生成标准格式报告。
+                `,
+                'claude-3': `
+                    🛡️ 安全报告生成中...<br><br>
+                    ✅ 合规性检查完成<br>
+                    ✅ 敏感信息脱敏处理<br>
+                    🔄 报告安全审查中<br><br>
+                    确保报告符合安全标准。
+                `,
+                'gemini-pro': `
+                    🌟 多模态报告生成中...<br><br>
+                    ✅ 文本内容生成<br>
+                    🔄 图表可视化处理<br>
+                    🔄 截图证据整理<br><br>
+                    将生成包含图表的综合报告。
+                `,
+                'llama-70b': `
+                    🦙 开源标准报告生成...<br><br>
+                    ✅ 使用开放标准模板<br>
+                    🔄 确保格式兼容性<br><br>
+                    生成标准化格式报告。
+                `,
+                'mixtral-8x7b': `
+                    🔀 专家协作报告生成...<br><br>
+                    ✅ 技术专家: 漏洞分析完成<br>
+                    🔄 文档专家: 报告撰写中<br>
+                    ⏳ 质量专家: 审核待开始<br><br>
+                    多专家协作确保报告质量。
+                `
+            };
+            return statuses[currentModel] || statuses['gpt-4'];
+        }
+
+        // 默认回复
+        function getDefaultResponse(userMessage) {
+            const defaults = {
+                'gpt-4': `
+                    我正在深度分析您的指令："${userMessage}"<br><br>
+                    基于当前上下文，我建议您可以尝试：<br>
+                    • "推荐高ROI项目" - 获取智能项目推荐<br>
+                    • "分析当前扫描结果" - 深度分析扫描数据<br>
+                    • "生成漏洞报告" - 创建专业报告<br>
+                    • "制定扫描策略 [目标]" - 定制扫描方案
+                `,
+                'gpt-3.5': `
+                    收到指令："${userMessage}"<br><br>
+                    快速帮助：<br>
+                    • 推荐项目<br>
+                    • 分析结果<br>
+                    • 生成报告<br>
+                    • 扫描策略
+                `,
+                'claude-3': `
+                    安全处理您的请求："${userMessage}"<br><br>
+                    建议的安全操作：<br>
+                    • 项目推荐 (已验证安全性)<br>
+                    • 结果分析 (符合规范)<br>
+                    • 报告生成 (合规处理)
+                `,
+                'gemini-pro': `
+                    多维度理解您的需求："${userMessage}"<br><br>
+                    可用功能模块：<br>
+                    📊 数据分析 | 🎯 项目推荐<br>
+                    📝 报告生成 | 🔍 策略制定
+                `,
+                'llama-70b': `
+                    开源AI处理："${userMessage}"<br><br>
+                    开放功能：<br>
+                    • 项目分析<br>
+                    • 数据处理<br>
+                    • 报告生成
+                `,
+                'mixtral-8x7b': `
+                    专家团队分析："${userMessage}"<br><br>
+                    可调用专家：<br>
+                    🔧 技术专家 | 📊 数据专家<br>
+                    📝 文档专家 | 🎯 策略专家
+                `
+            };
+            return defaults[currentModel] || defaults['gpt-4'];
+        }
+
+        // 切换聊天框大小
+        function toggleChatSize() {
+            const sidebar = document.querySelector('.sidebar');
+            const chatCard = sidebar.querySelector('.card');
+            const icon = document.getElementById('chatToggleIcon');
+            
+            if (sidebar.style.width === '600px') {
+                // 收缩
+                sidebar.style.width = '400px';
+                chatCard.style.height = 'calc(100vh - 200px)';
+                icon.className = 'fas fa-expand';
+            } else {
+                // 展开
+                sidebar.style.width = '600px';
+                chatCard.style.height = 'calc(100vh - 120px)';
+                icon.className = 'fas fa-compress';
+            }
+        }
+
+        // 显示添加工具模态框
+        function showAddToolModal() {
+            document.getElementById('addToolModal').showModal();
+        }
+
+        // 关闭添加工具模态框
+        function closeAddToolModal() {
+            document.getElementById('addToolModal').close();
+        }
+
+        // 显示新任务模态框
+        function showNewTaskModal() {
+            // 这里可以添加新任务模态框的逻辑
+            console.log('显示新任务模态框');
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 加载保存的主题
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            setTheme(savedTheme);
+            
+            // 恢复保存的模型设置
+            const savedModel = localStorage.getItem('selectedModel');
+            if (savedModel) {
+                currentModel = savedModel;
+                updateModelUI(savedModel);
+            }
+
+            // 导航链接点击事件
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const pageId = this.getAttribute('data-page');
+                    showPage(pageId);
+                });
+            });
+
+            // 悬浮聊天框输入框回车发送
+            const floatingChatInput = document.getElementById('floatingChatInput');
+            if (floatingChatInput) {
+                floatingChatInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        sendFloatingMessage();
+                    }
+                });
+            }
+
+            // 添加拖拽事件监听器
+            const chatHeader = document.getElementById('chatHeader');
+            if (chatHeader) {
+                chatHeader.addEventListener('mousedown', dragStart);
+                document.addEventListener('mousemove', drag);
+                document.addEventListener('mouseup', dragEnd);
+                
+                // 触摸事件支持
+                chatHeader.addEventListener('touchstart', dragStart);
+                document.addEventListener('touchmove', drag);
+                document.addEventListener('touchend', dragEnd);
+            }
+
+            // 双击最小化的聊天框恢复
+            const floatingChat = document.getElementById('floatingChat');
+            if (floatingChat) {
+                floatingChat.addEventListener('dblclick', function(e) {
+                    if (this.classList.contains('minimized')) {
+                        this.classList.remove('minimized');
+                    }
+                });
+            }
+            
+            // 点击折叠状态的聊天框标题区域展开
+            const chatTitle = document.querySelector('.chat-title');
+            if (chatTitle) {
+                chatTitle.addEventListener('click', function(e) {
+                    const chatBox = document.getElementById('floatingChat');
+                    if (chatBox.classList.contains('collapsed')) {
+                        // 防止拖拽时误触发
+                        if (!hasDragged) {
+                            toggleChatCollapse();
+                        }
+                    }
+                });
+            }
+
+            // 模拟数据更新
+            setInterval(() => {
+                const progressBars = document.querySelectorAll('.progress');
+                progressBars.forEach(bar => {
+                    if (bar.value && bar.value < 100) {
+                        bar.value = Math.min(100, bar.value + Math.random() * 3);
+                    }
+                });
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
