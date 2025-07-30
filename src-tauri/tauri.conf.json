@@ -12,11 +12,15 @@
   "app": {
     "windows": [
       {
-        "title": "Sentinel AI - 漏洞挖掘平台",
+        "label": "main",
+        "title": "Sentinel AI",
         "width": 1400,
         "height": 1000,
         "minWidth": 1100,
-        "minHeight": 900
+        "minHeight": 900,
+        "closable": true,
+        "minimizable": true,
+        "maximizable": true
       }
     ],
     "security": {

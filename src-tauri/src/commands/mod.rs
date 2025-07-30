@@ -1,30 +1,36 @@
 pub mod ai;
 pub mod config;
 pub mod database;
+pub mod dictionary;
 pub mod mcp;
-pub mod project;
-pub mod scan;
-pub mod vulnerability;
+pub mod performance;
 pub mod role;
+pub mod scan;
+pub mod scan_commands;
+pub mod scan_engine_commands;
+pub mod scan_session_commands;
+pub mod vulnerability;
 
 // 重新导出所有命令
 pub use ai::*;
 pub use config::*;
 pub use database::*;
+pub use dictionary::*;
 pub use mcp::*;
-pub use project::*;
+pub use performance::*;
+pub use role::*;
 pub use scan::*;
+pub use scan_commands::*;
+pub use scan_engine_commands::*;
+pub use scan_session_commands::*;
 pub use vulnerability::*;
 
 // 在现有的use语句后添加新的MCP命令导出
 pub use self::mcp::{
-    start_mcp_server,
-    stop_mcp_server,
-    mcp_check_server_status, mcp_get_connections, mcp_connect_server,
-    mcp_disconnect_server, mcp_list_tools, mcp_start_tool,
-    mcp_stop_tool, mcp_restart_tool, mcp_uninstall_tool, mcp_install_tool,
-    mcp_install_tool_from_url, mcp_install_tool_from_github, mcp_install_tool_from_registry,
-    mcp_create_custom_tool
+    mcp_check_server_status, mcp_connect_server, mcp_create_custom_tool, mcp_disconnect_server,
+    mcp_get_connections, mcp_install_tool, mcp_install_tool_from_github,
+    mcp_install_tool_from_registry, mcp_install_tool_from_url, mcp_list_tools, mcp_restart_tool,
+    mcp_start_tool, mcp_stop_tool, mcp_uninstall_tool, start_mcp_server, stop_mcp_server,
 };
 
 use std::process::Command;

@@ -2,7 +2,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use rmcp::{
     model::{
-        CallToolRequestParam, CallToolResult, Content, InitializeResult, RawContent, TextContent, Tool,
+        CallToolRequestParam, CallToolResult, Content, InitializeResult, RawContent, TextContent,
+        Tool,
     },
     service::{RoleClient, RunningService, ServiceExt},
     transport::{self, ConfigureCommandExt, TokioChildProcess},
@@ -147,20 +148,23 @@ impl McpClient {
         command: &str,
         args: Vec<&str>,
     ) -> Result<String> {
-        info!("Attempting to connect to MCP server: {} {}", command, args.join(" "));
+        info!(
+            "Attempting to connect to MCP server: {} {}",
+            command,
+            args.join(" ")
+        );
 
-        let transport = TokioChildProcess::new(
-            tokio::process::Command::new(command).configure(|cmd| {
+        let transport =
+            TokioChildProcess::new(tokio::process::Command::new(command).configure(|cmd| {
                 for arg in &args {
                     cmd.arg(arg);
                 }
                 cmd.stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped());
-            }),
-        )?;
-        
+            }))?;
+
         let client_service = ().serve(transport).await?;
-        
+
         let session: Arc<dyn McpSession> = Arc::new(McpSessionImpl {
             service: RwLock::new(Some(client_service)),
         });
@@ -208,7 +212,7 @@ impl McpClient {
         info!("Attempting to connect to HTTP MCP server: {}", url);
         let transport = transport::sse_client::SseClientTransport::start(url.to_string()).await?;
         let client_service = ().serve(transport).await?;
-        
+
         let session: Arc<dyn McpSession> = Arc::new(McpSessionImpl {
             service: RwLock::new(Some(client_service)),
         });
@@ -244,10 +248,10 @@ impl McpClient {
             last_activity: chrono::Utc::now(),
             error_count: 0,
         };
-        
+
         let mut connections = self.connections.write().await;
         connections.insert(connection_id.clone(), connection);
-        
+
         Ok(connection_id)
     }
 
@@ -346,7 +350,10 @@ impl McpClient {
                 };
                 session.call_tool(params).await
             } else {
-                Err(anyhow!("Session not available for connection {}", connection_id))
+                Err(anyhow!(
+                    "Session not available for connection {}",
+                    connection_id
+                ))
             }
         } else {
             Err(anyhow!("Connection not found: {}", connection_id))
@@ -371,13 +378,13 @@ impl McpClient {
                                     let msg = result
                                         .content
                                         .first()
-                                        .and_then(|c| {
-                                            match &c.raw {
-                                                RawContent::Text(t) => Some(t.text.clone()),
-                                                _ => None,
-                                            }
+                                        .and_then(|c| match &c.raw {
+                                            RawContent::Text(t) => Some(t.text.clone()),
+                                            _ => None,
                                         })
-                                        .unwrap_or_else(|| "Tool execution failed with no message.".to_string());
+                                        .unwrap_or_else(|| {
+                                            "Tool execution failed with no message.".to_string()
+                                        });
                                     return Err(anyhow!(msg));
                                 }
 
@@ -418,10 +425,14 @@ impl McpClient {
                     .map(|arr| arr.iter().filter_map(Value::as_str).collect())
                     .unwrap_or_default();
                 if let Some(command) = server_config.get("command").and_then(Value::as_str) {
-                    if let Ok(id) =
-                        self.connect_to_child_process(name.clone(), command, args).await
+                    if let Ok(id) = self
+                        .connect_to_child_process(name.clone(), command, args)
+                        .await
                     {
-                        info!("Successfully loaded MCP server from configuration: {}", name);
+                        info!(
+                            "Successfully loaded MCP server from configuration: {}",
+                            name
+                        );
                         connection_ids.push(id);
                     } else {
                         warn!("Failed to load MCP server from configuration: {}", name);
@@ -466,13 +477,13 @@ impl McpClient {
                 if let Some(session) = conn.session.take() {
                     tokio::spawn(async move {
                         if let Err(e) = session.cancel().await {
-                             warn!("Failed to send cancel on cleanup: {}", e);
+                            warn!("Failed to send cancel on cleanup: {}", e);
                         }
                     });
                 }
             }
         }
-        
+
         let removed_count = to_remove.len();
         if removed_count > 0 {
             info!("Cleaned {} invalid MCP connections", removed_count);
@@ -584,11 +595,14 @@ impl McpClientManager {
                     .connect_to_child_process(config.name.clone(), &config.command, args_refs)
                     .await
                 {
-                    warn!("Failed to connect to server {} when starting: {}", config.name, e);
+                    warn!(
+                        "Failed to connect to server {} when starting: {}",
+                        config.name, e
+                    );
                 }
             }
         }
-        
+
         let client_clone = self.client.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(3600));
@@ -620,7 +634,9 @@ impl McpClientManager {
         command: &str,
         args: &[String],
     ) -> Result<String> {
-        self.db.create_mcp_server_config(name, description, command, args).await
+        self.db
+            .create_mcp_server_config(name, description, command, args)
+            .await
     }
 
     /// 使用ConfigureCommandExt连接到子进程MCP服务器
@@ -631,11 +647,14 @@ impl McpClientManager {
         args: Vec<String>,
     ) -> Result<String> {
         use rmcp::transport::ConfigureCommandExt;
-        
-        info!("Attempting to connect to MCP server: {} {:?}", command, args);
-        
+
+        info!(
+            "Attempting to connect to MCP server: {} {:?}",
+            command, args
+        );
+
         let client = self.client.read().await;
-        
+
         let transport = rmcp::transport::TokioChildProcess::new(
             tokio::process::Command::new(command).configure(|cmd| {
                 for arg in &args {
@@ -645,9 +664,9 @@ impl McpClientManager {
                     .stdout(std::process::Stdio::piped());
             }),
         )?;
-        
+
         let client_service = ().serve(transport).await?;
-        
+
         let session: Arc<dyn McpSession> = Arc::new(McpSessionImpl {
             service: RwLock::new(Some(client_service)),
         });
@@ -686,14 +705,14 @@ impl McpClientManager {
 
         let mut connections = client.connections.write().await;
         connections.insert(connection_id.clone(), connection);
-        
+
         // 如果配置不存在，则保存到数据库
         if self.db.get_mcp_server_config_by_name(name).await?.is_none() {
             if let Err(e) = self.save_config_to_db(name, None, command, &args).await {
                 warn!("Failed to save MCP configuration to database: {}", e);
             }
         }
-        
+
         Ok(connection_id)
     }
 
@@ -704,9 +723,17 @@ impl McpClientManager {
         args: Vec<&str>,
     ) -> Result<String> {
         let client = self.client.read().await;
-        let id = client.connect_to_child_process(name.to_string(), command, args.clone()).await?;
+        let id = client
+            .connect_to_child_process(name.to_string(), command, args.clone())
+            .await?;
         drop(client);
-        self.save_config_to_db(name, None, command, &args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).await?;
+        self.save_config_to_db(
+            name,
+            None,
+            command,
+            &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        )
+        .await?;
         Ok(id)
     }
 
@@ -735,10 +762,7 @@ impl McpClientManager {
     /// 获取所有连接的状态映射（按服务器名称索引）
     pub async fn get_all_connections_status(&self) -> HashMap<String, ConfiguredServer> {
         match self.get_all_servers_with_status().await {
-            Ok(servers) => servers
-                .into_iter()
-                .map(|s| (s.name.clone(), s))
-                .collect(),
+            Ok(servers) => servers.into_iter().map(|s| (s.name.clone(), s)).collect(),
             Err(_) => HashMap::new(),
         }
     }
@@ -794,13 +818,17 @@ mod tests {
         let tools = client.get_connection_tools(&id).await.unwrap();
         assert!(!tools.is_empty());
 
-        let result = client.call_tool(&id, "increment", serde_json::json!({})).await;
+        let result = client
+            .call_tool(&id, "increment", serde_json::json!({}))
+            .await;
         assert!(result.is_ok());
 
-        let result = client.call_tool(&id, "get_value", serde_json::json!({})).await;
+        let result = client
+            .call_tool(&id, "get_value", serde_json::json!({}))
+            .await;
         assert!(result.is_ok());
 
         let result = client.disconnect(&id).await;
         assert!(result.is_ok());
     }
-} 
+}

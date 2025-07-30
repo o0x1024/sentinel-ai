@@ -1,8 +1,8 @@
 use crate::models::ai::AiRole;
 use crate::services::database::{Database, DatabaseService};
-use tauri::State;
-use std::sync::Arc;
 use chrono::Utc;
+use std::sync::Arc;
+use tauri::State;
 use uuid::Uuid;
 
 #[tauri::command]
@@ -55,12 +55,12 @@ pub async fn update_ai_role(
         tracing::error!("{}", err_msg);
         err_msg
     })?;
-    
+
     let existing_role = roles.iter().find(|r| r.id == payload.id);
     let is_system = existing_role.map(|r| r.is_system).unwrap_or(false);
-    
+
     tracing::info!("Updating role: {} (is_system: {})", payload.id, is_system);
-    
+
     let role = AiRole {
         id: payload.id,
         title: payload.title,
@@ -70,21 +70,21 @@ pub async fn update_ai_role(
         created_at: existing_role.map(|r| r.created_at).unwrap_or_else(Utc::now),
         updated_at: Utc::now(),
     };
-    
+
     db.update_ai_role(&role).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_ai_role(id: String, db: State<'_, Arc<DatabaseService>>) -> Result<(), String> {
     tracing::info!("Attempting to delete AI role with ID: {}", id);
-    
+
     // 首先检查角色是否存在
     let roles = db.get_ai_roles().await.map_err(|e| {
         let err_msg = format!("Failed to get AI roles: {}", e);
         tracing::error!("{}", err_msg);
         err_msg
     })?;
-    
+
     let role = roles.iter().find(|r| r.id == id);
     if let Some(role) = role {
         tracing::info!("Deleting role: {} ({})", role.title, id);
@@ -92,7 +92,7 @@ pub async fn delete_ai_role(id: String, db: State<'_, Arc<DatabaseService>>) -> 
             Ok(_) => {
                 tracing::info!("Successfully deleted role: {}", id);
                 Ok(())
-            },
+            }
             Err(e) => {
                 let err_msg = format!("Failed to delete AI role: {}", e);
                 tracing::error!("{}", err_msg);
@@ -104,4 +104,4 @@ pub async fn delete_ai_role(id: String, db: State<'_, Arc<DatabaseService>>) -> 
         tracing::error!("{}", err_msg);
         Err(err_msg)
     }
-} 
+}

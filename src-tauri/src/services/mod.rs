@@ -1,24 +1,28 @@
 pub mod ai;
 pub mod database;
+pub mod dictionary;
 pub mod mcp;
 pub mod performance;
-pub mod project;
 pub mod scan;
+pub mod scan_session;
 pub mod vulnerability;
 
 // 导出所有服务
 pub use ai::{AiService, AiServiceManager};
-pub use mcp::McpService;
-pub use scan::ScanService;
-pub use vulnerability::VulnerabilityService;
-pub use project::ProjectService;
 pub use database::DatabaseService;
-pub use performance::{PerformanceMonitor, PerformanceMetrics};
+pub use dictionary::DictionaryService;
+pub use mcp::McpService;
+pub use performance::{
+    PerformanceConfig, PerformanceMetrics, PerformanceMonitor, PerformanceOptimizer,
+};
+pub use scan::ScanService;
+pub use scan_session::ScanSessionService;
+pub use vulnerability::VulnerabilityService;
 
 // 创建Database包装器以简化AI服务的使用
-use std::sync::Arc;
-use anyhow::Result;
 use crate::models::database::{AiConversation, AiMessage};
+use anyhow::Result;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -62,7 +66,10 @@ impl Database {
         self.service.create_message(message).await
     }
 
-    pub async fn get_ai_messages_by_conversation(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {
+    pub async fn get_ai_messages_by_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<AiMessage>> {
         self.service.get_messages(conversation_id).await
     }
 
@@ -71,11 +78,22 @@ impl Database {
         self.service.get_config(category, key).await
     }
 
-    pub async fn get_configs_by_category(&self, category: &str) -> Result<Vec<crate::models::database::Configuration>> {
+    pub async fn get_configs_by_category(
+        &self,
+        category: &str,
+    ) -> Result<Vec<crate::models::database::Configuration>> {
         self.service.get_configs_by_category(category).await
     }
 
-    pub async fn set_config(&self, category: &str, key: &str, value: &str, description: Option<&str>) -> Result<()> {
-        self.service.set_config(category, key, value, description).await
+    pub async fn set_config(
+        &self,
+        category: &str,
+        key: &str,
+        value: &str,
+        description: Option<&str>,
+    ) -> Result<()> {
+        self.service
+            .set_config(category, key, value, description)
+            .await
     }
-} 
+}

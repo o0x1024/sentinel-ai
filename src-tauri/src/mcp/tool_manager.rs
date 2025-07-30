@@ -1,11 +1,11 @@
 use crate::mcp::types::*;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
-use tokio::process::Command;
-use uuid::Uuid;
 use std::time::Duration;
+use tokio::process::Command;
+use tokio::sync::{mpsc, RwLock};
+use uuid::Uuid;
 
 /// 工具管理器
 pub struct ToolManager {
@@ -54,8 +54,12 @@ impl ToolManager {
     /// 根据分类获取工具
     pub async fn get_tools_by_category(&self, category: ToolCategory) -> Vec<Arc<dyn McpTool>> {
         let tools = self.tools.read().await;
-        tools.values()
-            .filter(|tool| std::mem::discriminant(&tool.definition().category) == std::mem::discriminant(&category))
+        tools
+            .values()
+            .filter(|tool| {
+                std::mem::discriminant(&tool.definition().category)
+                    == std::mem::discriminant(&category)
+            })
             .cloned()
             .collect()
     }
@@ -64,13 +68,18 @@ impl ToolManager {
     pub async fn search_tools(&self, query: &str) -> Vec<Arc<dyn McpTool>> {
         let tools = self.tools.read().await;
         let query_lower = query.to_lowercase();
-        
-        tools.values()
+
+        tools
+            .values()
             .filter(|tool| {
                 let def = tool.definition();
-                def.name.to_lowercase().contains(&query_lower) ||
-                def.description.to_lowercase().contains(&query_lower) ||
-                def.metadata.tags.iter().any(|tag| tag.to_lowercase().contains(&query_lower))
+                def.name.to_lowercase().contains(&query_lower)
+                    || def.description.to_lowercase().contains(&query_lower)
+                    || def
+                        .metadata
+                        .tags
+                        .iter()
+                        .any(|tag| tag.to_lowercase().contains(&query_lower))
             })
             .cloned()
             .collect()
@@ -102,10 +111,7 @@ impl ToolManager {
                     return Err(anyhow!("Install command is empty"));
                 }
 
-                let output = Command::new(parts[0])
-                    .args(&parts[1..])
-                    .output()
-                    .await?;
+                let output = Command::new(parts[0]).args(&parts[1..]).output().await?;
 
                 if output.status.success() {
                     tracing::info!("Tool {} installed successfully", def.name);
@@ -125,7 +131,7 @@ impl ToolManager {
     /// 执行工具
     pub async fn execute_tool(&self, request: ToolExecutionRequest) -> Result<Uuid> {
         let execution_id = Uuid::new_v4();
-        
+
         let execution_result = ToolExecutionResult {
             execution_id,
             tool_id: request.tool_id.clone(),
@@ -152,7 +158,7 @@ impl ToolManager {
 
         let mut executions = self.executions.write().await;
         executions.insert(execution_id, execution_result);
-        
+
         Ok(execution_id)
     }
 
@@ -185,12 +191,13 @@ impl ToolManager {
                 for mut req in request.requests {
                     // 如果有前一个输出，添加到参数中
                     if let Some(ref output) = previous_output {
-                        req.parameters.insert("input_data".to_string(), output.clone());
+                        req.parameters
+                            .insert("input_data".to_string(), output.clone());
                     }
 
                     let execution_id = self.execute_tool(req).await?;
                     self.wait_for_completion(execution_id).await?;
-                    
+
                     // 获取输出用于下一个工具
                     if let Some(result) = self.get_execution_result(execution_id).await {
                         previous_output = result.output.structured_data;
@@ -206,12 +213,14 @@ impl ToolManager {
     /// 等待执行完成
     async fn wait_for_completion(&self, execution_id: Uuid) -> Result<()> {
         let mut retries = 100; // 最多等待100秒
-        
+
         while retries > 0 {
             if let Some(result) = self.get_execution_result(execution_id).await {
                 match result.status {
-                    ExecutionStatus::Completed | ExecutionStatus::Failed | 
-                    ExecutionStatus::Cancelled | ExecutionStatus::Timeout => {
+                    ExecutionStatus::Completed
+                    | ExecutionStatus::Failed
+                    | ExecutionStatus::Cancelled
+                    | ExecutionStatus::Timeout => {
                         return Ok(());
                     }
                     _ => {
@@ -257,10 +266,8 @@ impl ToolManager {
         let cutoff_time = chrono::Utc::now() - chrono::Duration::hours(older_than_hours as i64);
         let mut executions = self.executions.write().await;
         let initial_count = executions.len();
-        
-        executions.retain(|_, result| {
-            result.metadata.started_at > cutoff_time
-        });
+
+        executions.retain(|_, result| result.metadata.started_at > cutoff_time);
 
         Ok(initial_count - executions.len())
     }
@@ -271,14 +278,16 @@ impl ToolManager {
         let mut stats: HashMap<String, ToolStatistics> = HashMap::new();
 
         for result in executions.values() {
-            let stat = stats.entry(result.tool_id.clone()).or_insert(ToolStatistics {
-                tool_id: result.tool_id.clone(),
-                total_executions: 0,
-                successful_executions: 0,
-                failed_executions: 0,
-                average_duration_ms: 0,
-                last_execution: None,
-            });
+            let stat = stats
+                .entry(result.tool_id.clone())
+                .or_insert(ToolStatistics {
+                    tool_id: result.tool_id.clone(),
+                    total_executions: 0,
+                    successful_executions: 0,
+                    failed_executions: 0,
+                    average_duration_ms: 0,
+                    last_execution: None,
+                });
 
             stat.total_executions += 1;
             match result.status {
@@ -288,11 +297,14 @@ impl ToolManager {
             }
 
             if let Some(duration) = result.metadata.duration {
-                stat.average_duration_ms = (stat.average_duration_ms * (stat.total_executions - 1) + duration) / stat.total_executions;
+                stat.average_duration_ms = (stat.average_duration_ms * (stat.total_executions - 1)
+                    + duration)
+                    / stat.total_executions;
             }
 
-            if stat.last_execution.is_none() || 
-               stat.last_execution.as_ref().unwrap() < &result.metadata.started_at {
+            if stat.last_execution.is_none()
+                || stat.last_execution.as_ref().unwrap() < &result.metadata.started_at
+            {
                 stat.last_execution = Some(result.metadata.started_at);
             }
         }
@@ -321,4 +333,4 @@ impl Default for ToolManager {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

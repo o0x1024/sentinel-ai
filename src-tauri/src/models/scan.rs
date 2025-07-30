@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// 扫描任务
@@ -49,12 +49,12 @@ pub struct ScanConfig {
 /// 扫描状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScanStatus {
-    Pending,    // 等待中
-    Running,    // 运行中
-    Paused,     // 暂停
-    Completed,  // 完成
-    Failed,     // 失败
-    Cancelled,  // 取消
+    Pending,   // 等待中
+    Running,   // 运行中
+    Paused,    // 暂停
+    Completed, // 完成
+    Failed,    // 失败
+    Cancelled, // 取消
 }
 
 /// 扫描结果
@@ -115,7 +115,7 @@ impl Severity {
     pub fn to_lowercase(&self) -> String {
         self.to_string()
     }
-    
+
     pub fn from_string(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "info" => Severity::Info,
@@ -160,4 +160,4 @@ pub struct Service {
     pub service_name: String,
     pub version: Option<String>,
     pub banner: Option<String>,
-} 
+}

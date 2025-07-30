@@ -3,5 +3,4 @@
 
 fn main() {
     sentinel_ai_lib::run();
-
 }

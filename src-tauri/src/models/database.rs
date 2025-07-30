@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// 数据库配置
@@ -77,9 +77,9 @@ pub struct BountyProject {
     pub platform: String,
     pub url: Option<String>,
     pub scope_domains: Option<String>, // JSON数组
-    pub scope_ips: Option<String>, // JSON数组
-    pub out_of_scope: Option<String>, // JSON数组
-    pub reward_range: Option<String>, // JSON对象
+    pub scope_ips: Option<String>,     // JSON数组
+    pub out_of_scope: Option<String>,  // JSON数组
+    pub reward_range: Option<String>,  // JSON对象
     pub difficulty_level: i32,
     pub priority: i32,
     pub status: String,
@@ -243,7 +243,7 @@ pub struct Vulnerability {
     pub reward_amount: Option<f64>,
     pub submission_date: Option<DateTime<Utc>>,
     pub resolution_date: Option<DateTime<Utc>>,
-    pub tags: Option<String>, // JSON数组
+    pub tags: Option<String>,        // JSON数组
     pub attachments: Option<String>, // JSON数组
     pub notes: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -307,7 +307,7 @@ pub struct Submission {
     pub response_time: Option<i32>,
     pub resolution_time: Option<i32>,
     pub collaborators: Option<String>, // JSON数组
-    pub attachments: Option<String>, // JSON数组
+    pub attachments: Option<String>,   // JSON数组
     pub notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -325,11 +325,11 @@ pub struct McpTool {
     pub tool_type: String,
     pub executable_path: Option<String>,
     pub install_command: Option<String>,
-    pub config_schema: Option<String>, // JSON Schema
-    pub default_config: Option<String>, // JSON对象
-    pub capabilities: Option<String>, // JSON数组
+    pub config_schema: Option<String>,       // JSON Schema
+    pub default_config: Option<String>,      // JSON对象
+    pub capabilities: Option<String>,        // JSON数组
     pub supported_platforms: Option<String>, // JSON数组
-    pub requirements: Option<String>, // JSON数组
+    pub requirements: Option<String>,        // JSON数组
     pub status: String,
     pub installation_status: Option<String>,
     pub last_used: Option<DateTime<Utc>>,
@@ -355,7 +355,7 @@ pub struct McpConnection {
     pub config: Option<String>, // JSON对象
     pub status: String,
     pub capabilities: Option<String>, // JSON数组
-    pub server_info: Option<String>, // JSON对象
+    pub server_info: Option<String>,  // JSON对象
     pub tools_count: i32,
     pub last_ping: Option<DateTime<Utc>>,
     pub connected_at: Option<DateTime<Utc>>,
@@ -384,8 +384,8 @@ pub struct ToolExecution {
     pub error_output: Option<String>,
     pub exit_code: Option<i32>,
     pub resource_usage: Option<String>, // JSON对象
-    pub artifacts: Option<String>, // JSON数组
-    pub metadata: Option<String>, // JSON对象
+    pub artifacts: Option<String>,      // JSON数组
+    pub metadata: Option<String>,       // JSON对象
     pub created_at: DateTime<Utc>,
 }
 
@@ -448,7 +448,7 @@ pub struct AiMessage {
     pub metadata: Option<String>, // JSON对象
     pub token_count: Option<i32>,
     pub cost: Option<f64>,
-    pub tool_calls: Option<String>, // JSON数组
+    pub tool_calls: Option<String>,  // JSON数组
     pub attachments: Option<String>, // JSON数组
     pub timestamp: DateTime<Utc>,
 }
@@ -507,27 +507,27 @@ impl From<CreateProjectRequest> for BountyProject {
         project.difficulty_level = req.difficulty_level.unwrap_or(1);
         project.priority = req.priority.unwrap_or(1);
         project.notes = req.notes;
-        
+
         if let Some(domains) = req.scope_domains {
             project.scope_domains = Some(serde_json::to_string(&domains).unwrap_or_default());
         }
-        
+
         if let Some(ips) = req.scope_ips {
             project.scope_ips = Some(serde_json::to_string(&ips).unwrap_or_default());
         }
-        
+
         if let Some(out_of_scope) = req.out_of_scope {
             project.out_of_scope = Some(serde_json::to_string(&out_of_scope).unwrap_or_default());
         }
-        
+
         if let Some(reward_range) = req.reward_range {
             project.reward_range = Some(serde_json::to_string(&reward_range).unwrap_or_default());
         }
-        
+
         if let Some(tags) = req.tags {
             project.tags = Some(serde_json::to_string(&tags).unwrap_or_default());
         }
-        
+
         project
     }
 }
@@ -553,11 +553,11 @@ impl From<CreateScanTaskRequest> for ScanTask {
         task.project_id = req.project_id;
         task.priority = req.priority.unwrap_or(1);
         task.scheduled_at = req.scheduled_at;
-        
+
         if let Some(config) = req.tools_config {
             task.tools_config = Some(serde_json::to_string(&config).unwrap_or_default());
         }
-        
+
         task
     }
 }
@@ -600,15 +600,15 @@ impl From<CreateVulnerabilityRequest> for Vulnerability {
         vuln.impact = req.impact;
         vuln.remediation = req.remediation;
         vuln.notes = req.notes;
-        
+
         if let Some(references) = req.references {
             vuln.references = Some(serde_json::to_string(&references).unwrap_or_default());
         }
-        
+
         if let Some(tags) = req.tags {
             vuln.tags = Some(serde_json::to_string(&tags).unwrap_or_default());
         }
-        
+
         vuln
     }
 }
@@ -625,4 +625,4 @@ pub struct McpServerConfig {
     pub enabled: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-} 
+}

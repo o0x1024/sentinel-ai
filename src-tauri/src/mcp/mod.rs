@@ -45,4 +45,4 @@ pub fn convert_from_rmcp_content(content: Content) -> ToolContent {
 /// Converts our internal ToolContent to rmcp's Content type.
 pub fn convert_to_rmcp_content(content: ToolContent) -> Content {
     Content::text(content.text)
-} 
+}

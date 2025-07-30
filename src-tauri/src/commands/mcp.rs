@@ -1,22 +1,24 @@
-use tauri::State;
-use tracing::warn;
+use crate::mcp::types::{
+    McpServerConfig, McpToolInfo, ToolCategory, ToolExecutionResult, TransportConfig,
+};
+use crate::models::mcp::{McpStoreItem, McpToolInstallRequest};
 use crate::services::mcp::McpService;
-use crate::mcp::types::{McpToolInfo, ToolExecutionResult, ToolCategory, TransportConfig, McpServerConfig};
-use crate::models::mcp::{McpToolInstallRequest, McpStoreItem};
-use serde_json::Value;
-use uuid::Uuid;
-use tokio::sync::Mutex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tauri::State;
+use tokio::sync::Mutex;
+use tracing::warn;
+use uuid::Uuid;
 
+use crate::mcp::client::ConfiguredServer;
+use crate::mcp::server::ServerConfig;
+use crate::mcp::{ConnectionStatus, McpClientManager, McpServerManager};
 use crate::services::database::DatabaseService;
 use crate::services::mcp::McpConnectionInfo;
-use crate::mcp::{McpClientManager, McpServerManager, ConnectionStatus};
-use crate::mcp::server::ServerConfig;
-use std::sync::Arc;
-use std::collections::HashMap;
-use crate::mcp::client::ConfiguredServer;
-use rmcp::model::Tool as RmcpTool;
 use chrono::Utc;
+use rmcp::model::Tool as RmcpTool;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// 获取MCP工具列表
 #[tauri::command]
@@ -28,7 +30,7 @@ pub async fn get_mcp_tools(state: State<'_, McpService>) -> Result<Vec<McpToolIn
 #[tauri::command]
 pub async fn get_mcp_tools_by_category(
     category: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<Vec<McpToolInfo>, String> {
     let tool_category = match category.as_str() {
         "reconnaissance" => ToolCategory::Reconnaissance,
@@ -41,15 +43,18 @@ pub async fn get_mcp_tools_by_category(
         "utility" => ToolCategory::Utility,
         _ => return Err("Invalid tool category".to_string()),
     };
-    
-    state.get_tools_by_category(tool_category).await.map_err(|e| e.to_string())
+
+    state
+        .get_tools_by_category(tool_category)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 搜索工具
 #[tauri::command]
 pub async fn search_mcp_tools(
     query: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<Vec<McpToolInfo>, String> {
     state.search_tools(&query).await.map_err(|e| e.to_string())
 }
@@ -58,7 +63,7 @@ pub async fn search_mcp_tools(
 #[tauri::command]
 pub async fn get_mcp_tool(
     tool_id: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<Option<McpToolInfo>, String> {
     state.get_tool(&tool_id).await.map_err(|e| e.to_string())
 }
@@ -69,10 +74,12 @@ pub async fn execute_mcp_tool(
     tool_id: String,
     parameters: Value,
     _timeout: Option<u64>,
-    mcp_service: State<'_, Mutex<McpService>>
+    mcp_service: State<'_, Mutex<McpService>>,
 ) -> Result<Value, String> {
     let service = mcp_service.lock().await;
-    service.execute_tool(&tool_id, parameters).await
+    service
+        .execute_tool(&tool_id, parameters)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -80,17 +87,21 @@ pub async fn execute_mcp_tool(
 #[tauri::command]
 pub async fn get_mcp_execution_result(
     execution_id: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<Option<ToolExecutionResult>, String> {
-    let uuid = Uuid::parse_str(&execution_id)
-        .map_err(|_| "Invalid execution ID".to_string())?;
-    
-    state.get_execution_result(uuid).await.map_err(|e| e.to_string())
+    let uuid = Uuid::parse_str(&execution_id).map_err(|_| "Invalid execution ID".to_string())?;
+
+    state
+        .get_execution_result(uuid)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 获取连接状态
 #[tauri::command]
-pub async fn get_mcp_connections(state: State<'_, McpService>) -> Result<Vec<McpConnectionInfo>, String> {
+pub async fn get_mcp_connections(
+    state: State<'_, McpService>,
+) -> Result<Vec<McpConnectionInfo>, String> {
     state.get_connection_info().await.map_err(|e| e.to_string())
 }
 
@@ -102,21 +113,27 @@ pub async fn add_mcp_server(
     description: String,
     transport_type: String,
     transport_config: Value,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<String, String> {
     let transport = match transport_type.as_str() {
         "stdio" => TransportConfig::Stdio,
         "websocket" => {
-            let url = transport_config.get("url")
+            let url = transport_config
+                .get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("WebSocket configuration missing URL")?;
-            TransportConfig::WebSocket { url: url.to_string() }
+            TransportConfig::WebSocket {
+                url: url.to_string(),
+            }
         }
         "http" => {
-            let base_url = transport_config.get("base_url")
+            let base_url = transport_config
+                .get("base_url")
                 .and_then(|v| v.as_str())
                 .ok_or("HTTP configuration missing base_url")?;
-            TransportConfig::Http { base_url: base_url.to_string() }
+            TransportConfig::Http {
+                base_url: base_url.to_string(),
+            }
         }
         _ => return Err("Unsupported transport type".to_string()),
     };
@@ -142,19 +159,21 @@ pub async fn add_mcp_server(
 #[tauri::command]
 pub async fn remove_mcp_server(
     connection_id: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<(), String> {
-    state.remove_server(&connection_id).await.map_err(|e| e.to_string())
+    state
+        .remove_server(&connection_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 初始化默认工具
 #[tauri::command]
 pub async fn initialize_default_mcp_tools(
-    mcp_service: State<'_, Mutex<McpService>>
+    mcp_service: State<'_, Mutex<McpService>>,
 ) -> Result<(), String> {
     let mut service = mcp_service.lock().await;
-    service.initialize_mcp().await
-        .map_err(|e| e.to_string())
+    service.initialize_mcp().await.map_err(|e| e.to_string())
 }
 
 /// 获取工具分类列表
@@ -174,20 +193,14 @@ pub async fn get_mcp_tool_categories() -> Result<Vec<String>, String> {
 
 // 保留原有命令以保持兼容性
 #[tauri::command]
-pub async fn add_mcp_tool(
-    _tool: Value,
-    _state: State<'_, McpService>
-) -> Result<(), String> {
+pub async fn add_mcp_tool(_tool: Value, _state: State<'_, McpService>) -> Result<(), String> {
     // 兼容性实现
     tracing::warn!("Using deprecated add_mcp_tool command");
     Ok(())
 }
 
 #[tauri::command]
-pub async fn remove_mcp_tool(
-    tool_id: String,
-    state: State<'_, McpService>
-) -> Result<(), String> {
+pub async fn remove_mcp_tool(tool_id: String, state: State<'_, McpService>) -> Result<(), String> {
     // 兼容性实现
     tracing::warn!("Using deprecated remove_mcp_tool command");
     Ok(())
@@ -197,7 +210,7 @@ pub async fn remove_mcp_tool(
 pub async fn update_mcp_tool_status(
     tool_id: String,
     status: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<(), String> {
     // 兼容性实现
     tracing::warn!("Using deprecated update_mcp_tool_status command");
@@ -207,12 +220,15 @@ pub async fn update_mcp_tool_status(
 #[tauri::command]
 pub async fn get_mcp_execution_status(
     execution_id: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<String, String> {
-    let uuid = Uuid::parse_str(&execution_id)
-        .map_err(|_| "无效的执行ID".to_string())?;
-    
-    if let Some(result) = state.get_execution_result(uuid).await.map_err(|e| e.to_string())? {
+    let uuid = Uuid::parse_str(&execution_id).map_err(|_| "无效的执行ID".to_string())?;
+
+    if let Some(result) = state
+        .get_execution_result(uuid)
+        .await
+        .map_err(|e| e.to_string())?
+    {
         Ok(format!("{:?}", result.status))
     } else {
         Err("执行记录不存在".to_string())
@@ -222,7 +238,7 @@ pub async fn get_mcp_execution_status(
 #[tauri::command]
 pub async fn cancel_mcp_execution(
     execution_id: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<(), String> {
     // 兼容性实现
     tracing::warn!("Using deprecated cancel_mcp_execution command");
@@ -230,9 +246,7 @@ pub async fn cancel_mcp_execution(
 }
 
 #[tauri::command]
-pub async fn get_mcp_executions(
-    state: State<'_, McpService>
-) -> Result<Vec<String>, String> {
+pub async fn get_mcp_executions(state: State<'_, McpService>) -> Result<Vec<String>, String> {
     // 兼容性实现 - 返回空列表
     Ok(Vec::new())
 }
@@ -242,13 +256,33 @@ pub async fn get_mcp_executions(
 pub async fn check_mcp_tool_installation(tool_name: String) -> Result<bool, String> {
     // 简单检查工具是否在系统PATH中可用
     let output = match tool_name.as_str() {
-        "subfinder" => tokio::process::Command::new("subfinder").arg("--version").output().await,
-        "nuclei" => tokio::process::Command::new("nuclei").arg("--version").output().await,
-        "httpx" => tokio::process::Command::new("httpx").arg("--version").output().await,
-        "nmap" => tokio::process::Command::new("nmap").arg("--version").output().await,
+        "subfinder" => {
+            tokio::process::Command::new("subfinder")
+                .arg("--version")
+                .output()
+                .await
+        }
+        "nuclei" => {
+            tokio::process::Command::new("nuclei")
+                .arg("--version")
+                .output()
+                .await
+        }
+        "httpx" => {
+            tokio::process::Command::new("httpx")
+                .arg("--version")
+                .output()
+                .await
+        }
+        "nmap" => {
+            tokio::process::Command::new("nmap")
+                .arg("--version")
+                .output()
+                .await
+        }
         _ => return Ok(false),
     };
-    
+
     match output {
         Ok(result) => Ok(result.status.success()),
         Err(_) => Ok(false),
@@ -258,7 +292,7 @@ pub async fn check_mcp_tool_installation(tool_name: String) -> Result<bool, Stri
 #[tauri::command]
 pub async fn install_mcp_tool(
     _install_request: McpToolInstallRequest,
-    _mcp_service: State<'_, Mutex<McpService>>
+    _mcp_service: State<'_, Mutex<McpService>>,
 ) -> Result<String, String> {
     Ok("tool_id_123".to_string())
 }
@@ -267,7 +301,7 @@ pub async fn install_mcp_tool(
 pub async fn parse_mcp_tool_output(
     output: String,
     tool_id: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<Value, String> {
     // 尝试解析为JSON，失败则返回原始文本
     if let Ok(json_value) = serde_json::from_str::<Value>(&output) {
@@ -285,7 +319,7 @@ pub async fn get_mcp_tool_stats(state: State<'_, McpService>) -> Result<Value, S
 #[tauri::command]
 pub async fn cleanup_mcp_executions(
     older_than_hours: u64,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<usize, String> {
     // 兼容性实现
     tracing::warn!("Using deprecated cleanup_mcp_executions command");
@@ -343,39 +377,39 @@ pub async fn get_scan_templates() -> Result<Value, String> {
             }
         }
     });
-    
+
     Ok(templates)
 }
 
 /// 执行扫描模板
 #[tauri::command]
 pub async fn execute_scan_template(
-    template_name: String, 
+    template_name: String,
     target: String,
-    state: State<'_, McpService>
+    state: State<'_, McpService>,
 ) -> Result<Value, String> {
     let current_target = target.clone();
-    
+
     match template_name.as_str() {
         "web_app_scan" => {
             // 1. 子域名发现
-            let subfinder_result = state.execute_tool(
-                "subfinder", 
-                serde_json::json!({"domain": current_target})
-            ).await.map_err(|e| e.to_string())?;
-            
+            let subfinder_result = state
+                .execute_tool("subfinder", serde_json::json!({"domain": current_target}))
+                .await
+                .map_err(|e| e.to_string())?;
+
             // 2. HTTP探测
-            let httpx_result = state.execute_tool(
-                "httpx", 
-                serde_json::json!({"url": current_target})
-            ).await.map_err(|e| e.to_string())?;
-            
+            let httpx_result = state
+                .execute_tool("httpx", serde_json::json!({"url": current_target}))
+                .await
+                .map_err(|e| e.to_string())?;
+
             // 3. 漏洞扫描
-            let nuclei_result = state.execute_tool(
-                "nuclei", 
-                serde_json::json!({"target": current_target})
-            ).await.map_err(|e| e.to_string())?;
-            
+            let nuclei_result = state
+                .execute_tool("nuclei", serde_json::json!({"target": current_target}))
+                .await
+                .map_err(|e| e.to_string())?;
+
             Ok(serde_json::json!({
                 "template": template_name,
                 "target": target,
@@ -389,11 +423,14 @@ pub async fn execute_scan_template(
         }
         "network_discovery" => {
             // 网络发现扫描
-            let nmap_result = state.execute_tool(
-                "nmap", 
-                serde_json::json!({"target": current_target, "ports": "1-1000"})
-            ).await.map_err(|e| e.to_string())?;
-            
+            let nmap_result = state
+                .execute_tool(
+                    "nmap",
+                    serde_json::json!({"target": current_target, "ports": "1-1000"}),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+
             Ok(serde_json::json!({
                 "template": template_name,
                 "target": target,
@@ -405,11 +442,11 @@ pub async fn execute_scan_template(
         }
         "subdomain_enum" => {
             // 子域名枚举
-            let subfinder_result = state.execute_tool(
-                "subfinder", 
-                serde_json::json!({"domain": current_target})
-            ).await.map_err(|e| e.to_string())?;
-            
+            let subfinder_result = state
+                .execute_tool("subfinder", serde_json::json!({"domain": current_target}))
+                .await
+                .map_err(|e| e.to_string())?;
+
             Ok(serde_json::json!({
                 "template": template_name,
                 "target": target,
@@ -419,7 +456,7 @@ pub async fn execute_scan_template(
                 "status": "completed"
             }))
         }
-        _ => Err(format!("未知的扫描模板: {}", template_name))
+        _ => Err(format!("未知的扫描模板: {}", template_name)),
     }
 }
 
@@ -454,9 +491,9 @@ pub async fn get_default_security_tools() -> Result<Vec<Value>, String> {
             "category": "scanning",
             "version": "7.94",
             "install_url": "https://nmap.org/"
-        })
+        }),
     ];
-    
+
     Ok(tools)
 }
 
@@ -477,12 +514,12 @@ pub async fn initialize_mcp(
     if let Err(e) = client_manager.initialize().await {
         return Err(format!("Failed to initialize MCP client: {}", e));
     }
-    
+
     // 加载服务器配置
     if let Err(e) = server_manager.load_config().await {
         return Err(format!("Failed to load MCP server configuration: {}", e));
     }
-    
+
     Ok("MCP system initialized".to_string())
 }
 
@@ -579,7 +616,10 @@ pub async fn mcp_get_connections(
 ) -> Result<Vec<FrontendMcpConnection>, String> {
     let client_manager = client_manager.inner();
     let connections_status = client_manager.get_all_connections_status().await;
-    let db_configs = client_manager.get_all_server_configs_from_db().await.map_err(|e| e.to_string())?;
+    let db_configs = client_manager
+        .get_all_server_configs_from_db()
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut frontend_connections = Vec::new();
 
@@ -622,8 +662,11 @@ pub async fn connect_to_mcp_server(
     args: Vec<String>,
 ) -> Result<String, String> {
     let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    
-    match client_manager.connect_to_server(&name, &command, args_refs).await {
+
+    match client_manager
+        .connect_to_server(&name, &command, args_refs)
+        .await
+    {
         Ok(connection_id) => Ok(connection_id),
         Err(e) => Err(format!("Failed to connect to MCP server: {}", e)),
     }
@@ -680,7 +723,11 @@ pub async fn mcp_connect_server(
 ) -> Result<String, String> {
     let client_arc = client_manager.get_client();
     let client = client_arc.read().await;
-    match params.get("type").and_then(Value::as_str).ok_or_else(|| "Missing type parameter".to_string())? {
+    match params
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Missing type parameter".to_string())?
+    {
         "npx" => {
             let package = params
                 .get("package")
@@ -719,7 +766,10 @@ pub async fn mcp_connect_server(
                 .and_then(Value::as_array)
                 .map(|arr| arr.iter().filter_map(Value::as_str).collect())
                 .unwrap_or_default();
-            match client.connect_to_child_process(name.to_string(), command, args).await {
+            match client
+                .connect_to_child_process(name.to_string(), command, args)
+                .await
+            {
                 Ok(id) => Ok(id),
                 Err(e) => Err(e.to_string()),
             }
@@ -752,13 +802,13 @@ pub async fn mcp_list_tools(
     if !running {
         return Ok(Vec::new());
     }
-    
+
     // 获取工具详情
     let tools = match server_manager.get_tool_details().await {
         Ok(tools) => tools,
         Err(e) => return Err(format!("Failed to get tool details: {}", e)),
     };
-    
+
     // 将工具转换为前端可用的格式
     let mut result = Vec::new();
     for tool in tools {
@@ -774,7 +824,7 @@ pub async fn mcp_list_tools(
             "config": {}
         }));
     }
-    
+
     Ok(result)
 }
 
@@ -890,7 +940,10 @@ pub async fn execute_tool(
     parameters: Value,
     state: State<'_, McpService>,
 ) -> Result<Value, String> {
-    state.execute_tool(&tool_id, parameters).await.map_err(|e| e.to_string())
+    state
+        .execute_tool(&tool_id, parameters)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -902,7 +955,9 @@ pub async fn get_tool_info(
 }
 
 #[tauri::command]
-pub async fn get_connection_info(state: State<'_, McpService>) -> Result<Vec<McpConnectionInfo>, String> {
+pub async fn get_connection_info(
+    state: State<'_, McpService>,
+) -> Result<Vec<McpConnectionInfo>, String> {
     state.get_connection_info().await.map_err(|e| e.to_string())
 }
 
@@ -912,7 +967,10 @@ pub async fn get_execution_result(
     state: State<'_, McpService>,
 ) -> Result<Option<ToolExecutionResult>, String> {
     let uuid = Uuid::parse_str(&execution_id).map_err(|e| e.to_string())?;
-    state.get_execution_result(uuid).await.map_err(|e| e.to_string())
+    state
+        .get_execution_result(uuid)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 添加并连接到子进程 MCP 服务器
@@ -935,21 +993,24 @@ pub async fn add_child_process_mcp_server(
     } else {
         ("which", vec![command.clone()])
     };
-    
+
     let check_result = tokio::process::Command::new(check_cmd)
         .args(check_args)
         .output()
         .await;
-    
+
     if let Err(e) = check_result {
         return Err(format!("Failed to check if command exists: {}", e));
     }
-    
+
     let check_output = check_result.unwrap();
     if !check_output.status.success() {
-        return Err(format!("Command '{}' not found: please ensure the command exists in the system PATH", command));
+        return Err(format!(
+            "Command '{}' not found: please ensure the command exists in the system PATH",
+            command
+        ));
     }
-    
+
     // 使用connect_with_command方法，允许更灵活地配置命令
     client_manager
         .connect_with_command(&name, &command, args)
@@ -992,7 +1053,10 @@ pub async fn mcp_update_server_config(
     client_manager: tauri::State<'_, Arc<McpClientManager>>,
 ) -> Result<(), String> {
     let client_manager = client_manager.inner();
-    client_manager.update_server_config(payload).await.map_err(|e| e.to_string())
+    client_manager
+        .update_server_config(payload)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -1023,7 +1087,7 @@ pub async fn mcp_get_connection_tools(
         .get_connection_tools(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    
+
     let frontend_tools = tools.into_iter().map(FrontendTool::from).collect();
     Ok(frontend_tools)
 }
@@ -1050,7 +1114,7 @@ pub async fn quick_create_mcp_server(
             if cfg!(target_os = "windows") && (final_command == "npx" || final_command == "npm") {
                 final_command.push_str(".cmd");
             }
-            
+
             client_manager
                 .connect_with_command(&config.name, &final_command, args)
                 .await
@@ -1060,9 +1124,11 @@ pub async fn quick_create_mcp_server(
         "sse" | "streamableHttp" => {
             let url = config.params.trim();
             if url.is_empty() {
-                return Err("For sse or http types, the parameter field must be a valid URL.".to_string());
+                return Err(
+                    "For sse or http types, the parameter field must be a valid URL.".to_string(),
+                );
             }
-            
+
             client_manager
                 .connect_to_http_server(&config.name, url)
                 .await
@@ -1089,37 +1155,55 @@ pub async fn import_mcp_servers_from_json(
         .filter(|line| !line.trim().starts_with("//"))
         .collect();
 
-    let config: McpServersConfig = serde_json::from_str(&json_without_comments)
-        .map_err(|e| format!("Failed to parse JSON: {}. Please ensure the format is correct.", e))?;
+    let config: McpServersConfig = serde_json::from_str(&json_without_comments).map_err(|e| {
+        format!(
+            "Failed to parse JSON: {}. Please ensure the format is correct.",
+            e
+        )
+    })?;
 
     for (name, server_value) in config.mcp_servers {
         if let Some(obj) = server_value.as_object() {
             if obj.contains_key("command") {
-                let command = obj.get("command").and_then(Value::as_str).unwrap_or("").to_string();
-                if command.is_empty() { continue; }
-                let args: Vec<String> = obj.get("args")
+                let command = obj
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if command.is_empty() {
+                    continue;
+                }
+                let args: Vec<String> = obj
+                    .get("args")
                     .and_then(Value::as_array)
-                    .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(String::from)
+                            .collect()
+                    })
                     .unwrap_or_default();
-                
+
                 let mut final_command = command;
-                if cfg!(target_os = "windows") && (final_command == "npx" || final_command == "npm") {
+                if cfg!(target_os = "windows") && (final_command == "npx" || final_command == "npm")
+                {
                     final_command.push_str(".cmd");
                 }
-                
+
                 if let Err(e) = client_manager
                     .connect_with_command(&name, &final_command, args)
-                    .await {
+                    .await
+                {
                     warn!("Failed to import stdio server '{}' from JSON: {}", name, e);
                 }
-            } 
-            else if obj.contains_key("url") {
+            } else if obj.contains_key("url") {
                 let url = obj.get("url").and_then(Value::as_str).unwrap_or("");
                 if !url.is_empty() {
-                    if let Err(e) = client_manager
-                        .connect_to_http_server(&name, url)
-                        .await {
-                        warn!("Failed to import sse/http server '{}' from JSON: {}", name, e);
+                    if let Err(e) = client_manager.connect_to_http_server(&name, url).await {
+                        warn!(
+                            "Failed to import sse/http server '{}' from JSON: {}",
+                            name, e
+                        );
                     }
                 }
             }

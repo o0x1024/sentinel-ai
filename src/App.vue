@@ -32,14 +32,14 @@ const setupAIChatShortcut = () => {
       toggleAIChat()
     }
   }
-  
+
   window.addEventListener('keydown', handleKeyDown)
-  
+
   // 监听自定义事件，用于响应侧边栏的AI助手按钮点击
   window.addEventListener('toggle-ai-chat', () => {
     toggleAIChat()
   })
-  
+
   onUnmounted(() => {
     window.removeEventListener('keydown', handleKeyDown)
     window.removeEventListener('toggle-ai-chat', toggleAIChat)
@@ -52,7 +52,7 @@ onMounted(() => {
   if (router.currentRoute.value.path === '/') {
     router.replace('/dashboard')
   }
-  
+
   // 设置AI助手快捷键
   setupAIChatShortcut()
 })
@@ -85,7 +85,7 @@ onMounted(() => {
   // 恢复保存的主题
   const savedTheme = localStorage.getItem('theme') || 'light';
   setTheme(savedTheme);
-  
+
   // 加载FontAwesome
   const link = document.createElement('link');
   link.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css';
@@ -100,10 +100,10 @@ const uiScale = ref(100)
 // 计算应用的样式类
 const appClasses = computed(() => {
   const classes = []
-  
+
   // 添加字体大小类
   classes.push(`font-size-${fontSize.value}`)
-  
+
   return classes.join(' ')
 })
 
@@ -135,7 +135,7 @@ onMounted(() => {
 watch([fontSize, uiScale], () => {
   const savedSettings = localStorage.getItem('sentinel-settings')
   let settings: any = {}
-  
+
   if (savedSettings) {
     try {
       settings = JSON.parse(savedSettings)
@@ -143,14 +143,14 @@ watch([fontSize, uiScale], () => {
       console.error(t('settings.saveFailed'), error)
     }
   }
-  
+
   if (!settings.system) {
     settings.system = {}
   }
-  
+
   settings.system.fontSize = fontSize.value
   settings.system.uiScale = uiScale.value
-  
+
   localStorage.setItem('sentinel-settings', JSON.stringify(settings))
 })
 
@@ -172,9 +172,9 @@ window.updateUIScale = (newScale: number) => {
 </script>
 
 <template>
-  <div id="app" :class="appClasses" :style="appStyles" class="min-h-screen bg-base-100">
-    <!-- 顶部导航栏 -->
-    <div class="navbar bg-base-200 shadow-md z-50">
+  <div id="app" class="min-h-screen bg-base-100">
+    <!-- 顶部导航栏 - 不受缩放影响 -->
+    <div class="navbar bg-base-200 shadow-md z-50 fixed top-0 left-0 right-0">
       <div class="navbar-start">
         <button @click="toggleSidebar" class="btn btn-ghost btn-circle">
           <i class="fas fa-bars"></i>
@@ -183,7 +183,7 @@ window.updateUIScale = (newScale: number) => {
           <i class="fas fa-shield-alt text-primary mr-2"></i>Sentinel AI
         </router-link>
       </div>
-      
+
       <div class="navbar-center hidden lg:flex">
         <ul class="menu menu-horizontal px-1 gap-1">
           <li>
@@ -192,13 +192,13 @@ window.updateUIScale = (newScale: number) => {
             </router-link>
           </li>
           <li>
-            <router-link to="/projects" class="rounded-lg">
-              <i class="fas fa-trophy mr-2"></i>{{ t('sidebar.projects') }}
+            <router-link to="/scan-tasks" class="rounded-lg">
+              <i class="fas fa-search mr-2"></i>{{ t('sidebar.scanTasks') }}
             </router-link>
           </li>
           <li>
-            <router-link to="/scan-tasks" class="rounded-lg">
-              <i class="fas fa-search mr-2"></i>{{ t('sidebar.scanTasks') }}
+            <router-link to="/scan-sessions" class="rounded-lg">
+              <i class="fas fa-brain mr-2"></i>{{ t('scanSessions.title') }}
             </router-link>
           </li>
           <li>
@@ -207,18 +207,13 @@ window.updateUIScale = (newScale: number) => {
             </router-link>
           </li>
           <li>
-            <router-link to="/submissions" class="nav-link">
-              <i class="fas fa-paper-plane mr-2"></i>{{ t('sidebar.submissions') }}
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/earnings" class="nav-link">
-              <i class="fas fa-dollar-sign mr-2"></i>{{ t('sidebar.earnings') }}
-            </router-link>
-          </li>
-          <li>
             <router-link to="/mcp-tools" class="nav-link">
               <i class="fas fa-tools mr-2"></i>{{ t('sidebar.mcpTools') }}
+            </router-link>
+          </li>
+          <li>
+            <router-link to="/dictionary" class="nav-link">
+              <i class="fas fa-book mr-2"></i>{{ t('sidebar.dictionary', '字典管理') }}
             </router-link>
           </li>
           <li>
@@ -226,20 +221,21 @@ window.updateUIScale = (newScale: number) => {
               <i class="fas fa-cog mr-2"></i>{{ t('sidebar.settings') }}
             </router-link>
           </li>
+          <li>
+            <router-link to="/performance" class="nav-link">
+              <i class="fas fa-chart-line mr-2"></i>性能监控
+            </router-link>
+          </li>
 
         </ul>
       </div>
-      
+
       <div class="navbar-end">
         <!-- AI助手按钮 -->
-        <button 
-          class="btn btn-ghost btn-circle tooltip tooltip-bottom" 
-          data-tip="AI助手 (Alt+A)"
-          @click="toggleAIChat"
-        >
-          <i class="fas fa-robot text-xl" :class="{'text-primary': showAIChat}"></i>
+        <button class="btn btn-ghost btn-circle tooltip tooltip-bottom" data-tip="AI助手 (Alt+A)" @click="toggleAIChat">
+          <i class="fas fa-robot text-xl" :class="{ 'text-primary': showAIChat }"></i>
         </button>
-        
+
         <!-- 语言切换器 -->
         <div class="dropdown dropdown-end">
           <div tabindex="0" role="button" class="btn btn-ghost btn-circle">
@@ -253,7 +249,7 @@ window.updateUIScale = (newScale: number) => {
             </li>
           </ul>
         </div>
-        
+
         <!-- 主题切换器 -->
         <div class="dropdown dropdown-end">
           <div tabindex="0" role="button" class="btn btn-ghost btn-circle">
@@ -267,23 +263,24 @@ window.updateUIScale = (newScale: number) => {
             </li>
           </ul>
         </div>
-        
+
       </div>
     </div>
 
-    <!-- 主要内容区域 -->
-    <div class="flex">
+    <!-- 主要内容区域 - 受缩放影响 -->
+    <div :class="appClasses" :style="appStyles" class="flex pt-16">
       <!-- 侧边栏 -->
-      <div :class="{'w-80': !sidebarCollapsed, 'w-20': sidebarCollapsed}" class="transition-all duration-300 ease-in-out">
+      <div :class="{ 'w-80': !sidebarCollapsed, 'w-20': sidebarCollapsed }"
+        class="transition-all duration-300 ease-in-out">
         <Sidebar :collapsed="sidebarCollapsed" />
       </div>
-      
+
       <!-- 主内容区 -->
       <div class="flex-1 p-4 overflow-auto">
         <router-view />
       </div>
     </div>
-    
+
     <!-- AI助手聊天框 -->
     <AIChat v-if="showAIChat" @close="showAIChat = false" />
   </div>
@@ -291,7 +288,8 @@ window.updateUIScale = (newScale: number) => {
 
 <style>
 /* 全局样式 */
-html, body {
+html,
+body {
   height: 100%;
   margin: 0;
   padding: 0;
@@ -327,17 +325,17 @@ html, body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--fallback-b3,oklch(var(--b3)/1));
+  background: var(--fallback-b3, oklch(var(--b3)/1));
   border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--fallback-b2,oklch(var(--b2)/1));
+  background: var(--fallback-b2, oklch(var(--b2)/1));
   border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--fallback-n,oklch(var(--n)/1));
+  background: var(--fallback-n, oklch(var(--n)/1));
 }
 
 /* 过渡动画 */

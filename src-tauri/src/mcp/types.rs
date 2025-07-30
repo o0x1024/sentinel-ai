@@ -1,14 +1,14 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use uuid::Uuid;
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 /// 工具分类
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ToolCategory {
-    Reconnaissance,    // 侦察
+    Reconnaissance,   // 侦察
     Scanning,         // 扫描
     Exploitation,     // 利用
     PostExploitation, // 后渗透
@@ -146,9 +146,9 @@ pub struct BatchExecutionRequest {
 /// 批量执行模式
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BatchMode {
-    Parallel,     // 并行执行
-    Sequential,   // 顺序执行
-    Pipeline,     // 管道执行（前一个的输出作为后一个的输入）
+    Parallel,   // 并行执行
+    Sequential, // 顺序执行
+    Pipeline,   // 管道执行（前一个的输出作为后一个的输入）
 }
 
 /// 执行进度
@@ -243,7 +243,7 @@ pub type CallToolResult = Result<Vec<ToolContent>, CallToolError>;
 pub trait McpTool: Send + Sync {
     /// 获取工具定义
     fn definition(&self) -> ToolDefinition;
-    
+
     /// 调用工具
     async fn call(&self, input: ToolInput) -> CallToolResult;
-} 
+}

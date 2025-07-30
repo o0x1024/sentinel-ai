@@ -1,9 +1,9 @@
+use anyhow::{anyhow, Result};
+use rmcp::model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
-use anyhow::{Result, anyhow};
-use rmcp::model::{ProtocolVersion, ServerCapabilities, Implementation, ServerInfo};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// MCP协议版本
 pub const MCP_PROTOCOL_VERSION: &str = "0.2.0";
@@ -184,7 +184,7 @@ pub enum ToolContent {
         mime_type: String,
     },
     #[serde(rename = "resource")]
-    Resource { 
+    Resource {
         uri: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         text: Option<String>,
@@ -216,33 +216,36 @@ impl MessageBuilder {
             jsonrpc: "2.0".to_string(),
             id: Some(Value::Number(serde_json::Number::from(1))),
             method: Some("initialize".to_string()),
-            params: Some(serde_json::to_value(InitializeRequest {
-                protocol_version: MCP_PROTOCOL_VERSION.to_string(),
-                capabilities: ClientCapabilities {
-                    tools: Some(ToolCapabilities {
-                        supports_streaming: Some(true),
-                        supports_progress: Some(true),
-                        supports_cancellation: Some(true),
-                    }),
-                    resources: Some(ResourceCapabilities {
-                        supports_content_type: Some(vec![
-                            "text/plain".to_string(),
-                            "application/json".to_string(),
-                            "image/png".to_string(),
-                            "image/jpeg".to_string(),
-                        ]),
-                        supports_partial_read: Some(true),
-                    }),
-                    prompts: None,
-                    logging: Some(LoggingCapabilities {
-                        supports_logging: Some(true),
-                    }),
-                },
-                client_info: ClientInfo {
-                    name: client_name.to_string(),
-                    version: client_version.to_string(),
-                },
-            }).unwrap()),
+            params: Some(
+                serde_json::to_value(InitializeRequest {
+                    protocol_version: MCP_PROTOCOL_VERSION.to_string(),
+                    capabilities: ClientCapabilities {
+                        tools: Some(ToolCapabilities {
+                            supports_streaming: Some(true),
+                            supports_progress: Some(true),
+                            supports_cancellation: Some(true),
+                        }),
+                        resources: Some(ResourceCapabilities {
+                            supports_content_type: Some(vec![
+                                "text/plain".to_string(),
+                                "application/json".to_string(),
+                                "image/png".to_string(),
+                                "image/jpeg".to_string(),
+                            ]),
+                            supports_partial_read: Some(true),
+                        }),
+                        prompts: None,
+                        logging: Some(LoggingCapabilities {
+                            supports_logging: Some(true),
+                        }),
+                    },
+                    client_info: ClientInfo {
+                        name: client_name.to_string(),
+                        version: client_version.to_string(),
+                    },
+                })
+                .unwrap(),
+            ),
             result: None,
             error: None,
         }
@@ -297,14 +300,23 @@ impl MessageBuilder {
     }
 
     /// 创建错误响应
-    pub fn error_response(id: Option<Value>, code: i32, message: String, data: Option<Value>) -> JsonRpcMessage {
+    pub fn error_response(
+        id: Option<Value>,
+        code: i32,
+        message: String,
+        data: Option<Value>,
+    ) -> JsonRpcMessage {
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),
             id,
             method: None,
             params: None,
             result: None,
-            error: Some(JsonRpcError { code, message, data }),
+            error: Some(JsonRpcError {
+                code,
+                message,
+                data,
+            }),
         }
     }
 
@@ -319,17 +331,21 @@ impl MessageBuilder {
             error: None,
         }
     }
-    
+
     /// 创建进度通知
-    pub fn progress_notification(id: &Value, progress: f64, message: Option<&str>) -> JsonRpcMessage {
+    pub fn progress_notification(
+        id: &Value,
+        progress: f64,
+        message: Option<&str>,
+    ) -> JsonRpcMessage {
         let mut params = serde_json::Map::new();
         params.insert("id".to_string(), id.clone());
         params.insert("progress".to_string(), serde_json::json!(progress));
-        
+
         if let Some(msg) = message {
             params.insert("message".to_string(), serde_json::json!(msg));
         }
-        
+
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),
             id: None,
@@ -339,13 +355,13 @@ impl MessageBuilder {
             error: None,
         }
     }
-    
+
     /// 创建日志通知
     pub fn log_notification(level: &str, message: &str) -> JsonRpcMessage {
         let mut params = serde_json::Map::new();
         params.insert("level".to_string(), serde_json::json!(level));
         params.insert("message".to_string(), serde_json::json!(message));
-        
+
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),
             id: None,
@@ -366,32 +382,37 @@ impl MessageParser {
         if message.id.is_none() {
             return MessageType::Notification;
         }
-        
+
         if message.method.is_some() {
             return MessageType::Request;
         }
-        
+
         if message.result.is_some() || message.error.is_some() {
             return MessageType::Response;
         }
-        
+
         MessageType::Unknown
     }
-    
+
     /// 解析工具列表响应
-    pub fn parse_tool_list_response(message: &JsonRpcMessage) -> Result<Vec<ToolDefinition>, String> {
+    pub fn parse_tool_list_response(
+        message: &JsonRpcMessage,
+    ) -> Result<Vec<ToolDefinition>, String> {
         if let Some(result) = &message.result {
             match serde_json::from_value::<ToolListResponse>(result.clone()) {
                 Ok(response) => Ok(response.tools),
                 Err(e) => Err(format!("Failed to parse tool list response: {}", e)),
             }
         } else if let Some(error) = &message.error {
-            Err(format!("Tool list error: {} ({})", error.message, error.code))
+            Err(format!(
+                "Tool list error: {} ({})",
+                error.message, error.code
+            ))
         } else {
             Err("Invalid tool list response: no result or error".to_string())
         }
     }
-    
+
     /// 解析工具调用响应
     pub fn parse_tool_call_response(message: &JsonRpcMessage) -> Result<ToolCallResponse, String> {
         if let Some(result) = &message.result {
@@ -400,19 +421,22 @@ impl MessageParser {
                 Err(e) => Err(format!("Failed to parse tool call response: {}", e)),
             }
         } else if let Some(error) = &message.error {
-            Err(format!("Tool call error: {} ({})", error.message, error.code))
+            Err(format!(
+                "Tool call error: {} ({})",
+                error.message, error.code
+            ))
         } else {
             Err("Invalid tool call response: no result or error".to_string())
         }
     }
-    
+
     /// 验证消息格式
     pub fn validate_message(message: &JsonRpcMessage) -> Result<(), String> {
         // 检查JSON-RPC版本
         if message.jsonrpc != "2.0" {
             return Err(format!("Unsupported JSON-RPC version: {}", message.jsonrpc));
         }
-        
+
         // 根据消息类型验证字段
         match Self::parse_message_type(message) {
             MessageType::Request => {
@@ -420,64 +444,72 @@ impl MessageParser {
                 if message.id.is_none() {
                     return Err("Request message missing id field".to_string());
                 }
-                
+
                 if message.method.is_none() {
                     return Err("Request message missing method field".to_string());
                 }
-                
+
                 // 请求不应该有result或error
                 if message.result.is_some() || message.error.is_some() {
-                    return Err("Request message should not contain result or error fields".to_string());
+                    return Err(
+                        "Request message should not contain result or error fields".to_string()
+                    );
                 }
-            },
+            }
             MessageType::Response => {
                 // 响应必须有id和(result或error)
                 if message.id.is_none() {
                     return Err("Response message missing id field".to_string());
                 }
-                
+
                 if message.result.is_none() && message.error.is_none() {
                     return Err("Response message missing result or error field".to_string());
                 }
-                
+
                 // 响应不应该有method或params
                 if message.method.is_some() || message.params.is_some() {
-                    return Err("Response message should not contain method or params fields".to_string());
+                    return Err(
+                        "Response message should not contain method or params fields".to_string(),
+                    );
                 }
-            },
+            }
             MessageType::Notification => {
                 // 通知必须有method
                 if message.method.is_none() {
                     return Err("Notification message missing method field".to_string());
                 }
-                
+
                 // 通知不应该有id、result或error
                 if message.id.is_some() || message.result.is_some() || message.error.is_some() {
-                    return Err("Notification message should not contain id, result or error fields".to_string());
+                    return Err(
+                        "Notification message should not contain id, result or error fields"
+                            .to_string(),
+                    );
                 }
-            },
+            }
             MessageType::Unknown => {
                 return Err("Unable to determine message type".to_string());
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// 将工具内容转换为RMCP内容
     pub fn tool_content_to_rmcp_content(content: &ToolContent) -> rmcp::model::Content {
         let raw_content = match content {
-            ToolContent::Text { text, content_type: _ } => {
-                rmcp::model::RawContent::Text(rmcp::model::RawTextContent {
-                    text: text.clone(),
-                })
-            },
+            ToolContent::Text {
+                text,
+                content_type: _,
+            } => rmcp::model::RawContent::Text(rmcp::model::RawTextContent { text: text.clone() }),
             ToolContent::Image { data, mime_type } => {
                 rmcp::model::RawContent::image(data.clone(), mime_type.clone())
-            },
+            }
             ToolContent::Resource { uri, text } => {
                 let resource_text = text.clone().unwrap_or_else(|| uri.clone());
-                rmcp::model::RawContent::Text(rmcp::model::RawTextContent { text: resource_text })
+                rmcp::model::RawContent::Text(rmcp::model::RawTextContent {
+                    text: resource_text,
+                })
             }
         };
 
@@ -540,59 +572,54 @@ pub fn create_default_server_info(name: &str, version: &str) -> rmcp::model::Ser
 #[serde(tag = "type")]
 pub enum McpMessage {
     #[serde(rename = "initialize")]
-    Initialize {
-        client_info: Implementation,
-    },
-    
+    Initialize { client_info: Implementation },
+
     #[serde(rename = "initialize_result")]
     InitializeResult {
         server_info: rmcp::model::ServerInfo,
     },
-    
+
     #[serde(rename = "list_tools")]
     ListTools,
-    
+
     #[serde(rename = "list_tools_result")]
-    ListToolsResult {
-        tools: Vec<rmcp::model::Tool>,
-    },
-    
+    ListToolsResult { tools: Vec<rmcp::model::Tool> },
+
     #[serde(rename = "call_tool")]
     CallTool {
         name: String,
         arguments: Option<HashMap<String, Value>>,
     },
-    
+
     #[serde(rename = "call_tool_result")]
-    CallToolResult {
-        contents: Vec<rmcp::model::Content>,
-    },
-    
+    CallToolResult { contents: Vec<rmcp::model::Content> },
+
     #[serde(rename = "error")]
     Error {
         code: i32,
         message: String,
         data: Option<Value>,
     },
-    
+
     #[serde(rename = "cancel")]
     Cancel,
 }
 
 /// 解析MCP消息
 pub fn parse_message(json_str: &str) -> Result<McpMessage> {
-    serde_json::from_str(json_str)
-        .map_err(|e| anyhow!("Failed to parse MCP message: {}", e))
+    serde_json::from_str(json_str).map_err(|e| anyhow!("Failed to parse MCP message: {}", e))
 }
 
 /// 序列化MCP消息
 pub fn serialize_message(message: &McpMessage) -> Result<String> {
-    serde_json::to_string(message)
-        .map_err(|e| anyhow!("Failed to serialize MCP message: {}", e))
+    serde_json::to_string(message).map_err(|e| anyhow!("Failed to serialize MCP message: {}", e))
 }
 
 /// 检查协议版本兼容性
-pub fn check_protocol_compatibility(client_version: &ProtocolVersion, server_version: &ProtocolVersion) -> bool {
+pub fn check_protocol_compatibility(
+    client_version: &ProtocolVersion,
+    server_version: &ProtocolVersion,
+) -> bool {
     // 目前简单实现，只检查主版本号
     client_version == server_version
 }
@@ -624,7 +651,7 @@ impl ToolCallContext {
             start_time: std::time::Instant::now(),
         }
     }
-    
+
     pub fn elapsed_ms(&self) -> u64 {
         self.start_time.elapsed().as_millis() as u64
     }
@@ -633,7 +660,7 @@ impl ToolCallContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_message_serialization() {
         let message = McpMessage::Initialize {
@@ -642,19 +669,19 @@ mod tests {
                 version: "1.0.0".to_string(),
             },
         };
-        
+
         let json = serialize_message(&message).unwrap();
         let parsed: McpMessage = parse_message(&json).unwrap();
-        
+
         match parsed {
             McpMessage::Initialize { client_info } => {
                 assert_eq!(client_info.name, "test-client");
                 assert_eq!(client_info.version, "1.0.0");
-            },
+            }
             _ => panic!("Unexpected message type"),
         }
     }
-    
+
     #[test]
     fn test_protocol_compatibility() {
         assert!(check_protocol_compatibility(
@@ -662,4 +689,4 @@ mod tests {
             &ProtocolVersion::V_2024_11_05
         ));
     }
-} 
+}

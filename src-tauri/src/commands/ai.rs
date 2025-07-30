@@ -1,20 +1,20 @@
-use crate::services::ai::{AiServiceManager, AiConfig, AiToolCall};
 use crate::models::database::{AiConversation, AiMessage};
+use crate::services::ai::{AiConfig, AiServiceManager, AiToolCall};
 use crate::services::database::{Database, DatabaseService};
-use tauri::{AppHandle, State, Manager, Emitter};
 use anyhow::Result;
+use chrono::Utc;
+use futures::StreamExt;
+use genai::chat::{ChatMessage, ChatRequest, ChatStreamEvent, Tool};
+use genai::chat::{ChatOptions, StreamChunk};
+use genai::Client as GenaiClient;
+use reqwest::header::{HeaderMap, HeaderValue};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use genai::chat::{ChatMessage, ChatRequest, ChatStreamEvent, Tool};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use futures::StreamExt;
-use genai::{Client as GenaiClient};
-use genai::chat::{ChatOptions, StreamChunk};
-use reqwest::header::{HeaderMap, HeaderValue};
 use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
-use chrono::Utc;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateConversationRequest {
@@ -128,43 +128,52 @@ pub async fn list_ai_services(
 
 // 打印所有AI对话消息
 #[tauri::command]
-pub async fn print_ai_conversations(
-    app: AppHandle,
-) -> Result<String, String> {
+pub async fn print_ai_conversations(app: AppHandle) -> Result<String, String> {
     // 获取数据库服务
     let db = match app.try_state::<Arc<crate::services::database::DatabaseService>>() {
         Some(db) => db,
         None => return Err("Database service not initialized".to_string()),
     };
-    
+
     // 获取所有对话
     let conversations = match db.get_ai_conversations().await {
         Ok(convs) => convs,
         Err(e) => return Err(format!("Failed to get conversation list: {}", e)),
     };
-    
+
     // 如果没有对话，返回提示信息
     if conversations.is_empty() {
         return Ok("No AI conversation records found".to_string());
     }
-    
+
     // 构建输出字符串
     let mut output = String::new();
-    output.push_str(&format!("Found {} AI conversations\n\n", conversations.len()));
-    
+    output.push_str(&format!(
+        "Found {} AI conversations\n\n",
+        conversations.len()
+    ));
+
     // 遍历每个对话
     for (idx, conv) in conversations.iter().enumerate() {
-        output.push_str(&format!("对话 {}/{}: {} (ID: {})\n", 
-            idx + 1, 
+        output.push_str(&format!(
+            "对话 {}/{}: {} (ID: {})\n",
+            idx + 1,
             conversations.len(),
             conv.title.as_deref().unwrap_or("No title"),
             conv.id
         ));
-        output.push_str(&format!("Created time: {}\n", conv.created_at.format("%Y-%m-%d %H:%M:%S")));
-        output.push_str(&format!("Model: {} ({})\n", conv.model_name, conv.model_provider.as_deref().unwrap_or("Unknown")));
+        output.push_str(&format!(
+            "Created time: {}\n",
+            conv.created_at.format("%Y-%m-%d %H:%M:%S")
+        ));
+        output.push_str(&format!(
+            "Model: {} ({})\n",
+            conv.model_name,
+            conv.model_provider.as_deref().unwrap_or("Unknown")
+        ));
         output.push_str(&format!("Message count: {}\n", conv.total_messages));
         output.push_str("------------------------------------\n");
-        
+
         // 获取此对话的所有消息
         let messages = match db.get_ai_messages_by_conversation(&conv.id).await {
             Ok(msgs) => msgs,
@@ -173,7 +182,7 @@ pub async fn print_ai_conversations(
                 continue;
             }
         };
-        
+
         // 打印每条消息
         for (msg_idx, msg) in messages.iter().enumerate() {
             let role_str = match msg.role.as_str() {
@@ -183,48 +192,54 @@ pub async fn print_ai_conversations(
                 "tool" => "Tool",
                 _ => msg.role.as_str(),
             };
-            
-            output.push_str(&format!("Message {}/{} - {} ({})\n", 
-                msg_idx + 1, 
+
+            output.push_str(&format!(
+                "Message {}/{} - {} ({})\n",
+                msg_idx + 1,
                 messages.len(),
                 role_str,
                 msg.timestamp.format("%H:%M:%S")
             ));
-            
+
             // 打印消息内容
             output.push_str(&format!("{}\n", msg.content));
-            
+
             // 如果有Token使用情况，打印出来
             if let Some(token_count) = msg.token_count {
                 output.push_str(&format!("Token usage: {}\n", token_count));
-                
+
                 if let Some(cost) = msg.cost {
                     output.push_str(&format!("Cost: ${:.6}\n", cost));
                 }
             }
-            
+
             // 如果有工具调用情况，打印出来
             if let Some(tool_calls_json) = &msg.tool_calls {
                 // 尝试解析JSON
-                if let Ok(tool_calls) = serde_json::from_str::<Vec<serde_json::Value>>(tool_calls_json) {
+                if let Ok(tool_calls) =
+                    serde_json::from_str::<Vec<serde_json::Value>>(tool_calls_json)
+                {
                     if !tool_calls.is_empty() {
-                        let tool_names: Vec<String> = tool_calls.iter()
-                            .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(String::from))
+                        let tool_names: Vec<String> = tool_calls
+                            .iter()
+                            .filter_map(|t| {
+                                t.get("name").and_then(|n| n.as_str()).map(String::from)
+                            })
                             .collect();
-                        
+
                         if !tool_names.is_empty() {
                             output.push_str(&format!("Used tools: {}\n", tool_names.join(", ")));
                         }
                     }
                 }
             }
-            
+
             output.push_str("------------------------------------\n");
         }
-        
+
         output.push_str("\n\n");
     }
-    
+
     Ok(output)
 }
 
@@ -235,7 +250,10 @@ pub async fn add_ai_service(
     config: AiConfig,
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<(), String> {
-    ai_manager.add_service(name, config).await.map_err(|e| e.to_string())
+    ai_manager
+        .add_service(name, config)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // 移除AI服务
@@ -254,13 +272,22 @@ pub async fn create_ai_conversation(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<String, String> {
     if let Some(service) = ai_manager.get_service(&request.service_name) {
-        service.create_conversation(request.title).await.map_err(|e| e.to_string())
+        service
+            .create_conversation(request.title)
+            .await
+            .map_err(|e| e.to_string())
     } else {
         // Fallback or default service creation
         if let Some(default_service) = ai_manager.get_service("default") {
-            return default_service.create_conversation(request.title).await.map_err(|e| e.to_string());
+            return default_service
+                .create_conversation(request.title)
+                .await
+                .map_err(|e| e.to_string());
         }
-        Err(format!("AI service '{}' not found and no default service is available.", request.service_name))
+        Err(format!(
+            "AI service '{}' not found and no default service is available.",
+            request.service_name
+        ))
     }
 }
 
@@ -271,7 +298,10 @@ pub async fn send_ai_message(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<String, String> {
     if let Some(service) = ai_manager.get_service(&request.service_name) {
-        service.send_message(&request.message, Some(request.conversation_id)).await.map_err(|e| e.to_string())
+        service
+            .send_message(&request.message, Some(request.conversation_id))
+            .await
+            .map_err(|e| e.to_string())
     } else {
         Err("AI service not found".to_string())
     }
@@ -287,16 +317,19 @@ pub async fn send_ai_message_stream(
     if let Some(service_name) = &request.service_name {
         if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
             if let Some(service) = ai_manager.get_service(service_name) {
-                return service.send_message_stream_with_prompt(
-                    &request.message,
-                    request.conversation_id.clone(),
-                    request.system_prompt,
-                ).await.map_err(|e| e.to_string());
+                return service
+                    .send_message_stream_with_prompt(
+                        &request.message,
+                        request.conversation_id.clone(),
+                        request.system_prompt,
+                    )
+                    .await
+                    .map_err(|e| e.to_string());
             }
             return Err(format!("AI service '{}' not found", service_name));
         }
         return Err("AI service manager not initialized".to_string());
-    } 
+    }
     // 否则，直接使用提供的provider和model，通过genai库发送真实请求
     else if let (Some(provider), Some(model)) = (&request.provider, &request.model) {
         let conversation_id = request.conversation_id;
@@ -309,7 +342,7 @@ pub async fn send_ai_message_stream(
         let system_prompt_str = request.system_prompt.clone();
         let temperature = request.temperature;
         let max_tokens = request.max_tokens;
-        
+
         // 使用tokio spawn异步处理请求
         tokio::spawn(async move {
             let db = match app_handle_clone.try_state::<Arc<DatabaseService>>() {
@@ -336,18 +369,21 @@ pub async fn send_ai_message_stream(
             if let Err(e) = db.create_ai_message(&user_msg).await {
                 tracing::error!("Failed to save user message: {}", e);
             }
-            
+
             // 2. 准备工具
             let mut tools_xml = String::new();
             let mut tools_for_genai: Vec<Tool> = Vec::new();
             let mut has_tools = false;
-            if let Some(mcp_service) = app_handle_clone.try_state::<Arc<crate::services::mcp::McpService>>() {
+            if let Some(mcp_service) =
+                app_handle_clone.try_state::<Arc<crate::services::mcp::McpService>>()
+            {
                 if let Ok(available_tools) = mcp_service.get_available_tools().await {
                     if !available_tools.is_empty() {
                         has_tools = true;
                         tools_xml.push_str("<tools>\n");
                         for tool in available_tools {
-                             let schema_str = serde_json::to_string(&tool.parameters.schema).unwrap_or_else(|_| "{}".to_string());
+                            let schema_str = serde_json::to_string(&tool.parameters.schema)
+                                .unwrap_or_else(|_| "{}".to_string());
                             tools_xml.push_str(&format!(
                                 "<tool>\n  <name>{}</name>\n  <description>{}</description>\n  <arguments>{}</arguments>\n</tool>\n",
                                 &tool.name, &tool.description, schema_str
@@ -367,11 +403,12 @@ pub async fn send_ai_message_stream(
                     }
                 }
             }
-            
+
             // 3. 构建系统提示
             let mut final_system_prompt = system_prompt_str.unwrap_or_default();
             if has_tools {
-                let tool_instructions = format!(r#"
+                let tool_instructions = format!(
+                    r#"
 ---
 You have access to a set of tools to answer the user's question.
 You use tools step-by-step to accomplish a given task, with each tool use informed by the result of the previous tool use.
@@ -411,7 +448,7 @@ The user will respond with the result of the tool use, which should be formatted
             if !final_system_prompt.is_empty() {
                 chat_messages.push(ChatMessage::system(&final_system_prompt));
             }
-            
+
             match db.get_ai_messages_by_conversation(&conversation_id).await {
                 Ok(history) => {
                     for msg in history {
@@ -421,22 +458,30 @@ The user will respond with the result of the tool use, which should be formatted
                             "assistant" => {
                                 // 无论是否有工具调用，都使用普通assistant消息
                                 chat_messages.push(ChatMessage::assistant(&msg.content));
-                            },
+                            }
                             "tool" => {
                                 // 工具结果消息，使用系统消息
                                 if let Some(metadata) = &msg.metadata {
-                                    if let Ok(tool_metadata) = serde_json::from_str::<serde_json::Value>(metadata) {
-                                        if let Some(tool_name) = tool_metadata.get("tool_name").and_then(|v| v.as_str()) {
-                                            let formatted_result = format!("Tool result from {}: {}", tool_name, msg.content);
-                                            chat_messages.push(ChatMessage::system(&formatted_result));
+                                    if let Ok(tool_metadata) =
+                                        serde_json::from_str::<serde_json::Value>(metadata)
+                                    {
+                                        if let Some(tool_name) =
+                                            tool_metadata.get("tool_name").and_then(|v| v.as_str())
+                                        {
+                                            let formatted_result = format!(
+                                                "Tool result from {}: {}",
+                                                tool_name, msg.content
+                                            );
+                                            chat_messages
+                                                .push(ChatMessage::system(&formatted_result));
                                         }
                                     }
                                 }
-                            },
-                            _ => {},
+                            }
+                            _ => {}
                         }
                     }
-                },
+                }
                 Err(e) => tracing::error!("Failed to get conversation history: {}", e),
             }
             // 确保最新的用户消息在最后
@@ -449,9 +494,13 @@ The user will respond with the result of the tool use, which should be formatted
 
             // 5. 设置并执行第一次AI调用
             let mut chat_options = ChatOptions::default();
-            if let Some(temp) = temperature { chat_options.temperature = Some(temp as f64); }
-            if let Some(tokens) = max_tokens { chat_options.max_tokens = Some(tokens); }
-            
+            if let Some(temp) = temperature {
+                chat_options.temperature = Some(temp as f64);
+            }
+            if let Some(tokens) = max_tokens {
+                chat_options.max_tokens = Some(tokens);
+            }
+
             let mut chat_request = ChatRequest::new(chat_messages.clone());
             if has_tools {
                 chat_request = chat_request.with_tools(tools_for_genai.clone());
@@ -465,17 +514,18 @@ The user will respond with the result of the tool use, which should be formatted
             // 直接调用，不使用tokio::spawn
             let db_inner = db.inner().clone();
             run_ai_interaction_cycle(
-                app, 
-                db_inner, 
-                conversation_id, 
-                new_message_id, 
-                provider_str, 
-                model_str, 
-                new_request, 
-                chat_options
-            ).await;
+                app,
+                db_inner,
+                conversation_id,
+                new_message_id,
+                provider_str,
+                model_str,
+                new_request,
+                chat_options,
+            )
+            .await;
         });
-        
+
         return Ok(message_id);
     } else {
         return Err("Missing required parameters: provider and model".to_string());
@@ -498,7 +548,10 @@ fn run_ai_interaction_cycle(
         let genai_client = GenaiClient::default();
         // ... 此处省略了原有的设置API Key和Base URL的代码，实际应保留 ...
 
-        match genai_client.exec_chat_stream(&model, chat_request.clone(), Some(&chat_options)).await {
+        match genai_client
+            .exec_chat_stream(&model, chat_request.clone(), Some(&chat_options))
+            .await
+        {
             Ok(mut stream) => {
                 let mut content = String::new();
                 let tool_calls: Vec<genai::chat::ToolCall> = Vec::new();
@@ -508,16 +561,19 @@ fn run_ai_interaction_cycle(
                     match event {
                         Ok(ChatStreamEvent::Chunk(chunk)) => {
                             content.push_str(&chunk.content);
-                            let _ = app.emit("ai_stream_message", serde_json::json!({
-                                "conversation_id": &conversation_id, "message_id": &message_id,
-                                "content": &content, "is_complete": false,
-                            }));
-                        },
+                            let _ = app.emit(
+                                "ai_stream_message",
+                                serde_json::json!({
+                                    "conversation_id": &conversation_id, "message_id": &message_id,
+                                    "content": &content, "is_complete": false,
+                                }),
+                            );
+                        }
                         Err(e) => {
                             tracing::error!("Stream error: {}", e);
                             // ... 发送错误到前端 ...
                             return;
-                        },
+                        }
                         _ => {}
                     }
                 }
@@ -547,10 +603,13 @@ fn run_ai_interaction_cycle(
                     current_messages.push(ChatMessage::assistant(&content));
 
                     // 执行工具
-                    if let Some(mcp_service) = app.try_state::<Arc<crate::services::mcp::McpService>>() {
+                    if let Some(mcp_service) =
+                        app.try_state::<Arc<crate::services::mcp::McpService>>()
+                    {
                         for tool_call in tool_calls {
                             let args_str = tool_call.fn_arguments.to_string();
-                            let args: serde_json::Value = serde_json::from_str(&args_str).unwrap_or_default();
+                            let args: serde_json::Value =
+                                serde_json::from_str(&args_str).unwrap_or_default();
                             let result = mcp_service.execute_tool(&tool_call.fn_name, args).await;
                             let result_str = match result {
                                 Ok(res) => serde_json::to_string(&res).unwrap_or_default(),
@@ -563,7 +622,10 @@ fn run_ai_interaction_cycle(
                                 conversation_id: conversation_id.clone(),
                                 role: "tool".to_string(),
                                 content: result_str.clone(),
-                                metadata: Some(serde_json::json!({"tool_name": &tool_call.fn_name}).to_string()),
+                                metadata: Some(
+                                    serde_json::json!({"tool_name": &tool_call.fn_name})
+                                        .to_string(),
+                                ),
                                 timestamp: Utc::now(),
                                 token_count: None,
                                 cost: None,
@@ -574,27 +636,28 @@ fn run_ai_interaction_cycle(
                                 tracing::error!("Failed to save tool result message: {}", e);
                             }
 
-                            let formatted_result = format!("Tool result from {}: {}", tool_call.fn_name, result_str);
+                            let formatted_result =
+                                format!("Tool result from {}: {}", tool_call.fn_name, result_str);
                             current_messages.push(ChatMessage::system(&formatted_result));
                         }
                     }
-                    
+
                     // 使用更新后的消息再次调用AI
                     let new_message_id = Uuid::new_v4().to_string();
                     let new_request = ChatRequest::new(current_messages);
-                    
+
                     // 递归调用
                     run_ai_interaction_cycle(
-                        app, 
-                        db, 
-                        conversation_id, 
-                        new_message_id, 
-                        provider, 
-                        model, 
-                        new_request, 
-                        chat_options
-                    ).await;
-
+                        app,
+                        db,
+                        conversation_id,
+                        new_message_id,
+                        provider,
+                        model,
+                        new_request,
+                        chat_options,
+                    )
+                    .await;
                 } else {
                     // 没有工具调用，是最终回复
                     let final_msg = AiMessage {
@@ -612,12 +675,15 @@ fn run_ai_interaction_cycle(
                     if let Err(e) = db.create_ai_message(&final_msg).await {
                         tracing::error!("Failed to save final assistant message: {}", e);
                     }
-                    let _ = app.emit("ai_stream_message", serde_json::json!({
-                        "conversation_id": &conversation_id, "message_id": &message_id,
-                        "content": &content, "is_complete": true,
-                    }));
+                    let _ = app.emit(
+                        "ai_stream_message",
+                        serde_json::json!({
+                            "conversation_id": &conversation_id, "message_id": &message_id,
+                            "content": &content, "is_complete": true,
+                        }),
+                    );
                 }
-            },
+            }
             Err(e) => {
                 tracing::error!("AI request failed: {}", e);
                 // ... 发送错误到前端 ...
@@ -653,9 +719,15 @@ pub async fn delete_ai_conversation(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<(), String> {
     if let Some(service) = ai_manager.get_service(&service_name) {
-        return service.delete_conversation(&conversation_id).await.map_err(|e| e.to_string());
+        return service
+            .delete_conversation(&conversation_id)
+            .await
+            .map_err(|e| e.to_string());
     }
-    Err(format!("AI service '{}' not found for deleting conversation.", service_name))
+    Err(format!(
+        "AI service '{}' not found for deleting conversation.",
+        service_name
+    ))
 }
 
 // 更新对话标题
@@ -667,7 +739,10 @@ pub async fn update_ai_conversation_title(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<(), String> {
     if let Some(service) = ai_manager.get_service(&service_name) {
-        return service.update_conversation_title(&conversation_id, &title).await.map_err(|e| e.to_string());
+        return service
+            .update_conversation_title(&conversation_id, &title)
+            .await
+            .map_err(|e| e.to_string());
     }
     Err("AI service not found".to_string())
 }
@@ -680,7 +755,10 @@ pub async fn archive_ai_conversation(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<(), String> {
     if let Some(service) = ai_manager.get_service(&service_name) {
-        return service.archive_conversation(&conversation_id).await.map_err(|e| e.to_string());
+        return service
+            .archive_conversation(&conversation_id)
+            .await
+            .map_err(|e| e.to_string());
     }
     Err("AI service not found".to_string())
 }
@@ -719,17 +797,21 @@ pub async fn configure_ai_service(
                 Ok(Some(api_key)) => {
                     config.api_key = Some(api_key);
                     tracing::info!("Loading API key for {} from database", config.provider);
-                },
+                }
                 Ok(None) => {
                     tracing::warn!("API key for {} not found in database", config.provider);
-                },
+                }
                 Err(e) => {
-                    tracing::error!("Failed to load API key for {} from database: {}", config.provider, e);
+                    tracing::error!(
+                        "Failed to load API key for {} from database: {}",
+                        config.provider,
+                        e
+                    );
                 }
             }
         }
     }
-    
+
     // 如果有API密钥，设置为环境变量
     if let Some(api_key) = &config.api_key {
         let env_var_name = match config.provider.as_str() {
@@ -746,15 +828,25 @@ pub async fn configure_ai_service(
             }
         };
         std::env::set_var(env_var_name, api_key);
-        tracing::info!("Set API key environment variable for {}: {}", config.provider, env_var_name);
+        tracing::info!(
+            "Set API key environment variable for {}: {}",
+            config.provider,
+            env_var_name
+        );
     } else {
-        tracing::warn!("No API key found for {}, requests may fail", config.provider);
+        tracing::warn!(
+            "No API key found for {}, requests may fail",
+            config.provider
+        );
     }
-    
+
     // 先移除旧配置
     ai_manager.remove_service(&service_name);
     // 添加新配置
-    ai_manager.add_service(service_name, config).await.map_err(|e| e.to_string())
+    ai_manager
+        .add_service(service_name, config)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // 获取AI对话列表
@@ -766,7 +858,10 @@ pub async fn get_ai_conversations(
     let services = ai_manager.list_services();
     if let Some(service_name) = services.first() {
         if let Some(service) = ai_manager.get_service(service_name) {
-            return service.list_conversations().await.map_err(|e| e.to_string());
+            return service
+                .list_conversations()
+                .await
+                .map_err(|e| e.to_string());
         }
     }
     Ok(vec![])
@@ -780,19 +875,25 @@ pub async fn get_ai_conversation_history(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<Vec<AiMessage>, String> {
     if let Some(service) = ai_manager.get_service(&service_name) {
-        return service.get_conversation_history(&conversation_id).await.map_err(|e| e.to_string());
+        return service
+            .get_conversation_history(&conversation_id)
+            .await
+            .map_err(|e| e.to_string());
     }
-    Err(format!("AI service '{}' not found for getting conversation history.", service_name))
+    Err(format!(
+        "AI service '{}' not found for getting conversation history.",
+        service_name
+    ))
 }
 
 // 获取所有可用的AI模型
 #[tauri::command]
 pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
     let mut models = Vec::new();
-    
+
     // 基于环境变量返回默认模型列表
     // 这个函数主要用于初始化，实际的模型列表由前端通过update_ai_models命令更新
-    
+
     // OpenAI模型
     if std::env::var("OPENAI_API_KEY").is_ok() {
         models.push(AiModelInfo {
@@ -806,7 +907,7 @@ pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
             ],
         });
     }
-    
+
     // Anthropic模型
     if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         models.push(AiModelInfo {
@@ -821,7 +922,7 @@ pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
             ],
         });
     }
-    
+
     // Gemini模型
     if std::env::var("GEMINI_API_KEY").is_ok() {
         models.push(AiModelInfo {
@@ -835,7 +936,7 @@ pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
             ],
         });
     }
-    
+
     // DeepSeek模型
     if std::env::var("DEEPSEEK_API_KEY").is_ok() {
         models.push(AiModelInfo {
@@ -848,17 +949,15 @@ pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
             ],
         });
     }
-    
+
     // xAI模型
     if std::env::var("XAI_API_KEY").is_ok() {
         models.push(AiModelInfo {
             provider: "xai".to_string(),
-            models: vec![
-                "grok-1".to_string(),
-            ],
+            models: vec!["grok-1".to_string()],
         });
     }
-    
+
     // Groq模型
     if std::env::var("GROQ_API_KEY").is_ok() {
         models.push(AiModelInfo {
@@ -870,7 +969,7 @@ pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
             ],
         });
     }
-    
+
     // Cohere模型
     if std::env::var("COHERE_API_KEY").is_ok() {
         models.push(AiModelInfo {
@@ -882,7 +981,7 @@ pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
             ],
         });
     }
-    
+
     // Ollama模型（本地模型，不需要API密钥）
     models.push(AiModelInfo {
         provider: "ollama".to_string(),
@@ -902,27 +1001,28 @@ pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
             "phi3:small".to_string(),
         ],
     });
-    
+
     Ok(models)
 }
 
 // 更新AI模型列表（由前端调用，传递实际测试获取的模型）
 #[tauri::command]
-pub async fn update_ai_models(
-    models: Vec<AiModelInfo>,
-    app: AppHandle,
-) -> Result<(), String> {
+pub async fn update_ai_models(models: Vec<AiModelInfo>, app: AppHandle) -> Result<(), String> {
     tracing::info!("Updating AI model list: {:?}", models);
-    
+
     // 将模型列表保存到应用状态中
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
         // 这里可以将模型信息保存到AI服务管理器中
         // 目前先记录日志
         for model_info in &models {
-            tracing::info!("Provider {}: {} models", model_info.provider, model_info.models.len());
+            tracing::info!(
+                "Provider {}: {} models",
+                model_info.provider,
+                model_info.models.len()
+            );
         }
     }
-    
+
     Ok(())
 }
 
@@ -947,7 +1047,9 @@ pub async fn test_ai_connection(
 }
 
 // 测试OpenAI连接
-async fn test_openai_connection(request: TestConnectionRequest) -> Result<TestConnectionResponse, String> {
+async fn test_openai_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
     if request.api_key.is_none() {
         return Ok(TestConnectionResponse {
             success: false,
@@ -957,56 +1059,69 @@ async fn test_openai_connection(request: TestConnectionRequest) -> Result<TestCo
     }
 
     let client = reqwest::Client::new();
-    let api_base = request.api_base.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-    
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
-        "Authorization", 
-        format!("Bearer {}", request.api_key.unwrap()).parse().map_err(|e| format!("无效的API密钥: {}", e))?
+        "Authorization",
+        format!("Bearer {}", request.api_key.unwrap())
+            .parse()
+            .map_err(|e| format!("无效的API密钥: {}", e))?,
     );
-    
+
     if let Some(org) = &request.organization {
         if !org.is_empty() {
             headers.insert(
-                "OpenAI-Organization", 
-                org.parse().map_err(|e| format!("无效的组织ID: {}", e))?
+                "OpenAI-Organization",
+                org.parse().map_err(|e| format!("无效的组织ID: {}", e))?,
             );
         }
     }
-    
+
     // 测试连接 - 获取模型列表
-    let response = client.get(format!("{}/models", api_base))
+    let response = client
+        .get(format!("{}/models", api_base))
         .headers(headers)
         .send()
         .await
         .map_err(|e| format!("Failed to connect to OpenAI: {}", e))?;
-    
+
     if response.status().is_success() {
-        let models_response: serde_json::Value = response.json()
+        let models_response: serde_json::Value = response
+            .json()
             .await
             .map_err(|e| format!("Failed to parse response: {}", e))?;
-        
+
         // 提取模型ID列表
         if let Some(models_array) = models_response.get("data").and_then(|d| d.as_array()) {
             let models: Vec<String> = models_array
                 .iter()
                 .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
                 .collect();
-            
+
             Ok(TestConnectionResponse {
                 success: true,
-                message: format!("Successfully connected to OpenAI, found {} models", models.len()),
+                message: format!(
+                    "Successfully connected to OpenAI, found {} models",
+                    models.len()
+                ),
                 models: Some(models),
             })
         } else {
             Ok(TestConnectionResponse {
                 success: true,
-                message: "Successfully connected to OpenAI, but failed to get model list".to_string(),
+                message: "Successfully connected to OpenAI, but failed to get model list"
+                    .to_string(),
                 models: None,
             })
         }
     } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         Ok(TestConnectionResponse {
             success: false,
             message: format!("Failed to connect to OpenAI: {}", error_text),
@@ -1016,7 +1131,9 @@ async fn test_openai_connection(request: TestConnectionRequest) -> Result<TestCo
 }
 
 // 测试Anthropic连接
-async fn test_anthropic_connection(request: TestConnectionRequest) -> Result<TestConnectionResponse, String> {
+async fn test_anthropic_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
     if request.api_key.is_none() {
         return Ok(TestConnectionResponse {
             success: false,
@@ -1026,18 +1143,21 @@ async fn test_anthropic_connection(request: TestConnectionRequest) -> Result<Tes
     }
 
     let client = reqwest::Client::new();
-    let api_base = request.api_base.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-    
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
-        "x-api-key", 
-        request.api_key.unwrap().parse().map_err(|e| format!("无效的API密钥: {}", e))?
+        "x-api-key",
+        request
+            .api_key
+            .unwrap()
+            .parse()
+            .map_err(|e| format!("无效的API密钥: {}", e))?,
     );
-    headers.insert(
-        "anthropic-version", 
-        "2023-06-01".parse().unwrap()
-    );
-    
+    headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
+
     // Anthropic没有列出模型的公开API，我们只能测试连接
     // 使用简单的消息请求来测试连接
     let test_payload = serde_json::json!({
@@ -1050,14 +1170,15 @@ async fn test_anthropic_connection(request: TestConnectionRequest) -> Result<Tes
             }
         ]
     });
-    
-    let response = client.post(format!("{}/v1/messages", api_base))
+
+    let response = client
+        .post(format!("{}/v1/messages", api_base))
         .headers(headers)
         .json(&test_payload)
         .send()
         .await
         .map_err(|e| format!("Failed to connect to Anthropic: {}", e))?;
-    
+
     if response.status().is_success() {
         // 预定义Anthropic模型列表
         let models = vec![
@@ -1068,14 +1189,17 @@ async fn test_anthropic_connection(request: TestConnectionRequest) -> Result<Tes
             "claude-2.0".to_string(),
             "claude-instant-1.2".to_string(),
         ];
-        
+
         Ok(TestConnectionResponse {
             success: true,
             message: "Successfully connected to Anthropic Claude API".to_string(),
             models: Some(models),
         })
     } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "未知错误".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "未知错误".to_string());
         Ok(TestConnectionResponse {
             success: false,
             message: format!("Failed to connect to Anthropic: {}", error_text),
@@ -1085,7 +1209,9 @@ async fn test_anthropic_connection(request: TestConnectionRequest) -> Result<Tes
 }
 
 // 测试Gemini连接
-async fn test_gemini_connection(request: TestConnectionRequest) -> Result<TestConnectionResponse, String> {
+async fn test_gemini_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
     if request.api_key.is_none() {
         return Ok(TestConnectionResponse {
             success: false,
@@ -1096,39 +1222,55 @@ async fn test_gemini_connection(request: TestConnectionRequest) -> Result<TestCo
 
     let client = reqwest::Client::new();
     let api_key = request.api_key.unwrap();
-    
+
     // 使用Gemini API测试连接
-    let response = client.get(format!("https://generativelanguage.googleapis.com/v1/models?key={}", api_key))
+    let response = client
+        .get(format!(
+            "https://generativelanguage.googleapis.com/v1/models?key={}",
+            api_key
+        ))
         .send()
         .await
         .map_err(|e| format!("Failed to connect to Gemini: {}", e))?;
-    
+
     if response.status().is_success() {
-        let models_response: serde_json::Value = response.json()
+        let models_response: serde_json::Value = response
+            .json()
             .await
             .map_err(|e| format!("Failed to parse response: {}", e))?;
-        
+
         // 提取模型列表
         if let Some(models_array) = models_response.get("models").and_then(|m| m.as_array()) {
             let models: Vec<String> = models_array
                 .iter()
-                .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(|s| s.replace("models/", "")))
+                .filter_map(|m| {
+                    m.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|s| s.replace("models/", ""))
+                })
                 .collect();
-            
+
             Ok(TestConnectionResponse {
                 success: true,
-                message: format!("Successfully connected to Gemini, found {} models", models.len()),
+                message: format!(
+                    "Successfully connected to Gemini, found {} models",
+                    models.len()
+                ),
                 models: Some(models),
             })
         } else {
             Ok(TestConnectionResponse {
                 success: true,
-                message: "Successfully connected to Gemini, but failed to get model list".to_string(),
+                message: "Successfully connected to Gemini, but failed to get model list"
+                    .to_string(),
                 models: None,
             })
         }
     } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "未知错误".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "未知错误".to_string());
         Ok(TestConnectionResponse {
             success: false,
             message: format!("Failed to connect to Gemini: {}", error_text),
@@ -1138,7 +1280,9 @@ async fn test_gemini_connection(request: TestConnectionRequest) -> Result<TestCo
 }
 
 // 测试DeepSeek连接
-async fn test_deepseek_connection(request: TestConnectionRequest) -> Result<TestConnectionResponse, String> {
+async fn test_deepseek_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
     if request.api_key.is_none() {
         return Ok(TestConnectionResponse {
             success: false,
@@ -1148,36 +1292,45 @@ async fn test_deepseek_connection(request: TestConnectionRequest) -> Result<Test
     }
 
     let client = reqwest::Client::new();
-    let api_base = request.api_base.unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
-    
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
+
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
-        "Authorization", 
-        format!("Bearer {}", request.api_key.unwrap()).parse().map_err(|e| format!("无效的API密钥: {}", e))?
+        "Authorization",
+        format!("Bearer {}", request.api_key.unwrap())
+            .parse()
+            .map_err(|e| format!("无效的API密钥: {}", e))?,
     );
-    
+
     // 测试连接 - 获取模型列表
-    let response = client.get(format!("{}/models", api_base))
+    let response = client
+        .get(format!("{}/models", api_base))
         .headers(headers)
         .send()
         .await
         .map_err(|e| format!("Failed to connect to DeepSeek: {}", e))?;
-    
+
     if response.status().is_success() {
-        let models_response: serde_json::Value = response.json()
+        let models_response: serde_json::Value = response
+            .json()
             .await
             .map_err(|e| format!("Failed to parse response: {}", e))?;
-        
+
         // 提取模型ID列表
         if let Some(models_array) = models_response.get("data").and_then(|d| d.as_array()) {
             let models: Vec<String> = models_array
                 .iter()
                 .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
                 .collect();
-            
+
             Ok(TestConnectionResponse {
                 success: true,
-                message: format!("Successfully connected to DeepSeek, found {} models", models.len()),
+                message: format!(
+                    "Successfully connected to DeepSeek, found {} models",
+                    models.len()
+                ),
                 models: Some(models),
             })
         } else {
@@ -1194,7 +1347,10 @@ async fn test_deepseek_connection(request: TestConnectionRequest) -> Result<Test
             })
         }
     } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "未知错误".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "未知错误".to_string());
         Ok(TestConnectionResponse {
             success: false,
             message: format!("Failed to connect to DeepSeek: {}", error_text),
@@ -1204,42 +1360,55 @@ async fn test_deepseek_connection(request: TestConnectionRequest) -> Result<Test
 }
 
 // 测试Ollama连接(本地)
-async fn test_ollama_connection(request: TestConnectionRequest) -> Result<TestConnectionResponse, String> {
+async fn test_ollama_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
     let client = reqwest::Client::new();
-    let api_base = request.api_base.unwrap_or_else(|| "http://localhost:11434".to_string());
-    
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "http://localhost:11434".to_string());
+
     // 获取可用模型列表
-    let response = client.get(format!("{}/api/tags", api_base))
+    let response = client
+        .get(format!("{}/api/tags", api_base))
         .send()
         .await
         .map_err(|e| format!("Failed to connect to Ollama: {}", e))?;
-    
+
     if response.status().is_success() {
-        let models_response: serde_json::Value = response.json()
+        let models_response: serde_json::Value = response
+            .json()
             .await
             .map_err(|e| format!("Failed to parse response: {}", e))?;
-        
+
         // 提取模型列表
         if let Some(models_array) = models_response.get("models").and_then(|m| m.as_array()) {
             let models: Vec<String> = models_array
                 .iter()
                 .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from))
                 .collect();
-            
+
             Ok(TestConnectionResponse {
                 success: true,
-                message: format!("Successfully connected to Ollama, found {} local models", models.len()),
+                message: format!(
+                    "Successfully connected to Ollama, found {} local models",
+                    models.len()
+                ),
                 models: Some(models),
             })
         } else {
             Ok(TestConnectionResponse {
                 success: true,
-                message: "Successfully connected to Ollama, but failed to get model list".to_string(),
+                message: "Successfully connected to Ollama, but failed to get model list"
+                    .to_string(),
                 models: None,
             })
         }
     } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "未知错误".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "未知错误".to_string());
         Ok(TestConnectionResponse {
             success: false,
             message: format!("Failed to connect to Ollama: {}", error_text),
@@ -1257,20 +1426,26 @@ pub async fn save_ai_config(
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!("Starting to save AI configuration...");
-    
+
     // 直接使用注入的数据库服务
     let db_service = db.inner().clone();
-    
+
     // 保存providers配置为JSON
     let config_str = serde_json::to_string(&config.providers)
         .map_err(|e| format!("Failed to serialize providers config: {}", e))?;
-    
+
     tracing::info!("Saving providers config: {}", config_str);
-    
-    db_service.set_config("ai", "providers_config", &config_str, Some("AI providers configuration"))
+
+    db_service
+        .set_config(
+            "ai",
+            "providers_config",
+            &config_str,
+            Some("AI providers configuration"),
+        )
         .await
         .map_err(|e| format!("Failed to save providers config to DB: {}", e))?;
-    
+
     // 分别保存每个提供商的API密钥
     for (_id, provider) in &config.providers {
         if provider.enabled {
@@ -1278,7 +1453,10 @@ pub async fn save_ai_config(
                 if !api_key.is_empty() {
                     let key_name = format!("api_key_{}", provider.provider.to_lowercase());
                     let description = format!("{} API密钥", provider.provider);
-                    if let Err(e) = db_service.set_config("ai", &key_name, api_key, Some(&description)).await {
+                    if let Err(e) = db_service
+                        .set_config("ai", &key_name, api_key, Some(&description))
+                        .await
+                    {
                         tracing::error!("Failed to save API key for {}: {}", provider.provider, e);
                     } else {
                         tracing::info!("Saved API key for {}", provider.provider);
@@ -1287,15 +1465,15 @@ pub async fn save_ai_config(
             }
         }
     }
-    
+
     tracing::info!("AI configuration saved successfully");
-    
+
     // 触发AI服务重新加载
     if let Err(e) = reload_ai_services(app.clone()).await {
         tracing::warn!("Failed to reload AI services: {}", e);
         // 不返回错误，因为配置已保存成功
     }
-    
+
     // 验证配置是否正确加载
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
         match ai_manager.get_chat_models().await {
@@ -1308,13 +1486,16 @@ pub async fn save_ai_config(
                         tracing::info!("  - {}/{}", model.provider, model.name);
                     }
                 }
-            },
+            }
             Err(e) => {
-                tracing::error!("Failed to get chat models after reloading AI services: {}", e);
+                tracing::error!(
+                    "Failed to get chat models after reloading AI services: {}",
+                    e
+                );
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -1339,17 +1520,15 @@ pub async fn get_ai_usage_stats(
             "cost": 0.0088
         }
     });
-    
+
     Ok(stats)
 }
 
 // 重新加载AI服务
 #[tauri::command]
-pub async fn reload_ai_services(
-    app: AppHandle,
-) -> Result<(), String> {
+pub async fn reload_ai_services(app: AppHandle) -> Result<(), String> {
     tracing::info!("Starting to reload AI services...");
-    
+
     match app.try_state::<Arc<AiServiceManager>>() {
         Some(ai_manager) => {
             // 使用新的reload_services方法
@@ -1367,69 +1546,79 @@ pub async fn reload_ai_services(
                                     tracing::info!("  - {}/{}", model.provider, model.name);
                                 }
                             }
-                        },
+                        }
                         Err(e) => {
-                            tracing::error!("Failed to get chat models after reloading AI services: {}", e);
+                            tracing::error!(
+                                "Failed to get chat models after reloading AI services: {}",
+                                e
+                            );
                         }
                     }
                     Ok(())
-                },
+                }
                 Err(e) => {
                     let error_msg = format!("Failed to reload AI services: {}", e);
                     tracing::error!("{}", error_msg);
                     Err(error_msg)
                 }
             }
-        },
+        }
         None => {
             tracing::warn!("AI service manager not found, trying to recreate...");
-            
-            let database = match app.try_state::<Arc<crate::services::database::DatabaseService>>() {
+
+            let database = match app.try_state::<Arc<crate::services::database::DatabaseService>>()
+            {
                 Some(db) => db.inner().clone(),
                 None => {
-                    let error_msg = "Database service not initialized, cannot reload AI services.".to_string();
+                    let error_msg =
+                        "Database service not initialized, cannot reload AI services.".to_string();
                     tracing::error!("{}", error_msg);
                     return Err(error_msg);
                 }
             };
-            
+
             // 创建新的AI服务管理器
             let mut new_ai_manager = AiServiceManager::new(database);
-            
+
             // 设置MCP服务（如果可用）
             if let Some(mcp_service) = app.try_state::<Arc<crate::services::McpService>>() {
                 new_ai_manager.set_mcp_service(mcp_service.inner().clone());
             }
-            
+
             // 设置应用句柄
             new_ai_manager.set_app_handle(app.clone());
-            
+
             // 初始化默认服务
             match new_ai_manager.init_default_services().await {
                 Ok(_) => {
                     // 更新应用状态
                     app.manage(Arc::new(new_ai_manager.clone()));
                     tracing::info!("AI service manager recreated and initialized successfully");
-                    
+
                     // 验证模型是否正确加载
                     match new_ai_manager.get_chat_models().await {
                         Ok(models) => {
                             if models.is_empty() {
-                                tracing::warn!("No chat models found after recreating AI service manager");
+                                tracing::warn!(
+                                    "No chat models found after recreating AI service manager"
+                                );
                             } else {
                                 tracing::info!("Successfully loaded {} chat models", models.len());
                                 for model in &models {
                                     tracing::info!("  - {}/{}", model.provider, model.name);
                                 }
                             }
-                        },
+                        }
                         Err(e) => {
-                            tracing::error!("Failed to get chat models after recreating AI service manager: {}", e);
+                            tracing::error!(
+                                "Failed to get chat models after recreating AI service manager: {}",
+                                e
+                            );
                         }
                     }
-                    
+
                     Ok(())
-                },
+                }
                 Err(e) => {
                     let error_msg = format!("Failed to recreate AI service manager: {}", e);
                     tracing::error!("{}", error_msg);
@@ -1452,7 +1641,7 @@ pub async fn get_ai_chat_models(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<Vec<ModelInfo>, String> {
     tracing::info!("Getting available AI chat models...");
-    
+
     match ai_manager.get_chat_models().await {
         Ok(models) => {
             if models.is_empty() {
@@ -1464,7 +1653,7 @@ pub async fn get_ai_chat_models(
                 }
             }
             Ok(models)
-        },
+        }
         Err(e) => {
             let error_msg = format!("Failed to get chat models: {}", e);
             tracing::error!("{}", error_msg);
@@ -1477,7 +1666,10 @@ pub async fn get_ai_chat_models(
 pub async fn get_ai_embedding_models(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<Vec<ModelInfo>, String> {
-    ai_manager.get_embedding_models().await.map_err(|e| e.to_string())
+    ai_manager
+        .get_embedding_models()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1486,34 +1678,38 @@ pub async fn get_default_ai_model(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<Option<ModelInfo>, String> {
     tracing::info!("Getting default AI model for type: {}", model_type);
-    
+
     // 尝试从AI服务管理器获取默认模型
     match ai_manager.get_default_model(&model_type).await {
         Ok(Some(model)) => {
             tracing::info!("Found default model: {}/{}", model.provider, model.name);
             return Ok(Some(model));
-        },
+        }
         Ok(None) => {
             tracing::info!("No default model found, trying to find first available model");
-            
+
             // 如果没有设置默认模型，尝试获取第一个可用的模型
             match ai_manager.get_chat_models().await {
                 Ok(models) if !models.is_empty() => {
                     let first_model = &models[0];
-                    tracing::info!("Using first available model as default: {}/{}", first_model.provider, first_model.name);
+                    tracing::info!(
+                        "Using first available model as default: {}/{}",
+                        first_model.provider,
+                        first_model.name
+                    );
                     return Ok(Some(first_model.clone()));
-                },
+                }
                 Ok(_) => {
                     tracing::warn!("No models available to use as default");
                     return Ok(None);
-                },
+                }
                 Err(e) => {
                     let error_msg = format!("Failed to get models: {}", e);
                     tracing::error!("{}", error_msg);
                     return Err(error_msg);
                 }
             }
-        },
+        }
         Err(e) => {
             let error_msg = format!("Failed to get default model: {}", e);
             tracing::error!("{}", error_msg);
@@ -1529,7 +1725,10 @@ pub async fn set_default_ai_model(
     provider: String,
     model_name: String,
 ) -> Result<(), String> {
-    ai_manager.set_default_model(&model_type, &provider, &model_name).await.map_err(|e| e.to_string())
+    ai_manager
+        .set_default_model(&model_type, &provider, &model_name)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1538,7 +1737,10 @@ pub async fn get_ai_model_config(
     provider: String,
     model_name: String,
 ) -> Result<Option<ModelConfig>, String> {
-    ai_manager.get_model_config(&provider, &model_name).await.map_err(|e| e.to_string())
+    ai_manager
+        .get_model_config(&provider, &model_name)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1546,21 +1748,27 @@ pub async fn update_ai_model_config(
     ai_manager: State<'_, Arc<AiServiceManager>>,
     config: ModelConfig,
 ) -> Result<(), String> {
-    ai_manager.update_model_config(config).await.map_err(|e| e.to_string())
+    ai_manager
+        .update_model_config(config)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn save_ai_providers_config(
-    config: String,
-    app: AppHandle,
-) -> Result<(), String> {
-    let db = app.try_state::<Arc<dyn Database + Send + Sync>>()
+pub async fn save_ai_providers_config(config: String, app: AppHandle) -> Result<(), String> {
+    let db = app
+        .try_state::<Arc<dyn Database + Send + Sync>>()
         .ok_or_else(|| "Database service not initialized".to_string())?;
 
     // 这里 config 已经是 JSON string，直接保存
-    db.set_config("ai", "providers_config", &config, Some("AI providers configuration"))
-        .await
-        .map_err(|e| e.to_string())?;
-    
+    db.set_config(
+        "ai",
+        "providers_config",
+        &config,
+        Some("AI providers configuration"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(())
-} 
+}

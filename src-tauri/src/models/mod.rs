@@ -1,12 +1,14 @@
 pub mod ai;
+pub mod database;
+pub mod dictionary;
 pub mod mcp;
 pub mod scan;
+pub mod scan_session;
 pub mod vulnerability;
-pub mod database;
 
 // 通用类型定义
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// 通用响应结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,4 +53,4 @@ pub struct Pagination {
 pub struct PaginatedResponse<T> {
     pub data: Vec<T>,
     pub pagination: Pagination,
-} 
+}

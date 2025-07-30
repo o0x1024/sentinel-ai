@@ -1,17 +1,19 @@
-use crate::models::scan::{ScanTask as ScanTaskModel, ScanResult, ScanConfig, ScanStatus, ScanStep};
-use crate::models::database::{Asset, Vulnerability, ScanTask};
-use crate::services::database::DatabaseService;
-use crate::services::ai::AiServiceManager;
 use crate::mcp::client::McpClient;
-use anyhow::{Result, Context};
-use uuid::Uuid;
+use crate::models::database::{Asset, ScanTask, Vulnerability};
+use crate::models::scan::{
+    ScanConfig, ScanResult, ScanStatus, ScanStep, ScanTask as ScanTaskModel,
+};
+use crate::services::ai::AiServiceManager;
+use crate::services::database::DatabaseService;
+use anyhow::{Context, Result};
 use chrono::Utc;
-use tokio::sync::{RwLock, Mutex};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde_json::{json, Value};
-use tracing::{info, error};
-use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, RwLock};
+use tracing::{error, info};
+use uuid::Uuid;
 
 /// 智能扫描服务
 /// 集成AI分析、MCP工具执行、数据库持久化
@@ -24,9 +26,9 @@ pub struct ScanService {
 
 impl ScanService {
     pub fn new(
-        db: Arc<DatabaseService>, 
+        db: Arc<DatabaseService>,
         ai_manager: Arc<AiServiceManager>,
-        mcp_client: Arc<McpClient>
+        mcp_client: Arc<McpClient>,
     ) -> Self {
         Self {
             db,
@@ -39,10 +41,13 @@ impl ScanService {
     /// 创建扫描任务
     pub async fn create_task(&self, target: String, config: ScanConfig) -> Result<ScanTaskModel> {
         info!("Creating scan task: {}", target);
-        
+
         let task = ScanTaskModel {
             id: Uuid::new_v4(),
-            name: config.name.clone().unwrap_or_else(|| format!("AI Scan {}", target)),
+            name: config
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("AI Scan {}", target)),
             target: target.clone(),
             config: config.clone(),
             status: ScanStatus::Pending,
@@ -82,7 +87,9 @@ impl ScanService {
         };
 
         // 保存到数据库
-        self.db.create_scan_task(&db_task).await
+        self.db
+            .create_scan_task(&db_task)
+            .await
             .context("Failed to save scan task to database")?;
 
         // 加入活跃任务列表
@@ -100,7 +107,9 @@ impl ScanService {
         // 获取任务
         let task_arc = {
             let active_tasks = self.active_tasks.read().await;
-            active_tasks.get(&task_id).cloned()
+            active_tasks
+                .get(&task_id)
+                .cloned()
                 .ok_or_else(|| anyhow::anyhow!("Task not found: {}", task_id))?
         };
 
@@ -116,7 +125,7 @@ impl ScanService {
         let db = self.db.clone();
         let ai_manager = self.ai_manager.clone();
         let mcp_client = self.mcp_client.clone();
-        
+
         tokio::spawn(async move {
             if let Err(e) = Self::execute_scan(task_arc, db, ai_manager, mcp_client).await {
                 error!("Scan task execution failed: {}", e);
@@ -142,31 +151,43 @@ impl ScanService {
 
         // 阶段1: AI分析目标和制定扫描策略
         if let Err(e) = Self::phase_1_ai_planning(&task_arc, &ai_manager).await {
-            Self::mark_task_failed(&task_arc, &db, &format!("AI planning phase failed: {}", e)).await;
+            Self::mark_task_failed(&task_arc, &db, &format!("AI planning phase failed: {}", e))
+                .await;
             return Err(e);
         }
 
         // 阶段2: 资产发现
         if let Err(e) = Self::phase_2_asset_discovery(&task_arc, &db, &mcp_client).await {
-            Self::mark_task_failed(&task_arc, &db, &format!("Asset discovery phase failed: {}", e)).await;
+            Self::mark_task_failed(
+                &task_arc,
+                &db,
+                &format!("Asset discovery phase failed: {}", e),
+            )
+            .await;
             return Err(e);
         }
 
         // 阶段3: 漏洞扫描
         if let Err(e) = Self::phase_3_vulnerability_scan(&task_arc, &db, &mcp_client).await {
-            Self::mark_task_failed(&task_arc, &db, &format!("Vulnerability scanning phase failed: {}", e)).await;
+            Self::mark_task_failed(
+                &task_arc,
+                &db,
+                &format!("Vulnerability scanning phase failed: {}", e),
+            )
+            .await;
             return Err(e);
         }
 
         // 阶段4: AI分析和验证
         if let Err(e) = Self::phase_4_ai_analysis(&task_arc, &db, &ai_manager).await {
-            Self::mark_task_failed(&task_arc, &db, &format!("AI analysis phase failed: {}", e)).await;
+            Self::mark_task_failed(&task_arc, &db, &format!("AI analysis phase failed: {}", e))
+                .await;
             return Err(e);
         }
 
         // 完成任务
         Self::complete_task(&task_arc, &db).await?;
-        
+
         info!("Scan task completed: {}", task_id);
         Ok(())
     }
@@ -206,14 +227,14 @@ Please return the analysis result in JSON format.",
 
         // 暂时简化AI规划，等AI服务完全稳定后再完善
         info!("AI扫描规划: {}", analysis_prompt);
-        
+
         // TODO: 实现真正的AI对话
         // let conversation_id = ai_manager.create_conversation(...).await?;
         // let _response = ai_manager.send_message(...).await?;
 
         // 解析AI响应并更新扫描步骤
         let steps = Self::parse_ai_scan_plan("")?;
-        
+
         {
             let mut task = task_arc.lock().await;
             task.steps = steps;
@@ -241,7 +262,7 @@ Please return the analysis result in JSON format.",
 
         // 子域名发现 - 简化版，因为MCP客户端接口还需要实现
         let subdomains = vec![target.clone()]; // 简化版
-        
+
         // 端口扫描 - 简化版
         let open_ports = vec!["80".to_string(), "443".to_string()]; // 简化版
 
@@ -268,7 +289,7 @@ Please return the analysis result in JSON format.",
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             };
-            
+
             // 暂时注释掉，等待实现create_asset方法
             // if let Err(e) = db.create_asset(&asset).await {
             //     warn!("保存资产失败: {}", e);
@@ -281,7 +302,10 @@ Please return the analysis result in JSON format.",
             task.results_count = (subdomains.len() + open_ports.len() + http_services.len()) as u32;
         }
 
-        info!("Asset discovery completed, found {} assets", subdomains.len() + open_ports.len() + http_services.len());
+        info!(
+            "Asset discovery completed, found {} assets",
+            subdomains.len() + open_ports.len() + http_services.len()
+        );
         Ok(())
     }
 
@@ -301,15 +325,13 @@ Please return the analysis result in JSON format.",
         };
 
         // 模拟漏洞发现
-        let vulnerabilities = vec![
-            json!({
-                "title": "示例SQL注入漏洞",
-                "description": "发现潜在的SQL注入点",
-                "severity": "high",
-                "cvss": 8.5,
-                "type": "sql_injection"
-            })
-        ];
+        let vulnerabilities = vec![json!({
+            "title": "示例SQL注入漏洞",
+            "description": "发现潜在的SQL注入点",
+            "severity": "high",
+            "cvss": 8.5,
+            "type": "sql_injection"
+        })];
 
         // 保存发现的漏洞
         let mut vulns_saved = 0;
@@ -327,7 +349,10 @@ Please return the analysis result in JSON format.",
             task.vulnerabilities_found = vulns_saved;
         }
 
-        info!("Vulnerability scanning completed, found {} vulnerabilities", vulns_saved);
+        info!(
+            "Vulnerability scanning completed, found {} vulnerabilities",
+            vulns_saved
+        );
         Ok(())
     }
 
@@ -357,39 +382,48 @@ Please return the analysis result in JSON format.",
             project_id: None,
             asset_id: None,
             scan_task_id: None,
-            title: vuln_data.get("title")
+            title: vuln_data
+                .get("title")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown vulnerability")
                 .to_string(),
-            description: vuln_data.get("description")
+            description: vuln_data
+                .get("description")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            vulnerability_type: vuln_data.get("type")
+            vulnerability_type: vuln_data
+                .get("type")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            severity: vuln_data.get("severity")
+            severity: vuln_data
+                .get("severity")
                 .and_then(|v| v.as_str())
                 .unwrap_or("medium")
                 .to_string(),
-            cvss_score: vuln_data.get("cvss")
-                .and_then(|v| v.as_f64()),
-            cvss_vector: vuln_data.get("cvss_vector")
+            cvss_score: vuln_data.get("cvss").and_then(|v| v.as_f64()),
+            cvss_vector: vuln_data
+                .get("cvss_vector")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            cwe_id: vuln_data.get("cwe")
+            cwe_id: vuln_data
+                .get("cwe")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             owasp_category: None,
-            proof_of_concept: vuln_data.get("payload")
+            proof_of_concept: vuln_data
+                .get("payload")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            impact: vuln_data.get("impact")
+            impact: vuln_data
+                .get("impact")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            remediation: vuln_data.get("remediation")
+            remediation: vuln_data
+                .get("remediation")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            references: vuln_data.get("references")
+            references: vuln_data
+                .get("references")
                 .and_then(|v| v.as_array())
                 .map(|arr| json!(arr).to_string()),
             status: "open".to_string(),
@@ -398,7 +432,8 @@ Please return the analysis result in JSON format.",
             reward_amount: None,
             submission_date: None,
             resolution_date: None,
-            tags: vuln_data.get("tags")
+            tags: vuln_data
+                .get("tags")
                 .and_then(|v| v.as_array())
                 .map(|arr| json!(arr).to_string()),
             attachments: None,
@@ -454,7 +489,10 @@ Please return the analysis result in JSON format.",
             task.id
         };
 
-        if let Err(e) = db.update_scan_task_status(&task_id.to_string(), "failed", Some(0.0)).await {
+        if let Err(e) = db
+            .update_scan_task_status(&task_id.to_string(), "failed", Some(0.0))
+            .await
+        {
             error!("Failed to update task status: {}", e);
         }
     }
@@ -473,7 +511,8 @@ Please return the analysis result in JSON format.",
             task.id
         };
 
-        db.update_scan_task_status(&task_id.to_string(), "completed", Some(100.0)).await
+        db.update_scan_task_status(&task_id.to_string(), "completed", Some(100.0))
+            .await
             .context("Failed to update task completion status")?;
 
         Ok(())
@@ -486,11 +525,13 @@ Please return the analysis result in JSON format.",
             let mut task = task_arc.lock().await;
             task.status = ScanStatus::Cancelled;
             task.completed_at = Some(Utc::now());
-            
+
             // 更新数据库
-            self.db.update_scan_task_status(&task_id.to_string(), "cancelled", None).await?;
+            self.db
+                .update_scan_task_status(&task_id.to_string(), "cancelled", None)
+                .await?;
         }
-        
+
         Ok(())
     }
 
@@ -498,7 +539,7 @@ Please return the analysis result in JSON format.",
     pub async fn list_tasks(&self) -> Result<Vec<ScanTaskModel>> {
         // 从数据库获取任务
         let db_tasks = self.db.get_scan_tasks(None).await?;
-        
+
         // 转换为模型格式
         let mut tasks = Vec::new();
         for db_task in db_tasks {
@@ -506,7 +547,7 @@ Please return the analysis result in JSON format.",
                 tasks.push(task);
             }
         }
-        
+
         Ok(tasks)
     }
 
@@ -548,7 +589,7 @@ Please return the analysis result in JSON format.",
     /// 转换数据库任务为模型任务
     fn convert_db_task_to_model(db_task: &ScanTask) -> Result<ScanTaskModel> {
         let task_id = Uuid::parse_str(&db_task.id)?;
-        
+
         // 解析配置
         let config = if let Some(config_str) = &db_task.tools_config {
             serde_json::from_str(config_str).unwrap_or_else(|_| ScanConfig {
@@ -602,7 +643,7 @@ Please return the analysis result in JSON format.",
             created_at: db_task.created_at,
             started_at: db_task.started_at,
             completed_at: db_task.completed_at,
-            results_count: 0, // 需要单独查询
+            results_count: 0,         // 需要单独查询
             vulnerabilities_found: 0, // 需要单独查询
             error_message: db_task.error_message.clone(),
             current_step: None,
@@ -625,4 +666,4 @@ impl Default for ScanService {
     fn default() -> Self {
         unimplemented!("ScanService requires dependencies to be constructed")
     }
-} 
+}

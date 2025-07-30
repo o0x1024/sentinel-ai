@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// AI服务提供商
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -10,12 +10,12 @@ pub enum AiProvider {
     OpenAI,
     Anthropic,
     Gemini,
-    XAI,       // XAI/Grok
+    XAI, // XAI/Grok
     Ollama,
     Groq,
     DeepSeek,
     Cohere,
-    Custom,    // 自定义提供商
+    Custom, // 自定义提供商
 }
 
 impl std::fmt::Display for AiProvider {
@@ -246,7 +246,8 @@ impl AiConversation {
     }
 
     pub fn calculate_cost(&self) -> f64 {
-        self.messages.iter()
+        self.messages
+            .iter()
             .filter_map(|msg| msg.tokens_used.as_ref())
             .filter_map(|usage| usage.cost)
             .sum()
@@ -258,111 +259,122 @@ pub fn get_default_models() -> HashMap<AiProvider, Vec<AiModel>> {
     let mut models = HashMap::new();
 
     // OpenAI 模型
-    models.insert(AiProvider::OpenAI, vec![
-        AiModel {
-            id: "gpt-4o".to_string(),
-            name: "GPT-4o".to_string(),
-            provider: AiProvider::OpenAI,
-            description: "The latest GPT-4 Omni model, supporting text, images and audio".to_string(),
-            context_length: 128000,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: true,
-            cost_per_1k_input: Some(5.0),
-            cost_per_1k_output: Some(15.0),
-            is_available: true,
-        },
-        AiModel {
-            id: "gpt-4o-mini".to_string(),
-            name: "GPT-4o Mini".to_string(),
-            provider: AiProvider::OpenAI,
-            description: "A lightweight GPT-4o model with lower cost".to_string(),
-            context_length: 128000,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: true,
-            cost_per_1k_input: Some(0.15),
-            cost_per_1k_output: Some(0.6),
-            is_available: true,
-        },
-        AiModel {
-            id: "gpt-4-turbo".to_string(),
-            name: "GPT-4 Turbo".to_string(),
-            provider: AiProvider::OpenAI,
-            description: "A high-performance GPT-4 model".to_string(),
-            context_length: 128000,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: true,
-            cost_per_1k_input: Some(10.0),
-            cost_per_1k_output: Some(30.0),
-            is_available: true,
-        },
-    ]);
+    models.insert(
+        AiProvider::OpenAI,
+        vec![
+            AiModel {
+                id: "gpt-4o".to_string(),
+                name: "GPT-4o".to_string(),
+                provider: AiProvider::OpenAI,
+                description: "The latest GPT-4 Omni model, supporting text, images and audio"
+                    .to_string(),
+                context_length: 128000,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: true,
+                cost_per_1k_input: Some(5.0),
+                cost_per_1k_output: Some(15.0),
+                is_available: true,
+            },
+            AiModel {
+                id: "gpt-4o-mini".to_string(),
+                name: "GPT-4o Mini".to_string(),
+                provider: AiProvider::OpenAI,
+                description: "A lightweight GPT-4o model with lower cost".to_string(),
+                context_length: 128000,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: true,
+                cost_per_1k_input: Some(0.15),
+                cost_per_1k_output: Some(0.6),
+                is_available: true,
+            },
+            AiModel {
+                id: "gpt-4-turbo".to_string(),
+                name: "GPT-4 Turbo".to_string(),
+                provider: AiProvider::OpenAI,
+                description: "A high-performance GPT-4 model".to_string(),
+                context_length: 128000,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: true,
+                cost_per_1k_input: Some(10.0),
+                cost_per_1k_output: Some(30.0),
+                is_available: true,
+            },
+        ],
+    );
 
     // Anthropic 模型
-    models.insert(AiProvider::Anthropic, vec![
-        AiModel {
-            id: "claude-3-5-sonnet-20241022".to_string(),
-            name: "Claude 3.5 Sonnet".to_string(),
-            provider: AiProvider::Anthropic,
-            description: "The most powerful model from Anthropic".to_string(),
-            context_length: 200000,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: true,
-            cost_per_1k_input: Some(3.0),
-            cost_per_1k_output: Some(15.0),
-            is_available: true,
-        },
-        AiModel {
-            id: "claude-3-haiku-20240307".to_string(),
-            name: "Claude 3 Haiku".to_string(),
-            provider: AiProvider::Anthropic,
-            description: "A fast and economical Claude model".to_string(),
-            context_length: 200000,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: true,
-            cost_per_1k_input: Some(0.25),
-            cost_per_1k_output: Some(1.25),
-            is_available: true,
-        },
-    ]);
+    models.insert(
+        AiProvider::Anthropic,
+        vec![
+            AiModel {
+                id: "claude-3-5-sonnet-20241022".to_string(),
+                name: "Claude 3.5 Sonnet".to_string(),
+                provider: AiProvider::Anthropic,
+                description: "The most powerful model from Anthropic".to_string(),
+                context_length: 200000,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: true,
+                cost_per_1k_input: Some(3.0),
+                cost_per_1k_output: Some(15.0),
+                is_available: true,
+            },
+            AiModel {
+                id: "claude-3-haiku-20240307".to_string(),
+                name: "Claude 3 Haiku".to_string(),
+                provider: AiProvider::Anthropic,
+                description: "A fast and economical Claude model".to_string(),
+                context_length: 200000,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: true,
+                cost_per_1k_input: Some(0.25),
+                cost_per_1k_output: Some(1.25),
+                is_available: true,
+            },
+        ],
+    );
 
     // Google Gemini 模型
-    models.insert(AiProvider::Gemini, vec![
-        AiModel {
-            id: "gemini-1.5-pro".to_string(),
-            name: "Gemini 1.5 Pro".to_string(),
-            provider: AiProvider::Gemini,
-            description: "The most advanced multimodal model from Google".to_string(),
-            context_length: 2000000,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: true,
-            cost_per_1k_input: Some(3.5),
-            cost_per_1k_output: Some(10.5),
-            is_available: true,
-        },
-        AiModel {
-            id: "gemini-1.5-flash".to_string(),
-            name: "Gemini 1.5 Flash".to_string(),
-            provider: AiProvider::Gemini,
-            description: "A fast Gemini model".to_string(),
-            context_length: 1000000,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: true,
-            cost_per_1k_input: Some(0.075),
-            cost_per_1k_output: Some(0.3),
-            is_available: true,
-        },
-    ]);
+    models.insert(
+        AiProvider::Gemini,
+        vec![
+            AiModel {
+                id: "gemini-1.5-pro".to_string(),
+                name: "Gemini 1.5 Pro".to_string(),
+                provider: AiProvider::Gemini,
+                description: "The most advanced multimodal model from Google".to_string(),
+                context_length: 2000000,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: true,
+                cost_per_1k_input: Some(3.5),
+                cost_per_1k_output: Some(10.5),
+                is_available: true,
+            },
+            AiModel {
+                id: "gemini-1.5-flash".to_string(),
+                name: "Gemini 1.5 Flash".to_string(),
+                provider: AiProvider::Gemini,
+                description: "A fast Gemini model".to_string(),
+                context_length: 1000000,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: true,
+                cost_per_1k_input: Some(0.075),
+                cost_per_1k_output: Some(0.3),
+                is_available: true,
+            },
+        ],
+    );
 
     // XAI/Grok 模型
-    models.insert(AiProvider::XAI, vec![
-        AiModel {
+    models.insert(
+        AiProvider::XAI,
+        vec![AiModel {
             id: "grok-beta".to_string(),
             name: "Grok Beta".to_string(),
             provider: AiProvider::XAI,
@@ -374,42 +386,46 @@ pub fn get_default_models() -> HashMap<AiProvider, Vec<AiModel>> {
             cost_per_1k_input: Some(5.0),
             cost_per_1k_output: Some(15.0),
             is_available: true,
-        },
-    ]);
+        }],
+    );
 
     // Groq 模型
-    models.insert(AiProvider::Groq, vec![
-        AiModel {
-            id: "llama-3.1-70b-versatile".to_string(),
-            name: "Llama 3.1 70B".to_string(),
-            provider: AiProvider::Groq,
-            description: "The Llama 3.1 70B model from Meta, running on Groq".to_string(),
-            context_length: 131072,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: false,
-            cost_per_1k_input: Some(0.59),
-            cost_per_1k_output: Some(0.79),
-            is_available: true,
-        },
-        AiModel {
-            id: "mixtral-8x7b-32768".to_string(),
-            name: "Mixtral 8x7B".to_string(),
-            provider: AiProvider::Groq,
-            description: "The Mixtral 8x7B model from Mistral".to_string(),
-            context_length: 32768,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: false,
-            cost_per_1k_input: Some(0.27),
-            cost_per_1k_output: Some(0.27),
-            is_available: true,
-        },
-    ]);
+    models.insert(
+        AiProvider::Groq,
+        vec![
+            AiModel {
+                id: "llama-3.1-70b-versatile".to_string(),
+                name: "Llama 3.1 70B".to_string(),
+                provider: AiProvider::Groq,
+                description: "The Llama 3.1 70B model from Meta, running on Groq".to_string(),
+                context_length: 131072,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: false,
+                cost_per_1k_input: Some(0.59),
+                cost_per_1k_output: Some(0.79),
+                is_available: true,
+            },
+            AiModel {
+                id: "mixtral-8x7b-32768".to_string(),
+                name: "Mixtral 8x7B".to_string(),
+                provider: AiProvider::Groq,
+                description: "The Mixtral 8x7B model from Mistral".to_string(),
+                context_length: 32768,
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: false,
+                cost_per_1k_input: Some(0.27),
+                cost_per_1k_output: Some(0.27),
+                is_available: true,
+            },
+        ],
+    );
 
     // DeepSeek 模型
-    models.insert(AiProvider::DeepSeek, vec![
-        AiModel {
+    models.insert(
+        AiProvider::DeepSeek,
+        vec![AiModel {
             id: "deepseek-chat".to_string(),
             name: "DeepSeek Chat".to_string(),
             provider: AiProvider::DeepSeek,
@@ -421,12 +437,13 @@ pub fn get_default_models() -> HashMap<AiProvider, Vec<AiModel>> {
             cost_per_1k_input: Some(0.14),
             cost_per_1k_output: Some(0.28),
             is_available: true,
-        },
-    ]);
+        }],
+    );
 
     // Cohere 模型
-    models.insert(AiProvider::Cohere, vec![
-        AiModel {
+    models.insert(
+        AiProvider::Cohere,
+        vec![AiModel {
             id: "command-r-plus".to_string(),
             name: "Command R+".to_string(),
             provider: AiProvider::Cohere,
@@ -438,38 +455,41 @@ pub fn get_default_models() -> HashMap<AiProvider, Vec<AiModel>> {
             cost_per_1k_input: Some(3.0),
             cost_per_1k_output: Some(15.0),
             is_available: true,
-        },
-    ]);
+        }],
+    );
 
     // Ollama 模型（本地运行）
-    models.insert(AiProvider::Ollama, vec![
-        AiModel {
-            id: "llama3.1".to_string(),
-            name: "Llama 3.1".to_string(),
-            provider: AiProvider::Ollama,
-            description: "The Llama 3.1 model running locally".to_string(),
-            context_length: 128000,
-            supports_streaming: true,
-            supports_tools: false,
-            supports_vision: false,
-            cost_per_1k_input: Some(0.0), // 本地运行无成本
-            cost_per_1k_output: Some(0.0),
-            is_available: false, // 需要本地安装
-        },
-        AiModel {
-            id: "mistral".to_string(),
-            name: "Mistral".to_string(),
-            provider: AiProvider::Ollama,
-            description: "The Mistral model running locally".to_string(),
-            context_length: 32768,
-            supports_streaming: true,
-            supports_tools: false,
-            supports_vision: false,
-            cost_per_1k_input: Some(0.0),
-            cost_per_1k_output: Some(0.0),
-            is_available: false,
-        },
-    ]);
+    models.insert(
+        AiProvider::Ollama,
+        vec![
+            AiModel {
+                id: "llama3.1".to_string(),
+                name: "Llama 3.1".to_string(),
+                provider: AiProvider::Ollama,
+                description: "The Llama 3.1 model running locally".to_string(),
+                context_length: 128000,
+                supports_streaming: true,
+                supports_tools: false,
+                supports_vision: false,
+                cost_per_1k_input: Some(0.0), // 本地运行无成本
+                cost_per_1k_output: Some(0.0),
+                is_available: false, // 需要本地安装
+            },
+            AiModel {
+                id: "mistral".to_string(),
+                name: "Mistral".to_string(),
+                provider: AiProvider::Ollama,
+                description: "The Mistral model running locally".to_string(),
+                context_length: 32768,
+                supports_streaming: true,
+                supports_tools: false,
+                supports_vision: false,
+                cost_per_1k_input: Some(0.0),
+                cost_per_1k_output: Some(0.0),
+                is_available: false,
+            },
+        ],
+    );
 
     models
-} 
+}

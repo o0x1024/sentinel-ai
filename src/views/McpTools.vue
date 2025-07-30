@@ -372,7 +372,7 @@ import { ref, onMounted, reactive, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 
-const { t } = useI18n();
+const { t } = useI18n()
 
 // --- 类型定义 ---
 interface McpConnection {

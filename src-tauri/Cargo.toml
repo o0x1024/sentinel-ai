@@ -19,17 +19,21 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # Tauri 核心依赖
-tauri = { version = "2.0", features = ["devtools", "protocol-asset"] }
-tauri-plugin-opener = "2"
+tauri = { version = "2.7.0", features = ["devtools", "protocol-asset", "tray-icon"] }
+tauri-plugin-opener = "2.4.0"
 tauri-plugin-dialog = "2"
-tauri-plugin-http = "2"
+tauri-plugin-http = "2.5.1"
 tauri-plugin-shell = "2"
+
+# 子域名扫描工具
+rsubdomain = "1.2.1"
+
 
 # MCP协议支持 - 使用官方Rust SDK
 rmcp = { version = "0.2.0", features = ["client", "macros", "transport-async-rw", "transport-child-process", "transport-sse-client", "reqwest"] }
 
 # AI服务 - 使用 genai
-genai = "0.4.0-alpha.3"
+genai = "0.4.0-alpha.6"
 
 # 数据库支持
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
@@ -80,6 +84,34 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 url = "2.4"
 derive_more = "2.0.1"
+
+# 网络扫描工具依赖
+# 子域名扫描相关
+trust-dns-resolver = "0.23"
+hickory-resolver = "0.25.2"
+
+# 端口扫描相关
+tokio-util = { version = "0.7", features = ["net"] }
+net2 = "0.2"
+socket2 = "0.5"
+
+# 网络工具
+ping = "0.5"
+cidr = "0.2"
+ipnet = "2.9"
+
+# 并发控制
+semaphore = "0.4.0"
+tokio-stream = "0.1"
+
+# 命令行工具集成
+which = "8.0.0"
+tempfile = "3.8"
+
+# HTTP 探测
+headers = "0.4"
+mime = "0.3"
+tauri-plugin-fs = "2"
 
 [profile.dev]
 # 开发环境优化

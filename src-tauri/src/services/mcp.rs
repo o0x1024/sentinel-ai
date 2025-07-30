@@ -1,13 +1,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde_json::Value;
 
-use crate::mcp::{
-    McpServerManager, McpClientManager, ConnectionStatus,
-    McpTool, ToolDefinition
-};
+use crate::mcp::{ConnectionStatus, McpClientManager, McpServerManager, McpTool, ToolDefinition};
 
 // 工具信息类型已移动到 types 模块
 
@@ -45,20 +42,20 @@ impl McpService {
         if *running {
             return Err(anyhow::anyhow!("MCP server is already running"));
         }
-        
+
         match transport {
             "stdio" => {
                 // 在后台启动 STDIO 服务器
                 let manager = self.server_manager.clone();
                 let running_flag = self.is_running.clone();
-                
+
                 tokio::spawn(async move {
                     *running_flag.write().await = true;
-                    
+
                     if let Err(e) = manager.start_stdio().await {
                         eprintln!("STDIO MCP server failed to start: {}", e);
                     }
-                    
+
                     *running_flag.write().await = false;
                 });
             }
@@ -69,10 +66,16 @@ impl McpService {
                     if !parts.is_empty() {
                         let command = parts[0].to_string();
                         let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-                        
+
                         let manager = self.server_manager.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = manager.start_child_process(&command, &args.iter().map(|s| s.as_str()).collect::<Vec<_>>()).await {
+                            if let Err(e) = manager
+                                .start_child_process(
+                                    &command,
+                                    &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                                )
+                                .await
+                            {
                                 eprintln!("Child process MCP server failed to start: {}", e);
                             }
                         });
@@ -85,7 +88,7 @@ impl McpService {
                 tracing::info!("MCP server started (mode: {})", transport);
             }
         }
-        
+
         Ok(())
     }
 
@@ -105,14 +108,14 @@ impl McpService {
     /// 获取所有可用工具（包括内置和外部连接的工具）
     pub async fn get_available_tools(&self) -> Result<Vec<crate::mcp::types::McpToolInfo>> {
         let mut tool_infos = Vec::new();
-        
+
         // 获取内置工具
         let server_arc = self.server_manager.get_server().await;
         let server_guard = server_arc.read().await;
         let internal_tools = server_guard.list_tools().await;
         let registry_arc = server_guard.get_tool_registry();
         let reg = registry_arc.read().await;
-        
+
         for tool_name in internal_tools {
             if let Some(tool) = reg.get_tool(&tool_name).ok() {
                 tool_infos.push(crate::mcp::types::McpToolInfo {
@@ -138,7 +141,7 @@ impl McpService {
                 });
             }
         }
-        
+
         // 获取外部连接的工具
         let client_arc = self.client_manager.get_client();
         let client = client_arc.read().await;
@@ -168,7 +171,7 @@ impl McpService {
                 });
             }
         }
-        
+
         Ok(tool_infos)
     }
 
@@ -176,11 +179,19 @@ impl McpService {
     pub async fn execute_tool(&self, tool_name: &str, parameters: Value) -> Result<Value> {
         // 首先尝试执行内置工具
         let server = self.server_manager.get_server().await;
-        match server.write().await.execute_tool(tool_name, parameters.clone()).await {
+        match server
+            .write()
+            .await
+            .execute_tool(tool_name, parameters.clone())
+            .await
+        {
             Ok(result) => return Ok(result),
             Err(_) => {
                 // 内置工具不存在或执行失败，尝试外部工具
-                tracing::info!("Built-in tool '{}' not available, trying external tools", tool_name);
+                tracing::info!(
+                    "Built-in tool '{}' not available, trying external tools",
+                    tool_name
+                );
             }
         }
 
@@ -215,7 +226,12 @@ impl McpService {
     }
 
     /// 连接到子进程MCP服务器
-    pub async fn connect_to_process(&self, name: String, command: &str, args: Vec<&str>) -> Result<String> {
+    pub async fn connect_to_process(
+        &self,
+        name: String,
+        command: &str,
+        args: Vec<&str>,
+    ) -> Result<String> {
         let client_arc = self.client_manager.get_client();
         let client = client_arc.read().await;
         client.connect_to_child_process(name, command, args).await
@@ -231,24 +247,40 @@ impl McpService {
     /// 获取连接状态信息
     pub async fn get_connection_info(&self) -> Result<Vec<McpConnectionInfo>> {
         let mut connections = Vec::new();
-        
+
         // 内置服务器状态
         let is_running = self.is_server_running().await;
-        let tools_count = self.server_manager.get_server().await.read().await.list_tools().await.len();
-        
+        let tools_count = self
+            .server_manager
+            .get_server()
+            .await
+            .read()
+            .await
+            .list_tools()
+            .await
+            .len();
+
         connections.push(McpConnectionInfo {
             name: "Built-in security tools server".to_string(),
             transport_type: "internal".to_string(),
             endpoint: "localhost".to_string(),
-            status: if is_running { "connected".to_string() } else { "disconnected".to_string() },
+            status: if is_running {
+                "connected".to_string()
+            } else {
+                "disconnected".to_string()
+            },
             tools_count,
-            last_activity: if is_running { 
-                Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string()) 
-            } else { 
-                None 
+            last_activity: if is_running {
+                Some(
+                    chrono::Utc::now()
+                        .format("%Y-%m-%d %H:%M:%S UTC")
+                        .to_string(),
+                )
+            } else {
+                None
             },
         });
-        
+
         // 外部连接状态
         let client_arc = self.client_manager.get_client();
         let client = client_arc.read().await;
@@ -261,26 +293,38 @@ impl McpService {
                 status: match conn.status {
                     crate::mcp::client::ConnectionStatus::Connected => "connected".to_string(),
                     crate::mcp::client::ConnectionStatus::Connecting => "connecting".to_string(),
-                    crate::mcp::client::ConnectionStatus::Disconnected => "disconnected".to_string(),
+                    crate::mcp::client::ConnectionStatus::Disconnected => {
+                        "disconnected".to_string()
+                    }
                     crate::mcp::client::ConnectionStatus::Error(e) => format!("error: {}", e),
                 },
                 tools_count: conn.tools.len(),
-                last_activity: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+                last_activity: Some(
+                    chrono::Utc::now()
+                        .format("%Y-%m-%d %H:%M:%S UTC")
+                        .to_string(),
+                ),
             });
         }
-        
+
         Ok(connections)
     }
 
     /// 测试工具连接
     pub async fn test_tool(&self, tool_name: &str) -> Result<bool> {
-        let registry = self.server_manager.get_server().await.read().await.get_tool_registry();
+        let registry = self
+            .server_manager
+            .get_server()
+            .await
+            .read()
+            .await
+            .get_tool_registry();
         let reg = registry.read().await;
-        
+
         if reg.get_tool(tool_name).is_ok() {
             return Ok(true);
         }
-        
+
         // 检查外部工具
         let client_arc = self.client_manager.get_client();
         let connections = client_arc.read().await.get_connections().await;
@@ -293,7 +337,7 @@ impl McpService {
                 }
             }
         }
-        
+
         Ok(false)
     }
 
@@ -301,11 +345,20 @@ impl McpService {
     pub async fn get_tool_stats(&self) -> Result<Value> {
         let tools = self.get_available_tools().await?;
         let connections = self.get_connection_info().await?;
-        
-        let internal_tools = tools.iter().filter(|t| t.metadata.author.contains("Internal")).count();
-        let external_tools = tools.iter().filter(|t| t.metadata.author.contains("External")).count();
-        let connected_servers = connections.iter().filter(|c| c.status == "connected").count();
-        
+
+        let internal_tools = tools
+            .iter()
+            .filter(|t| t.metadata.author.contains("Internal"))
+            .count();
+        let external_tools = tools
+            .iter()
+            .filter(|t| t.metadata.author.contains("External"))
+            .count();
+        let connected_servers = connections
+            .iter()
+            .filter(|c| c.status == "connected")
+            .count();
+
         Ok(serde_json::json!({
             "total_tools": tools.len(),
             "internal_tools": internal_tools,
@@ -322,15 +375,24 @@ impl McpService {
     }
 
     /// 根据分类获取工具
-    pub async fn get_tools_by_category(&self, category: crate::mcp::ToolCategory) -> Result<Vec<crate::mcp::types::McpToolInfo>> {
+    pub async fn get_tools_by_category(
+        &self,
+        category: crate::mcp::ToolCategory,
+    ) -> Result<Vec<crate::mcp::types::McpToolInfo>> {
         let all_tools = self.get_available_tools().await?;
-        Ok(all_tools.into_iter().filter(|t| t.category == category).collect())
+        Ok(all_tools
+            .into_iter()
+            .filter(|t| t.category == category)
+            .collect())
     }
 
     /// 搜索工具
     pub async fn search_tools(&self, query: &str) -> Result<Vec<crate::mcp::types::McpToolInfo>> {
         let all_tools = self.get_available_tools().await?;
-        Ok(all_tools.into_iter().filter(|t| t.name.contains(query) || t.description.contains(query)).collect())
+        Ok(all_tools
+            .into_iter()
+            .filter(|t| t.name.contains(query) || t.description.contains(query))
+            .collect())
     }
 
     /// 获取单个工具
@@ -340,7 +402,10 @@ impl McpService {
     }
 
     /// 获取执行结果
-    pub async fn get_execution_result(&self, execution_id: uuid::Uuid) -> Result<Option<crate::mcp::ToolExecutionResult>> {
+    pub async fn get_execution_result(
+        &self,
+        execution_id: uuid::Uuid,
+    ) -> Result<Option<crate::mcp::ToolExecutionResult>> {
         let server = self.server_manager.get_server().await;
         let server_guard = server.read().await;
         Ok(server_guard.get_execution_result(&execution_id))
@@ -360,4 +425,4 @@ impl McpService {
     pub async fn initialize_mcp(&self) -> Result<()> {
         self.client_manager.initialize().await
     }
-} 
+}

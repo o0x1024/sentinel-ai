@@ -12,8 +12,16 @@
         <i class="fas fa-search text-xl"></i>
       </router-link>
       
+      <router-link to="/scan-sessions" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="智能扫描会话">
+        <i class="fas fa-brain text-xl"></i>
+      </router-link>
+      
       <router-link to="/vulnerabilities" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="漏洞管理">
         <i class="fas fa-bug text-xl"></i>
+      </router-link>
+      
+      <router-link to="/dictionary" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="字典管理">
+        <i class="fas fa-book text-xl"></i>
       </router-link>
       
       <router-link to="/projects" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="赏金项目">
@@ -69,54 +77,6 @@
           </div>
         </div>
       </div>
-
-      <!-- 导航菜单 -->
-      <div class="card bg-base-100 shadow">
-        <div class="card-body p-4">
-          <h3 class="card-title text-base font-medium flex items-center">
-            <i class="fas fa-compass mr-2 text-secondary"></i>{{ t('sidebar.navigation') }}
-          </h3>
-          
-          <ul class="menu menu-sm p-0 mt-2">
-            <li>
-              <router-link to="/dashboard">
-                <i class="fas fa-home"></i>{{ t('sidebar.dashboard') }}
-              </router-link>
-            </li>
-            <li>
-              <router-link to="/scan-tasks">
-                <i class="fas fa-search"></i>{{ t('sidebar.scanTasks') }}
-              </router-link>
-            </li>
-            <li>
-              <router-link to="/vulnerabilities">
-                <i class="fas fa-bug"></i>{{ t('sidebar.vulnerabilities') }}
-              </router-link>
-            </li>
-            <li>
-              <router-link to="/projects">
-                <i class="fas fa-trophy"></i>{{ t('sidebar.projects') }}
-              </router-link>
-            </li>
-            <li>
-              <router-link to="/submissions">
-                <i class="fas fa-paper-plane"></i>{{ t('sidebar.submissions') }}
-              </router-link>
-            </li>
-            <li>
-              <router-link to="/earnings">
-                <i class="fas fa-dollar-sign"></i>{{ t('sidebar.earnings') }}
-              </router-link>
-            </li>
-            <li>
-              <router-link to="/mcp-tools">
-                <i class="fas fa-tools"></i>{{ t('sidebar.mcpTools') }}
-              </router-link>
-            </li>
-          </ul>
-        </div>
-      </div>
-
       <!-- 快速操作 -->
       <div class="card bg-base-100 shadow">
         <div class="card-body p-4">
@@ -158,10 +118,6 @@
           </h3>
           
           <div class="stats stats-vertical shadow-sm bg-base-200 mt-2">
-            <div class="stat py-1 px-2">
-              <div class="stat-title text-xs">{{ t('dashboard.earningsToday') }}</div>
-              <div class="stat-value text-lg text-success">${{ todayEarnings }}</div>
-            </div>
             <div class="stat py-1 px-2">
               <div class="stat-title text-xs">{{ t('dashboard.vulnerabilitiesFound') }}</div>
               <div class="stat-value text-lg text-error">{{ todayVulns }}</div>
@@ -280,4 +236,4 @@ onMounted(() => {
 .router-link-active {
   @apply bg-primary/10 text-primary;
 }
-</style> 
+</style>

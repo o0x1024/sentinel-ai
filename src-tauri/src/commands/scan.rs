@@ -1,7 +1,7 @@
-use crate::models::scan::{ScanTask, ScanResult, ScanConfig};
+use crate::models::scan::{ScanConfig, ScanResult, ScanTask};
 use crate::services::scan::ScanService;
-use tauri::State;
 use std::sync::Arc;
+use tauri::State;
 use uuid::Uuid;
 
 /// 创建扫描任务
@@ -48,10 +48,7 @@ pub async fn stop_scan_task(
 pub async fn get_scan_tasks(
     scan_service: State<'_, Arc<ScanService>>,
 ) -> Result<Vec<ScanTask>, String> {
-    scan_service
-        .list_tasks()
-        .await
-        .map_err(|e| e.to_string())
+    scan_service.list_tasks().await.map_err(|e| e.to_string())
 }
 
 /// 获取扫描任务详情
@@ -91,4 +88,4 @@ pub async fn delete_scan_task(
         .delete_task(task_uuid)
         .await
         .map_err(|e| e.to_string())
-} 
+}

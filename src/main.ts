@@ -10,12 +10,12 @@ import DialogPlugin from './composables/useDialog'; // 导入对话框插件
 // 懒加载页面组件 - 性能优化
 const Dashboard = () => import('./views/Dashboard.vue');
 const ScanTasks = () => import('./views/ScanTasks.vue');
+const ScanSessions = () => import('./views/ScanSessions.vue');
 const Vulnerabilities = () => import('./views/Vulnerabilities.vue');
-const Projects = () => import('./views/Projects.vue');
 const McpTools = () => import('./views/McpTools.vue');
-const Earnings = () => import('./views/Earnings.vue');
-const Submissions = () => import('./views/Submissions.vue');
+const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 const Settings = () => import('./views/Settings.vue');
+const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
 
 // 创建路由配置
 const routes = [
@@ -36,16 +36,16 @@ const routes = [
     meta: { title: '扫描任务' }
   },
   { 
+    path: '/scan-sessions', 
+    name: 'ScanSessions', 
+    component: ScanSessions,
+    meta: { title: '智能扫描会话' }
+  },
+  { 
     path: '/vulnerabilities', 
     name: 'Vulnerabilities', 
     component: Vulnerabilities,
     meta: { title: '漏洞管理' }
-  },
-  { 
-    path: '/projects', 
-    name: 'Projects', 
-    component: Projects,
-    meta: { title: '赏金项目' }
   },
   { 
     path: '/mcp-tools', 
@@ -54,22 +54,22 @@ const routes = [
     meta: { title: 'MCP工具' }
   },
   { 
-    path: '/earnings', 
-    name: 'Earnings', 
-    component: Earnings,
-    meta: { title: '收益统计' }
-  },
-  { 
-    path: '/submissions', 
-    name: 'Submissions', 
-    component: Submissions,
-    meta: { title: '提交记录' }
+    path: '/dictionary', 
+    name: 'DictionaryManagement', 
+    component: DictionaryManagement,
+    meta: { title: '字典管理' }
   },
   { 
     path: '/settings', 
     name: 'Settings', 
     component: Settings,
     meta: { title: '系统设置' }
+  },
+  { 
+    path: '/performance', 
+    name: 'PerformanceMonitor', 
+    component: PerformanceMonitor,
+    meta: { title: '性能监控' }
   },
 ];
 

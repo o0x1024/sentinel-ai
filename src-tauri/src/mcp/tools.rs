@@ -1,19 +1,11 @@
 use super::types::{
-    ToolDefinition, 
-    ToolInput, 
-    CallToolError, 
-    CallToolResult, 
-    McpTool,
-    McpToolInfo,
-    ToolCategory,
-    ToolParameters,
-    ToolMetadata
+    CallToolError, CallToolResult, McpTool, McpToolInfo, ToolCategory, ToolDefinition, ToolInput,
+    ToolMetadata, ToolParameters,
 };
 
-use std::collections::HashMap;
 use anyhow;
+use std::collections::HashMap;
 use uuid::Uuid;
-
 
 /// 工具注册表
 pub struct ToolRegistry {
@@ -23,19 +15,22 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     /// 创建新的工具注册表
     pub fn new() -> Self {
-        let mut registry = Self { tools: HashMap::new() };
+        let registry = Self {
+            tools: HashMap::new(),
+        };
         registry
     }
-    
+
     /// 注册工具
     pub fn register_tool(&mut self, tool: Box<dyn McpTool>) {
         let name = tool.definition().name.clone();
         self.tools.insert(name, tool);
     }
-    
+
     /// 获取工具
     pub fn get_tool(&self, name: &str) -> anyhow::Result<ToolDefinition> {
-        self.tools.get(name)
+        self.tools
+            .get(name)
             .map(|t| t.definition())
             .ok_or_else(|| anyhow::anyhow!("Tool does not exist: {}", name))
     }
@@ -44,7 +39,7 @@ impl ToolRegistry {
     pub fn tool_exists(&self, name: &str) -> bool {
         self.tools.contains_key(name)
     }
-    
+
     /// 列出所有工具名称
     pub fn list_tools(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
@@ -54,32 +49,35 @@ impl ToolRegistry {
     pub fn list_tools_with_details(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
     }
-    
+
     /// 获取工具数量
     pub fn tool_count(&self) -> usize {
         self.tools.len()
     }
-    
+
     /// 执行工具
     pub async fn execute_tool(&self, name: &str, args: serde_json::Value) -> CallToolResult {
-        let tool = self.tools.get(name).ok_or_else(|| CallToolError::msg(format!("工具不存在: {}", name)))?;
-        
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| CallToolError::msg(format!("工具不存在: {}", name)))?;
+
         let input = ToolInput { arguments: args };
         tool.call(input).await
     }
-    
+
     /// 获取工具详情
     pub fn get_tool_details(&self) -> anyhow::Result<Vec<McpToolInfo>> {
         let mut tools = Vec::new();
-        
+
         for (name, tool) in &self.tools {
             let definition = tool.definition();
-            
+
             // 提取所需参数
             let schema = definition.input_schema.clone();
             let mut required = Vec::new();
             let mut optional = Vec::new();
-            
+
             if let Some(obj) = schema.as_object() {
                 if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
                     for (prop_name, _) in props {
@@ -96,7 +94,7 @@ impl ToolRegistry {
                     }
                 }
             }
-            
+
             tools.push(McpToolInfo {
                 id: Uuid::new_v4().to_string(),
                 name: name.clone(),
@@ -119,14 +117,13 @@ impl ToolRegistry {
                 },
             });
         }
-        
+
         Ok(tools)
     }
-    
 }
 
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
     }
-} 
+}
