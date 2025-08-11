@@ -115,6 +115,7 @@ impl ToolRegistry {
                     install_command: None,
                     requirements: Vec::new(),
                 },
+                source: super::types::ToolSource::Builtin,
             });
         }
 

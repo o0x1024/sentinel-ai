@@ -20,7 +20,7 @@ test.describe('Dashboard Page', () => {
     // Check main content sections
     await expect(page.locator('[data-testid="attack-surface"]')).toBeVisible()
     await expect(page.locator('[data-testid="recent-vulnerabilities"]')).toBeVisible()
-    await expect(page.locator('[data-testid="earnings-chart"]')).toBeVisible()
+
   })
 
   test('should navigate between pages', async ({ page }) => {
@@ -46,7 +46,7 @@ test.describe('Dashboard Page', () => {
     await expect(statsCards).toHaveCount(4)
 
     // Check card content
-    await expect(statsCards.first()).toContainText('Total Earnings')
+
     await expect(statsCards.nth(1)).toContainText('Active Scans')
     await expect(statsCards.nth(2)).toContainText('Vulnerabilities')
     await expect(statsCards.nth(3)).toContainText('Success Rate')
@@ -87,12 +87,7 @@ test.describe('Dashboard Page', () => {
     }
   })
 
-  test('should display earnings chart', async ({ page }) => {
-    const earningsChart = page.locator('[data-testid="earnings-chart"]')
-    
-    await expect(earningsChart).toBeVisible()
-    await expect(earningsChart.locator('canvas')).toBeVisible() // Chart.js canvas
-  })
+
 
   test('should show floating chat interface', async ({ page }) => {
     const floatingChat = page.locator('[data-testid="floating-chat"]')
@@ -151,4 +146,4 @@ test.describe('Dashboard Page', () => {
       await expect(errorMessage).toContainText('error', { ignoreCase: true })
     }
   })
-}) 
+})

@@ -1,8 +1,10 @@
 <template>
   <div>
     <ChatWindow 
+      ref="chatWindowRef"
       :is-open="isChatOpen"
-      :is-sidebar-open="isSidebarOpen"
+      :is-sidebar-open="false"
+      :is-standalone="isStandalone"
       @open-roles="isRoleModalOpen = true"
       @new-conversation="startNewConversation"
       @close="handleClose"
@@ -44,7 +46,79 @@
             </div>
             <div class="message-bubble">
               <div v-if="message.isStreaming" class="streaming-indicator"></div>
-              <div class="prose prose-sm max-w-none" v-html="renderMarkdown(message.content)"></div>
+              <div v-if="message.isExecutingTool" class="tool-execution-indicator">
+                <div class="tool-spinner"></div>
+                <span class="tool-text">正在执行工具: {{ message.toolName }}</span>
+              </div>
+              
+              <!-- 主要消息内容 -->
+              <div v-if="getMainContent(message.content).trim()" class="prose prose-sm max-w-none mb-3" v-html="renderMarkdown(getMainContent(message.content))"></div>
+              
+              <!-- 工具调用状态显示 -->
+              <div v-if="message.toolCalls && message.toolCalls.length > 0" class="tool-calls-section">
+                <div v-for="(toolCall, index) in message.toolCalls" :key="index" class="tool-call-item mb-3">
+                  <!-- 工具调用头部 -->
+                  <div class="tool-call-header flex items-center gap-2 p-3 bg-base-100 rounded-lg border">
+                    <div class="tool-icon">
+                      <i class="fas fa-cog" :class="{
+                        'text-warning animate-spin': toolCall.status === 'executing',
+                        'text-success': toolCall.status === 'success',
+                        'text-error': toolCall.status === 'error',
+                        'text-info': toolCall.status === 'pending'
+                      }"></i>
+                    </div>
+                    <div class="tool-info flex-1">
+                      <div class="tool-name font-medium text-sm">{{ toolCall.name }}</div>
+                      <div class="tool-status text-xs opacity-70">
+                        <span v-if="toolCall.status === 'pending'">准备执行...</span>
+                        <span v-else-if="toolCall.status === 'executing'">正在执行...</span>
+                        <span v-else-if="toolCall.status === 'success'">执行成功</span>
+                        <span v-else-if="toolCall.status === 'error'">执行失败</span>
+                      </div>
+                    </div>
+                    <div class="tool-badge">
+                      <div class="badge badge-sm" :class="{
+                        'badge-warning': toolCall.status === 'executing' || toolCall.status === 'pending',
+                        'badge-success': toolCall.status === 'success',
+                        'badge-error': toolCall.status === 'error'
+                      }">
+                        {{ toolCall.status === 'success' ? '成功' : toolCall.status === 'error' ? '失败' : '执行中' }}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <!-- 工具结果展示（风琴组件） -->
+                  <div v-if="toolCall.result && (toolCall.status === 'success' || toolCall.status === 'error')" class="tool-result-accordion mt-2">
+                    <div class="collapse collapse-arrow bg-base-200">
+                      <input type="checkbox" class="collapse-checkbox" :id="`tool-result-${message.id}-${index}`" />
+                      <label :for="`tool-result-${message.id}-${index}`" class="collapse-title text-sm font-medium cursor-pointer">
+                        <i class="fas fa-file-alt mr-2"></i>
+                        查看详细结果
+                      </label>
+                      <div class="collapse-content">
+                        <div class="pt-2">
+                          <div class="text-xs text-base-content/70 mb-2">工具执行结果:</div>
+                          <div class="mockup-code text-xs max-h-60 overflow-y-auto">
+                            <pre><code>{{ typeof toolCall.result === 'string' ? toolCall.result : JSON.stringify(toolCall.result, null, 2) }}</code></pre>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <!-- 错误信息显示 -->
+                  <div v-if="toolCall.error && toolCall.status === 'error'" class="tool-error mt-2 p-2 bg-error/10 border border-error/20 rounded text-sm text-error">
+                    <i class="fas fa-exclamation-triangle mr-2"></i>
+                    {{ toolCall.error }}
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 继续响应内容 -->
+              <div v-if="message.continuedContent" class="continued-content mt-3 pt-3 border-t border-base-300">
+                <div class="prose prose-sm max-w-none" v-html="renderMarkdown(message.continuedContent)"></div>
+              </div>
+              
               <div class="timestamp">{{ formatTime(message.timestamp) }}</div>
             </div>
           </div>
@@ -76,10 +150,6 @@
             </div>
             
             <div class="flex gap-1">
-              <button class="btn btn-sm btn-ghost btn-circle" @click="toggleSidebar" 
-                     :title="t('aiChat.toggleSidebar')">
-                <i class="fas fa-bars"></i>
-              </button>
               <button class="btn btn-sm btn-ghost btn-circle" @click="isRoleModalOpen = true" 
                      :title="currentRole ? currentRole.title : t('aiChat.selectRole')">
                 <i class="fas fa-users-cog"></i>
@@ -95,6 +165,10 @@
               <button class="btn btn-sm btn-ghost btn-circle" :title="t('aiChat.exportConversation')">
                 <i class="fas fa-file-export"></i>
               </button>
+              <button class="btn btn-sm btn-ghost btn-circle" @click="toggleConversationList" 
+                     :title="t('aiChat.conversationList')">
+                <i class="fas fa-list"></i>
+              </button>
             </div>
           </div>
           
@@ -107,10 +181,13 @@
               class="textarea textarea-bordered w-full resize-none"
               rows="3"
             ></textarea>
-            <button @click="sendMessage" :disabled="isLoading || !inputMessage.trim()" 
+            <button v-if="!isLoading" @click="sendMessage" :disabled="!inputMessage.trim()" 
                    class="btn btn-circle btn-primary">
-              <i v-if="isLoading" class="fas fa-spinner fa-spin"></i>
-              <i v-else class="fas fa-paper-plane"></i>
+              <i class="fas fa-paper-plane"></i>
+            </button>
+            <button v-else @click="stopMessage" 
+                   class="btn btn-circle btn-error">
+              <i class="fas fa-stop"></i>
             </button>
           </div>
         </div>
@@ -132,9 +209,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { marked } from 'marked';
 import { useI18n } from 'vue-i18n';
+import { dialog } from '@/composables/useDialog';
 
 import ChatWindow from './ChatWindow.vue';
 import RoleManagementModal from './RoleManagementModal.vue';
+
+interface Props {
+  isStandalone?: boolean;
+}
+
+const props = defineProps<Props>();
 
 const { t } = useI18n();
 marked.setOptions({ breaks: true, gfm: true });
@@ -142,10 +226,13 @@ marked.setOptions({ breaks: true, gfm: true });
 // 定义emit
 const emit = defineEmits(['close']);
 
+// Props
+const isStandalone = ref(props.isStandalone || false);
+
 // Component State
 const isChatOpen = ref(true); // 默认显示
 const isRoleModalOpen = ref(false);
-const isSidebarOpen = ref(true);
+const isSidebarOpen = ref(false);
 const isLoading = ref(false);
 const inputMessage = ref('');
 const messagesContainer = ref<HTMLElement | null>(null);
@@ -170,9 +257,13 @@ const minimizeChatWindow = () => {
   isChatOpen.value = false;
 };
 
-const toggleSidebar = () => {
-  isSidebarOpen.value = !isSidebarOpen.value;
+const toggleConversationList = () => {
+  // 调用ChatWindow组件的对话抽屉切换功能
+  chatWindowRef.value?.toggleConversationDrawer();
 };
+
+// ChatWindow组件引用
+const chatWindowRef = ref<InstanceType<typeof ChatWindow> | null>(null);
 
 // 模型选择相关
 const selectedModel = ref('');
@@ -214,6 +305,15 @@ const loadAvailableModels = async () => {
 // Role State
 const currentRole = ref<{ id: string; title: string; description: string; prompt: string; is_system?: boolean; } | null>(null);
 
+// 工具调用接口定义
+interface ToolCall {
+  id: string;
+  name: string;
+  status: 'pending' | 'executing' | 'success' | 'error';
+  result?: any;
+  error?: string;
+}
+
 // Message State
 const messages = ref<Array<{
   id: string;
@@ -221,6 +321,10 @@ const messages = ref<Array<{
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
+  isExecutingTool?: boolean;
+  toolName?: string;
+  toolCalls?: ToolCall[];
+  continuedContent?: string;
 }>>([]);
 
 const handleRoleSelected = (role: { id: string; title: string; description: string; prompt: string; is_system?: boolean; }) => {
@@ -294,7 +398,7 @@ const loadConversation = async (conversation: {id: string, service_name: string}
   try {
     currentConversationId.value = conversation.id;
     const history: any[] = await invoke('get_ai_conversation_history', { 
-      conversationId: conversation.id,
+      conversation_id: conversation.id,
       service_name: conversation.service_name
     });
 
@@ -311,7 +415,7 @@ const loadConversation = async (conversation: {id: string, service_name: string}
 };
 
 const confirmDeleteConversation = async (conversation: {id: string, service_name: string}) => {
-  const confirmed = confirm(t('aiChat.confirmDeleteConversation'));
+  const confirmed = await dialog.confirm(t('aiChat.confirmDeleteConversation'));
   if (confirmed) {
     await deleteConversation(conversation);
   }
@@ -320,8 +424,8 @@ const confirmDeleteConversation = async (conversation: {id: string, service_name
 const deleteConversation = async (conversation: {id: string, service_name: string}) => {
   try {
     await invoke('delete_ai_conversation', { 
-      conversationId: conversation.id,
-      serviceName: conversation.service_name
+      conversation_id: conversation.id,
+      service_name: conversation.service_name
     });
     
     // 从列表中移除
@@ -335,6 +439,13 @@ const deleteConversation = async (conversation: {id: string, service_name: strin
     console.error(`Failed to delete conversation ${conversation.id}:`, error);
   }
 };
+
+// 添加超时和重试机制的状态
+const messageTimeout = ref<NodeJS.Timeout | null>(null);
+const currentStreamingMessageId = ref<string | null>(null);
+const retryCount = ref(0);
+const maxRetries = 3;
+const messageTimeoutMs = 30000; // 30秒超时
 
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || isLoading.value) return;
@@ -359,6 +470,7 @@ const sendMessage = async () => {
   isLoading.value = true;
 
   const assistantMessageId = (Date.now() + 1).toString();
+  currentStreamingMessageId.value = assistantMessageId;
   messages.value.push({
     id: assistantMessageId,
     role: 'assistant',
@@ -367,6 +479,13 @@ const sendMessage = async () => {
     isStreaming: true,
   });
   scrollToBottom();
+
+  // 设置超时处理 - 工具执行时使用更长的超时时间
+  const executingToolMessage = messages.value.find(m => m.isExecutingTool);
+  const timeoutMs = executingToolMessage ? messageTimeoutMs * 3 : messageTimeoutMs;
+  messageTimeout.value = setTimeout(() => {
+    handleMessageTimeout();
+  }, timeoutMs);
 
   try {
     const [provider, model] = selectedModel.value.split('/');
@@ -393,27 +512,299 @@ const sendMessage = async () => {
     });
   } catch (error) {
     console.error('Send message failed:', error);
-    const lastMessage = messages.value.find(m => m.id === assistantMessageId);
-    if (lastMessage) {
-      lastMessage.content = `Error: ${error}`;
-      lastMessage.isStreaming = false;
-    }
-  } finally {
-    isLoading.value = false;
+    clearMessageTimeout();
+    handleSendError(error, assistantMessageId);
   }
+};
+
+// 处理发送错误
+const handleSendError = (error: any, messageId: string) => {
+  const lastMessage = messages.value.find(m => m.id === messageId);
+  if (lastMessage) {
+    lastMessage.content = `${t('aiChat.sendError')}: ${error}`;
+    lastMessage.isStreaming = false;
+  }
+  isLoading.value = false;
+  currentStreamingMessageId.value = null;
+  retryCount.value = 0;
+};
+
+// 处理消息超时
+const handleMessageTimeout = () => {
+  console.warn('Message timeout occurred');
+  
+  // 检查是否有消息正在执行工具，如果是则不处理超时
+  const executingToolMessage = messages.value.find(m => m.isExecutingTool);
+  if (executingToolMessage) {
+    console.log('Tool is executing, ignoring timeout');
+    return;
+  }
+  
+  if (currentStreamingMessageId.value) {
+    const streamingMessage = messages.value.find(m => m.id === currentStreamingMessageId.value);
+    if (streamingMessage && streamingMessage.isStreaming) {
+      if (retryCount.value < maxRetries) {
+        retryCount.value++;
+        console.log(`Retrying message (attempt ${retryCount.value}/${maxRetries})`);
+        // 重试发送
+        setTimeout(() => {
+          if (streamingMessage.isStreaming) {
+            stopMessage();
+          }
+        }, 1000);
+      } else {
+        streamingMessage.content = streamingMessage.content || t('aiChat.messageTimeout');
+        streamingMessage.isStreaming = false;
+        streamingMessage.isExecutingTool = false;
+        streamingMessage.toolName = undefined;
+        isLoading.value = false;
+        currentStreamingMessageId.value = null;
+        retryCount.value = 0;
+      }
+    }
+  }
+};
+
+// 清除超时定时器
+const clearMessageTimeout = () => {
+  if (messageTimeout.value) {
+    clearTimeout(messageTimeout.value);
+    messageTimeout.value = null;
+  }
+};
+
+const stopMessage = async () => {
+  if (!currentConversationId.value) return;
+  
+  console.log('Stopping AI stream...');
+  
+  // 清除超时定时器
+  clearMessageTimeout();
+  
+  try {
+    await invoke('stop_ai_stream', {
+      request: {
+        conversation_id: currentConversationId.value
+      }
+    });
+    
+    console.log('Stop request sent successfully');
+  } catch (error) {
+    console.error('Stop message failed:', error);
+  } finally {
+    // 无论是否成功，都要停止本地状态
+    forceStopStreaming();
+  }
+};
+
+// 强制停止流式状态
+const forceStopStreaming = () => {
+  console.log('Force stopping streaming state');
+  
+  // 检查是否有消息正在执行工具，如果是则不强制停止
+  const executingToolMessage = messages.value.find(m => m.isExecutingTool);
+  if (executingToolMessage) {
+    console.log('Tool is executing, not forcing stop');
+    return;
+  }
+  
+  // 立即停止加载状态
+  isLoading.value = false;
+  
+  // 停止当前流式消息
+  const streamingMessage = messages.value.find(m => m.isStreaming);
+  if (streamingMessage) {
+    streamingMessage.isStreaming = false;
+    streamingMessage.isExecutingTool = false;
+    streamingMessage.toolName = undefined;
+    if (!streamingMessage.content.trim()) {
+      streamingMessage.content = t('aiChat.messageStopped');
+    }
+  }
+  
+  // 重置状态
+  currentStreamingMessageId.value = null;
+  retryCount.value = 0;
+  clearMessageTimeout();
 };
 
 const handleStreamMessage = (streamData: any) => {
   if (streamData.conversation_id !== currentConversationId.value) return;
 
-  const assistantMessage = messages.value.find(m => m.id === streamData.message_id || (m.role === 'assistant' && m.isStreaming));
+  // 清除超时定时器，因为收到了响应
+  clearMessageTimeout();
+
+  const assistantMessage = messages.value.find(m => 
+    m.id === streamData.message_id || 
+    (m.role === 'assistant' && m.isStreaming && m.id === currentStreamingMessageId.value)
+  );
   
   if (assistantMessage) {
-    assistantMessage.content = streamData.content;
+    // 智能处理内容分离：如果有工具调用，将工具调用后的内容放到continuedContent中
+    if (assistantMessage.toolCalls && assistantMessage.toolCalls.length > 0) {
+      // 检查是否有工具调用完成，如果有，则将新内容作为继续响应
+      const hasCompletedTools = assistantMessage.toolCalls.some(tc => 
+        tc.status === 'success' || tc.status === 'error'
+      );
+      
+      if (hasCompletedTools) {
+        // 将新的流式内容作为工具调用后的继续响应
+        const cleanContent = getMainContent(streamData.content);
+        if (cleanContent.trim()) {
+          assistantMessage.continuedContent = cleanContent;
+        }
+      } else {
+        // 工具还在执行中，更新主要内容
+        assistantMessage.content = streamData.content;
+      }
+    } else {
+      // 没有工具调用，正常更新内容
+      assistantMessage.content = streamData.content;
+    }
+    
     if (streamData.is_complete) {
+      console.log('Stream completed for message:', streamData.message_id);
       assistantMessage.isStreaming = false;
+      assistantMessage.isExecutingTool = false;
+      assistantMessage.toolName = undefined;
+      isLoading.value = false;
+      currentStreamingMessageId.value = null;
+      retryCount.value = 0;
+      
+      // 如果主要内容为空但有工具调用，显示默认消息
+      const mainContent = getMainContent(assistantMessage.content);
+      if (!mainContent.trim() && assistantMessage.toolCalls && assistantMessage.toolCalls.length > 0) {
+        // 如果有工具调用但没有主要内容，不显示任何默认消息
+        // 让工具调用结果作为主要内容
+      } else if (!mainContent.trim() && !assistantMessage.continuedContent) {
+        // 只有在既没有主要内容也没有继续内容时才显示默认消息
+        assistantMessage.content = assistantMessage.content || '消息处理完成';
+      }
+    } else {
+      // 重新设置超时，因为还在流式传输中 - 工具执行时使用更长的超时时间
+      const executingToolMessage = messages.value.find(m => m.isExecutingTool);
+      const timeoutMs = executingToolMessage ? messageTimeoutMs * 3 : messageTimeoutMs;
+      messageTimeout.value = setTimeout(() => {
+        handleMessageTimeout();
+      }, timeoutMs);
+    }
+  } else {
+    console.warn('Could not find assistant message for stream data:', streamData);
+  }
+  
+  scrollToBottom();
+};
+
+// 处理工具执行开始事件
+const handleToolExecutionStart = (eventData: any) => {
+  if (eventData.conversation_id !== currentConversationId.value) return;
+  
+  console.log('Tool execution started:', eventData.tool_name);
+  
+  // 清除超时定时器，因为工具正在执行
+  clearMessageTimeout();
+  
+  // 找到最后一个助手消息
+  const assistantMessages = messages.value.filter(m => m.role === 'assistant');
+  const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+  
+  if (lastAssistantMessage) {
+    // 初始化toolCalls数组（如果不存在）
+    if (!lastAssistantMessage.toolCalls) {
+      lastAssistantMessage.toolCalls = [];
+    }
+    
+    // 查找是否已存在该工具调用
+    let toolCall = lastAssistantMessage.toolCalls.find(tc => tc.name === eventData.tool_name);
+    
+    if (!toolCall) {
+      // 创建新的工具调用记录
+      toolCall = {
+        id: `tool-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: eventData.tool_name,
+        status: 'executing'
+      };
+      lastAssistantMessage.toolCalls.push(toolCall);
+    } else {
+      // 更新现有工具调用状态
+      toolCall.status = 'executing';
+    }
+    
+    // 设置全局执行状态（保持向后兼容）
+    lastAssistantMessage.isExecutingTool = true;
+    lastAssistantMessage.toolName = eventData.tool_name;
+  }
+  
+  scrollToBottom();
+};
+
+// 处理工具执行成功事件
+const handleToolExecutionSuccess = (eventData: any) => {
+  if (eventData.conversation_id !== currentConversationId.value) return;
+  
+  console.log('Tool execution succeeded:', eventData.tool_name);
+  
+  // 找到包含该工具调用的助手消息
+  const assistantMessage = messages.value.find(m => 
+    m.role === 'assistant' && m.toolCalls?.some(tc => tc.name === eventData.tool_name)
+  );
+  
+  if (assistantMessage && assistantMessage.toolCalls) {
+    // 找到对应的工具调用记录
+    const toolCall = assistantMessage.toolCalls.find(tc => tc.name === eventData.tool_name);
+    
+    if (toolCall) {
+      // 更新工具调用状态和结果
+      toolCall.status = 'success';
+      toolCall.result = eventData.result;
+      
+      // 检查是否所有工具调用都已完成
+      const allCompleted = assistantMessage.toolCalls.every(tc => 
+        tc.status === 'success' || tc.status === 'error'
+      );
+      
+      if (allCompleted) {
+        assistantMessage.isExecutingTool = false;
+        assistantMessage.toolName = undefined;
+      }
     }
   }
+  
+  scrollToBottom();
+};
+
+// 处理工具执行失败事件
+const handleToolExecutionError = (eventData: any) => {
+  if (eventData.conversation_id !== currentConversationId.value) return;
+  
+  console.error('Tool execution failed:', eventData.tool_name, eventData.error);
+  
+  // 找到包含该工具调用的助手消息
+  const assistantMessage = messages.value.find(m => 
+    m.role === 'assistant' && m.toolCalls?.some(tc => tc.name === eventData.tool_name)
+  );
+  
+  if (assistantMessage && assistantMessage.toolCalls) {
+    // 找到对应的工具调用记录
+    const toolCall = assistantMessage.toolCalls.find(tc => tc.name === eventData.tool_name);
+    
+    if (toolCall) {
+      // 更新工具调用状态和错误信息
+      toolCall.status = 'error';
+      toolCall.error = eventData.error;
+      
+      // 检查是否所有工具调用都已完成
+      const allCompleted = assistantMessage.toolCalls.every(tc => 
+        tc.status === 'success' || tc.status === 'error'
+      );
+      
+      if (allCompleted) {
+        assistantMessage.isExecutingTool = false;
+        assistantMessage.toolName = undefined;
+      }
+    }
+  }
+  
   scrollToBottom();
 };
 
@@ -427,6 +818,84 @@ const scrollToBottom = () => {
 
 const renderMarkdown = (content: string) => marked(content);
 const formatTime = (timestamp: Date) => timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+// 解析消息内容，分离主要内容和工具调用结果
+const getMainContent = (content: string): string => {
+  // 移除工具执行相关的内容（保持向后兼容）
+  let mainContent = content
+    .replace(/🔧 正在执行工具: [^\n]+\.\.\./g, '')
+    .replace(/✅ 工具执行完成: [^\n]+/g, '')
+    .replace(/❌ 工具执行失败: [^\n]+/g, '')
+    .replace(/📋 工具执行结果预览:[\s\S]*?```[\s\S]*?```/g, '')
+    .replace(/错误信息: [^\n]+/g, '')
+    .replace(/\n\s*\n/g, '\n') // 移除多余的空行
+    .trim();
+  
+  return mainContent;
+};
+
+// 提取工具调用结果
+const getToolResults = (content: string): Array<{name: string, status: string, result: string}> => {
+  const results: Array<{name: string, status: string, result: string}> = [];
+  
+  // 匹配工具执行完成的模式
+  const successMatches = content.match(/✅ 工具执行完成: ([^\n]+)/g);
+  if (successMatches) {
+    successMatches.forEach(match => {
+      const toolName = match.replace('✅ 工具执行完成: ', '');
+      
+      // 查找对应的结果预览
+      const resultPattern = new RegExp(`📋 工具执行结果预览:[\\s\\S]*?\`\`\`([\\s\\S]*?)\`\`\``);
+      const resultMatch = content.match(resultPattern);
+      const result = resultMatch ? resultMatch[1].trim() : '执行成功，无详细结果';
+      
+      results.push({
+        name: toolName,
+        status: 'success',
+        result: result
+      });
+    });
+  }
+  
+  // 匹配工具执行失败的模式
+  const errorMatches = content.match(/❌ 工具执行失败: ([^\n]+)/g);
+  if (errorMatches) {
+    errorMatches.forEach(match => {
+      const toolName = match.replace('❌ 工具执行失败: ', '');
+      
+      // 查找错误信息
+      const errorPattern = /错误信息: ([^\n]+)/;
+      const errorMatch = content.match(errorPattern);
+      const errorMsg = errorMatch ? errorMatch[1] : '未知错误';
+      
+      results.push({
+        name: toolName,
+        status: 'error',
+        result: errorMsg
+      });
+    });
+  }
+  
+  // 匹配正在执行的工具
+  const runningMatches = content.match(/🔧 正在执行工具: ([^\n]+)\.\.\./g);
+  if (runningMatches) {
+    runningMatches.forEach(match => {
+      const toolName = match.replace('🔧 正在执行工具: ', '').replace('...', '');
+      
+      // 检查是否已经有完成或失败的记录
+      const existingResult = results.find(r => r.name === toolName);
+      if (!existingResult) {
+        results.push({
+          name: toolName,
+          status: 'running',
+          result: '工具正在执行中...'
+        });
+      }
+    });
+  }
+  
+  return results;
+};
 
 const clearHistory = () => {
     startNewConversation();
@@ -445,8 +914,63 @@ onMounted(async () => {
     handleStreamMessage(event.payload);
   });
 
+  // 监听AI配置更新事件，重新加载模型列表
+  const unlistenConfigUpdate = await listen('ai_config_updated', async () => {
+    console.log('AI configuration updated, reloading models...');
+    await loadAvailableModels();
+  });
+
+  // 监听AI流式响应停止事件
+  const unlistenStreamStopped = await listen('ai_stream_stopped', (event) => {
+    const conversationId = event.payload as string;
+    if (conversationId === currentConversationId.value) {
+      console.log('AI stream stopped for current conversation');
+      forceStopStreaming();
+    }
+  });
+
+  // 监听AI流式响应错误事件
+  const unlistenStreamError = await listen('ai_stream_error', (event) => {
+    const errorData = event.payload as { conversation_id: string; error: string };
+    if (errorData.conversation_id === currentConversationId.value) {
+      console.error('AI stream error:', errorData.error);
+      
+      const streamingMessage = messages.value.find(m => m.isStreaming);
+      if (streamingMessage) {
+        streamingMessage.content = streamingMessage.content || `${t('aiChat.streamError')}: ${errorData.error}`;
+        streamingMessage.isStreaming = false;
+      }
+      
+      forceStopStreaming();
+    }
+  });
+
+  // 监听工具执行事件
+  const unlistenToolStart = await listen('ai_tool_execution_start', (event) => {
+    handleToolExecutionStart(event.payload);
+  });
+
+  const unlistenToolSuccess = await listen('ai_tool_execution_success', (event) => {
+    handleToolExecutionSuccess(event.payload);
+  });
+
+  const unlistenToolError = await listen('ai_tool_execution_error', (event) => {
+    handleToolExecutionError(event.payload);
+  });
+
   onUnmounted(() => {
+    // 清理事件监听器
     unlistenStream();
+    unlistenConfigUpdate();
+    unlistenStreamStopped();
+    unlistenStreamError();
+    unlistenToolStart();
+    unlistenToolSuccess();
+    unlistenToolError();
+    
+    // 清理定时器和状态
+    clearMessageTimeout();
+    forceStopStreaming();
   });
 });
 </script>
@@ -460,6 +984,7 @@ onMounted(async () => {
   background-color: #ffffff;
   position: relative;
   overflow: hidden; /* 确保模态框不会溢出 */
+  min-height: 0; /* 允许flex子元素收缩 */
 }
 
 .sidebar-content {
@@ -537,10 +1062,11 @@ onMounted(async () => {
 
 /* Messages Area */
 .messages-area {
-  flex-grow: 1;
+  flex: 1;
   overflow-y: auto;
   padding: 1.5rem;
   background-color: #f8f9fa;
+  min-height: 0; /* 允许flex子元素收缩 */
 }
 .empty-state {
     text-align: center;
@@ -560,7 +1086,7 @@ onMounted(async () => {
   justify-content: flex-end;
 }
 .message-user .message-bubble {
-    background-color: #4f46e5;
+    background-color: #bbdae8;
     color: white;
 }
 .message-user .avatar {
@@ -604,11 +1130,78 @@ onMounted(async () => {
   40% { transform: scale(1.0); }
 }
 
+.tool-execution-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 6px;
+  border-left: 3px solid #3b82f6;
+}
+
+.tool-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e5e7eb;
+  border-top: 2px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.tool-text {
+  font-size: 0.875rem;
+  color: #374151;
+  font-weight: 500;
+}
+
+.tool-results-section {
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  padding-top: 12px;
+}
+
+.tool-results-section .collapse {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+}
+
+.tool-results-section .collapse-title {
+  padding: 12px 16px;
+  min-height: auto;
+}
+
+.tool-results-section .collapse-content {
+  padding: 0 16px 12px 16px;
+}
+
+.tool-results-section .mockup-code {
+  margin: 0;
+  border-radius: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.tool-results-section .mockup-code pre {
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 /* Input Area */
 .input-area {
   padding: 1rem;
   border-top: 1px solid #e0e0e0;
   background-color: #ffffff;
+  flex-shrink: 0; /* 防止输入区域被压缩 */
+  max-height: 40vh; /* 限制最大高度，防止超出屏幕 */
+  overflow-y: auto; /* 如果内容过多，允许滚动 */
 }
 .input-actions-top {
     display: flex;
@@ -714,4 +1307,52 @@ onMounted(async () => {
   padding: 0 0.5rem;
   line-height: 1;
 }
-</style> 
+
+/* 响应式布局优化 */
+@media (max-width: 768px) {
+  .input-area {
+    padding: 0.75rem;
+    max-height: 50vh;
+  }
+  
+  .input-actions-top {
+    margin-bottom: 0.5rem;
+    gap: 0.25rem;
+  }
+  
+  .model-selector {
+    max-width: 180px;
+  }
+  
+  .messages-area {
+    padding: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .input-area {
+    padding: 0.5rem;
+    max-height: 60vh;
+  }
+  
+  .input-actions-top {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  
+  .model-selector {
+    max-width: 150px;
+    order: -1;
+    flex-basis: 100%;
+  }
+  
+  .messages-area {
+    padding: 0.75rem;
+  }
+  
+  .message-bubble {
+    max-width: 85%;
+    padding: 0.5rem 0.75rem;
+  }
+}
+</style>

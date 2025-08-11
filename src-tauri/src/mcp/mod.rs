@@ -1,6 +1,7 @@
 pub mod client;
 pub mod protocol;
 pub mod server;
+pub mod tool_adapter;
 pub mod tool_executor;
 pub mod tool_manager;
 pub mod tools;
@@ -8,11 +9,13 @@ pub mod types;
 
 use std::sync::Arc;
 
+
 // Re-export core types from the single source of truth, types.rs
 pub use self::types::*;
 
 // Re-export key components for easy access from other modules
 pub use client::{McpClient, McpClientManager, McpConnection};
+use serde::{Deserialize, Serialize};
 pub use server::{McpServerManager, SentinelMcpServer};
 pub use tool_manager::ToolManager;
 
@@ -22,6 +25,13 @@ pub use rmcp::model::{
 };
 
 // Conversion functions to bridge our internal types and rmcp types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct  ResourceUsage{
+    cpu_time:f32,
+    memory_peak: u32,
+    network_requests: u8,
+    disk_io: u8,
+}
 
 /// Converts our internal ToolDefinition to the rmcp Tool type.
 pub fn convert_to_rmcp_tool(tool: &ToolDefinition) -> RmcpTool {

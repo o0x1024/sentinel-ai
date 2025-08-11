@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::mcp::{ConnectionStatus, McpClientManager, McpServerManager, McpTool, ToolDefinition};
+use crate::mcp::{McpClientManager, McpServerManager, McpTool, ToolDefinition};
 
 // 工具信息类型已移动到 types 模块
 
@@ -20,7 +20,7 @@ pub struct McpConnectionInfo {
 }
 
 /// MCP 服务 - 集成服务器和客户端管理
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct McpService {
     server_manager: Arc<McpServerManager>,
     client_manager: Arc<McpClientManager>,
@@ -36,6 +36,13 @@ impl McpService {
         }
     }
 
+    pub fn with_server_manager(client_manager: Arc<McpClientManager>, server_manager: Arc<McpServerManager>) -> Self {
+        Self {
+            server_manager,
+            client_manager,
+            is_running: Arc::new(RwLock::new(false)),
+        }
+    }
     /// 启动 MCP 服务器
     pub async fn start_server(&self, transport: &str, endpoint: Option<&str>) -> Result<()> {
         let mut running = self.is_running.write().await;
@@ -107,38 +114,41 @@ impl McpService {
 
     /// 获取所有可用工具（包括内置和外部连接的工具）
     pub async fn get_available_tools(&self) -> Result<Vec<crate::mcp::types::McpToolInfo>> {
+        tracing::info!("[MCP] get_available_tools called, self ptr: {:p}", self);
         let mut tool_infos = Vec::new();
 
         // 获取内置工具
         let server_arc = self.server_manager.get_server().await;
         let server_guard = server_arc.read().await;
+        tracing::debug!("[MCP] server_guard ptr: {:p}", &*server_guard);
         let internal_tools = server_guard.list_tools().await;
+        tracing::debug!("[MCP] internal_tools: {:?}", internal_tools);
         let registry_arc = server_guard.get_tool_registry();
         let reg = registry_arc.read().await;
+        tracing::debug!("[MCP] registry ptr: {:p}, tool count: {}", &*reg, reg.tool_count());
 
-        for tool_name in internal_tools {
-            if let Some(tool) = reg.get_tool(&tool_name).ok() {
-                tool_infos.push(crate::mcp::types::McpToolInfo {
-                    id: tool_name,
-                    name: tool.name,
-                    description: tool.description,
-                    version: "1.0.0".to_string(),
-                    category: crate::mcp::ToolCategory::Utility,
-                    parameters: crate::mcp::types::ToolParameters {
-                        schema: tool.input_schema,
-                        required: vec![],
-                        optional: vec![],
-                    },
-                    metadata: crate::mcp::types::ToolMetadata {
-                        author: "Sentinel AI Internal".to_string(),
-                        license: "MIT".to_string(),
-                        homepage: None,
-                        repository: None,
-                        tags: vec!["security".to_string()],
-                        install_command: None,
-                        requirements: vec![],
-                    },
-                });
+        for tool_name in internal_tools.iter() {
+            match reg.get_tool(tool_name) {
+                Ok(tool) => {
+                    tracing::debug!("[MCP] found tool in registry: {}", tool_name);
+                    tool_infos.push(crate::mcp::types::McpToolInfo {
+                        id: tool_name.clone(),
+                        name: tool.name.clone(),
+                        description: tool.description.clone(),
+                        version: "1.0.0".to_string(),
+                        category: tool.category.clone(),
+                        parameters: crate::mcp::types::ToolParameters {
+                            schema: tool.input_schema.clone(),
+                            required: vec![],
+                            optional: vec![],
+                        },
+                        metadata: tool.metadata.clone(),
+                        source: crate::mcp::types::ToolSource::Builtin,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("[MCP] tool not found in registry: {}, error: {}", tool_name, e);
+                }
             }
         }
 
@@ -168,6 +178,7 @@ impl McpService {
                         install_command: None,
                         requirements: vec![],
                     },
+                    source: crate::mcp::types::ToolSource::External,
                 });
             }
         }
@@ -175,33 +186,41 @@ impl McpService {
         Ok(tool_infos)
     }
 
-    /// 执行工具（优先使用内置工具，然后尝试外部工具）
+    /// 执行工具（通过DynamicToolAdapter统一调用）
     pub async fn execute_tool(&self, tool_name: &str, parameters: Value) -> Result<Value> {
-        // 首先尝试执行内置工具
-        let server = self.server_manager.get_server().await;
-        match server
-            .write()
-            .await
-            .execute_tool(tool_name, parameters.clone())
-            .await
-        {
-            Ok(result) => return Ok(result),
-            Err(_) => {
-                // 内置工具不存在或执行失败，尝试外部工具
-                tracing::info!(
-                    "Built-in tool '{}' not available, trying external tools",
-                    tool_name
-                );
+        use crate::tools::create_dynamic_adapter;
+        use std::collections::HashMap;
+        
+        tracing::info!("[MCP] Executing tool '{}' with parameters: {:?}", tool_name, parameters);
+        
+        // 使用DynamicToolAdapter执行工具
+        let adapter = create_dynamic_adapter().map_err(|e| {
+            anyhow::anyhow!("创建动态工具适配器失败: {}. 请确保全局工具系统已初始化。", e)
+        })?;
+        
+        // 将Value参数转换为HashMap<String, Value>
+        let params_map = if let Value::Object(map) = parameters {
+            map.into_iter().collect::<HashMap<String, Value>>()
+        } else {
+            HashMap::new()
+        };
+        
+        // 统一使用通用工具执行方法
+        let result = adapter.execute_generic_task(tool_name, params_map).await;
+        
+        match result {
+            Ok(output) => {
+                tracing::info!("[MCP] Tool '{}' executed successfully via DynamicToolAdapter", tool_name);
+                Ok(serde_json::json!({
+                    "success": true,
+                    "output": output,
+                    "tool": tool_name
+                }))
+            },
+            Err(e) => {
+                tracing::error!("[MCP] Tool '{}' execution failed via DynamicToolAdapter: {}", tool_name, e);
+                Err(anyhow::anyhow!("Tool '{}' execution failed: {}", tool_name, e))
             }
-        }
-
-        // 尝试在任何已连接的客户端上执行工具
-        let client = self.client_manager.get_client();
-        let client = client.read().await;
-
-        match client.execute_tool_on_any(tool_name, parameters).await {
-            Ok(result) => Ok(result),
-            Err(e) => Err(anyhow::anyhow!("Tool '{}' is not available or failed to execute on built-in and external servers: {}", tool_name, e)),
         }
     }
 

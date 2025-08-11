@@ -363,17 +363,36 @@ impl McpClient {
     /// 在任何可用连接上执行工具
     pub async fn execute_tool_on_any(&self, tool_name: &str, parameters: Value) -> Result<Value> {
         let connections = self.connections.read().await;
-        for conn in connections.values() {
+        
+        tracing::info!("[MCP Client] Looking for tool '{}' across {} connections", tool_name, connections.len());
+        
+        let mut available_tools = Vec::new();
+        let mut connection_errors = Vec::new();
+        
+        for (conn_id, conn) in connections.iter() {
+            tracing::debug!("[MCP Client] Checking connection '{}' (status: {:?})", conn.name, conn.status);
+            
             if conn.status == ConnectionStatus::Connected {
+                // 记录此连接的所有工具
+                for tool in &conn.tools {
+                    available_tools.push(format!("{}@{}", tool.name, conn.name));
+                }
+                
                 if conn.tools.iter().any(|t| t.name == tool_name) {
+                    tracing::info!("[MCP Client] Found tool '{}' on connection '{}'", tool_name, conn.name);
+                    
                     if let Some(session) = &conn.session {
                         let params = CallToolRequestParam {
                             name: tool_name.to_string().into(),
                             arguments: parameters.as_object().cloned(),
                         };
 
+                        tracing::debug!("[MCP Client] Calling tool '{}' with params: {:?}", tool_name, params);
+                        
                         match session.call_tool(params).await {
                             Ok(result) => {
+                                tracing::debug!("[MCP Client] Tool call result: {:?}", result);
+                                
                                 if result.is_error.unwrap_or(false) {
                                     let msg = result
                                         .content
@@ -385,30 +404,64 @@ impl McpClient {
                                         .unwrap_or_else(|| {
                                             "Tool execution failed with no message.".to_string()
                                         });
-                                    return Err(anyhow!(msg));
+                                    tracing::error!("[MCP Client] Tool '{}' returned error: {}", tool_name, msg);
+                                    return Err(anyhow!("Tool execution error: {}", msg));
                                 }
 
                                 if let Some(raw_content) =
                                     result.content.into_iter().next().map(|c| c.raw)
                                 {
-                                    return match raw_content {
-                                        RawContent::Text(t) => Ok(serde_json::from_str(&t.text)
-                                            .unwrap_or_else(|_| Value::String(t.text.clone()))),
-                                        _ => Ok(Value::Null),
+                                    let final_result = match raw_content {
+                                        RawContent::Text(t) => {
+                                            tracing::debug!("[MCP Client] Tool '{}' returned text: {}", tool_name, t.text);
+                                            serde_json::from_str(&t.text)
+                                                .unwrap_or_else(|_| Value::String(t.text.clone()))
+                                        },
+                                        _ => {
+                                            tracing::debug!("[MCP Client] Tool '{}' returned non-text content", tool_name);
+                                            Value::Null
+                                        },
                                     };
+                                    tracing::info!("[MCP Client] Tool '{}' executed successfully", tool_name);
+                                    return Ok(final_result);
                                 }
+                                tracing::info!("[MCP Client] Tool '{}' executed successfully with no content", tool_name);
                                 return Ok(Value::Null);
                             }
-                            Err(e) => return Err(e),
+                            Err(e) => {
+                                let error_msg = format!("Failed to call tool '{}' on connection '{}': {}", tool_name, conn.name, e);
+                                tracing::error!("[MCP Client] {}", error_msg);
+                                connection_errors.push(error_msg);
+                                // 继续尝试其他连接
+                            }
                         }
+                    } else {
+                        let error_msg = format!("Connection '{}' has no active session", conn.name);
+                        tracing::warn!("[MCP Client] {}", error_msg);
+                        connection_errors.push(error_msg);
                     }
+                } else {
+                    tracing::debug!("[MCP Client] Tool '{}' not found on connection '{}'", tool_name, conn.name);
                 }
+            } else {
+                tracing::debug!("[MCP Client] Connection '{}' is not connected (status: {:?})", conn.name, conn.status);
             }
         }
-        Err(anyhow!(
-            "Tool '{}' not found on any connected server.",
-            tool_name
-        ))
+        
+        // 如果没有找到工具，提供详细的错误信息
+        let error_msg = if available_tools.is_empty() {
+            format!("Tool '{}' not found. No tools available on any connected server.", tool_name)
+        } else {
+            format!(
+                "Tool '{}' not found. Available tools: [{}]. Connection errors: [{}]",
+                tool_name,
+                available_tools.join(", "),
+                connection_errors.join("; ")
+            )
+        };
+        
+        tracing::error!("[MCP Client] {}", error_msg);
+        Err(anyhow!(error_msg))
     }
 
     /// 从配置加载连接

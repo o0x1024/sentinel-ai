@@ -1,13 +1,12 @@
 use crate::mcp::client::McpClient;
 use crate::models::database::{Asset, ScanTask, Vulnerability};
 use crate::models::scan::{
-    ScanConfig, ScanResult, ScanStatus, ScanStep, ScanTask as ScanTaskModel,
+    ScanConfig, ScanResult, ScanStatus, ScanStep, ScanTask as ScanTaskModel, TaskStats,
 };
 use crate::services::ai::AiServiceManager;
 use crate::services::database::DatabaseService;
 use anyhow::{Context, Result};
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,7 +19,7 @@ use uuid::Uuid;
 pub struct ScanService {
     db: Arc<DatabaseService>,
     ai_manager: Arc<AiServiceManager>,
-    mcp_client: Arc<McpClient>,
+    mcp_client: Arc<RwLock<McpClient>>,
     active_tasks: RwLock<HashMap<Uuid, Arc<Mutex<ScanTaskModel>>>>,
 }
 
@@ -28,7 +27,7 @@ impl ScanService {
     pub fn new(
         db: Arc<DatabaseService>,
         ai_manager: Arc<AiServiceManager>,
-        mcp_client: Arc<McpClient>,
+        mcp_client: Arc<RwLock<McpClient>>,
     ) -> Self {
         Self {
             db,
@@ -140,7 +139,7 @@ impl ScanService {
         task_arc: Arc<Mutex<ScanTaskModel>>,
         db: Arc<DatabaseService>,
         ai_manager: Arc<AiServiceManager>,
-        mcp_client: Arc<McpClient>,
+        mcp_client: Arc<RwLock<McpClient>>,
     ) -> Result<()> {
         let task_id = {
             let task = task_arc.lock().await;
@@ -249,7 +248,7 @@ Please return the analysis result in JSON format.",
     async fn phase_2_asset_discovery(
         task_arc: &Arc<Mutex<ScanTaskModel>>,
         db: &Arc<DatabaseService>,
-        mcp_client: &Arc<McpClient>,
+        mcp_client: &Arc<RwLock<McpClient>>,
     ) -> Result<()> {
         info!("开始资产发现阶段");
 
@@ -313,7 +312,7 @@ Please return the analysis result in JSON format.",
     async fn phase_3_vulnerability_scan(
         task_arc: &Arc<Mutex<ScanTaskModel>>,
         db: &Arc<DatabaseService>,
-        _mcp_client: &Arc<McpClient>,
+        _mcp_client: &Arc<RwLock<McpClient>>,
     ) -> Result<()> {
         info!("Starting vulnerability scanning phase");
 
@@ -428,9 +427,7 @@ Please return the analysis result in JSON format.",
                 .map(|arr| json!(arr).to_string()),
             status: "open".to_string(),
             verification_status: "unverified".to_string(),
-            submission_status: "not_submitted".to_string(),
-            reward_amount: None,
-            submission_date: None,
+
             resolution_date: None,
             tags: vuln_data
                 .get("tags")
@@ -573,6 +570,33 @@ Please return the analysis result in JSON format.",
     pub async fn get_results(&self, _task_id: Uuid) -> Result<Vec<ScanResult>> {
         // 暂时返回空结果，等待实现
         Ok(vec![])
+    }
+
+    /// 获取任务统计信息
+    pub async fn get_task_stats(&self) -> Result<TaskStats> {
+        let tasks = self.list_tasks().await?;
+        
+        let mut stats = TaskStats {
+            total: tasks.len(),
+            running: 0,
+            pending: 0,
+            completed: 0,
+            failed: 0,
+            cancelled: 0,
+        };
+        
+        for task in tasks {
+            match task.status {
+                ScanStatus::Running => stats.running += 1,
+                ScanStatus::Pending => stats.pending += 1,
+                ScanStatus::Completed => stats.completed += 1,
+                ScanStatus::Failed => stats.failed += 1,
+                ScanStatus::Cancelled => stats.cancelled += 1,
+                _ => {},
+            }
+        }
+        
+        Ok(stats)
     }
 
     /// 删除扫描任务

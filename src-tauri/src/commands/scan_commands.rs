@@ -1,5 +1,5 @@
-use crate::mcp::ToolManager;
-use crate::tools::ScanConfig;
+use crate::tools::{ToolSystem, ToolInfo, ToolExecutionParams};
+use std::collections::HashMap as StdHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
@@ -22,7 +22,7 @@ pub struct ScanResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ToolInfo {
+pub struct SimpleToolInfo {
     pub id: String,
     pub name: String,
     pub description: String,
@@ -30,17 +30,16 @@ pub struct ToolInfo {
 }
 
 #[tauri::command]
-pub async fn list_scan_tools(tool_manager: State<'_, ToolManager>) -> Result<ScanResponse, String> {
-    let tools = tool_manager.get_tools().await;
-    let tool_list: Vec<ToolInfo> = tools
+pub async fn list_scan_tools(tool_system: State<'_, ToolSystem>) -> Result<ScanResponse, String> {
+    let tools = tool_system.list_tools().await;
+    let tool_list: Vec<SimpleToolInfo> = tools
         .iter()
         .map(|tool| {
-            let def = tool.definition();
-            ToolInfo {
-                id: def.name.clone(),
-                name: def.name.clone(),
-                description: def.description.clone(),
-                category: format!("{:?}", def.category),
+            SimpleToolInfo {
+                id: tool.name.clone(),
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                category: format!("{:?}", tool.category),
             }
         })
         .collect();
@@ -55,28 +54,32 @@ pub async fn list_scan_tools(tool_manager: State<'_, ToolManager>) -> Result<Sca
 #[tauri::command]
 pub async fn start_scan(
     request: StartScanRequest,
-    tool_manager: State<'_, ToolManager>,
+    tool_system: State<'_, ToolSystem>,
 ) -> Result<ScanResponse, String> {
-    let config = ScanConfig {
-        target: request.target,
-        timeout: request.timeout.unwrap_or(5),
-        threads: request.threads.unwrap_or(50),
-        options: request.options.unwrap_or_default(),
+    let mut inputs = StdHashMap::new();
+    inputs.insert("target".to_string(), serde_json::json!(request.target));
+    inputs.insert("timeout".to_string(), serde_json::json!(request.timeout.unwrap_or(5)));
+    inputs.insert("threads".to_string(), serde_json::json!(request.threads.unwrap_or(50)));
+    
+    // 添加其他选项
+    if let Some(options) = request.options {
+        for (key, value) in options {
+            inputs.insert(key, value);
+        }
+    }
+    
+    let params = ToolExecutionParams {
+        inputs,
+        context: StdHashMap::new(),
+        timeout: None,
+        execution_id: None,
     };
 
-    // 创建工具执行请求
-    let execution_request = crate::mcp::types::ToolExecutionRequest {
-        tool_id: request.tool_name.clone(),
-        parameters: std::collections::HashMap::new(),
-        timeout: Some(300), // 5分钟超时
-        priority: crate::mcp::types::ExecutionPriority::Normal,
-    };
-
-    match tool_manager.execute_tool(execution_request).await {
-        Ok(scan_id) => Ok(ScanResponse {
+    match tool_system.execute_tool(&request.tool_name, params).await {
+        Ok(result) => Ok(ScanResponse {
             success: true,
             message: "扫描任务启动成功".to_string(),
-            data: Some(serde_json::to_value(scan_id).map_err(|e| e.to_string())?),
+            data: Some(result.output),
         }),
         Err(e) => Ok(ScanResponse {
             success: false,
@@ -89,53 +92,71 @@ pub async fn start_scan(
 #[tauri::command]
 pub async fn get_scan_result(
     scan_id: String,
-    tool_manager: State<'_, ToolManager>,
+    tool_system: State<'_, ToolSystem>,
 ) -> Result<ScanResponse, String> {
-    let uuid = Uuid::parse_str(&scan_id).map_err(|e| format!("无效的扫描ID: {}", e))?;
+    let _uuid = Uuid::parse_str(&scan_id).map_err(|e| format!("无效的扫描ID: {}", e))?;
 
-    match tool_manager.get_execution_result(uuid).await {
-        Some(result) => Ok(ScanResponse {
+    // 注意：新的ToolSystem使用不同的历史记录机制
+    let history = tool_system.get_execution_history(Some(100)).await;
+    if let Some(record) = history.iter().find(|r| r.execution_id.to_string() == scan_id) {
+        Ok(ScanResponse {
             success: true,
             message: "扫描结果获取成功".to_string(),
-            data: Some(serde_json::to_value(result).unwrap()),
-        }),
-        None => Err("扫描结果不存在".to_string()),
+            data: Some(serde_json::to_value(&record.result).unwrap()),
+        })
+    } else {
+        Err("扫描结果不存在".to_string())
     }
 }
 
 #[tauri::command]
 pub async fn cancel_scan(
     scan_id: String,
-    tool_manager: State<'_, ToolManager>,
+    tool_system: State<'_, ToolSystem>,
 ) -> Result<ScanResponse, String> {
-    let uuid = Uuid::parse_str(&scan_id).map_err(|e| format!("无效的扫描ID: {}", e))?;
+    let _uuid = Uuid::parse_str(&scan_id).map_err(|e| format!("无效的扫描ID: {}", e))?;
 
-    match tool_manager.cancel_execution(uuid).await {
-        Ok(_) => Ok(ScanResponse {
-            success: true,
-            message: "扫描任务取消成功".to_string(),
-            data: None,
-        }),
-        Err(e) => Ok(ScanResponse {
-            success: false,
-            message: format!("取消扫描失败: {}", e),
-            data: None,
-        }),
-    }
+    // 注意：新的ToolSystem不支持取消操作，返回错误
+    Ok(ScanResponse {
+        success: false,
+        message: "当前版本不支持取消扫描操作".to_string(),
+        data: None,
+    })
 }
 
 #[tauri::command]
 pub async fn list_running_scans(
-    tool_manager: State<'_, ToolManager>,
+    tool_system: State<'_, ToolSystem>,
 ) -> Result<ScanResponse, String> {
-    let running_scans = tool_manager.get_execution_history().await;
-    let running_scans: Vec<_> = running_scans
-        .into_iter()
-        .filter(|result| matches!(result.status, crate::mcp::types::ExecutionStatus::Running))
-        .collect();
+    let history = tool_system.get_execution_history(Some(100)).await;
+    let running_scans: Vec<_> = history.iter().filter(|r| {
+        if let Some(ref result) = r.result {
+            result.success
+        } else {
+            false
+        }
+    }).collect();
     Ok(ScanResponse {
         success: true,
         message: "获取运行中的扫描任务成功".to_string(),
         data: Some(serde_json::to_value(running_scans).map_err(|e| e.to_string())?),
     })
+}
+
+#[tauri::command]
+pub async fn get_available_scan_tools(tool_system: State<'_, ToolSystem>) -> Result<Vec<SimpleToolInfo>, String> {
+    let tools = tool_system.list_tools().await;
+    let tool_list: Vec<SimpleToolInfo> = tools
+        .iter()
+        .map(|tool| {
+            SimpleToolInfo {
+                id: tool.name.clone(),
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                category: format!("{:?}", tool.category),
+            }
+        })
+        .collect();
+
+    Ok(tool_list)
 }

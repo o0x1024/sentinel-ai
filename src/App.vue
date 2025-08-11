@@ -2,8 +2,13 @@
 import { onMounted, ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { listen } from '@tauri-apps/api/event'
+import TopNavbar from './components/Layout/TopNavbar.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
 import AIChat from './components/AIChat.vue'
+import AIChatWindow from './components/AIChatWindow.vue'
+import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
 
 const router = useRouter()
@@ -13,6 +18,19 @@ const { t, locale } = useI18n()
 
 // AI助手控制
 const showAIChat = ref(false)
+const isAIChatWindow = ref(false)
+
+// 检查当前窗口是否为AI助手窗口
+const checkWindowType = async () => {
+  try {
+    const currentWindow = getCurrentWindow()
+    const label = await currentWindow.label
+    isAIChatWindow.value = label === 'ai-chat'
+  } catch (error) {
+    console.error('Failed to get window label:', error)
+    isAIChatWindow.value = false
+  }
+}
 
 // 切换AI助手显示状态
 const toggleAIChat = () => {
@@ -25,15 +43,42 @@ const toggleSidebar = () => {
   sidebarCollapsed.value = !sidebarCollapsed.value
 }
 
+// 移动端菜单控制
+const showMobileMenu = ref(false)
+const toggleMobileMenu = () => {
+  showMobileMenu.value = !showMobileMenu.value
+}
+
+// 关闭移动端菜单
+const closeMobileMenu = () => {
+  showMobileMenu.value = false
+}
+
 // 注册AI助手快捷键 (Alt+A)
 const setupAIChatShortcut = () => {
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.altKey && e.key === 'a') {
       toggleAIChat()
     }
+    // ESC键关闭移动端菜单
+    if (e.key === 'Escape' && showMobileMenu.value) {
+      closeMobileMenu()
+    }
+  }
+
+  // 点击外部区域关闭移动端菜单
+  const handleClickOutside = (e: MouseEvent) => {
+    if (showMobileMenu.value) {
+      const target = e.target as Element
+      const dropdown = document.querySelector('.dropdown.lg\\:hidden')
+      if (dropdown && !dropdown.contains(target)) {
+        closeMobileMenu()
+      }
+    }
   }
 
   window.addEventListener('keydown', handleKeyDown)
+  document.addEventListener('click', handleClickOutside)
 
   // 监听自定义事件，用于响应侧边栏的AI助手按钮点击
   window.addEventListener('toggle-ai-chat', () => {
@@ -42,19 +87,43 @@ const setupAIChatShortcut = () => {
 
   onUnmounted(() => {
     window.removeEventListener('keydown', handleKeyDown)
+    document.removeEventListener('click', handleClickOutside)
     window.removeEventListener('toggle-ai-chat', toggleAIChat)
   })
 }
 
-// 在组件挂载时导航到Dashboard (如果当前在根路径)
-onMounted(() => {
-  // 只有在根路径时才重定向，避免路由冲突
-  if (router.currentRoute.value.path === '/') {
-    router.replace('/dashboard')
-  }
+// 事件监听器清理函数
+let unlistenAIChat: (() => void) | null = null
 
-  // 设置AI助手快捷键
-  setupAIChatShortcut()
+// 在组件挂载时导航到Dashboard (如果当前在根路径)
+onMounted(async () => {
+  // 检查窗口类型
+  await checkWindowType()
+  
+  // 如果不是AI助手窗口，执行正常的路由逻辑
+  if (!isAIChatWindow.value) {
+    // 只有在根路径时才重定向，避免路由冲突
+    if (router.currentRoute.value.path === '/') {
+      router.replace('/dashboard')
+    }
+    
+    // 设置AI助手快捷键
+    setupAIChatShortcut()
+  }
+  
+  // 监听显示AI聊天的事件（用于AI助手窗口）
+  if (isAIChatWindow.value) {
+    unlistenAIChat = await listen('show-ai-chat-only', (event) => {
+      console.log('Received show-ai-chat-only event:', event.payload)
+    })
+  }
+})
+
+// 组件卸载时清理事件监听器
+onUnmounted(() => {
+  if (unlistenAIChat) {
+    unlistenAIChat()
+  }
 })
 
 // 主题管理
@@ -173,116 +242,53 @@ window.updateUIScale = (newScale: number) => {
 
 <template>
   <div id="app" class="min-h-screen bg-base-100">
-    <!-- 顶部导航栏 - 不受缩放影响 -->
-    <div class="navbar bg-base-200 shadow-md z-50 fixed top-0 left-0 right-0">
-      <div class="navbar-start">
-        <button @click="toggleSidebar" class="btn btn-ghost btn-circle">
-          <i class="fas fa-bars"></i>
-        </button>
-        <router-link to="/" class="btn btn-ghost normal-case text-xl">
-          <i class="fas fa-shield-alt text-primary mr-2"></i>Sentinel AI
-        </router-link>
+    <!-- AI助手独立窗口 -->
+    <template v-if="isAIChatWindow">
+      <AIChatWindow />
+    </template>
+    
+    <!-- 主应用窗口 -->
+    <template v-else>
+      <!-- 顶部导航栏 -->
+      <TopNavbar 
+        :showAIChat="showAIChat"
+        @toggle-sidebar="toggleSidebar"
+        @toggle-a-i-chat="toggleAIChat"
+        @set-theme="setTheme"
+        @switch-language="switchLanguage"
+      />
+
+      <!-- 主要内容区域 - 受缩放影响 -->
+      <div :class="appClasses" :style="appStyles" class="flex pt-16">
+        <!-- 侧边栏 -->
+        <Sidebar 
+          :collapsed="sidebarCollapsed" 
+          class="fixed left-0 top-16 h-[calc(100vh-4rem)] transition-all duration-300 z-40"
+          :class="{
+            'w-16': sidebarCollapsed,
+            'w-64': !sidebarCollapsed
+          }"
+        />
+        
+        <!-- 主内容区 -->
+        <main 
+          class="flex-1 transition-all duration-300 overflow-hidden p-4 pt-4"
+          :class="{
+            'ml-16': sidebarCollapsed,
+            'ml-64': !sidebarCollapsed
+          }"
+          style="min-height: calc(100vh - 4rem);"
+        >
+          <router-view />
+        </main>
       </div>
 
-      <div class="navbar-center hidden lg:flex">
-        <ul class="menu menu-horizontal px-1 gap-1">
-          <li>
-            <router-link to="/dashboard" class="rounded-lg">
-              <i class="fas fa-home mr-2"></i>{{ t('sidebar.dashboard') }}
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/scan-tasks" class="rounded-lg">
-              <i class="fas fa-search mr-2"></i>{{ t('sidebar.scanTasks') }}
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/scan-sessions" class="rounded-lg">
-              <i class="fas fa-brain mr-2"></i>{{ t('scanSessions.title') }}
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/vulnerabilities" class="rounded-lg">
-              <i class="fas fa-bug mr-2"></i>{{ t('sidebar.vulnerabilities') }}
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/mcp-tools" class="nav-link">
-              <i class="fas fa-tools mr-2"></i>{{ t('sidebar.mcpTools') }}
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/dictionary" class="nav-link">
-              <i class="fas fa-book mr-2"></i>{{ t('sidebar.dictionary', '字典管理') }}
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/settings" class="nav-link">
-              <i class="fas fa-cog mr-2"></i>{{ t('sidebar.settings') }}
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/performance" class="nav-link">
-              <i class="fas fa-chart-line mr-2"></i>性能监控
-            </router-link>
-          </li>
-
-        </ul>
-      </div>
-
-      <div class="navbar-end">
-        <!-- AI助手按钮 -->
-        <button class="btn btn-ghost btn-circle tooltip tooltip-bottom" data-tip="AI助手 (Alt+A)" @click="toggleAIChat">
-          <i class="fas fa-robot text-xl" :class="{ 'text-primary': showAIChat }"></i>
-        </button>
-
-        <!-- 语言切换器 -->
-        <div class="dropdown dropdown-end">
-          <div tabindex="0" role="button" class="btn btn-ghost btn-circle">
-            <i class="fas fa-language text-xl"></i>
-          </div>
-          <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-36">
-            <li v-for="lang in availableLanguages" :key="lang.code">
-              <a @click="switchLanguage(lang.code)" :class="{ 'active': locale === lang.code }">
-                <i :class="`fas ${lang.icon} mr-2`"></i>{{ lang.name }}
-              </a>
-            </li>
-          </ul>
-        </div>
-
-        <!-- 主题切换器 -->
-        <div class="dropdown dropdown-end">
-          <div tabindex="0" role="button" class="btn btn-ghost btn-circle">
-            <i class="fas fa-palette text-xl"></i>
-          </div>
-          <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
-            <li v-for="theme in availableThemes" :key="theme.code">
-              <a @click="setTheme(theme.code)">
-                <i :class="`fas ${theme.icon} mr-2`"></i>{{ theme.name }}
-              </a>
-            </li>
-          </ul>
-        </div>
-
-      </div>
-    </div>
-
-    <!-- 主要内容区域 - 受缩放影响 -->
-    <div :class="appClasses" :style="appStyles" class="flex pt-16">
-      <!-- 侧边栏 -->
-      <div :class="{ 'w-80': !sidebarCollapsed, 'w-20': sidebarCollapsed }"
-        class="transition-all duration-300 ease-in-out">
-        <Sidebar :collapsed="sidebarCollapsed" />
-      </div>
-
-      <!-- 主内容区 -->
-      <div class="flex-1 p-4 overflow-auto">
-        <router-view />
-      </div>
-    </div>
-
-    <!-- AI助手聊天框 -->
-    <AIChat v-if="showAIChat" @close="showAIChat = false" />
+      <!-- AI助手聊天框 -->
+      <AIChat v-if="showAIChat" @close="showAIChat = false" />
+    </template>
+    
+    <!-- Toast组件 -->
+    <Toast />
   </div>
 </template>
 
@@ -357,5 +363,89 @@ body {
 .slide-enter-from,
 .slide-leave-to {
   transform: translateX(-100%);
+}
+
+/* 导航栏响应式优化 */
+.navbar {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+@media (min-width: 640px) {
+  .navbar {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+/* 移动端下拉菜单动画 */
+.dropdown-content {
+  animation: slideDown 0.2s ease-out;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 确保导航栏在移动端有足够的空间 */
+@media (max-width: 1023px) {
+  .navbar {
+    min-height: 4rem;
+  }
+  
+  /* 当移动端菜单展开时，确保有足够的空间 */
+  .dropdown.lg\:hidden .dropdown-content {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: auto;
+    margin-top: 0.5rem;
+    z-index: 1000;
+  }
+}
+
+/* 确保导航栏按钮在小屏幕上不会过小 */
+@media (max-width: 639px) {
+  .btn-circle {
+    min-height: 2.5rem;
+    min-width: 2.5rem;
+  }
+}
+
+/* 导航栏文字在中等屏幕上的优化 */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .navbar-center .menu li a {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+}
+
+/* 防止导航栏内容溢出 */
+.navbar-start,
+.navbar-center,
+.navbar-end {
+  min-width: 0;
+}
+
+.navbar-start {
+  flex: 0 1 auto;
+}
+
+.navbar-center {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.navbar-end {
+  flex: 0 1 auto;
 }
 </style>

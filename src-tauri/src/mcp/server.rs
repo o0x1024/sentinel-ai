@@ -331,6 +331,19 @@ impl SentinelMcpServer {
         registry.get_tool_details()
     }
 
+    /// 注册工具到内部注册表
+    pub async fn register_tool_internal(&mut self, tool: Box<dyn McpTool>) -> Result<()> {
+        let mut registry = self.tool_registry.write().await;
+        registry.register_tool(tool);
+        
+        // 清除工具缓存以便重新生成
+        let mut cache = self.tools_cache.write().await;
+        cache.clear();
+        
+        tracing::debug!("Tool registered successfully");
+        Ok(())
+    }
+
     /// 执行工具
     pub async fn execute_tool(&self, tool_name: &str, parameters: Value) -> Result<Value> {
         let registry = self.tool_registry.read().await;
@@ -617,9 +630,9 @@ impl McpServerManager {
         Ok("".to_string())
     }
 
-    pub async fn register_tool(&self, _tool: Box<dyn McpTool>) -> Result<()> {
-        // Placeholder implementation
-        Ok(())
+    pub async fn register_tool(&self, tool: Box<dyn McpTool>) -> Result<()> {
+        let mut server = self.server.write().await;
+        server.register_tool_internal(tool).await
     }
 
     pub async fn remove_server(&self, _connection_id: &str) -> Result<()> {

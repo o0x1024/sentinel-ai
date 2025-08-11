@@ -97,9 +97,20 @@ export default {
     newConversationTitle: 'New Conversation',
     currentRole: 'Current Role',
     clearRole: 'Clear Role',
+    toggleSidebar: 'Toggle Sidebar',
+    switchSide: 'Switch Side',
+    confirmDeleteConversation: 'Are you sure you want to delete this conversation?',
     noModelSelected: 'No AI model selected',
     invalidModelSelected: 'Invalid model selection',
     errorCreatingConversation: 'Error creating conversation',
+    messageStopped: 'Message stopped',
+    streamError: 'Stream error',
+    messageTimeout: 'Message timeout, retrying',
+    maxRetriesReached: 'Maximum retries reached',
+    stopMessage: 'Stop message',
+    sendMessage: 'Send message',
+    toggleInApp: 'In-App Chat',
+    openWindow: 'Open Window',
   },
   tools: {
     executionStatus: {
@@ -168,10 +179,14 @@ export default {
     providerRequired: 'Provider selection is required',
     categories: {
       ai: 'AI Services',
-      scan: 'Scan Configuration',
-      system: 'System Settings'
+      scheduler: 'Scheduler Strategy',
+      database: 'Database',
+      system: 'System Settings',
+      security: 'Security Settings'
     },
-    ai: {
+      ai: {
+        basicConfig: 'Basic Configuration',
+      advancedConfig: 'Advanced Configuration',
       providerStatus: 'AI Provider Status Overview',
       connected: 'Connected',
       disconnected: 'Disconnected',
@@ -214,7 +229,243 @@ export default {
       inputTokens: 'Input Tokens',
       outputTokens: 'Output Tokens',
       totalTokens: 'Total Tokens',
-      estimatedCost: 'Estimated Cost'
+      estimatedCost: 'Estimated Cost',
+        selectModel: 'Please select a model',
+        refreshModels: 'Refresh Models'
+    },
+    scheduler: {
+      title: 'Scheduler Strategy Configuration',
+      description: 'Configure AI models and strategies for different execution stages',
+      currentStrategy: 'Current Strategy',
+      disabled: 'Disabled',
+      enableScheduler: 'Enable Scheduler',
+      enableSchedulerDesc: 'Enable AI task scheduling and automatic replanning functionality',
+      status: 'Status',
+      enabled: 'Enabled',
+      modelsConfigured: 'Models Configured',
+      performance: 'Performance Level',
+      estimatedCost: 'Estimated Cost',
+      high: 'High',
+      medium: 'Medium',
+      low: 'Low',
+      highCost: 'High Cost',
+      mediumCost: 'Medium Cost',
+      lowCost: 'Low Cost',
+      required: 'Required',
+      optional: 'Optional',
+      selectModel: 'Select Model',
+      useDefault: 'Use Default',
+      maxRetries: 'Max Retries',
+      timeoutSeconds: 'Timeout (seconds)',
+      scenarioLabel: 'Scenario Configuration',
+      stageModels: 'Stage Model Configuration',
+      noModelsAvailable: 'No Models Available',
+      noModelsAvailableDesc: 'Please enable AI providers and configure API keys in the AI Service Configuration section first.',
+      intentAnalysisModel: 'Intent Analysis Model',
+      intentAnalysisModelDesc: 'Used to analyze user input intent',
+      plannerModel: 'Planner Model',
+      plannerModelDesc: 'Used to generate execution plans',
+      replannerModel: 'Replanner Model',
+      replannerModelDesc: 'Used to dynamically adjust execution plans',
+      executorModel: 'Executor Model',
+      executorModelDesc: 'Used to execute specific tasks',
+      evaluatorModel: 'Evaluator Model',
+      evaluatorModelDesc: 'Used to evaluate execution results',
+      replanningStrategy: 'Replanning Strategy Configuration',
+      defaultStrategy: 'Default Replanning Strategy',
+      defaultStrategyDesc: 'Strategy to use when replanning is needed',
+      strategyName: 'Strategy Name',
+      strategyDescription: 'Description',
+      applicableScenarios: 'Applicable Scenarios',
+      quickPresets: 'Quick Configuration Presets',
+      applyConfig: 'Apply Configuration',
+      saveConfig: 'Save Scheduler Configuration',
+      configSaved: 'Scheduler configuration saved successfully',
+      configSaveFailed: 'Failed to save scheduler configuration',
+      highPerformance: 'High Performance configuration applied',
+      balanced: 'Balanced configuration applied',
+      economic: 'Economic configuration applied',
+      strategies: {
+          adaptive: 'Adaptive Strategy',
+          conservative: 'Conservative Strategy',
+          aggressive: 'Aggressive Strategy',
+          costOptimized: 'Cost Optimized Strategy',
+          adaptiveDesc: 'Automatically selects the best replanning strategy based on failure type',
+          conservativeDesc: 'Conservative replanning strategy that prioritizes stability',
+          aggressiveDesc: 'Aggressive replanning strategy that pursues optimal performance',
+          costOptimizedDesc: 'Cost-optimized replanning strategy that balances performance and cost',
+          adaptiveDetailed: {
+            name: 'Adaptive Strategy',
+            description: 'Automatically select the best strategy based on context',
+            scenario: 'All scenarios'
+          },
+        scenarios: 'Scenario Configuration',
+        complete: {
+          name: 'Complete Replanning',
+          description: 'Completely regenerate the execution plan',
+          scenario: 'Severe failures'
+        },
+        partial: {
+          name: 'Partial Replanning',
+          description: 'Only adjust the failed part of the plan',
+          scenario: 'Partial failures'
+        },
+        parameter: {
+          name: 'Parameter Adjustment',
+          description: 'Only adjust execution parameters',
+          scenario: 'Parameter issues'
+        },
+        reorder: {
+          name: 'Task Reordering',
+          description: 'Adjust the execution order of tasks',
+          scenario: 'Dependency issues'
+        },
+        resource: {
+          name: 'Resource Reallocation',
+          description: 'Reallocate computing resources',
+          scenario: 'Resource shortage'
+        },
+        alternative: {
+          name: 'Alternative Tool',
+          description: 'Use alternative tools to complete tasks',
+          scenario: 'Tool failures'
+        }
+      },
+      scenarioConfig: {
+        allScenarios: 'All scenarios',
+        severeFail: 'Severe failures',
+        partialFail: 'Partial failures',
+        parameterIssue: 'Parameter issues',
+        dependencyIssue: 'Dependency issues',
+        resourceShortage: 'Resource shortage',
+        toolFailure: 'Tool failures'
+      },
+      presets: {
+        highPerformance: {
+          title: 'High Performance',
+          description: 'Use the most powerful models for complex tasks'
+        },
+        balanced: {
+          title: 'Balanced',
+          description: 'Balance between performance and cost'
+        },
+        economic: {
+          title: 'Economic',
+          description: 'Prioritize cost control'
+        }
+      }
+    },
+    general: {
+      version: 'Version',
+      buildDate: 'Build Date',
+      language: 'Language',
+      region: 'Region',
+      theme: 'Theme',
+      darkMode: 'Dark Mode',
+      interface: 'Interface Settings',
+      appearance: 'Appearance',
+      languageRegion: 'Language & Region',
+      fontSize: 'Font Size',
+      compactMode: 'Compact Mode',
+      compactModeHint: 'Reduce spacing and padding for more compact interface',
+      darkModeHint: 'Automatically switch between light and dark themes based on system settings',
+      timezone: 'Timezone',
+      dateFormat: 'Date Format',
+      unknown: 'Unknown',
+      window: 'Window Settings',
+      closeToTray: 'Close to System Tray',
+      closeToTrayHint: 'Keep running in background when window is closed',
+      minimizeToTray: 'Minimize to System Tray',
+      alwaysOnTop: 'Always on Top',
+      windowOpacity: 'Window Opacity',
+      performance: 'Performance',
+      memory: 'Memory Settings',
+      memoryLimit: 'Memory Limit',
+      memoryLimitHint: 'Maximum memory usage for the application',
+      autoGC: 'Auto Garbage Collection',
+      preload: 'Preload Resources',
+      preloadHint: 'Preload frequently used resources for better performance',
+      network: 'Network Settings',
+      maxConnections: 'Max Connections',
+      maxConnectionsHint: 'Maximum number of concurrent connections',
+      requestTimeout: 'Request Timeout',
+      retryCount: 'Retry Count',
+      privacy: 'Privacy Settings',
+      analytics: 'Usage Analytics',
+      analyticsHint: 'Help improve the application by sharing anonymous usage data',
+      errorReporting: 'Error Reporting',
+      errorReportingHint: 'Automatically send error reports to help fix issues',
+      usageStats: 'Usage Statistics',
+      encryptLocalData: 'Encrypt Local Data',
+      encryptLocalDataHint: 'Encrypt sensitive data stored locally',
+      saveConfig: 'Save Configuration',
+      behavior: 'Behavior Settings',
+      startup: 'Startup Settings',
+      autoStart: 'Start on Boot',
+      autoStartHint: 'Automatically start the application when system boots',
+      startMinimized: 'Start Minimized',
+      restoreSession: 'Restore Session',
+      restoreSessionHint: 'Restore the previous session state on startup',
+      checkUpdates: 'Check for Updates',
+      themes: {
+        auto: 'Auto (Follow System)',
+        light: 'Light',
+        dark: 'Dark',
+        cupcake: 'Cupcake',
+        bumblebee: 'Bumblebee',
+        emerald: 'Emerald',
+        corporate: 'Corporate',
+        synthwave: 'Synthwave',
+        retro: 'Retro',
+        cyberpunk: 'Cyberpunk',
+        valentine: 'Valentine',
+        halloween: 'Halloween',
+        garden: 'Garden',
+        forest: 'Forest',
+        aqua: 'Aqua',
+        lofi: 'Lo-fi',
+        pastel: 'Pastel',
+        fantasy: 'Fantasy',
+        wireframe: 'Wireframe',
+        black: 'Black',
+        luxury: 'Luxury',
+        dracula: 'Dracula'
+      },
+      languages: {
+        auto: 'Auto (Follow System)',
+        zhCN: '简体中文',
+        zhTW: '繁體中文',
+        enUS: 'English (US)',
+        jaJP: '日本語',
+        koKR: '한국어',
+        frFR: 'Français',
+        deDE: 'Deutsch',
+        esES: 'Español',
+        ptBR: 'Português (Brasil)',
+        ruRU: 'Русский'
+      },
+      regions: {
+        auto: 'Auto',
+        CN: 'China Mainland',
+        TW: 'Taiwan',
+        HK: 'Hong Kong',
+        US: 'United States',
+        JP: 'Japan',
+        KR: 'South Korea',
+        EU: 'European Union'
+      },
+      timezones: {
+        auto: 'Auto (Follow System)',
+        shanghai: 'Asia/Shanghai (UTC+8)',
+        taipei: 'Asia/Taipei (UTC+8)',
+        hongkong: 'Asia/Hong_Kong (UTC+8)',
+        tokyo: 'Asia/Tokyo (UTC+9)',
+        seoul: 'Asia/Seoul (UTC+9)',
+        newyork: 'America/New_York (UTC-5)',
+        losangeles: 'America/Los_Angeles (UTC-8)',
+        london: 'Europe/London (UTC+0)',
+        paris: 'Europe/Paris (UTC+1)'
+      }
     },
     themes: {
       light: 'Light Theme',
@@ -256,7 +507,7 @@ export default {
     activeScans: 'Active Scans',
     vulnerabilitiesFound: 'Vulnerabilities Found',
     projectsMonitored: 'Projects Monitored',
-    earningsToday: 'Today\'s Earnings',
+
     scanProgress: 'Scan Progress',
     recentVulnerabilities: 'Recent Vulnerabilities',
     topProjects: 'Top Projects',
@@ -269,7 +520,7 @@ export default {
     startNewScan: 'Start New Scan',
     viewAllVulnerabilities: 'View All Vulnerabilities',
     manageProjects: 'Manage Projects',
-    checkEarnings: 'Check Earnings'
+
   },
   scanTasks: {
     title: 'Scan Tasks',
@@ -333,13 +584,17 @@ export default {
       submit: 'Submit'
     },
     notifications: {
+      loadFailed: 'Failed to load scan tasks',
       scanStarted: 'Scan started',
       scanCompleted: 'Scan completed',
       scanFailed: 'Scan failed',
       scanPaused: 'Scan paused',
       scanResumed: 'Scan resumed',
       scanStopped: 'Scan stopped',
-      scanDeleted: 'Scan deleted'
+      scanDeleted: 'Scan deleted',
+      stopFailed: 'Failed to stop scan',
+      deleteFailed: 'Failed to delete scan',
+      confirmDelete: 'Are you sure you want to delete this scan task?'
     }
   },
   vulnerabilities: {
@@ -417,7 +672,7 @@ export default {
     }
   },
   projects: {
-    title: 'Bounty Projects',
+    
     newProject: 'New Project',
     allProjects: 'All Projects',
     activeProjects: 'Active Projects',
@@ -431,7 +686,7 @@ export default {
     endDate: 'End Date',
     status: 'Status',
     budget: 'Budget',
-    earnings: 'Earnings',
+    
     scope: 'Scope',
     outOfScope: 'Out of Scope',
     vulnerabilitiesFound: 'Vulnerabilities Found',
@@ -460,8 +715,7 @@ export default {
       submit: 'Submit'
     },
     types: {
-      publicBounty: 'Public Bounty',
-      privateBounty: 'Private Bounty',
+
       contractedTest: 'Contracted Test',
       internal: 'Internal Project',
       other: 'Other'
@@ -535,9 +789,6 @@ export default {
       sqlmap: 'Automatic SQL injection and database takeover tool',
       ffuf: 'Fast web fuzzer'
     },
-    categories: {
-      all: 'All'
-    },
     serversTitle: 'MCP Servers',
     serversDescription: 'Manage and connect to Model Context Protocol (MCP) servers to extend AI capabilities.',
     myServers: 'My Servers',
@@ -563,111 +814,42 @@ export default {
     history: 'History',
     clearHistory: 'Clear History',
   },
-  earnings: {
-    title: 'Earnings',
-    description: 'Track your earnings from vulnerability submissions and other activities.',
-    summary: 'Summary',
-    totalEarnings: 'Total Earnings',
-    thisMonth: 'This Month',
-    thisWeek: 'This Week',
-    today: 'Today',
-    earningsHistory: 'Earnings History',
-    earningsByProject: 'Earnings by Project',
-    earningsByVulnerability: 'Earnings by Vulnerability Type',
-    earningsByPlatform: 'Earnings by Platform',
-    earningsByMonth: 'Earnings by Month',
-    earningDetails: 'Earning Details',
-    date: 'Date',
-    project: 'Project',
-    vulnerability: 'Vulnerability',
-    platform: 'Platform',
-    amount: 'Amount',
-    status: 'Status',
-    paymentMethod: 'Payment Method',
-    transactionId: 'Transaction ID',
-    filters: {
-      all: 'All',
-      paid: 'Paid',
-      pending: 'Pending',
-      rejected: 'Rejected'
-    },
-    export: {
-      exportData: 'Export Data',
-      exportAsCsv: 'Export as CSV',
-      exportAsExcel: 'Export as Excel',
-      exportAsPdf: 'Export as PDF'
-    },
-    stats: {
-      averagePerVulnerability: 'Average per Vulnerability',
-      averagePerProject: 'Average per Project',
-      highestPaying: 'Highest Paying',
-      mostProfitablePlatform: 'Most Profitable Platform',
-      mostProfitableVulnerabilityType: 'Most Profitable Vulnerability Type'
-    }
-  },
-  submissions: {
-    title: 'Submissions',
-    newSubmission: 'New Submission',
-    allSubmissions: 'All Submissions',
-    pendingSubmissions: 'Pending Submissions',
-    acceptedSubmissions: 'Accepted Submissions',
-    rejectedSubmissions: 'Rejected Submissions',
-    submissionDetails: 'Submission Details',
-    submissionTitle: 'Submission Title',
-    project: 'Project',
-    platform: 'Platform',
-    vulnerabilityType: 'Vulnerability Type',
-    severity: 'Severity',
-    submissionDate: 'Submission Date',
-    status: 'Status',
-    reward: 'Reward',
-    description: 'Description',
-    proofOfConcept: 'Proof of Concept',
-    impact: 'Impact',
-    remediation: 'Remediation',
-    comments: 'Comments',
-    actions: 'Actions',
-    edit: 'Edit',
-    delete: 'Delete',
-    export: 'Export',
-    filters: {
-      all: 'All',
-      pending: 'Pending',
-      accepted: 'Accepted',
-      rejected: 'Rejected',
-      needsMoreInfo: 'Needs More Info'
-    },
-    form: {
-      titlePlaceholder: 'Enter submission title',
-      selectProject: 'Select Project',
-      selectPlatform: 'Select Platform',
-      selectVulnerabilityType: 'Select Vulnerability Type',
-      selectSeverity: 'Select Severity',
-      descriptionPlaceholder: 'Enter vulnerability description',
-      pocPlaceholder: 'Enter proof of concept steps',
-      impactPlaceholder: 'Enter vulnerability impact',
-      remediationPlaceholder: 'Enter remediation suggestions',
-      submit: 'Submit'
-    },
-    notifications: {
-      submissionCreated: 'Submission created',
-      submissionUpdated: 'Submission updated',
-      submissionDeleted: 'Submission deleted',
-      statusChanged: 'Status changed',
-      rewardReceived: 'Reward received'
-    }
-  },
+
+
   sidebar: {
     dashboard: 'Dashboard',
     scanTasks: 'Scan Tasks',
     vulnerabilities: 'Vulnerabilities',
     dictionary: 'Dictionary Management',
-    projects: 'Bounty Projects',
     mcpTools: 'MCP Tools',
-    earnings: 'Earnings',
-    submissions: 'Submissions',
+    agents: 'Agent Management',
     settings: 'System Settings',
-    language: 'Language Settings'
+    language: 'Language Settings',
+    performance: 'Performance Monitor',
+    
+    // Sidebar section titles
+    coreFeatures: 'Core Features',
+    toolsManagement: 'Tools & Management',
+    systemSettings: 'System Settings',
+    
+    // Task status
+    currentTask: 'Current Task',
+    running: 'Running',
+    remaining: 'Remaining',
+    scanning: 'Scanning',
+    
+    // Statistics
+    todayStats: 'Today\'s Stats',
+    vulnerabilitiesFound: 'Vulnerabilities Found',
+    completedTasks: 'Completed Tasks',
+    
+    // New translation keys
+    new: 'NEW',
+    vulnerabilityCount: '12',
+    agentCount: '5',
+    remainingTimeDefault: '2h 15m remaining',
+    assets: 'Asset Management',
+    intelligentTest: 'Intelligent Security Test'
   },
   dictionary: {
     title: 'Dictionary Management',
@@ -736,6 +918,10 @@ export default {
      manageWords: 'Manage Words',
      addWordPlaceholder: 'Enter new word',
      addWord: 'Add',
+     searchWords: 'Search words...',
+     word: 'Word',
+     addedAt: 'Added At',
+     clearAll: 'Clear All',
 
   },
   mcp: {
@@ -921,6 +1107,214 @@ export default {
       shallow: 'Shallow Scan',
       medium: 'Medium Depth',
       deep: 'Deep Scan'
+    }
+  },
+  agents: {
+    title: 'Agent Management',
+    description: 'Manage and monitor intelligent Agent system',
+    executeTask: 'Execute Task',
+    createWorkflow: 'Create Workflow',
+    intelligentTest: 'Intelligent Test',
+    initializing: 'Initializing Agent system...',
+    refreshing: 'Refreshing data...',
+    initSuccess: 'Agent system initialized successfully',
+    initFailed: 'Agent system initialization failed',
+    loadFailed: 'Failed to load data',
+    refreshSuccess: 'Data refreshed successfully',
+    taskExecuteSuccess: 'Task executed successfully',
+    taskExecuteFailed: 'Task execution failed',
+    workflowCreateSuccess: 'Workflow created and started successfully',
+    workflowCreateFailed: 'Workflow creation failed',
+    workflowActionSuccess: 'Workflow operation successful',
+    workflowActionFailed: 'Workflow operation failed',
+    intelligentTestStarted: 'Intelligent security test started',
+    intelligentTestFailed: 'Failed to start intelligent security test',
+    enterTarget: 'Please enter test target:',
+    paused: 'Paused',
+    resumed: 'Resumed',
+    cancelled: 'Cancelled',
+    agentList: 'Agent List',
+    workflowList: 'Workflow List',
+    
+    // Agent types and status
+    legacyAgent: 'Legacy Agent',
+    universalAgent: 'Universal Agent',
+    active: 'Active',
+    inactive: 'Inactive',
+    universalSystem: 'Universal System',
+    initUniversalSystem: 'Initialize Universal System',
+    noAgents: 'No Agents',
+    ready: 'Ready',
+    stats: {
+      totalAgents: 'Total Agents',
+      totalTasks: 'Total Tasks',
+      successRate: 'Success Rate',
+      avgExecutionTime: 'Avg Execution Time'
+    },
+    table: {
+      name: 'Name',
+      type: 'Type',
+      status: 'Status',
+      totalTasks: 'Total Tasks',
+      successRate: 'Success Rate',
+      avgTime: 'Avg Time',
+      lastActivity: 'Last Activity',
+      actions: 'Actions'
+    },
+    workflow: {
+      name: 'Name',
+      target: 'Target',
+      status: 'Status',
+      progress: 'Progress',
+      tasks: 'Tasks',
+      created: 'Created',
+      actions: 'Actions',
+      currentStage: 'Current Stage',
+      total: 'Total',
+      completed: 'Completed',
+      failed: 'Failed',
+      createAndStart: 'Create and Start',
+      form: {
+        name: 'Workflow Name',
+        target: 'Target',
+        riskTolerance: 'Risk Tolerance',
+        timeLimit: 'Time Limit (seconds)'
+      }
+    },
+    form: {
+      agentType: 'Agent Type',
+      selectAgent: 'Select Agent',
+      selectFactory: 'Select Agent Factory',
+      taskType: 'Task Type',
+      target: 'Target',
+      parameters: 'Parameters (JSON)',
+      priority: 'Priority',
+      pleaseSelect: 'Please select...'
+    },
+    
+    taskTypes: {
+      reconnaissance: 'Reconnaissance',
+      scanning: 'Scanning',
+      exploitation: 'Exploitation',
+      reporting: 'Reporting'
+    },
+    
+    priority: {
+      low: 'Low',
+      normal: 'Normal',
+      high: 'High',
+      critical: 'Critical'
+    },
+    
+    risk: {
+      low: 'Low',
+      medium: 'Medium',
+      high: 'High'
+    },
+    
+    createCustomAgent: 'Create Custom Agent',
+    customAgentCreated: 'Custom Agent Created Successfully',
+    type: 'Type'
+  },
+  
+  agentCreator: {
+    title: 'Create Custom Agent',
+    steps: {
+      basic: 'Basic Info',
+      capabilities: 'Capabilities',
+      tools: 'MCP Tools',
+      code: 'Code Editor',
+      deploy: 'Test & Deploy'
+    },
+    basic: {
+      title: 'Agent Basic Information',
+      description: 'Configure basic properties and metadata for the Agent',
+      name: 'Agent Name',
+      namePlaceholder: 'Enter agent name',
+      version: 'Version',
+      versionPlaceholder: '1.0.0',
+      desc: 'Description',
+      descPlaceholder: 'Describe the functionality and purpose of the Agent',
+      author: 'Author',
+      authorPlaceholder: 'Enter author name',
+      category: 'Category',
+      categoryPlaceholder: 'Select category',
+      tags: 'Tags',
+      tagsPlaceholder: 'Enter tags and press Enter to add'
+    },
+    capabilities: {
+      title: 'Capability Definition',
+      description: 'Define actions and capabilities that the Agent can execute',
+      addCapability: 'Add Capability',
+      actionName: 'Action Name',
+      actionNamePlaceholder: 'Enter action name',
+      actionDesc: 'Action Description',
+      actionDescPlaceholder: 'Describe the functionality of this action',
+      inputParams: 'Input Parameters',
+      outputParams: 'Output Parameters',
+      addParam: 'Add Parameter',
+      paramName: 'Parameter Name',
+      paramType: 'Parameter Type',
+      paramDesc: 'Parameter Description',
+      paramRequired: 'Required',
+      removeParam: 'Remove Parameter',
+      removeCapability: 'Remove Capability'
+    },
+    tools: {
+      title: 'MCP Tools Configuration',
+      description: 'Select MCP tools that the Agent needs to use',
+      refresh: 'Refresh Tool List',
+      loading: 'Loading tool list...',
+      selectedTools: 'Selected Tools',
+      categories: {
+        all: 'All',
+        security: 'Security Tools',
+        network: 'Network Tools',
+        analysis: 'Analysis Tools',
+        automation: 'Automation Tools',
+        data: 'Data Tools',
+        monitoring: 'Monitoring Tools',
+        other: 'Other'
+      }
+    },
+    code: {
+      title: 'Code Editor',
+      description: 'Edit and customize the Agent implementation code',
+      generateCode: 'Generate Code Template',
+      validateCode: 'Validate Code',
+      codeValid: 'Code validation passed',
+      codeInvalid: 'Code validation failed',
+      validating: 'Validating...'
+    },
+    deploy: {
+      title: 'Test & Deploy',
+      description: 'Test Agent functionality and deploy to system',
+      testAgent: 'Test Agent',
+      deployAgent: 'Deploy Agent',
+      testing: 'Testing...',
+      deploying: 'Deploying...',
+      testPassed: 'Test Passed',
+      testFailed: 'Test Failed',
+      deploySuccess: 'Deploy Success',
+      deployFailed: 'Deploy Failed',
+      clearResults: 'Clear Results',
+      environment: 'Environment',
+      autoStart: 'Auto Start',
+      resources: 'Resource Configuration',
+      memory: 'Memory',
+      cpu: 'CPU'
+    },
+    navigation: {
+      previous: 'Previous',
+      next: 'Next',
+      finish: 'Finish',
+      cancel: 'Cancel'
+    },
+    messages: {
+      createSuccess: 'Agent created successfully',
+      createFailed: 'Agent creation failed',
+      validationFailed: 'Validation failed, please check configuration',
+      fillRequired: 'Please fill in required fields'
     }
   }
 }

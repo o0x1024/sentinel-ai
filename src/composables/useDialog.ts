@@ -1,5 +1,6 @@
 import { createApp, defineComponent, h, ref, App } from 'vue';
 import i18n from '@/i18n';
+import { toast } from './useToast';
 
 // 对话框选项接口
 interface DialogOptions {
@@ -88,6 +89,22 @@ class DialogService {
       message,
       variant: 'error'
     });
+  }
+
+  // Toast提示方法
+  toast = {
+    success: (message: string, title?: string, duration?: number) => {
+      toast.success(message, title, duration);
+    },
+    error: (message: string, title?: string, duration?: number) => {
+      toast.error(message, title, duration);
+    },
+    warning: (message: string, title?: string, duration?: number) => {
+      toast.warning(message, title, duration);
+    },
+    info: (message: string, title?: string, duration?: number) => {
+      toast.info(message, title, duration);
+    }
   }
 
   // 显示信息提示
@@ -199,4 +216,4 @@ declare module '@vue/runtime-core' {
   interface ComponentCustomProperties {
     $dialog: DialogService;
   }
-} 
+}

@@ -1,11 +1,16 @@
-use crate::mcp::types::*;
+use crate::mcp::{types::*, ResourceUsage};
+
 use anyhow::{anyhow, Result};
+use std::arch::aarch64::float16x4_t;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
+
+
+
 
 /// 工具管理器
 pub struct ToolManager {
@@ -148,10 +153,10 @@ impl ToolManager {
                 completed_at: Some(chrono::Utc::now()),
                 duration: Some(1000),
                 resource_usage: ResourceUsage {
-                    cpu_percent: Some(10.0),
-                    memory_mb: Some(50),
-                    disk_io_mb: Some(0),
-                    network_io_mb: Some(10),
+                    cpu_time: 10.0,
+                    memory_peak: 50 * 1024 * 1024, // 50MB
+                    network_requests: 10,
+                    disk_io: 0,
                 },
             },
         };

@@ -3,13 +3,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
-use std::fs;
 use std::path::PathBuf;
 
 use crate::models::ai::AiRole;
 use crate::models::database::{
-    AiConversation, AiMessage, BountyProject, Configuration, DatabaseStats, McpServerConfig,
-    ScanTask, Submission, Vulnerability,
+    AiConversation, AiMessage, Configuration, DatabaseStats, McpServerConfig,
+    ScanTask, Vulnerability,
 };
 
 #[async_trait]
@@ -39,6 +38,13 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn create_ai_role(&self, role: &AiRole) -> Result<()>;
     async fn update_ai_role(&self, role: &AiRole) -> Result<()>;
     async fn delete_ai_role(&self, role_id: &str) -> Result<()>;
+    
+    // 扫描任务相关方法
+    async fn create_scan_task(&self, task: &ScanTask) -> Result<()>;
+    async fn get_scan_tasks(&self, project_id: Option<&str>) -> Result<Vec<ScanTask>>;
+    async fn get_scan_task(&self, id: &str) -> Result<Option<ScanTask>>;
+    async fn get_scan_tasks_by_target(&self, target: &str) -> Result<Vec<ScanTask>>;
+    async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -63,7 +69,6 @@ impl DatabaseService {
 
     /// 初始化数据库连接和架构
     pub async fn initialize(&mut self) -> Result<()> {
-        tracing::info!("Starting database initialization...");
         tracing::info!("Database path: {}", self.db_path.display());
 
         // 确保数据库目录存在
@@ -77,7 +82,6 @@ impl DatabaseService {
 
         // 检查数据库文件是否存在
         let db_exists = self.db_path.exists();
-        tracing::info!("Database file exists: {}", db_exists);
 
         // 如果数据库文件不存在，先创建一个空文件
         if !db_exists {
@@ -90,17 +94,16 @@ impl DatabaseService {
 
         // 创建连接池，使用更安全的连接选项
         let database_url = format!("sqlite:{}?mode=rwc", self.db_path.display());
-        tracing::debug!("Database connection string: {}", database_url);
 
         let pool = SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new()
                 .filename(&self.db_path)
                 .create_if_missing(true)
-                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Delete)
                 .synchronous(sqlx::sqlite::SqliteSynchronous::Normal),
         )
         .await
-        .map_err(|e| anyhow::anyhow!("连接数据库失败: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("创建数据库连接池失败: {}", e))?;
 
         // 启用外键约束
         sqlx::query("PRAGMA foreign_keys = ON")
@@ -115,52 +118,18 @@ impl DatabaseService {
         if !db_exists {
             tracing::info!("New database detected, inserting default data...");
             self.insert_default_data(&pool).await?;
-        } else {
-            tracing::info!("Existing database detected, skipping data insertion.");
-        }
+        } 
 
         self.pool = Some(pool);
-        tracing::info!(
-            "Database initialization completed: {}",
-            self.db_path.display()
-        );
 
         Ok(())
     }
 
     /// 创建数据库表结构
     async fn create_database_schema(&self, pool: &SqlitePool) -> Result<()> {
-        tracing::info!("Creating database schema...");
 
         // 使用事务来确保所有表创建成功或全部回滚
         let mut tx = pool.begin().await?;
-
-        // 创建赏金项目表
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS bounty_projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                platform TEXT NOT NULL,
-                url TEXT,
-                scope_domains TEXT,
-                scope_ips TEXT,
-                out_of_scope TEXT,
-                reward_range TEXT,
-                difficulty_level INTEGER DEFAULT 1,
-                priority INTEGER DEFAULT 1,
-                status TEXT DEFAULT 'active',
-                last_activity_at DATETIME,
-                roi_score REAL DEFAULT 0.0,
-                success_rate REAL DEFAULT 0.0,
-                competition_level INTEGER DEFAULT 1,
-                tags TEXT,
-                notes TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )",
-        )
-        .execute(&mut *tx)
-        .await?;
 
         // 创建扫描任务表
         sqlx::query(
@@ -184,8 +153,53 @@ impl DatabaseService {
                 error_message TEXT,
                 created_by TEXT DEFAULT 'user',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES bounty_projects(id) ON DELETE SET NULL
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建扫描会话表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS scan_sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                target TEXT NOT NULL,
+                scan_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                config TEXT NOT NULL DEFAULT '{}',
+                progress REAL NOT NULL DEFAULT 0.0,
+                current_stage TEXT,
+                total_stages INTEGER NOT NULL DEFAULT 0,
+                completed_stages INTEGER NOT NULL DEFAULT 0,
+                results_summary TEXT,
+                error_message TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                started_at DATETIME,
+                completed_at DATETIME,
+                created_by TEXT NOT NULL
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建扫描阶段表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS scan_stages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                stage_name TEXT NOT NULL,
+                stage_order INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                tool_name TEXT NOT NULL,
+                config TEXT NOT NULL DEFAULT '{}',
+                results TEXT,
+                error_message TEXT,
+                started_at DATETIME,
+                completed_at DATETIME,
+                duration_ms INTEGER,
+                FOREIGN KEY (session_id) REFERENCES scan_sessions(id) ON DELETE CASCADE
             )",
         )
         .execute(&mut *tx)
@@ -196,23 +210,23 @@ impl DatabaseService {
             "CREATE TABLE IF NOT EXISTS assets (
                 id TEXT PRIMARY KEY,
                 project_id TEXT,
-                scan_task_id TEXT,
                 asset_type TEXT NOT NULL,
+                name TEXT NOT NULL,
                 value TEXT NOT NULL,
-                parent_id TEXT,
+                description TEXT,
+                confidence REAL NOT NULL DEFAULT 1.0,
+                status TEXT NOT NULL DEFAULT 'active',
+                source TEXT,
+                source_scan_id TEXT,
                 metadata TEXT,
-                status TEXT DEFAULT 'active',
-                confidence_score REAL DEFAULT 1.0,
-                risk_level TEXT DEFAULT 'info',
                 tags TEXT,
-                notes TEXT,
-                first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES bounty_projects(id) ON DELETE CASCADE,
-                FOREIGN KEY (scan_task_id) REFERENCES scan_tasks(id) ON DELETE SET NULL,
-                FOREIGN KEY (parent_id) REFERENCES assets(id) ON DELETE SET NULL
+                risk_level TEXT NOT NULL DEFAULT 'unknown',
+                first_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_by TEXT NOT NULL DEFAULT 'system',
+                FOREIGN KEY (project_id) REFERENCES scan_tasks(id) ON DELETE SET NULL
             )",
         )
         .execute(&mut *tx)
@@ -239,16 +253,12 @@ impl DatabaseService {
                 reference_links TEXT,
                 status TEXT DEFAULT 'open',
                 verification_status TEXT DEFAULT 'unverified',
-                submission_status TEXT DEFAULT 'not_submitted',
-                reward_amount REAL,
-                submission_date DATETIME,
                 resolution_date DATETIME,
                 tags TEXT,
                 attachments TEXT,
                 notes TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES bounty_projects(id) ON DELETE CASCADE,
                 FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL,
                 FOREIGN KEY (scan_task_id) REFERENCES scan_tasks(id) ON DELETE SET NULL
             )",
@@ -256,38 +266,7 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
-        // 创建提交记录表
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS submissions (
-                id TEXT PRIMARY KEY,
-                vulnerability_id TEXT NOT NULL,
-                project_id TEXT NOT NULL,
-                platform TEXT NOT NULL,
-                submission_id TEXT,
-                title TEXT NOT NULL,
-                description TEXT,
-                severity TEXT NOT NULL,
-                status TEXT DEFAULT 'submitted',
-                reward_amount REAL,
-                bonus_amount REAL,
-                currency TEXT DEFAULT 'USD',
-                submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                triaged_at DATETIME,
-                resolved_at DATETIME,
-                feedback TEXT,
-                response_time INTEGER,
-                resolution_time INTEGER,
-                collaborators TEXT,
-                attachments TEXT,
-                notes TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (vulnerability_id) REFERENCES vulnerabilities(id) ON DELETE CASCADE,
-                FOREIGN KEY (project_id) REFERENCES bounty_projects(id) ON DELETE CASCADE
-            )",
-        )
-        .execute(&mut *tx)
-        .await?;
+
 
         // 创建MCP工具表
         sqlx::query(
@@ -376,6 +355,17 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
+        // 创建内置工具设置表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS builtin_tool_settings (
+                tool_name TEXT PRIMARY KEY,
+                enabled BOOLEAN DEFAULT 1,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
         // 创建工具执行记录表
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS tool_executions (
@@ -424,7 +414,6 @@ impl DatabaseService {
                 is_archived BOOLEAN DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES bounty_projects(id) ON DELETE SET NULL,
                 FOREIGN KEY (vulnerability_id) REFERENCES vulnerabilities(id) ON DELETE SET NULL,
                 FOREIGN KEY (scan_task_id) REFERENCES scan_tasks(id) ON DELETE SET NULL
             )",
@@ -466,28 +455,7 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
-        // 创建收益统计表
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS earnings (
-                id TEXT PRIMARY KEY,
-                submission_id TEXT NOT NULL,
-                project_id TEXT NOT NULL,
-                amount REAL NOT NULL,
-                currency TEXT DEFAULT 'USD',
-                earning_type TEXT,
-                payment_status TEXT DEFAULT 'pending',
-                payment_date DATETIME,
-                payment_method TEXT,
-                tax_info TEXT,
-                notes TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (submission_id) REFERENCES submissions(id) ON DELETE CASCADE,
-                FOREIGN KEY (project_id) REFERENCES bounty_projects(id) ON DELETE CASCADE
-            )",
-        )
-        .execute(&mut *tx)
-        .await?;
+
 
         // 创建配置表
         sqlx::query(
@@ -582,18 +550,7 @@ impl DatabaseService {
         .await?;
 
         // 创建索引
-        // 赏金项目索引
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_bounty_projects_platform ON bounty_projects(platform)",
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_bounty_projects_status ON bounty_projects(status)",
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_bounty_projects_roi_score ON bounty_projects(roi_score DESC)").execute(&mut *tx).await?;
+
 
         // 扫描任务索引
         sqlx::query(
@@ -609,6 +566,28 @@ impl DatabaseService {
         )
         .execute(&mut *tx)
         .await?;
+
+        // 扫描会话索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_sessions_status ON scan_sessions(status)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_sessions_created_at ON scan_sessions(created_at)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_sessions_created_by ON scan_sessions(created_by)")
+            .execute(&mut *tx)
+            .await?;
+
+        // 扫描阶段索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_stages_session_id ON scan_stages(session_id)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_stages_status ON scan_stages(status)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_stages_order ON scan_stages(session_id, stage_order)")
+            .execute(&mut *tx)
+            .await?;
 
         // 资产索引
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_assets_project_id ON assets(project_id)")
@@ -635,16 +614,7 @@ impl DatabaseService {
         .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_vulnerabilities_type ON vulnerabilities(vulnerability_type)").execute(&mut *tx).await?;
 
-        // 提交记录索引
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_submissions_project_id ON submissions(project_id)",
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status)")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_submissions_submitted_at ON submissions(submitted_at DESC)").execute(&mut *tx).await?;
+
 
         // MCP工具索引
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_mcp_tools_category ON mcp_tools(category)")
@@ -683,20 +653,7 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
-        // 收益索引
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_earnings_project_id ON earnings(project_id)")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_earnings_payment_status ON earnings(payment_status)",
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_earnings_created_at ON earnings(created_at DESC)",
-        )
-        .execute(&mut *tx)
-        .await?;
+
 
         // 配置索引
         sqlx::query(
@@ -772,7 +729,6 @@ impl DatabaseService {
         // 提交事务
         tx.commit().await?;
 
-        tracing::info!("Database schema created successfully");
         Ok(())
     }
 
@@ -838,9 +794,7 @@ impl DatabaseService {
     pub async fn get_stats(&self) -> Result<DatabaseStats> {
         let pool = self.get_pool()?;
 
-        let projects_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bounty_projects")
-            .fetch_one(pool)
-            .await?;
+
 
         let scan_tasks_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scan_tasks")
             .fetch_one(pool)
@@ -854,9 +808,7 @@ impl DatabaseService {
             .fetch_one(pool)
             .await?;
 
-        let submissions_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submissions")
-            .fetch_one(pool)
-            .await?;
+
 
         let conversations_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ai_conversations")
             .fetch_one(pool)
@@ -868,11 +820,9 @@ impl DatabaseService {
             .unwrap_or(0);
 
         Ok(DatabaseStats {
-            projects_count: projects_count as u64,
             scan_tasks_count: scan_tasks_count as u64,
             vulnerabilities_count: vulnerabilities_count as u64,
             assets_count: assets_count as u64,
-            submissions_count: submissions_count as u64,
             conversations_count: conversations_count as u64,
             db_size_bytes: db_size,
             last_backup: None, // TODO: 实现备份跟踪
@@ -911,109 +861,7 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// 项目相关操作
-    pub async fn create_project(&self, project: &BountyProject) -> Result<()> {
-        let pool = self.get_pool()?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO bounty_projects (
-                id, name, platform, url, scope_domains, scope_ips, out_of_scope,
-                reward_range, difficulty_level, priority, status, roi_score,
-                success_rate, competition_level, tags, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        )
-        .bind(&project.id)
-        .bind(&project.name)
-        .bind(&project.platform)
-        .bind(&project.url)
-        .bind(&project.scope_domains)
-        .bind(&project.scope_ips)
-        .bind(&project.out_of_scope)
-        .bind(&project.reward_range)
-        .bind(project.difficulty_level)
-        .bind(project.priority)
-        .bind(&project.status)
-        .bind(project.roi_score)
-        .bind(project.success_rate)
-        .bind(project.competition_level)
-        .bind(&project.tags)
-        .bind(&project.notes)
-        .execute(pool)
-        .await?;
-
-        Ok(())
-    }
-
-    pub async fn get_projects(&self) -> Result<Vec<BountyProject>> {
-        let pool = self.get_pool()?;
-
-        let rows = sqlx::query_as::<_, BountyProject>(
-            "SELECT * FROM bounty_projects ORDER BY created_at DESC",
-        )
-        .fetch_all(pool)
-        .await?;
-
-        Ok(rows)
-    }
-
-    pub async fn get_project(&self, id: &str) -> Result<BountyProject> {
-        let pool = self.get_pool()?;
-
-        let row = sqlx::query_as::<_, BountyProject>("SELECT * FROM bounty_projects WHERE id = ?")
-            .bind(id)
-            .fetch_one(pool)
-            .await?;
-
-        Ok(row)
-    }
-
-    pub async fn update_project(&self, project: &BountyProject) -> Result<()> {
-        let pool = self.get_pool()?;
-
-        sqlx::query(
-            r#"
-            UPDATE bounty_projects SET
-                name = ?, platform = ?, url = ?, scope_domains = ?, scope_ips = ?,
-                out_of_scope = ?, reward_range = ?, difficulty_level = ?, priority = ?,
-                status = ?, roi_score = ?, success_rate = ?, competition_level = ?,
-                tags = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        "#,
-        )
-        .bind(&project.name)
-        .bind(&project.platform)
-        .bind(&project.url)
-        .bind(&project.scope_domains)
-        .bind(&project.scope_ips)
-        .bind(&project.out_of_scope)
-        .bind(&project.reward_range)
-        .bind(project.difficulty_level)
-        .bind(project.priority)
-        .bind(&project.status)
-        .bind(project.roi_score)
-        .bind(project.success_rate)
-        .bind(project.competition_level)
-        .bind(&project.tags)
-        .bind(&project.notes)
-        .bind(&project.id)
-        .execute(pool)
-        .await?;
-
-        Ok(())
-    }
-
-    pub async fn delete_project(&self, id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-
-        sqlx::query("DELETE FROM bounty_projects WHERE id = ?")
-            .bind(id)
-            .execute(pool)
-            .await?;
-
-        Ok(())
-    }
 
     /// 扫描任务相关操作
     pub async fn create_scan_task(&self, task: &ScanTask) -> Result<()> {
@@ -1123,7 +971,7 @@ impl DatabaseService {
                 id, project_id, asset_id, scan_task_id, title, description,
                 vulnerability_type, severity, cvss_score, cvss_vector, cwe_id,
                 owasp_category, proof_of_concept, impact, remediation, references,
-                status, verification_status, submission_status, tags, attachments, notes
+                status, verification_status, tags, attachments, notes
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         )
@@ -1145,7 +993,7 @@ impl DatabaseService {
         .bind(&vuln.references)
         .bind(&vuln.status)
         .bind(&vuln.verification_status)
-        .bind(&vuln.submission_status)
+
         .bind(&vuln.tags)
         .bind(&vuln.attachments)
         .bind(&vuln.notes)
@@ -1576,6 +1424,20 @@ impl DatabaseService {
         self.get_scan_tasks(Some(project_id)).await
     }
 
+    /// 根据目标获取扫描任务
+    pub async fn get_scan_tasks_by_target(&self, target: &str) -> Result<Vec<ScanTask>> {
+        let pool = self.get_pool()?;
+
+        let rows = sqlx::query_as::<_, ScanTask>(
+            "SELECT * FROM scan_tasks WHERE targets LIKE ? ORDER BY created_at DESC"
+        )
+        .bind(format!("%{}%", target))
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
     /// 根据项目ID获取漏洞
     pub async fn get_vulnerabilities_by_project(
         &self,
@@ -1585,18 +1447,7 @@ impl DatabaseService {
     }
 
     /// 根据项目ID获取提交记录
-    pub async fn get_submissions_by_project(&self, project_id: &str) -> Result<Vec<Submission>> {
-        let pool = self.get_pool()?;
 
-        let rows = sqlx::query_as::<_, Submission>(
-            "SELECT * FROM submissions WHERE project_id = ? ORDER BY created_at DESC",
-        )
-        .bind(project_id)
-        .fetch_all(pool)
-        .await?;
-
-        Ok(rows)
-    }
 
     // --- MCP Server Configs ---
 
@@ -1874,98 +1725,8 @@ impl DatabaseService {
             .await?;
         }
 
-        // 插入默认MCP工具
-        let default_tools = vec![
-            (
-                "tool_subfinder",
-                "subfinder",
-                "Subfinder",
-                "快速子域名发现工具",
-                "2.6.3",
-                "reconnaissance",
-                "builtin",
-                r#"{"type":"object","properties":{"domain":{"type":"string"},"silent":{"type":"boolean"},"recursive":{"type":"boolean"}}}"#,
-                r#"{"silent":true,"recursive":false}"#,
-                r#"["subdomain_enumeration","passive_recon"]"#,
-                r#"["linux","windows","darwin"]"#,
-            ),
-            (
-                "tool_nmap",
-                "nmap",
-                "Nmap",
-                "网络发现和安全审计工具",
-                "7.94",
-                "reconnaissance",
-                "builtin",
-                r#"{"type":"object","properties":{"target":{"type":"string"},"ports":{"type":"string"},"scan_type":{"type":"string"}}}"#,
-                r#"{"ports":"1-1000","scan_type":"syn"}"#,
-                r#"["port_scanning","service_detection","os_detection"]"#,
-                r#"["linux","windows","darwin"]"#,
-            ),
-            (
-                "tool_nuclei",
-                "nuclei",
-                "Nuclei",
-                "基于模板的漏洞扫描器",
-                "3.1.0",
-                "vulnerability_scanning",
-                "builtin",
-                r#"{"type":"object","properties":{"target":{"type":"string"},"templates":{"type":"array"},"severity":{"type":"string"}}}"#,
-                r#"{"severity":"medium,high,critical"}"#,
-                r#"["vulnerability_scanning","template_based_scanning"]"#,
-                r#"["linux","windows","darwin"]"#,
-            ),
-            (
-                "tool_httpx",
-                "httpx",
-                "Httpx",
-                "HTTP工具包",
-                "1.3.7",
-                "reconnaissance",
-                "builtin",
-                r#"{"type":"object","properties":{"target":{"type":"string"},"probe":{"type":"boolean"},"tech_detect":{"type":"boolean"}}}"#,
-                r#"{"probe":true,"tech_detect":true}"#,
-                r#"["http_probing","technology_detection","web_analysis"]"#,
-                r#"["linux","windows","darwin"]"#,
-            ),
-        ];
 
-        for (
-            id,
-            name,
-            display_name,
-            description,
-            version,
-            category,
-            tool_type,
-            config_schema,
-            default_config,
-            capabilities,
-            supported_platforms,
-        ) in default_tools
-        {
-            sqlx::query(
-                r#"
-                INSERT OR IGNORE INTO mcp_tools (
-                    id, name, display_name, description, version, category, tool_type,
-                    config_schema, default_config, capabilities, supported_platforms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available')
-            "#,
-            )
-            .bind(id)
-            .bind(name)
-            .bind(display_name)
-            .bind(description)
-            .bind(version)
-            .bind(category)
-            .bind(tool_type)
-            .bind(config_schema)
-            .bind(default_config)
-            .bind(capabilities)
-            .bind(supported_platforms)
-            .execute(pool)
-            .await?;
-        }
+       
 
         // 创建默认MCP服务器配置
         let default_mcp_server = (
@@ -2076,6 +1837,53 @@ impl DatabaseService {
 impl Database for DatabaseService {
     async fn create_ai_conversation(&self, conversation: &AiConversation) -> Result<()> {
         let pool = self.get_pool()?;
+        
+        // 验证外键约束 - 检查vulnerability_id是否存在
+        let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
+            if !vuln_id.is_empty() {
+                // 检查vulnerability是否存在
+                let exists: Option<(String,)> = sqlx::query_as(
+                    "SELECT id FROM vulnerabilities WHERE id = ?"
+                )
+                .bind(vuln_id)
+                .fetch_optional(pool)
+                .await?;
+                
+                if exists.is_some() {
+                    Some(vuln_id.clone())
+                } else {
+                    None // 如果不存在，设置为NULL
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // 验证外键约束 - 检查scan_task_id是否存在
+        let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
+            if !task_id.is_empty() {
+                // 检查scan_task是否存在
+                let exists: Option<(String,)> = sqlx::query_as(
+                    "SELECT id FROM scan_tasks WHERE id = ?"
+                )
+                .bind(task_id)
+                .fetch_optional(pool)
+                .await?;
+                
+                if exists.is_some() {
+                    Some(task_id.clone())
+                } else {
+                    None // 如果不存在，设置为NULL
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
         sqlx::query(
             r#"
             INSERT INTO ai_conversations (id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, tags, is_archived, created_at, updated_at)
@@ -2089,8 +1897,8 @@ impl Database for DatabaseService {
         .bind(&conversation.model_provider)
         .bind(&conversation.context_type)
         .bind(&conversation.project_id)
-        .bind(&conversation.vulnerability_id)
-        .bind(&conversation.scan_task_id)
+        .bind(vulnerability_id)
+        .bind(scan_task_id)
         .bind(&conversation.conversation_data)
         .bind(&conversation.summary)
         .bind(conversation.total_messages)
@@ -2127,6 +1935,53 @@ impl Database for DatabaseService {
 
     async fn update_ai_conversation(&self, conversation: &AiConversation) -> Result<()> {
         let pool = self.get_pool()?;
+        
+        // 验证外键约束 - 检查vulnerability_id是否存在
+        let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
+            if !vuln_id.is_empty() {
+                // 检查vulnerability是否存在
+                let exists: Option<(String,)> = sqlx::query_as(
+                    "SELECT id FROM vulnerabilities WHERE id = ?"
+                )
+                .bind(vuln_id)
+                .fetch_optional(pool)
+                .await?;
+                
+                if exists.is_some() {
+                    Some(vuln_id.clone())
+                } else {
+                    None // 如果不存在，设置为NULL
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // 验证外键约束 - 检查scan_task_id是否存在
+        let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
+            if !task_id.is_empty() {
+                // 检查scan_task是否存在
+                let exists: Option<(String,)> = sqlx::query_as(
+                    "SELECT id FROM scan_tasks WHERE id = ?"
+                )
+                .bind(task_id)
+                .fetch_optional(pool)
+                .await?;
+                
+                if exists.is_some() {
+                    Some(task_id.clone())
+                } else {
+                    None // 如果不存在，设置为NULL
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
         sqlx::query(
             r#"
             UPDATE ai_conversations
@@ -2140,8 +1995,8 @@ impl Database for DatabaseService {
         .bind(&conversation.model_provider)
         .bind(&conversation.context_type)
         .bind(&conversation.project_id)
-        .bind(&conversation.vulnerability_id)
-        .bind(&conversation.scan_task_id)
+        .bind(vulnerability_id)
+        .bind(scan_task_id)
         .bind(&conversation.conversation_data)
         .bind(&conversation.summary)
         .bind(conversation.total_messages)
@@ -2354,6 +2209,26 @@ impl Database for DatabaseService {
         }
 
         Ok(())
+    }
+
+    async fn create_scan_task(&self, task: &ScanTask) -> Result<()> {
+        self.create_scan_task(task).await
+    }
+
+    async fn get_scan_tasks(&self, project_id: Option<&str>) -> Result<Vec<ScanTask>> {
+        self.get_scan_tasks(project_id).await
+    }
+
+    async fn get_scan_task(&self, id: &str) -> Result<Option<ScanTask>> {
+        self.get_scan_task(id).await
+    }
+
+    async fn get_scan_tasks_by_target(&self, target: &str) -> Result<Vec<ScanTask>> {
+        self.get_scan_tasks_by_target(target).await
+    }
+
+    async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()> {
+        self.update_scan_task_status(id, status, progress).await
     }
 }
 

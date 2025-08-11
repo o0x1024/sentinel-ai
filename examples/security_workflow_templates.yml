@@ -1,0 +1,552 @@
+# Sentinel AI 安全测试工作流模板
+# 本文件包含各种安全测试场景的工作流模板，供智能安全Agent使用
+
+# ==========================================
+# 模板1: 基础安全扫描工作流
+# ==========================================
+basic_security_scan:
+  metadata:
+    name: "基础安全扫描工作流"
+    version: "1.0.0"
+    description: "执行基础的安全扫描，包括子域名发现、端口扫描和基础漏洞检测"
+    author: "Sentinel AI Security Team"
+    tags: ["security", "scanning", "basic", "reconnaissance"]
+    category: "security_testing"
+  
+  variables:
+    target_domain: "${input.target || 'example.com'}"
+    scan_depth: "${input.depth || 2}"
+    port_range: "${input.ports || '1-65535'}"
+    scan_timeout: "${input.timeout || 300}"
+    output_format: "json"
+  
+  steps:
+    # 步骤1: 子域名发现
+    - id: "subdomain_discovery"
+      name: "子域名发现"
+      agent: "reconnaissance_agent"
+      action: "discover_subdomains"
+      inputs:
+        domain: "${target_domain}"
+        depth: "${scan_depth}"
+        sources: ["subfinder", "amass", "assetfinder"]
+        timeout: "${scan_timeout}"
+      outputs:
+        subdomains: "discovered_subdomains"
+        subdomain_count: "subdomain_total"
+      timeout: 300
+      retry:
+        max_attempts: 2
+        delay: 10
+    
+    # 步骤2: 端口扫描
+    - id: "port_scanning"
+      name: "端口扫描"
+      agent: "scanning_agent"
+      action: "scan_ports"
+      depends_on: ["subdomain_discovery"]
+      inputs:
+        targets: "${discovered_subdomains}"
+        ports: "${port_range}"
+        scan_type: "syn"
+        threads: 100
+      outputs:
+        open_ports: "port_scan_results"
+        services: "identified_services"
+      parallel: true
+    
+    # 步骤3: 基础漏洞扫描
+    - id: "vulnerability_scan"
+      name: "基础漏洞扫描"
+      agent: "vulnerability_agent"
+      action: "scan_vulnerabilities"
+      depends_on: ["port_scanning"]
+      inputs:
+        targets: "${port_scan_results}"
+        scan_templates: ["cves", "exposures", "misconfigurations"]
+        severity_filter: "medium"
+      outputs:
+        vulnerabilities: "vulnerability_results"
+        risk_score: "calculated_risk_score"
+    
+    # 步骤4: 结果分析和报告
+    - id: "analysis_and_report"
+      name: "智能分析和报告生成"
+      agent: "analysis_agent"
+      action: "generate_security_report"
+      depends_on: ["vulnerability_scan"]
+      inputs:
+        scan_results:
+          subdomains: "${discovered_subdomains}"
+          ports: "${port_scan_results}"
+          vulnerabilities: "${vulnerability_results}"
+        analysis_depth: "standard"
+        report_format: "${output_format}"
+      outputs:
+        security_report: "final_security_report"
+        recommendations: "security_recommendations"
+  
+  error_handling:
+    on_error: "continue"
+    retry_failed_steps: true
+    max_retries: 2
+    notification_on_failure: true
+
+---
+
+# ==========================================
+# 模板2: 深度漏洞扫描工作流
+# ==========================================
+deep_vulnerability_scan:
+  metadata:
+    name: "深度漏洞扫描工作流"
+    version: "1.0.0"
+    description: "执行深度漏洞扫描，包括Web应用扫描、API测试和高级漏洞检测"
+    author: "Sentinel AI Security Team"
+    tags: ["security", "vulnerability", "deep_scan", "web_security"]
+    category: "security_testing"
+  
+  variables:
+    target_url: "${input.target}"
+    scan_intensity: "${input.intensity || 'medium'}"
+    include_api_scan: "${input.api_scan || true}"
+    custom_wordlists: "${input.wordlists || []}"
+  
+  steps:
+    # 步骤1: Web应用指纹识别
+    - id: "web_fingerprinting"
+      name: "Web应用指纹识别"
+      agent: "reconnaissance_agent"
+      action: "identify_web_technologies"
+      inputs:
+        target: "${target_url}"
+        detection_methods: ["headers", "content", "cookies"]
+      outputs:
+        technologies: "identified_technologies"
+        cms_info: "cms_detection_results"
+    
+    # 步骤2: 目录和文件发现
+    - id: "directory_discovery"
+      name: "目录和文件发现"
+      agent: "reconnaissance_agent"
+      action: "discover_directories"
+      depends_on: ["web_fingerprinting"]
+      inputs:
+        target: "${target_url}"
+        wordlists: "${custom_wordlists}"
+        extensions: [".php", ".asp", ".jsp", ".html"]
+        threads: 50
+      outputs:
+        discovered_paths: "directory_scan_results"
+        interesting_files: "sensitive_files"
+      parallel: true
+    
+    # 步骤3: API端点发现
+    - id: "api_discovery"
+      name: "API端点发现"
+      agent: "api_agent"
+      action: "discover_api_endpoints"
+      depends_on: ["directory_discovery"]
+      condition: "${include_api_scan}"
+      inputs:
+        target: "${target_url}"
+        discovered_paths: "${directory_scan_results}"
+        api_patterns: ["api", "v1", "v2", "rest", "graphql"]
+      outputs:
+        api_endpoints: "api_discovery_results"
+        api_documentation: "api_docs"
+    
+    # 步骤4: 深度漏洞扫描
+    - id: "deep_vulnerability_scan"
+      name: "深度漏洞扫描"
+      agent: "vulnerability_agent"
+      action: "comprehensive_vulnerability_scan"
+      depends_on: ["api_discovery"]
+      inputs:
+        web_target: "${target_url}"
+        technologies: "${identified_technologies}"
+        discovered_paths: "${directory_scan_results}"
+        api_endpoints: "${api_discovery_results}"
+        scan_intensity: "${scan_intensity}"
+        scan_categories: [
+          "injection", "xss", "csrf", "authentication",
+          "authorization", "information_disclosure", "business_logic"
+        ]
+      outputs:
+        detailed_vulnerabilities: "comprehensive_vulnerability_results"
+        exploit_chains: "potential_exploit_chains"
+    
+    # 步骤5: 漏洞验证
+    - id: "vulnerability_verification"
+      name: "漏洞验证和利用测试"
+      agent: "exploitation_agent"
+      action: "verify_vulnerabilities"
+      depends_on: ["deep_vulnerability_scan"]
+      inputs:
+        vulnerabilities: "${comprehensive_vulnerability_results}"
+        verification_level: "safe"
+        auto_exploit: false
+      outputs:
+        verified_vulnerabilities: "verified_vulnerability_results"
+        proof_of_concepts: "vulnerability_pocs"
+    
+    # 步骤6: 风险评估和报告
+    - id: "risk_assessment"
+      name: "风险评估和详细报告"
+      agent: "analysis_agent"
+      action: "comprehensive_risk_assessment"
+      depends_on: ["vulnerability_verification"]
+      inputs:
+        all_results:
+          technologies: "${identified_technologies}"
+          vulnerabilities: "${verified_vulnerability_results}"
+          exploit_chains: "${potential_exploit_chains}"
+          pocs: "${vulnerability_pocs}"
+        business_context: "${input.business_context || 'general'}"
+        compliance_frameworks: "${input.compliance || ['owasp']}"
+      outputs:
+        risk_assessment_report: "comprehensive_risk_report"
+        executive_summary: "executive_summary"
+        remediation_plan: "detailed_remediation_plan"
+  
+  error_handling:
+    on_error: "continue"
+    retry_failed_steps: true
+    max_retries: 3
+    notification_on_failure: true
+
+---
+
+# ==========================================
+# 模板3: 综合安全测试工作流
+# ==========================================
+comprehensive_security_test:
+  metadata:
+    name: "综合安全测试工作流"
+    version: "1.0.0"
+    description: "执行全面的安全测试，包括网络、Web应用、API和基础设施安全评估"
+    author: "Sentinel AI Security Team"
+    tags: ["security", "comprehensive", "penetration_testing", "full_assessment"]
+    category: "security_testing"
+  
+  variables:
+    target_scope: "${input.scope}"
+    test_type: "${input.test_type || 'black_box'}"
+    risk_tolerance: "${input.risk_tolerance || 'medium'}"
+    time_limit: "${input.time_limit || 3600}"
+    compliance_check: "${input.compliance || false}"
+  
+  steps:
+    # 阶段1: 信息收集和侦察
+    - id: "reconnaissance_phase"
+      name: "信息收集和侦察阶段"
+      agent: "reconnaissance_agent"
+      action: "comprehensive_reconnaissance"
+      inputs:
+        targets: "${target_scope}"
+        reconnaissance_depth: "deep"
+        osint_sources: ["passive_dns", "certificate_transparency", "search_engines"]
+        social_engineering: false
+      outputs:
+        reconnaissance_results: "recon_comprehensive_results"
+        attack_surface: "identified_attack_surface"
+        target_profile: "target_organization_profile"
+      timeout: 600
+    
+    # 阶段2: 网络安全评估
+    - id: "network_security_assessment"
+      name: "网络安全评估"
+      agent: "network_agent"
+      action: "network_security_scan"
+      depends_on: ["reconnaissance_phase"]
+      inputs:
+        network_targets: "${identified_attack_surface.network}"
+        scan_techniques: ["tcp_syn", "udp", "service_detection"]
+        evasion_techniques: "${risk_tolerance}"
+      outputs:
+        network_vulnerabilities: "network_security_results"
+        network_topology: "discovered_network_topology"
+      parallel: true
+    
+    # 阶段3: Web应用安全测试
+    - id: "web_application_testing"
+      name: "Web应用安全测试"
+      agent: "web_security_agent"
+      action: "web_application_security_test"
+      depends_on: ["reconnaissance_phase"]
+      inputs:
+        web_targets: "${identified_attack_surface.web}"
+        test_categories: [
+          "authentication", "session_management", "input_validation",
+          "error_handling", "logging", "data_protection"
+        ]
+        automated_tools: ["nuclei", "custom_scripts"]
+      outputs:
+        web_vulnerabilities: "web_security_results"
+        web_risk_score: "web_application_risk_score"
+      parallel: true
+    
+    # 阶段4: API安全测试
+    - id: "api_security_testing"
+      name: "API安全测试"
+      agent: "api_security_agent"
+      action: "api_security_assessment"
+      depends_on: ["reconnaissance_phase"]
+      inputs:
+        api_targets: "${identified_attack_surface.apis}"
+        api_testing_methods: [
+          "authentication_bypass", "authorization_flaws",
+          "input_validation", "rate_limiting", "data_exposure"
+        ]
+      outputs:
+        api_vulnerabilities: "api_security_results"
+        api_risk_assessment: "api_risk_evaluation"
+      parallel: true
+      condition: "${identified_attack_surface.apis.length > 0}"
+    
+    # 阶段5: 基础设施安全评估
+    - id: "infrastructure_assessment"
+      name: "基础设施安全评估"
+      agent: "infrastructure_agent"
+      action: "infrastructure_security_scan"
+      depends_on: ["network_security_assessment"]
+      inputs:
+        infrastructure_targets: "${discovered_network_topology}"
+        assessment_areas: [
+          "server_hardening", "service_configuration",
+          "patch_management", "access_controls"
+        ]
+      outputs:
+        infrastructure_vulnerabilities: "infrastructure_security_results"
+        compliance_status: "infrastructure_compliance_check"
+    
+    # 阶段6: 漏洞利用和影响评估
+    - id: "exploitation_assessment"
+      name: "漏洞利用和影响评估"
+      agent: "exploitation_agent"
+      action: "controlled_exploitation"
+      depends_on: ["web_application_testing", "api_security_testing", "infrastructure_assessment"]
+      inputs:
+        all_vulnerabilities:
+          network: "${network_security_results}"
+          web: "${web_security_results}"
+          api: "${api_security_results}"
+          infrastructure: "${infrastructure_security_results}"
+        exploitation_level: "${risk_tolerance}"
+        safety_checks: true
+      outputs:
+        exploitation_results: "controlled_exploitation_results"
+        business_impact: "assessed_business_impact"
+    
+    # 阶段7: 合规性检查
+    - id: "compliance_verification"
+      name: "合规性检查"
+      agent: "compliance_agent"
+      action: "compliance_assessment"
+      depends_on: ["exploitation_assessment"]
+      condition: "${compliance_check}"
+      inputs:
+        security_results:
+          vulnerabilities: "${controlled_exploitation_results}"
+          configurations: "${infrastructure_compliance_check}"
+        frameworks: "${input.compliance_frameworks || ['owasp', 'nist']}"
+      outputs:
+        compliance_report: "compliance_assessment_results"
+        compliance_gaps: "identified_compliance_gaps"
+    
+    # 阶段8: 综合报告和建议
+    - id: "comprehensive_reporting"
+      name: "综合报告和建议生成"
+      agent: "reporting_agent"
+      action: "generate_comprehensive_security_report"
+      depends_on: ["compliance_verification"]
+      inputs:
+        complete_assessment_data:
+          reconnaissance: "${recon_comprehensive_results}"
+          network: "${network_security_results}"
+          web: "${web_security_results}"
+          api: "${api_security_results}"
+          infrastructure: "${infrastructure_security_results}"
+          exploitation: "${controlled_exploitation_results}"
+          compliance: "${compliance_assessment_results}"
+        report_audience: "${input.report_audience || 'technical'}"
+        include_executive_summary: true
+      outputs:
+        final_security_report: "comprehensive_security_assessment_report"
+        executive_dashboard: "executive_security_dashboard"
+        remediation_roadmap: "prioritized_remediation_roadmap"
+        security_metrics: "quantified_security_metrics"
+  
+  error_handling:
+    on_error: "continue"
+    retry_failed_steps: true
+    max_retries: 2
+    notification_on_failure: true
+    escalation_on_critical_failure: true
+  
+  notifications:
+    on_completion:
+      channels: ["email", "slack"]
+      recipients: "${input.notification_recipients}"
+    on_critical_finding:
+      immediate: true
+      channels: ["email", "sms"]
+      escalation_level: "high"
+
+---
+
+# ==========================================
+# 模板4: 快速安全评估工作流
+# ==========================================
+quick_security_assessment:
+  metadata:
+    name: "快速安全评估工作流"
+    version: "1.0.0"
+    description: "执行快速的安全评估，适用于时间紧迫的场景"
+    author: "Sentinel AI Security Team"
+    tags: ["security", "quick", "assessment", "rapid"]
+    category: "security_testing"
+  
+  variables:
+    target: "${input.target}"
+    time_budget: "${input.time_budget || 300}"
+    priority_areas: "${input.priorities || ['critical_vulnerabilities']}"
+  
+  steps:
+    # 快速侦察
+    - id: "rapid_reconnaissance"
+      name: "快速侦察"
+      agent: "reconnaissance_agent"
+      action: "rapid_reconnaissance"
+      inputs:
+        target: "${target}"
+        time_limit: "${time_budget * 0.3}"
+        focus_areas: "${priority_areas}"
+      outputs:
+        quick_recon_results: "rapid_recon_data"
+      timeout: "${time_budget * 0.3}"
+    
+    # 关键漏洞扫描
+    - id: "critical_vulnerability_scan"
+      name: "关键漏洞扫描"
+      agent: "vulnerability_agent"
+      action: "critical_vulnerability_scan"
+      depends_on: ["rapid_reconnaissance"]
+      inputs:
+        targets: "${rapid_recon_data}"
+        scan_templates: ["critical", "high"]
+        time_limit: "${time_budget * 0.5}"
+      outputs:
+        critical_vulnerabilities: "critical_vuln_results"
+    
+    # 快速报告
+    - id: "rapid_reporting"
+      name: "快速安全报告"
+      agent: "reporting_agent"
+      action: "generate_rapid_security_report"
+      depends_on: ["critical_vulnerability_scan"]
+      inputs:
+        scan_results: "${critical_vuln_results}"
+        report_type: "executive_summary"
+        time_remaining: "${time_budget * 0.2}"
+      outputs:
+        rapid_security_report: "quick_assessment_report"
+  
+  error_handling:
+    on_error: "continue"
+    timeout_strategy: "best_effort"
+    partial_results: true
+
+---
+
+# ==========================================
+# 模板5: 持续安全监控工作流
+# ==========================================
+continuous_security_monitoring:
+  metadata:
+    name: "持续安全监控工作流"
+    version: "1.0.0"
+    description: "持续监控目标的安全状态变化"
+    author: "Sentinel AI Security Team"
+    tags: ["security", "monitoring", "continuous", "surveillance"]
+    category: "security_monitoring"
+  
+  variables:
+    monitoring_targets: "${input.targets}"
+    monitoring_interval: "${input.interval || 3600}"
+    alert_threshold: "${input.threshold || 'medium'}"
+  
+  steps:
+    # 基线建立
+    - id: "establish_baseline"
+      name: "建立安全基线"
+      agent: "monitoring_agent"
+      action: "establish_security_baseline"
+      inputs:
+        targets: "${monitoring_targets}"
+        baseline_metrics: ["open_ports", "services", "certificates", "dns_records"]
+      outputs:
+        security_baseline: "established_baseline"
+      run_once: true
+    
+    # 持续监控
+    - id: "continuous_monitoring"
+      name: "持续安全监控"
+      agent: "monitoring_agent"
+      action: "monitor_security_changes"
+      depends_on: ["establish_baseline"]
+      inputs:
+        targets: "${monitoring_targets}"
+        baseline: "${established_baseline}"
+        monitoring_frequency: "${monitoring_interval}"
+        change_detection_sensitivity: "${alert_threshold}"
+      outputs:
+        security_changes: "detected_changes"
+        monitoring_alerts: "security_alerts"
+      schedule:
+        type: "interval"
+        interval: "${monitoring_interval}"
+    
+    # 变化分析
+    - id: "change_analysis"
+      name: "安全变化分析"
+      agent: "analysis_agent"
+      action: "analyze_security_changes"
+      depends_on: ["continuous_monitoring"]
+      condition: "${detected_changes.length > 0}"
+      inputs:
+        changes: "${detected_changes}"
+        baseline: "${established_baseline}"
+        risk_assessment: true
+      outputs:
+        change_analysis_report: "security_change_analysis"
+        risk_impact: "assessed_risk_impact"
+    
+    # 自动响应
+    - id: "automated_response"
+      name: "自动安全响应"
+      agent: "response_agent"
+      action: "automated_security_response"
+      depends_on: ["change_analysis"]
+      condition: "${assessed_risk_impact.severity >= alert_threshold}"
+      inputs:
+        security_incident: "${security_change_analysis}"
+        response_playbook: "${input.response_playbook || 'default'}"
+        auto_remediation: "${input.auto_remediation || false}"
+      outputs:
+        response_actions: "executed_response_actions"
+        incident_report: "security_incident_report"
+  
+  error_handling:
+    on_error: "continue"
+    monitoring_resilience: true
+    alert_on_monitoring_failure: true
+  
+  notifications:
+    on_security_change:
+      immediate: true
+      channels: ["email", "slack", "webhook"]
+    on_critical_change:
+      immediate: true
+      channels: ["email", "sms", "phone"]
+      escalation: true

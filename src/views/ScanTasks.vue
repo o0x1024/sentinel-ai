@@ -44,7 +44,9 @@
           <select v-model="typeFilter" class="select select-bordered select-sm">
             <option value="">{{ $t('scanTasks.filters.all') }}</option>
             <option value="subdomain">{{ $t('scanTasks.scanTypes.webScan') }}</option>
+            <option value="rsubdomain">{{ $t('scanTasks.scanTypes.webScan') }}</option>
             <option value="port">{{ $t('scanTasks.scanTypes.portScan') }}</option>
+            <option value="rustscan">{{ $t('scanTasks.scanTypes.portScan') }}</option>
             <option value="vulnerability">{{ $t('scanTasks.scanTypes.vulnerabilityScan') }}</option>
             <option value="web">{{ $t('scanTasks.scanTypes.webScan') }}</option>
           </select>
@@ -333,6 +335,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
+import { dialog } from '@/composables/useDialog';
 
 const { t } = useI18n();
 
@@ -366,46 +369,8 @@ interface Tool {
 }
 
 // 响应式数据
-const tasks = ref<ScanTask[]>([
-  {
-    id: 'task-1',
-    name: t('scanTasks.scanTypes.webScan') + ' - example.com',
-    target: 'example.com',
-    config: {
-      tools: ['subfinder'],
-      depth: 2,
-      timeout: 60,
-      include_subdomains: true
-    },
-    status: 'Running',
-    progress: 0.65,
-    created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-    started_at: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
-    results_count: 0,
-    vulnerabilities_found: 0,
-    assets_found: 12,
-    estimated_remaining: 300
-  },
-  {
-    id: 'task-2',
-    name: t('scanTasks.scanTypes.vulnerabilityScan') + ' - api.example.com',
-    target: 'api.example.com',
-    config: {
-      tools: ['nuclei'],
-      depth: 1,
-      timeout: 30,
-      include_subdomains: false
-    },
-    status: 'Completed',
-    progress: 1.0,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    started_at: new Date(Date.now() - 1000 * 60 * 60 * 2 + 1000 * 60).toISOString(),
-    completed_at: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-    results_count: 15,
-    vulnerabilities_found: 3,
-    assets_found: 8
-  }
-]);
+const tasks = ref<ScanTask[]>([]);
+const isLoading = ref(false);
 
 const searchQuery = ref('');
 const statusFilter = ref('');
@@ -426,12 +391,7 @@ const newTask = ref({
   }
 });
 
-const availableTools = ref<Tool[]>([
-  { id: 'subfinder', name: 'Subfinder', description: t('scanTasks.scanTypes.webScan') },
-  { id: 'nuclei', name: 'Nuclei', description: t('scanTasks.scanTypes.vulnerabilityScan') },
-  { id: 'httpx', name: 'Httpx', description: t('scanTasks.scanTypes.webScan') },
-  { id: 'nmap', name: 'Nmap', description: t('scanTasks.scanTypes.portScan') }
-]);
+const availableTools = ref<Tool[]>([]);
 
 // 计算属性
 const filteredTasks = computed(() => {
@@ -447,29 +407,33 @@ const filteredTasks = computed(() => {
 
 // 方法
 const refreshTasks = async () => {
+  isLoading.value = true;
   try {
-    // 这里将来会调用后端API
-    console.log(t('common.refresh'));
+    const response = await invoke('get_scan_tasks');
+    tasks.value = response as ScanTask[];
   } catch (error) {
     console.error(t('common.error'), error);
+    await dialog.toast.error(t('scanTasks.notifications.loadFailed'));
+  } finally {
+    isLoading.value = false;
   }
 };
 
 const createTask = async () => {
   if (newTask.value.config.tools.length === 0) {
-    alert(t('scanTasks.form.selectScanType'));
+    await dialog.toast.error(t('scanTasks.form.selectScanType'));
     return;
   }
 
   isCreating.value = true;
   try {
-    // 调用后端API创建任务
     const response = await invoke('create_scan_task', {
+      name: newTask.value.name,
       target: newTask.value.target,
       config: newTask.value.config
     });
     
-    console.log(t('scanTasks.notifications.scanStarted'), response);
+    await dialog.toast.success(t('scanTasks.notifications.scanStarted'));
     showCreateModal.value = false;
     
     // 重置表单
@@ -487,7 +451,7 @@ const createTask = async () => {
     await refreshTasks();
   } catch (error) {
     console.error(t('scanTasks.notifications.scanFailed'), error);
-    alert(t('scanTasks.notifications.scanFailed'));
+    await dialog.toast.error(t('scanTasks.notifications.scanFailed'));
   } finally {
     isCreating.value = false;
   }
@@ -496,19 +460,28 @@ const createTask = async () => {
 const stopTask = async (taskId: string) => {
   try {
     await invoke('stop_scan_task', { taskId });
+    await dialog.toast.success(t('scanTasks.notifications.scanStopped'));
     await refreshTasks();
   } catch (error) {
-    console.error(t('scanTasks.notifications.scanStopped'), error);
+    console.error(t('scanTasks.notifications.stopFailed'), error);
+    await dialog.toast.error(t('scanTasks.notifications.stopFailed'));
   }
 };
 
 const deleteTask = async (taskId: string) => {
-  if (confirm(t('common.confirm'))) {
+  const confirmed = await dialog.confirm({
+    message: t('scanTasks.notifications.confirmDelete'),
+    title: t('common.confirm')
+  });
+  
+  if (confirmed) {
     try {
       await invoke('delete_scan_task', { taskId });
-      tasks.value = tasks.value.filter(task => task.id !== taskId);
+      await dialog.toast.success(t('scanTasks.notifications.scanDeleted'));
+      await refreshTasks();
     } catch (error) {
-      console.error(t('scanTasks.notifications.scanDeleted'), error);
+      console.error(t('scanTasks.notifications.deleteFailed'), error);
+      await dialog.toast.error(t('scanTasks.notifications.deleteFailed'));
     }
   }
 };
@@ -552,9 +525,11 @@ const getStatusLabel = (status: string) => {
 const getTaskTypeLabel = (tool: string) => {
   const labels: Record<string, string> = {
     'subfinder': t('scanTasks.scanTypes.webScan'),
+    'rsubdomain': t('scanTasks.scanTypes.webScan'),
     'nuclei': t('scanTasks.scanTypes.vulnerabilityScan'),
     'httpx': t('scanTasks.scanTypes.webScan'),
-    'nmap': t('scanTasks.scanTypes.portScan')
+    'nmap': t('scanTasks.scanTypes.portScan'),
+    'rustscan': t('scanTasks.scanTypes.portScan')
   };
   return labels[tool] || tool;
 };
@@ -611,8 +586,28 @@ const cloneTask = (task: ScanTask) => {
   showCreateModal.value = true;
 };
 
+// 获取可用工具列表
+const loadAvailableTools = async () => {
+  try {
+    const response = await invoke('get_available_scan_tools');
+    availableTools.value = response as Tool[];
+  } catch (error) {
+    console.error('Failed to load available tools:', error);
+    // 如果后台获取失败，使用默认工具列表作为备选
+    // availableTools.value = [
+    //   { id: 'subfinder', name: 'Subfinder', description: t('scanTasks.scanTypes.webScan') },
+    //   { id: 'rsubdomain', name: 'RSubdomain', description: t('scanTasks.scanTypes.webScan') },
+    //   { id: 'nuclei', name: 'Nuclei', description: t('scanTasks.scanTypes.vulnerabilityScan') },
+    //   { id: 'httpx', name: 'Httpx', description: t('scanTasks.scanTypes.webScan') },
+    //   { id: 'nmap', name: 'Nmap', description: t('scanTasks.scanTypes.portScan') },
+    //   { id: 'rustscan', name: 'RustScan', description: t('scanTasks.scanTypes.portScan') }
+    // ];
+  }
+};
+
 // 生命周期
-onMounted(() => {
-  refreshTasks();
+onMounted(async () => {
+  await loadAvailableTools();
+  await refreshTasks();
 });
-</script> 
+</script>

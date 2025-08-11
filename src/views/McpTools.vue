@@ -21,6 +21,13 @@
     <!-- 选项卡 -->
     <div class="tabs tabs-boxed bg-base-200">
       <button 
+        @click="activeTab = 'builtin_tools'"
+        :class="['tab', { 'tab-active': activeTab === 'builtin_tools' }]"
+      >
+        <i class="fas fa-tools mr-2"></i>
+        内置工具
+      </button>
+      <button 
         @click="activeTab = 'my_servers'"
         :class="['tab', { 'tab-active': activeTab === 'my_servers' }]"
       >
@@ -34,6 +41,77 @@
         <i class="fas fa-store mr-2"></i>
         {{ $t('mcpTools.marketplace') }}
       </button>
+    </div>
+
+    <!-- 内置工具列表 -->
+    <div v-if="activeTab === 'builtin_tools'" class="space-y-4">
+      <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <span>这些是系统内置的MCP工具，已自动注册并可供AI助手调用。</span>
+      </div>
+      
+      <div v-if="isLoadingBuiltinTools" class="text-center p-8">
+        <i class="fas fa-spinner fa-spin text-2xl"></i>
+        <p class="mt-2">正在加载内置工具...</p>
+      </div>
+      
+      <div v-else-if="builtinTools.length > 0" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div 
+          v-for="tool in builtinTools" 
+          :key="tool.id"
+          class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow"
+        >
+          <div class="card-body">
+            <div class="flex items-center gap-3">
+              <div class="avatar">
+                <div class="w-12 h-12 rounded-lg bg-success/10 flex items-center justify-center">
+                  <i :class="getToolIcon(tool.name)" class="text-success text-xl"></i>
+                </div>
+              </div>
+              <div class="flex-1">
+                <h3 class="card-title text-lg">{{ tool.name }}</h3>
+                <span class="badge badge-success badge-sm">{{ tool.category }}</span>
+              </div>
+              <div class="form-control">
+                <label class="label cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    class="toggle toggle-success toggle-sm" 
+                    :checked="tool.enabled !== false"
+                    @change="toggleBuiltinTool(tool)"
+                    :disabled="tool.is_toggling"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <p class="text-sm mt-2 h-16">{{ tool.description }}</p>
+
+            <div class="card-actions justify-between items-center mt-4">
+              <span class="text-xs text-base-content/60">v{{ tool.version }}</span>
+              <button 
+                @click="testBuiltinTool(tool)"
+                class="btn btn-success btn-sm"
+                :disabled="tool.is_testing"
+              >
+                <i v-if="tool.is_testing" class="fas fa-spinner fa-spin mr-1"></i>
+                <i v-else class="fas fa-play mr-1"></i>
+                {{ tool.is_testing ? '测试中...' : '测试工具' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div v-else class="text-center p-8">
+        <i class="fas fa-exclamation-triangle text-4xl text-warning mb-4"></i>
+        <p class="text-lg font-semibold">未找到内置工具</p>
+        <p class="text-base-content/70">请检查MCP服务是否正常运行</p>
+        <button @click="refreshBuiltinTools" class="btn btn-primary mt-4">
+          <i class="fas fa-sync-alt mr-2"></i>
+          重新加载
+        </button>
+      </div>
     </div>
 
     <!-- 我的服务器列表 -->
@@ -371,6 +449,7 @@
 import { ref, onMounted, reactive, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
+import { dialog } from '@/composables/useDialog';
 
 const { t } = useI18n()
 
@@ -403,9 +482,11 @@ interface FrontendTool {
 }
 
 // --- 响应式状态 ---
-const activeTab = ref('my_servers');
+const activeTab = ref('builtin_tools');
 const mcpConnections = ref<McpConnection[]>([]);
 const marketplaceServers = ref<MarketplaceServer[]>([]);
+const builtinTools = ref<any[]>([]);
+const isLoadingBuiltinTools = ref(false);
 const showAddServerModal = ref(false);
 const addServerMode = ref('quick');
 const marketplaceView = ref('card'); // 'card' or 'list'
@@ -530,12 +611,12 @@ async function saveServerDetails() {
       args: editableServer.args.split(' ').filter(s => s.trim() !== ''), // 将字符串转回数组
     };
     await invoke('mcp_update_server_config', { payload });
-    alert(t('mcpTools.updateSuccess'));
+    dialog.toast.success(t('mcpTools.updateSuccess'));
     closeDetailsModal();
     await fetchConnections();
   } catch (error) {
     console.error("Failed to save server details:", error);
-    alert(`${t('mcpTools.updateFailed')}: ${error}`);
+    dialog.toast.error(`${t('mcpTools.updateFailed')}: ${error}`);
   }
 }
 
@@ -550,6 +631,64 @@ async function fetchConnections() {
 
 async function refreshConnections() {
   await fetchConnections();
+}
+
+function getToolIcon(toolName: string) {
+  switch (toolName) {
+    case 'subdomain_scanner':
+      return 'fas fa-sitemap';
+    case 'port_scanner':
+      return 'fas fa-network-wired';
+    default:
+      return 'fas fa-tools';
+  }
+}
+
+async function testBuiltinTool(tool: any) {
+  tool.is_testing = true;
+  try {
+    // 调用后端真实测试接口，传递工具名称而不是ID
+    const result = await invoke('test_mcp_tools_registration', { toolId: tool.name }) as any;
+    dialog.toast.success(`工具 ${tool.name} 测试成功：${result && result.message ? result.message : '已完成'}`);
+  } catch (error: any) {
+    console.error(`Failed to test tool ${tool.name}:`, error);
+    dialog.toast.error(`工具 ${tool.name} 测试失败：${error && error.message ? error.message : error}`);
+  } finally {
+    tool.is_testing = false;
+  }
+}
+
+async function toggleBuiltinTool(tool: any) {
+  tool.is_toggling = true;
+  try {
+    const newState = tool.enabled === false;
+    await invoke('toggle_builtin_tool', { toolName: tool.name, enabled: newState });
+    tool.enabled = newState;
+    dialog.toast.success(`工具 ${tool.name} 已${newState ? '启用' : '禁用'}`);
+  } catch (error: any) {
+    console.error(`Failed to toggle tool ${tool.name}:`, error);
+    dialog.toast.error(`切换工具 ${tool.name} 状态失败：${error && error.message ? error.message : error}`);
+  } finally {
+    tool.is_toggling = false;
+  }
+}
+
+async function fetchBuiltinTools() {
+  isLoadingBuiltinTools.value = true;
+  try {
+    const tools: any[] = await invoke('get_builtin_tools_with_status');
+    console.log('get_builtin_tools_with_status 返回:', tools); // 临时调试输出
+    builtinTools.value = tools;
+  } catch (error) {
+    console.error('Failed to fetch builtin tools:', error);
+    builtinTools.value = [];
+  } finally {
+    isLoadingBuiltinTools.value = false;
+  }
+}
+
+async function refreshBuiltinTools() {
+  await fetchBuiltinTools();
 }
 
 async function addMarketplaceServer(server: MarketplaceServer) {
@@ -595,7 +734,7 @@ async function disconnectMcpServer(id: string) {
 
 async function handleQuickCreateServer() {
   if (!quickCreateForm.name) {
-    alert(t('mcpTools.addServer.nameRequired'));
+    await dialog.error(t('mcpTools.addServer.nameRequired'));
     return;
   }
   try {
@@ -605,30 +744,31 @@ async function handleQuickCreateServer() {
     await fetchConnections();
   } catch (error) {
     console.error("快速创建服务器失败:", error);
-    alert(`${t('mcpTools.addServerFailed')}: ${error}`);
+    await dialog.error(`${t('mcpTools.addServerFailed')}: ${error}`);
   }
 }
 
 async function handleImportFromJson() {
   if (!jsonImportConfig.value.trim()) {
-    alert(t('mcpTools.addServer.jsonRequired'));
+    await dialog.error(t('mcpTools.addServer.jsonRequired'));
     return;
   }
   try {
     await invoke('import_mcp_servers_from_json', { jsonConfig: jsonImportConfig.value });
-    alert(t('mcpTools.importSuccess'));
+    dialog.toast.success(t('mcpTools.importSuccess'));
     showAddServerModal.value = false;
     await fetchConnections();
   } catch (error) {
     console.error("从JSON导入服务器失败:", error);
-    alert(`${t('mcpTools.importFailed')}: ${error}`);
+    dialog.toast.error(`${t('mcpTools.importFailed')}: ${error}`);
   }
 }
 
 // --- 生命周期钩子 ---
 onMounted(() => {
   fetchConnections();
+  fetchBuiltinTools();
   // 移除内置服务器列表
   marketplaceServers.value = [];
 });
-</script> 
+</script>

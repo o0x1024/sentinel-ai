@@ -1,131 +1,124 @@
 <template>
-  <div class="h-screen bg-base-200 overflow-y-auto overflow-x-hidden transition-all duration-300 ease-in-out"
-       :class="{'p-4': !collapsed, 'p-2': collapsed}">
+  <div class="h-screen bg-base-200 overflow-y-auto overflow-x-hidden transition-all duration-300 ease-in-out flex flex-col"
+       :class="{'w-20': collapsed, 'w-60': !collapsed}">
     
     <!-- 折叠模式显示图标导航 -->
-    <div v-if="collapsed" class="flex flex-col items-center space-y-4 py-4">
-      <router-link to="/dashboard" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="仪表盘">
-        <i class="fas fa-home text-xl"></i>
-      </router-link>
-      
-      <router-link to="/scan-tasks" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="扫描任务">
-        <i class="fas fa-search text-xl"></i>
-      </router-link>
-      
-      <router-link to="/scan-sessions" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="智能扫描会话">
-        <i class="fas fa-brain text-xl"></i>
-      </router-link>
-      
-      <router-link to="/vulnerabilities" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="漏洞管理">
-        <i class="fas fa-bug text-xl"></i>
-      </router-link>
-      
-      <router-link to="/dictionary" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="字典管理">
-        <i class="fas fa-book text-xl"></i>
-      </router-link>
-      
-      <router-link to="/projects" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="赏金项目">
-        <i class="fas fa-trophy text-xl"></i>
-      </router-link>
-      
-      <router-link to="/submissions" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="提交记录">
-        <i class="fas fa-paper-plane text-xl"></i>
-      </router-link>
-      
-      <router-link to="/earnings" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="收益统计">
-        <i class="fas fa-dollar-sign text-xl"></i>
-      </router-link>
-      
-      <router-link to="/mcp-tools" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="MCP工具">
-        <i class="fas fa-tools text-xl"></i>
+    <div v-if="collapsed" class="flex flex-col items-center space-y-2 py-4 flex-1">
+      <!-- 主要功能菜单 -->
+      <router-link 
+        v-for="item in mainMenuItems" 
+        :key="item.path"
+        :to="item.path" 
+        class="btn btn-ghost btn-circle tooltip tooltip-right" 
+        :data-tip="item.name"
+      >
+        <i :class="`${item.icon} text-xl`"></i>
       </router-link>
       
       <div class="divider divider-neutral my-2"></div>
       
-      <button @click="toggleAIChat" class="btn btn-ghost btn-circle tooltip tooltip-right" data-tip="AI助手">
-        <i class="fas fa-robot text-xl"></i>
-      </button>
+      <!-- 工具菜单 -->
+      <router-link 
+        v-for="item in toolMenuItems" 
+        :key="item.path"
+        :to="item.path" 
+        class="btn btn-ghost btn-circle tooltip tooltip-right" 
+        :data-tip="item.name"
+      >
+        <i :class="`${item.icon} text-xl`"></i>
+      </router-link>
     </div>
     
     <!-- 展开模式显示完整侧边栏 -->
-    <div v-else class="space-y-4">
-      <!-- 任务状态 -->
-      <div class="card bg-base-100 shadow">
-        <div class="card-body p-4">
-          <h3 class="card-title text-base font-medium flex items-center">
-            <i class="fas fa-tasks mr-2 text-primary"></i>{{ t('scanTasks.taskDetails') }}
+    <div v-else class="flex flex-col h-full">
+      <!-- 主导航菜单 -->
+      <div class="flex-1 p-4 space-y-2">
+        <!-- 核心功能区 -->
+        <div class="mb-6">
+          <h3 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
+            {{ t('sidebar.coreFeatures', '核心功能') }}
           </h3>
-          
-          <div class="space-y-3 mt-2">
-            <div v-for="step in currentTaskSteps" :key="step.name" class="flex items-center justify-between">
-              <span class="text-sm">{{ step.name }}</span>
-              <div :class="getStepBadgeClass(step.status)" class="badge badge-sm">
-                {{ step.status }}
-              </div>
-            </div>
-            
-            <div class="mt-4">
-              <progress 
-                class="progress progress-primary w-full" 
-                :value="taskProgress" 
-                max="100">
-              </progress>
-              <div class="text-xs text-center mt-1 opacity-70">
-                {{ t('common.time') }}: {{ remainingTime }}
-              </div>
-            </div>
-          </div>
+          <ul class="menu menu-sm space-y-1">
+            <li v-for="item in mainMenuItems" :key="item.path">
+              <router-link 
+                :to="item.path" 
+                class="rounded-lg flex items-center gap-3 px-3 py-2 hover:bg-base-300 transition-colors"
+                :class="{ 'bg-primary/10 text-primary border-r-2 border-primary': route.path === item.path }"
+              >
+                <i :class="`${item.icon} text-lg`"></i>
+                <span class="font-medium">{{ item.name }}</span>
+                <span v-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
+                  {{ item.badge }}
+                </span>
+              </router-link>
+            </li>
+          </ul>
         </div>
-      </div>
-      <!-- 快速操作 -->
-      <div class="card bg-base-100 shadow">
-        <div class="card-body p-4">
-          <h3 class="card-title text-base font-medium flex items-center">
-            <i class="fas fa-bolt mr-2 text-accent"></i>{{ t('dashboard.quickActions') }}
+
+        <!-- 工具与管理区 -->
+        <div class="mb-6">
+          <h3 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
+            {{ t('sidebar.toolsManagement', '工具与管理') }}
           </h3>
-          
-          <div class="grid grid-cols-2 gap-2 mt-2">
-            <button 
-              @click="toggleAIChat" 
-              class="btn btn-sm btn-primary">
-              <i class="fas fa-robot"></i>{{ t('aiChat.title') }}
-            </button>
-            <button 
-              @click="pauseScan" 
-              class="btn btn-sm btn-outline"
-              :disabled="!hasRunningTasks">
-              <i class="fas fa-pause"></i>{{ t('scanTasks.pause') }}
-            </button>
-            <button 
-              @click="exportResults" 
-              class="btn btn-sm btn-outline">
-              <i class="fas fa-download"></i>{{ t('scanTasks.export') }}
-            </button>
-            <button 
-              @click="createNewTask" 
-              class="btn btn-sm btn-outline">
-              <i class="fas fa-plus"></i>{{ t('scanTasks.newScan') }}
-            </button>
-          </div>
+          <ul class="menu menu-sm space-y-1">
+            <li v-for="item in toolMenuItems" :key="item.path">
+              <router-link 
+                :to="item.path" 
+                class="rounded-lg flex items-center gap-3 px-3 py-2 hover:bg-base-300 transition-colors"
+                :class="{ 'bg-primary/10 text-primary border-r-2 border-primary': route.path === item.path }"
+              >
+                <i :class="`${item.icon} text-lg`"></i>
+                <span class="font-medium">{{ item.name }}</span>
+                <span v-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
+                  {{ item.badge }}
+                </span>
+              </router-link>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 系统设置区 -->
+        <div>
+          <h3 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
+            {{ t('sidebar.systemSettings', '系统设置') }}
+          </h3>
+          <ul class="menu menu-sm space-y-1">
+            <li v-for="item in systemMenuItems" :key="item.path">
+              <router-link 
+                :to="item.path" 
+                class="rounded-lg flex items-center gap-3 px-3 py-2 hover:bg-base-300 transition-colors"
+                :class="{ 'bg-primary/10 text-primary border-r-2 border-primary': route.path === item.path }"
+              >
+                <i :class="`${item.icon} text-lg`"></i>
+                <span class="font-medium">{{ item.name }}</span>
+              </router-link>
+            </li>
+          </ul>
         </div>
       </div>
 
-      <!-- 实时统计 -->
-      <div class="card bg-base-100 shadow">
-        <div class="card-body p-4">
-          <h3 class="card-title text-base font-medium flex items-center">
-            <i class="fas fa-chart-bar mr-2 text-info"></i>{{ t('dashboard.todayStats') }}
-          </h3>
-          
-          <div class="stats stats-vertical shadow-sm bg-base-200 mt-2">
-            <div class="stat py-1 px-2">
-              <div class="stat-title text-xs">{{ t('dashboard.vulnerabilitiesFound') }}</div>
-              <div class="stat-value text-lg text-error">{{ todayVulns }}</div>
-            </div>
-            <div class="stat py-1 px-2">
-              <div class="stat-title text-xs">{{ t('dashboard.scanProgress') }}</div>
-              <div class="stat-value text-lg text-primary">{{ taskProgress }}%</div>
-            </div>
+      <!-- 底部状态信息 -->
+      <div class="p-4 border-t border-base-300">
+        <!-- 当前任务状态 -->
+        <div class="bg-base-100 rounded-lg p-3 mb-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium">{{ t('sidebar.currentTask', '当前任务') }}</span>
+            <div class="badge badge-primary badge-sm">{{ t('sidebar.running') }}</div>
+          </div>
+          <div class="text-xs text-base-content/70 mb-2">{{ t('sidebar.scanning') }} example.com</div>
+          <progress class="progress progress-primary w-full h-2" :value="taskProgress" max="100"></progress>
+          <div class="text-xs text-center mt-1 opacity-70">{{ taskProgress }}% - {{ t('sidebar.remaining') }} {{ remainingTime }}</div>
+        </div>
+
+        <!-- 今日统计 -->
+        <div class="grid grid-cols-2 gap-2 text-center">
+          <div class="bg-base-100 rounded-lg p-2">
+            <div class="text-lg font-bold text-error">{{ todayVulns }}</div>
+            <div class="text-xs opacity-70">{{ t('sidebar.vulnerabilitiesFound') }}</div>
+          </div>
+          <div class="bg-base-100 rounded-lg p-2">
+            <div class="text-lg font-bold text-success">{{ completedTasks }}</div>
+            <div class="text-xs opacity-70">{{ t('sidebar.completedTasks') }}</div>
           </div>
         </div>
       </div>
@@ -136,6 +129,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
+import { invoke } from '@tauri-apps/api/core'
 
 // 接收折叠状态
 const props = defineProps({
@@ -145,60 +140,174 @@ const props = defineProps({
   }
 });
 
-// 初始化i18n
+// 初始化i18n和路由
 const { t } = useI18n()
+const route = useRoute()
 
-// 任务状态相关
-const currentTaskSteps = ref([
-  { name: t('scanTasks.targetUrl'), status: t('common.completed') },
-  { name: t('vulnerabilities.title'), status: t('common.inProgress') },
-  { name: t('common.statistics'), status: t('common.pending') },
-  { name: t('scanTasks.viewReport'), status: t('common.pending') }
+// 主要功能菜单项
+const mainMenuItems = computed(() => [
+  {
+    path: '/dashboard',
+    name: t('sidebar.dashboard', '仪表盘'),
+    icon: 'fas fa-home',
+    badge: null,
+    badgeClass: ''
+  },
+  {
+    path: '/scan-tasks',
+    name: t('sidebar.scanTasks', '扫描任务'),
+    icon: 'fas fa-search',
+    badge: taskStats.value.running > 0 ? taskStats.value.running.toString() : null,
+    badgeClass: 'badge-primary'
+  },
+  {
+    path: '/scan-sessions',
+    name: t('scanSessions.title', '智能扫描会话'),
+    icon: 'fas fa-brain',
+    badge: null,
+    badgeClass: ''
+  },
+  {
+    path: '/vulnerabilities',
+    name: t('sidebar.vulnerabilities', '漏洞管理'),
+    icon: 'fas fa-bug',
+    badge: '12',
+    badgeClass: 'badge-error'
+  },
+  {
+    path: '/assets',
+    name: t('sidebar.assets', '资产管理'),
+    icon: 'fas fa-server',
+    badge: null,
+    badgeClass: ''
+  },
+  {
+    path: '/agents',
+    name: t('sidebar.agents', 'Agent管理'),
+    icon: 'fas fa-robot',
+    badge: t('sidebar.agentCount', '5'),
+    badgeClass: 'badge-success'
+  },
+  {
+    path: '/workflow-monitor',
+    name: t('sidebar.workflowMonitor', '工作流监控'),
+    icon: 'fas fa-project-diagram',
+    badge: null,
+    badgeClass: ''
+  }
 ])
 
+// 工具与管理菜单项
+const toolMenuItems = computed(() => [
+  {
+    path: '/intelligent-test',
+    name: t('sidebar.intelligentTest', '智能安全测试'),
+    icon: 'fas fa-magic',
+    badge: t('sidebar.new', 'NEW'),
+    badgeClass: 'badge-accent'
+  },
+  {
+    path: '/plan-execute',
+    name: 'Plan-and-Execute 演示',
+    icon: 'fas fa-project-diagram',
+    badge: 'BETA',
+    badgeClass: 'badge-warning'
+  },
+  {
+    path: '/rewoo-test',
+    name: 'ReWOO 架构测试',
+    icon: 'fas fa-cogs',
+    badge: 'TEST',
+    badgeClass: 'badge-info'
+  },
+  {
+    path: '/llm-compiler-test',
+    name: 'LLMCompiler 引擎测试',
+    icon: 'fas fa-microchip',
+    badge: 'NEW',
+    badgeClass: 'badge-success'
+  },
+  {
+    path: '/mcp-tools',
+    name: t('sidebar.mcpTools', 'MCP工具'),
+    icon: 'fas fa-tools',
+    badge: null,
+    badgeClass: ''
+  },
+  {
+    path: '/dictionary',
+    name: t('sidebar.dictionary', '字典管理'),
+    icon: 'fas fa-book',
+    badge: null,
+    badgeClass: ''
+  }
+])
+
+// 系统设置菜单项
+const systemMenuItems = computed(() => [
+  {
+    path: '/settings',
+    name: t('sidebar.settings', '系统设置'),
+    icon: 'fas fa-cog',
+    badge: null,
+    badgeClass: ''
+  },
+  {
+    path: '/performance',
+    name: t('sidebar.performance', '性能监控'),
+    icon: 'fas fa-chart-line',
+    badge: null,
+    badgeClass: ''
+  }
+])
+
+// 任务状态相关
 const taskProgress = ref(65)
-const remainingTime = ref('2小时15分钟')
+const remainingTime = ref(t('sidebar.remainingTimeDefault', '2小时15分钟'))
 const hasRunningTasks = ref(true)
 
 // 统计数据
-const todayEarnings = ref(1250)
 const todayVulns = ref(3)
+const completedTasks = ref(8)
+const taskStats = ref({
+  total: 0,
+  running: 0,
+  pending: 0,
+  completed: 0,
+  failed: 0,
+  cancelled: 0
+})
 
-// 方法
-const toggleAIChat = () => {
-  // 触发AI助手聊天框显示
-  window.dispatchEvent(new CustomEvent('toggle-ai-chat'))
+// 任务统计类型定义
+interface TaskStats {
+  total: number
+  running: number
+  pending: number
+  completed: number
+  failed: number
+  cancelled: number
 }
 
-const pauseScan = () => {
-  console.log('暂停扫描')
-  hasRunningTasks.value = false
-}
-
-const exportResults = () => {
-  console.log('导出结果')
-}
-
-const createNewTask = () => {
-  console.log('创建新任务')
-}
-
-// 获取步骤状态的样式类
-const getStepBadgeClass = (status: string) => {
-  switch (status) {
-    case t('common.completed'):
-      return 'badge-success'
-    case t('common.inProgress'):
-      return 'badge-primary'
-    case t('common.pending'):
-      return 'badge-neutral'
-    default:
-      return 'badge-neutral'
+// 获取任务统计信息
+const loadTaskStats = async () => {
+  try {
+    const stats = await invoke<TaskStats>('get_scan_task_stats')
+    taskStats.value = stats
+  } catch (error) {
+    console.error('Failed to load task stats:', error)
   }
 }
 
 // 模拟数据更新
 onMounted(() => {
+  // 加载任务统计信息
+  loadTaskStats()
+  
+  // 定期更新任务统计信息
+  setInterval(() => {
+    loadTaskStats()
+  }, 10000) // 每10秒更新一次
+  
   // 模拟任务进度更新
   setInterval(() => {
     if (hasRunningTasks.value && taskProgress.value < 100) {

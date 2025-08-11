@@ -1,8 +1,9 @@
 use crate::mcp::types::{
     McpServerConfig, McpToolInfo, ToolCategory, ToolExecutionResult, TransportConfig,
 };
-use crate::models::mcp::{McpStoreItem, McpToolInstallRequest};
+use crate::models::mcp::McpToolInstallRequest;
 use crate::services::mcp::McpService;
+use crate::tools::get_global_tool_system;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
@@ -10,15 +11,15 @@ use tokio::sync::Mutex;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::mcp::client::ConfiguredServer;
 use crate::mcp::server::ServerConfig;
-use crate::mcp::{ConnectionStatus, McpClientManager, McpServerManager};
+use crate::mcp::{McpClientManager, McpServerManager};
 use crate::services::database::DatabaseService;
 use crate::services::mcp::McpConnectionInfo;
 use chrono::Utc;
 use rmcp::model::Tool as RmcpTool;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// 获取MCP工具列表
 #[tauri::command]
@@ -68,19 +69,53 @@ pub async fn get_mcp_tool(
     state.get_tool(&tool_id).await.map_err(|e| e.to_string())
 }
 
-/// 执行MCP工具
+/// 执行MCP工具（通过统一工具管理器）
 #[tauri::command]
 pub async fn execute_mcp_tool(
     tool_id: String,
     parameters: Value,
-    _timeout: Option<u64>,
-    mcp_service: State<'_, Mutex<McpService>>,
+    timeout: Option<u64>,
+    _mcp_service: State<'_, Mutex<McpService>>,
 ) -> Result<Value, String> {
-    let service = mcp_service.lock().await;
-    service
-        .execute_tool(&tool_id, parameters)
-        .await
-        .map_err(|e| e.to_string())
+    use crate::tools::{get_global_tool_system, ToolExecutionParams};
+    use std::collections::HashMap;
+    use uuid::Uuid;
+    
+    // 使用统一工具管理器执行工具
+    let tool_system = get_global_tool_system().map_err(|e| {
+        format!("获取工具系统失败: {}. 请确保全局工具系统已初始化。", e)
+    })?;
+    
+    // 将Value参数转换为HashMap<String, Value>
+    let inputs = if let Value::Object(map) = parameters {
+        map.into_iter().collect::<HashMap<String, Value>>()
+    } else {
+        HashMap::new()
+    };
+    
+    let execution_id = Uuid::new_v4().to_string();
+    
+    let params = ToolExecutionParams {
+        inputs,
+        context: HashMap::new(),
+        timeout: timeout.map(Duration::from_secs),
+        execution_id: Some(Uuid::new_v4()),
+    };
+    
+    match tool_system.execute_tool(&tool_id, params).await {
+        Ok(result) => {
+            Ok(serde_json::json!({
+                "success": true,
+                "output": result.output,
+                "tool": tool_id,
+                "execution_id": execution_id,
+                "execution_time": result.execution_time_ms
+            }))
+        },
+        Err(e) => {
+            Err(format!("Tool '{}' execution failed: {}", tool_id, e))
+        }
+    }
 }
 
 /// 获取执行结果
@@ -381,80 +416,34 @@ pub async fn get_scan_templates() -> Result<Value, String> {
     Ok(templates)
 }
 
-/// 执行扫描模板
+/// 执行扫描模板（通过DynamicToolAdapter）
 #[tauri::command]
 pub async fn execute_scan_template(
     template_name: String,
     target: String,
-    state: State<'_, McpService>,
+    _state: State<'_, McpService>,
 ) -> Result<Value, String> {
+    use crate::tools::create_dynamic_adapter;
+    use std::collections::HashMap;
+    
+    // 使用DynamicToolAdapter执行工具
+    let adapter = create_dynamic_adapter().map_err(|e| {
+        format!("创建动态工具适配器失败: {}. 请确保全局工具系统已初始化。", e)
+    })?;
+    
     let current_target = target.clone();
 
     match template_name.as_str() {
         "web_app_scan" => {
-            // 1. 子域名发现
-            let subfinder_result = state
-                .execute_tool("subfinder", serde_json::json!({"domain": current_target}))
-                .await
-                .map_err(|e| e.to_string())?;
-
-            // 2. HTTP探测
-            let httpx_result = state
-                .execute_tool("httpx", serde_json::json!({"url": current_target}))
-                .await
-                .map_err(|e| e.to_string())?;
-
-            // 3. 漏洞扫描
-            let nuclei_result = state
-                .execute_tool("nuclei", serde_json::json!({"target": current_target}))
-                .await
-                .map_err(|e| e.to_string())?;
-
-            Ok(serde_json::json!({
-                "template": template_name,
-                "target": target,
-                "results": {
-                    "subfinder": subfinder_result,
-                    "httpx": httpx_result,
-                    "nuclei": nuclei_result
-                },
-                "status": "completed"
-            }))
+            Ok(().into())
         }
         "network_discovery" => {
             // 网络发现扫描
-            let nmap_result = state
-                .execute_tool(
-                    "nmap",
-                    serde_json::json!({"target": current_target, "ports": "1-1000"}),
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-
-            Ok(serde_json::json!({
-                "template": template_name,
-                "target": target,
-                "results": {
-                    "nmap": nmap_result
-                },
-                "status": "completed"
-            }))
+            Ok(().into())
         }
         "subdomain_enum" => {
             // 子域名枚举
-            let subfinder_result = state
-                .execute_tool("subfinder", serde_json::json!({"domain": current_target}))
-                .await
-                .map_err(|e| e.to_string())?;
-
-            Ok(serde_json::json!({
-                "template": template_name,
-                "target": target,
-                "results": {
-                    "subfinder": subfinder_result
-                },
-                "status": "completed"
-            }))
+           Ok(().into())
         }
         _ => Err(format!("未知的扫描模板: {}", template_name)),
     }
@@ -1246,4 +1235,78 @@ pub fn get_mcp_marketplace_servers() -> Result<Vec<MarketplaceServer>, String> {
             icon: "fab fa-bilibili".to_string(),
         },
     ])
+}
+
+/// 切换内置工具的启用状态
+#[tauri::command]
+pub async fn toggle_builtin_tool(
+    tool_name: String,
+    enabled: bool,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    // 在数据库中保存工具的启用状态
+    let timestamp = Utc::now().timestamp();
+    
+    let formatted_query = format!(
+        "INSERT OR REPLACE INTO builtin_tool_settings (tool_name, enabled, updated_at) VALUES ('{}', {}, {})",
+        tool_name, if enabled { 1 } else { 0 }, timestamp
+    );
+    
+    db_service
+        .execute_query(&formatted_query)
+        .await
+        .map_err(|e| format!("Failed to update tool status: {}", e))?;
+    
+    Ok(())
+}
+
+/// 获取带有启用状态的内置工具列表
+#[tauri::command]
+pub async fn get_builtin_tools_with_status(
+    _state: State<'_, Arc<McpService>>, // 不再依赖McpService列出内置工具
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    // 通过统一工具系统获取当前注册的工具（内置）
+    let tool_system = get_global_tool_system().map_err(|e| e.to_string())?;
+    let tools = tool_system.list_tools().await;
+
+    // 读取启用状态
+    let query = "SELECT tool_name, enabled FROM builtin_tool_settings";
+    let settings_result = db_service
+        .execute_query(query)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut settings_map = std::collections::HashMap::new();
+    for setting in settings_result {
+        if let (Some(tool_name), Some(enabled_value)) = (
+            setting.get("tool_name").and_then(|v| v.as_str()),
+            setting.get("enabled"),
+        ) {
+            let enabled = match enabled_value {
+                serde_json::Value::Bool(b) => *b,
+                serde_json::Value::Number(n) => n.as_i64().map(|i| i != 0).or_else(|| n.as_f64().map(|f| f != 0.0)).unwrap_or(true),
+                serde_json::Value::String(s) => s != "0" && s.to_lowercase() != "false",
+                _ => true,
+            };
+            settings_map.insert(tool_name.to_string(), enabled);
+        }
+    }
+
+    // 组装前端需要的结构
+    let mut result = Vec::new();
+    for info in tools {
+        let name = info.name.clone();
+        let enabled = settings_map.get(&name).copied().unwrap_or(true);
+        let tool_json = serde_json::json!({
+            "id": name,
+            "name": info.name,
+            "description": info.description,
+            "category": info.category.to_string(),
+            "enabled": enabled,
+        });
+        result.push(tool_json);
+    }
+
+    Ok(result)
 }

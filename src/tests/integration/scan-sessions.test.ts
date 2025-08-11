@@ -163,11 +163,11 @@ describe('Scan Sessions Integration Tests', () => {
       mockInvoke.mockResolvedValueOnce(mockSessions)
 
       const result = await invoke('list_scan_sessions', {
-        filters: {
-          status: 'running',
-        },
-        limit: 20,
-        offset: 0,
+        request: {
+          limit: 20,
+          offset: 0,
+          status_filter: 'running',
+        }
       }) as typeof mockSessions
 
       expect(result).toEqual(mockSessions)

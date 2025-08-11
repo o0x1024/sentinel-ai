@@ -5,6 +5,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use crate::mcp::ResourceUsage;
+
 /// 工具分类
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ToolCategory {
@@ -16,6 +18,21 @@ pub enum ToolCategory {
     Database,         // 数据库
     Analysis,         // 分析
     Utility,          // 实用工具
+}
+
+impl std::fmt::Display for ToolCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolCategory::Reconnaissance => write!(f, "reconnaissance"),
+            ToolCategory::Scanning => write!(f, "scanning"),
+            ToolCategory::Exploitation => write!(f, "exploitation"),
+            ToolCategory::PostExploitation => write!(f, "post_exploitation"),
+            ToolCategory::Reporting => write!(f, "reporting"),
+            ToolCategory::Database => write!(f, "database"),
+            ToolCategory::Analysis => write!(f, "analysis"),
+            ToolCategory::Utility => write!(f, "utility"),
+        }
+    }
 }
 
 /// 工具参数定义
@@ -38,6 +55,13 @@ pub struct ToolMetadata {
     pub requirements: Vec<String>,
 }
 
+/// 工具来源
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ToolSource {
+    Builtin,  // 内置工具
+    External, // 外部MCP工具
+}
+
 /// MCP工具信息（用于UI显示）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpToolInfo {
@@ -48,6 +72,7 @@ pub struct McpToolInfo {
     pub category: ToolCategory,
     pub parameters: ToolParameters,
     pub metadata: ToolMetadata,
+    pub source: ToolSource,
 }
 
 /// 工具执行请求
@@ -118,14 +143,7 @@ pub struct ExecutionMetadata {
     pub resource_usage: ResourceUsage,
 }
 
-/// 资源使用情况
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceUsage {
-    pub cpu_percent: Option<f64>,
-    pub memory_mb: Option<u64>,
-    pub disk_io_mb: Option<u64>,
-    pub network_io_mb: Option<u64>,
-}
+// ResourceUsage 已移至 agents/types.rs 中统一定义
 
 /// 传输配置
 #[derive(Debug, Clone, Serialize, Deserialize)]

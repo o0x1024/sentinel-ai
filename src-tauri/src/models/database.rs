@@ -17,11 +17,9 @@ pub struct DatabaseConfig {
 /// 数据库统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseStats {
-    pub projects_count: u64,
     pub scan_tasks_count: u64,
     pub vulnerabilities_count: u64,
     pub assets_count: u64,
-    pub submissions_count: u64,
     pub conversations_count: u64,
     pub db_size_bytes: u64,
     pub last_backup: Option<DateTime<Utc>>,
@@ -69,56 +67,7 @@ pub struct Migration {
     pub checksum: String,
 }
 
-/// 赏金项目
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct BountyProject {
-    pub id: String,
-    pub name: String,
-    pub platform: String,
-    pub url: Option<String>,
-    pub scope_domains: Option<String>, // JSON数组
-    pub scope_ips: Option<String>,     // JSON数组
-    pub out_of_scope: Option<String>,  // JSON数组
-    pub reward_range: Option<String>,  // JSON对象
-    pub difficulty_level: i32,
-    pub priority: i32,
-    pub status: String,
-    pub last_activity_at: Option<DateTime<Utc>>,
-    pub roi_score: f64,
-    pub success_rate: f64,
-    pub competition_level: i32,
-    pub tags: Option<String>, // JSON数组
-    pub notes: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
-impl BountyProject {
-    pub fn new(name: String, platform: String) -> Self {
-        let now = Utc::now();
-        Self {
-            id: Uuid::new_v4().to_string(),
-            name,
-            platform,
-            url: None,
-            scope_domains: None,
-            scope_ips: None,
-            out_of_scope: None,
-            reward_range: None,
-            difficulty_level: 1,
-            priority: 1,
-            status: "active".to_string(),
-            last_activity_at: None,
-            roi_score: 0.0,
-            success_rate: 0.0,
-            competition_level: 1,
-            tags: None,
-            notes: None,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-}
 
 /// 扫描任务
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -239,9 +188,6 @@ pub struct Vulnerability {
     pub references: Option<String>, // JSON数组
     pub status: String,
     pub verification_status: String,
-    pub submission_status: String,
-    pub reward_amount: Option<f64>,
-    pub submission_date: Option<DateTime<Utc>>,
     pub resolution_date: Option<DateTime<Utc>>,
     pub tags: Option<String>,        // JSON数组
     pub attachments: Option<String>, // JSON数组
@@ -272,9 +218,7 @@ impl Vulnerability {
             references: None,
             status: "open".to_string(),
             verification_status: "unverified".to_string(),
-            submission_status: "not_submitted".to_string(),
-            reward_amount: None,
-            submission_date: None,
+
             resolution_date: None,
             tags: None,
             attachments: None,
@@ -285,65 +229,7 @@ impl Vulnerability {
     }
 }
 
-/// 提交记录
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Submission {
-    pub id: String,
-    pub vulnerability_id: String,
-    pub project_id: String,
-    pub platform: String,
-    pub submission_id: Option<String>,
-    pub title: String,
-    pub description: Option<String>,
-    pub severity: String,
-    pub status: String,
-    pub reward_amount: Option<f64>,
-    pub bonus_amount: Option<f64>,
-    pub currency: String,
-    pub submitted_at: DateTime<Utc>,
-    pub triaged_at: Option<DateTime<Utc>>,
-    pub resolved_at: Option<DateTime<Utc>>,
-    pub feedback: Option<String>,
-    pub response_time: Option<i32>,
-    pub resolution_time: Option<i32>,
-    pub collaborators: Option<String>, // JSON数组
-    pub attachments: Option<String>,   // JSON数组
-    pub notes: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
-/// MCP工具
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct McpTool {
-    pub id: String,
-    pub name: String,
-    pub display_name: Option<String>,
-    pub description: Option<String>,
-    pub version: Option<String>,
-    pub category: Option<String>,
-    pub tool_type: String,
-    pub executable_path: Option<String>,
-    pub install_command: Option<String>,
-    pub config_schema: Option<String>,       // JSON Schema
-    pub default_config: Option<String>,      // JSON对象
-    pub capabilities: Option<String>,        // JSON数组
-    pub supported_platforms: Option<String>, // JSON数组
-    pub requirements: Option<String>,        // JSON数组
-    pub status: String,
-    pub installation_status: Option<String>,
-    pub last_used: Option<DateTime<Utc>>,
-    pub usage_count: i32,
-    pub success_rate: f64,
-    pub average_execution_time: Option<i32>,
-    pub tags: Option<String>, // JSON数组
-    pub author: Option<String>,
-    pub license: Option<String>,
-    pub documentation_url: Option<String>,
-    pub source_url: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
 /// MCP连接
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -453,23 +339,7 @@ pub struct AiMessage {
     pub timestamp: DateTime<Utc>,
 }
 
-/// 收益记录
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Earning {
-    pub id: String,
-    pub submission_id: String,
-    pub project_id: String,
-    pub amount: f64,
-    pub currency: String,
-    pub earning_type: Option<String>,
-    pub payment_status: String,
-    pub payment_date: Option<DateTime<Utc>>,
-    pub payment_method: Option<String>,
-    pub tax_info: Option<String>, // JSON对象
-    pub notes: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+
 
 /// 配置
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -484,53 +354,7 @@ pub struct Configuration {
     pub updated_at: DateTime<Utc>,
 }
 
-/// 创建项目请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateProjectRequest {
-    pub name: String,
-    pub platform: String,
-    pub url: Option<String>,
-    pub scope_domains: Option<Vec<String>>,
-    pub scope_ips: Option<Vec<String>>,
-    pub out_of_scope: Option<Vec<String>>,
-    pub reward_range: Option<serde_json::Value>,
-    pub difficulty_level: Option<i32>,
-    pub priority: Option<i32>,
-    pub tags: Option<Vec<String>>,
-    pub notes: Option<String>,
-}
 
-impl From<CreateProjectRequest> for BountyProject {
-    fn from(req: CreateProjectRequest) -> Self {
-        let mut project = BountyProject::new(req.name, req.platform);
-        project.url = req.url;
-        project.difficulty_level = req.difficulty_level.unwrap_or(1);
-        project.priority = req.priority.unwrap_or(1);
-        project.notes = req.notes;
-
-        if let Some(domains) = req.scope_domains {
-            project.scope_domains = Some(serde_json::to_string(&domains).unwrap_or_default());
-        }
-
-        if let Some(ips) = req.scope_ips {
-            project.scope_ips = Some(serde_json::to_string(&ips).unwrap_or_default());
-        }
-
-        if let Some(out_of_scope) = req.out_of_scope {
-            project.out_of_scope = Some(serde_json::to_string(&out_of_scope).unwrap_or_default());
-        }
-
-        if let Some(reward_range) = req.reward_range {
-            project.reward_range = Some(serde_json::to_string(&reward_range).unwrap_or_default());
-        }
-
-        if let Some(tags) = req.tags {
-            project.tags = Some(serde_json::to_string(&tags).unwrap_or_default());
-        }
-
-        project
-    }
-}
 
 /// 创建扫描任务请求
 #[derive(Debug, Clone, Serialize, Deserialize)]

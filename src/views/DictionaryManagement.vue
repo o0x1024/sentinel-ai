@@ -40,16 +40,16 @@
       <div 
         v-for="dictionary in filteredDictionaries" 
         :key="dictionary.id"
-        class="card bg-base-200 shadow-xl hover:shadow-2xl transition-shadow"
+        class="card bg-base-200 shadow-xl hover:shadow-2xl transition-shadow overflow-visible relative"
       >
         <div class="card-body">
           <div class="flex justify-between items-start mb-2">
             <h3 class="card-title text-lg">{{ dictionary.name }}</h3>
-            <div class="dropdown dropdown-end">
+            <div class="dropdown dropdown-end z-50 relative">
               <label tabindex="0" class="btn btn-ghost btn-sm">
                 <i class="fas fa-ellipsis-v"></i>
               </label>
-              <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52">
+              <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
                 <li><a @click="editDictionary(dictionary)"><i class="fas fa-edit mr-2"></i>{{ t('common.edit', '编辑') }}</a></li>
                 <li><a @click="exportDictionary(dictionary)"><i class="fas fa-download mr-2"></i>{{ t('common.export', '导出') }}</a></li>
                 <li><a @click="duplicateDictionary(dictionary)"><i class="fas fa-copy mr-2"></i>{{ t('common.duplicate', '复制') }}</a></li>
@@ -61,7 +61,7 @@
           <p class="text-sm opacity-70 mb-3">{{ dictionary.description }}</p>
           
           <div class="flex flex-wrap gap-2 mb-3">
-            <div class="badge badge-primary">{{ getDictionaryTypeLabel(dictionary.dictionary_type) }}</div>
+            <div class="badge badge-primary">{{ getDictionaryTypeLabel(dictionary.dict_type) }}</div>
             <div v-if="dictionary.service_type" class="badge badge-secondary">{{ getServiceTypeLabel(dictionary.service_type) }}</div>
             <div v-if="dictionary.is_builtin" class="badge badge-accent">{{ t('dictionary.builtin', '内置') }}</div>
           </div>
@@ -100,7 +100,7 @@
     <!-- 创建/编辑字典模态框 -->
     <div v-if="showCreateModal || editingDictionary" class="modal modal-open">
       <div class="modal-box max-w-2xl">
-        <h3 class="font-bold text-lg mb-4">
+        <h3 class="font-bold text-lg mb-4" >
           {{ editingDictionary ? t('dictionary.editDictionary', '编辑字典') : t('dictionary.createDictionary', '创建字典') }}
         </h3>
         
@@ -349,27 +349,58 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { writeTextFile }  from '@tauri-apps/plugin-fs';
+import { dialog } from '@/composables/useDialog'
 
 const { t } = useI18n()
 
+// 类型定义
+interface Dictionary {
+  id: string;
+  name: string;
+  description?: string;
+  dict_type: string;
+  service_type?: string;
+  is_builtin: boolean;
+  is_active: boolean;
+  word_count?: number;
+  updated_at: string;
+  created_at: string;
+  category?: string;
+  tags?: string[];
+}
+
+interface DictionaryWord {
+  id: string;
+  word: string;
+  created_at: string;
+}
+
+interface DictionaryForm {
+  name: string;
+  description?: string;
+  dictionary_type: string;
+  service_type?: string;
+  is_active: boolean;
+}
+
 // 响应式数据
-const dictionaries = ref([])
+const dictionaries = ref<Dictionary[]>([])
 const selectedType = ref('all')
 const showCreateModal = ref(false)
-const editingDictionary = ref(null)
-const managingDictionary = ref(null)
+const editingDictionary = ref<Dictionary | null>(null)
+const managingDictionary = ref<Dictionary | null>(null)
 const showImportModal = ref(false)
 const saving = ref(false)
 const initializing = ref(false)
 const importing = ref(false)
 const newWord = ref('')
 const searchQuery = ref('')
-const selectedWords = ref([])
+const selectedWords = ref<string[]>([])
 const importText = ref('')
 const importMethod = ref('text')
-const selectedFile = ref(null)
+const selectedFile = ref<File | null>(null)
 const mergeMode = ref('append')
-const dictionaryWords = ref([])
+const dictionaryWords = ref<DictionaryWord[]>([])
 
 // 表单数据
 const dictionaryForm = ref({
@@ -387,9 +418,9 @@ const dictionaryTypes = [
   { value: 'username', label: t('dictionary.types.username', '用户名'), icon: 'fas fa-user' },
   { value: 'password', label: t('dictionary.types.password', '密码'), icon: 'fas fa-key' },
   { value: 'path', label: t('dictionary.types.path', '路径'), icon: 'fas fa-folder' },
-  { value: 'parameter', label: t('dictionary.types.parameter', 'HTTP参数'), icon: 'fas fa-code' },
+  { value: 'http_param', label: t('dictionary.types.parameter', 'HTTP参数'), icon: 'fas fa-code' },
   { value: 'xss_payload', label: t('dictionary.types.xss_payload', 'XSS载荷'), icon: 'fas fa-bug' },
-  { value: 'sql_injection', label: t('dictionary.types.sql_injection', 'SQL注入'), icon: 'fas fa-database' },
+  { value: 'sql_injection_payload', label: t('dictionary.types.sql_injection', 'SQL注入'), icon: 'fas fa-database' },
   { value: 'custom', label: t('dictionary.types.custom', '自定义'), icon: 'fas fa-cog' }
 ]
 
@@ -408,7 +439,7 @@ const filteredDictionaries = computed(() => {
   if (selectedType.value === 'all') {
     return dictionaries.value
   }
-  return dictionaries.value.filter(dict => dict.dictionary_type === selectedType.value)
+  return dictionaries.value.filter(dict => dict.dict_type === selectedType.value)
 })
 
 const filteredWords = computed(() => {
@@ -430,7 +461,7 @@ const loadDictionaries = async () => {
       is_builtin: null,
       is_active: null,
       search_term: null
-    })
+    }) as Dictionary[]
     dictionaries.value = result || []
   } catch (error) {
     console.error('Failed to load dictionaries:', error)
@@ -478,13 +509,20 @@ const saveDictionary = async () => {
   }
 }
 
-const editDictionary = (dictionary) => {
+const editDictionary = (dictionary: Dictionary) => {
   editingDictionary.value = dictionary
-  dictionaryForm.value = { ...dictionary }
+  dictionaryForm.value = {
+    name: dictionary.name,
+    description: dictionary.description || '',
+    dictionary_type: dictionary.dict_type,
+    service_type: dictionary.service_type || '',
+    is_active: dictionary.is_active
+  }
 }
 
-const deleteDictionary = async (dictionary) => {
-  if (confirm(t('dictionary.confirmDelete', '确定要删除这个字典吗？'))) {
+const deleteDictionary = async (dictionary: Dictionary) => {
+  const confirmed = await dialog.confirm(t('dictionary.confirmDelete', '确定要删除这个字典吗？'));
+  if (confirmed) {
     try {
       await invoke('delete_dictionary', { id: dictionary.id })
       await loadDictionaries()
@@ -494,11 +532,11 @@ const deleteDictionary = async (dictionary) => {
   }
 }
 
-const duplicateDictionary = async (dictionary) => {
+const duplicateDictionary = async (dictionary: Dictionary) => {
   try {
     await invoke('create_dictionary', {
       name: `${dictionary.name} ${t('dictionary.copyPrefix', '(副本)')}`,
-      dict_type: dictionary.dictionary_type,
+      dict_type: dictionary.dict_type,
       service_type: dictionary.service_type || null,
       description: dictionary.description || null,
       category: dictionary.category || null,
@@ -510,7 +548,7 @@ const duplicateDictionary = async (dictionary) => {
   }
 }
 
-const exportDictionary = async (dictionary) => {
+const exportDictionary = async (dictionary: Dictionary) => {
   try {
     const result = await invoke('export_dictionary', { dictionary_id: dictionary.id })
     const fileName = `${dictionary.name.replace(/[^a-zA-Z0-9]/g, '_')}.json`
@@ -527,21 +565,21 @@ const exportDictionary = async (dictionary) => {
   }
 }
 
-const manageDictionaryWords = async (dictionary) => {
+const manageDictionaryWords = async (dictionary: Dictionary) => {
   managingDictionary.value = dictionary
   await loadDictionaryWords(dictionary.id)
 }
 
-const viewDictionaryWords = async (dictionary) => {
+const viewDictionaryWords = async (dictionary: Dictionary) => {
   managingDictionary.value = dictionary
   await loadDictionaryWords(dictionary.id)
 }
 
-const loadDictionaryWords = async (dictionaryId) => {
+const loadDictionaryWords = async (dictionaryId: string) => {
   try {
     const result = await invoke('get_dictionary_words', {
       dictionary_id: dictionaryId
-    })
+    }) as DictionaryWord[]
     dictionaryWords.value = result || []
   } catch (error) {
     console.error('Failed to load dictionary words:', error)
@@ -564,11 +602,11 @@ const addWord = async () => {
   }
 }
 
-const removeWord = async (wordId) => {
+const removeWord = async (wordId: string) => {
   try {
     // 找到要删除的词条
     const wordToRemove = dictionaryWords.value.find(w => w.id === wordId)
-    if (wordToRemove) {
+    if (wordToRemove && managingDictionary.value) {
       await invoke('remove_dictionary_words', {
         dictionary_id: managingDictionary.value.id,
         words: [wordToRemove.word]
@@ -590,7 +628,7 @@ const removeSelectedWords = async () => {
       .filter(w => selectedWords.value.includes(w.id))
       .map(w => w.word)
     
-    if (wordsToRemove.length > 0) {
+    if (wordsToRemove.length > 0 && managingDictionary.value) {
       await invoke('remove_dictionary_words', {
         dictionary_id: managingDictionary.value.id,
         words: wordsToRemove
@@ -605,7 +643,8 @@ const removeSelectedWords = async () => {
 }
 
 const clearDictionary = async () => {
-  if (!confirm(t('dictionary.confirmClear', '确定要清空这个字典吗？'))) return
+  const confirmed = await dialog.confirm(t('dictionary.confirmClear', '确定要清空这个字典吗？'));
+  if (!confirmed || !managingDictionary.value) return
   
   try {
     await invoke('clear_dictionary', { dictionary_id: managingDictionary.value.id })
@@ -638,7 +677,7 @@ const importWords = async () => {
       }
     }
     
-    if (words.length > 0) {
+    if (words.length > 0 && managingDictionary.value) {
       // 使用add_dictionary_words来导入词条
       await invoke('add_dictionary_words', {
         dictionary_id: managingDictionary.value.id,
@@ -658,8 +697,9 @@ const importWords = async () => {
   }
 }
 
-const handleFileSelect = (event) => {
-  selectedFile.value = event.target.files[0]
+const handleFileSelect = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  selectedFile.value = target.files?.[0] || null
 }
 
 const toggleSelectAll = () => {
@@ -689,17 +729,17 @@ const closeDictionaryWordsModal = () => {
   searchQuery.value = ''
 }
 
-const getDictionaryTypeLabel = (type) => {
+const getDictionaryTypeLabel = (type: string) => {
   const typeObj = dictionaryTypes.find(t => t.value === type)
   return typeObj ? t(`dictionary.types.${type}`, typeObj.label) : type
 }
 
-const getServiceTypeLabel = (type) => {
+const getServiceTypeLabel = (type: string) => {
   const serviceObj = serviceTypes.find(s => s.value === type)
   return serviceObj ? t(`dictionary.serviceTypes.${type}`, serviceObj.label) : type
 }
 
-const formatDate = (dateString) => {
+const formatDate = (dateString: string) => {
   if (!dateString) return '-'
   return new Date(dateString).toLocaleDateString()
 }

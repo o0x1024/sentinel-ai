@@ -253,6 +253,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { dialog } from '@/composables/useDialog';
 
 const { t } = useI18n();
 
@@ -323,8 +324,9 @@ const viewDetails = (vuln: VulnData) => {
   showModal.value = true;
 };
 
-const deleteVuln = (vulnId: string) => {
-  if (confirm(t('common.confirm'))) {
+const deleteVuln = async (vulnId: string) => {
+  const confirmed = await dialog.confirm(t('common.confirm'));
+  if (confirmed) {
     vulnerabilities.value = vulnerabilities.value.filter(vuln => vuln.id !== vulnId);
   }
 };
@@ -435,4 +437,4 @@ onMounted(() => {
 .stat-card {
   @apply card bg-base-100 shadow-lg p-6;
 }
-</style> 
+</style>

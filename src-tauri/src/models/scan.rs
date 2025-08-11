@@ -161,3 +161,14 @@ pub struct Service {
     pub version: Option<String>,
     pub banner: Option<String>,
 }
+
+/// 任务统计信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStats {
+    pub total: usize,
+    pub running: usize,
+    pub pending: usize,
+    pub completed: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+}

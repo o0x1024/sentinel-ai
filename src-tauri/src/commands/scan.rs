@@ -1,4 +1,4 @@
-use crate::models::scan::{ScanConfig, ScanResult, ScanTask};
+use crate::models::scan::{ScanConfig, ScanResult, ScanTask, TaskStats};
 use crate::services::scan::ScanService;
 use std::sync::Arc;
 use tauri::State;
@@ -86,6 +86,17 @@ pub async fn delete_scan_task(
     let task_uuid = Uuid::parse_str(&task_id).map_err(|e| e.to_string())?;
     scan_service
         .delete_task(task_uuid)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取扫描任务统计信息
+#[tauri::command]
+pub async fn get_scan_task_stats(
+    scan_service: State<'_, Arc<ScanService>>,
+) -> Result<TaskStats, String> {
+    scan_service
+        .get_task_stats()
         .await
         .map_err(|e| e.to_string())
 }

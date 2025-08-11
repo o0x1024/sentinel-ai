@@ -13,14 +13,7 @@
 
     <!-- 赏金统计卡片 -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-      <StatsCard
-        :value="stats.totalEarnings"
-        :label="$t('earnings.totalEarnings')"
-        :subtitle="`+${stats.monthlyGrowth}% ${$t('earnings.thisMonth')}`"
-        icon="fas fa-dollar-sign"
-        theme="success"
-        prefix="$"
-      />
+
       
       <StatsCard
         :value="stats.discoveredAssets"
@@ -30,13 +23,7 @@
         theme="primary"
       />
       
-      <StatsCard
-        :value="stats.validSubmissions"
-        :label="$t('submissions.acceptedSubmissions')"
-        :subtitle="$t('submissions.submissionTitle')"
-        icon="fas fa-check-circle"
-        theme="secondary"
-      />
+
       
       <StatsCard
         :value="stats.vulnerabilities"
@@ -151,22 +138,7 @@
 
     <!-- 图表区域 -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <!-- 收益趋势图 -->
-      <div class="card bg-base-100 shadow-lg">
-        <div class="card-body">
-          <h3 class="card-title mb-4">
-            <i class="fas fa-chart-line mr-2 text-primary"></i>
-            {{ $t('earnings.earningsHistory') }}
-          </h3>
-          <div class="h-64 flex items-center justify-center bg-base-200 rounded-lg">
-            <div class="text-center">
-              <i class="fas fa-chart-line text-6xl text-base-content/30 mb-4"></i>
-              <p class="text-sm opacity-70">{{ $t('earnings.earningsByMonth') }}</p>
-              <p class="text-xs opacity-50">{{ $t('dashboard.summary') }}...</p>
-            </div>
-          </div>
-        </div>
-      </div>
+
 
       <!-- 漏洞类型分布 -->
       <div class="card bg-base-100 shadow-lg">
@@ -286,10 +258,7 @@ const { t } = useI18n()
 const activeTab = ref('subdomains')
 
 const stats = ref({
-  totalEarnings: 12450,
-  monthlyGrowth: 15.3,
   discoveredAssets: 156,
-  validSubmissions: 89,
   vulnerabilities: 23,
   criticalVulns: 7
 })
@@ -513,4 +482,4 @@ onMounted(() => {
 .alert {
   padding: 0.75rem;
 }
-</style> 
+</style>

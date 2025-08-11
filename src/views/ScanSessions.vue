@@ -48,7 +48,9 @@
             <option value="">{{ $t('scanSessions.filters.all') }}</option>
             <option value="comprehensive">{{ $t('scanSessions.types.comprehensive') }}</option>
             <option value="subdomain">{{ $t('scanSessions.types.subdomain') }}</option>
+            <option value="rsubdomain">{{ $t('scanSessions.types.subdomain') }}</option>
             <option value="port">{{ $t('scanSessions.types.port') }}</option>
+            <option value="rustscan">{{ $t('scanSessions.types.port') }}</option>
             <option value="vulnerability">{{ $t('scanSessions.types.vulnerability') }}</option>
           </select>
         </div>
@@ -235,7 +237,9 @@
               <option value="">{{ $t('scanSessions.form.selectType') }}</option>
               <option value="comprehensive">{{ $t('scanSessions.types.comprehensive') }}</option>
               <option value="subdomain">{{ $t('scanSessions.types.subdomain') }}</option>
+              <option value="rsubdomain">{{ $t('scanSessions.types.subdomain') }}</option>
               <option value="port">{{ $t('scanSessions.types.port') }}</option>
+              <option value="rustscan">{{ $t('scanSessions.types.port') }}</option>
               <option value="vulnerability">{{ $t('scanSessions.types.vulnerability') }}</option>
             </select>
           </div>
@@ -406,6 +410,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
+import { dialog } from '@/composables/useDialog';
 
 const { t } = useI18n();
 
@@ -444,67 +449,8 @@ interface ScanSession {
 }
 
 // 响应式数据
-const sessions = ref<ScanSession[]>([
-  {
-    id: 'session-1',
-    name: '综合扫描 - example.com',
-    target: 'example.com',
-    config: {
-      scan_type: 'comprehensive',
-      depth: 2,
-      max_concurrency: 5,
-      enable_ai_analysis: true,
-      auto_optimize: true
-    },
-    status: 'running',
-    current_stage: 'subdomain_discovery',
-    stage_progress: 75,
-    overall_progress: 35,
-    created_at: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    started_at: new Date(Date.now() - 1000 * 60 * 40).toISOString(),
-    estimated_remaining: 1200,
-    assets_found: {
-      domains: 23,
-      ips: 8,
-      ports: 45,
-      vulnerabilities: 2
-    },
-    stages: [
-      { name: 'subdomain_discovery', status: 'running', progress: 75 },
-      { name: 'port_scanning', status: 'pending', progress: 0 },
-      { name: 'service_detection', status: 'pending', progress: 0 },
-      { name: 'vulnerability_scanning', status: 'pending', progress: 0 }
-    ]
-  },
-  {
-    id: 'session-2',
-    name: '子域名扫描 - test.com',
-    target: 'test.com',
-    config: {
-      scan_type: 'subdomain',
-      depth: 1,
-      max_concurrency: 3,
-      enable_ai_analysis: false,
-      auto_optimize: false
-    },
-    status: 'completed',
-    current_stage: 'subdomain_discovery',
-    stage_progress: 100,
-    overall_progress: 100,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-    started_at: new Date(Date.now() - 1000 * 60 * 60 * 3 + 1000 * 60).toISOString(),
-    completed_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    assets_found: {
-      domains: 15,
-      ips: 6,
-      ports: 0,
-      vulnerabilities: 0
-    },
-    stages: [
-      { name: 'subdomain_discovery', status: 'completed', progress: 100 }
-    ]
-  }
-]);
+const sessions = ref<ScanSession[]>([]);
+const isLoading = ref(false);
 
 const searchQuery = ref('');
 const statusFilter = ref('');
@@ -540,22 +486,26 @@ const filteredSessions = computed(() => {
 
 // 方法
 const refreshSessions = async () => {
+  isLoading.value = true;
   try {
-    const response = await invoke('list_scan_sessions', {
-      request: {}
-    });
-    console.log('Sessions refreshed:', response);
-    if (response && Array.isArray(response)) {
-      sessions.value = response;
-    }
+    const request = {
+      limit: null,
+      offset: null,
+      status_filter: null
+    };
+    const response:any = await invoke('list_scan_sessions', { request });
+    sessions.value = response.data as ScanSession[];
   } catch (error) {
     console.error('Failed to refresh sessions:', error);
+    await dialog.toast.error(t('scanSessions.notifications.loadFailed'));
+  } finally {
+    isLoading.value = false;
   }
 };
 
 const createSession = async () => {
-  if (!newSession.value.config.scan_type) {
-    alert(t('scanSessions.form.selectType'));
+  if (!newSession.value.name || !newSession.value.target || !newSession.value.config.scan_type) {
+    await dialog.toast.error(t('scanSessions.form.selectType'));
     return;
   }
 
@@ -564,10 +514,11 @@ const createSession = async () => {
     const response = await invoke('create_scan_session', {
       name: newSession.value.name,
       target: newSession.value.target,
+      scan_type: newSession.value.config.scan_type,
       config: newSession.value.config
     });
     
-    console.log('Session created:', response);
+    await dialog.toast.success(t('scanSessions.notifications.sessionCreated'));
     showCreateModal.value = false;
     
     // 重置表单
@@ -586,7 +537,7 @@ const createSession = async () => {
     await refreshSessions();
   } catch (error) {
     console.error('Failed to create session:', error);
-    alert(t('scanSessions.notifications.createFailed'));
+    await dialog.toast.error(t('scanSessions.notifications.createFailed'));
   } finally {
     isCreating.value = false;
   }
@@ -595,37 +546,48 @@ const createSession = async () => {
 const startSession = async (sessionId: string) => {
   try {
     await invoke('start_scan_session', { sessionId });
+    await dialog.toast.success(t('scanSessions.notifications.sessionStarted'));
     await refreshSessions();
   } catch (error) {
     console.error('Failed to start session:', error);
+    await dialog.toast.error(t('scanSessions.notifications.startFailed'));
   }
 };
 
 const pauseSession = async (sessionId: string) => {
   try {
     await invoke('pause_scan_session', { sessionId });
+    await dialog.toast.success(t('scanSessions.notifications.sessionPaused'));
     await refreshSessions();
   } catch (error) {
     console.error('Failed to pause session:', error);
+    await dialog.toast.error(t('scanSessions.notifications.pauseFailed'));
   }
 };
 
 const stopSession = async (sessionId: string) => {
   try {
     await invoke('stop_scan_session', { sessionId });
+    await dialog.toast.success(t('scanSessions.notifications.sessionStopped'));
     await refreshSessions();
   } catch (error) {
     console.error('Failed to stop session:', error);
+    await dialog.toast.error(t('scanSessions.notifications.stopFailed'));
   }
 };
 
 const deleteSession = async (sessionId: string) => {
-  if (confirm(t('common.confirm'))) {
+  const confirmed = await dialog.confirm(
+    t('scanSessions.notifications.confirmDelete')
+  );
+  if (confirmed) {
     try {
       await invoke('delete_scan_session', { sessionId });
-      sessions.value = sessions.value.filter(session => session.id !== sessionId);
+      await dialog.toast.success(t('scanSessions.notifications.sessionDeleted'));
+      await refreshSessions();
     } catch (error) {
       console.error('Failed to delete session:', error);
+      await dialog.toast.error(t('scanSessions.notifications.deleteFailed'));
     }
   }
 };
@@ -670,7 +632,9 @@ const getTypeLabel = (type: string) => {
   const labels: Record<string, string> = {
     'comprehensive': t('scanSessions.types.comprehensive'),
     'subdomain': t('scanSessions.types.subdomain'),
+    'rsubdomain': t('scanSessions.types.subdomain'),
     'port': t('scanSessions.types.port'),
+    'rustscan': t('scanSessions.types.port'),
     'vulnerability': t('scanSessions.types.vulnerability')
   };
   return labels[type] || type;

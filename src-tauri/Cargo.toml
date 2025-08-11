@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "AI+MCP漏洞挖掘应用"
 authors = ["you"]
 edition = "2021"
+default-run = "sentinel-ai"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,6 +14,7 @@ edition = "2021"
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "sentinel_ai_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -25,18 +27,19 @@ tauri-plugin-dialog = "2"
 tauri-plugin-http = "2.5.1"
 tauri-plugin-shell = "2"
 
-# 子域名扫描工具
-rsubdomain = "1.2.1"
 
+futures-util = "0.3"
+# 子域名扫描工具
+rsubdomain = "1.2.5"
+
+
+rustscan = "2.4.1"
 
 # MCP协议支持 - 使用官方Rust SDK
 rmcp = { version = "0.2.0", features = ["client", "macros", "transport-async-rw", "transport-child-process", "transport-sse-client", "reqwest"] }
 
-# AI服务 - 使用 genai
-genai = "0.4.0-alpha.6"
-
 # 数据库支持
-sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 
 # HTTP客户端
 reqwest = { version = "0.12.0", features = ["json"] }
@@ -45,10 +48,13 @@ http = "1"
 # 序列化/反序列化
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 
 # 日志
+log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 # 目录路径
 dirs = "5.0"
@@ -64,6 +70,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # 任何错误处理
 anyhow = "1.0"
+thiserror = "1.0"
 
 # 随机数生成
 rand = "0.8"
@@ -83,7 +90,8 @@ chrono = { version = "0.4", features = ["serde"] }
 # 额外的 AI 相关依赖
 base64 = "0.22"
 url = "2.4"
-derive_more = "2.0.1"
+derive_more = { version = "2.0.1", features = ["full"] }
+md5 = "0.7"
 
 # 网络扫描工具依赖
 # 子域名扫描相关
@@ -113,6 +121,10 @@ headers = "0.4"
 mime = "0.3"
 tauri-plugin-fs = "2"
 
+# 文件系统监控
+notify = "6.1"
+fastrand = "2.3.0"
+
 [profile.dev]
 # 开发环境优化
 opt-level = 1          # 基本优化，提升编译速度
@@ -134,4 +146,7 @@ debug = true          # 生产环境但保留调试信息
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
 

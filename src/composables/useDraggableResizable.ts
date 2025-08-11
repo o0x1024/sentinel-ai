@@ -7,7 +7,7 @@ export default function useDraggableResizable(
   const windowWidth = ref(options.initialWidth);
   const windowHeight = ref(options.initialHeight);
   const windowX = ref((window.innerWidth - options.initialWidth) / 2);
-  const windowY = ref((window.innerHeight - options.initialHeight) / 2);
+  const windowY = ref(Math.max(80, (window.innerHeight - options.initialHeight) / 2));
   const isLeftSide = computed(() => windowX.value < window.innerWidth / 2);
 
   const state = reactive({
@@ -52,9 +52,10 @@ export default function useDraggableResizable(
     // Prevent dragging outside of the window
     const maxX = window.innerWidth - windowWidth.value;
     const maxY = window.innerHeight - windowHeight.value;
+    const minY = 64; // 导航栏高度
 
     windowX.value = Math.max(0, Math.min(newX, maxX));
-    windowY.value = Math.max(0, Math.min(newY, maxY));
+    windowY.value = Math.max(minY, Math.min(newY, maxY));
   };
 
   const stopDrag = () => {
@@ -118,9 +119,10 @@ export default function useDraggableResizable(
   const ensureInBounds = () => {
     const maxX = window.innerWidth - windowWidth.value;
     const maxY = window.innerHeight - windowHeight.value;
+    const minY = 64; // 导航栏高度
 
     windowX.value = Math.max(0, Math.min(windowX.value, maxX));
-    windowY.value = Math.max(0, Math.min(windowY.value, maxY));
+    windowY.value = Math.max(minY, Math.min(windowY.value, maxY));
   };
   
   const loadPosition = () => {
@@ -153,4 +155,4 @@ export default function useDraggableResizable(
     startDrag,
     startResize,
   };
-} 
+}

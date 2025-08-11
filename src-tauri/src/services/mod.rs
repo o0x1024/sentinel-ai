@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod asset_service;
 pub mod database;
 pub mod dictionary;
 pub mod mcp;
@@ -6,15 +7,26 @@ pub mod performance;
 pub mod scan;
 pub mod scan_session;
 pub mod vulnerability;
+pub mod prompt_service;
 
 // 导出所有服务
 pub use ai::{AiService, AiServiceManager};
+pub use asset_service::AssetService;
 pub use database::DatabaseService;
 pub use dictionary::DictionaryService;
 pub use mcp::McpService;
 pub use performance::{
     PerformanceConfig, PerformanceMetrics, PerformanceMonitor, PerformanceOptimizer,
 };
+
+pub use prompt_service::{
+    PromptService, PromptServiceConfig, PromptSession, ExecutionRecord,
+    SessionPerformanceStats, PromptBuildRequest, PromptBuildType,
+    PromptBuildResponse, OptimizationRequest, ValidationSettings,
+    ServiceStats, HealthStatus,
+};
+
+// Re-export from commands module
 pub use scan::ScanService;
 pub use scan_session::ScanSessionService;
 pub use vulnerability::VulnerabilityService;
