@@ -15,6 +15,8 @@ use chrono::Utc;
 use tracing::{info, warn, error, debug};
 
 use crate::services::ai::AiService;
+use crate::services::prompt_db::PromptRepository;
+use crate::models::prompt::{ArchitectureType, StageType};
 use super::types::*;
 use super::types::EfficiencyMetrics;
 
@@ -24,6 +26,8 @@ pub struct IntelligentJoiner {
     ai_service: AiService,
     /// 配置
     config: LlmCompilerConfig,
+    /// 动态Prompt仓库
+    prompt_repo: Option<PromptRepository>,
     /// 决策历史
     decision_history: Vec<JoinerDecisionRecord>,
     /// 执行上下文
@@ -84,10 +88,11 @@ struct DecisionAnalysis {
 }
 
 impl IntelligentJoiner {
-    pub fn new(ai_service: AiService, config: LlmCompilerConfig) -> Self {
+    pub fn new(ai_service: AiService, config: LlmCompilerConfig, prompt_repo: Option<PromptRepository>) -> Self {
         Self {
             ai_service,
             config,
+            prompt_repo,
             decision_history: Vec::new(),
             execution_context: ExecutionContext::default(),
         }
@@ -221,7 +226,7 @@ impl IntelligentJoiner {
         let completion_prompt = self.build_goal_completion_prompt(
             original_query,
             &successful_outputs,
-        );
+        ).await?;
         
         // 调用AI分析目标完成度
         match self.ai_service.send_message(&completion_prompt, None).await {
@@ -317,7 +322,7 @@ impl IntelligentJoiner {
             execution_plan,
             execution_results,
             round,
-        );
+        ).await?;
         
         match self.ai_service.send_message(&decision_prompt, None).await {
             Ok(response) => {
@@ -404,12 +409,23 @@ impl IntelligentJoiner {
     }
 
     /// 构建目标完成度分析提示
-    fn build_goal_completion_prompt(
+    async fn build_goal_completion_prompt(
         &self,
         original_query: &str,
         successful_outputs: &[&HashMap<String, Value>],
-    ) -> String {
-        format!(
+    ) -> Result<String> {
+        if let Some(repo) = &self.prompt_repo {
+            if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
+                let replaced = Self::apply_placeholders(&dynamic, vec![
+                    ("{{USER_QUERY}}", original_query),
+                    ("{original_query}", original_query),
+                    ("{{RESULTS}}", &self.format_outputs_for_analysis(successful_outputs)),
+                    ("{results}", &self.format_outputs_for_analysis(successful_outputs)),
+                ]);
+                return Ok(replaced);
+            }
+        }
+        Ok(format!(
             "请分析以下执行结果是否充分回答了原始查询。\n\n\
             原始查询: {}\n\n\
             执行结果:\n{}\n\n\
@@ -423,21 +439,39 @@ impl IntelligentJoiner {
             请只返回数字分数。",
             original_query,
             self.format_outputs_for_analysis(successful_outputs)
-        )
+        ))
     }
 
     /// 构建AI决策提示
-    fn build_ai_decision_prompt(
+    async fn build_ai_decision_prompt(
         &self,
         original_query: &str,
         execution_plan: &DagExecutionPlan,
         execution_results: &[TaskExecutionResult],
         round: usize,
-    ) -> String {
+    ) -> Result<String> {
         let execution_summary = self.format_execution_summary(execution_results);
         let plan_summary = self.format_plan_summary(execution_plan);
-        
-        format!(
+        if let Some(repo) = &self.prompt_repo {
+            if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Replan).await {
+                let replaced = Self::apply_placeholders(&dynamic, vec![
+                    ("{{USER_QUERY}}", original_query),
+                    ("{original_query}", original_query),
+                    ("{{ROUND}}", &round.to_string()),
+                    ("{round}", &round.to_string()),
+                    ("{{MAX_ROUNDS}}", &self.config.max_iterations.to_string()),
+                    ("{max_rounds}", &self.config.max_iterations.to_string()),
+                    ("{{PLAN_SUMMARY}}", &plan_summary),
+                    ("{plan_summary}", &plan_summary),
+                    ("{{EXECUTION_SUMMARY}}", &execution_summary),
+                    ("{execution_summary}", &execution_summary),
+                    ("{{DECISION_HISTORY}}", &self.format_decision_history()),
+                    ("{decision_history}", &self.format_decision_history()),
+                ]);
+                return Ok(replaced);
+            }
+        }
+        Ok(format!(
             "作为LLMCompiler的智能决策器，请分析当前执行状态并决定下一步行动。\n\n\
             原始查询: {}\n\n\
             当前轮次: {}\n\
@@ -460,7 +494,15 @@ impl IntelligentJoiner {
             plan_summary,
             execution_summary,
             self.format_decision_history()
-        )
+        ))
+    }
+
+    fn apply_placeholders(template: &str, pairs: Vec<(&str, &str)>) -> String {
+        let mut out = template.to_string();
+        for (k, v) in pairs {
+            out = out.replace(k, v);
+        }
+        out
     }
 
     /// 更新执行上下文

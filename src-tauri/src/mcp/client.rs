@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use rmcp::{
     model::{
-        CallToolRequestParam, CallToolResult, Content, InitializeResult, RawContent, TextContent,
+        CallToolRequestParam, CallToolResult, InitializeResult, RawContent,
         Tool,
     },
     service::{RoleClient, RunningService, ServiceExt},
@@ -12,18 +12,10 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::services::database::DatabaseService;
-
-/// MCP 连接状态
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConnectionStatus {
-    Disconnected,
-    Connecting,
-    Connected,
-    Error(String),
-}
+use super::types::ConnectionStatus;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct ConfiguredServer {
@@ -154,103 +146,168 @@ impl McpClient {
             args.join(" ")
         );
 
-        let transport =
-            TokioChildProcess::new(tokio::process::Command::new(command).configure(|cmd| {
-                for arg in &args {
-                    cmd.arg(arg);
-                }
-                cmd.stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped());
-            }))?;
-
-        let client_service = ().serve(transport).await?;
-
-        let session: Arc<dyn McpSession> = Arc::new(McpSessionImpl {
-            service: RwLock::new(Some(client_service)),
-        });
-
         let connection_id = uuid::Uuid::new_v4().to_string();
-        info!("Successfully initialized MCP connection: {}", name);
+        let endpoint = format!("{} {}", command, args.join(" "));
 
-        let peer_info = session.peer_info().await;
-        info!("MCP server information: {:?}", peer_info);
-
-        let tools = match session.list_all_tools().await {
-            Ok(list_tools_result) => {
-                info!(
-                    "Successfully retrieved tool list, tool count: {}",
-                    list_tools_result.len()
-                );
-                list_tools_result
-            }
-            Err(e) => {
-                warn!("Failed to retrieve tool list: {}", e);
-                Vec::new()
-            }
-        };
-
-        let connection = McpConnection {
+        // 创建错误状态的连接以便前端可以看到
+        let mut error_connection = McpConnection {
             id: connection_id.clone(),
-            name,
+            name: name.clone(),
             transport_type: "child_process".to_string(),
-            endpoint: format!("{} {}", command, args.join(" ")),
-            status: ConnectionStatus::Connected,
-            tools,
-            session: Some(session),
+            endpoint: endpoint.clone(),
+            status: ConnectionStatus::Connecting,
+            tools: Vec::new(),
+            session: None,
             last_activity: chrono::Utc::now(),
             error_count: 0,
         };
 
-        let mut connections = self.connections.write().await;
-        connections.insert(connection_id.clone(), connection);
+        // 先插入连接状态为"正在连接"
+        {
+            let mut connections = self.connections.write().await;
+            connections.insert(connection_id.clone(), error_connection.clone());
+        }
 
+        // 尝试建立连接
+        let connection_result: Result<(Arc<dyn McpSession>, Vec<Tool>)> = async {
+            let transport =
+                TokioChildProcess::new(tokio::process::Command::new(command).configure(|cmd| {
+                    for arg in &args {
+                        cmd.arg(arg);
+                    }
+                    cmd.stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::piped());
+                }))?;
+
+            let client_service = ().serve(transport).await?;
+
+            let session: Arc<dyn McpSession> = Arc::new(McpSessionImpl {
+                service: RwLock::new(Some(client_service)),
+            });
+
+            info!("Successfully initialized MCP connection: {}", name);
+
+            let peer_info = session.peer_info().await;
+            info!("MCP server information: {:?}", peer_info);
+
+            let tools = match session.list_all_tools().await {
+                Ok(list_tools_result) => {
+                    info!(
+                        "Successfully retrieved tool list, tool count: {}",
+                        list_tools_result.len()
+                    );
+                    list_tools_result
+                }
+                Err(e) => {
+                    warn!("Failed to retrieve tool list: {}", e);
+                    Vec::new()
+                }
+            };
+
+            Ok((session, tools))
+        }.await;
+
+        // 根据连接结果更新连接状态
+        match connection_result {
+            Ok((session, tools)) => {
+                error_connection.status = ConnectionStatus::Connected;
+                error_connection.tools = tools;
+                error_connection.session = Some(session);
+                error_connection.error_count = 0;
+            }
+            Err(e) => {
+                warn!("Failed to connect to MCP server '{}': {}", name, e);
+                error_connection.status = ConnectionStatus::Error(e.to_string());
+                error_connection.error_count += 1;
+            }
+        }
+
+        // 更新连接状态
+        {
+            let mut connections = self.connections.write().await;
+            connections.insert(connection_id.clone(), error_connection);
+        }
+
+        // 即使连接失败也返回connection_id，以便前端可以显示错误状态
         Ok(connection_id)
     }
 
     /// 连接到HTTP MCP服务器
     pub async fn connect_to_http_server(&self, name: String, url: &str) -> Result<String> {
         info!("Attempting to connect to HTTP MCP server: {}", url);
-        let transport = transport::sse_client::SseClientTransport::start(url.to_string()).await?;
-        let client_service = ().serve(transport).await?;
-
-        let session: Arc<dyn McpSession> = Arc::new(McpSessionImpl {
-            service: RwLock::new(Some(client_service)),
-        });
 
         let connection_id = uuid::Uuid::new_v4().to_string();
-        info!("Successfully initialized MCP connection: {}", name);
 
-        let peer_info = session.peer_info().await;
-        info!("MCP server information: {:?}", peer_info);
-
-        let tools = match session.list_all_tools().await {
-            Ok(list_tools_result) => {
-                info!(
-                    "Successfully retrieved tool list, tool count: {}",
-                    list_tools_result.len()
-                );
-                list_tools_result
-            }
-            Err(e) => {
-                warn!("Failed to retrieve tool list: {}", e);
-                Vec::new()
-            }
-        };
-
-        let connection = McpConnection {
+        // 创建初始连接状态
+        let mut connection = McpConnection {
             id: connection_id.clone(),
-            name,
+            name: name.clone(),
             transport_type: "http".to_string(),
             endpoint: url.to_string(),
-            status: ConnectionStatus::Connected,
-            tools,
-            session: Some(session),
+            status: ConnectionStatus::Connecting,
+            tools: Vec::new(),
+            session: None,
             last_activity: chrono::Utc::now(),
             error_count: 0,
         };
 
-        let mut connections = self.connections.write().await;
-        connections.insert(connection_id.clone(), connection);
+        // 先插入连接状态为"正在连接"
+        {
+            let mut connections = self.connections.write().await;
+            connections.insert(connection_id.clone(), connection.clone());
+        }
+
+        // 尝试建立连接
+        let connection_result: Result<(Arc<dyn McpSession>, Vec<Tool>)> = async {
+            let transport = transport::sse_client::SseClientTransport::start(url.to_string()).await?;
+            let client_service = ().serve(transport).await?;
+
+            let session: Arc<dyn McpSession> = Arc::new(McpSessionImpl {
+                service: RwLock::new(Some(client_service)),
+            });
+
+            info!("Successfully initialized MCP connection: {}", name);
+
+            let peer_info = session.peer_info().await;
+            info!("MCP server information: {:?}", peer_info);
+
+            let tools = match session.list_all_tools().await {
+                Ok(list_tools_result) => {
+                    info!(
+                        "Successfully retrieved tool list, tool count: {}",
+                        list_tools_result.len()
+                    );
+                    list_tools_result
+                }
+                Err(e) => {
+                    warn!("Failed to retrieve tool list: {}", e);
+                    Vec::new()
+                }
+            };
+
+            Ok((session, tools))
+        }.await;
+
+        // 根据连接结果更新连接状态
+        match connection_result {
+            Ok((session, tools)) => {
+                connection.status = ConnectionStatus::Connected;
+                connection.tools = tools;
+                connection.session = Some(session);
+                connection.error_count = 0;
+            }
+            Err(e) => {
+                warn!("Failed to connect to HTTP MCP server '{}': {}", name, e);
+                connection.status = ConnectionStatus::Error(e.to_string());
+                connection.error_count += 1;
+            }
+        }
+
+        // 更新连接状态
+        {
+            let mut connections = self.connections.write().await;
+            connections.insert(connection_id.clone(), connection);
+        }
 
         Ok(connection_id)
     }
@@ -520,7 +577,10 @@ impl McpClient {
         let mut to_remove = Vec::new();
         for (id, conn) in connections.iter() {
             let elapsed = chrono::Utc::now() - conn.last_activity;
-            if elapsed.num_hours() > 1 || matches!(conn.status, ConnectionStatus::Error(_)) {
+            // 对于错误状态的连接，给用户10分钟时间查看错误信息
+            let should_remove = elapsed.num_hours() > 1 || 
+                (matches!(conn.status, ConnectionStatus::Error(_)) && elapsed.num_minutes() > 10);
+            if should_remove {
                 to_remove.push(id.clone());
             }
         }
@@ -571,7 +631,7 @@ impl McpClient {
                     id: Some(active_conn.id),
                     transport_type: active_conn.transport_type,
                     endpoint: active_conn.endpoint,
-                    status: format!("{:?}", active_conn.status),
+                    status: active_conn.status.to_string(),
                     command: config.command,
                     args,
                 });
@@ -607,7 +667,7 @@ impl McpClient {
                 id: Some(active_conn.id),
                 transport_type: active_conn.transport_type,
                 endpoint: active_conn.endpoint,
-                status: format!("{:?}", active_conn.status),
+                status: active_conn.status.to_string(),
                 command,
                 args,
             });
@@ -816,7 +876,10 @@ impl McpClientManager {
     pub async fn get_all_connections_status(&self) -> HashMap<String, ConfiguredServer> {
         match self.get_all_servers_with_status().await {
             Ok(servers) => servers.into_iter().map(|s| (s.name.clone(), s)).collect(),
-            Err(_) => HashMap::new(),
+            Err(e) => {
+                warn!("Failed to get server status: {}", e);
+                HashMap::new()
+            }
         }
     }
 
@@ -844,6 +907,40 @@ impl McpClientManager {
                 enabled,
             )
             .await
+    }
+
+    /// 重新连接失败的MCP服务器
+    pub async fn retry_connection(&self, connection_id: &str) -> Result<String> {
+        let client = self.client.read().await;
+        let connections = client.connections.read().await;
+        
+        if let Some(conn) = connections.get(connection_id) {
+            match &conn.status {
+                ConnectionStatus::Error(_) => {
+                    let name = conn.name.clone();
+                    let endpoint = conn.endpoint.clone();
+                    let transport_type = conn.transport_type.clone();
+                    drop(connections);
+                    drop(client);
+                    
+                    // 尝试重新连接
+                    if transport_type == "http" {
+                        self.connect_to_http_server(&name, &endpoint).await
+                    } else {
+                        // 解析命令和参数
+                        let parts: Vec<&str> = endpoint.split_whitespace().collect();
+                        if let Some((command, args)) = parts.split_first() {
+                            self.connect_to_server(&name, command, args.to_vec()).await
+                        } else {
+                            Err(anyhow!("Invalid endpoint format: {}", endpoint))
+                        }
+                    }
+                }
+                _ => Err(anyhow!("Connection is not in error state"))
+            }
+        } else {
+            Err(anyhow!("Connection not found: {}", connection_id))
+        }
     }
 }
 

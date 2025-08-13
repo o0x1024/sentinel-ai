@@ -11,6 +11,11 @@ interface DialogOptions {
   variant?: 'primary' | 'secondary' | 'accent' | 'info' | 'success' | 'warning' | 'error';
 }
 
+interface InputDialogOptions extends DialogOptions {
+  placeholder?: string;
+  defaultValue?: string;
+}
+
 // 创建一个全局对话框服务
 class DialogService {
   private modalId = 'global-dialog-modal';
@@ -73,6 +78,23 @@ class DialogService {
     });
   }
 
+  // 输入对话框
+  input(options: InputDialogOptions | string): Promise<string | null> {
+    if (typeof options === 'string') {
+      options = { message: options };
+    }
+    return new Promise<string | null>((resolve) => {
+      this.showModal({
+        ...options,
+        type: 'input',
+        confirmText: options.confirmText || i18n.global.t('common.confirm'),
+        cancelText: options.cancelText || i18n.global.t('common.cancel'),
+        onConfirm: (value: string) => resolve(value),
+        onCancel: () => resolve(null)
+      });
+    });
+  }
+
   // 显示成功提示
   success(message: string, title?: string): Promise<void> {
     return this.alert({
@@ -129,16 +151,25 @@ class DialogService {
     const icon = this.getIconForVariant(options.variant);
     
     // 创建模态框内容
+    const isInput = options.type === 'input';
+    const inputHtml = isInput
+      ? `<input id="dialog-input" class="input input-bordered w-full" placeholder="${options.placeholder || ''}" value="${options.defaultValue || ''}" />`
+      : '';
+    const cancelHtml = options.type === 'confirm' || isInput
+      ? `<button id="dialog-cancel-btn" class="btn">${options.cancelText}</button>`
+      : '';
     const modalContent = `
       <div class="modal-box">
         <div class="flex items-center gap-3 mb-4">
           ${icon ? `<div class="text-${options.variant} text-2xl">${icon}</div>` : ''}
           <h3 class="font-bold text-lg">${options.title || ''}</h3>
         </div>
-        <p class="py-4">${options.message}</p>
+        <div class="py-2 space-y-3">
+          <p>${options.message}</p>
+          ${inputHtml}
+        </div>
         <div class="modal-action">
-          ${options.type === 'confirm' ? 
-            `<button id="dialog-cancel-btn" class="btn">${options.cancelText}</button>` : ''}
+          ${cancelHtml}
           <button id="dialog-confirm-btn" class="btn ${options.variant ? 'btn-' + options.variant : ''}">${options.confirmText}</button>
         </div>
       </div>
@@ -159,7 +190,13 @@ class DialogService {
     if (confirmBtn) {
       confirmBtn.addEventListener('click', () => {
         modal.close();
-        if (options.onConfirm) options.onConfirm();
+        if (isInput) {
+          const inputEl = document.getElementById('dialog-input') as HTMLInputElement | null;
+          const val = inputEl ? inputEl.value : '';
+          if (options.onConfirm) options.onConfirm(val);
+        } else {
+          if (options.onConfirm) options.onConfirm();
+        }
       });
     }
     
@@ -169,6 +206,20 @@ class DialogService {
         modal.close();
         if (options.onCancel) options.onCancel();
       });
+    }
+
+    // 回车提交（输入框）
+    if (isInput) {
+      const inputEl = document.getElementById('dialog-input') as HTMLInputElement | null;
+      if (inputEl) {
+        setTimeout(() => inputEl.focus(), 0);
+        inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            (confirmBtn as HTMLButtonElement)?.click();
+          }
+        });
+      }
     }
     
     // 点击背景关闭（仅对alert类型）

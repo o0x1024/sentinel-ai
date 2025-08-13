@@ -93,7 +93,7 @@ impl DatabaseService {
         }
 
         // 创建连接池，使用更安全的连接选项
-        let database_url = format!("sqlite:{}?mode=rwc", self.db_path.display());
+        let _database_url = format!("sqlite:{}?mode=rwc", self.db_path.display());
 
         let pool = SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new()
@@ -118,6 +118,7 @@ impl DatabaseService {
         if !db_exists {
             tracing::info!("New database detected, inserting default data...");
             self.insert_default_data(&pool).await?;
+            self.insert_default_prompts(&pool).await?;
         } 
 
         self.pool = Some(pool);
@@ -154,6 +155,95 @@ impl DatabaseService {
                 created_by TEXT DEFAULT 'user',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 提示词模板表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS prompt_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                architecture TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                content TEXT NOT NULL,
+                is_default INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 用户提示词配置表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_prompt_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                architecture TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                template_id INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(architecture, stage),
+                FOREIGN KEY (template_id) REFERENCES prompt_templates(id)
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 提示词分组表（每个架构仅允许一个默认组）
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS prompt_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                architecture TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 唯一索引：同一架构仅一个默认组
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_groups_arch_default \
+             ON prompt_groups(architecture) \
+             WHERE is_default = 1",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 分组阶段-模板映射表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS prompt_group_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                stage TEXT NOT NULL,
+                template_id INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(group_id, stage),
+                FOREIGN KEY(group_id) REFERENCES prompt_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY(template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 提示词历史版本表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS prompt_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (template_id) REFERENCES prompt_templates(id)
             )",
         )
         .execute(&mut *tx)
@@ -204,6 +294,17 @@ impl DatabaseService {
         )
         .execute(&mut *tx)
         .await?;
+
+        // 索引优化（提示词相关）
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_prompt_templates_arch_stage ON prompt_templates(architecture, stage)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_prompt_templates_is_active ON prompt_templates(is_active)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_user_prompt_configs_arch_stage ON user_prompt_configs(architecture, stage)")
+            .execute(&mut *tx)
+            .await?;
 
         // 创建资产表
         sqlx::query(
@@ -732,6 +833,33 @@ impl DatabaseService {
         Ok(())
     }
 
+    async fn insert_default_prompts(&self, pool: &SqlitePool) -> Result<()> {
+        let defaults: &[(&str, &str, &str, &str)] = &[
+            // arch, stage, name, content
+            ("rewoo", "planner", "ReWOO Planner", "你是一个智能任务规划器。请根据用户的问题，制定一个详细的执行计划。\n\n用户问题：{user_question}\n\n请按照以下格式输出计划：\nPlan: 步骤描述\n#E1 = 工具名称[参数]\n#E2 = 工具名称[参数, #E1]"),
+            ("rewoo", "worker", "ReWOO Worker", "你是一个工具执行器。请根据计划中的步骤，调用相应的工具并返回结果。\n当前步骤：{current_step}\n可用工具：{available_tools}"),
+            ("rewoo", "solver", "ReWOO Solver", "你是一个结果整合器。请根据执行结果，为用户提供最终答案。\n原始问题：{original_question}\n执行计划：{plan}\n执行结果：{results}"),
+            ("llmcompiler", "planning", "LLMC Planning", "你是一个并行任务规划器。请将复杂任务分解为可并行执行的子任务。\n用户任务：{user_task}"),
+            ("llmcompiler", "execution", "LLMC Execution", "你是一个任务执行器。请执行指定的子任务。\n当前任务：{current_task}\n依赖结果：{dependencies}"),
+            ("llmcompiler", "replan", "LLMC Replan", "你是一个重新规划器。当执行出现问题时，请调整执行计划。\n原始计划：{original_plan}\n执行状态：{execution_status}\n错误信息：{error_info}"),
+            ("planexecute", "planning", "P&E Planning", "你是一个策略规划师。请为用户的目标制定详细的执行计划。\n用户目标：{user_goal}"),
+            ("planexecute", "execution", "P&E Execution", "你是一个执行专家。请执行计划中的当前步骤。\n执行计划：{plan}\n当前步骤：{current_step}\n前置结果：{previous_results}"),
+            ("planexecute", "reflection", "P&E Reflection", "你是一个反思分析师。请评估执行结果并提供改进建议。\n执行计划：{plan}\n执行结果：{results}\n目标达成情况：{goal_achievement}"),
+        ];
+
+        for (arch, stage, name, content) in defaults {
+            sqlx::query(r#"INSERT INTO prompt_templates (name, description, architecture, stage, content, is_default, is_active) VALUES (?, ?, ?, ?, ?, 1, 1)"#)
+                .bind(*name)
+                .bind(Option::<&str>::None)
+                .bind(*arch)
+                .bind(*stage)
+                .bind(*content)
+                .execute(pool)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// 获取初始数据库架构SQL语句 - 不再需要，直接在create_database_schema中实现
     fn get_initial_schema_statements(&self) -> Vec<String> {
         vec![]
@@ -935,11 +1063,11 @@ impl DatabaseService {
 
         let mut query =
             "UPDATE scan_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP".to_string();
-        let mut bind_count = 1;
+        let mut _bind_count = 1;
 
         if progress.is_some() {
             query.push_str(", progress = ?");
-            bind_count += 1;
+            _bind_count += 1;
         }
 
         if status == "running" {

@@ -5,6 +5,17 @@ use std::sync::Arc;
 use tauri::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalProxyConfig {
+    pub enabled: bool,
+    pub scheme: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub no_proxy: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigItem {
     pub id: String,
     pub category: String,
@@ -45,6 +56,41 @@ pub async fn save_config(
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+// 设置全局代理（并保存到DB）
+#[tauri::command]
+pub async fn set_global_proxy_config(
+    cfg: GlobalProxyConfig,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
+    db.set_config("network", "global_proxy", &json, Some("Global HTTP proxy settings")).await.map_err(|e| e.to_string())?;
+    // 生效到运行时
+    let to_runtime = crate::ai_adapter::http::ProxyConfig {
+        enabled: cfg.enabled,
+        scheme: cfg.scheme,
+        host: cfg.host,
+        port: cfg.port,
+        username: cfg.username,
+        password: cfg.password,
+        no_proxy: cfg.no_proxy,
+    };
+    crate::ai_adapter::http::set_global_proxy(Some(to_runtime));
+    Ok(())
+}
+
+// 读取全局代理
+#[tauri::command]
+pub async fn get_global_proxy_config(
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<GlobalProxyConfig, String> {
+    if let Ok(Some(json)) = db.get_config("network", "global_proxy").await {
+        if let Ok(cfg) = serde_json::from_str::<GlobalProxyConfig>(&json) {
+            return Ok(cfg);
+        }
+    }
+    Ok(GlobalProxyConfig { enabled: false, scheme: None, host: None, port: None, username: None, password: None, no_proxy: None })
 }
 
 // 获取配置

@@ -4,6 +4,7 @@ pub mod database;
 pub mod dictionary;
 pub mod mcp;
 pub mod performance;
+pub mod prompt_db;
 pub mod scan;
 pub mod scan_session;
 pub mod vulnerability;

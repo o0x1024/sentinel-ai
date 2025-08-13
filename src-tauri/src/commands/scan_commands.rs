@@ -1,4 +1,5 @@
 use crate::tools::{ToolSystem, ToolInfo, ToolExecutionParams};
+use std::sync::Arc;
 use std::collections::HashMap as StdHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -30,7 +31,7 @@ pub struct SimpleToolInfo {
 }
 
 #[tauri::command]
-pub async fn list_scan_tools(tool_system: State<'_, ToolSystem>) -> Result<ScanResponse, String> {
+pub async fn list_scan_tools(tool_system: State<'_, Arc<ToolSystem>>) -> Result<ScanResponse, String> {
     let tools = tool_system.list_tools().await;
     let tool_list: Vec<SimpleToolInfo> = tools
         .iter()
@@ -54,7 +55,7 @@ pub async fn list_scan_tools(tool_system: State<'_, ToolSystem>) -> Result<ScanR
 #[tauri::command]
 pub async fn start_scan(
     request: StartScanRequest,
-    tool_system: State<'_, ToolSystem>,
+    tool_system: State<'_, Arc<ToolSystem>>,
 ) -> Result<ScanResponse, String> {
     let mut inputs = StdHashMap::new();
     inputs.insert("target".to_string(), serde_json::json!(request.target));
@@ -92,7 +93,7 @@ pub async fn start_scan(
 #[tauri::command]
 pub async fn get_scan_result(
     scan_id: String,
-    tool_system: State<'_, ToolSystem>,
+    tool_system: State<'_, Arc<ToolSystem>>,
 ) -> Result<ScanResponse, String> {
     let _uuid = Uuid::parse_str(&scan_id).map_err(|e| format!("无效的扫描ID: {}", e))?;
 
@@ -112,7 +113,7 @@ pub async fn get_scan_result(
 #[tauri::command]
 pub async fn cancel_scan(
     scan_id: String,
-    tool_system: State<'_, ToolSystem>,
+    tool_system: State<'_, Arc<ToolSystem>>,
 ) -> Result<ScanResponse, String> {
     let _uuid = Uuid::parse_str(&scan_id).map_err(|e| format!("无效的扫描ID: {}", e))?;
 
@@ -126,7 +127,7 @@ pub async fn cancel_scan(
 
 #[tauri::command]
 pub async fn list_running_scans(
-    tool_system: State<'_, ToolSystem>,
+    tool_system: State<'_, Arc<ToolSystem>>,
 ) -> Result<ScanResponse, String> {
     let history = tool_system.get_execution_history(Some(100)).await;
     let running_scans: Vec<_> = history.iter().filter(|r| {
@@ -144,7 +145,7 @@ pub async fn list_running_scans(
 }
 
 #[tauri::command]
-pub async fn get_available_scan_tools(tool_system: State<'_, ToolSystem>) -> Result<Vec<SimpleToolInfo>, String> {
+pub async fn get_available_scan_tools(tool_system: State<'_, Arc<ToolSystem>>) -> Result<Vec<SimpleToolInfo>, String> {
     let tools = tool_system.list_tools().await;
     let tool_list: Vec<SimpleToolInfo> = tools
         .iter()

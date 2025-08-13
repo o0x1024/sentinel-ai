@@ -10,6 +10,8 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
+use crate::models::prompt::{ArchitectureType, StageType};
+use crate::services::prompt_db::PromptRepository;
 
 /// ReWOO Planner - 负责生成执行计划
 pub struct ReWOOPlanner {
@@ -20,6 +22,8 @@ pub struct ReWOOPlanner {
     config: PlannerConfig,
     /// 计划解析正则表达式
     plan_regex: Regex,
+    /// 动态Prompt仓库
+    prompt_repo: Option<PromptRepository>,
 }
 
 impl ReWOOPlanner {
@@ -28,6 +32,7 @@ impl ReWOOPlanner {
         ai_provider: Arc<dyn AiProvider>,
         tool_manager: Arc<dyn ToolManager>,
         config: PlannerConfig,
+        prompt_repo: Option<PromptRepository>,
     ) -> Result<Self, ReWOOError> {
         // 用于解析计划步骤的正则表达式
         // 匹配格式：#E1 = Tool[args]
@@ -39,6 +44,7 @@ impl ReWOOPlanner {
             tool_manager,
             config,
             plan_regex,
+            prompt_repo,
         })
     }
     
@@ -101,7 +107,7 @@ impl ReWOOPlanner {
         let start_time = SystemTime::now();
         
         // 构建计划生成提示
-        let prompt = self.build_planning_prompt(&state.task)?;
+        let prompt = self.build_planning_prompt(&state.task).await?;
         
         // 调用 AI 生成计划
         let plan_string = self.generate_plan_string(&prompt).await?;
@@ -117,7 +123,7 @@ impl ReWOOPlanner {
     }
     
     /// 构建计划生成提示
-    fn build_planning_prompt(&self, task: &str) -> Result<String, ReWOOError> {
+    async fn build_planning_prompt(&self, task: &str) -> Result<String, ReWOOError> {
         // 动态获取可用工具名称
         let tool_names = self.tool_manager.get_available_tools();
         // 生成带参数签名的工具清单，形如：
@@ -153,7 +159,7 @@ impl ReWOOPlanner {
             tool_lines.join("\n")
         };
 
-        let prompt = format!(r#"
+        let base = format!(r#"
  You are a planner for the ReWOO (Reasoning without Observation) framework.
  Your job is to create a step-by-step plan to solve the given task.
  
@@ -172,14 +178,37 @@ impl ReWOOPlanner {
  Plan: Now I'll check for vulnerabilities on the discovered ports
  #E3 = VulnerabilityScanner[ports from #E2]
  
- Task: {task}
+  Task: {task}
  
 Guidelines:
 - do not reponse thinking process, just generate the plan
 
-"#, tools = tools_block, task = task);
-        
-        Ok(prompt)
+  "#, tools = tools_block, task = task);
+
+        if let Some(repo) = &self.prompt_repo {
+            match repo.get_active_prompt(ArchitectureType::ReWOO, StageType::Planner).await {
+                Ok(Some(dynamic)) => {
+                    let replaced = Self::apply_placeholders(&dynamic, vec![
+                        ("{{TOOLS}}", &tools_block),
+                        ("{tools}", &tools_block),
+                        ("{{TASK}}", task),
+                        ("{task}", task),
+                    ]);
+                    Ok(replaced)
+                },
+                _ => Ok(base),
+            }
+        } else {
+            Ok(base)
+        }
+    }
+
+    fn apply_placeholders(template: &str, pairs: Vec<(&str, &str)>) -> String {
+        let mut out = template.to_string();
+        for (k, v) in pairs {
+            out = out.replace(k, v);
+        }
+        out
     }
     
     /// 生成计划字符串

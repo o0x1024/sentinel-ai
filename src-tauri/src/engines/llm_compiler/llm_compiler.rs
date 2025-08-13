@@ -11,6 +11,9 @@ use chrono::Utc;
 
 use crate::services::ai::AiService;
 use crate::tools::ToolSystem;
+use crate::services::database::DatabaseService;
+use crate::services::prompt_db::PromptRepository;
+use crate::models::prompt::{ArchitectureType, StageType};
 
 use super::types::*;
 use super::planner::LlmCompilerPlanner;
@@ -32,6 +35,8 @@ pub struct LlmCompilerEngine {
     ai_service: Arc<AiService>,
     /// 配置
     config: LlmCompilerConfig,
+    /// 动态Prompt仓库
+    prompt_repo: Option<PromptRepository>,
 }
 
 impl LlmCompilerEngine {
@@ -40,12 +45,15 @@ impl LlmCompilerEngine {
         ai_service: Arc<AiService>,
         tool_system: Arc<ToolSystem>,
         config: LlmCompilerConfig,
+        db_service: Arc<DatabaseService>,
     ) -> Self {
         // 初始化各个组件
+        let pool = db_service.get_pool().expect("DB pool not initialized");
         let planner = Arc::new(LlmCompilerPlanner::new(
             ai_service.clone(),
             tool_system.clone(),
             config.clone(),
+            Some(PromptRepository::new(pool.clone())),
         ));
         
         let task_fetcher = Arc::new(TaskFetchingUnit::new(config.clone()));
@@ -58,6 +66,7 @@ impl LlmCompilerEngine {
         let joiner = Arc::new(tokio::sync::Mutex::new(IntelligentJoiner::new(
             (*ai_service).clone(),
             config.clone(),
+            Some(PromptRepository::new(pool.clone())),
         )));
         
         Self {
@@ -67,6 +76,7 @@ impl LlmCompilerEngine {
             joiner,
             ai_service,
             config,
+            prompt_repo: Some(PromptRepository::new(pool.clone())),
         }
     }
 
@@ -282,68 +292,16 @@ impl LlmCompilerEngine {
         }
         
         // 构建响应生成提示
-        let response_prompt = format!(
-            r#"你是一个专业的安全分析专家，请基于以下LLMCompiler工作流执行结果，为用户查询生成一个完整、准确、专业的分析报告。
-
-**用户查询**: {}
-
-**执行统计**:
-- 总任务数: {}
-- 成功任务: {}
-- 失败任务: {}
-- 总耗时: {}ms
-- 任务成功率: {:.1}%
-
-**执行结果详情**:
-{}
-
-**报告要求**:
-请生成一个结构化、专业的分析报告，包含以下部分：
-
-## 📊 执行摘要
-- 简要概述本次分析的目标和范围
-- 总体执行情况和关键指标
-
-## 🔍 主要发现
-- 列出最重要的发现和结果
-- 突出关键的安全问题或异常情况
-- 提供具体的数据支撑
-
-## 📈 详细分析
-- 对每个重要发现进行深入分析
-- 解释技术细节和潜在影响
-- 提供相关的安全评估
-
-## ⚠️ 风险评估
-- 识别发现的安全风险等级
-- 评估潜在的业务影响
-- 提供风险缓解建议
-
-## 🛠️ 建议措施
-- 提供具体的修复建议
-- 推荐后续的安全测试
-- 给出最佳实践建议
-
-{}
-
-请确保报告内容准确、专业，使用清晰的技术语言，并提供可操作的建议。"#,
-            user_query,
-            execution_summary.total_tasks,
-            execution_summary.successful_tasks,
-            execution_summary.failed_tasks,
-            execution_summary.total_duration_ms,
-            if execution_summary.total_tasks > 0 {
-                (execution_summary.successful_tasks as f32 / execution_summary.total_tasks as f32) * 100.0
+        // 报告生成 Prompt：优先从动态模板(LLMCompiler/Report or Execution)获取
+        let response_prompt = if let Some(repo) = &self.prompt_repo {
+            if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
+                dynamic
             } else {
-                0.0
-            },
-            self.format_outputs_for_response(&successful_outputs),
-            if execution_summary.failed_tasks > 0 {
-                format!("\n## ❌ 执行问题\n本次执行中有 {} 个任务失败，请在报告中说明可能的原因和影响。", execution_summary.failed_tasks)
-            } else {
-                String::new()
+                self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
             }
-        );
+        } else {
+            self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
+        };
         
         // 调用AI生成最终响应
         info!("开始调用AI生成最终响应，提示词长度: {} 字符", response_prompt.len());
@@ -364,6 +322,47 @@ impl LlmCompilerEngine {
                 Ok(self.generate_default_response(task_results, execution_summary))
             }
         }
+    }
+
+    fn build_default_response_prompt(
+        &self,
+        user_query: &str,
+        successful_outputs: &[&std::collections::HashMap<String, serde_json::Value>],
+        execution_summary: &ExecutionSummary,
+    ) -> String {
+        format!(
+            r#"你是一个专业的安全分析专家，请基于以下LLMCompiler工作流执行结果，为用户查询生成一个完整、准确、专业的分析报告。
+
+**用户查询**: {}
+
+**执行统计**:
+- 总任务数: {}
+- 成功任务: {}
+- 失败任务: {}
+- 总耗时: {}ms
+- 任务成功率: {:.1}%
+
+**执行结果详情**:
+{}
+
+{}"#,
+            user_query,
+            execution_summary.total_tasks,
+            execution_summary.successful_tasks,
+            execution_summary.failed_tasks,
+            execution_summary.total_duration_ms,
+            if execution_summary.total_tasks > 0 {
+                (execution_summary.successful_tasks as f32 / execution_summary.total_tasks as f32) * 100.0
+            } else {
+                0.0
+            },
+            self.format_outputs_for_response(&successful_outputs),
+            if execution_summary.failed_tasks > 0 {
+                format!("\n## ❌ 执行问题\n本次执行中有 {} 个任务失败，请在报告中说明可能的原因和影响。", execution_summary.failed_tasks)
+            } else {
+                String::new()
+            }
+        )
     }
 
     /// 格式化输出用于响应生成

@@ -3,6 +3,8 @@
 //! 负责将复杂任务分解为可执行的子任务，制定详细的执行计划
 
 use crate::ai_adapter::core::AiAdapterManager;
+use crate::models::prompt::{ArchitectureType, StageType};
+use crate::services::prompt_db::PromptRepository;
 use crate::engines::plan_and_execute::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -120,11 +122,12 @@ pub struct ResourceRequirements {
 pub struct Planner {
     config: PlannerConfig,
     ai_manager: &'static AiAdapterManager,
+    prompt_repo: Option<PromptRepository>,
 }
 
 impl Planner {
     /// 创建新的规划器实例
-    pub fn new(config: PlannerConfig) -> Result<Self, PlanAndExecuteError> {
+    pub fn new(config: PlannerConfig, prompt_repo: Option<PromptRepository>) -> Result<Self, PlanAndExecuteError> {
         let ai_manager = AiAdapterManager::global();
         
         // 验证AI提供商是否可用
@@ -134,6 +137,7 @@ impl Planner {
         Ok(Self {
             config,
             ai_manager,
+            prompt_repo,
         })
     }
 
@@ -173,7 +177,7 @@ impl Planner {
 
     /// 分析任务复杂度
     async fn analyze_task_complexity(&self, task: &TaskRequest) -> Result<TaskComplexity, PlanAndExecuteError> {
-        let prompt = self.build_complexity_analysis_prompt(task);
+        let prompt = self.build_complexity_analysis_prompt(task).await?;
         
         let provider = self.ai_manager.get_provider(&self.config.ai_provider)
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
@@ -190,7 +194,7 @@ impl Planner {
 
     /// 生成初始计划
     async fn generate_initial_plan(&self, task: &TaskRequest, complexity: &TaskComplexity) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        let prompt = self.build_planning_prompt(task, complexity);
+        let prompt = self.build_planning_prompt(task, complexity).await?;
         
         let provider = self.ai_manager.get_provider(&self.config.ai_provider)
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
@@ -217,7 +221,7 @@ impl Planner {
 
     /// 评估风险
     async fn assess_risks(&self, plan: &ExecutionPlan, task: &TaskRequest) -> Result<RiskAssessment, PlanAndExecuteError> {
-        let prompt = self.build_risk_assessment_prompt(plan, task);
+        let prompt = self.build_risk_assessment_prompt(plan, task).await?;
         
         let provider = self.ai_manager.get_provider(&self.config.ai_provider)
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
@@ -299,19 +303,20 @@ impl Planner {
     }
 
     // 辅助方法
-    fn build_complexity_analysis_prompt(&self, task: &TaskRequest) -> String {
-        format!(
+    async fn build_complexity_analysis_prompt(&self, task: &TaskRequest) -> Result<String, PlanAndExecuteError> {
+        let base = format!(
             "分析以下任务的复杂度：\n\
              任务类型: {:?}\n\
              目标: {}\n\
              描述: {}\n\
              请评估任务的复杂度等级（简单/中等/复杂/非常复杂）并说明原因。",
             task.task_type, task.target.address, task.description
-        )
+        );
+        self.decorate_with_dynamic_prompt(StageType::Planning, base).await
     }
 
-    fn build_planning_prompt(&self, task: &TaskRequest, complexity: &TaskComplexity) -> String {
-        format!(
+    async fn build_planning_prompt(&self, task: &TaskRequest, complexity: &TaskComplexity) -> Result<String, PlanAndExecuteError> {
+        let base = format!(
             "为以下任务制定详细的执行计划：\n\
              任务: {}\n\
              类型: {:?}\n\
@@ -319,18 +324,31 @@ impl Planner {
              复杂度: {:?}\n\
              请分解为具体的执行步骤，包括工具调用、参数配置等。",
             task.name, task.task_type, task.target.address, complexity
-        )
+        );
+        self.decorate_with_dynamic_prompt(StageType::Planning, base).await
     }
 
-    fn build_risk_assessment_prompt(&self, plan: &ExecutionPlan, task: &TaskRequest) -> String {
-        format!(
+    async fn build_risk_assessment_prompt(&self, plan: &ExecutionPlan, task: &TaskRequest) -> Result<String, PlanAndExecuteError> {
+        let base = format!(
             "评估以下执行计划的风险：\n\
              任务: {}\n\
              步骤数: {}\n\
              目标: {}\n\
              请识别潜在风险并提供缓解策略。",
             task.name, plan.steps.len(), task.target.address
-        )
+        );
+        self.decorate_with_dynamic_prompt(StageType::Reflection, base).await
+    }
+
+    async fn decorate_with_dynamic_prompt(&self, stage: StageType, base: String) -> Result<String, PlanAndExecuteError> {
+        if let Some(repo) = &self.prompt_repo {
+            match repo.get_active_prompt(ArchitectureType::PlanExecute, stage).await {
+                Ok(Some(dynamic)) => Ok(dynamic),
+                _ => Ok(base),
+            }
+        } else {
+            Ok(base)
+        }
     }
 
     fn build_ai_request(&self, prompt: &str) -> Result<crate::ai_adapter::types::ChatRequest, PlanAndExecuteError> {

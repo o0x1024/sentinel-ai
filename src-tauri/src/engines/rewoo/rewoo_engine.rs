@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use uuid::Uuid;
+use crate::services::prompt_db::PromptRepository;
+use crate::services::database::DatabaseService;
+use crate::models::prompt::{ArchitectureType, StageType};
 
 /// ReWOO 引擎 - 实现完整的 ReWOO 执行流程
 pub struct ReWOOEngine {
@@ -30,11 +33,18 @@ impl ReWOOEngine {
         ai_provider: Arc<dyn AiProvider>,
         tool_manager: Arc<dyn ToolManager>,
         config: ReWOOConfig,
+        db_service: Arc<DatabaseService>,
     ) -> Result<Self, ReWOOError> {
+        // Prompt 仓库
+        let prompt_repo = {
+            let pool = db_service.get_pool().map_err(|e| ReWOOError::ConfigurationError(format!("DB pool error: {}", e)))?;
+            Some(PromptRepository::new(pool.clone()))
+        };
         let planner = ReWOOPlanner::new(
             Arc::clone(&ai_provider),
             Arc::clone(&tool_manager),
             config.planner.clone(),
+            prompt_repo.clone(),
         )?;
         
         let worker = ReWOOWorker::new(
@@ -45,6 +55,7 @@ impl ReWOOEngine {
         let solver = ReWOOSolver::new(
             ai_provider,
             config.solver.clone(),
+            prompt_repo.clone(),
         );
         
         Ok(Self {

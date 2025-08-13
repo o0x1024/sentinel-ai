@@ -240,6 +240,13 @@ const toolMenuItems = computed(() => [
     icon: 'fas fa-book',
     badge: null,
     badgeClass: ''
+  },
+  {
+    path: '/prompts',
+    name: t('sidebar.promptManagement', 'Prompt管理'),
+    icon: 'fas fa-align-left',
+    badge: null,
+    badgeClass: ''
   }
 ])
 

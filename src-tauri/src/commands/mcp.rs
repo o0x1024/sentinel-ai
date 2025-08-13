@@ -673,6 +673,18 @@ pub async fn disconnect_mcp_connection(
     }
 }
 
+/// 重试失败的MCP连接
+#[tauri::command]
+pub async fn retry_mcp_connection(
+    client_manager: State<'_, McpClientManager>,
+    connection_id: String,
+) -> Result<String, String> {
+    match client_manager.retry_connection(&connection_id).await {
+        Ok(new_id) => Ok(format!("Connection retried successfully: {}", new_id)),
+        Err(e) => Err(format!("Failed to retry MCP connection: {}", e)),
+    }
+}
+
 /// MCP服务器状态结构
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ServerStatus {

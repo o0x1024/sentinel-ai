@@ -2,7 +2,7 @@
 //! 
 //! 提供统一的HTTP请求处理功能
 
-use reqwest::{Client, Method, Request, Response};
+use reqwest::{Client, Proxy};
 use serde_json::Value;
 use tokio_util::bytes;
 use std::collections::HashMap;
@@ -12,6 +12,79 @@ use futures::StreamExt;
 
 use crate::ai_adapter::error::{AiAdapterError, Result};
 use crate::ai_adapter::types::{HttpRequest, HttpResponse};
+
+#[derive(Debug, Clone, Default)]
+pub struct ProxyConfig {
+    pub enabled: bool,
+    pub scheme: Option<String>, // http|https|socks5|socks5h
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub no_proxy: Option<String>,
+}
+
+static GLOBAL_PROXY: std::sync::OnceLock<std::sync::RwLock<Option<ProxyConfig>>> = std::sync::OnceLock::new();
+
+fn global_proxy_lock() -> &'static std::sync::RwLock<Option<ProxyConfig>> {
+    GLOBAL_PROXY.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+pub fn set_global_proxy(config: Option<ProxyConfig>) {
+    if let Ok(mut w) = global_proxy_lock().write() {
+        *w = config.clone();
+    }
+    // 同步环境变量，便于其他直接使用 reqwest::Client::new 的路径也走代理
+    if let Some(cfg) = config {
+        if cfg.enabled {
+            if let (Some(host), Some(port)) = (cfg.host, cfg.port) {
+                let scheme = cfg.scheme.unwrap_or_else(|| "http".to_string());
+                let proxy_url = format!("{}://{}:{}", scheme, host, port);
+                std::env::set_var("HTTP_PROXY", &proxy_url);
+                std::env::set_var("HTTPS_PROXY", &proxy_url);
+                std::env::set_var("ALL_PROXY", &proxy_url);
+            }
+            if let Some(no_proxy) = cfg.no_proxy {
+                std::env::set_var("NO_PROXY", no_proxy);
+            }
+        } else {
+            std::env::remove_var("HTTP_PROXY");
+            std::env::remove_var("HTTPS_PROXY");
+            std::env::remove_var("ALL_PROXY");
+            std::env::remove_var("NO_PROXY");
+        }
+    } else {
+        std::env::remove_var("HTTP_PROXY");
+        std::env::remove_var("HTTPS_PROXY");
+        std::env::remove_var("ALL_PROXY");
+        std::env::remove_var("NO_PROXY");
+    }
+}
+
+pub fn get_global_proxy() -> Option<ProxyConfig> {
+    global_proxy_lock().read().ok().and_then(|g| g.clone())
+}
+
+pub fn build_client_with_global_proxy(timeout: Duration) -> Result<Client> {
+    let mut builder = Client::builder().timeout(timeout);
+    if let Some(cfg) = get_global_proxy() {
+        if cfg.enabled {
+            if let (Some(host), Some(port)) = (cfg.host, cfg.port) {
+                let scheme = cfg.scheme.unwrap_or_else(|| "http".to_string());
+                let proxy_url = format!("{}://{}:{}", scheme, host, port);
+                let mut proxy = Proxy::all(&proxy_url)
+                    .map_err(|e| AiAdapterError::ConfigurationError(e.to_string()))?;
+                if let (Some(u), Some(p)) = (cfg.username, cfg.password) {
+                    proxy = proxy.basic_auth(&u, &p);
+                }
+                builder = builder.proxy(proxy);
+            }
+        }
+    }
+    builder
+        .build()
+        .map_err(|e| AiAdapterError::ConfigurationError(e.to_string()))
+}
 
 /// HTTP客户端
 #[derive(Debug, Clone)]
@@ -25,10 +98,7 @@ pub struct HttpClient {
 impl HttpClient {
     /// 创建新的HTTP客户端
     pub fn new(timeout: Duration) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|e| AiAdapterError::ConfigurationError(e.to_string()))?;
+        let client = build_client_with_global_proxy(timeout)?;
         
         let mut default_headers = HashMap::new();
         default_headers.insert("Content-Type".to_string(), "application/json".to_string());

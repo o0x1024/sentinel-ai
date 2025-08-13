@@ -193,12 +193,23 @@ impl Default for ToolCategory {
 }
 
 /// MCP连接状态
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionStatus {
     Disconnected,
     Connecting,
     Connected,
     Error(String),
+}
+
+impl std::fmt::Display for ConnectionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectionStatus::Disconnected => write!(f, "Disconnected"),
+            ConnectionStatus::Connecting => write!(f, "Connecting"),
+            ConnectionStatus::Connected => write!(f, "Connected"),
+            ConnectionStatus::Error(msg) => write!(f, "Error: {}", msg),
+        }
+    }
 }
 
 /// 工具发现结果

@@ -19,17 +19,20 @@ use tracing::{info, warn, error, debug};
 use crate::services::ai::AiService;
 use crate::tools::ToolSystem;
 use super::types::*;
+use crate::services::prompt_db::PromptRepository;
+use crate::models::prompt::{ArchitectureType, StageType};
 
 /// LLMCompiler Planner - 智能任务规划器
 pub struct LlmCompilerPlanner {
     ai_service: Arc<AiService>,
     tool_system: Arc<ToolSystem>,
     config: LlmCompilerConfig,
+    prompt_repo: Option<PromptRepository>,
 }
 
 impl LlmCompilerPlanner {
-    pub fn new(ai_service: Arc<AiService>, tool_system: Arc<ToolSystem>, config: LlmCompilerConfig) -> Self {
-        Self { ai_service, tool_system, config }
+    pub fn new(ai_service: Arc<AiService>, tool_system: Arc<ToolSystem>, config: LlmCompilerConfig, prompt_repo: Option<PromptRepository>) -> Self {
+        Self { ai_service, tool_system, config, prompt_repo }
     }
 
     /// 生成DAG执行计划
@@ -42,7 +45,7 @@ impl LlmCompilerPlanner {
 
         // 获取可用工具列表
         let available_tools = self.get_available_tools_description().await?;
-        let prompt = self.build_planning_prompt_with_tools(user_input, context, &available_tools);
+        let prompt = self.build_planning_prompt_with_tools(user_input, context, &available_tools).await?;
         
         // 调用LLM生成计划
         let response = self.ai_service.send_message_stream_with_prompt(&prompt, None, None).await?;
@@ -73,13 +76,13 @@ impl LlmCompilerPlanner {
     }
     
     /// 构建包含工具信息的规划提示
-    fn build_planning_prompt_with_tools(
+    async fn build_planning_prompt_with_tools(
         &self, 
         user_input: &str, 
         context: &HashMap<String, Value>,
         available_tools: &str
-    ) -> String {
-        format!(
+    ) -> Result<String> {
+        let base = format!(
             r#"你是一个专业的LLMCompiler规划器，专门设计并行执行的DAG任务计划。
 
 **用户输入**: {}
@@ -145,7 +148,29 @@ impl LlmCompilerPlanner {
             user_input,
             serde_json::to_string_pretty(context).unwrap_or_default(),
             available_tools
-        )
+         );
+        if let Some(repo) = &self.prompt_repo {
+            if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Planning).await {
+                let replaced = Self::apply_placeholders(&dynamic, vec![
+                    ("{{USER_INPUT}}", user_input),
+                    ("{user_input}", user_input),
+                    ("{{CONTEXT}}", &serde_json::to_string_pretty(context).unwrap_or_default()),
+                    ("{context}", &serde_json::to_string_pretty(context).unwrap_or_default()),
+                    ("{{TOOLS}}", available_tools),
+                    ("{tools}", available_tools),
+                ]);
+                return Ok(replaced);
+            }
+        }
+        Ok(base)
+    }
+
+    fn apply_placeholders(template: &str, pairs: Vec<(&str, &str)>) -> String {
+        let mut out = template.to_string();
+        for (k, v) in pairs {
+            out = out.replace(k, v);
+        }
+        out
     }
 
     /// 重新规划

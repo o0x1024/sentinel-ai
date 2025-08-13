@@ -283,6 +283,7 @@ pub async fn execute_rewoo_test(
         ai_provider,
         tool_manager,
         test_config.rewoo_config.clone(),
+        db.inner().clone(),
     ) {
         Ok(engine) => {
             test_result.logs.push(LogEntry {

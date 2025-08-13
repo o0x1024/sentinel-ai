@@ -11,7 +11,7 @@ pub mod prompt;
 
 
 // 导入依赖
-use crate::{mcp::{McpClientManager, McpServerManager}, tools::ToolProvider};
+use crate::{mcp::{McpClientManager, McpServerManager}};
 use std::sync::Arc;
 use tauri::{
     generate_handler,
@@ -171,6 +171,12 @@ pub fn run() {
                 handle.manage(client_manager.clone());
                 handle.manage(server_manager);
                 handle.manage(Arc::new(mcp_service));
+                // 将全局工具系统注入到 Tauri State，供扫描命令等读取
+                if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+                    handle.manage(tool_system);
+                } else {
+                    tracing::error!("Global tool system not available to manage in Tauri state");
+                }
                 handle.manage(ai_manager);
                 handle.manage(scan_session_service);
                 handle.manage(scan_service);
@@ -300,6 +306,8 @@ pub fn run() {
             config::set_theme,
             config::get_language,
             config::set_language,
+            config::get_global_proxy_config,
+            config::set_global_proxy_config,
             // 统一工具管理命令
             unified_tools::unified_list_tools,
             unified_tools::unified_search_tools,
@@ -338,6 +346,7 @@ pub fn run() {
             commands::mcp::get_mcp_marketplace_servers,
             commands::mcp::mcp_get_connection_tools,
             commands::mcp::mcp_update_server_config,
+            commands::mcp::retry_mcp_connection,
             commands::mcp::toggle_builtin_tool,
             commands::mcp::get_builtin_tools_with_status,
             commands::check_command_exists,
@@ -434,6 +443,23 @@ pub fn run() {
             prompt_commands::save_prompt_config,
             prompt_commands::list_prompt_templates,
             prompt_commands::save_prompt_template,
+            // Prompt DB-backed APIs
+            commands::prompt_api::list_prompt_templates_api,
+            commands::prompt_api::get_prompt_template_api,
+            commands::prompt_api::create_prompt_template_api,
+            commands::prompt_api::update_prompt_template_api,
+            commands::prompt_api::delete_prompt_template_api,
+            commands::prompt_api::get_user_prompt_configs_api,
+            commands::prompt_api::update_user_prompt_config_api,
+            commands::prompt_api::get_active_prompt_api,
+            commands::prompt_api::list_prompt_groups_api,
+            commands::prompt_api::create_prompt_group_api,
+            commands::prompt_api::update_prompt_group_api,
+            commands::prompt_api::delete_prompt_group_api,
+            commands::prompt_api::set_arch_default_group_api,
+            commands::prompt_api::upsert_prompt_group_item_api,
+            commands::prompt_api::list_prompt_group_items_api,
+            commands::prompt_api::remove_prompt_group_item_api,
 
             // ReWOO测试相关命令
             rewoo_commands::init_rewoo_engine,

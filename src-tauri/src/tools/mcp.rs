@@ -123,9 +123,7 @@ pub struct McpClient {
 
 impl McpClient {
     pub async fn new(config: McpConfig) -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .timeout(config.timeout)
-            .build()
+        let client = crate::ai_adapter::http::build_client_with_global_proxy(config.timeout)
             .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
         
         Ok(Self { config, client })

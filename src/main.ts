@@ -22,6 +22,7 @@ const IntelligentSecurityTest = () => import('./components/IntelligentSecurityTe
 const PlanExecuteDemo = () => import('./components/PlanExecuteDemo.vue');
 const ReWOOTestPanel = () => import('./components/ReWOOTestPanel.vue');
 const LLMCompilerTest = () => import('./views/LLMCompilerTest.vue');
+const PromptManagement = () => import('./views/PromptManagement.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
@@ -31,6 +32,12 @@ const routes = [
   { 
     path: '/', 
     redirect: '/dashboard'
+  },
+  { 
+    path: '/prompts', 
+    name: 'PromptManagement', 
+    component: PromptManagement,
+    meta: { title: 'Prompt管理' }
   },
   { 
     path: '/dashboard', 

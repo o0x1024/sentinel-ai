@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
+use crate::services::prompt_db::PromptRepository;
 
 /// Plan-and-Execute 引擎配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,11 +174,18 @@ impl PlanAndExecuteEngine {
         log::info!("初始化 Plan-and-Execute 引擎: {}", config.name);
 
         // 创建核心组件
-        let planner = Arc::new(Planner::new(config.planner_config.clone())?);
+        // 动态Prompt仓库
+        let prompt_repo = {
+            let pool = db_service.get_pool().map_err(|e| PlanAndExecuteError::ConfigError(format!("DB pool error: {}", e)))?;
+            Some(PromptRepository::new(pool.clone()))
+        };
+
+        let planner = Arc::new(Planner::new(config.planner_config.clone(), prompt_repo.clone())?);
         let executor = Arc::new(Executor::new(config.executor_config.clone(), db_service.clone()));
         let replanner = Arc::new(Replanner::new(
             config.replanner_config.clone(),
             config.planner_config.clone(),
+            prompt_repo.clone(),
         )?);
         let memory_manager = Arc::new(MemoryManager::new(config.memory_config.clone()));
         let tool_interface = Arc::new(ToolInterface::new(db_service.clone()).await?);

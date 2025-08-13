@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::mcp::{McpClientManager, McpServerManager, McpTool, ToolDefinition};
+use crate::mcp::types::ConnectionStatus;
 
 // 工具信息类型已移动到 types 模块
 
@@ -310,12 +311,12 @@ impl McpService {
                 transport_type: conn.transport_type,
                 endpoint: conn.endpoint,
                 status: match conn.status {
-                    crate::mcp::client::ConnectionStatus::Connected => "connected".to_string(),
-                    crate::mcp::client::ConnectionStatus::Connecting => "connecting".to_string(),
-                    crate::mcp::client::ConnectionStatus::Disconnected => {
+                    ConnectionStatus::Connected => "connected".to_string(),
+                    ConnectionStatus::Connecting => "connecting".to_string(),
+                    ConnectionStatus::Disconnected => {
                         "disconnected".to_string()
                     }
-                    crate::mcp::client::ConnectionStatus::Error(e) => format!("error: {}", e),
+                    ConnectionStatus::Error(e) => format!("error: {}", e),
                 },
                 tools_count: conn.tools.len(),
                 last_activity: Some(
@@ -348,7 +349,7 @@ impl McpService {
         let client_arc = self.client_manager.get_client();
         let connections = client_arc.read().await.get_connections().await;
         for conn in connections {
-            if matches!(conn.status, crate::mcp::client::ConnectionStatus::Connected) {
+            if matches!(conn.status, ConnectionStatus::Connected) {
                 for tool in &conn.tools {
                     if tool.name == tool_name {
                         return Ok(true);

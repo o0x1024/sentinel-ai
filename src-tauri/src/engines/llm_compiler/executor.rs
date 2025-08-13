@@ -190,7 +190,7 @@ impl ParallelExecutorPool {
                 // 如果工具不存在，尝试使用模拟数据作为后备
                 if e.to_string().contains("not found") || e.to_string().contains("not available") {
                     warn!("工具 {} 不可用，使用模拟数据", task.tool_name);
-                    self.get_fallback_result(task).await
+                    Ok(HashMap::new())
                 } else {
                     Err(e)
                 }
@@ -235,83 +235,7 @@ impl ParallelExecutorPool {
         Ok(outputs)
     }
     
-    /// 获取后备模拟结果（当真实工具不可用时）
-    async fn get_fallback_result(&self, task: &DagTaskNode) -> Result<HashMap<String, Value>> {
-        let mut outputs = HashMap::new();
-        
-        warn!("使用后备模拟数据: {}", task.tool_name);
-        
-        match task.tool_name.as_str() {
-            "port_scanner" => {
-                outputs.insert("open_ports".to_string(), json!([80, 443, 22]));
-                outputs.insert("services".to_string(), json!({
-                    "80": "HTTP",
-                    "443": "HTTPS",
-                    "22": "SSH"
-                }));
-                outputs.insert("scan_type".to_string(), json!("tcp"));
-                outputs.insert("target".to_string(), task.inputs.get("target").cloned().unwrap_or_else(|| json!("unknown")));
-            }
-            "subdomain_scanner" | "dns_scanner" => {
-                let target = task.inputs.get("target").and_then(|v| v.as_str()).unwrap_or("example.com");
-                outputs.insert("subdomains".to_string(), json!([
-                    format!("api.{}", target),
-                    format!("www.{}", target),
-                    format!("admin.{}", target)
-                ]));
-                outputs.insert("total_found".to_string(), json!(3));
-                outputs.insert("scan_method".to_string(), json!("dns_enumeration"));
-                outputs.insert("ip_address".to_string(), json!("192.168.1.100"));
-            }
-            "vulnerability_scanner" | "vuln_scanner" => {
-                outputs.insert("vulnerabilities".to_string(), json!([
-                    {
-                        "type": "XSS",
-                        "severity": "Medium",
-                        "location": "/search",
-                        "description": "Reflected XSS vulnerability",
-                        "cvss_score": 6.1
-                    }
-                ]));
-                outputs.insert("risk_score".to_string(), json!(6.5));
-                outputs.insert("total_vulnerabilities".to_string(), json!(1));
-            }
-            "web_crawler" | "web_scanner" => {
-                let target = task.inputs.get("target").and_then(|v| v.as_str()).unwrap_or("example.com");
-                outputs.insert("urls_found".to_string(), json!([
-                    format!("https://{}/page1", target),
-                    format!("https://{}/page2", target),
-                    format!("https://{}/admin", target)
-                ]));
-                outputs.insert("total_pages".to_string(), json!(3));
-                outputs.insert("technologies".to_string(), json!(["nginx", "php", "mysql"]));
-            }
-            "ssl_analyzer" => {
-                outputs.insert("ssl_version".to_string(), json!("TLS 1.3"));
-                outputs.insert("certificate_valid".to_string(), json!(true));
-                outputs.insert("grade".to_string(), json!("A"));
-                outputs.insert("vulnerabilities".to_string(), json!([])); 
-            }
-            "auth_tester" => {
-                outputs.insert("authentication_required".to_string(), json!(true));
-                outputs.insert("brute_force_protection".to_string(), json!(true));
-                outputs.insert("session_management".to_string(), json!("secure"));
-            }
-            _ => {
-                outputs.insert("result".to_string(), json!("Tool executed successfully (simulated)"));
-                outputs.insert("message".to_string(), json!(format!("Simulated execution of {}", task.tool_name)));
-                outputs.insert("status".to_string(), json!("completed"));
-            }
-        }
-
-        // 添加模拟标记和时间戳
-        outputs.insert("simulated".to_string(), json!(true));
-        outputs.insert("executed_at".to_string(), json!(Utc::now().to_rfc3339()));
-        outputs.insert("tool_name".to_string(), json!(task.tool_name));
-        outputs.insert("execution_success".to_string(), json!(true));
-        
-        Ok(outputs)
-    }
+   
 
     /// 批量执行任务
     pub async fn execute_tasks_batch(&self, tasks: Vec<DagTaskNode>) -> Vec<TaskExecutionResult> {

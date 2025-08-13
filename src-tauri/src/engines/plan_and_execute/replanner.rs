@@ -4,6 +4,7 @@
 
 use crate::engines::plan_and_execute::types::*;
 use crate::engines::plan_and_execute::planner::{Planner, PlannerConfig, RiskLevel};
+use crate::services::prompt_db::PromptRepository;
 use crate::engines::plan_and_execute::executor::{ExecutionResult, StepResult, StepStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -219,8 +220,8 @@ pub struct Replanner {
 
 impl Replanner {
     /// 创建新的重新规划器实例
-    pub fn new(config: ReplannerConfig, planner_config: PlannerConfig) -> Result<Self, PlanAndExecuteError> {
-        let planner = Planner::new(planner_config)?;
+    pub fn new(config: ReplannerConfig, planner_config: PlannerConfig, prompt_repo: Option<PromptRepository>) -> Result<Self, PlanAndExecuteError> {
+        let planner = Planner::new(planner_config, prompt_repo)?;
         
         Ok(Self {
             config,

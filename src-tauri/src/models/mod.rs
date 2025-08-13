@@ -6,6 +6,7 @@ pub mod mcp;
 pub mod scan;
 pub mod scan_session;
 pub mod vulnerability;
+pub mod prompt;
 
 // 通用类型定义
 use chrono::{DateTime, Utc};
