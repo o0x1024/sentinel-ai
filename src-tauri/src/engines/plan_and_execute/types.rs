@@ -7,6 +7,42 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 use uuid::Uuid;
 
+/// 通用执行状态 - 参考 LangGraph 设计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanExecuteState {
+    /// 用户输入
+    pub input: String,
+    /// 生成的计划
+    pub plan: Vec<String>,
+    /// 执行历史 (步骤, 结果)
+    pub past_steps: Vec<(String, String)>,
+    /// 最终响应
+    pub response: Option<String>,
+    /// 当前执行步骤索引
+    pub current_step: usize,
+    /// 是否需要重新规划
+    pub should_replan: bool,
+    /// 上下文信息
+    pub context: HashMap<String, serde_json::Value>,
+    /// 错误信息
+    pub error: Option<String>,
+}
+
+impl Default for PlanExecuteState {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            plan: Vec::new(),
+            past_steps: Vec::new(),
+            response: None,
+            current_step: 0,
+            should_replan: false,
+            context: HashMap::new(),
+            error: None,
+        }
+    }
+}
+
 /// Plan-and-Execute 错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum PlanAndExecuteError {
@@ -71,8 +107,8 @@ pub struct TaskRequest {
     pub description: String,
     /// 任务类型
     pub task_type: TaskType,
-    /// 目标信息
-    pub target: TargetInfo,
+    /// 目标信息（可选，某些任务可能不需要特定目标）
+    pub target: Option<TargetInfo>,
     /// 任务参数
     pub parameters: HashMap<String, serde_json::Value>,
     /// 优先级
@@ -85,77 +121,71 @@ pub struct TaskRequest {
     pub created_at: SystemTime,
 }
 
-/// 任务类型
+/// 任务类型 - 通用化设计
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskType {
-    /// 安全扫描
-    SecurityScan,
-    /// 漏洞评估
-    VulnerabilityAssessment,
-    /// 渗透测试
-    PenetrationTest,
-    /// 资产发现
-    AssetDiscovery,
-    /// 信息收集
-    InformationGathering,
-    /// 合规检查
-    ComplianceCheck,
-    /// 威胁狩猎
-    ThreatHunting,
-    /// 事件响应
-    IncidentResponse,
-    /// 取证分析
-    ForensicAnalysis,
-    /// 风险评估
-    RiskAssessment,
+    /// 研究分析
+    Research,
+    /// 问题解决
+    ProblemSolving,
+    /// 数据处理
+    DataProcessing,
+    /// 创作生成
+    ContentGeneration,
+    /// 信息检索
+    InformationRetrieval,
+    /// 任务自动化
+    Automation,
+    /// 推理分析
+    Reasoning,
+    /// 文档处理
+    DocumentProcessing,
+    /// 代码相关
+    CodeRelated,
+    /// 通信交互
+    Communication,
     /// 自定义任务
     Custom(String),
 }
 
-/// 目标信息
+/// 目标信息 - 通用化设计
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetInfo {
     /// 目标类型
     pub target_type: TargetType,
-    /// 目标地址
-    pub address: String,
-    /// 端口
-    pub port: Option<u16>,
-    /// 端口范围
-    pub port_range: Option<(u16, u16)>,
-    /// 协议列表
-    pub protocols: Vec<String>,
-    /// 认证信息
+    /// 主要标识符（URL、文件路径、文本内容等）
+    pub identifier: String,
+    /// 辅助参数
+    pub parameters: HashMap<String, serde_json::Value>,
+    /// 认证信息（如API密钥等）
     pub credentials: Option<HashMap<String, String>>,
     /// 元数据
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// 目标类型
+/// 目标类型 - 通用化设计
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TargetType {
-    /// 单个主机
-    Host,
-    /// 网络段
-    Network,
-    /// 域名
-    Domain,
-    /// URL
+    /// 文本内容
+    Text,
+    /// 文件资源
+    File,
+    /// 网络资源
     Url,
-    /// IP地址
-    IpAddress,
-    /// 网站
-    Website,
+    /// 数据集
+    Dataset,
+    /// API端点
+    Api,
+    /// 数据库
+    Database,
     /// 服务
     Service,
     /// 应用程序
     Application,
-    /// 数据库
-    Database,
-    /// API
-    Api,
-    /// 文件
-    File,
+    /// 通用输入
+    GenericInput,
+    /// 上下文信息
+    Context,
 }
 
 /// 优先级
@@ -256,17 +286,17 @@ pub struct TaskReport {
     pub attachments: Vec<ReportAttachment>,
 }
 
-/// 报告类型
+/// 报告类型 - 通用化设计
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ReportType {
     /// 执行摘要
     ExecutionSummary,
     /// 详细报告
     DetailedReport,
-    /// 漏洞报告
-    VulnerabilityReport,
-    /// 资产清单
-    AssetInventory,
+    /// 分析结果
+    AnalysisResult,
+    /// 处理结果
+    ProcessingResult,
     /// 自定义报告
     Custom(String),
 }
@@ -438,7 +468,7 @@ impl Default for TaskRequest {
             name: "Default Task".to_string(),
             description: "Default task description".to_string(),
             task_type: TaskType::Custom("default".to_string()),
-            target: TargetInfo::default(),
+            target: None,
             parameters: HashMap::new(),
             priority: Priority::Medium,
             constraints: HashMap::new(),
@@ -451,11 +481,9 @@ impl Default for TaskRequest {
 impl Default for TargetInfo {
     fn default() -> Self {
         Self {
-            target_type: TargetType::Host,
-            address: "localhost".to_string(),
-            port: None,
-            port_range: None,
-            protocols: vec!["tcp".to_string()],
+            target_type: TargetType::GenericInput,
+            identifier: "".to_string(),
+            parameters: HashMap::new(),
             credentials: None,
             metadata: HashMap::new(),
         }

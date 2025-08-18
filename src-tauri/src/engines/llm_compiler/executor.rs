@@ -17,17 +17,17 @@ use tokio::sync::Semaphore;
 use tokio::time::{timeout, Instant};
 use uuid::Uuid;
 use chrono::Utc;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, error};
 
-use crate::tools::{ToolSystem, ToolExecutionParams, ToolExecutionResult};
+use crate::tools::{EngineToolAdapter, UnifiedToolCall, UnifiedToolResult, get_global_engine_adapter};
 use super::types::*;
 
 /// Parallel Executor Pool - 并行执行器池
 pub struct ParallelExecutorPool {
     /// 并发控制信号量
     semaphore: Arc<Semaphore>,
-    /// 工具系统
-    tool_system: Arc<ToolSystem>,
+    /// 工具适配器
+    tool_adapter: Arc<dyn EngineToolAdapter>,
     /// 配置
     config: LlmCompilerConfig,
     /// 执行统计
@@ -54,13 +54,21 @@ struct ExecutionMetrics {
 }
 
 impl ParallelExecutorPool {
-    pub fn new(tool_system: Arc<ToolSystem>, config: LlmCompilerConfig) -> Self {
+    pub fn new(tool_adapter: Arc<dyn EngineToolAdapter>, config: LlmCompilerConfig) -> Self {
         Self {
             semaphore: Arc::new(Semaphore::new(config.max_concurrency)),
-            tool_system,
+            tool_adapter,
             config,
             execution_metrics: Arc::new(tokio::sync::RwLock::new(ExecutionMetrics::default())),
         }
+    }
+    
+    /// 使用全局工具适配器创建执行器池
+    pub async fn new_with_global_adapter(config: LlmCompilerConfig) -> Result<Self> {
+        let tool_adapter = get_global_engine_adapter()
+            .map_err(|e| anyhow::anyhow!("获取全局工具适配器失败: {}", e))?;
+        
+        Ok(Self::new(tool_adapter, config))
     }
 
     /// 执行单个任务
@@ -157,15 +165,17 @@ impl ParallelExecutorPool {
         info!("调用工具: {} with inputs: {:?}", task.tool_name, task.inputs);
         
         // 准备工具执行参数
-        let execution_params = ToolExecutionParams {
-            inputs: task.inputs.clone(),
-            context: HashMap::new(),
+        let tool_call = UnifiedToolCall {
+            id: Uuid::new_v4().to_string(),
+            tool_name: task.tool_name.clone(),
+            parameters: task.inputs.clone(),
             timeout: Some(Duration::from_secs(self.config.task_timeout)),
-            execution_id: Some(Uuid::new_v4()),
+            context: HashMap::new(),
+            retry_count: 0,
         };
         
-        // 调用真实工具系统
-        match self.tool_system.execute_tool(&task.tool_name, execution_params).await {
+        // 调用统一工具适配器
+        match self.tool_adapter.execute_tool(tool_call).await {
             Ok(tool_result) => {
                 info!("工具执行成功: {}, 成功: {}", task.tool_name, tool_result.success);
                 
@@ -199,12 +209,12 @@ impl ParallelExecutorPool {
     }
     
     /// 转换工具执行结果为标准输出格式
-    fn convert_tool_result_to_outputs(&self, tool_result: &ToolExecutionResult) -> Result<HashMap<String, Value>> {
+    fn convert_tool_result_to_outputs(&self, tool_result: &UnifiedToolResult) -> Result<HashMap<String, Value>> {
         let mut outputs = HashMap::new();
         
         // 添加基础结果信息
         outputs.insert("success".to_string(), json!(tool_result.success));
-        outputs.insert("execution_id".to_string(), json!(tool_result.execution_id.to_string()));
+        outputs.insert("call_id".to_string(), json!(tool_result.id));
         outputs.insert("execution_time_ms".to_string(), json!(tool_result.execution_time_ms));
         outputs.insert("tool_name".to_string(), json!(tool_result.tool_name));
         
@@ -364,7 +374,7 @@ impl Clone for ParallelExecutorPool {
     fn clone(&self) -> Self {
         Self {
             semaphore: self.semaphore.clone(),
-            tool_system: self.tool_system.clone(),
+            tool_adapter: self.tool_adapter.clone(),
             config: self.config.clone(),
             execution_metrics: self.execution_metrics.clone(),
         }

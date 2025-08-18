@@ -14,7 +14,7 @@ use crate::engines::plan_and_execute::{
     executor::ExecutorConfig,
     replanner::ReplannerConfig,
     memory_manager::MemoryManagerConfig,
-    tool_interface::ToolInterfaceConfig,
+
 };
 use crate::services::database::DatabaseService;
 use serde::{Deserialize, Serialize};
@@ -22,9 +22,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 /// Plan-and-Execute 引擎状态
 pub type PlanExecuteEngineState = Arc<RwLock<Option<PlanAndExecuteEngine>>>;
@@ -182,6 +182,154 @@ pub struct ReportAttachmentResponse {
     pub data: Vec<u8>,
 }
 
+// ===== Compatibility shims for existing frontend =====
+#[derive(Debug, Serialize)]
+pub struct FrontendStatisticsResponse {
+    pub total_sessions: u64,
+    pub completed_sessions: u64,
+    pub failed_sessions: u64,
+    pub replan_count: u64,
+    pub average_execution_time: u64,
+    pub success_rate: f64,
+}
+
+#[tauri::command]
+pub async fn get_plan_execute_statistics(
+    engine_state: State<'_, PlanExecuteEngineState>,
+) -> Result<FrontendStatisticsResponse, String> {
+    let state = engine_state.read().await;
+    if let Some(engine) = state.as_ref() {
+        let sessions = engine.get_task_history(None).await;
+        let total = sessions.len() as u64;
+        let mut completed = 0u64;
+        let mut failed = 0u64;
+        let mut total_duration_ms = 0u64;
+        for s in &sessions {
+            match s.status {
+                TaskStatus::Completed => completed += 1,
+                TaskStatus::Failed | TaskStatus::Cancelled => failed += 1,
+                _ => {}
+            }
+            if let Some(end) = s.completed_at {
+                total_duration_ms += end.duration_since(s.started_at).unwrap_or_default().as_millis() as u64;
+            }
+        }
+        let avg_ms = if completed > 0 { total_duration_ms / completed } else { 0 };
+        let success_rate = if total > 0 { completed as f64 / total as f64 } else { 0.0 };
+        Ok(FrontendStatisticsResponse {
+            total_sessions: total,
+            completed_sessions: completed,
+            failed_sessions: failed,
+            replan_count: 0,
+            average_execution_time: avg_ms / 1000, // seconds
+            success_rate,
+        })
+    } else {
+        Ok(FrontendStatisticsResponse {
+            total_sessions: 0,
+            completed_sessions: 0,
+            failed_sessions: 0,
+            replan_count: 0,
+            average_execution_time: 0,
+            success_rate: 0.0,
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn list_plan_execute_architectures() -> Result<Vec<serde_json::Value>, String> {
+    Ok(vec![
+        serde_json::json!({
+            "name": "Plan-and-Execute",
+            "description": "通用的规划-执行模式，由 Prompt 驱动，适合各种复杂任务的分解和执行",
+            "suitable_for": ["research","problem_solving","automation","content_generation","data_processing","reasoning"],
+            "complexity_range": "medium-high",
+            "features": ["prompt_driven", "generic_tasks", "step_by_step_execution", "ai_powered_planning"]
+        })
+    ])
+}
+
+#[tauri::command]
+pub async fn get_plan_execute_sessions(
+    _filter: Option<serde_json::Value>,
+    engine_state: State<'_, PlanExecuteEngineState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let state = engine_state.read().await;
+    if let Some(engine) = state.as_ref() {
+        let sessions = engine.get_task_history(None).await;
+        let items: Vec<serde_json::Value> = sessions.into_iter().map(|s| {
+            let started_secs = s
+                .started_at
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            serde_json::json!({
+                "task_id": s.id,
+                "status": format!("{:?}", s.status).to_lowercase(),
+                "progress": match s.status { TaskStatus::Completed => 100.0, _ => 50.0 },
+                "current_phase": match s.status {
+                    TaskStatus::Completed => "completed",
+                    TaskStatus::Planning => "planning",
+                    TaskStatus::Executing => "executing",
+                    TaskStatus::Replanning => "replanning",
+                    _ => "pending",
+                },
+                "description": s.request.description,
+                "replan_count": 0,
+                "started_at": started_secs,
+            })
+        }).collect();
+        Ok(items)
+    } else {
+        Ok(vec![])
+    }
+}
+
+#[tauri::command]
+pub async fn get_plan_execute_session_detail(
+    session_id: String,
+    engine_state: State<'_, PlanExecuteEngineState>,
+) -> Result<serde_json::Value, String> {
+    let state = engine_state.read().await;
+    if let Some(engine) = state.as_ref() {
+        if let Some(result) = engine.get_task_result(&session_id).await {
+            let detail = serde_json::json!({
+                "task_id": result.task_id,
+                "status": format!("{:?}", result.status).to_lowercase(),
+                "progress": match result.status { TaskStatus::Completed => 100.0, _ => 50.0 },
+                "current_phase": match result.status {
+                    TaskStatus::Completed => "completed",
+                    _ => "executing",
+                },
+                "result": result.result_data,
+                "error": result.error,
+                "started_at": result.started_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+                "completed_at": result.completed_at.map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+            });
+            return Ok(detail);
+        }
+    }
+    Err(format!("任务不存在: {}", session_id))
+}
+
+#[derive(Debug, Serialize)]
+pub struct SimpleApiResponse {
+    pub success: bool,
+}
+
+#[tauri::command]
+pub async fn cancel_plan_execute_session(
+    session_id: String,
+    engine_state: State<'_, PlanExecuteEngineState>,
+) -> Result<SimpleApiResponse, String> {
+    let state = engine_state.read().await;
+    if let Some(engine) = state.as_ref() {
+        engine.cancel_task(&session_id).await.map_err(|e| e.to_string())?;
+        Ok(SimpleApiResponse { success: true })
+    } else {
+        Err("引擎未运行".to_string())
+    }
+}
 /// 任务列表响应
 #[derive(Debug, Serialize)]
 pub struct TaskListResponse {
@@ -243,7 +391,7 @@ pub async fn start_plan_execute_engine(
         executor_config: ExecutorConfig::default(),
         replanner_config: ReplannerConfig::default(),
         memory_config: MemoryManagerConfig::default(),
-        tool_config: ToolInterfaceConfig::default(),
+        tool_config: crate::tools::ToolManagerConfig::default(),
         engine_config: EngineConfig::default(),
     };
     
@@ -256,7 +404,7 @@ pub async fn start_plan_execute_engine(
         ai_service_manager.inner().clone(),
         database_service.inner().clone(),
     ).await {
-        Ok(mut engine) => {
+        Ok( engine) => {
             match engine.start().await {
                 Ok(_) => {
                     *state = Some(engine);
@@ -286,7 +434,7 @@ pub async fn stop_plan_execute_engine(
     let mut state = engine_state.write().await;
     
     match state.take() {
-        Some(mut engine) => {
+        Some( engine) => {
             match engine.stop().await {
                 Ok(_) => {
                     info!("✅ [Plan-Execute] 引擎停止成功");
@@ -353,22 +501,33 @@ pub async fn dispatch_plan_execute_task(
     match state.as_ref() {
         Some(engine) => {
             // 构建任务请求
+            let target_info = if !request.target.address.is_empty() {
+                Some(TargetInfo {
+                    target_type: parse_target_type(&request.target.target_type)?,
+                    identifier: request.target.address,
+                    parameters: request.target.protocol.map(|p| {
+                        let mut params = HashMap::new();
+                        params.insert("protocol".to_string(), serde_json::Value::String(p));
+                        if let Some(port) = request.target.port {
+                            params.insert("port".to_string(), serde_json::Value::Number(serde_json::Number::from(port)));
+                        }
+                        params
+                    }).unwrap_or_default(),
+                    credentials: request.target.credentials,
+                    metadata: request.target.metadata.unwrap_or_default().into_iter()
+                        .map(|(k, v)| (k, serde_json::Value::String(v)))
+                        .collect(),
+                })
+            } else {
+                None
+            };
+
             let task_request = TaskRequest {
                 id: Uuid::new_v4().to_string(),
                 name: request.name.clone(),
                 description: request.description,
                 task_type: parse_task_type(&request.task_type)?,
-                target: TargetInfo {
-                    target_type: parse_target_type(&request.target.target_type)?,
-                    address: request.target.address,
-                    port: request.target.port,
-                    port_range: None,
-                    protocols: request.target.protocol.map(|p| vec![p]).unwrap_or_default(),
-                    credentials: request.target.credentials,
-                    metadata: request.target.metadata.unwrap_or_default().into_iter()
-                        .map(|(k, v)| (k, serde_json::Value::String(v)))
-                        .collect(),
-                },
+                target: target_info,
                 parameters: request.parameters.unwrap_or_default(),
                 priority: parse_priority(&request.priority)?,
                 constraints: request.constraints.unwrap_or_default(),
@@ -574,7 +733,7 @@ pub async fn get_plan_execute_active_tasks(
 #[tauri::command]
 pub async fn get_plan_execute_task_history(
     limit: Option<u32>,
-    offset: Option<u32>,
+    _offset: Option<u32>,
     engine_state: State<'_, PlanExecuteEngineState>,
 ) -> Result<CommandResponse<TaskListResponse>, String> {
     debug!("📚 [Plan-Execute] 获取任务历史");
@@ -622,33 +781,37 @@ pub async fn get_plan_execute_task_history(
      }
  }
 
-// 辅助函数：解析任务类型
+// 辅助函数：解析任务类型 - 通用化
 fn parse_task_type(task_type: &str) -> Result<TaskType, String> {
     match task_type.to_lowercase().as_str() {
-        "security_scan" => Ok(TaskType::SecurityScan),
-        "vulnerability_assessment" => Ok(TaskType::VulnerabilityAssessment),
-        "penetration_test" => Ok(TaskType::PenetrationTest),
-        "compliance_check" => Ok(TaskType::ComplianceCheck),
-        "threat_hunting" => Ok(TaskType::ThreatHunting),
-        "incident_response" => Ok(TaskType::IncidentResponse),
-        "forensic_analysis" => Ok(TaskType::ForensicAnalysis),
-        "risk_assessment" => Ok(TaskType::RiskAssessment),
-        _ => Err(format!("未知的任务类型: {}", task_type)),
+        "research" => Ok(TaskType::Research),
+        "problem_solving" => Ok(TaskType::ProblemSolving),
+        "data_processing" => Ok(TaskType::DataProcessing),
+        "content_generation" => Ok(TaskType::ContentGeneration),
+        "information_retrieval" => Ok(TaskType::InformationRetrieval),
+        "automation" => Ok(TaskType::Automation),
+        "reasoning" => Ok(TaskType::Reasoning),
+        "document_processing" => Ok(TaskType::DocumentProcessing),
+        "code_related" => Ok(TaskType::CodeRelated),
+        "communication" => Ok(TaskType::Communication),
+        _ => Ok(TaskType::Custom(task_type.to_string())),
     }
 }
 
-// 辅助函数：解析目标类型
+// 辅助函数：解析目标类型 - 通用化
 fn parse_target_type(target_type: &str) -> Result<TargetType, String> {
     match target_type.to_lowercase().as_str() {
-        "host" => Ok(TargetType::Host),
-        "network" => Ok(TargetType::Network),
-        "domain" => Ok(TargetType::Domain),
-        "url" => Ok(TargetType::Url),
-        "application" => Ok(TargetType::Application),
-        "database" => Ok(TargetType::Database),
-        "api" => Ok(TargetType::Api),
+        "text" => Ok(TargetType::Text),
         "file" => Ok(TargetType::File),
-        _ => Err(format!("未知的目标类型: {}", target_type)),
+        "url" => Ok(TargetType::Url),
+        "dataset" => Ok(TargetType::Dataset),
+        "api" => Ok(TargetType::Api),
+        "database" => Ok(TargetType::Database),
+        "service" => Ok(TargetType::Service),
+        "application" => Ok(TargetType::Application),
+        "generic_input" => Ok(TargetType::GenericInput),
+        "context" => Ok(TargetType::Context),
+        _ => Ok(TargetType::GenericInput), // 默认为通用输入而非错误
     }
 }
 
@@ -661,4 +824,150 @@ fn parse_priority(priority: &str) -> Result<Priority, String> {
         "critical" => Ok(Priority::Critical),
         _ => Err(format!("未知的优先级: {}", priority)),
     }
+}
+
+/// 兼容前端旧调用：execute_plan_and_execute_task
+/// 将旧请求结构转换为新的 DispatchTaskRequest 并调用 dispatch_plan_execute_task
+#[derive(Debug, Deserialize)]
+pub struct FrontendExecuteRequest {
+    pub goal: String,
+    pub task_type: Option<String>,
+    pub priority: Option<String>,
+    pub max_execution_time: Option<u64>,
+    pub context: Option<String>,
+    pub config: Option<serde_json::Value>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[tauri::command]
+pub async fn execute_plan_and_execute_task(
+    task_data: FrontendExecuteRequest,
+    engine_state: State<'_, PlanExecuteEngineState>,
+) -> Result<CommandResponse<DispatchTaskResponse>, String> {
+    // 映射到新的请求结构
+    let name = if task_data.goal.chars().count() > 32 {
+        let truncated: String = task_data.goal.chars().take(32).collect();
+        format!("{}…", truncated)
+    } else {
+        task_data.goal.clone()
+    };
+
+    // 任务类型映射（默认使用一个已支持的类型）
+    let mapped_task_type = task_data
+        .task_type
+        .clone()
+        .unwrap_or_else(|| "problem_solving".to_string());
+
+    // 优先级映射
+    let mapped_priority = task_data
+        .priority
+        .clone()
+        .unwrap_or_else(|| "normal".to_string());
+
+    // 构造最小目标信息（可按需扩展）
+    let target = TargetInfoRequest {
+        target_type: "generic_input".to_string(),
+        address: task_data.goal.clone(), // 使用目标作为主要标识符
+        port: None,
+        protocol: None,
+        credentials: None,
+        metadata: None,
+    };
+
+    // 参数映射：将 context/config 作为参数传入
+    let mut parameters: HashMap<String, serde_json::Value> = HashMap::new();
+    if let Some(ctx) = task_data.context {
+        parameters.insert("context".to_string(), serde_json::Value::String(ctx));
+    }
+    if let Some(cfg) = task_data.config {
+        parameters.insert("config".to_string(), cfg);
+    }
+
+    // 元数据映射
+    let mut metadata_map: HashMap<String, String> = HashMap::new();
+    if let Some(meta) = task_data.metadata {
+        if let Some(obj) = meta.as_object() {
+            for (k, v) in obj {
+                if let Some(s) = v.as_str() {
+                    metadata_map.insert(k.clone(), s.to_string());
+                } else {
+                    metadata_map.insert(k.clone(), v.to_string());
+                }
+            }
+        }
+    }
+
+    let request = DispatchTaskRequest {
+        name,
+        description: task_data.goal,
+        task_type: mapped_task_type,
+        target,
+        priority: mapped_priority,
+        parameters: Some(parameters),
+        constraints: None,
+        metadata: Some(metadata_map),
+    };
+
+    // 调用现有调度逻辑
+    dispatch_plan_execute_task(request, engine_state).await
+}
+
+/// 新增：通用的 Prompt 驱动任务执行
+#[derive(Debug, Deserialize)]
+pub struct GenericPromptTaskRequest {
+    pub prompt: String,
+    pub task_type: Option<String>,
+    pub context: Option<HashMap<String, serde_json::Value>>,
+    pub priority: Option<String>,
+    pub max_steps: Option<u32>,
+}
+
+#[tauri::command]
+pub async fn execute_generic_prompt_task(
+    request: GenericPromptTaskRequest,
+    engine_state: State<'_, PlanExecuteEngineState>,
+) -> Result<CommandResponse<DispatchTaskResponse>, String> {
+    info!("🤖 [Plan-Execute] 执行通用 Prompt 任务");
+    
+    let task_name = if request.prompt.chars().count() > 50 {
+        let truncated: String = request.prompt.chars().take(50).collect();
+        format!("{}...", truncated)
+    } else {
+        request.prompt.clone()
+    };
+    
+    let prompt_clone = request.prompt.clone();
+    let task_request = DispatchTaskRequest {
+        name: task_name,
+        description: request.prompt,
+        task_type: request.task_type.unwrap_or_else(|| "reasoning".to_string()),
+        target: TargetInfoRequest {
+            target_type: "context".to_string(),
+            address: "user_prompt".to_string(),
+            port: None,
+            protocol: None,
+            credentials: None,
+            metadata: None,
+        },
+        priority: request.priority.unwrap_or_else(|| "normal".to_string()),
+        parameters: Some({
+            let mut params = HashMap::new();
+            params.insert("user_prompt".to_string(), serde_json::Value::String(prompt_clone));
+            if let Some(context) = request.context {
+                params.insert("context".to_string(), serde_json::Value::Object(
+                    context.into_iter().collect()
+                ));
+            }
+            if let Some(max_steps) = request.max_steps {
+                params.insert("max_steps".to_string(), serde_json::Value::Number(
+                    serde_json::Number::from(max_steps)
+                ));
+            }
+            params
+        }),
+        constraints: None,
+        metadata: None,
+    };
+    
+    dispatch_plan_execute_task(task_request, engine_state).await
 }

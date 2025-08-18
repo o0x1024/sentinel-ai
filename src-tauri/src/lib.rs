@@ -3,28 +3,29 @@ pub mod ai_adapter;
 pub mod commands;
 pub mod database;
 pub mod engines;
-pub mod mcp;
 pub mod models;
 pub mod services;
-pub mod tools;
+pub mod tools;  // 包含原 MCP 功能
 pub mod prompt;
 
 
 // 导入依赖
-use crate::{mcp::{McpClientManager, McpServerManager}};
+use crate::tools::{McpClientManager, McpServerManager};
+use crate::services::mcp::McpService;
 use std::sync::Arc;
 use tauri::{
     generate_handler,
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
+use tokio::sync::RwLock;
 use tracing_subscriber;
 use tracing_appender;
 use std::fs;
 
 // 导入服务
 use services::{
-    ai::AiServiceManager, database::DatabaseService, mcp::McpService,
+    ai::AiServiceManager, database::DatabaseService, 
     scan::ScanService, scan_session::ScanSessionService,
 };
 
@@ -35,7 +36,81 @@ use commands::{
     window, prompt_commands, rewoo_commands, unified_tools,
 };
 
+use crate::ai_adapter::http::{set_global_proxy, ProxyConfig};
 
+#[cfg(unix)]
+use signal_hook::consts::signal::*;
+#[cfg(unix)]
+use signal_hook_tokio::Signals;
+
+/// 设置信号处理器
+#[cfg(unix)]
+async fn setup_signal_handlers(
+    mcp_client_manager: Arc<McpClientManager>,
+    mcp_service: Arc<McpService>,
+) {
+    use futures::stream::StreamExt;
+    
+    let signals = Signals::new(&[SIGHUP, SIGTERM, SIGINT]).expect("Failed to register signal handler");
+    let handle = signals.handle();
+
+    let signals_task = signals.for_each(move |signal| {
+        let mcp_client_manager = mcp_client_manager.clone();
+        let mcp_service = mcp_service.clone();
+        
+        async move {
+            match signal {
+                SIGHUP => {
+                    tracing::warn!("Received SIGHUP signal, performing graceful shutdown of MCP connections");
+                    
+                    // 保存MCP服务器状态
+                    let is_running = mcp_service.is_server_running().await;
+                    if let Err(e) = mcp_service.save_server_state("builtin_security_tools", is_running).await {
+                        tracing::error!("Failed to save MCP server state on SIGHUP: {}", e);
+                    }
+                    
+                    // 优雅关闭所有MCP连接
+                    if let Err(e) = mcp_client_manager.shutdown_all().await {
+                        tracing::error!("Failed to shutdown MCP connections on SIGHUP: {}", e);
+                    } else {
+                        tracing::info!("Successfully shutdown all MCP connections on SIGHUP");
+                    }
+                }
+                SIGTERM | SIGINT => {
+                    tracing::warn!("Received termination signal ({}), shutting down gracefully", signal);
+                    
+                    // 保存状态并退出
+                    let is_running = mcp_service.is_server_running().await;
+                    if let Err(e) = mcp_service.save_server_state("builtin_security_tools", is_running).await {
+                        tracing::error!("Failed to save MCP server state on exit: {}", e);
+                    }
+                    
+                    if let Err(e) = mcp_client_manager.shutdown_all().await {
+                        tracing::error!("Failed to shutdown MCP connections on exit: {}", e);
+                    }
+                    
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    tokio::spawn(signals_task);
+    
+    // 防止信号处理器被过早释放
+    std::mem::forget(handle);
+    
+    tracing::info!("Signal handlers set up successfully");
+}
+
+#[cfg(not(unix))]
+async fn setup_signal_handlers(
+    _mcp_client_manager: Arc<McpClientManager>,
+    _mcp_service: Arc<McpService>,
+) {
+    tracing::info!("Signal handling not available on this platform");
+}
 
 /// 应用程序主入口
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,7 +146,7 @@ pub fn run() {
         
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
         }))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -80,6 +155,34 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
+                // 检查是否是最后一个窗口
+                let app_handle = window.app_handle();
+                let windows = app_handle.webview_windows();
+                
+                if windows.len() <= 1 {
+                    // 最后一个窗口，执行清理
+                    let app_handle_clone = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // 保存MCP服务器状态
+                        if let Some(mcp_service) = app_handle_clone.try_state::<Arc<McpService>>() {
+                            // 检查当前状态并保存
+                            let is_running = mcp_service.is_server_running().await;
+                            if let Err(e) = mcp_service.save_server_state("builtin_security_tools", is_running).await {
+                                eprintln!("Failed to save MCP server state on exit: {}", e);
+                            } else {
+                                println!("MCP server state saved on exit: enabled={}", is_running);
+                            }
+                        }
+                        
+                        // 关闭MCP进程
+                        if let Some(mcp_manager) = app_handle_clone.try_state::<Arc<crate::tools::client::McpClientManager>>() {
+                            if let Err(e) = mcp_manager.shutdown_all().await {
+                                eprintln!("Failed to shutdown MCP processes: {}", e);
+                            }
+                        }
+                    });
+                }
+                
                 window.hide().unwrap();
                 api.prevent_close();
             }
@@ -131,14 +234,40 @@ pub fn run() {
                     tracing::info!("Global tool system initialized successfully");
                 }
 
+                // 初始化全局适配器管理器（为三个框架提供统一的工具调用接口）
+                if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+                    let tool_manager = tool_system.get_manager();
+                    if let Err(e) = crate::tools::initialize_global_adapter_manager(tool_manager).await {
+                        tracing::error!("Failed to initialize global adapter manager: {}", e);
+                    } else {
+                        tracing::info!("Global adapter manager initialized successfully");
+                    }
+                } else {
+                    tracing::error!("Cannot initialize adapter manager: global tool system not available");
+                }
+
                 // 创建MCP客户端管理器（保留用于MCP服务器连接）
-                let client_manager = Arc::new(McpClientManager::new(db_service.clone()));
+                let client_manager = Arc::new(McpClientManager::with_database(db_service.clone()));
                 
                 // 创建MCP服务器管理器（保留用于向外提供MCP服务）
                 let server_manager: Arc<McpServerManager> = Arc::new(McpServerManager::new());
                 
                 // 创建MCP服务（使用统一工具系统）
-                let mcp_service = McpService::with_server_manager(client_manager.clone(), server_manager.clone());
+                let mcp_service = McpService::with_server_manager(client_manager.clone(), server_manager.clone(), db_service.clone());
+
+                // 自动恢复MCP服务器状态
+                if let Err(e) = mcp_service.auto_restore_server_state().await {
+                    tracing::warn!("Failed to auto-restore MCP server state: {}", e);
+                } else {
+                    tracing::info!("MCP server state auto-restored successfully");
+                }
+
+                // Initialize global proxy configuration from database
+                if let Err(e) = initialize_global_proxy(&db_service).await {
+                    tracing::warn!("Failed to initialize global proxy configuration: {}", e);
+                } else {
+                    tracing::info!("Global proxy configuration initialized successfully");
+                }
 
                 let mut ai_manager = AiServiceManager::new(db_service.clone());
                 ai_manager.set_mcp_service(Arc::new(mcp_service.clone()));
@@ -159,13 +288,18 @@ pub fn run() {
                 let scan_service = Arc::new(ScanService::new(
                     db_service.clone(),
                     ai_manager.clone(),
-                    client_manager.get_client(),
+                    Arc::new(RwLock::new(crate::tools::McpClientManager::new())),
                 ));
 
+                // 设置信号处理器
+                setup_signal_handlers(client_manager.clone(), Arc::new(mcp_service.clone())).await;
         
                 // 初始化资产服务
                 let pool = db_service.get_pool().expect("Database pool not initialized").clone();
                 let asset_service = crate::services::AssetService::new(pool);
+
+                // 为异步任务创建 mcp_service 的克隆（在 manage 之前）
+                let mcp_service_for_tools = Arc::new(mcp_service.clone());
 
                 handle.manage(db_service);
                 handle.manage(client_manager.clone());
@@ -204,22 +338,21 @@ pub fn run() {
                     Arc::new(tokio::sync::RwLock::new(None));
                 handle.manage(plan_execute_engine_state);
 
-                // 启动时检查AI窗口并启动同步
-                let app_handle = handle.clone();
+                let client_manager_clone = client_manager.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = client_manager.initialize().await {
+                    if let Err(e) = client_manager_clone.initialize().await {
                         tracing::error!("Failed to initialize MCP client: {}", e);
                     } else {
                         tracing::info!("MCP client initialized successfully");
-                    }
-                    
-                    // 检查是否存在AI窗口，如果存在则启动同步
-                    if let Some(ai_window) = app_handle.get_webview_window("ai-chat") {
-                        if ai_window.is_visible().unwrap_or(false) {
-                            tracing::info!("AI chat window found on startup, starting window sync");
-                            // if let Err(e) = commands::window::start_window_sync(app_handle.clone()).await {
-                            //     tracing::error!("Failed to start window sync on startup: {}", e);
-                            // }
+                        
+                        // MCP 客户端初始化完成后，将 MCP 工具同步到全局工具系统
+                        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+                            // 通过 MCP 服务添加 MCP 工具提供者到全局工具系统
+                            if let Err(e) = tool_system.add_mcp_provider_to_system(mcp_service_for_tools).await {
+                                tracing::error!("Failed to register MCP provider to global tool system: {}", e);
+                            } else {
+                                tracing::info!("MCP provider registered to global tool system successfully");
+                            }
                         }
                     }
                 });
@@ -328,6 +461,11 @@ pub fn run() {
             mcp_commands::mcp_get_connections,
             mcp_commands::start_mcp_server,
             mcp_commands::stop_mcp_server,
+            mcp_commands::start_mcp_server_with_state,
+            mcp_commands::stop_mcp_server_with_state,
+            mcp_commands::auto_restore_mcp_server_state,
+            mcp_commands::get_mcp_server_saved_states,
+            mcp_commands::save_mcp_server_state,
             mcp_commands::mcp_connect_server,
             mcp_commands::mcp_disconnect_server,
             mcp_commands::mcp_list_tools,
@@ -345,10 +483,24 @@ pub fn run() {
             commands::mcp::import_mcp_servers_from_json,
             commands::mcp::get_mcp_marketplace_servers,
             commands::mcp::mcp_get_connection_tools,
+            commands::mcp::mcp_get_connection_status,
             commands::mcp::mcp_update_server_config,
             commands::mcp::retry_mcp_connection,
+            commands::mcp::retry_mcp_connection_new,
             commands::mcp::toggle_builtin_tool,
             commands::mcp::get_builtin_tools_with_status,
+            commands::mcp::get_mcp_external_tools,
+            commands::mcp::diagnose_mcp_environment,
+            commands::mcp::test_mcp_servers,
+            commands::mcp::remove_local_mcp_servers,
+            commands::mcp::get_running_mcp_processes,
+            commands::mcp::shutdown_mcp_process,
+            commands::mcp::shutdown_all_mcp_processes,
+            commands::mcp::cleanup_duplicate_mcp_servers,
+            commands::mcp::test_mcp_transport_types,
+            commands::mcp::diagnose_mcp_connection,
+            commands::mcp::connect_servers_concurrent,
+            commands::mcp::get_connection_performance_stats,
             commands::check_command_exists,
             commands::role::get_ai_roles,
             commands::role::create_ai_role,
@@ -479,6 +631,12 @@ pub fn run() {
             // commands::intelligent_dispatcher_commands::get_execution_history,
             // commands::intelligent_dispatcher_commands::cancel_execution,
             // commands::intelligent_dispatcher_commands::get_dispatcher_statistics,
+            plan_execute_commands::execute_plan_and_execute_task,
+            plan_execute_commands::get_plan_execute_statistics,
+            plan_execute_commands::list_plan_execute_architectures,
+            plan_execute_commands::get_plan_execute_sessions,
+            plan_execute_commands::get_plan_execute_session_detail,
+            plan_execute_commands::cancel_plan_execute_session,
 
             // Plan-Execute引擎相关命令
             plan_execute_commands::start_plan_execute_engine,
@@ -490,7 +648,48 @@ pub fn run() {
             plan_execute_commands::cancel_plan_execute_task,
             plan_execute_commands::get_plan_execute_active_tasks,
             plan_execute_commands::get_plan_execute_task_history,
+            plan_execute_commands::execute_generic_prompt_task,
         ])
         .run(context)
         .expect("Failed to start Tauri application");
+}
+
+/// Initialize global proxy configuration from database
+async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result<()> {
+    // Try to load proxy configuration from database
+    match db_service.get_config("network", "global_proxy").await {
+        Ok(Some(json_str)) => {
+            // Parse the JSON configuration
+            match serde_json::from_str::<serde_json::Value>(&json_str) {
+                Ok(config_json) => {
+                    let proxy_config = ProxyConfig {
+                        enabled: config_json["enabled"].as_bool().unwrap_or(false),
+                        scheme: config_json["scheme"].as_str().map(|s| s.to_string()),
+                        host: config_json["host"].as_str().map(|s| s.to_string()),
+                        port: config_json["port"].as_u64().map(|p| p as u16),
+                        username: config_json["username"].as_str().map(|s| s.to_string()),
+                        password: config_json["password"].as_str().map(|s| s.to_string()),
+                        no_proxy: config_json["no_proxy"].as_str().map(|s| s.to_string()),
+                    };
+                    
+                    // Set the global proxy configuration
+                    set_global_proxy(Some(proxy_config));
+                    tracing::info!("Loaded proxy configuration from database");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse proxy configuration JSON: {}", e);
+                }
+            }
+        }
+        Ok(None) => {
+            tracing::debug!("No proxy configuration found in database, using default (no proxy)");
+            set_global_proxy(None);
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load proxy configuration from database: {}", e);
+            set_global_proxy(None);
+        }
+    }
+    
+    Ok(())
 }

@@ -5,7 +5,6 @@ use crate::ai_adapter::error::{AiAdapterError, Result};
 use async_trait::async_trait;
 use std::ops::Deref;
 use std::collections::HashMap;
-use std::time::SystemTime;
 use tokio_util::bytes::Bytes;
 use crate::ai_adapter::providers::base::BaseProvider;
 /// DeepSeek提供商
@@ -64,8 +63,8 @@ impl DeepSeekProvider {
     fn parse_chat_response(
         &self,
         response: &serde_json::Value,
-        request_info: Option<HttpRequest>,
-        response_info: Option<HttpResponse>,
+        _request_info: Option<HttpRequest>,
+        _response_info: Option<HttpResponse>,
     ) -> Result<ChatResponse> {
         let id = response["id"].as_str().unwrap_or("").to_string();
         let model = response["model"].as_str().unwrap_or("").to_string();
@@ -246,6 +245,7 @@ impl DeepSeekProvider {
     }
     
     /// 解析流式数据块
+    #[allow(unused)]
     fn parse_stream_chunk(&self, chunk: &serde_json::Value) -> Result<StreamChunk> {
         let id = chunk["id"].as_str().unwrap_or("").to_string();
         let model = chunk["model"].as_str().unwrap_or("").to_string();

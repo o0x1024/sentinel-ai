@@ -251,7 +251,7 @@ impl TaskFetchingUnit {
         let context = self.variable_context.read().await;
         
         // 解析输入参数中的变量引用
-        for (key, value) in task.inputs.iter_mut() {
+        for (_key, value) in task.inputs.iter_mut() {
             if let Value::String(s) = value.clone() {
                 if s.starts_with('$') {
                     if let Some(resolved_value) = context.resolve_variable(&s) {

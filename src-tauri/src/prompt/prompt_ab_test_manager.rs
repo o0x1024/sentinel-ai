@@ -25,6 +25,7 @@ pub struct PromptABTestManager {
     /// 统计分析器
     analyzer: StatisticalAnalyzer,
     /// 配置
+    #[allow(unused)]
     config: ABTestConfig,
 }
 
@@ -758,8 +759,7 @@ impl PromptABTestManager {
 
     /// 随机分配
     fn random_allocation(&self, variants: &[TestVariant]) -> Result<String> {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        let _rng = rand::thread_rng();
         let random_value: f32 = rand::random();
         
         let mut cumulative_weight = 0.0;

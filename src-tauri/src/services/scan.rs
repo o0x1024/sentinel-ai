@@ -1,4 +1,4 @@
-use crate::mcp::client::McpClient;
+use crate::tools::McpClientManager;
 use crate::models::database::{Asset, ScanTask, Vulnerability};
 use crate::models::scan::{
     ScanConfig, ScanResult, ScanStatus, ScanStep, ScanTask as ScanTaskModel, TaskStats,
@@ -19,7 +19,7 @@ use uuid::Uuid;
 pub struct ScanService {
     db: Arc<DatabaseService>,
     ai_manager: Arc<AiServiceManager>,
-    mcp_client: Arc<RwLock<McpClient>>,
+    mcp_client: Arc<RwLock<McpClientManager>>,
     active_tasks: RwLock<HashMap<Uuid, Arc<Mutex<ScanTaskModel>>>>,
 }
 
@@ -27,7 +27,7 @@ impl ScanService {
     pub fn new(
         db: Arc<DatabaseService>,
         ai_manager: Arc<AiServiceManager>,
-        mcp_client: Arc<RwLock<McpClient>>,
+        mcp_client: Arc<RwLock<McpClientManager>>,
     ) -> Self {
         Self {
             db,
@@ -139,7 +139,7 @@ impl ScanService {
         task_arc: Arc<Mutex<ScanTaskModel>>,
         db: Arc<DatabaseService>,
         ai_manager: Arc<AiServiceManager>,
-        mcp_client: Arc<RwLock<McpClient>>,
+        mcp_client: Arc<RwLock<McpClientManager>>,
     ) -> Result<()> {
         let task_id = {
             let task = task_arc.lock().await;
@@ -194,7 +194,7 @@ impl ScanService {
     /// 阶段1: AI智能规划
     async fn phase_1_ai_planning(
         task_arc: &Arc<Mutex<ScanTaskModel>>,
-        ai_manager: &Arc<AiServiceManager>,
+        _ai_manager: &Arc<AiServiceManager>,
     ) -> Result<()> {
         info!("Starting AI scan planning phase");
 
@@ -247,8 +247,8 @@ Please return the analysis result in JSON format.",
     /// 阶段2: 资产发现
     async fn phase_2_asset_discovery(
         task_arc: &Arc<Mutex<ScanTaskModel>>,
-        db: &Arc<DatabaseService>,
-        mcp_client: &Arc<RwLock<McpClient>>,
+        _db: &Arc<DatabaseService>,
+        _mcp_client: &Arc<RwLock<McpClientManager>>,
     ) -> Result<()> {
         info!("开始资产发现阶段");
 
@@ -312,7 +312,7 @@ Please return the analysis result in JSON format.",
     async fn phase_3_vulnerability_scan(
         task_arc: &Arc<Mutex<ScanTaskModel>>,
         db: &Arc<DatabaseService>,
-        _mcp_client: &Arc<RwLock<McpClient>>,
+        _mcp_client: &Arc<RwLock<McpClientManager>>,
     ) -> Result<()> {
         info!("Starting vulnerability scanning phase");
 
@@ -676,6 +676,7 @@ Please return the analysis result in JSON format.",
     }
 
     /// AI辅助扫描分析（暂时简化实现）
+    #[allow(unused)]
     async fn ai_scan_analysis(
         _scan_task: &ScanTask,
         _results: &Value,

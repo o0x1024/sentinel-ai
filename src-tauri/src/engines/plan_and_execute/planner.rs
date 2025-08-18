@@ -1,14 +1,20 @@
-//! Planner 组件 - 任务规划器
+//! Planner 组件 - 通用任务规划器
 //! 
-//! 负责将复杂任务分解为可执行的子任务，制定详细的执行计划
+//! 基于 Prompt 驱动的通用规划逻辑，不针对特定任务类型做特殊处理
 
 use crate::ai_adapter::core::AiAdapterManager;
-use crate::models::prompt::{ArchitectureType, StageType};
+use crate::ai_adapter::types::{ChatRequest, Message, MessageRole, ChatOptions};
 use crate::services::prompt_db::PromptRepository;
+use crate::services::mcp::McpService;
+use crate::models::prompt::{ArchitectureType, StageType};
 use crate::engines::plan_and_execute::types::*;
+use crate::tools::{ToolInfo};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::time::SystemTime;
+use std::sync::Arc;
+
 use uuid::Uuid;
 
 /// 规划器配置
@@ -123,6 +129,8 @@ pub struct Planner {
     config: PlannerConfig,
     ai_manager: &'static AiAdapterManager,
     prompt_repo: Option<PromptRepository>,
+    framework_adapter: Option<Arc<dyn crate::tools::FrameworkToolAdapter>>,
+    mcp_service: Option<Arc<McpService>>,
 }
 
 impl Planner {
@@ -134,39 +142,90 @@ impl Planner {
         ai_manager.get_provider(&config.ai_provider)
             .map_err(|e| PlanAndExecuteError::ConfigError(format!("AI provider '{}' not available: {}", config.ai_provider, e)))?;
         
+        // 尝试获取Plan & Execute框架适配器
+        let framework_adapter = match crate::tools::get_global_adapter_manager() {
+            Ok(adapter_manager) => {
+                let adapter = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        adapter_manager.get_framework_adapter(crate::tools::FrameworkType::PlanAndExecute).await
+                    })
+                });
+                Some(adapter)
+            },
+            Err(e) => {
+                log::warn!("Failed to get framework adapter: {}", e);
+                None
+            }
+        };
+        
         Ok(Self {
             config,
             ai_manager,
             prompt_repo,
+            framework_adapter,
+            mcp_service: None,
         })
     }
 
-    /// 创建执行计划
+    /// 创建带有MCP服务的规划器实例
+    pub fn with_mcp_service(
+        config: PlannerConfig, 
+        prompt_repo: Option<PromptRepository>,
+        mcp_service: Option<Arc<McpService>>
+    ) -> Result<Self, PlanAndExecuteError> {
+        let ai_manager = AiAdapterManager::global();
+        
+        // 验证AI提供商是否可用
+        ai_manager.get_provider(&config.ai_provider)
+            .map_err(|e| PlanAndExecuteError::ConfigError(format!("AI provider '{}' not available: {}", config.ai_provider, e)))?;
+        
+        // 尝试获取Plan & Execute框架适配器
+        let framework_adapter = match crate::tools::get_global_adapter_manager() {
+            Ok(adapter_manager) => {
+                let adapter = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        adapter_manager.get_framework_adapter(crate::tools::FrameworkType::PlanAndExecute).await
+                    })
+                });
+                Some(adapter)
+            },
+            Err(e) => {
+                log::warn!("Failed to get framework adapter: {}", e);
+                None
+            }
+        };
+        
+        Ok(Self {
+            config,
+            ai_manager,
+            prompt_repo,
+            framework_adapter,
+            mcp_service,
+        })
+    }
+
+    /// 创建执行计划 - 基于通用 Prompt 模板
     pub async fn create_plan(&self, task: &TaskRequest) -> Result<PlanningResult, PlanAndExecuteError> {
         log::info!("开始为任务 '{}' 创建执行计划", task.name);
         
-        // 1. 分析任务复杂度
-        let complexity = self.analyze_task_complexity(task).await?;
+        // 1. 构建通用规划 Prompt
+        let planning_prompt = self.build_generic_planning_prompt(task).await?;
         
-        // 2. 生成初始计划
-        let initial_plan = self.generate_initial_plan(task, &complexity).await?;
+        // 2. 调用 AI 进行规划
+        let planning_response = self.call_ai_for_planning(&planning_prompt).await?;
         
-        // 3. 优化计划
-        let optimized_plan = self.optimize_plan(initial_plan, task).await?;
+        // 3. 解析规划结果
+        let plan = self.parse_planning_response(&planning_response)?;
         
-        // 4. 评估风险
-        let risk_assessment = self.assess_risks(&optimized_plan, task).await?;
-        
-        // 5. 计算资源需求
-        let resource_requirements = self.calculate_resource_requirements(&optimized_plan).await?;
-        
-        // 6. 计算置信度
-        let confidence = self.calculate_confidence(&optimized_plan, &risk_assessment).await?;
+        // 4. 计算基本指标
+        let confidence = self.calculate_basic_confidence(&plan).await?;
+        let risk_assessment = self.assess_generic_risks(&plan).await?;
+        let resource_requirements = self.calculate_basic_resources(&plan).await?;
         
         let result = PlanningResult {
-            plan: optimized_plan,
+            plan,
             confidence,
-            reasoning: self.generate_reasoning_explanation(task).await?,
+            reasoning: planning_response.clone(),
             risk_assessment,
             resource_requirements,
         };
@@ -175,187 +234,421 @@ impl Planner {
         Ok(result)
     }
 
-    /// 分析任务复杂度
-    async fn analyze_task_complexity(&self, task: &TaskRequest) -> Result<TaskComplexity, PlanAndExecuteError> {
-        let prompt = self.build_complexity_analysis_prompt(task).await?;
-        
-        let provider = self.ai_manager.get_provider(&self.config.ai_provider)
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        
-        let request = self.build_ai_request(&prompt)?;
-        let response = provider.send_chat_request(&request).await
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        
-        let content = match &response.message.content {
-            text => text,
+    /// 构建通用规划 Prompt
+    async fn build_generic_planning_prompt(&self, task: &TaskRequest) -> Result<String, PlanAndExecuteError> {
+        // 从数据库获取 Prompt 模板，或者使用默认模板
+        let prompt_template = if let Some(repo) = &self.prompt_repo {
+            repo.get_active_prompt(ArchitectureType::PlanExecute, StageType::Planning)
+                .await
+                .unwrap_or_else(|_| None)
+                .unwrap_or_else(|| self.get_default_planning_template())
+        } else {
+            self.get_default_planning_template()
         };
-        self.parse_complexity_response(content)
-    }
 
-    /// 生成初始计划
-    async fn generate_initial_plan(&self, task: &TaskRequest, complexity: &TaskComplexity) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        let prompt = self.build_planning_prompt(task, complexity).await?;
-        
-        let provider = self.ai_manager.get_provider(&self.config.ai_provider)
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        
-        let request = self.build_ai_request(&prompt)?;
-        let response = provider.send_chat_request(&request).await
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        
-        let content = match &response.message.content {
-            text => text,
+        // 获取可用工具信息
+        let tools_block = self.build_tools_information().await;
+
+        // 构建具体的 Prompt
+        let target_info = if let Some(target) = &task.target {
+            format!("目标: {} ({})", target.identifier, format!("{:?}", target.target_type))
+        } else {
+            "无特定目标".to_string()
         };
-        self.parse_plan_response(content, task)
-    }
 
-    /// 优化计划
-    async fn optimize_plan(&self, plan: ExecutionPlan, task: &TaskRequest) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        match self.config.planning_strategy {
-            PlanningStrategy::Sequential => self.optimize_sequential_plan(plan).await,
-            PlanningStrategy::Hierarchical => self.optimize_hierarchical_plan(plan).await,
-            PlanningStrategy::Parallel => self.optimize_parallel_plan(plan).await,
-            PlanningStrategy::Adaptive => self.optimize_adaptive_plan(plan, task).await,
-        }
-    }
-
-    /// 评估风险
-    async fn assess_risks(&self, plan: &ExecutionPlan, task: &TaskRequest) -> Result<RiskAssessment, PlanAndExecuteError> {
-        let prompt = self.build_risk_assessment_prompt(plan, task).await?;
-        
-        let provider = self.ai_manager.get_provider(&self.config.ai_provider)
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        
-        let request = self.build_ai_request(&prompt)?;
-        let response = provider.send_chat_request(&request).await
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        
-        let content = match &response.message.content {
-            text => text,
+        let parameters_str = if !task.parameters.is_empty() {
+            serde_json::to_string_pretty(&task.parameters)
+                .unwrap_or_else(|_| "无参数".to_string())
+        } else {
+            "无参数".to_string()
         };
-        self.parse_risk_assessment_response(content)
+
+        let prompt = prompt_template
+            .replace("{task_name}", &task.name)
+            .replace("{task_description}", &task.description)
+            .replace("{task_type}", &format!("{:?}", task.task_type))
+            .replace("{target_info}", &target_info)
+            .replace("{parameters}", &parameters_str)
+            .replace("{priority}", &format!("{:?}", task.priority))
+            .replace("{tools}", &tools_block);
+
+        Ok(prompt)
     }
 
-    /// 计算资源需求
-    async fn calculate_resource_requirements(&self, plan: &ExecutionPlan) -> Result<ResourceRequirements, PlanAndExecuteError> {
-        let mut total_time = 0;
-        let mut required_tools = Vec::new();
-        let mut memory_mb = 512; // 基础内存需求
-        let cpu_cores = 2; // 默认CPU需求
-        let network_mbps = 10; // 默认网络需求
+    /// 获取默认规划模板
+    fn get_default_planning_template(&self) -> String {
+        r#"你是一个Plan-and-Execute规划器。基于以下任务信息，生成一个由清晰、可执行步骤组成的计划。
+
+任务名称: {task_name}
+任务描述: {task_description}
+任务类型: {task_type}
+{target_info}
+优先级: {priority}
+参数: {parameters}
+
+可用工具（名称与参数签名）：
+{tools}
+
+重要：请严格以JSON返回，键为"steps"，每个步骤为一个对象，格式如下：
+{
+  "steps": [
+    {
+      "name": "步骤名称",
+      "description": "做什么、为什么",
+      "step_type": "ToolCall|AiReasoning|DataProcessing|Conditional|Parallel|Wait|ManualConfirmation",
+      "tool": {
+        "name": "可用工具名称",
+        "args": { "param1": "value", "param2": 123 }
+      }
+    }
+  ]
+}
+
+规则：
+- 如需使用工具，必须提供tool.name与tool.args(JSON对象)，参数名需与工具签名匹配；
+- 不使用工具时，可省略tool字段或将step_type设置为AiReasoning等；
+- 步骤数量建议3-10；
+- 仅返回JSON，不要附加其它文本。"#.to_string()
+    }
+
+    /// 构建工具信息块
+    async fn build_tools_information(&self) -> String {
+        let mut all_tools: Vec<ToolInfo> = Vec::new();
         
-        for step in &plan.steps {
-            total_time += step.estimated_duration;
-            
-            if let Some(tool_config) = &step.tool_config {
-                if !required_tools.contains(&tool_config.tool_name) {
-                    required_tools.push(tool_config.tool_name.clone());
+        // 从框架适配器获取工具
+        if let Some(framework_adapter) = &self.framework_adapter {
+            let available_tools = framework_adapter.list_available_tools().await;
+            for tool_name in available_tools {
+                if let Some(tool_info) = framework_adapter.get_tool_info(&tool_name).await {
+                    all_tools.push(tool_info);
                 }
             }
-            
-            // 根据步骤类型调整资源需求
-            match step.step_type {
-                StepType::ToolCall => memory_mb += 128,
-                StepType::AiReasoning => memory_mb += 256,
-                StepType::DataProcessing => memory_mb += 64,
-                StepType::Parallel => memory_mb += 512,
-                _ => {},
+        }
+        
+        // 框架适配器已经包含了所有工具（内置工具 + MCP工具）
+        // 不需要单独处理MCP工具，因为它们已经通过全局工具系统集成到框架适配器中
+        log::info!("所有工具（包括MCP工具）已通过框架适配器统一获取");
+        
+        // 去重工具（按名称）
+        let mut unique_tools: HashMap<String, ToolInfo> = HashMap::new();
+        for tool in all_tools {
+            unique_tools.entry(tool.name.clone()).or_insert(tool);
+        }
+        
+        let tool_infos: Vec<&ToolInfo> = unique_tools.values().collect();
+        
+        if tool_infos.is_empty() {
+            log::warn!("没有找到任何可用工具");
+            "(no tools available)".to_string()
+        } else {
+            log::info!("构建工具信息，共 {} 个工具", tool_infos.len());
+            let mut tool_lines: Vec<String> = Vec::new();
+            for info in &tool_infos {
+                // 构建工具参数签名
+                let mut parts: Vec<String> = Vec::new();
+                for param in &info.parameters.parameters {
+                    let param_type = match param.param_type {
+                        crate::tools::ParameterType::String => "string",
+                        crate::tools::ParameterType::Number => "number",
+                        crate::tools::ParameterType::Boolean => "boolean",
+                        crate::tools::ParameterType::Array => "array",
+                        crate::tools::ParameterType::Object => "object",
+                    };
+                    let param_str = if param.required {
+                        format!("{}: {}", param.name, param_type)
+                    } else {
+                        format!("{}?: {}", param.name, param_type)
+                    };
+                    parts.push(param_str);
+                }
+                
+                let signature = if parts.is_empty() {
+                    String::new()
+                } else {
+                    parts.join(", ")
+                };
+                
+                tool_lines.push(format!("- {}({}) - {}", 
+                    info.name, signature, info.description));
+            }
+            tool_lines.join("\n")
+        }
+    }
+
+    /// 调用 AI 进行规划
+    async fn call_ai_for_planning(&self, prompt: &str) -> Result<String, PlanAndExecuteError> {
+        let provider = self.ai_manager.get_provider(&self.config.ai_provider)
+            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+        
+        let request = self.build_ai_request(prompt)?;
+        let response = provider.send_chat_request(&request).await
+            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+        
+        Ok(response.message.content.clone())
+    }
+
+    /// 解析规划响应
+    fn parse_planning_response(&self, response: &str) -> Result<ExecutionPlan, PlanAndExecuteError> {
+        // 优先尝试JSON解析（包含可执行的工具信息）
+        if let Ok(plan) = self.parse_planning_response_json(response) {
+            return Ok(plan);
+        }
+
+        // 回退：解析为纯文本步骤
+        let steps = self.extract_steps_from_response(response)?;
+        let steps_count = steps.len();
+        
+        let plan = ExecutionPlan {
+            id: Uuid::new_v4().to_string(),
+            task_id: Uuid::new_v4().to_string(),
+            name: "Generated Plan".to_string(),
+            description: "AI generated execution plan".to_string(),
+            steps: steps.into_iter().enumerate().map(|(i, step_desc)| {
+                ExecutionStep {
+                    id: format!("step_{}", i + 1),
+                    name: format!("Step {}", i + 1),
+                    description: step_desc,
+                    step_type: StepType::AiReasoning,
+                    tool_config: None,
+                    parameters: HashMap::new(),
+                    estimated_duration: 60,
+                    retry_config: RetryConfig::default(),
+                    preconditions: Vec::new(),
+                    postconditions: Vec::new(),
+                }
+            }).collect(),
+            estimated_duration: (steps_count as u64) * 60,
+            created_at: SystemTime::now(),
+            dependencies: HashMap::new(),
+            metadata: HashMap::new(),
+        };
+        
+        Ok(plan)
+    }
+
+    /// JSON解析：从LLM返回的结构化计划中构建可执行计划
+    fn parse_planning_response_json(&self, response: &str) -> Result<ExecutionPlan, PlanAndExecuteError> {
+        let json_str = Self::extract_json_string(response)
+            .ok_or_else(|| PlanAndExecuteError::PlanningFailed("No JSON content found in response".to_string()))?;
+
+        let json: Value = serde_json::from_str(&json_str)
+            .map_err(|e| PlanAndExecuteError::PlanningFailed(format!("Invalid JSON plan: {}", e)))?;
+
+        let steps_val = json.get("steps").ok_or_else(||
+            PlanAndExecuteError::PlanningFailed("Missing 'steps' field in JSON plan".to_string())
+        )?;
+
+        let steps_arr = steps_val.as_array().ok_or_else(||
+            PlanAndExecuteError::PlanningFailed("Field 'steps' must be an array".to_string())
+        )?;
+
+        let mut built_steps: Vec<ExecutionStep> = Vec::new();
+        for (i, step) in steps_arr.iter().enumerate() {
+            let name = step.get("name").and_then(|v| v.as_str()).unwrap_or(&format!("Step {}", i + 1)).to_string();
+            let description = step.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let mut step_type_str = step.get("step_type").and_then(|v| v.as_str()).unwrap_or("AiReasoning");
+            let mut step_type = match step_type_str {
+                "ToolCall" => StepType::ToolCall,
+                "AiReasoning" => StepType::AiReasoning,
+                "DataProcessing" => StepType::DataProcessing,
+                "Conditional" => StepType::Conditional,
+                "Parallel" => StepType::Parallel,
+                "Wait" => StepType::Wait,
+                "ManualConfirmation" => StepType::ManualConfirmation,
+                _ => StepType::AiReasoning,
+            };
+
+            // 读取可选工具信息
+            let mut tool_config: Option<ToolConfig> = None;
+            if let Some(tool_obj) = step.get("tool").and_then(|v| v.as_object()) {
+                if let Some(tool_name) = tool_obj.get("name").and_then(|v| v.as_str()) {
+                    // 解析args对象
+                    let args_map = tool_obj.get("args").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+                    let mut tool_args: HashMap<String, serde_json::Value> = HashMap::new();
+                    for (k, v) in args_map.into_iter() { tool_args.insert(k, v); }
+                    tool_config = Some(ToolConfig {
+                        tool_name: tool_name.to_string(),
+                        tool_version: None,
+                        tool_args,
+                        timeout: Some(300),
+                        env_vars: HashMap::new(),
+                    });
+
+                    // 如果包含工具但未显式声明为ToolCall，则强制为ToolCall
+                    if !matches!(step_type, StepType::ToolCall) {
+                        step_type = StepType::ToolCall;
+                        step_type_str = "ToolCall";
+                    }
+                }
+            }
+
+            built_steps.push(ExecutionStep {
+                id: format!("step_{}", i + 1),
+                name,
+                description,
+                step_type,
+                tool_config,
+                parameters: HashMap::new(),
+                estimated_duration: step.get("estimated_duration").and_then(|v| v.as_u64()).unwrap_or(60),
+                retry_config: RetryConfig::default(),
+                preconditions: Vec::new(),
+                postconditions: Vec::new(),
+            });
+        }
+
+        if built_steps.is_empty() {
+            return Err(PlanAndExecuteError::PlanningFailed("No steps parsed from JSON plan".to_string()));
+        }
+
+        let plan = ExecutionPlan {
+            id: Uuid::new_v4().to_string(),
+            task_id: Uuid::new_v4().to_string(),
+            name: json.get("name").and_then(|v| v.as_str()).unwrap_or("Generated Plan").to_string(),
+            description: json.get("description").and_then(|v| v.as_str()).unwrap_or("AI generated execution plan").to_string(),
+            steps: built_steps,
+            estimated_duration: json.get("estimated_duration").and_then(|v| v.as_u64()).unwrap_or(60 *  (json.get("steps").and_then(|s| s.as_array()).map(|a| a.len()).unwrap_or(1) as u64)),
+            created_at: SystemTime::now(),
+            dependencies: HashMap::new(),
+            metadata: HashMap::new(),
+        };
+
+        Ok(plan)
+    }
+
+    /// 从响应文本中提取JSON字符串（支持```json代码块或首尾大括号）
+    fn extract_json_string(response: &str) -> Option<String> {
+        // 优先匹配```json代码块
+        if let Some(start_idx) = response.find("```json") {
+            let rest = &response[start_idx + 7..];
+            if let Some(end_idx) = rest.find("```") {
+                let block = &rest[..end_idx];
+                let trimmed = block.trim();
+                // 再次裁剪到首个{ 与末尾}
+                if let (Some(s), Some(e)) = (trimmed.find('{'), trimmed.rfind('}')) {
+                    if e > s { return Some(trimmed[s..=e].to_string()); }
+                }
+                return Some(trimmed.to_string());
+            }
+        }
+        // 次选：任意```代码块
+        if let Some(start_idx) = response.find("```") {
+            let rest = &response[start_idx + 3..];
+            if let Some(end_idx) = rest.find("```") {
+                let block = &rest[..end_idx];
+                let trimmed = block.trim();
+                if let (Some(s), Some(e)) = (trimmed.find('{'), trimmed.rfind('}')) {
+                    if e > s { return Some(trimmed[s..=e].to_string()); }
+                }
+                return Some(trimmed.to_string());
+            }
+        }
+        // 回退：扫描首个{ 和最后一个}
+        if let (Some(s), Some(e)) = (response.find('{'), response.rfind('}')) {
+            if e > s {
+                return Some(response[s..=e].to_string());
+            }
+        }
+        None
+    }
+
+    /// 从响应中提取步骤
+    fn extract_steps_from_response(&self, response: &str) -> Result<Vec<String>, PlanAndExecuteError> {
+        let mut steps = Vec::new();
+        
+        for line in response.lines() {
+            let trimmed = line.trim();
+            // 匹配形如 "1. 步骤描述" 的行
+            if let Some(captures) = regex::Regex::new(r"^\d+\.\s*(.+)$")
+                .unwrap()
+                .captures(trimmed) {
+                if let Some(step_desc) = captures.get(1) {
+                    steps.push(step_desc.as_str().to_string());
+                }
             }
         }
         
-        Ok(ResourceRequirements {
-            estimated_time: total_time,
-            required_tools,
-            memory_mb,
-            cpu_cores,
-            network_mbps,
+        if steps.is_empty() {
+            // 如果没有找到编号格式，尝试按行分割
+            for line in response.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && trimmed.len() > 10 { // 过滤太短的行
+                    steps.push(trimmed.to_string());
+                }
+            }
+        }
+        
+        if steps.is_empty() {
+            return Err(PlanAndExecuteError::PlanningFailed(
+                "Unable to extract steps from AI response".to_string()
+            ));
+        }
+        
+        Ok(steps)
+    }
+
+    /// 计算基本置信度
+    async fn calculate_basic_confidence(&self, plan: &ExecutionPlan) -> Result<f32, PlanAndExecuteError> {
+        // 简单的置信度计算：基于步骤数量和描述质量
+        let step_count = plan.steps.len() as f32;
+        let mut confidence: f32 = 0.5; // 基础置信度
+        
+        // 步骤数量合理性
+        if step_count >= 3.0 && step_count <= 10.0 {
+            confidence += 0.2;
+        } else if step_count > 10.0 {
+            confidence -= 0.1;
+        }
+        
+        // 步骤描述质量
+        let avg_description_length = plan.steps.iter()
+            .map(|s| s.description.len() as f32)
+            .sum::<f32>() / step_count;
+        
+        if avg_description_length > 20.0 {
+            confidence += 0.2;
+        }
+        
+        Ok(confidence.min(1.0).max(0.1))
+    }
+
+    /// 评估通用风险
+    async fn assess_generic_risks(&self, plan: &ExecutionPlan) -> Result<RiskAssessment, PlanAndExecuteError> {
+        let risk_level = if plan.steps.len() > 8 {
+            RiskLevel::Medium
+        } else {
+            RiskLevel::Low
+        };
+
+        Ok(RiskAssessment {
+            overall_risk: risk_level,
+            risk_items: vec![
+                RiskItem {
+                    description: "Execution complexity".to_string(),
+                    level: RiskLevel::Low,
+                    impact: "Potential delays in execution".to_string(),
+                    probability: 0.3,
+                }
+            ],
+            mitigation_strategies: vec![
+                "Monitor execution progress closely".to_string(),
+                "Have backup plans for critical steps".to_string(),
+            ],
         })
     }
 
-    /// 计算置信度
-    async fn calculate_confidence(&self, plan: &ExecutionPlan, risk_assessment: &RiskAssessment) -> Result<f32, PlanAndExecuteError> {
-        let mut confidence = 1.0;
-        
-        // 根据计划复杂度调整置信度
-        let complexity_factor = 1.0 - (plan.steps.len() as f32 * 0.02).min(0.3);
-        confidence *= complexity_factor;
-        
-        // 根据风险等级调整置信度
-        let risk_factor = match risk_assessment.overall_risk {
-            RiskLevel::Low => 0.95,
-            RiskLevel::Medium => 0.85,
-            RiskLevel::High => 0.70,
-            RiskLevel::Critical => 0.50,
-        };
-        confidence *= risk_factor;
-        
-        // 确保置信度在合理范围内
-        Ok(confidence.max(0.1).min(1.0))
+    /// 计算基本资源需求
+    async fn calculate_basic_resources(&self, plan: &ExecutionPlan) -> Result<ResourceRequirements, PlanAndExecuteError> {
+        Ok(ResourceRequirements {
+            estimated_time: plan.estimated_duration,
+            required_tools: vec!["ai_reasoning".to_string()],
+            memory_mb: 512,
+            cpu_cores: 1,
+            network_mbps: 10,
+        })
     }
 
-    /// 生成推理解释
-    async fn generate_reasoning_explanation(&self, task: &TaskRequest) -> Result<String, PlanAndExecuteError> {
-        Ok(format!(
-            "基于任务类型 '{:?}' 和目标 '{}' 的分析，采用 '{:?}' 策略进行规划。\
-             考虑了任务复杂度、资源需求和风险因素，制定了分步执行计划。",
-            task.task_type, task.target.address, self.config.planning_strategy
-        ))
-    }
-
-    // 辅助方法
-    async fn build_complexity_analysis_prompt(&self, task: &TaskRequest) -> Result<String, PlanAndExecuteError> {
-        let base = format!(
-            "分析以下任务的复杂度：\n\
-             任务类型: {:?}\n\
-             目标: {}\n\
-             描述: {}\n\
-             请评估任务的复杂度等级（简单/中等/复杂/非常复杂）并说明原因。",
-            task.task_type, task.target.address, task.description
-        );
-        self.decorate_with_dynamic_prompt(StageType::Planning, base).await
-    }
-
-    async fn build_planning_prompt(&self, task: &TaskRequest, complexity: &TaskComplexity) -> Result<String, PlanAndExecuteError> {
-        let base = format!(
-            "为以下任务制定详细的执行计划：\n\
-             任务: {}\n\
-             类型: {:?}\n\
-             目标: {}\n\
-             复杂度: {:?}\n\
-             请分解为具体的执行步骤，包括工具调用、参数配置等。",
-            task.name, task.task_type, task.target.address, complexity
-        );
-        self.decorate_with_dynamic_prompt(StageType::Planning, base).await
-    }
-
-    async fn build_risk_assessment_prompt(&self, plan: &ExecutionPlan, task: &TaskRequest) -> Result<String, PlanAndExecuteError> {
-        let base = format!(
-            "评估以下执行计划的风险：\n\
-             任务: {}\n\
-             步骤数: {}\n\
-             目标: {}\n\
-             请识别潜在风险并提供缓解策略。",
-            task.name, plan.steps.len(), task.target.address
-        );
-        self.decorate_with_dynamic_prompt(StageType::Reflection, base).await
-    }
-
-    async fn decorate_with_dynamic_prompt(&self, stage: StageType, base: String) -> Result<String, PlanAndExecuteError> {
-        if let Some(repo) = &self.prompt_repo {
-            match repo.get_active_prompt(ArchitectureType::PlanExecute, stage).await {
-                Ok(Some(dynamic)) => Ok(dynamic),
-                _ => Ok(base),
-            }
-        } else {
-            Ok(base)
-        }
-    }
-
-    fn build_ai_request(&self, prompt: &str) -> Result<crate::ai_adapter::types::ChatRequest, PlanAndExecuteError> {
-        use crate::ai_adapter::types::{ChatRequest, Message, MessageRole, MessageContent};
-        
-        use crate::ai_adapter::types::ChatOptions;
-        
+    /// 构建 AI 请求
+    fn build_ai_request(&self, prompt: &str) -> Result<ChatRequest, PlanAndExecuteError> {
         Ok(ChatRequest {
             model: self.config.model_config.model_name.clone(),
             messages: vec![Message {
@@ -381,119 +674,8 @@ impl Planner {
         })
     }
 
-    // 解析响应的方法（简化实现）
-    fn parse_complexity_response(&self, content: &str) -> Result<TaskComplexity, PlanAndExecuteError> {
-        // 简化的解析逻辑，实际应该使用更复杂的NLP解析
-        if content.to_lowercase().contains("简单") {
-            Ok(TaskComplexity::Simple)
-        } else if content.to_lowercase().contains("复杂") {
-            Ok(TaskComplexity::Complex)
-        } else {
-            Ok(TaskComplexity::Medium)
-        }
-    }
 
-    fn parse_plan_response(&self, content: &str, task: &TaskRequest) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        // 简化的解析逻辑，实际应该解析AI返回的结构化计划
-        let steps = self.generate_default_steps_for_task(task)?;
-        
-        Ok(ExecutionPlan {
-            id: Uuid::new_v4().to_string(),
-            task_id: task.id.clone(),
-            name: format!("{} - 执行计划", task.name),
-            description: format!("为任务 '{}' 生成的执行计划", task.name),
-            steps,
-            estimated_duration: 1800, // 30分钟默认
-            created_at: SystemTime::now(),
-            dependencies: HashMap::new(),
-            metadata: HashMap::new(),
-        })
-    }
 
-    fn parse_risk_assessment_response(&self, content: &str) -> Result<RiskAssessment, PlanAndExecuteError> {
-        // 简化的风险评估解析
-        Ok(RiskAssessment {
-            overall_risk: RiskLevel::Medium,
-            risk_items: vec![
-                RiskItem {
-                    description: "网络连接可能不稳定".to_string(),
-                    level: RiskLevel::Low,
-                    impact: "可能导致工具调用失败".to_string(),
-                    probability: 0.2,
-                }
-            ],
-            mitigation_strategies: vec![
-                "配置重试机制".to_string(),
-                "设置合理的超时时间".to_string(),
-            ],
-        })
-    }
-
-    fn generate_default_steps_for_task(&self, task: &TaskRequest) -> Result<Vec<ExecutionStep>, PlanAndExecuteError> {
-        let mut steps = Vec::new();
-        
-        match task.task_type {
-            TaskType::SecurityScan => {
-                steps.push(self.create_step("信息收集", "收集目标基本信息", StepType::ToolCall, Some("nmap".to_string()))?);
-                steps.push(self.create_step("漏洞扫描", "执行漏洞扫描", StepType::ToolCall, Some("nuclei".to_string()))?);
-                steps.push(self.create_step("结果分析", "分析扫描结果", StepType::AiReasoning, None)?);
-            },
-            TaskType::AssetDiscovery => {
-                steps.push(self.create_step("子域名发现", "发现子域名", StepType::ToolCall, Some("subfinder".to_string()))?);
-                steps.push(self.create_step("端口扫描", "扫描开放端口", StepType::ToolCall, Some("nmap".to_string()))?);
-                steps.push(self.create_step("服务识别", "识别运行的服务", StepType::ToolCall, Some("whatweb".to_string()))?);
-            },
-            _ => {
-                steps.push(self.create_step("默认步骤", "执行默认任务", StepType::ToolCall, None)?);
-            }
-        }
-        
-        Ok(steps)
-    }
-
-    fn create_step(&self, name: &str, description: &str, step_type: StepType, tool_name: Option<String>) -> Result<ExecutionStep, PlanAndExecuteError> {
-        let tool_config = tool_name.map(|name| ToolConfig {
-            tool_name: name,
-            tool_version: None,
-            tool_args: HashMap::new(),
-            timeout: Some(300), // 5分钟默认超时
-            env_vars: HashMap::new(),
-        });
-        
-        Ok(ExecutionStep {
-            id: Uuid::new_v4().to_string(),
-            name: name.to_string(),
-            description: description.to_string(),
-            step_type,
-            tool_config,
-            parameters: HashMap::new(),
-            estimated_duration: 300, // 5分钟默认
-            retry_config: RetryConfig::default(),
-            preconditions: Vec::new(),
-            postconditions: Vec::new(),
-        })
-    }
-
-    // 优化策略实现（简化版本）
-    async fn optimize_sequential_plan(&self, plan: ExecutionPlan) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        // 顺序优化：确保步骤按依赖关系排序
-        Ok(plan)
-    }
-
-    async fn optimize_hierarchical_plan(&self, plan: ExecutionPlan) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        // 分层优化：将步骤分组为不同层级
-        Ok(plan)
-    }
-
-    async fn optimize_parallel_plan(&self, plan: ExecutionPlan) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        // 并行优化：识别可以并行执行的步骤
-        Ok(plan)
-    }
-
-    async fn optimize_adaptive_plan(&self, plan: ExecutionPlan, _task: &TaskRequest) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        // 自适应优化：根据任务特性动态调整
-        Ok(plan)
-    }
 }
 
 /// 任务复杂度

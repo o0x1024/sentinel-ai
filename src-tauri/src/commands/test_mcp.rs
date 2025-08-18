@@ -1,14 +1,13 @@
-use crate::mcp::tool_adapter::ScanToolAdapter;
 use crate::services::mcp::McpService;
 use crate::tools::ToolSystem;
 use serde_json::Value;
-use std::sync::Arc;
 use tauri::State;
+use std::sync::Arc;
 
 /// 测试MCP工具注册和获取功能
 #[tauri::command]
 pub async fn test_mcp_tools_registration(
-    mcp_service: State<'_, McpService>,
+    mcp_service: State<'_, Arc<McpService>>,
     tool_system: State<'_, ToolSystem>,
     tool_id: Option<String>,
 ) -> Result<Value, String> {
@@ -167,7 +166,7 @@ pub async fn test_mcp_tools_registration(
 /// 测试AI服务工具获取功能
 #[tauri::command]
 pub async fn test_ai_service_tools(
-    mcp_service: State<'_, McpService>,
+    mcp_service: State<'_, Arc<McpService>>,
 ) -> Result<Value, String> {
     println!("🤖 开始测试AI服务工具获取功能...");
     
@@ -208,7 +207,7 @@ pub async fn test_ai_service_tools(
 /// 获取当前MCP工具状态
 #[tauri::command]
 pub async fn get_mcp_tools_status(
-    mcp_service: State<'_, McpService>,
+    mcp_service: State<'_, Arc<McpService>>,
 ) -> Result<Value, String> {
     let mut status = serde_json::json!({
         "timestamp": chrono::Utc::now().to_rfc3339(),

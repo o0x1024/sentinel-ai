@@ -2,18 +2,12 @@ use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::{AiConfig, AiServiceManager, AiToolCall};
 use crate::services::database::{Database, DatabaseService};
 use anyhow::Result;
-use chrono::Utc;
-use futures::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tracing::trace;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
+
 
 // DTO for Tauri command argument to avoid CommandArg bound issues
 #[derive(Debug, Clone, Deserialize)]
@@ -377,10 +371,9 @@ pub async fn send_ai_message(
 // 发送AI消息（流式）- 统一入口，通过多Agent调度系统
 #[tauri::command]
 pub async fn send_ai_message_stream(
-    request: SendStreamMessageRequest,
-    app: tauri::AppHandle,
+    _request: SendStreamMessageRequest,
+    _app: tauri::AppHandle,
 ) {
-    use std::collections::HashMap;
     
 
    
@@ -464,7 +457,7 @@ pub async fn get_ai_service_info(
 #[tauri::command]
 pub async fn configure_ai_service(
     service_name: String,
-    mut config: CommandAiConfig,
+    config: CommandAiConfig,
     ai_manager: State<'_, Arc<AiServiceManager>>,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -692,7 +685,7 @@ pub async fn update_ai_models(models: Vec<AiModelInfo>, app: AppHandle) -> Resul
     tracing::info!("Updating AI model list: {:?}", models);
 
     // 将模型列表保存到应用状态中
-    if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
+    if let Some(_ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
         // 这里可以将模型信息保存到AI服务管理器中
         // 目前先记录日志
         for model_info in &models {
@@ -1135,7 +1128,7 @@ async fn test_ollama_connection(
 pub async fn save_ai_config(
     config: SaveAiConfigRequest,
     db: State<'_, Arc<DatabaseService>>,
-    ai_manager: State<'_, Arc<AiServiceManager>>,
+    _ai_manager: State<'_, Arc<AiServiceManager>>,
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!("Starting to save AI configuration...");
@@ -1508,7 +1501,7 @@ pub async fn stop_ai_stream(request: StopStreamRequest, app: AppHandle) -> Resul
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
         // 遍历所有服务，尝试停止对应的对话流
         for service_name in ai_manager.list_services() {
-            if let Some(service) = ai_manager.get_service(&service_name) {
+            if let Some(_service) = ai_manager.get_service(&service_name) {
                 // 这里可以添加服务级别的停止逻辑
                 tracing::debug!("Attempting to stop stream in service: {}", service_name);
             }
@@ -1548,10 +1541,14 @@ pub async fn get_ai_config(
             }
         },
         Ok(None) => {
-            tracing::info!("No AI providers configuration found, using default");
+            tracing::info!("No AI providers configuration found, using defaults from @ai_adapter");
+            // 返回默认提供商配置（未启用，便于前端展示并填写）
+            ai_config["providers"] = default_providers_config();
         },
         Err(e) => {
             tracing::warn!("Failed to load AI providers configuration: {}", e);
+            // 发生错误时也提供默认配置，避免前端空列表
+            ai_config["providers"] = default_providers_config();
         }
     }
     
@@ -1588,6 +1585,132 @@ pub async fn get_ai_config(
     
     tracing::info!("Successfully retrieved AI configuration");
     Ok(ai_config)
+}
+
+/// 生成默认的AI提供商配置（与前端 `AiProviderConfig` 结构兼容）
+fn default_providers_config() -> serde_json::Value {
+    use serde_json::json;
+    // 提供商清单与后端支持的 provider 名称保持一致
+    let providers: Vec<(&'static str, serde_json::Value)> = vec![
+        (
+            "OpenAI",
+            json!({
+                "id": "openai",
+                "provider": "openai",
+                "name": "OpenAI",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.openai.com/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "Anthropic",
+            json!({
+                "id": "anthropic",
+                "provider": "anthropic",
+                "name": "Anthropic",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.anthropic.com",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "Gemini",
+            json!({
+                "id": "gemini",
+                "provider": "gemini",
+                "name": "Gemini",
+                "enabled": false,
+                "api_key": null,
+                "api_base": null, // Gemini 主要通过 key 查询，无必须 base
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "DeepSeek",
+            json!({
+                "id": "deepseek",
+                "provider": "deepseek",
+                "name": "DeepSeek",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.deepseek.com/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "Ollama",
+            json!({
+                "id": "ollama",
+                "provider": "ollama",
+                "name": "Ollama",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "http://localhost:11434",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "Groq",
+            json!({
+                "id": "groq",
+                "provider": "groq",
+                "name": "Groq",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.groq.com/openai/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "Cohere",
+            json!({
+                "id": "cohere",
+                "provider": "cohere",
+                "name": "Cohere",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.cohere.ai",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "xAI",
+            json!({
+                "id": "xai",
+                "provider": "xai",
+                "name": "xAI",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.x.ai/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+    ];
+
+    let mut map = serde_json::Map::new();
+    for (key, value) in providers {
+        map.insert(key.to_string(), value);
+    }
+    serde_json::Value::Object(map)
 }
 
 // 调度策略相关命令

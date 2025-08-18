@@ -29,7 +29,6 @@ pub use deepseek::DeepSeekProvider;
 use crate::ai_adapter::types::ProviderConfig;
 use crate::ai_adapter::error::{AiAdapterError, Result};
 use crate::ai_adapter::types::AiProvider;
-use crate::ai_adapter::core::BaseProvider;
 use std::sync::Arc;
 
 /// 提供商工厂

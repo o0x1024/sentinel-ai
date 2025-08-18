@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use sqlx::{sqlite::SqlitePool, Row};
 use serde_json;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 pub struct AssetDao {
     pool: SqlitePool,
@@ -118,7 +117,7 @@ impl AssetDao {
 
     /// 更新资产
     pub async fn update_asset(&self, id: &str, request: UpdateAssetRequest) -> Result<bool> {
-        let mut updates: Vec<String> = Vec::new();
+        let  _updates: Vec<String> = Vec::new();
         let mut query_builder = sqlx::QueryBuilder::new("UPDATE assets SET ");
         let mut has_updates = false;
 
@@ -316,7 +315,6 @@ impl AssetDao {
             if let Some(last_seen_before) = filter.last_seen_before {
                 if !has_conditions {
                     query_builder.push(" WHERE ");
-                    has_conditions = true;
                 } else {
                     query_builder.push(" AND ");
                 }

@@ -369,7 +369,8 @@ const getProviderIcon = (provider: string) => {
   const icons: Record<string, string> = {
     'OpenAI': 'fas fa-brain',
     'Anthropic': 'fas fa-robot',
-    'Google': 'fab fa-google',
+      'Google': 'fab fa-google',
+      'Gemini': 'fab fa-google',
     'Ollama': 'fas fa-server',
     'DeepSeek': 'fas fa-eye'
   }
@@ -380,7 +381,8 @@ const getProviderName = (provider: string) => {
   const names: Record<string, string> = {
     'OpenAI': 'OpenAI',
     'Anthropic': 'Anthropic',
-    'Google': 'Google',
+      'Google': 'Google',
+      'Gemini': 'Gemini',
     'Ollama': 'Ollama',
     'DeepSeek': 'DeepSeek'
   }

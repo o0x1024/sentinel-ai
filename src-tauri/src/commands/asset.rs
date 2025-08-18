@@ -1,10 +1,7 @@
 use crate::models::asset::*;
 use crate::services::AssetService;
-use crate::database::AssetDao;
-use sqlx::SqlitePool;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tauri::State;
 
 /// 初始化资产服务

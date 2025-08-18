@@ -3,8 +3,7 @@
 //! 为不同的AI提供商提供统一的适配器接口
 
 use async_trait::async_trait;
-use std::collections::HashMap;
-use std::sync::Arc;
+
 
 use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};

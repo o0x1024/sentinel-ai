@@ -8,7 +8,6 @@ use tokio_util::bytes;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use futures::StreamExt;
 
 use crate::ai_adapter::error::{AiAdapterError, Result};
 use crate::ai_adapter::types::{HttpRequest, HttpResponse};
@@ -69,17 +68,25 @@ pub fn build_client_with_global_proxy(timeout: Duration) -> Result<Client> {
     let mut builder = Client::builder().timeout(timeout);
     if let Some(cfg) = get_global_proxy() {
         if cfg.enabled {
-            if let (Some(host), Some(port)) = (cfg.host, cfg.port) {
-                let scheme = cfg.scheme.unwrap_or_else(|| "http".to_string());
+            if let (Some(host), Some(port)) = (cfg.host.as_ref(), cfg.port) {
+                let scheme = cfg.scheme.as_deref().unwrap_or("http");
                 let proxy_url = format!("{}://{}:{}", scheme, host, port);
+                tracing::info!("Configuring HTTP client with proxy: {}", proxy_url);
                 let mut proxy = Proxy::all(&proxy_url)
                     .map_err(|e| AiAdapterError::ConfigurationError(e.to_string()))?;
-                if let (Some(u), Some(p)) = (cfg.username, cfg.password) {
-                    proxy = proxy.basic_auth(&u, &p);
+                if let (Some(u), Some(p)) = (cfg.username.as_ref(), cfg.password.as_ref()) {
+                    proxy = proxy.basic_auth(u, p);
+                    tracing::info!("Using proxy authentication for user: {}", u);
                 }
                 builder = builder.proxy(proxy);
+            } else {
+                tracing::warn!("Proxy is enabled but host or port is missing");
             }
+        } else {
+            tracing::debug!("Proxy is disabled in configuration");
         }
+    } else {
+        tracing::debug!("No proxy configuration found");
     }
     builder
         .build()
@@ -98,7 +105,7 @@ pub struct HttpClient {
 impl HttpClient {
     /// 创建新的HTTP客户端
     pub fn new(timeout: Duration) -> Result<Self> {
-        let client = build_client_with_global_proxy(timeout)?;
+        let client: Client = build_client_with_global_proxy(timeout)?;
         
         let mut default_headers = HashMap::new();
         default_headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -226,6 +233,9 @@ impl HttpClient {
         // 发送请求
         let start_time = SystemTime::now();
         let response = request.send().await?;
+
+        tracing::info!("响应: {:?}", response);
+
         let duration = start_time.elapsed().unwrap_or_default();
         
         // 记录响应信息

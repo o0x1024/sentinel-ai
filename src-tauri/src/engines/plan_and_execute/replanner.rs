@@ -8,8 +8,6 @@ use crate::services::prompt_db::PromptRepository;
 use crate::engines::plan_and_execute::executor::{ExecutionResult, StepResult, StepStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::SystemTime;
-use uuid::Uuid;
 use tokio::sync::Mutex;
 
 /// 重新规划器配置
@@ -290,7 +288,7 @@ impl Replanner {
     ) -> Result<ReplanResult, PlanAndExecuteError> {
         log::warn!("处理运行时异常: 步骤 '{}' 失败", failed_step.step_id);
         
-        let trigger = ReplanTrigger::StepFailure {
+        let _trigger = ReplanTrigger::StepFailure {
             step_id: failed_step.step_id.clone(),
             error_message: failed_step.error.clone().unwrap_or_default(),
             retry_count: failed_step.retry_count,
@@ -343,7 +341,7 @@ impl Replanner {
     pub async fn optimize_plan(
         &self,
         current_plan: &ExecutionPlan,
-        task: &TaskRequest,
+        _task: &TaskRequest,
     ) -> Result<ReplanResult, PlanAndExecuteError> {
         log::info!("开始优化现有计划");
         
@@ -534,7 +532,7 @@ impl Replanner {
         &self,
         current_plan: &ExecutionPlan,
         analysis: &ExecutionAnalysis,
-        task: &TaskRequest,
+        _task: &TaskRequest,
     ) -> Result<ReplanResult, PlanAndExecuteError> {
         // 保守策略：只调整失败的步骤
         let mut new_plan = current_plan.clone();
@@ -615,7 +613,7 @@ impl Replanner {
         current_plan: &ExecutionPlan,
         analysis: &ExecutionAnalysis,
         task: &TaskRequest,
-        trigger: Option<&ReplanTrigger>,
+        _trigger: Option<&ReplanTrigger>,
     ) -> Result<ReplanResult, PlanAndExecuteError> {
         // 自适应策略：根据情况选择合适的方法
         if analysis.success_rate > 0.7 {
@@ -691,7 +689,7 @@ impl Replanner {
         &self,
         current_plan: &ExecutionPlan,
         failed_step: &StepResult,
-        failure_analysis: &FailureAnalysis,
+        _failure_analysis: &FailureAnalysis,
         _task: &TaskRequest,
     ) -> Result<ExecutionPlan, PlanAndExecuteError> {
         let mut emergency_plan = current_plan.clone();
@@ -833,14 +831,19 @@ impl Replanner {
 #[derive(Debug, Clone)]
 struct FailureAnalysis {
     root_cause: String,
+    #[allow(unused)]
     failure_category: String,
+    #[allow(unused)]
     suggested_fixes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 struct HistoricalAnalysis {
+    #[allow(unused)]
     avg_success_rate: f64,
+    #[allow(unused)]
     common_failure_points: Vec<String>,
+    #[allow(unused)]
     optimal_configurations: HashMap<String, serde_json::Value>,
 }
 
@@ -848,6 +851,7 @@ struct HistoricalAnalysis {
 struct OptimizationOpportunity {
     description: String,
     affected_steps: Vec<String>,
+    #[allow(unused)]
     expected_improvement: f64,
 }
 

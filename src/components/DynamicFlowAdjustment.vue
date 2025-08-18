@@ -276,8 +276,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { DetailedExecutionStatus } from '../types/enhanced-execution'
-import type { FlowAdjustment } from '../types/enhanced-execution'
+import { DetailedExecutionStatus } from '../types/McpClientManager-execution'
+import type { FlowAdjustment } from '../types/McpClientManager-execution'
 
 // 步骤状态类型
 type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'cancelled'

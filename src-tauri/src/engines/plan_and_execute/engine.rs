@@ -10,7 +10,7 @@ use crate::{
         memory_manager::{MemoryManager, MemoryManagerConfig},
         planner::{Planner, PlannerConfig},
         replanner::{Replanner, ReplannerConfig},
-        tool_interface::{ToolInterface, ToolInterfaceConfig},
+
         types::*,
     },
     services::{AiServiceManager, database::DatabaseService},
@@ -39,7 +39,7 @@ pub struct PlanAndExecuteConfig {
     /// 内存管理器配置
     pub memory_config: MemoryManagerConfig,
     /// 工具接口配置
-    pub tool_config: ToolInterfaceConfig,
+    pub tool_config: crate::tools::ToolManagerConfig,
     /// 引擎级别配置
     pub engine_config: EngineConfig,
 }
@@ -145,7 +145,7 @@ pub struct PlanAndExecuteEngine {
     executor: Arc<Executor>,
     replanner: Arc<Replanner>,
     memory_manager: Arc<MemoryManager>,
-    tool_interface: Arc<ToolInterface>,
+    tool_manager: Arc<RwLock<crate::tools::UnifiedToolManager>>,
 
     // AI 服务
     ai_adapter_manager: Arc<AiAdapterManager>,
@@ -180,7 +180,16 @@ impl PlanAndExecuteEngine {
             Some(PromptRepository::new(pool.clone()))
         };
 
-        let planner = Arc::new(Planner::new(config.planner_config.clone(), prompt_repo.clone())?);
+        // 尝试获取MCP服务（如果AI服务管理器中有的话）
+        let mcp_service = ai_service_manager.get_mcp_service();
+        
+        // 创建带有MCP服务的规划器
+        let planner = Arc::new(Planner::with_mcp_service(
+            config.planner_config.clone(), 
+            prompt_repo.clone(),
+            mcp_service
+        )?);
+        
         let executor = Arc::new(Executor::new(config.executor_config.clone(), db_service.clone()));
         let replanner = Arc::new(Replanner::new(
             config.replanner_config.clone(),
@@ -188,7 +197,9 @@ impl PlanAndExecuteEngine {
             prompt_repo.clone(),
         )?);
         let memory_manager = Arc::new(MemoryManager::new(config.memory_config.clone()));
-        let tool_interface = Arc::new(ToolInterface::new(db_service.clone()).await?);
+        let tool_system = crate::tools::get_global_tool_system()
+            .map_err(|e| PlanAndExecuteError::ToolFailed(format!("获取全局工具系统失败: {}", e)))?;
+        let tool_manager = tool_system.get_manager();
 
         let engine = Self {
             config,
@@ -197,7 +208,7 @@ impl PlanAndExecuteEngine {
             executor,
             replanner,
             memory_manager,
-            tool_interface,
+            tool_manager,
             ai_adapter_manager,
             ai_service_manager,
             active_sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -228,9 +239,7 @@ impl PlanAndExecuteEngine {
         log::info!("启动 Plan-and-Execute 引擎");
 
         // 启动工具发现
-        if let Err(e) = self.tool_interface.start_tool_discovery().await {
-            log::warn!("工具发现启动失败: {}", e);
-        }
+        // 工具发现功能已集成到统一适配器中
 
         // 启动自动清理
         if self.config.engine_config.enable_auto_cleanup {
@@ -780,7 +789,7 @@ impl PlanAndExecuteEngine {
     }
 
     async fn complete_task_success(&self, session_id: &str, result: TaskResult) {
-        let mut session = {
+        let  session = {
             let mut active_sessions = self.active_sessions.write().await;
             active_sessions.remove(session_id)
         };
@@ -810,7 +819,7 @@ impl PlanAndExecuteEngine {
     }
 
     async fn complete_task_failure(&self, session_id: &str, error: PlanAndExecuteError) {
-        let mut session = {
+        let  session = {
             let mut active_sessions = self.active_sessions.write().await;
             active_sessions.remove(session_id)
         };
@@ -894,9 +903,7 @@ impl PlanAndExecuteEngine {
                 }
 
                 // 清理工具接口缓存
-                if let Err(e) = engine.tool_interface.cleanup_expired_cache().await {
-                    log::error!("工具缓存清理失败: {}", e);
-                }
+                // 缓存清理功能已集成到统一适配器中
             }
         });
 
@@ -970,7 +977,7 @@ impl Clone for PlanAndExecuteEngine {
             executor: Arc::clone(&self.executor),
             replanner: Arc::clone(&self.replanner),
             memory_manager: Arc::clone(&self.memory_manager),
-            tool_interface: Arc::clone(&self.tool_interface),
+            tool_manager: Arc::clone(&self.tool_manager),
             ai_adapter_manager: Arc::clone(&self.ai_adapter_manager),
             ai_service_manager: Arc::clone(&self.ai_service_manager),
             active_sessions: Arc::clone(&self.active_sessions),
@@ -993,7 +1000,7 @@ impl Default for PlanAndExecuteConfig {
             executor_config: ExecutorConfig::default(),
             replanner_config: ReplannerConfig::default(),
             memory_config: MemoryManagerConfig::default(),
-            tool_config: ToolInterfaceConfig::default(),
+            tool_config: crate::tools::ToolManagerConfig::default(),
             engine_config: EngineConfig::default(),
         }
     }
@@ -1031,97 +1038,105 @@ impl Default for EngineMetrics {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::ai_adapter::core::AiAdapterManager;
-//     use crate::services::{AiServiceManager, DatabaseService};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai_adapter::core::AiAdapterManager;
+    use crate::services::{AiServiceManager, DatabaseService};
 
-//     #[tokio::test]
-//     async fn test_engine_lifecycle() {
-//         let mut db_service = DatabaseService::new();
-//         db_service
-//             .initialize()
-//             .await
-//             .expect("Failed to initialize database");
-//         let db_service = Arc::new(db_service);
+    #[tokio::test]
+    async fn test_engine_lifecycle() {
+        let mut db_service = DatabaseService::new();
+        db_service
+            .initialize()
+            .await
+            .expect("Failed to initialize database");
+        let db_service = Arc::new(db_service);
 
-//         let config = PlanAndExecuteConfig::default();
-//         let ai_adapter_manager = Arc::new(AiAdapterManager::global().clone());
-//         let ai_service_manager = Arc::new(AiServiceManager::new(db_service));
+        let config = PlanAndExecuteConfig::default();
+        let ai_adapter_manager = Arc::new(AiAdapterManager::new());
+        let ai_service_manager = Arc::new(AiServiceManager::new(db_service.clone()));
 
-//         let engine =
-//             PlanAndExecuteEngine::new(config, ai_adapter_manager, ai_service_manager)
-//                 .await
-//                 .unwrap();
+        let engine =
+            PlanAndExecuteEngine::new(
+                config,
+                ai_adapter_manager,
+                ai_service_manager,
+                db_service.clone(),
+            )
+            .await
+            .unwrap();
 
-//         // 测试启动
-//         assert!(engine.start().await.is_ok());
-//         assert_eq!(engine.get_status().await, EngineStatus::Running);
+        // 测试启动
+        assert!(engine.start().await.is_ok());
+        assert_eq!(engine.get_status().await, EngineStatus::Running);
 
-//         // 测试暂停和恢复
-//         assert!(engine.pause().await.is_ok());
-//         assert_eq!(engine.get_status().await, EngineStatus::Paused);
+        // 测试暂停和恢复
+        assert!(engine.pause().await.is_ok());
+        assert_eq!(engine.get_status().await, EngineStatus::Paused);
 
-//         assert!(engine.resume().await.is_ok());
-//         assert_eq!(engine.get_status().await, EngineStatus::Running);
+        assert!(engine.resume().await.is_ok());
+        assert_eq!(engine.get_status().await, EngineStatus::Running);
 
-//         // 测试停止
-//         assert!(engine.stop().await.is_ok());
-//         assert_eq!(engine.get_status().await, EngineStatus::Stopped);
-//     }
+        // 测试停止
+        assert!(engine.stop().await.is_ok());
+        assert_eq!(engine.get_status().await, EngineStatus::Stopped);
+    }
 
-//     #[tokio::test]
-//     async fn test_task_execution() {
-//         let mut db_service = DatabaseService::new();
+    #[tokio::test]
+    async fn test_task_execution() {
+        let mut db_service = DatabaseService::new();
 
-//         db_service
-//             .initialize()
-//             .await
-//             .expect("Failed to initialize database");
-//         let db_service = Arc::new(db_service);
+        db_service
+            .initialize()
+            .await
+            .expect("Failed to initialize database");
+        let db_service = Arc::new(db_service);
 
-//         let config = PlanAndExecuteConfig::default();
-//         let ai_adapter_manager = Arc::new(AiAdapterManager::global().clone());
-//         let ai_service_manager = Arc::new(AiServiceManager::new(db_service));
+        let config = PlanAndExecuteConfig::default();
+        let ai_adapter_manager = Arc::new(AiAdapterManager::new());
+        let ai_service_manager = Arc::new(AiServiceManager::new(db_service.clone()));
 
-//         let engine =
-//             PlanAndExecuteEngine::new(config, ai_adapter_manager.clone(), ai_service_manager)
-//                 .await
-//                 .unwrap();
+        let engine =
+            PlanAndExecuteEngine::new(
+                config,
+                ai_adapter_manager.clone(),
+                ai_service_manager,
+                db_service.clone(),
+            )
+            .await
+            .unwrap();
 
-//         engine.start().await.unwrap();
+        engine.start().await.unwrap();
 
-//         let request = TaskRequest {
-//             id: Uuid::new_v4().to_string(),
-//             name: "测试任务".to_string(),
-//             description: "这是一个测试任务".to_string(),
-//             task_type: TaskType::SecurityScan,
-//             target: TargetInfo {
-//                 target_type: TargetType::Website,
-//                 address: "https://example.com".to_string(),
-//                 port: Some(443),
-//                 port_range: None,
-//                 protocols: vec!["https".to_string()],
-//                 credentials: None,
-//                 metadata: HashMap::new(),
-//             },
-//             priority: Priority::Medium,
-//             parameters: HashMap::new(),
-//             constraints: HashMap::new(),
-//             metadata: HashMap::new(),
-//             created_at: SystemTime::now(),
-//         };
+        let request = TaskRequest {
+            id: Uuid::new_v4().to_string(),
+            name: "测试任务".to_string(),
+            description: "这是一个测试任务".to_string(),
+            task_type: TaskType::InformationRetrieval,
+            target: Some(TargetInfo {
+                target_type: TargetType::Url,
+                identifier: "https://example.com".to_string(),
+                parameters: HashMap::new(),
+                credentials: None,
+                metadata: HashMap::new(),
+            }),
+            priority: Priority::Medium,
+            parameters: HashMap::new(),
+            constraints: HashMap::new(),
+            metadata: HashMap::new(),
+            created_at: SystemTime::now(),
+        };
 
-//         let session_id = engine.execute_task(request).await.unwrap();
-//         assert!(!session_id.is_empty());
+        let session_id = engine.execute_task(request).await.unwrap();
+        assert!(!session_id.is_empty());
 
-//         // 等待一段时间让任务开始执行
-//         tokio::time::sleep(Duration::from_millis(100)).await;
+        // 等待一段时间让任务开始执行
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-//         let status = engine.get_task_status(&session_id).await;
-//         assert!(status.is_some());
+        let status = engine.get_task_status(&session_id).await;
+        assert!(status.is_some());
 
-//         engine.stop().await.unwrap();
-//     }
-// }
+        engine.stop().await.unwrap();
+    }
+}

@@ -11,7 +11,7 @@ use crate::prompt::prompt_template_manager::ValidationRules;
 use crate::prompt::{
     CreateTestRequest, OptimizationResult, OptimizationSuggestion, OptimizerConfig, PerformanceRecord, PromptBuildContext, PromptBuildResult, PromptBuilder, PromptConfig, PromptConfigManager, PromptOptimizer, PromptTemplateManager, SystemMetrics, TemplateManagerConfig, TokenUsage
 };
-use crate::prompt::prompt_ab_test_manager::{PromptABTestManager, ABTest, ABTestConfig, ABTestResults};
+use crate::prompt::prompt_ab_test_manager::{PromptABTestManager, ABTest, ABTestResults};
 use crate::prompt::prompt_optimizer::{BatchTestResult, ConfigReport, ExecutionContext, PerformanceAnalysis, ReportType, TestScenario};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -605,7 +605,7 @@ impl PromptService {
     /// 获取A/B测试变体
     async fn get_ab_test_variant(
         &self,
-        config_id: &str,
+        _config_id: &str,
         user_id: &Option<String>,
     ) -> Result<Option<String>> {
         // 查找针对此配置的活跃A/B测试
@@ -615,7 +615,7 @@ impl PromptService {
             // 检查测试是否适用于此配置
             // 简化匹配逻辑，假设所有测试都适用于当前配置
             if !test.variants.is_empty() {
-                let user_key = user_id.as_deref().unwrap_or("anonymous");
+                let _user_key = user_id.as_deref().unwrap_or("anonymous");
                 let user_context = crate::prompt::prompt_ab_test_manager::UserContext {
                     user_id: user_id.clone(),
                     session_id: "default".to_string(),

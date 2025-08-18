@@ -11,7 +11,6 @@ use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
 use crate::ai_adapter::http::HttpClient;
 use crate::ai_adapter::utils;
-use crate::ai_adapter::raw_message::{RawChatRequest, RawChatResponse, RawChatStreamResponse, RawChatOptions};
 
 /// 基础提供商结构
 pub struct BaseProvider {

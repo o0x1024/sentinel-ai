@@ -1,4 +1,4 @@
-use crate::tools::{ToolSystem, ToolInfo, ToolExecutionParams};
+use crate::tools::{ToolSystem, ToolExecutionParams};
 use std::sync::Arc;
 use std::collections::HashMap as StdHashMap;
 use serde::{Deserialize, Serialize};
@@ -113,7 +113,7 @@ pub async fn get_scan_result(
 #[tauri::command]
 pub async fn cancel_scan(
     scan_id: String,
-    tool_system: State<'_, Arc<ToolSystem>>,
+    _tool_system: State<'_, Arc<ToolSystem>>,
 ) -> Result<ScanResponse, String> {
     let _uuid = Uuid::parse_str(&scan_id).map_err(|e| format!("无效的扫描ID: {}", e))?;
 

@@ -30,20 +30,37 @@ tauri-plugin-shell = "2"
 
 futures-util = "0.3"
 # 子域名扫描工具
-rsubdomain = "1.2.5"
+rsubdomain = "1.2.6"
 
 
 rustscan = "2.4.1"
 
-# MCP协议支持 - 使用官方Rust SDK
-rmcp = { version = "0.2.0", features = ["client", "macros", "transport-async-rw", "transport-child-process", "transport-sse-client", "reqwest"] }
+# MCP协议支持 - 使用官方Rust SDK，启用所有新特性
+rmcp = { version = "0.5.0", features = [
+    "client", 
+    "server", 
+    "macros", 
+    "transport-async-rw", 
+    "transport-child-process", 
+    "transport-sse-client", 
+    "transport-sse-server",
+    "transport-streamable-http-client",
+    "transport-streamable-http-server",
+    "reqwest",
+    "auth",
+    "uuid",
+    "base64"
+] }
 
 # 数据库支持
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 
 # HTTP客户端
-reqwest = { version = "0.12.0", features = ["json"] }
+reqwest = { version = "0.12.0", features = ["json", "stream"] }
 http = "1"
+
+# SSE客户端支持
+eventsource-client = "0.12"
 
 # 序列化/反序列化
 serde = { version = "1.0", features = ["derive"] }
@@ -92,6 +109,7 @@ base64 = "0.22"
 url = "2.4"
 derive_more = { version = "2.0.1", features = ["full"] }
 md5 = "0.7"
+sha2 = "0.10"
 
 # 网络扫描工具依赖
 # 子域名扫描相关
@@ -124,6 +142,13 @@ tauri-plugin-fs = "2"
 # 文件系统监控
 notify = "6.1"
 fastrand = "2.3.0"
+
+# 信号处理
+signal-hook = "0.3"
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.dev]
 # 开发环境优化

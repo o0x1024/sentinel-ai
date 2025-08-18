@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tauri::State;
 use uuid::Uuid;
-use log::{info, warn, error, debug};
+use log::{info, error};
 
 /// ReWOO 测试状态管理
 pub struct ReWOOTestState {
@@ -87,7 +87,7 @@ pub struct EngineStatusInfo {
 /// 初始化 ReWOO 引擎
 #[tauri::command]
 pub async fn init_rewoo_engine(
-    config: ReWOOConfig,
+    _config: ReWOOConfig,
     state: State<'_, Arc<Mutex<ReWOOTestState>>>,
 ) -> Result<String, String> {
     // 注意：这里需要实际的 AI Provider 和 Tool Manager 实现
@@ -125,7 +125,7 @@ pub async fn get_rewoo_engine_status(
 #[tauri::command]
 pub async fn execute_rewoo_test(
     test_config: TestConfig,
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
     state: State<'_, Arc<Mutex<ReWOOTestState>>>,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
@@ -245,10 +245,11 @@ pub async fn execute_rewoo_test(
         message: "成功获取AI Provider".to_string(),
         details: None,
     });
+
     
     // 创建ReWOO工具管理器
-    let tool_manager = match crate::engines::rewoo::rewoo_tool_adapter::create_rewoo_tool_manager(db.inner().clone()).await {
-        Ok(manager) => {
+    let _tool_adapter = match crate::tools::get_global_engine_adapter() {
+        Ok(adapter) => {
             test_result.logs.push(LogEntry {
                 timestamp: SystemTime::now(),
                 level: LogLevel::INFO,
@@ -256,7 +257,7 @@ pub async fn execute_rewoo_test(
                 message: "成功创建ReWOO工具管理器".to_string(),
                 details: None,
             });
-            manager
+            adapter
         }
         Err(e) => {
             let error_msg = format!("创建ReWOO工具管理器失败: {}", e);
@@ -281,10 +282,9 @@ pub async fn execute_rewoo_test(
     // 创建ReWOO引擎
     let mut rewoo_engine = match crate::engines::rewoo::ReWOOEngine::new(
         ai_provider,
-        tool_manager,
         test_config.rewoo_config.clone(),
         db.inner().clone(),
-    ) {
+    ).await {
         Ok(engine) => {
             test_result.logs.push(LogEntry {
                 timestamp: SystemTime::now(),
@@ -494,6 +494,7 @@ pub async fn get_available_tools() -> Result<Vec<String>, String> {
             Ok(tool_names)
         }
         Err(e) => {
+            error!("获取可用工具失败: {}", e);
             Ok(vec![])
         }
     }

@@ -1,5 +1,5 @@
 <template>
-  <div class="enhanced-state-machine">
+  <div class="McpClientManager-state-machine">
     <!-- 状态机控制面板 -->
     <div class="card bg-base-100 shadow-xl mb-6">
       <div class="card-body">
@@ -172,12 +172,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { DetailedExecutionStatus } from '../types/enhanced-execution'
+import { DetailedExecutionStatus } from '../types/McpClientManager-execution'
 import type { 
   StateTransitionEvent, 
   ExecutionWarning,
   StateHistoryEntry 
-} from '../types/enhanced-execution'
+} from '../types/McpClientManager-execution'
 
 // Props
 interface Props {
@@ -539,7 +539,7 @@ defineExpose({
 </script>
 
 <style scoped>
-.enhanced-state-machine {
+.McpClientManager-state-machine {
   @apply space-y-6;
 }
 

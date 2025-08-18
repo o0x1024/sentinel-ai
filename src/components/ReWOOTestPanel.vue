@@ -478,11 +478,11 @@ const testResults = ref<TestResult[]>([])
 const customTest = reactive<CustomTestConfig>({
   name: '1',
   task: '请扫描一下mgtv.com有哪些子域名',
-  timeout_seconds: 600,
+  timeout_seconds: 300,
   expected_tools: [],
   rewoo_config: {
     planner: {
-      model_name: 'deepseek-reasoner',
+      model_name: 'deepseek-chat',
       temperature: 0.0,
       max_tokens: 4000,
       max_steps: 10

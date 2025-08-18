@@ -17,6 +17,7 @@ pub struct PromptBuilder {
     /// 配置管理器
     config_manager: PromptConfigManager,
     /// 模板缓存
+    #[allow(unused)]
     template_cache: HashMap<String, CompiledTemplate>,
     /// 变量解析器
     variable_resolver: VariableResolver,
@@ -728,7 +729,7 @@ mod tests {
     #[tokio::test]
     async fn test_prompt_builder() {
         let config_manager = PromptConfigManager::new();
-        let mut builder = PromptBuilder::new(config_manager);
+        let builder = PromptBuilder::new(config_manager);
         
         let context = PromptBuildContext {
             user_query: "测试查询".to_string(),

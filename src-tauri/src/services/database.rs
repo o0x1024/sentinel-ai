@@ -860,16 +860,6 @@ impl DatabaseService {
         Ok(())
     }
 
-    /// 获取初始数据库架构SQL语句 - 不再需要，直接在create_database_schema中实现
-    fn get_initial_schema_statements(&self) -> Vec<String> {
-        vec![]
-    }
-
-    /// 运行数据库迁移 - 不再需要，直接在initialize中创建表结构
-    async fn run_migrations(&self, _pool: &SqlitePool) -> Result<()> {
-        Ok(())
-    }
-
     /// 获取数据库连接池
     pub fn get_pool(&self) -> Result<&SqlitePool> {
         self.pool
@@ -1697,6 +1687,7 @@ impl DatabaseService {
         Ok(())
     }
 
+    #[allow(unused)]
     async fn get_ai_roles(&self) -> Result<Vec<AiRole>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT id, title, description, prompt, is_system, created_at, updated_at FROM ai_roles ORDER BY created_at DESC")
@@ -1719,6 +1710,7 @@ impl DatabaseService {
         Ok(roles)
     }
 
+    #[allow(unused)]
     async fn create_ai_role(&self, role: &AiRole) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query("INSERT INTO ai_roles (id, title, description, prompt, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -1734,6 +1726,7 @@ impl DatabaseService {
         Ok(())
     }
 
+    #[allow(unused)]
     async fn update_ai_role(&self, role: &AiRole) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query("UPDATE ai_roles SET title = ?, description = ?, prompt = ?, updated_at = ? WHERE id = ?")
@@ -1747,6 +1740,7 @@ impl DatabaseService {
         Ok(())
     }
 
+    #[allow(unused)]
     async fn delete_ai_role(&self, role_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
         tracing::info!("Executing SQL to delete role with ID: {}", role_id);
@@ -1852,74 +1846,7 @@ impl DatabaseService {
             .execute(pool)
             .await?;
         }
-
-
-       
-
-        // 创建默认MCP服务器配置
-        let default_mcp_server = (
-            "default_mcp_server",
-            "本地MCP服务器",
-            "默认的本地MCP服务器配置",
-            "http://localhost:8080",
-            "http",
-            "none",
-            r#"{"username":"","password":"","token":""}"#,
-            "mcp-server",
-            r#"["--port", "8080"]"#,
-            true,
-            true,
-            true,
-            3,
-            5000,
-            30000,
-            r#"{}"#,
-        );
-
-        let (
-            id,
-            name,
-            description,
-            url,
-            connection_type,
-            auth_type,
-            auth_config,
-            command,
-            args,
-            is_enabled,
-            is_default,
-            auto_connect,
-            retry_count,
-            retry_delay,
-            timeout,
-            metadata,
-        ) = default_mcp_server;
-
-        sqlx::query(r#"
-            INSERT OR IGNORE INTO mcp_server_configs (
-                id, name, description, url, connection_type, auth_type, auth_config,
-                command, args, is_enabled, is_default, auto_connect, retry_count, retry_delay, timeout, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#)
-        .bind(id)
-        .bind(name)
-        .bind(description)
-        .bind(url)
-        .bind(connection_type)
-        .bind(auth_type)
-        .bind(auth_config)
-        .bind(command)
-        .bind(args)
-        .bind(is_enabled)
-        .bind(is_default)
-        .bind(auto_connect)
-        .bind(retry_count)
-        .bind(retry_delay)
-        .bind(timeout)
-        .bind(metadata)
-        .execute(pool)
-        .await?;
-
+    
         // 初始化默认AI角色
         self.initialize_default_roles(pool).await?;
 

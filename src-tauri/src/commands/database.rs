@@ -1,12 +1,10 @@
 // 数据库管理命令模块
 // 暂时简化实现，等架构稳定后再完善
 
-use crate::models::database::Vulnerability;
 use crate::services::database::DatabaseService;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
-use uuid::Uuid;
 
 // 临时定义QueryHistory结构体，等待数据库模型完善
 #[derive(Debug, Serialize, Deserialize)]

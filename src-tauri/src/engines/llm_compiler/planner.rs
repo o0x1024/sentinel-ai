@@ -8,16 +8,15 @@
 //! - 可重新规划
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use tracing::{info, warn, error, debug};
+use chrono::Utc;
+use tracing::{info, warn, debug};
 
 use crate::services::ai::AiService;
-use crate::tools::ToolSystem;
+
 use super::types::*;
 use crate::services::prompt_db::PromptRepository;
 use crate::models::prompt::{ArchitectureType, StageType};
@@ -25,14 +24,15 @@ use crate::models::prompt::{ArchitectureType, StageType};
 /// LLMCompiler Planner - 智能任务规划器
 pub struct LlmCompilerPlanner {
     ai_service: Arc<AiService>,
-    tool_system: Arc<ToolSystem>,
+    tool_adapter: Arc<dyn crate::tools::EngineToolAdapter>,
+    #[allow(unused)]
     config: LlmCompilerConfig,
     prompt_repo: Option<PromptRepository>,
 }
 
 impl LlmCompilerPlanner {
-    pub fn new(ai_service: Arc<AiService>, tool_system: Arc<ToolSystem>, config: LlmCompilerConfig, prompt_repo: Option<PromptRepository>) -> Self {
-        Self { ai_service, tool_system, config, prompt_repo }
+    pub fn new(ai_service: Arc<AiService>, tool_adapter: Arc<dyn crate::tools::EngineToolAdapter>, config: LlmCompilerConfig, prompt_repo: Option<PromptRepository>) -> Self {
+        Self { ai_service, tool_adapter, config, prompt_repo }
     }
 
     /// 生成DAG执行计划
@@ -56,21 +56,25 @@ impl LlmCompilerPlanner {
     
     /// 获取可用工具描述
     async fn get_available_tools_description(&self) -> Result<String> {
-        let tools = self.tool_system.list_tools().await;
+        let tools = self.tool_adapter.list_available_tools().await;
         
         if tools.is_empty() {
             return Ok("暂无可用工具".to_string());
         }
         
-        let tool_descriptions: Vec<String> = tools.iter()
-            .map(|tool| {
-                format!("- {}: {} (类别: {:?})", 
-                    tool.name, 
-                    tool.description,
-                    tool.category
-                )
-            })
-            .collect();
+        let mut tool_descriptions = Vec::new();
+        for tool_name in &tools {
+            if let Some(tool_info) = self.tool_adapter.get_tool_info(tool_name).await {
+                tool_descriptions.push(format!(
+                    "- {}: {} (类别: {:?})", 
+                    tool_info.name, 
+                    tool_info.description,
+                    tool_info.category
+                ));
+            } else {
+                tool_descriptions.push(format!("- {}: 工具信息不可用", tool_name));
+            }
+        }
             
         Ok(tool_descriptions.join("\n"))
     }

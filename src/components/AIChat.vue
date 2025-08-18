@@ -822,7 +822,7 @@ const formatTime = (timestamp: Date) => timestamp.toLocaleTimeString([], { hour:
 // 解析消息内容，分离主要内容和工具调用结果
 const getMainContent = (content: string): string => {
   // 移除工具执行相关的内容（保持向后兼容）
-  let mainContent = content
+  const mainContent = content
     .replace(/🔧 正在执行工具: [^\n]+\.\.\./g, '')
     .replace(/✅ 工具执行完成: [^\n]+/g, '')
     .replace(/❌ 工具执行失败: [^\n]+/g, '')

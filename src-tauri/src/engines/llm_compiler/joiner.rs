@@ -12,7 +12,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use chrono::Utc;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn};
 
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
@@ -38,6 +38,7 @@ pub struct IntelligentJoiner {
 #[derive(Debug, Clone)]
 struct JoinerDecisionRecord {
     /// 决策时间
+    #[allow(unused)]
     timestamp: chrono::DateTime<Utc>,
     /// 决策类型
     decision: JoinerDecision,
@@ -46,8 +47,10 @@ struct JoinerDecisionRecord {
     /// 执行轮次
     round: usize,
     /// 任务完成数
+    #[allow(unused)]
     completed_tasks: usize,
     /// 任务失败数
+    #[allow(unused)]
     failed_tasks: usize,
     /// 置信度
     confidence: f64,
@@ -82,8 +85,10 @@ struct DecisionAnalysis {
     /// 分析原因
     reasoning: String,
     /// 关键指标
+    #[allow(unused)]
     key_metrics: HashMap<String, Value>,
     /// 建议的下一步行动
+    #[allow(unused)]
     suggested_actions: Vec<String>,
 }
 
@@ -341,7 +346,7 @@ impl IntelligentJoiner {
         &self,
         basic_metrics: HashMap<String, Value>,
         goal_completion: f64,
-        efficiency_analysis: HashMap<String, Value>,
+        _efficiency_analysis: HashMap<String, Value>,
         risk_assessment: HashMap<String, Value>,
         ai_decision: JoinerDecision,
         round: usize,

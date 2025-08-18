@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::engines::types::*;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 /// 知识实体类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -270,8 +270,10 @@ pub struct IntelligentMemory {
     /// 学习反馈存储
     feedback_history: Vec<LearningFeedback>,
     /// 向量嵌入存储
+    #[allow(unused)]
     embeddings: HashMap<String, VectorEmbedding>,
     /// 查询历史
+    #[allow(unused)]
     query_history: Vec<MemoryQueryHistory>,
 }
 
@@ -356,6 +358,7 @@ impl IntelligentMemory {
     }
 
     /// 从执行会话提取经验
+    #[allow(unused)]
     fn extract_experience_from_session(&self, session: &ExecutionSession) -> Option<ExecutionExperience> {
         if session.step_results.is_empty() {
             return None;
@@ -426,6 +429,7 @@ impl IntelligentMemory {
     }
 
     /// 更新实体使用统计
+    #[allow(unused)]
     fn update_entity_usage(&mut self, entity_id: &str) {
         if let Some(entity) = self.entities.get_mut(entity_id) {
             entity.usage_count += 1;
@@ -434,6 +438,7 @@ impl IntelligentMemory {
     }
 
     /// 更新关系使用统计
+    #[allow(unused)]
     fn update_relationship_usage(&mut self, relationship_id: &str) {
         if let Some(relationship) = self.relationships.get_mut(relationship_id) {
             relationship.usage_count += 1;
@@ -579,7 +584,7 @@ impl Memory for IntelligentMemory {
         results.truncate(query.max_results);
 
         // 记录查询历史
-        let query_history = MemoryQueryHistory {
+        let _query_history = MemoryQueryHistory {
             id: Uuid::new_v4().to_string(),
             query_type: query.query_type.clone(),
             query_content: serde_json::to_value(query)?,
@@ -602,8 +607,8 @@ impl Memory for IntelligentMemory {
     fn retrieve_applicable_templates(
         &self,
         task_type: &str,
-        environment: &str,
-        target_properties: &serde_json::Value,
+        _environment: &str,
+        _target_properties: &serde_json::Value,
     ) -> Result<Vec<SimilaritySearchResult<PlanTemplate>>> {
         let mut results = Vec::new();
 

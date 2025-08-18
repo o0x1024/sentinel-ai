@@ -4,8 +4,8 @@
     <div class="demo-header">
       <h1 class="text-4xl font-bold mb-4">Plan-and-Execute 引擎测试</h1>
       <p class="demo-description text-lg text-base-content/70 max-w-4xl mx-auto">
-        专门测试 Plan-and-Execute 引擎的功能，包括任务规划、执行、重新规划和状态管理。
-        该引擎采用经典的规划-执行模式，适合需要明确步骤分解的复杂任务。
+        通用的 Plan-and-Execute 引擎，由 Prompt 驱动，适合各种复杂任务的分解和执行。
+        支持研究分析、问题解决、内容生成、数据处理等多种任务类型，无特定领域限制。
       </p>
     </div>
 
@@ -55,18 +55,6 @@
     <div class="health-status mb-8" v-if="engineStatus.initialized">
       <div class="card bg-base-100 shadow-xl">
         <div class="card-body">
-          <div class="flex justify-between items-center mb-6">
-            <h3 class="card-title">引擎统计</h3>
-            <button 
-              class="btn btn-outline btn-sm"
-              @click="loadStatistics"
-              :disabled="loadingStatistics"
-            >
-              <span v-if="loadingStatistics" class="loading loading-spinner loading-sm"></span>
-              刷新统计
-            </button>
-          </div>
-          
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <div class="stat bg-base-200 rounded-lg">
               <div class="stat-title">总任务数</div>
@@ -301,11 +289,61 @@
       </div>
     </div>
 
+    <!-- 快速 Prompt 输入 -->
+    <div class="quick-prompt mb-8" v-if="engineStatus.initialized">
+      <div class="card bg-gradient-to-r from-primary/10 to-secondary/10 shadow-xl">
+        <div class="card-body">
+          <h3 class="card-title mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            </svg>
+            快速执行任务
+          </h3>
+          <p class="text-sm text-base-content/70 mb-4">
+            直接输入您的需求，AI 将自动规划并执行任务步骤
+          </p>
+          
+          <div class="form-control mb-4">
+            <textarea 
+              class="textarea textarea-bordered h-24" 
+              placeholder="例如：帮我分析今天的新闻趋势、创建一个项目计划、整理数据报告..."
+              v-model="quickPrompt.prompt"
+            ></textarea>
+          </div>
+          
+          <div class="flex gap-4 items-center">
+            <select class="select select-bordered select-sm" v-model="quickPrompt.task_type">
+              <option value="">自动识别</option>
+              <option value="research">研究分析</option>
+              <option value="problem_solving">问题解决</option>
+              <option value="content_generation">内容生成</option>
+              <option value="reasoning">推理分析</option>
+            </select>
+            
+            <select class="select select-bordered select-sm" v-model="quickPrompt.priority">
+              <option value="normal">普通优先级</option>
+              <option value="high">高优先级</option>
+              <option value="low">低优先级</option>
+            </select>
+            
+            <button 
+              class="btn btn-primary"
+              @click="executeQuickPrompt"
+              :disabled="!quickPrompt.prompt.trim() || executing"
+            >
+              <span v-if="executing" class="loading loading-spinner loading-sm"></span>
+              {{ executing ? '执行中...' : '立即执行' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 任务调度表单 -->
     <div class="execute-form mb-8" v-if="engineStatus.initialized">
       <div class="card bg-base-100 shadow-xl">
         <div class="card-body">
-          <h3 class="card-title mb-6">Plan-and-Execute 任务</h3>
+          <h3 class="card-title mb-6">详细任务配置</h3>
           
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- 左侧：基本信息 -->
@@ -342,8 +380,13 @@
                   <option value="research">研究分析</option>
                   <option value="problem_solving">问题解决</option>
                   <option value="data_processing">数据处理</option>
-                  <option value="content_creation">内容创作</option>
-                  <option value="automation">自动化任务</option>
+                  <option value="content_generation">内容生成</option>
+                  <option value="information_retrieval">信息检索</option>
+                  <option value="automation">任务自动化</option>
+                  <option value="reasoning">推理分析</option>
+                  <option value="document_processing">文档处理</option>
+                  <option value="code_related">代码相关</option>
+                  <option value="communication">通信交互</option>
                 </select>
               </div>
               
@@ -590,18 +633,6 @@
     <div class="available-tools mb-8" v-if="engineStatus.initialized">
       <div class="card bg-base-100 shadow-xl">
         <div class="card-body">
-          <div class="flex justify-between items-center mb-6">
-            <h3 class="card-title">可用架构</h3>
-            <button 
-              class="btn btn-outline btn-sm"
-              @click="loadAvailableArchitectures"
-              :disabled="loadingArchitectures"
-            >
-              <span v-if="loadingArchitectures" class="loading loading-spinner loading-sm"></span>
-              刷新
-            </button>
-          </div>
-          
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div 
               v-for="arch in availableArchitectures" 
@@ -777,7 +808,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 import FlowchartVisualization from './FlowchartVisualization.vue'
-import { EnhancedStateMachine, StateMachineFactory } from '../utils/enhanced-state-machine'
 import {
   DetailedExecutionStatus,
   type EnhancedExecuteRequest,
@@ -911,6 +941,7 @@ const currentPlanData = ref<any>(null)
 const initializing = ref(false)
 const loadingStatistics = ref(false)
 const dispatching = ref(false)
+const executing = ref(false)
 const loadingTasks = ref(false)
 const loadingArchitectures = ref(false)
 const taskDetailVisible = ref(false)
@@ -926,6 +957,14 @@ const dispatchForm = reactive<MultiAgentDispatchRequest>({
   priority: 'normal',
   max_execution_time: 30,
   custom_parameters: {}
+})
+
+// 快速 Prompt 数据
+const quickPrompt = reactive({
+  prompt: '',
+  task_type: '',
+  priority: 'normal',
+  max_steps: 10
 })
 
 // 引擎配置
@@ -949,7 +988,7 @@ const taskFilter = reactive({
 
 // 当前执行状态
 const currentExecution = ref({
-  taskId: null,
+  taskId: '',
   currentStep: null,
   progress: 0,
   phase: 'idle'
@@ -1036,8 +1075,6 @@ const initializeEngine = async () => {
     
     // 加载初始数据
     await Promise.all([
-      loadStatistics(),
-      loadAvailableArchitectures(),
       loadTasks()
     ])
     
@@ -1057,76 +1094,14 @@ const setupRealTimeConnection = () => {
   console.log('[MultiAgentDemo] 设置实时连接')
 }
 
-const onStateTransition = (event: StateTransitionEvent) => {
-  console.log('[MultiAgentDemo] 状态转换:', event)
-  // 更新UI状态
-}
 
-const onRealTimeUpdate = (update: RealTimeUpdate) => {
-  console.log('[MultiAgentDemo] 实时更新:', update)
-  // 更新流程图和状态
-}
-
-const loadStatistics = async () => {
-  console.log('[PlanExecuteDemo] 开始加载执行统计')
-  
-  loadingStatistics.value = true
-  try {
-    const response = await invoke('get_plan_execute_statistics') as StatisticsResponse
-    console.log('[PlanExecuteDemo] 获取执行统计响应:', response)
-    
-    if (response) {
-      statistics.value = {
-        totalSessions: response.total_sessions || 0,
-        completedSessions: response.completed_sessions || 0,
-        failedSessions: response.failed_sessions || 0,
-        replanCount: response.replan_count || 0,
-        averageExecutionTime: response.average_execution_time || 0,
-        successRate: response.success_rate || 0
-      }
-      console.log('[PlanExecuteDemo] 执行统计已更新:', statistics.value)
-    }
-  } catch (error) {
-    console.error('[PlanExecuteDemo] 获取执行统计异常:', error)
-    toast.error(`获取执行统计失败: ${error}`)
-  } finally {
-    loadingStatistics.value = false
-  }
-}
-
-const loadAvailableArchitectures = async () => {
-  console.log('[PlanExecuteDemo] 开始加载可用架构')
-  
-  loadingArchitectures.value = true
-  try {
-    const response = await invoke('list_plan_execute_architectures') as AgentArchitecture[]
-    console.log('[PlanExecuteDemo] 获取可用架构响应:', response)
-    
-    if (response) {
-      availableArchitectures.value = response
-      console.log('[PlanExecuteDemo] 可用架构已更新:', availableArchitectures.value)
-    }
-  } catch (error) {
-    console.error('[PlanExecuteDemo] 获取可用架构异常:', error)
-    toast.error(`获取可用架构失败: ${error}`)
-  } finally {
-    loadingArchitectures.value = false
-  }
-}
 
 const loadTasks = async () => {
   console.log('[PlanExecuteDemo] 开始加载任务列表')
   
   loadingTasks.value = true
   try {
-    const response = await invoke('get_plan_execute_sessions', { filter: taskFilter }) as DispatchStatus[]
-    console.log('[PlanExecuteDemo] 获取任务列表响应:', response)
-    
-    if (response) {
-      taskList.value = response
-    } else {
-      taskList.value = []
-    }
+
     console.log('[PlanExecuteDemo] 任务列表已更新')
   } catch (error) {
     console.error('[PlanExecuteDemo] 获取任务列表异常:', error)
@@ -1134,6 +1109,55 @@ const loadTasks = async () => {
     taskList.value = []
   } finally {
     loadingTasks.value = false
+  }
+}
+
+const executeQuickPrompt = async () => {
+  console.log('[PlanExecuteDemo] 执行快速 Prompt 任务')
+  
+  if (!quickPrompt.prompt.trim()) {
+    toast.error('请输入任务描述')
+    return
+  }
+  
+  executing.value = true
+  
+  try {
+    const response = await invoke<TaskExecuteResponse>('execute_generic_prompt_task', {
+      request: {
+        prompt: quickPrompt.prompt,
+        task_type: quickPrompt.task_type || undefined,
+        priority: quickPrompt.priority,
+        max_steps: quickPrompt.max_steps,
+        context: {}
+      }
+    })
+    
+    console.log('[PlanExecuteDemo] 快速任务执行响应:', response)
+    
+    if (response.success && response.data) {
+      toast.success(`任务已启动！任务ID: ${response.data.task_id}`)
+      
+      // 清空表单
+      quickPrompt.prompt = ''
+      quickPrompt.task_type = ''
+      
+      // 刷新任务列表
+      await loadTasks()
+      
+      // 跳转到任务详情
+      currentExecution.value.taskId = response.data.task_id
+      currentExecution.value.phase = 'planning'
+      
+    } else {
+      console.error('[PlanExecuteDemo] 任务执行失败:', response.error)
+      toast.error(response.error || '任务执行失败')
+    }
+  } catch (error) {
+    console.error('[PlanExecuteDemo] 快速任务执行异常:', error)
+    toast.error('执行出错：' + (error as Error).message)
+  } finally {
+    executing.value = false
   }
 }
 

@@ -2,7 +2,6 @@
 //! 
 //! 为前端提供prompt管理和优化的API接口
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
@@ -12,10 +11,9 @@ use anyhow::Result;
 use crate::prompt::{ABTest, CustomTemplate, TemplateType, TestScenario, UsageStats};
 use crate::services::{PromptBuildRequest, PromptService};
 use crate::prompt::{
-    CreateTestRequest, OptimizationResult, OptimizationSuggestion, OptimizerConfig, 
-    PerformanceRecord, PromptBuildContext, PromptBuildResult, PromptBuilder, 
-    PromptConfig, PromptConfigManager, PromptOptimizer, PromptTemplateManager, 
-    SystemMetrics, TemplateManagerConfig, TokenUsage, ReportType
+    CreateTestRequest, OptimizationResult, OptimizationSuggestion,
+    PerformanceRecord, 
+    PromptConfig, ReportType
 };
 use crate::services::{
     PromptServiceConfig, PromptSession, PromptBuildResponse, ServiceStats, OptimizationRequest

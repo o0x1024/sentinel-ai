@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use rmcp::model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo};
+use rmcp::model::{Implementation, ProtocolVersion};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -615,14 +615,7 @@ pub fn serialize_message(message: &McpMessage) -> Result<String> {
     serde_json::to_string(message).map_err(|e| anyhow!("Failed to serialize MCP message: {}", e))
 }
 
-/// 检查协议版本兼容性
-pub fn check_protocol_compatibility(
-    client_version: &ProtocolVersion,
-    server_version: &ProtocolVersion,
-) -> bool {
-    // 目前简单实现，只检查主版本号
-    client_version == server_version
-}
+
 
 /// 创建错误消息
 pub fn create_error_message(code: i32, message: &str, data: Option<Value>) -> McpMessage {
@@ -682,11 +675,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_protocol_compatibility() {
-        assert!(check_protocol_compatibility(
-            &ProtocolVersion::V_2024_11_05,
-            &ProtocolVersion::V_2024_11_05
-        ));
-    }
+
 }

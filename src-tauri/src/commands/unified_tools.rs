@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
-use tauri::State;
 use uuid::Uuid;
 
 
@@ -32,13 +31,16 @@ pub async fn unified_list_tools() -> Result<Vec<ToolInfo>, String> {
     let tools = tool_system.list_tools().await;
     
     let tool_infos = tools.into_iter().map(|tool| ToolInfo {
+        id: tool.id,
         name: tool.name,
         description: tool.description,
+        version: tool.version,
         category: tool.category,
         parameters: tool.parameters,
         metadata: tool.metadata,
         available: tool.available,
         installed: tool.installed,
+        source: tool.source,
     }).collect();
     
     Ok(tool_infos)
@@ -76,13 +78,16 @@ pub async fn unified_search_tools(
     let search_result = tool_system.search_tools(search_query).await;
     
     let tool_infos = search_result.tools.into_iter().map(|tool| ToolInfo {
+        id: tool.id,
         name: tool.name,
         description: tool.description,
+        version: tool.version,
         category: tool.category,
         parameters: tool.parameters,
         metadata: tool.metadata,
         available: tool.available,
         installed: tool.installed,
+        source: tool.source,
     }).collect();
     
     Ok(ToolSearchResponse {
@@ -218,13 +223,16 @@ pub async fn unified_get_tool_info(tool_name: String) -> Result<Option<ToolInfo>
     let tool_info = tools.into_iter()
         .find(|tool| tool.name == tool_name)
         .map(|tool| ToolInfo {
+            id: tool.id,
             name: tool.name,
             description: tool.description,
+            version: tool.version,
             category: tool.category,
             parameters: tool.parameters,
             metadata: tool.metadata,
             available: tool.available,
             installed: tool.installed,
+            source: tool.source,
         });
     
     Ok(tool_info)

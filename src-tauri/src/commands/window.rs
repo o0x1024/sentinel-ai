@@ -2,7 +2,7 @@
 //! 
 //! 提供窗口创建、管理和控制的Tauri命令接口
 
-use tauri::{command, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, PhysicalPosition, PhysicalSize};
+use tauri::{command, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

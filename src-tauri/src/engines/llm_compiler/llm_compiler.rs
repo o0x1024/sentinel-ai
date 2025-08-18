@@ -6,8 +6,6 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{info, warn, error, debug};
-use uuid::Uuid;
-use chrono::Utc;
 
 use crate::services::ai::AiService;
 use crate::tools::ToolSystem;
@@ -43,15 +41,18 @@ impl LlmCompilerEngine {
     /// 创建新的LLMCompiler引擎实例
     pub fn new(
         ai_service: Arc<AiService>,
-        tool_system: Arc<ToolSystem>,
+        _tool_system: Arc<ToolSystem>,
         config: LlmCompilerConfig,
         db_service: Arc<DatabaseService>,
-    ) -> Self {
+    ) -> Result<Self, anyhow::Error> {
         // 初始化各个组件
         let pool = db_service.get_pool().expect("DB pool not initialized");
+        let tool_adapter = crate::tools::get_global_engine_adapter()
+            .map_err(|e| anyhow::anyhow!("获取全局工具适配器失败: {}", e))?;
+        
         let planner = Arc::new(LlmCompilerPlanner::new(
             ai_service.clone(),
-            tool_system.clone(),
+            tool_adapter.clone(),
             config.clone(),
             Some(PromptRepository::new(pool.clone())),
         ));
@@ -59,7 +60,7 @@ impl LlmCompilerEngine {
         let task_fetcher = Arc::new(TaskFetchingUnit::new(config.clone()));
         
         let executor_pool = Arc::new(ParallelExecutorPool::new(
-            tool_system.clone(),
+            tool_adapter.clone(),
             config.clone(),
         ));
         
@@ -69,7 +70,7 @@ impl LlmCompilerEngine {
             Some(PromptRepository::new(pool.clone())),
         )));
         
-        Self {
+        Ok(Self {
             planner,
             task_fetcher,
             executor_pool,
@@ -77,7 +78,7 @@ impl LlmCompilerEngine {
             ai_service,
             config,
             prompt_repo: Some(PromptRepository::new(pool.clone())),
-        }
+        })
     }
 
     /// 执行工作流 - 主入口点

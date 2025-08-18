@@ -7,17 +7,15 @@ use crate::services::database::DatabaseService;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
-use tokio::process::Command as AsyncCommand;
 use tokio::sync::Semaphore;
 use tokio::time::timeout as tokio_timeout;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 // ============================================================================
@@ -264,7 +262,10 @@ impl PortScanTool {
             author: "Built-in".to_string(),
             version: "2.0.0".to_string(),
             license: "MIT".to_string(),
+            homepage: None,
+            repository: None,
             tags: vec!["port".to_string(), "scanning".to_string(), "network".to_string(), "tcp".to_string()],
+            install_command: None,
             requirements: vec![],
         };
 
@@ -299,6 +300,17 @@ impl PortScanTool {
                     default_value: Some(json!(3)),
                 },
             ],
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string"},
+                    "ports": {"type": "string"},
+                    "timeout": {"type": "number"}
+                },
+                "required": ["target"]
+            }),
+            required: vec!["target".to_string()],
+            optional: vec!["ports".to_string(), "timeout".to_string()],
         };
 
         Self { 
@@ -438,12 +450,14 @@ impl UnifiedTool for PortScanTool {
                 
                 Ok(ToolExecutionResult {
                     execution_id,
+                    tool_id: self.name().to_string(),
                     tool_name: self.name().to_string(),
                     success: true,
                     output: result_json,
                     error: None,
                     execution_time_ms,
                     metadata: HashMap::new(),
+                    status: crate::tools::ExecutionStatus::Completed,
                     started_at: chrono::Utc::now(),
                     completed_at: Some(chrono::Utc::now()),
                 })
@@ -454,6 +468,7 @@ impl UnifiedTool for PortScanTool {
                 
                 Ok(ToolExecutionResult {
                     execution_id,
+                    tool_id: self.name().to_string(),
                     tool_name: self.name().to_string(),
                     success: false,
                     output: json!({}),
@@ -461,6 +476,7 @@ impl UnifiedTool for PortScanTool {
                     execution_time_ms,
                     metadata: HashMap::new(),
                     started_at: chrono::Utc::now(),
+                    status: crate::tools::ExecutionStatus::Failed,
                     completed_at: Some(chrono::Utc::now()),
                 })
             }
@@ -506,7 +522,10 @@ impl RSubdomainTool {
             author: "RSubdomain Team".to_string(),
             version: "2.0.0".to_string(),
             license: "MIT".to_string(),
+            homepage: None,
+            repository: None,
             tags: vec!["subdomain".to_string(), "enumeration".to_string(), "fast".to_string(), "rsubdomain".to_string()],
+            install_command: None,
             requirements: vec!["rsubdomain".to_string()],
         };
 
@@ -527,6 +546,16 @@ impl RSubdomainTool {
                     default_value: Some(json!(true)),
                 },
             ],
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string"},
+                    "use_database_wordlist": {"type": "boolean"}
+                },
+                "required": ["domain"]
+            }),
+            required: vec!["domain".to_string()],
+            optional: vec!["use_database_wordlist".to_string()],
         };
 
         Self { 
@@ -751,12 +780,14 @@ impl UnifiedTool for RSubdomainTool {
                 
                 Ok(ToolExecutionResult {
                     execution_id,
+                    tool_id: self.name().to_string(),
                     tool_name: self.name().to_string(),
                     success: true,
                     output: result_json,
                     error: None,
                     execution_time_ms,
                     metadata: HashMap::new(),
+                    status: crate::tools::ExecutionStatus::Completed,
                     started_at: chrono::Utc::now(),
                     completed_at: Some(chrono::Utc::now()),
                 })
@@ -767,6 +798,7 @@ impl UnifiedTool for RSubdomainTool {
                 
                 Ok(ToolExecutionResult {
                     execution_id,
+                    tool_id: self.name().to_string(),
                     tool_name: self.name().to_string(),
                     success: false,
                     output: json!({}),
@@ -774,6 +806,7 @@ impl UnifiedTool for RSubdomainTool {
                     execution_time_ms,
                     metadata: HashMap::new(),
                     started_at: chrono::Utc::now(),
+                    status: crate::tools::ExecutionStatus::Failed,
                     completed_at: Some(chrono::Utc::now()),
                 })
             }
@@ -783,13 +816,13 @@ impl UnifiedTool for RSubdomainTool {
 
 //写一个域名扫描的单元测试
 mod tests {
-    use super::*;
+    
 
-    #[tokio::test]
-    async fn test_rsubdomain_scan() {
-        let db_service = Arc::new(DatabaseService::new());
-        let tool = RSubdomainTool::new(db_service);
-        let result = tool.scan_subdomains("mgtv.com", true).await;
-        println!("result: {:?}", result);
-    }
+    // #[tokio::test]
+    // async fn test_rsubdomain_scan() {
+    //     let db_service = Arc::new(DatabaseService::new());
+    //     let tool = RSubdomainTool::new(db_service);
+    //     let result = tool.scan_subdomains("mgtv.com", true).await;
+    //     println!("result: {:?}", result);
+    // }
 }

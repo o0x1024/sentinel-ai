@@ -227,7 +227,7 @@ import LLMCompilerExecutionMonitor from '../components/LLMCompilerExecutionMonit
 import EnhancedStateMachine from '../components/EnhancedStateMachine.vue'
 import FlowchartVisualization from '../components/FlowchartVisualization.vue'
 import PerformanceMonitor from '../components/PerformanceMonitor.vue'
-import { DetailedExecutionStatus } from '../types/enhanced-execution'
+import { DetailedExecutionStatus } from '../types/McpClientManager-execution'
 
 // 标签页
 const tabs = [

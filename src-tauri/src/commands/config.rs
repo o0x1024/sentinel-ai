@@ -1,4 +1,4 @@
-use crate::models::database::Configuration;
+
 use crate::services::database::DatabaseService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -64,6 +64,9 @@ pub async fn set_global_proxy_config(
     cfg: GlobalProxyConfig,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
+    tracing::info!("Setting global proxy configuration: enabled={}, host={:?}, port={:?}", 
+                   cfg.enabled, cfg.host, cfg.port);
+    
     let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
     db.set_config("network", "global_proxy", &json, Some("Global HTTP proxy settings")).await.map_err(|e| e.to_string())?;
     // 生效到运行时
@@ -77,6 +80,7 @@ pub async fn set_global_proxy_config(
         no_proxy: cfg.no_proxy,
     };
     crate::ai_adapter::http::set_global_proxy(Some(to_runtime));
+    tracing::info!("Global proxy configuration applied successfully");
     Ok(())
 }
 
@@ -149,7 +153,7 @@ pub async fn delete_config(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     // 由于DatabaseService没有delete_config方法，我们需要使用execute_query
-    let query = "DELETE FROM configurations WHERE category = ? AND key = ?";
+    let _query = "DELETE FROM configurations WHERE category = ? AND key = ?";
 
     // 使用execute_query执行删除操作
     // 注意：execute_query返回结果，但我们只需要知道操作是否成功

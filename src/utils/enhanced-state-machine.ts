@@ -11,7 +11,7 @@ import {
   UserIntervention,
   FlowchartNode,
   FlowchartConnection
-} from '../types/enhanced-execution'
+} from '../types/McpClientManager-execution'
 
 // 增强的状态机管理器
 export class EnhancedStateMachine {

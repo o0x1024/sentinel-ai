@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use std::sync::Arc;
 use notify::{Watcher, RecursiveMode, Event, EventKind};
 use std::sync::mpsc;
-use std::time::Duration;
+
 use serde_yaml;
 
 /// 模板管理器
@@ -559,7 +559,7 @@ impl PromptTemplateManager {
         watcher.watch(&self.template_dir, RecursiveMode::NonRecursive)?;
 
         let cache = Arc::clone(&self.template_cache);
-        let template_dir = self.template_dir.clone();
+        let _template_dir = self.template_dir.clone();
 
         // 启动监视线程
         tokio::spawn(async move {

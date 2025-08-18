@@ -1,13 +1,10 @@
 //! 工具模块
 
-use reqwest::{Client, Request, Response};
+use reqwest::Client;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crate::ai_adapter::error::{AiAdapterError, Result};
-use crate::ai_adapter::types::{HttpRequestInfo, HttpResponseInfo};
 
 /// 创建HTTP客户端
 pub fn create_http_client(timeout: Duration) -> Result<Client> {

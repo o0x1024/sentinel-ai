@@ -5,7 +5,7 @@ use crate::services::database::Database;
 use crate::services::mcp::McpService;
 use anyhow::Result;
 use chrono::Utc;
-use crate::ai_adapter::types::{ChatRequest, Tool, ToolCall};
+use crate::ai_adapter::types::ToolCall;
 use crate::ai_adapter::raw_message::{RawChatRequest, RawChatOptions};
 
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // 调度策略相关结构体
@@ -104,6 +104,7 @@ pub struct AiService {
     db: Arc<dyn Database + Send + Sync>,
     app_handle: Option<AppHandle>,
     mcp_service: Option<Arc<McpService>>,
+    #[allow(unused)]
     max_retries: u32,
 }
 
@@ -117,6 +118,7 @@ pub struct AiServiceManager {
 
 #[derive(Debug, Deserialize)]
 struct ProviderConfig {
+    #[allow(unused)]
     id: String,
     provider: String,
     name: String,
@@ -125,13 +127,17 @@ struct ProviderConfig {
     organization: Option<String>,
     enabled: bool,
     default_model: String,
+    #[allow(unused)]
     models: Vec<ModelDefinition>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ModelDefinition {
+    #[allow(unused)]
     id: String,
+    #[allow(unused)]
     name: String,
+    #[allow(unused)]
     #[serde(default)]
     config: serde_json::Value,
 }
@@ -224,6 +230,11 @@ impl AiServiceManager {
         for service in services.values_mut() {
             service.set_mcp_service(mcp_service.clone());
         }
+    }
+
+    // 获取MCP服务
+    pub fn get_mcp_service(&self) -> Option<Arc<McpService>> {
+        self.mcp_service.clone()
     }
 
     // 设置Tauri应用句柄，用于事件发送
@@ -328,7 +339,7 @@ impl AiServiceManager {
             match serde_json::from_str::<HashMap<String, ProviderConfig>>(&config_str) {
                 Ok(providers) => {
                     tracing::info!("Successfully parsed 'providers_config' from DB.");
-                    for (id, provider_config) in providers {
+                    for (_id, provider_config) in providers {
                         if !provider_config.enabled {
                             continue;
                         }
@@ -659,7 +670,7 @@ impl AiServiceManager {
         let services = self.services.read().unwrap();
         
         // 遍历所有服务，找到包含指定模型的服务
-        for (service_name, service) in services.iter() {
+        for (_service_name, service) in services.iter() {
             let config = service.get_config();
             
             // 检查服务的默认模型是否匹配
@@ -910,28 +921,28 @@ impl AiServiceManager {
         Ok(vec![])
     }
 
-    pub async fn get_default_model(&self, model_type: &str) -> Result<Option<ModelInfo>> {
+    pub async fn get_default_model(&self, _model_type: &str) -> Result<Option<ModelInfo>> {
         Ok(None)
     }
 
     pub async fn set_default_model(
         &self,
-        model_type: &str,
-        provider: &str,
-        model_name: &str,
+        _model_type: &str,
+        _provider: &str,
+        _model_name: &str,
     ) -> Result<()> {
         Ok(())
     }
 
     pub async fn get_model_config(
         &self,
-        provider: &str,
-        model_name: &str,
+        _provider: &str,
+        _model_name: &str,
     ) -> Result<Option<ModelConfig>> {
         Ok(None)
     }
 
-    pub async fn update_model_config(&self, config: ModelConfig) -> Result<()> {
+    pub async fn update_model_config(&self, _config: ModelConfig) -> Result<()> {
         Ok(())
     }
 }
@@ -1205,6 +1216,7 @@ impl AiService {
                         t.parameters.schema.clone()
                     };
                     tools_vec.push(crate::ai_adapter::types::Tool {
+                        r#type: "function".to_string(),
                         name: t.name,
                         description: t.description,
                         parameters: params_schema,
@@ -1248,7 +1260,7 @@ impl AiService {
             Some(serde_json::to_value(&tools_vec).unwrap_or(serde_json::Value::Null))
         };
         
-        let raw_request = RawChatRequest {
+        let _raw_request = RawChatRequest {
             messages: raw_messages.clone(),
             tools: tools_json,
             tool_choice: None,
@@ -1262,7 +1274,7 @@ impl AiService {
             stream: options.stream,
         };
         
-        let raw_options = RawChatOptions {
+        let _raw_options = RawChatOptions {
             temperature: options.temperature,
             max_tokens: options.max_tokens,
             top_p: options.top_p,
@@ -1429,7 +1441,7 @@ impl AiService {
         match self.db.create_ai_message(&assistant_msg).await {
             Ok(_) => {}
             Err(e) => {
-                // tracing::error!("Failed to create assistant message: {}", e);
+                tracing::error!("Failed to create assistant message: {}", e);
             }
         }
 
@@ -1442,7 +1454,7 @@ impl AiService {
         info!("Analyzing query: {}", query);
         
         // 使用结构化的系统提示来分析查询
-        let system_prompt = format!(r#"
+        let _system_prompt = format!(r#"
 You are a task analysis expert. Please analyze the user query and extract key features.
 
 **Analysis Dimensions:**
@@ -1477,6 +1489,7 @@ Please analyze and output structured results.
     }
 
     // 发送分析请求 - 无状态，不保存到数据库
+    #[allow(unused)]
     async fn send_analysis_request(&self, query: &str, system_prompt: &str) -> Result<String> {
         info!("🔍 发送分析请求到 {} 模型", self.config.model);
         info!("📝 查询内容: {}", query);
@@ -1546,6 +1559,7 @@ Please analyze and output structured results.
     }
     
     // 辅助函数：发送流式消息到前端
+    #[allow(unused)]
     async fn emit_stream_message(
         &self,
         conversation_id: &str,
@@ -1592,6 +1606,7 @@ Please analyze and output structured results.
     }
 
     // 保存消息到数据库
+    #[allow(unused)]
     async fn save_message(&self, conversation_id: &str, role: &str, content: &str) -> Result<()> {
         let message = AiMessage {
             id: Uuid::new_v4().to_string(),
@@ -1611,6 +1626,7 @@ Please analyze and output structured results.
     }
 
     // 保存带工具调用的消息到数据库
+    #[allow(unused)]
     async fn save_message_with_tool_calls(
         &self,
         conversation_id: &str,

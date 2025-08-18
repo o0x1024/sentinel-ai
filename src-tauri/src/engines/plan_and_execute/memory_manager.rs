@@ -3,7 +3,6 @@
 //! 负责管理执行过程中的上下文、状态信息和历史数据
 
 use crate::engines::plan_and_execute::types::*;
-use crate::engines::plan_and_execute::executor::{ExecutionResult, StepResult};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -624,7 +623,7 @@ impl MemoryManager {
     }
 
     async fn cleanup_low_priority(&self, target_count: usize) -> Result<u64, PlanAndExecuteError> {
-        let mut cleaned_count = 0;
+        let cleaned_count;
         
         {
             let mut store = self.memory_store.write().await;

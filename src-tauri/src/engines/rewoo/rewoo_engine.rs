@@ -11,7 +11,8 @@ use std::time::SystemTime;
 use uuid::Uuid;
 use crate::services::prompt_db::PromptRepository;
 use crate::services::database::DatabaseService;
-use crate::models::prompt::{ArchitectureType, StageType};
+
+
 
 /// ReWOO 引擎 - 实现完整的 ReWOO 执行流程
 pub struct ReWOOEngine {
@@ -28,10 +29,9 @@ pub struct ReWOOEngine {
 }
 
 impl ReWOOEngine {
-    /// 创建新的 ReWOO 引擎
-    pub fn new(
+    /// 创建新的 ReWOO 引擎  
+    pub async fn new(
         ai_provider: Arc<dyn AiProvider>,
-        tool_manager: Arc<dyn ToolManager>,
         config: ReWOOConfig,
         db_service: Arc<DatabaseService>,
     ) -> Result<Self, ReWOOError> {
@@ -40,15 +40,20 @@ impl ReWOOEngine {
             let pool = db_service.get_pool().map_err(|e| ReWOOError::ConfigurationError(format!("DB pool error: {}", e)))?;
             Some(PromptRepository::new(pool.clone()))
         };
+        
+        // 获取ReWOO框架适配器
+        let framework_adapter = crate::tools::get_framework_adapter(crate::tools::FrameworkType::ReWOO).await
+            .map_err(|e| ReWOOError::ToolSystemError(format!("获取ReWOO框架适配器失败: {}", e)))?;
+        
         let planner = ReWOOPlanner::new(
             Arc::clone(&ai_provider),
-            Arc::clone(&tool_manager),
+            framework_adapter.clone(),
             config.planner.clone(),
             prompt_repo.clone(),
         )?;
         
         let worker = ReWOOWorker::new(
-            tool_manager,
+            framework_adapter,
             config.worker.clone(),
         );
         
@@ -67,10 +72,21 @@ impl ReWOOEngine {
         })
     }
     
+    /// 使用全局统一工具系统创建新的 ReWOO 引擎
+    /// 这个构造函数会自动使用全局工具系统，包含所有已注册的工具（内置工具 + MCP工具）
+    pub async fn new_with_global_tools(
+        ai_provider: Arc<dyn AiProvider>,
+        config: ReWOOConfig,
+        db_service: Arc<DatabaseService>,
+    ) -> Result<Self, ReWOOError> {
+        // 使用现有的构造函数（已经使用全局适配器）
+        Self::new(ai_provider, config, db_service).await
+    }
+    
     /// 执行 ReWOO 流程
     pub async fn execute(&mut self, task: &str) -> Result<String, ReWOOError> {
         let session_id = Uuid::new_v4().to_string();
-        let start_time = SystemTime::now();
+        let _start_time = SystemTime::now();
         
         // 创建执行会话
         let mut session = ReWOOSession::new(session_id.clone(), task.to_string());
@@ -119,7 +135,7 @@ impl ReWOOEngine {
             let parsed_step = self.planner.parse_step(&current_step)?;
             
             // 验证步骤
-            self.worker.validate_step(&parsed_step)?;
+            self.worker.validate_step(&parsed_step).await?;
             
             // 替换变量
             let substituted_args = self.planner.substitute_variables(
@@ -277,13 +293,13 @@ impl ReWOOEngine {
     }
     
     /// 获取可用工具列表
-    pub fn get_available_tools(&self) -> Vec<String> {
-        self.worker.get_available_tools()
+        pub async fn get_available_tools(&self) -> Vec<String> {
+        self.worker.get_available_tools().await
     }
-    
+
     /// 检查工具是否可用
-    pub fn is_tool_available(&self, tool_name: &str) -> bool {
-        self.worker.is_tool_available(tool_name)
+    pub async fn is_tool_available(&self, tool_name: &str) -> bool {
+        self.worker.is_tool_available(tool_name).await
     }
 }
 
@@ -313,24 +329,24 @@ mod tests {
     #[test]
     fn test_route_decision() {
         // 创建测试配置
-        let config = ReWOOConfig {
-            planner: PlannerConfig {
-                model_name: "test".to_string(),
-                temperature: 0.0,
-                max_tokens: 1000,
-                max_steps: 10,
-            },
-            worker: WorkerConfig {
-                timeout_seconds: 30,
-                max_retries: 3,
-                enable_parallel: false,
-            },
-            solver: SolverConfig {
-                model_name: "test".to_string(),
-                temperature: 0.0,
-                max_tokens: 2000,
-            },
-        };
+        // let config = ReWOOConfig {
+        //     planner: PlannerConfig {
+        //         model_name: "test".to_string(),
+        //         temperature: 0.0,
+        //         max_tokens: 1000,
+        //         max_steps: 10,
+        //     },
+        //     worker: WorkerConfig {
+        //         timeout_seconds: 30,
+        //         max_retries: 3,
+        //         enable_parallel: false,
+        //     },
+        //     solver: SolverConfig {
+        //         model_name: "test".to_string(),
+        //         temperature: 0.0,
+        //         max_tokens: 2000,
+        //     },
+        // };
         
         // 创建模拟的依赖项
         // let ai_provider = Arc::new(MockAiProvider::new());
@@ -338,13 +354,13 @@ mod tests {
         // let engine = ReWOOEngine::new(ai_provider, tool_manager, config).unwrap();
         
         // 测试空状态 - 应该路由到 Plan
-        let empty_state = ReWOOState {
-            task: "test".to_string(),
-            plan_string: String::new(),
-            steps: Vec::new(),
-            results: HashMap::new(),
-            result: String::new(),
-        };
+        // let empty_state = ReWOOState {
+        //     task: "test".to_string(),
+        //     plan_string: String::new(),
+        //     steps: Vec::new(),
+        //     results: HashMap::new(),
+        //     result: String::new(),
+        // };
         // assert_eq!(engine.route(&empty_state), NodeRoute::Tool);
         
         // 测试有步骤但未完成 - 应该路由到 Tool

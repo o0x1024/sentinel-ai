@@ -5,7 +5,6 @@ use crate::ai_adapter::types::AiProvider;
 use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
 use crate::ai_adapter::providers::base::BaseProvider;
-use crate::ai_adapter::raw_message::{RawChatRequest, RawChatResponse, RawChatStreamResponse, RawChatOptions};
 
 /// Gemini提供商
 #[derive(Debug)]

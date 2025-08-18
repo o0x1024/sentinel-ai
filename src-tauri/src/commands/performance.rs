@@ -1,21 +1,17 @@
 use crate::services::performance::{PerformanceConfig, PerformanceMetrics, PerformanceOptimizer};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tauri::State;
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// 性能监控状态
-static mut PERFORMANCE_OPTIMIZER: Option<Arc<PerformanceOptimizer>> = None;
-static INIT_LOCK: std::sync::Once = std::sync::Once::new();
+/// 使用 OnceLock + RwLock 安全管理全局优化器实例，避免 `static mut` 带来的未定义行为和编译器开销
+static PERFORMANCE_OPTIMIZER: OnceLock<RwLock<Arc<PerformanceOptimizer>>> = OnceLock::new();
 
-/// 初始化性能优化器
+/// 初始化或获取性能优化器
 fn get_or_init_optimizer() -> Arc<PerformanceOptimizer> {
-    unsafe {
-        INIT_LOCK.call_once(|| {
-            let config = PerformanceConfig::default();
-            PERFORMANCE_OPTIMIZER = Some(Arc::new(PerformanceOptimizer::new(config)));
-        });
-        PERFORMANCE_OPTIMIZER.as_ref().unwrap().clone()
-    }
+    let lock = PERFORMANCE_OPTIMIZER.get_or_init(|| {
+        let config = PerformanceConfig::default();
+        RwLock::new(Arc::new(PerformanceOptimizer::new(config)))
+    });
+    lock.read().expect("optimizer lock poisoned").clone()
 }
 
 /// 获取性能指标
@@ -53,8 +49,13 @@ pub async fn update_performance_config(config: PerformanceConfig) -> Result<(), 
     // 创建新的优化器实例
     let new_optimizer = Arc::new(PerformanceOptimizer::new(config));
 
-    unsafe {
-        PERFORMANCE_OPTIMIZER = Some(new_optimizer.clone());
+    // 确保全局锁已初始化
+    let lock = PERFORMANCE_OPTIMIZER.get_or_init(|| RwLock::new(new_optimizer.clone()));
+
+    // 替换为新实例
+    {
+        let mut guard = lock.write().map_err(|_| "optimizer lock poisoned".to_string())?;
+        *guard = new_optimizer.clone();
     }
 
     // 启动新的监控

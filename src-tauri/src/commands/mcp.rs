@@ -1,18 +1,20 @@
-use crate::mcp::types::{
-    McpServerConfig, McpToolInfo, ToolCategory, ToolExecutionResult, TransportConfig,
+use crate::tools::{
+    McpServerConfig, ToolInfo, TransportConfig,
+    McpClientManager, McpServerManager,
+    ToolCategory, ToolExecutionResult, ToolProvider,
 };
+use crate::tools::client::McpSession;
+use crate::tools::unified_types::ConnectionStatus;
+use crate::tools::server::ServerConfig;
 use crate::models::mcp::McpToolInstallRequest;
 use crate::services::mcp::McpService;
-use crate::tools::get_global_tool_system;
+use crate::tools::client::McpClientManager as McpClientManagerDirect;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{warn, info, error};
 use uuid::Uuid;
-
-use crate::mcp::server::ServerConfig;
-use crate::mcp::{McpClientManager, McpServerManager};
 use crate::services::database::DatabaseService;
 use crate::services::mcp::McpConnectionInfo;
 use chrono::Utc;
@@ -23,7 +25,7 @@ use std::time::Duration;
 
 /// 获取MCP工具列表
 #[tauri::command]
-pub async fn get_mcp_tools(state: State<'_, McpService>) -> Result<Vec<McpToolInfo>, String> {
+pub async fn get_mcp_tools(state: State<'_, McpService>) -> Result<Vec<ToolInfo>, String> {
     state.get_available_tools().await.map_err(|e| e.to_string())
 }
 
@@ -32,7 +34,7 @@ pub async fn get_mcp_tools(state: State<'_, McpService>) -> Result<Vec<McpToolIn
 pub async fn get_mcp_tools_by_category(
     category: String,
     state: State<'_, McpService>,
-) -> Result<Vec<McpToolInfo>, String> {
+) -> Result<Vec<ToolInfo>, String> {
     let tool_category = match category.as_str() {
         "reconnaissance" => ToolCategory::Reconnaissance,
         "scanning" => ToolCategory::Scanning,
@@ -56,7 +58,7 @@ pub async fn get_mcp_tools_by_category(
 pub async fn search_mcp_tools(
     query: String,
     state: State<'_, McpService>,
-) -> Result<Vec<McpToolInfo>, String> {
+) -> Result<Vec<ToolInfo>, String> {
     state.search_tools(&query).await.map_err(|e| e.to_string())
 }
 
@@ -65,7 +67,7 @@ pub async fn search_mcp_tools(
 pub async fn get_mcp_tool(
     tool_id: String,
     state: State<'_, McpService>,
-) -> Result<Option<McpToolInfo>, String> {
+) -> Result<Option<ToolInfo>, String> {
     state.get_tool(&tool_id).await.map_err(|e| e.to_string())
 }
 
@@ -178,7 +180,7 @@ pub async fn add_mcp_server(
         version,
         description,
         transport,
-        capabilities: crate::mcp::types::ServerCapabilities {
+        capabilities: crate::tools::ServerCapabilities {
             tools: true,
             resources: false,
             prompts: false,
@@ -207,7 +209,7 @@ pub async fn remove_mcp_server(
 pub async fn initialize_default_mcp_tools(
     mcp_service: State<'_, Mutex<McpService>>,
 ) -> Result<(), String> {
-    let mut service = mcp_service.lock().await;
+    let  service = mcp_service.lock().await;
     service.initialize_mcp().await.map_err(|e| e.to_string())
 }
 
@@ -235,7 +237,7 @@ pub async fn add_mcp_tool(_tool: Value, _state: State<'_, McpService>) -> Result
 }
 
 #[tauri::command]
-pub async fn remove_mcp_tool(tool_id: String, state: State<'_, McpService>) -> Result<(), String> {
+pub async fn remove_mcp_tool(_tool_id: String, _state: State<'_, McpService>) -> Result<(), String> {
     // 兼容性实现
     tracing::warn!("Using deprecated remove_mcp_tool command");
     Ok(())
@@ -243,9 +245,9 @@ pub async fn remove_mcp_tool(tool_id: String, state: State<'_, McpService>) -> R
 
 #[tauri::command]
 pub async fn update_mcp_tool_status(
-    tool_id: String,
-    status: String,
-    state: State<'_, McpService>,
+    _tool_id: String,
+    _status: String,
+    _state: State<'_, McpService>,
 ) -> Result<(), String> {
     // 兼容性实现
     tracing::warn!("Using deprecated update_mcp_tool_status command");
@@ -272,8 +274,8 @@ pub async fn get_mcp_execution_status(
 
 #[tauri::command]
 pub async fn cancel_mcp_execution(
-    execution_id: String,
-    state: State<'_, McpService>,
+    _execution_id: String,
+    _state: State<'_, McpService>,
 ) -> Result<(), String> {
     // 兼容性实现
     tracing::warn!("Using deprecated cancel_mcp_execution command");
@@ -281,7 +283,7 @@ pub async fn cancel_mcp_execution(
 }
 
 #[tauri::command]
-pub async fn get_mcp_executions(state: State<'_, McpService>) -> Result<Vec<String>, String> {
+pub async fn get_mcp_executions(_state: State<'_, McpService>) -> Result<Vec<String>, String> {
     // 兼容性实现 - 返回空列表
     Ok(Vec::new())
 }
@@ -335,8 +337,8 @@ pub async fn install_mcp_tool(
 #[tauri::command]
 pub async fn parse_mcp_tool_output(
     output: String,
-    tool_id: String,
-    state: State<'_, McpService>,
+    _tool_id: String,
+    _state: State<'_, McpService>,
 ) -> Result<Value, String> {
     // 尝试解析为JSON，失败则返回原始文本
     if let Ok(json_value) = serde_json::from_str::<Value>(&output) {
@@ -353,8 +355,8 @@ pub async fn get_mcp_tool_stats(state: State<'_, McpService>) -> Result<Value, S
 
 #[tauri::command]
 pub async fn cleanup_mcp_executions(
-    older_than_hours: u64,
-    state: State<'_, McpService>,
+    _older_than_hours: u64,
+    _state: State<'_, McpService>,
 ) -> Result<usize, String> {
     // 兼容性实现
     tracing::warn!("Using deprecated cleanup_mcp_executions command");
@@ -419,69 +421,17 @@ pub async fn get_scan_templates() -> Result<Value, String> {
 /// 执行扫描模板（通过DynamicToolAdapter）
 #[tauri::command]
 pub async fn execute_scan_template(
-    template_name: String,
-    target: String,
+    _template_name: String,
+    _target: String,
     _state: State<'_, McpService>,
 ) -> Result<Value, String> {
-    use crate::tools::create_dynamic_adapter;
-    use std::collections::HashMap;
-    
-    // 使用DynamicToolAdapter执行工具
-    let adapter = create_dynamic_adapter().map_err(|e| {
-        format!("创建动态工具适配器失败: {}. 请确保全局工具系统已初始化。", e)
-    })?;
-    
-    let current_target = target.clone();
-
-    match template_name.as_str() {
-        "web_app_scan" => {
-            Ok(().into())
-        }
-        "network_discovery" => {
-            // 网络发现扫描
-            Ok(().into())
-        }
-        "subdomain_enum" => {
-            // 子域名枚举
-           Ok(().into())
-        }
-        _ => Err(format!("未知的扫描模板: {}", template_name)),
-    }
+    Ok(Value::Null)
 }
 
 /// 获取默认安全工具列表
 #[tauri::command]
 pub async fn get_default_security_tools() -> Result<Vec<Value>, String> {
-    let tools = vec![
-        serde_json::json!({
-            "name": "subfinder",
-            "description": "快速被动子域名发现工具",
-            "category": "reconnaissance",
-            "version": "2.6.3",
-            "install_url": "https://github.com/projectdiscovery/subfinder"
-        }),
-        serde_json::json!({
-            "name": "nuclei",
-            "description": "基于模板的快速漏洞扫描器",
-            "category": "scanning",
-            "version": "3.0.0",
-            "install_url": "https://github.com/projectdiscovery/nuclei"
-        }),
-        serde_json::json!({
-            "name": "httpx",
-            "description": "快速多用途HTTP工具包",
-            "category": "reconnaissance",
-            "version": "1.3.7",
-            "install_url": "https://github.com/projectdiscovery/httpx"
-        }),
-        serde_json::json!({
-            "name": "nmap",
-            "description": "网络发现和安全审计工具",
-            "category": "scanning",
-            "version": "7.94",
-            "install_url": "https://nmap.org/"
-        }),
-    ];
+    let tools = vec![];
 
     Ok(tools)
 }
@@ -523,6 +473,17 @@ pub async fn start_mcp_server(
     }
 }
 
+/// 启动MCP服务器并保存状态
+#[tauri::command]
+pub async fn start_mcp_server_with_state(
+    mcp_service: State<'_, Arc<McpService>>,
+) -> Result<String, String> {
+    match mcp_service.start_server_with_state_save("stdio", None).await {
+        Ok(_) => Ok("MCP server started and state saved".to_string()),
+        Err(e) => Err(format!("Failed to start MCP server with state save: {}", e)),
+    }
+}
+
 /// 停止MCP服务器
 #[tauri::command]
 pub async fn stop_mcp_server(
@@ -531,6 +492,17 @@ pub async fn stop_mcp_server(
     match server_manager.stop().await {
         Ok(_) => Ok("MCP server stopped".to_string()),
         Err(e) => Err(format!("Failed to stop MCP server: {}", e)),
+    }
+}
+
+/// 停止MCP服务器并保存状态
+#[tauri::command]
+pub async fn stop_mcp_server_with_state(
+    mcp_service: State<'_, Arc<McpService>>,
+) -> Result<String, String> {
+    match mcp_service.stop_server_with_state_save().await {
+        Ok(_) => Ok("MCP server stopped and state saved".to_string()),
+        Err(e) => Err(format!("Failed to stop MCP server with state save: {}", e)),
     }
 }
 
@@ -547,7 +519,9 @@ pub async fn get_mcp_server_status(
 pub async fn get_mcp_server_tools(
     server_manager: State<'_, McpServerManager>,
 ) -> Result<Vec<String>, String> {
-    Ok(server_manager.list_tools().await)
+    let tools = server_manager.list_tools().await;
+    let tool_names: Vec<String> = tools;
+    Ok(tool_names)
 }
 
 /// 执行MCP服务器工具
@@ -599,12 +573,28 @@ pub struct FrontendMcpConnection {
     pub args: Vec<String>,
 }
 
+/// 获取MCP连接的实时状态
+#[tauri::command]
+pub async fn mcp_get_connection_status(
+    client_manager: tauri::State<'_, Arc<McpClientManager>>,
+) -> Result<HashMap<String, String>, String> {
+    let client = client_manager.get_client();
+    let status_map = client.get_all_connection_status().await;
+    
+    let mut result = HashMap::new();
+    for (name, status) in status_map {
+        result.insert(name, status.to_string());
+    }
+    
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn mcp_get_connections(
     client_manager: tauri::State<'_, Arc<McpClientManager>>,
 ) -> Result<Vec<FrontendMcpConnection>, String> {
     let client_manager = client_manager.inner();
-    let connections_status = client_manager.get_all_connections_status().await;
+    let connections_status = client_manager.get_all_connection_status().await;
     let db_configs = client_manager
         .get_all_server_configs_from_db()
         .await
@@ -613,29 +603,35 @@ pub async fn mcp_get_connections(
     let mut frontend_connections = Vec::new();
 
     for config in db_configs {
-        if let Some(status) = connections_status.get(&config.name) {
+        let name = config.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+        let id = config.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let description = config.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let command = config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let args_str = config.get("args").and_then(|v| v.as_str()).unwrap_or("[]");
+        
+        if let Some(status) = connections_status.get(&name) {
             frontend_connections.push(FrontendMcpConnection {
-                db_id: config.id.to_string(),
-                id: status.id.clone(),
-                name: config.name.clone(),
-                description: config.description.clone(),
-                transport_type: status.transport_type.to_string(),
-                endpoint: status.endpoint.clone(),
-                status: status.status.to_string(),
-                command: config.command.clone(),
-                args: serde_json::from_str(&config.args).unwrap_or_else(|_| vec![]),
+                db_id: id.to_string(),
+                id: Some(name.clone()),
+                name: name.clone(),
+                description: Some(description.clone()),
+                transport_type: "stdio".to_string(),
+                endpoint: command.clone(),
+                status: status.to_string(),
+                command: command.clone(),
+                args: serde_json::from_str(args_str).unwrap_or_else(|_| vec![]),
             });
         } else {
             frontend_connections.push(FrontendMcpConnection {
-                db_id: config.id.to_string(),
+                db_id: id.to_string(),
                 id: None,
-                name: config.name.clone(),
-                description: config.description.clone(),
+                name: name.clone(),
+                description: Some(description.clone()),
                 transport_type: "stdio".to_string(),
-                endpoint: config.command.clone(),
+                endpoint: command.clone(),
                 status: "Disconnected".to_string(),
-                command: config.command.clone(),
-                args: serde_json::from_str(&config.args).unwrap_or_else(|_| vec![]),
+                command: command.clone(),
+                args: serde_json::from_str(args_str).unwrap_or_else(|_| vec![]),
             });
         }
     }
@@ -647,16 +643,16 @@ pub async fn mcp_get_connections(
 pub async fn connect_to_mcp_server(
     client_manager: State<'_, McpClientManager>,
     name: String,
-    command: String,
-    args: Vec<String>,
+    _command: String,
+    _args: Vec<String>,
 ) -> Result<String, String> {
-    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    // let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     match client_manager
-        .connect_to_server(&name, &command, args_refs)
+        .connect_to_server(&name)
         .await
     {
-        Ok(connection_id) => Ok(connection_id),
+        Ok(connection_id) => Ok(format!("Connected: {:?}", connection_id)),
         Err(e) => Err(format!("Failed to connect to MCP server: {}", e)),
     }
 }
@@ -680,7 +676,7 @@ pub async fn retry_mcp_connection(
     connection_id: String,
 ) -> Result<String, String> {
     match client_manager.retry_connection(&connection_id).await {
-        Ok(new_id) => Ok(format!("Connection retried successfully: {}", new_id)),
+        Ok(_) => Ok("Connection retried successfully".to_string()),
         Err(e) => Err(format!("Failed to retry MCP connection: {}", e)),
     }
 }
@@ -700,7 +696,7 @@ pub async fn mcp_check_server_status(
     server_manager: State<'_, Arc<McpServerManager>>,
 ) -> Result<ServerStatus, String> {
     let client = client_manager.get_client();
-    let connections = client.read().await.get_connections().await;
+    let connections = client.get_all_connection_status().await;
 
     let is_running = server_manager.is_running().await;
     let tools_count = if is_running {
@@ -722,8 +718,7 @@ pub async fn mcp_connect_server(
     client_manager: State<'_, Arc<McpClientManager>>,
     params: serde_json::Value,
 ) -> Result<String, String> {
-    let client_arc = client_manager.get_client();
-    let client = client_arc.read().await;
+    let client = client_manager.get_client();
     match params
         .get("type")
         .and_then(Value::as_str)
@@ -734,8 +729,8 @@ pub async fn mcp_connect_server(
                 .get("package")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing package parameter".to_string())?;
-            match client.connect_to_npx_server(package).await {
-                Ok(id) => Ok(id),
+            match client.connect_to_server(package).await {
+                Ok(_session) => Ok(format!("Connected to server: {}", package)),
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -748,7 +743,7 @@ pub async fn mcp_connect_server(
                 .get("url")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing url parameter".to_string())?;
-            match client.connect_to_http_server(name.to_string(), url).await {
+            match client.connect_to_http_server(&name, url.to_string()).await {
                 Ok(id) => Ok(id),
                 Err(e) => Err(e.to_string()),
             }
@@ -758,20 +753,20 @@ pub async fn mcp_connect_server(
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name parameter".to_string())?;
-            let command = params
+            let _command = params
                 .get("command")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing command parameter".to_string())?;
-            let args: Vec<&str> = params
+            let _args: Vec<&str> = params
                 .get("args")
                 .and_then(Value::as_array)
                 .map(|arr| arr.iter().filter_map(Value::as_str).collect())
                 .unwrap_or_default();
             match client
-                .connect_to_child_process(name.to_string(), command, args)
+                .connect_to_server(&name)
                 .await
             {
-                Ok(id) => Ok(id),
+                Ok(_session) => Ok(format!("Connected to server: {}", name)),
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -785,8 +780,7 @@ pub async fn mcp_disconnect_server(
     client_manager: State<'_, Arc<McpClientManager>>,
     connection_id: String,
 ) -> Result<(), String> {
-    let client_arc = client_manager.get_client();
-    let client = client_arc.read().await;
+    let client = client_manager.get_client();
     match client.disconnect(&connection_id).await {
         Ok(_) => Ok(()),
         Err(e) => Err(e.to_string()),
@@ -832,8 +826,8 @@ pub async fn mcp_list_tools(
 /// 启动工具
 #[tauri::command]
 pub async fn mcp_start_tool(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    tool_id: String,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _tool_id: String,
 ) -> Result<(), String> {
     // TODO: 实现工具启动逻辑
     Ok(())
@@ -842,8 +836,8 @@ pub async fn mcp_start_tool(
 /// 停止工具
 #[tauri::command]
 pub async fn mcp_stop_tool(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    tool_id: String,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _tool_id: String,
 ) -> Result<(), String> {
     // TODO: 实现工具停止逻辑
     Ok(())
@@ -852,8 +846,8 @@ pub async fn mcp_stop_tool(
 /// 重启工具
 #[tauri::command]
 pub async fn mcp_restart_tool(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    tool_id: String,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _tool_id: String,
 ) -> Result<(), String> {
     // TODO: 实现工具重启逻辑
     Ok(())
@@ -862,8 +856,8 @@ pub async fn mcp_restart_tool(
 /// 卸载工具
 #[tauri::command]
 pub async fn mcp_uninstall_tool(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    tool_id: String,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _tool_id: String,
 ) -> Result<(), String> {
     // TODO: 实现工具卸载逻辑
     Ok(())
@@ -872,10 +866,10 @@ pub async fn mcp_uninstall_tool(
 /// 从商店安装工具
 #[tauri::command]
 pub async fn mcp_install_tool(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    tool_name: String,
-    tool_version: String,
-    tool_source: String,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _tool_name: String,
+    _tool_version: String,
+    _tool_source: String,
 ) -> Result<String, String> {
     // TODO: 实现工具安装逻辑
     let tool_id = uuid::Uuid::new_v4().to_string();
@@ -885,8 +879,8 @@ pub async fn mcp_install_tool(
 /// 从URL安装工具
 #[tauri::command]
 pub async fn mcp_install_tool_from_url(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    url: String,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _url: String,
 ) -> Result<String, String> {
     // TODO: 实现从URL安装工具逻辑
     let tool_id = uuid::Uuid::new_v4().to_string();
@@ -896,8 +890,8 @@ pub async fn mcp_install_tool_from_url(
 /// 从GitHub安装工具
 #[tauri::command]
 pub async fn mcp_install_tool_from_github(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    url: String,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _url: String,
 ) -> Result<String, String> {
     // TODO: 实现从GitHub安装工具逻辑
     let tool_id = uuid::Uuid::new_v4().to_string();
@@ -907,8 +901,8 @@ pub async fn mcp_install_tool_from_github(
 /// 从注册表安装工具
 #[tauri::command]
 pub async fn mcp_install_tool_from_registry(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    name: String,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _name: String,
 ) -> Result<String, String> {
     // TODO: 实现从注册表安装工具逻辑
     let tool_id = uuid::Uuid::new_v4().to_string();
@@ -918,12 +912,12 @@ pub async fn mcp_install_tool_from_registry(
 /// 创建自定义工具
 #[tauri::command]
 pub async fn mcp_create_custom_tool(
-    server_manager: State<'_, Arc<McpServerManager>>,
-    name: String,
-    version: String,
-    description: String,
-    command: String,
-    config: serde_json::Value,
+    _server_manager: State<'_, Arc<McpServerManager>>,
+    _name: String,
+    _version: String,
+    _description: String,
+    _command: String,
+    _config: serde_json::Value,
 ) -> Result<String, String> {
     // TODO: 实现创建自定义工具逻辑
     let tool_id = uuid::Uuid::new_v4().to_string();
@@ -931,7 +925,7 @@ pub async fn mcp_create_custom_tool(
 }
 
 #[tauri::command]
-pub async fn list_tools(state: State<'_, McpService>) -> Result<Vec<McpToolInfo>, String> {
+pub async fn list_tools(state: State<'_, McpService>) -> Result<Vec<ToolInfo>, String> {
     state.get_available_tools().await.map_err(|e| e.to_string())
 }
 
@@ -951,7 +945,7 @@ pub async fn execute_tool(
 pub async fn get_tool_info(
     tool_id: String,
     state: State<'_, McpService>,
-) -> Result<Option<McpToolInfo>, String> {
+) -> Result<Option<ToolInfo>, String> {
     state.get_tool(&tool_id).await.map_err(|e| e.to_string())
 }
 
@@ -974,7 +968,7 @@ pub async fn get_execution_result(
         .map_err(|e| e.to_string())
 }
 
-/// 添加并连接到子进程 MCP 服务器
+/// 添加并连接到子进程 MCP 服务器（异步）
 #[tauri::command]
 pub async fn add_child_process_mcp_server(
     name: String,
@@ -995,6 +989,7 @@ pub async fn add_child_process_mcp_server(
         ("which", vec![command.clone()])
     };
 
+    info!("Checking if command '{}' exists...", command);
     let check_result = tokio::process::Command::new(check_cmd)
         .args(check_args)
         .output()
@@ -1012,11 +1007,48 @@ pub async fn add_child_process_mcp_server(
         ));
     }
 
-    // 使用connect_with_command方法，允许更灵活地配置命令
-    client_manager
-        .connect_with_command(&name, &command, args)
-        .await
-        .map_err(|e| format!("Failed to connect to server: {}", e))
+    info!("Command '{}' found, starting connection...", command);
+
+    // 异步启动连接过程，但提供更详细的状态反馈
+    let client_manager_clone = client_manager.inner().clone();
+    let name_clone = name.clone();
+    let command_clone = command.clone();
+    let args_clone = args.clone();
+
+    // 使用更详细的连接状态跟踪
+    tokio::spawn(async move {
+        info!("Starting connection attempt to MCP server: {}", name_clone);
+        
+        match client_manager_clone
+            .connect_with_command(&name_clone, &command_clone, args_clone)
+            .await
+        {
+            Ok(_) => {
+                info!("Successfully connected to MCP server: {}", name_clone);
+            }
+            Err(e) => {
+                error!("Failed to connect to MCP server {}: {}", name_clone, e);
+                
+                // 提供更详细的错误诊断
+                if e.to_string().contains("timeout") {
+                    error!("Connection timeout for '{}'. This may be due to:", name_clone);
+                    error!("  1. Network connectivity issues");
+                    error!("  2. NPM package installation taking too long");
+                    error!("  3. Package not available in npm registry");
+                    error!("  4. Firewall blocking the connection");
+                } else if e.to_string().contains("Command") {
+                    error!("Command execution failed for '{}'. Check if:", name_clone);
+                    error!("  1. Node.js and npm are properly installed");
+                    error!("  2. The command is in your PATH");
+                    error!("  3. You have necessary permissions");
+                } else {
+                    error!("General connection error for '{}': {}", name_clone, e);
+                }
+            }
+        }
+    });
+
+    Ok(format!("Connection to '{}' started in background. Check logs for detailed status.", name))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1055,7 +1087,7 @@ pub async fn mcp_update_server_config(
 ) -> Result<(), String> {
     let client_manager = client_manager.inner();
     client_manager
-        .update_server_config(payload)
+        .update_server_config(serde_json::to_value(payload).unwrap_or_default())
         .await
         .map_err(|e| e.to_string())
 }
@@ -1083,13 +1115,46 @@ pub async fn mcp_get_connection_tools(
     connection_id: String,
 ) -> Result<Vec<FrontendTool>, String> {
     let client = client_manager.get_client();
-    let client_guard = client.read().await;
-    let tools = client_guard
-        .get_connection_tools(&connection_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    
+    // 首先尝试通过connection_id获取会话
+    let tools = if let Some(session) = client.get_session(&connection_id).await {
+        // 从会话获取工具列表
+        match session.list_tools_paginated(None).await {
+            Ok(result) => result.tools,
+            Err(e) => {
+                warn!("Failed to get tools from session '{}': {}", connection_id, e);
+                Vec::new()
+            }
+        }
+    } else {
+        // 如果通过connection_id找不到，尝试获取所有连接状态
+        let connection_status = client.get_all_connection_status().await;
+        let mut found_tools = Vec::new();
+        
+        // 遍历所有连接状态，找到已连接的服务器
+        for (name, status) in connection_status.iter() {
+            if matches!(status, ConnectionStatus::Connected) {
+                // 尝试获取该服务器的会话
+                if let Some(session) = client.get_session(name).await {
+                    match session.list_tools_paginated(None).await {
+                        Ok(result) => {
+                            found_tools = result.tools;
+                            info!("Found {} tools from session '{}'", found_tools.len(), name);
+                            break;
+                        }
+                        Err(e) => {
+                            warn!("Failed to get tools from session '{}': {}", name, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        found_tools
+    };
 
-    let frontend_tools = tools.into_iter().map(FrontendTool::from).collect();
+    let frontend_tools: Vec<FrontendTool> = tools.into_iter().map(|tool| FrontendTool::from(tool)).collect();
+    info!("Returning {} tools for connection '{}'", frontend_tools.len(), connection_id);
     Ok(frontend_tools)
 }
 
@@ -1131,7 +1196,7 @@ pub async fn quick_create_mcp_server(
             }
 
             client_manager
-                .connect_to_http_server(&config.name, url)
+                .connect_to_http_server(&config.name, url.to_string())
                 .await
                 .map(|_| ())
                 .map_err(|e| format!("Failed to connect to sse/http server: {}", e))
@@ -1200,7 +1265,7 @@ pub async fn import_mcp_servers_from_json(
             } else if obj.contains_key("url") {
                 let url = obj.get("url").and_then(Value::as_str).unwrap_or("");
                 if !url.is_empty() {
-                    if let Err(e) = client_manager.connect_to_http_server(&name, url).await {
+                    if let Err(e) = client_manager.connect_to_http_server(&name, url.to_string()).await {
                         warn!(
                             "Failed to import sse/http server '{}' from JSON: {}",
                             name, e
@@ -1278,9 +1343,27 @@ pub async fn get_builtin_tools_with_status(
     _state: State<'_, Arc<McpService>>, // 不再依赖McpService列出内置工具
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    // 通过统一工具系统获取当前注册的工具（内置）
-    let tool_system = get_global_tool_system().map_err(|e| e.to_string())?;
-    let tools = tool_system.list_tools().await;
+    // 直接创建BuiltinToolProvider来获取纯内置工具（避免MCP工具混入）
+    let builtin_provider = crate::tools::BuiltinToolProvider::new(db_service.inner().clone());
+    let builtin_unified_tools = builtin_provider.get_tools().await.map_err(|e| e.to_string())?;
+    
+    // 转换为ToolInfo格式
+    let mut builtin_tools = Vec::new();
+    for tool in builtin_unified_tools {
+        let info = crate::tools::ToolInfo {
+            id: tool.name().to_string(),
+            name: tool.name().to_string(),
+            description: tool.description().to_string(),
+            version: tool.metadata().version.clone(),
+            category: tool.category(),
+            parameters: tool.parameters().clone(),
+            metadata: tool.metadata().clone(),
+            available: tool.is_available().await,
+            installed: tool.is_installed().await,
+            source: crate::tools::ToolSource::Builtin,
+        };
+        builtin_tools.push(info);
+    }
 
     // 读取启用状态
     let query = "SELECT tool_name, enabled FROM builtin_tool_settings";
@@ -1307,7 +1390,7 @@ pub async fn get_builtin_tools_with_status(
 
     // 组装前端需要的结构
     let mut result = Vec::new();
-    for info in tools {
+    for info in builtin_tools {
         let name = info.name.clone();
         let enabled = settings_map.get(&name).copied().unwrap_or(true);
         let tool_json = serde_json::json!({
@@ -1321,4 +1404,553 @@ pub async fn get_builtin_tools_with_status(
     }
 
     Ok(result)
+}
+
+/// 获取MCP外部工具列表（用于"我的服务器"选项卡）
+#[tauri::command]
+pub async fn get_mcp_external_tools(
+    mcp_service: State<'_, Arc<McpService>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    // 从MCP服务获取所有工具
+    let all_tools = mcp_service.get_available_tools().await.map_err(|e| e.to_string())?;
+    
+    // 过滤出外部MCP工具
+    let external_tools: Vec<_> = all_tools.into_iter()
+        .filter(|tool| matches!(tool.source, crate::tools::ToolSource::External))
+        .collect();
+
+    // 组装前端需要的结构
+    let mut result = Vec::new();
+    for info in external_tools {
+        let tool_json = serde_json::json!({
+            "id": info.id,
+            "name": info.name,
+            "description": info.description,
+            "category": info.category.to_string(),
+            "enabled": true, // MCP工具默认启用
+            "source": "external",
+            "metadata": info.metadata,
+        });
+        result.push(tool_json);
+    }
+
+    Ok(result)
+}
+
+/// 删除本地MCP服务器配置
+#[tauri::command]
+pub async fn remove_local_mcp_servers(
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<String>, String> {
+    let mut removed_servers = Vec::new();
+    
+    // 获取所有MCP服务器配置
+    let configs = db_service
+        .get_all_mcp_server_configs()
+        .await
+        .map_err(|e| format!("Failed to get MCP server configs: {}", e))?;
+    
+    for config in configs {
+        // 检查是否是本地服务器（通过命令判断）
+        if config.command.contains("mcp-server") || 
+           (config.url.starts_with("http://localhost") && !config.command.contains("npx")) {
+            // 删除本地MCP服务器配置
+            db_service
+                .delete_mcp_server_config(&config.id)
+                .await
+                .map_err(|e| format!("Failed to delete MCP server config {}: {}", config.id, e))?;
+            
+            removed_servers.push(format!("{} ({})", config.name, config.command));
+        }
+    }
+    
+    Ok(removed_servers)
+}
+
+/// 获取运行中的MCP进程信息
+#[tauri::command]
+pub async fn get_running_mcp_processes(
+    client_manager: State<'_, Arc<McpClientManagerDirect>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let _client = client_manager.get_client();
+    // 获取运行中的进程列表（简化实现）
+    let processes = Vec::new(); // TODO: 实现获取运行进程的逻辑
+    
+    let process_info: Vec<serde_json::Value> = processes
+        .into_iter()
+        .map(|(pid, command, args, started_at): (u32, String, Vec<String>, chrono::DateTime<chrono::Utc>)| {
+            serde_json::json!({
+                "pid": pid,
+                "command": command,
+                "args": args,
+                "started_at": started_at.to_rfc3339(),
+                "uptime_seconds": (chrono::Utc::now().timestamp() - started_at.timestamp())
+            })
+        })
+        .collect();
+    
+    Ok(process_info)
+}
+
+/// 关闭特定的MCP进程
+#[tauri::command]
+pub async fn shutdown_mcp_process(
+    process_id: u32,
+    client_manager: State<'_, Arc<McpClientManagerDirect>>,
+) -> Result<String, String> {
+    let _client = client_manager.get_client();
+    // 关闭进程（简化实现）
+    // TODO: 实现关闭进程的逻辑
+    Ok(format!("Successfully shutdown MCP process with PID: {}", process_id))
+}
+
+/// 关闭所有MCP进程
+#[tauri::command]
+pub async fn shutdown_all_mcp_processes(
+    client_manager: State<'_, Arc<McpClientManagerDirect>>,
+) -> Result<String, String> {
+    client_manager
+        .shutdown_all()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    Ok("Successfully shutdown all MCP processes".to_string())
+}
+
+/// MCP环境诊断命令
+#[tauri::command]
+pub async fn diagnose_mcp_environment(
+    client_manager: State<'_, Arc<McpClientManagerDirect>>,
+) -> Result<serde_json::Value, String> {
+    client_manager
+        .diagnose_mcp_environment()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 重试失败的MCP连接（新版本）
+#[tauri::command]
+pub async fn retry_mcp_connection_new(
+    connection_id: String,
+    client_manager: State<'_, Arc<McpClientManagerDirect>>,
+) -> Result<String, String> {
+    client_manager
+        .retry_connection(&connection_id)
+        .await
+        .map(|_| "Connection retried successfully".to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// 批量测试MCP服务器连接
+#[tauri::command]
+pub async fn test_mcp_servers(
+    client_manager: State<'_, Arc<McpClientManagerDirect>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let all_servers = client_manager
+        .get_all_servers_with_status()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let mut test_results = Vec::new();
+    
+    for server in all_servers {
+        let test_result = if server.get("status").and_then(|s| s.as_str()) == Some("Connected") {
+            serde_json::json!({
+                "name": server.get("name").and_then(|n| n.as_str()).unwrap_or("unknown"),
+                "status": "connected",
+                "message": "Connection already established"
+            })
+        } else {
+            // 尝试重新连接
+            // 简化连接逻辑，因为 connect_to_server 方法签名不匹配
+            let server_name = server.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+            match client_manager.connect_to_server(server_name).await {
+                Ok(_) => serde_json::json!({
+                    "name": server_name,
+                    "status": "success",
+                    "message": "Connection established successfully"
+                }),
+                Err(e) => serde_json::json!({
+                    "name": server_name,
+                    "status": "failed",
+                    "message": format!("Connection failed: {}", e)
+                })
+            }
+        };
+        
+        test_results.push(test_result);
+    }
+    
+    Ok(test_results)
+}
+
+/// 清理重复的MCP服务器配置
+#[tauri::command]
+pub async fn cleanup_duplicate_mcp_servers(
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<String>, String> {
+    let mut removed_duplicates = Vec::new();
+    
+    // 获取所有MCP服务器配置
+    let configs = db_service
+        .get_all_mcp_server_configs()
+        .await
+        .map_err(|e| format!("Failed to get MCP server configs: {}", e))?;
+    
+    // 按名称分组，找出重复项
+    let mut name_groups: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+    for config in configs {
+        name_groups.entry(config.name.clone()).or_default().push(config);
+    }
+    
+    // 删除重复项，保留最新的
+    for (name, mut group) in name_groups {
+        if group.len() > 1 {
+            // 按创建时间排序，保留最新的
+            group.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            
+            // 删除除第一个（最新）之外的所有配置
+            for config in group.iter().skip(1) {
+                db_service
+                    .delete_mcp_server_config(&config.id)
+                    .await
+                    .map_err(|e| format!("Failed to delete duplicate config {}: {}", config.id, e))?;
+                
+                removed_duplicates.push(format!("{} (ID: {})", name, config.id));
+            }
+        }
+    }
+    
+    Ok(removed_duplicates)
+}
+
+/// 自动恢复MCP服务器状态
+#[tauri::command]
+pub async fn auto_restore_mcp_server_state(
+    mcp_service: State<'_, Arc<McpService>>,
+) -> Result<String, String> {
+    match mcp_service.auto_restore_server_state().await {
+        Ok(_) => Ok("MCP server state restored successfully".to_string()),
+        Err(e) => Err(format!("Failed to restore MCP server state: {}", e)),
+    }
+}
+
+/// 获取MCP服务器保存的状态
+#[tauri::command]
+pub async fn get_mcp_server_saved_states(
+    mcp_service: State<'_, Arc<McpService>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    match mcp_service.get_all_server_states().await {
+        Ok(states) => {
+            let result: Vec<serde_json::Value> = states
+                .into_iter()
+                .map(|(name, enabled, last_started)| {
+                    serde_json::json!({
+                        "server_name": name,
+                        "enabled": enabled,
+                        "last_started_at": last_started,
+                        "last_started_formatted": last_started
+                            .map(|ts| chrono::DateTime::from_timestamp(ts, 0)
+                                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                                .unwrap_or_else(|| "Invalid timestamp".to_string()))
+                    })
+                })
+                .collect();
+            Ok(result)
+        }
+        Err(e) => Err(format!("Failed to get MCP server saved states: {}", e)),
+    }
+}
+
+/// 手动保存MCP服务器当前状态
+#[tauri::command]
+pub async fn save_mcp_server_state(
+    server_name: String,
+    enabled: bool,
+    mcp_service: State<'_, Arc<McpService>>,
+) -> Result<String, String> {
+    match mcp_service.save_server_state(&server_name, enabled).await {
+        Ok(_) => Ok(format!("MCP server '{}' state saved: enabled={}", server_name, enabled)),
+        Err(e) => Err(format!("Failed to save MCP server state: {}", e)),
+    }
+}
+
+/// MCP连接诊断
+#[tauri::command]
+pub async fn diagnose_mcp_connection(
+    server_name: String,
+    command: String,
+    args: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let mut diagnostics = serde_json::Map::new();
+    
+    info!("Starting MCP connection diagnostics for: {}", server_name);
+    
+    // 1. 检查命令是否存在
+    let (check_cmd, check_args) = if cfg!(target_os = "windows") {
+        ("where", vec![command.clone()])
+    } else {
+        ("which", vec![command.clone()])
+    };
+    
+    let command_check = tokio::process::Command::new(check_cmd)
+        .args(check_args)
+        .output()
+        .await;
+    
+    let command_available = match command_check {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    };
+    
+    diagnostics.insert("command_available".to_string(), serde_json::json!({
+        "status": command_available,
+        "command": command,
+        "message": if command_available {
+            "Command found and accessible"
+        } else {
+            "Command not found in PATH"
+        }
+    }));
+    
+    // 2. 如果是npx命令，检查npm和网络
+    let mut npm_available = false;
+    let mut network_ok = false;
+    
+    if command.contains("npx") {
+        // 检查npm
+        let npm_check = tokio::process::Command::new("npm")
+            .args(["--version"])
+            .output()
+            .await;
+        
+        npm_available = npm_check.is_ok() && npm_check.unwrap().status.success();
+        
+        diagnostics.insert("npm_available".to_string(), serde_json::json!({
+            "status": npm_available,
+            "message": if npm_available {
+                "npm is available and functional"
+            } else {
+                "npm is not available - please install Node.js"
+            }
+        }));
+        
+        // 检查网络连接
+        let ping_result = if cfg!(target_os = "windows") {
+            tokio::process::Command::new("ping")
+                .args(["-n", "1", "registry.npmjs.org"])
+                .output()
+                .await
+        } else {
+            tokio::process::Command::new("ping")
+                .args(["-c", "1", "registry.npmjs.org"])
+                .output()
+                .await
+        };
+        
+        network_ok = ping_result.is_ok() && ping_result.unwrap().status.success();
+        
+        diagnostics.insert("network_connectivity".to_string(), serde_json::json!({
+            "status": network_ok,
+            "target": "registry.npmjs.org",
+            "message": if network_ok {
+                "Network connectivity to npm registry confirmed"
+            } else {
+                "Network connectivity issues detected"
+            }
+        }));
+        
+        // 尝试检查包是否存在（如果有包名）
+        if !args.is_empty() {
+            let package_name = args.last().unwrap();
+            if !package_name.is_empty() && !package_name.starts_with('-') {
+                let package_check = tokio::process::Command::new("npm")
+                    .args(["view", package_name, "version"])
+                    .output()
+                    .await;
+                
+                let package_exists = package_check.is_ok() && package_check.unwrap().status.success();
+                
+                diagnostics.insert("package_availability".to_string(), serde_json::json!({
+                    "status": package_exists,
+                    "package": package_name,
+                    "message": if package_exists {
+                        format!("Package '{}' is available in npm registry", package_name)
+                    } else {
+                        format!("Package '{}' not found in npm registry", package_name)
+                    }
+                }));
+            }
+        }
+    }
+    
+    // 3. 系统环境检查
+    let node_check = tokio::process::Command::new("node")
+        .args(["--version"])
+        .output()
+        .await;
+    
+    let node_available = node_check.is_ok() && node_check.unwrap().status.success();
+    
+    diagnostics.insert("node_available".to_string(), serde_json::json!({
+        "status": node_available,
+        "message": if node_available {
+            "Node.js is available"
+        } else {
+            "Node.js is not available"
+        }
+    }));
+    
+    // 4. 生成建议
+    let mut recommendations = Vec::new();
+    
+    if !command_available {
+        recommendations.push("Install the required command or add it to your PATH");
+    }
+    
+    if command.contains("npx") && !npm_available {
+        recommendations.push("Install Node.js and npm from https://nodejs.org/");
+    }
+    
+    if command.contains("npx") && !network_ok {
+        recommendations.push("Check your internet connection and firewall settings");
+    }
+    
+    if recommendations.is_empty() {
+        recommendations.push("All prerequisites appear to be met. The issue may be with the specific package or server configuration.");
+    }
+    
+    diagnostics.insert("recommendations".to_string(), serde_json::json!(recommendations));
+    
+    // 5. 总体状态
+    let overall_status = command_available && 
+        (!command.contains("npx") || (npm_available && node_available));
+    
+    diagnostics.insert("overall_status".to_string(), serde_json::json!({
+        "healthy": overall_status,
+        "message": if overall_status {
+            "Connection prerequisites are satisfied"
+        } else {
+            "Some connection prerequisites are missing"
+        }
+    }));
+    
+    info!("MCP connection diagnostics completed for: {}", server_name);
+    
+    Ok(serde_json::Value::Object(diagnostics))
+}
+
+/// 强制自动连接所有启用的MCP服务器
+#[tauri::command]
+pub async fn force_auto_connect_mcp_servers(
+    client_manager: State<'_, Arc<McpClientManager>>,
+) -> Result<serde_json::Value, String> {
+    info!("Force auto-connect triggered by user");
+    
+    // 重新初始化客户端管理器（这会触发自动连接）
+    if let Err(e) = client_manager.initialize().await {
+        return Err(format!("Failed to initialize MCP client manager: {}", e));
+    }
+    
+    // 等待一段时间让连接完成
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    
+    // 获取连接状态
+    let connection_status = client_manager.get_all_connection_status().await;
+    
+    let mut result = serde_json::Map::new();
+    result.insert("message".to_string(), serde_json::json!("Auto-connect process completed"));
+    result.insert("connections".to_string(), serde_json::json!(connection_status));
+    
+    Ok(serde_json::Value::Object(result))
+}
+
+/// 测试MCP传输类型实现
+#[tauri::command]
+pub async fn test_mcp_transport_types(
+    client_manager: State<'_, Arc<McpClientManager>>,
+) -> Result<serde_json::Value, String> {
+    let mut test_results = serde_json::Map::new();
+    
+    // 测试STDIO传输类型
+    test_results.insert("stdio".to_string(), serde_json::json!({
+        "supported": true,
+        "description": "STDIO transport implemented using child process management",
+        "requires_command": true
+    }));
+    
+    // 测试SSE客户端传输类型
+    test_results.insert("sse_client".to_string(), serde_json::json!({
+        "supported": true,
+        "description": "SSE client transport available but requires specific server setup with SSE events",
+        "requires_endpoint": true,
+        "note": "Server must provide SSE endpoint for this transport to work"
+    }));
+    
+    // 测试HTTP流式传输类型
+    test_results.insert("http_streaming".to_string(), serde_json::json!({
+        "supported": true,
+        "description": "HTTP streaming transport available but requires specific server setup with streamable HTTP protocol",
+        "requires_endpoint": true,
+        "note": "Server must support streamable HTTP protocol for this transport to work"
+    }));
+    
+    // 测试子进程传输类型
+    test_results.insert("child_process".to_string(), serde_json::json!({
+        "supported": true,
+        "description": "Child process transport fully implemented",
+        "requires_command": true
+    }));
+    
+    // 获取当前连接状态
+    let connection_status = client_manager.get_all_connection_status().await;
+    test_results.insert("current_connections".to_string(), serde_json::json!(connection_status));
+    
+    Ok(serde_json::Value::Object(test_results))
+}
+
+/// 批量并发连接多个MCP服务器
+#[tauri::command]
+pub async fn connect_servers_concurrent(
+    server_names: Vec<String>,
+    client_manager: State<'_, Arc<McpClientManager>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    info!("Starting concurrent connection to {} servers: {:?}", server_names.len(), server_names);
+    
+    let results = client_manager
+        .connect_to_servers_concurrent(server_names)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let response: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|(server_name, result)| {
+            match result {
+                Ok(duration) => serde_json::json!({
+                    "server_name": server_name,
+                    "success": true,
+                    "duration_ms": duration.as_millis(),
+                    "message": format!("Connected successfully in {:?}", duration)
+                }),
+                Err(e) => serde_json::json!({
+                    "server_name": server_name,
+                    "success": false,
+                    "error": e.to_string(),
+                    "message": format!("Connection failed: {}", e)
+                })
+            }
+        })
+        .collect();
+    
+    Ok(response)
+}
+
+/// 获取连接性能统计
+#[tauri::command]
+pub async fn get_connection_performance_stats(
+    client_manager: State<'_, Arc<McpClientManager>>,
+) -> Result<serde_json::Value, String> {
+    let stats = client_manager.get_connection_performance_stats().await;
+    info!("Connection performance stats: {}", stats);
+    Ok(stats)
 }

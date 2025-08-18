@@ -3,16 +3,18 @@
 //! 负责按照计划逐步执行子任务，调用具体的工具和服务
 
 use crate::engines::plan_and_execute::types::*;
-use crate::engines::plan_and_execute::tool_interface::{ToolInterface, ToolCall, ToolResult};
+use crate::tools::{UnifiedToolManager, ToolExecutionParams, ToolExecutionResult, get_global_tool_system};
 use crate::engines::ExecutionError;
 use crate::services::database::DatabaseService;
+use crate::ai_adapter::core::AiAdapterManager;
+use crate::ai_adapter::types::{ChatRequest, Message, MessageRole, ChatOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::timeout;
-use uuid::Uuid;
+
 
 /// 执行器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +29,23 @@ pub struct ExecutorConfig {
     pub execution_mode: ExecutionMode,
     /// 错误处理策略
     pub error_handling: ErrorHandlingStrategy,
+    /// AI提供商（用于AI推理步骤）
+    pub ai_provider: String,
+    /// AI模型配置（用于AI推理步骤）
+    pub model_config: ExecutorModelConfig,
+}
+
+/// 执行器模型配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutorModelConfig {
+    /// 模型名称
+    pub model_name: String,
+    /// 温度参数
+    pub temperature: f32,
+    /// 最大token数
+    pub max_tokens: u32,
+    /// top_p参数
+    pub top_p: f32,
 }
 
 /// 执行模式
@@ -92,7 +111,7 @@ pub struct StepResult {
     /// 重试次数
     pub retry_count: u32,
     /// 工具调用结果
-    pub tool_result: Option<ToolResult>,
+    pub tool_result: Option<ToolExecutionResult>,
 }
 
 /// 步骤状态
@@ -146,8 +165,8 @@ pub struct ExecutionContext {
     pub shared_data: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     /// 执行状态
     pub execution_state: Arc<RwLock<ExecutionState>>,
-    /// 工具接口
-    pub tool_interface: Arc<ToolInterface>,
+    /// 工具管理器
+    pub tool_manager: Arc<RwLock<UnifiedToolManager>>,
 }
 
 /// 执行状态
@@ -344,7 +363,9 @@ impl Executor {
             is_cancelled: false,
         }));
         
-        let tool_interface = Arc::new(ToolInterface::new(self.db_service.clone()).await?);
+        let tool_system = get_global_tool_system()
+            .map_err(|e| PlanAndExecuteError::ToolFailed(format!("获取全局工具系统失败: {}", e)))?;
+        let tool_manager = tool_system.get_manager();
         
         let mut context = self.context.lock().await;
         *context = Some(ExecutionContext {
@@ -352,7 +373,7 @@ impl Executor {
             plan_id: plan.id.clone(),
             shared_data,
             execution_state,
-            tool_interface,
+            tool_manager,
         });
         
         Ok(())
@@ -362,7 +383,7 @@ impl Executor {
         &self,
         plan: &ExecutionPlan,
         step_results: &mut HashMap<String, StepResult>,
-        errors: &mut Vec<ExecutionError>,
+        _errors: &mut Vec<ExecutionError>,
     ) -> Result<(), PlanAndExecuteError> {
         let context_guard = self.context.lock().await;
         let context = context_guard.as_ref().unwrap();
@@ -481,21 +502,24 @@ impl Executor {
         context: &ExecutionContext,
     ) -> Result<serde_json::Value, PlanAndExecuteError> {
         if let Some(tool_config) = &step.tool_config {
-            let tool_call = ToolCall {
-                id: Uuid::new_v4().to_string(),
-                tool_name: tool_config.tool_name.clone(),
-                parameters: step.parameters.clone(),
-                timeout: Some(tool_config.timeout.unwrap_or(self.config.default_timeout)),
-                retry_config: None,
-                context: None,
+            // 合并工具参数（以步骤参数为优先，覆盖tool_args）
+            let mut merged_inputs = tool_config.tool_args.clone();
+            for (k, v) in &step.parameters { merged_inputs.insert(k.clone(), v.clone()); }
+
+            let tool_params = ToolExecutionParams {
+                inputs: merged_inputs,
+                context: HashMap::new(),
+                timeout: Some(std::time::Duration::from_secs(tool_config.timeout.unwrap_or(self.config.default_timeout))),
+                execution_id: None,
             };
             
             let timeout_duration = Duration::from_secs(
                 tool_config.timeout.unwrap_or(self.config.default_timeout)
             );
             
-            match timeout(timeout_duration, context.tool_interface.call_tool(tool_call)).await {
-                Ok(Ok(result)) => Ok(result.result),
+            let manager = context.tool_manager.read().await;
+            match timeout(timeout_duration, manager.call_tool(&tool_config.tool_name, tool_params)).await {
+                Ok(Ok(result)) => Ok(result.output),
                 Ok(Err(error)) => Err(PlanAndExecuteError::ToolFailed(error.to_string())),
                 Err(_) => Err(PlanAndExecuteError::ToolFailed("工具调用超时".to_string())),
             }
@@ -507,12 +531,59 @@ impl Executor {
     async fn execute_ai_reasoning(
         &self,
         step: &ExecutionStep,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<serde_json::Value, PlanAndExecuteError> {
-        // AI推理步骤的实现
-        log::info!("执行AI推理步骤: {}", step.name);
+        log::info!("Executing AI reasoning step: {}", step.name);
+
+        // 构建提示
+        let shared = context.shared_data.read().await;
+        let shared_keys: Vec<String> = shared.keys().cloned().collect();
+        let params_str = if step.parameters.is_empty() {
+            "{}".to_string()
+        } else {
+            serde_json::to_string(&step.parameters).unwrap_or_else(|_| "{}".to_string())
+        };
+        let prompt = format!(
+            "You are an expert reasoning module.\n\nStep: {step_name}\nDescription: {desc}\nParameters: {params}\nShared context keys: {keys}\n\nTask: Provide a concise reasoning outcome. If applicable, produce actionable insights for subsequent steps. Return plain text.",
+            step_name = step.name,
+            desc = step.description,
+            params = params_str,
+            keys = if shared_keys.is_empty() { "(none)".to_string() } else { shared_keys.join(", ") }
+        );
+
+        // 发送到AI提供商
+        let ai_manager = AiAdapterManager::global();
+        let provider = ai_manager.get_provider(&self.config.ai_provider)
+            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+        let request = ChatRequest {
+            model: self.config.model_config.model_name.clone(),
+            messages: vec![Message {
+                role: MessageRole::User,
+                content: prompt,
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            tools: None,
+            tool_choice: None,
+            user: None,
+            extra_params: None,
+            options: Some(ChatOptions {
+                temperature: Some(self.config.model_config.temperature),
+                max_tokens: Some(self.config.model_config.max_tokens),
+                top_p: Some(self.config.model_config.top_p),
+                frequency_penalty: None,
+                presence_penalty: None,
+                stop: None,
+                stream: Some(false),
+            }),
+        };
+
+        let response = provider.send_chat_request(&request).await
+            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+
         Ok(serde_json::json!({
-            "reasoning_result": "AI推理完成",
+            "reasoning_result": response.message.content,
             "step_name": step.name
         }))
     }
@@ -630,6 +701,7 @@ impl Executor {
         }
     }
 
+    #[allow(unused)]
     fn can_execute_in_parallel(&self, _step: &ExecutionStep, _plan: &ExecutionPlan) -> bool {
         // 简化的并行判断逻辑
         // 实际应该检查步骤依赖关系
@@ -720,6 +792,13 @@ impl Default for ExecutorConfig {
             enable_step_caching: true,
             execution_mode: ExecutionMode::Tolerant,
             error_handling: ErrorHandlingStrategy::RetryThenStop,
+            ai_provider: "deepseek".to_string(),
+            model_config: ExecutorModelConfig {
+                model_name: "deepseek-chat".to_string(),
+                temperature: 0.3,
+                max_tokens: 2000,
+                top_p: 0.9,
+            },
         }
     }
 }
@@ -747,7 +826,7 @@ impl Clone for ExecutionContext {
             plan_id: self.plan_id.clone(),
             shared_data: Arc::clone(&self.shared_data),
             execution_state: Arc::clone(&self.execution_state),
-            tool_interface: Arc::clone(&self.tool_interface),
+            tool_manager: Arc::clone(&self.tool_manager),
         }
     }
 }

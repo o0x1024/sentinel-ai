@@ -15,6 +15,15 @@
           <i class="fas fa-sync-alt mr-2"></i>
           {{ $t('common.refresh') }}
         </button>
+        <div class="dropdown dropdown-end">
+          <button tabindex="0" class="btn btn-outline btn-secondary">
+            <i class="fas fa-cog mr-2"></i>
+            管理
+          </button>
+          <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
+            <li><a @click="cleanupDuplicateServers"><i class="fas fa-broom mr-2"></i>清理重复服务器</a></li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -136,7 +145,8 @@
               <td>{{ connection.name }}</td>
               <td><span class="badge badge-ghost">{{ connection.transport_type }}</span></td>
               <td>
-                <span :class="getStatusBadgeClass(connection.status)">
+                <span :class="getStatusBadgeClass(connection.status)" class="flex items-center gap-1">
+                  <i :class="getStatusIcon(connection.status)"></i>
                   {{ connection.status }}
                 </span>
               </td>
@@ -446,7 +456,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive, computed } from 'vue';
+import { ref, onMounted, onUnmounted, reactive, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { dialog } from '@/composables/useDialog';
@@ -503,6 +513,7 @@ const editableServer = reactive({
 });
 const serverTools = ref<FrontendTool[]>([]);
 const isLoadingTools = ref(false);
+const statusUpdateInterval = ref<NodeJS.Timeout | null>(null);
 
 const quickCreateForm = reactive({
   enabled: true,
@@ -533,6 +544,16 @@ const getStatusBadgeClass = (status: string) => {
     case 'Disconnected': return 'badge badge-sm badge-warning';
     case 'Connecting': return 'badge badge-sm badge-info';
     default: return 'badge badge-sm';
+  }
+};
+
+const getStatusIcon = (status: string) => {
+  switch (status) {
+    case 'Connected': return 'fas fa-check-circle';
+    case 'Error': return 'fas fa-exclamation-circle';
+    case 'Disconnected': return 'fas fa-times-circle';
+    case 'Connecting': return 'fas fa-spinner fa-spin';
+    default: return 'fas fa-question-circle';
   }
 };
 
@@ -623,9 +644,25 @@ async function saveServerDetails() {
 async function fetchConnections() {
   try {
     mcpConnections.value = await invoke('mcp_get_connections');
+    // 获取实时连接状态
+    await updateConnectionStatus();
   } catch (error) {
     console.error('Failed to fetch MCP connections:', error);
     mcpConnections.value = [];
+  }
+}
+
+async function updateConnectionStatus() {
+  try {
+    const statusMap = await invoke('mcp_get_connection_status') as Record<string, string>;
+    // 更新连接状态
+    mcpConnections.value.forEach(conn => {
+      if (conn.name && statusMap[conn.name]) {
+        conn.status = statusMap[conn.name];
+      }
+    });
+  } catch (error) {
+    console.error('Failed to fetch connection status:', error);
   }
 }
 
@@ -708,17 +745,31 @@ async function addMarketplaceServer(server: MarketplaceServer) {
 async function toggleServerEnabled(connection: McpConnection) {
   try {
     if (connection.status === 'Connected' && connection.id) {
+      // 断开连接
       await invoke('mcp_disconnect_server', { connectionId: connection.id });
+      dialog.toast.success(`已断开服务器 ${connection.name}`);
     } else {
+      // 连接服务器 - 检查是否已经存在连接
+      const existingConnection = mcpConnections.value.find(conn => 
+        conn.name === connection.name && conn.status === 'Connected'
+      );
+      
+      if (existingConnection) {
+        dialog.toast.warning(`服务器 ${connection.name} 已经连接`);
+        return;
+      }
+      
       await invoke('add_child_process_mcp_server', { 
         name: connection.name, 
         command: connection.command, 
         args: connection.args 
       });
+      dialog.toast.success(`已连接服务器 ${connection.name}`);
     }
     await fetchConnections();
   } catch (error) {
     console.error(`Failed to toggle server ${connection.name} state:`, error);
+    dialog.toast.error(`切换服务器 ${connection.name} 状态失败: ${error}`);
   }
 }
 
@@ -764,11 +815,58 @@ async function handleImportFromJson() {
   }
 }
 
+async function cleanupDuplicateServers() {
+  try {
+    const confirmed = await dialog.confirm('确定要清理重复的MCP服务器配置吗？这将删除重复的配置，只保留最新的。');
+    if (!confirmed) return;
+    
+    const removedDuplicates: string[] = await invoke('cleanup_duplicate_mcp_servers');
+    
+    if (removedDuplicates.length > 0) {
+      dialog.toast.success(`已清理 ${removedDuplicates.length} 个重复配置`);
+      console.log('清理的重复配置:', removedDuplicates);
+    } else {
+      dialog.toast.info('没有发现重复的服务器配置');
+    }
+    
+    await fetchConnections();
+  } catch (error) {
+    console.error('清理重复服务器失败:', error);
+    dialog.toast.error(`清理失败: ${error}`);
+  }
+}
+
+// 启动状态更新定时器
+function startStatusUpdates() {
+  if (statusUpdateInterval.value) {
+    clearInterval(statusUpdateInterval.value);
+  }
+  
+  statusUpdateInterval.value = setInterval(async () => {
+    if (activeTab.value === 'my_servers') {
+      await updateConnectionStatus();
+    }
+  }, 2000); // 每2秒更新一次状态
+}
+
+// 停止状态更新定时器
+function stopStatusUpdates() {
+  if (statusUpdateInterval.value) {
+    clearInterval(statusUpdateInterval.value);
+    statusUpdateInterval.value = null;
+  }
+}
+
 // --- 生命周期钩子 ---
 onMounted(() => {
   fetchConnections();
   fetchBuiltinTools();
   // 移除内置服务器列表
   marketplaceServers.value = [];
+  startStatusUpdates();
+});
+
+onUnmounted(() => {
+  stopStatusUpdates();
 });
 </script>

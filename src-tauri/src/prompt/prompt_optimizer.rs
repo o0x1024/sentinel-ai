@@ -1365,7 +1365,7 @@ impl PromptOptimizer {
             metadata: HashMap::new(),
         };
         
-        let test = self.ab_test_manager.create_test(test_request).await?;
+        let _test = self.ab_test_manager.create_test(test_request).await?;
         
         // 简化验证结果
         Ok(ValidationResults {
@@ -1395,7 +1395,7 @@ impl PromptOptimizer {
     }
     
     /// 分析趋势
-    fn analyze_trends(&self, performance_data: &[PerformanceRecord]) -> TrendAnalysis {
+    fn analyze_trends(&self, _performance_data: &[PerformanceRecord]) -> TrendAnalysis {
         // 简化的趋势分析实现
         TrendAnalysis {
             response_time_trend: TrendDirection::Stable,
@@ -1408,7 +1408,7 @@ impl PromptOptimizer {
     /// 识别性能瓶颈
     fn identify_bottlenecks(
         &self,
-        performance_data: &[PerformanceRecord],
+        _performance_data: &[PerformanceRecord],
         overall_stats: &OverallStats,
     ) -> Vec<PerformanceBottleneck> {
         let mut bottlenecks = Vec::new();
@@ -1679,8 +1679,11 @@ impl RuleBasedStrategy {
 /// 遗传算法优化策略
 #[derive(Debug)]
 pub struct GeneticAlgorithmStrategy {
+    #[allow(unused)]
     population_size: usize,
+    #[allow(unused)]
     generations: usize,
+    #[allow(unused)]
     mutation_rate: f32,
 }
 
@@ -1722,7 +1725,9 @@ impl OptimizationStrategy for GeneticAlgorithmStrategy {
 /// 强化学习优化策略
 #[derive(Debug)]
 pub struct ReinforcementLearningStrategy {
+    #[allow(unused)]
     learning_rate: f32,
+    #[allow(unused)]
     exploration_rate: f32,
 }
 
@@ -1763,7 +1768,7 @@ impl OptimizationStrategy for ReinforcementLearningStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    // use tempfile::TempDir;
 
     // #[tokio::test]
     // async fn test_prompt_optimizer() {

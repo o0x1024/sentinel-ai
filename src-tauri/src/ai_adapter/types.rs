@@ -110,6 +110,8 @@ impl Message {
 /// 工具定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
+    #[serde(rename = "type")]
+    pub r#type: String,
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,

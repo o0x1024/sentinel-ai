@@ -159,7 +159,7 @@ impl ScanSessionService {
         );
 
         let mut query_builder = sqlx::query(&query);
-        for param in params {
+        for _param in params {
             // Note: This is a simplified approach. In practice, you'd need to handle
             // the dynamic binding more carefully.
         }

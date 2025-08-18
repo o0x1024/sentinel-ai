@@ -13,8 +13,8 @@ use serde_json::Value;
 
 /// ReWOO Worker - 负责执行工具调用
 pub struct ReWOOWorker {
-    /// 工具管理器
-    tool_manager: Arc<dyn ToolManager>,
+    /// 框架适配器
+    framework_adapter: Arc<dyn crate::tools::FrameworkToolAdapter>,
     /// 配置
     config: WorkerConfig,
 }
@@ -22,13 +22,24 @@ pub struct ReWOOWorker {
 impl ReWOOWorker {
     /// 创建新的 Worker
     pub fn new(
-        tool_manager: Arc<dyn ToolManager>,
+        framework_adapter: Arc<dyn crate::tools::FrameworkToolAdapter>,
         config: WorkerConfig,
     ) -> Self {
         Self {
-            tool_manager,
+            framework_adapter,
             config,
         }
+    }
+    
+    /// 使用全局框架适配器创建Worker
+    pub async fn new_with_global_adapter(config: WorkerConfig) -> Result<Self, ReWOOError> {
+        let framework_adapter = crate::tools::get_framework_adapter(crate::tools::FrameworkType::ReWOO).await
+            .map_err(|e| ReWOOError::ToolSystemError(format!("获取ReWOO框架适配器失败: {}", e)))?;
+        
+        Ok(Self {
+            framework_adapter,
+            config,
+        })
     }
     
     /// 执行工具调用
@@ -44,19 +55,19 @@ impl ReWOOWorker {
         info!("Executing tool '{}' with args: {}", step.tool, substituted_args);
         
         // 构建工具调用
-        let tool_call = self.build_tool_call(step, substituted_args)?;
+        let tool_call = self.build_unified_tool_call(step, substituted_args).await?;
         
         tracing::info!("tool_call: {:?}", tool_call);
         // 验证工具调用
-        if let Err(e) = self.tool_manager.validate_tool_call(&tool_call).await {
+        if let Err(e) = self.framework_adapter.validate_tool_call(&step.tool, &tool_call).await {
             warn!("Tool call validation failed: {}", e);
-            return Err(e);
+            return Err(ReWOOError::ToolExecutionError(e.to_string()));
         }
         
         // 执行工具调用（带超时）
         let execution_result = match timeout(
             Duration::from_secs(self.config.timeout_seconds),
-            self.tool_manager.execute_tool(&tool_call)
+            self.framework_adapter.execute_tool(tool_call)
         ).await {
             Ok(result) => result,
             Err(_) => {
@@ -75,7 +86,13 @@ impl ReWOOWorker {
                 } else {
                     warn!("Tool '{}' execution failed: {:?}", step.tool, result.error);
                 }
-                result
+                // 转换UnifiedToolResult为ToolResult
+                ToolResult {
+                    success: result.success,
+                    content: result.output.to_string(),
+                    error: result.error,
+                    execution_time_ms: result.execution_time_ms,
+                }
             },
             Err(e) => {
                 error!("Tool '{}' execution error: {}", step.tool, e);
@@ -91,24 +108,44 @@ impl ReWOOWorker {
         Ok(tool_result)
     }
     
-    /// 构建工具调用
-    fn build_tool_call(
+    /// 构建工具调用 (保留用于兼容性)
+    async fn build_tool_execution_params(
         &self,
         step: &PlanStep,
         substituted_args: &str,
-    ) -> Result<ToolCall, ReWOOError> {
+    ) -> Result<crate::tools::ToolExecutionParams, ReWOOError> {
         // 解析工具参数（结合工具定义做智能映射）
-        let args = self.parse_tool_args_with_tool(&step.tool, substituted_args)?;
+        let args = self.parse_tool_args_with_tool(&step.tool, substituted_args).await?;
         
-        Ok(ToolCall {
+        Ok(crate::tools::ToolExecutionParams {
+            inputs: args,
+            context: std::collections::HashMap::new(),
+            timeout: Some(std::time::Duration::from_secs(self.config.timeout_seconds)),
+            execution_id: None,
+        })
+    }
+    
+    /// 构建统一工具调用 (新的框架适配器接口)
+    async fn build_unified_tool_call(
+        &self,
+        step: &PlanStep,
+        substituted_args: &str,
+    ) -> Result<crate::tools::UnifiedToolCall, ReWOOError> {
+        // 解析工具参数
+        let args = self.parse_tool_args_with_tool(&step.tool, substituted_args).await?;
+        
+        Ok(crate::tools::UnifiedToolCall {
             id: Uuid::new_v4().to_string(),
-            name: step.tool.clone(),
-            args,
+            tool_name: step.tool.clone(),
+            parameters: args,
+            timeout: Some(std::time::Duration::from_secs(self.config.timeout_seconds)),
+            context: std::collections::HashMap::new(),
+            retry_count: 0,
         })
     }
     
     /// 解析工具参数
-    fn parse_tool_args_with_tool(&self, tool_name: &str, args_str: &str) -> Result<HashMap<String, Value>, ReWOOError> {
+    async fn parse_tool_args_with_tool(&self, tool_name: &str, args_str: &str) -> Result<HashMap<String, Value>, ReWOOError> {
         let mut args = HashMap::new();
         
         // 规范化辅助：去除首尾引号
@@ -167,7 +204,8 @@ impl ReWOOWorker {
         }
 
         // 裸字符串：根据工具定义推断映射到唯一必填参数
-        if let Some(params) = self.tool_manager.get_tool_parameters(tool_name) {
+        if let Some(tool_info) = self.framework_adapter.get_tool_info(tool_name).await {
+            let params = &tool_info.parameters;
             let required: Vec<_> = params.parameters.iter().filter(|p| p.required).collect();
             if required.len() == 1 {
                 let key = &required[0].name;
@@ -189,19 +227,19 @@ impl ReWOOWorker {
     }
     
     /// 验证工具是否可用
-    pub fn is_tool_available(&self, tool_name: &str) -> bool {
-        self.tool_manager.is_tool_available(tool_name)
+    pub async fn is_tool_available(&self, tool_name: &str) -> bool {
+        self.framework_adapter.is_tool_available(tool_name).await
     }
     
     /// 获取可用工具列表
-    pub fn get_available_tools(&self) -> Vec<String> {
-        self.tool_manager.get_available_tools()
+    pub async fn get_available_tools(&self) -> Vec<String> {
+        self.framework_adapter.list_available_tools().await
     }
     
     /// 验证步骤是否可执行
-    pub fn validate_step(&self, step: &PlanStep) -> Result<(), ReWOOError> {
+    pub async fn validate_step(&self, step: &PlanStep) -> Result<(), ReWOOError> {
         // 检查工具是否可用
-        if !self.is_tool_available(&step.tool) {
+        if !self.is_tool_available(&step.tool).await {
             return Err(ReWOOError::ToolExecutionError(
                 format!("Tool '{}' is not available", step.tool)
             ));
@@ -297,7 +335,7 @@ impl ReWOOWorker {
 impl Clone for ReWOOWorker {
     fn clone(&self) -> Self {
         Self {
-            tool_manager: Arc::clone(&self.tool_manager),
+            framework_adapter: Arc::clone(&self.framework_adapter),
             config: self.config.clone(),
         }
     }

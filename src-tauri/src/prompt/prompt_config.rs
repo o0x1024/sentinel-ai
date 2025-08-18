@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
 use anyhow::{Result, anyhow};
-use uuid::Uuid;
 
 /// Prompt配置管理器
 #[derive(Debug, Clone)]
@@ -828,14 +827,14 @@ mod tests {
 
     #[test]
     fn test_prompt_building() {
-        let manager = PromptConfigManager::new();
-        let context = ConfigSelectionContext {
-            user_query: "测试查询".to_string(),
-            detected_domain: Some("security_testing".to_string()),
-            complexity_score: 0.5,
-            resource_constraints: None,
-            user_preferences: HashMap::new(),
-        };
+        // let manager = PromptConfigManager::new();
+        // let context = ConfigSelectionContext {
+        //     user_query: "测试查询".to_string(),
+        //     detected_domain: Some("security_testing".to_string()),
+        //     complexity_score: 0.5,
+        //     resource_constraints: None,
+        //     user_preferences: HashMap::new(),
+        // };
 
         // 这里需要同步版本的测试
         // let config = manager.get_optimal_config(&context).await.unwrap();

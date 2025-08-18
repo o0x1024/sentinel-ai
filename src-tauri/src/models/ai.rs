@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 /// AI服务提供商
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

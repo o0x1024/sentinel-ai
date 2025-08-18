@@ -277,13 +277,15 @@ const availableModels = computed(() => {
   const models: any[] = []
   
   Object.values(aiConfig.value.providers || {}).forEach((provider: any) => {
-    if (provider.enabled && provider.models) {
+    // 修改条件：只要provider有models就包含，不需要enabled状态
+    // 这样用户在配置阶段就能看到所有可用模型
+    if (provider.models && Array.isArray(provider.models)) {
       provider.models.forEach((model: any) => {
         if (model.is_available) {
           models.push({
             id: model.id,
             name: model.name,
-            provider: provider.name || 'Unknown',
+            provider: provider.name || provider.provider || 'Unknown',
             description: model.description || '',
             context_length: model.context_length || 4096,
             supports_tools: model.supports_tools || false,
@@ -294,6 +296,7 @@ const availableModels = computed(() => {
     }
   })
   
+  console.log('Available models for scheduler:', models)
   return models
 })
 
@@ -327,6 +330,9 @@ const loadSettings = async () => {
       console.log('Loaded scheduler config:', settings.scheduler)
     }
     
+    // 加载代理设置
+    await loadProxy()
+    
     // 加载其他设置...
   } catch (error) {
     console.error('Failed to load settings:', error)
@@ -342,7 +348,8 @@ const saveAllSettings = async () => {
       saveSchedulerConfig(),
       saveDatabaseConfig(),
       saveGeneralConfig(),
-      saveSecurityConfig()
+      saveSecurityConfig(),
+      saveProxy()
     ])
     dialog.toast.success('所有设置已保存')
   } catch (error) {

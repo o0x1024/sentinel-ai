@@ -3,8 +3,8 @@
 //! 基于 LangGraph ReWOO 标准实现的 Planner 模块
 //! 负责生成标准格式的执行计划：Plan: <reasoning> #E1 = Tool[args]
 use super::*;
-use super::rewoo_tool_adapter::ToolManager;
-use crate::ai_adapter::types::{ChatRequest, Message, MessageContent, MessageRole, Tool};
+
+use crate::ai_adapter::types::{ChatRequest, Message, MessageRole, Tool};
 use crate::ai_adapter::{AiProvider, ChatOptions};
 use regex::Regex;
 use std::collections::HashMap;
@@ -17,7 +17,8 @@ use crate::services::prompt_db::PromptRepository;
 pub struct ReWOOPlanner {
     /// AI 提供商
     ai_provider: Arc<dyn AiProvider>,
-    tool_manager: Arc<dyn ToolManager>,
+    /// 框架适配器
+    framework_adapter: Arc<dyn crate::tools::FrameworkToolAdapter>,
     /// 配置
     config: PlannerConfig,
     /// 计划解析正则表达式
@@ -30,7 +31,7 @@ impl ReWOOPlanner {
     /// 创建新的 Planner
     pub fn new(
         ai_provider: Arc<dyn AiProvider>,
-        tool_manager: Arc<dyn ToolManager>,
+        framework_adapter: Arc<dyn crate::tools::FrameworkToolAdapter>,
         config: PlannerConfig,
         prompt_repo: Option<PromptRepository>,
     ) -> Result<Self, ReWOOError> {
@@ -41,24 +42,25 @@ impl ReWOOPlanner {
         
         Ok(Self {
             ai_provider,
-            tool_manager,
+            framework_adapter,
             config,
             plan_regex,
             prompt_repo,
         })
     }
     
-    /// 将ToolManager提供的可用工具名称转换为LLM函数调用的Tool定义
-    fn build_tools_from_manager(&self) -> Vec<Tool> {
-        let names = self.tool_manager.get_available_tools();
+    /// 将FrameworkAdapter提供的可用工具名称转换为LLM函数调用的Tool定义
+    async fn build_tools_from_manager(&self) -> Vec<Tool> {
+        let names = self.framework_adapter.list_available_tools().await;
         let mut tools = Vec::new();
         for name in names {
-            // 从管理器获取参数定义，转换为 JSON Schema
-            let schema = if let Some(params) = self.tool_manager.get_tool_parameters(&name) {
+            // 从适配器获取参数定义，转换为 JSON Schema
+            let schema = if let Some(tool_info) = self.framework_adapter.get_tool_info(&name).await {
+                let params = &tool_info.parameters;
                 // 将 ParameterDefinition 列表转为 OpenAI function schema
                 let mut properties = serde_json::Map::new();
                 let mut required: Vec<String> = Vec::new();
-                for p in params.parameters {
+                for p in &params.parameters {
                     let ty = match p.param_type {
                         crate::tools::ParameterType::String => "string",
                         crate::tools::ParameterType::Number => "number",
@@ -70,14 +72,14 @@ impl ReWOOPlanner {
                         "type": ty,
                         "description": p.description,
                     });
-                    if let Some(defv) = p.default_value {
+                    if let Some(defv) = &p.default_value {
                         if let Some(obj) = prop.as_object_mut() {
-                            obj.insert("default".to_string(), defv);
+                            obj.insert("default".to_string(), defv.clone());
                         }
                     }
                     properties.insert(p.name.clone(), prop);
                     if p.required {
-                        required.push(p.name);
+                        required.push(p.name.clone());
                     }
                 }
                 serde_json::json!({
@@ -95,6 +97,7 @@ impl ReWOOPlanner {
             };
 
             tools.push(Tool {
+                r#type: "function".to_string(),
                 name: name.clone(),
                 description: format!("Tool {}", name),
                 parameters: schema,
@@ -104,7 +107,7 @@ impl ReWOOPlanner {
     }
     /// 生成计划
     pub async fn plan(&self, state: &mut ReWOOState) -> Result<(), ReWOOError> {
-        let start_time = SystemTime::now();
+        let _start_time: SystemTime = SystemTime::now();
         
         // 构建计划生成提示
         let prompt = self.build_planning_prompt(&state.task).await?;
@@ -125,14 +128,15 @@ impl ReWOOPlanner {
     /// 构建计划生成提示
     async fn build_planning_prompt(&self, task: &str) -> Result<String, ReWOOError> {
         // 动态获取可用工具名称
-        let tool_names = self.tool_manager.get_available_tools();
+        let tool_names = self.framework_adapter.list_available_tools().await;
         // 生成带参数签名的工具清单，形如：
         // - rsubdomain(domain: string, use_database_wordlist?: boolean)
         let mut tool_lines: Vec<String> = Vec::new();
         for name in &tool_names {
-            if let Some(params) = self.tool_manager.get_tool_parameters(name) {
+            if let Some(tool_info) = self.framework_adapter.get_tool_info(name).await {
+                let params = &tool_info.parameters;
                 let mut parts: Vec<String> = Vec::new();
-                for p in params.parameters {
+                for p in &params.parameters {
                     let ty = match p.param_type {
                         crate::tools::ParameterType::String => "string",
                         crate::tools::ParameterType::Number => "number",
@@ -213,6 +217,9 @@ Guidelines:
     
     /// 生成计划字符串
     async fn generate_plan_string(&self, prompt: &str) -> Result<String, ReWOOError> {
+        // 将工具列表传递给模型（启用函数调用能力，包含内置 + MCP 工具）
+        let tools_for_model = self.build_tools_from_manager();
+
         let request = ChatRequest {
             model: self.config.model_name.clone(),
             messages: vec![Message {
@@ -222,7 +229,7 @@ Guidelines:
                 tool_calls: None,
                 tool_call_id: None,
             }],
-            tools: None,
+            tools: Some(tools_for_model.await),
             tool_choice: None,
             user: None,
             extra_params: None,
@@ -351,17 +358,17 @@ Guidelines:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::collections::HashMap;
+    // use super::*;
+    // use std::collections::HashMap;
     
     #[test]
     fn test_parse_step() {
-        let config = PlannerConfig {
-            model_name: "test".to_string(),
-            temperature: 0.0,
-            max_tokens: 1000,
-            max_steps: 10,
-        };
+        // let config = PlannerConfig {
+        //     model_name: "test".to_string(),
+        //     temperature: 0.0,
+        //     max_tokens: 1000,
+        //     max_steps: 10,
+        // };
         
         // 创建一个模拟的 AI 提供商
         // 注意：这里需要一个测试用的 AI 提供商实现
@@ -377,18 +384,18 @@ mod tests {
     
     #[test]
     fn test_substitute_variables() {
-        let config = PlannerConfig {
-            model_name: "test".to_string(),
-            temperature: 0.0,
-            max_tokens: 1000,
-            max_steps: 10,
-        };
+        // let config = PlannerConfig {
+        //     model_name: "test".to_string(),
+        //     temperature: 0.0,
+        //     max_tokens: 1000,
+        //     max_steps: 10,
+        // };
         
         // 创建一个模拟的 AI 提供商
         // let planner = ReWOOPlanner::new(ai_provider, config).unwrap();
         
-        let mut results = HashMap::new();
-        results.insert("#E1".to_string(), "192.168.1.1".to_string());
+        // let mut results = HashMap::new();
+        // results.insert("#E1".to_string(), "192.168.1.1".to_string());
         
         // let substituted = planner.substitute_variables("scan #E1 for ports", &results);
         // assert_eq!(substituted, "scan 192.168.1.1 for ports");

@@ -195,7 +195,8 @@ impl BaseProvider {
         supports_streaming: bool,
         supports_tools: bool,
     ) -> Result<Self> {
-        let timeout = config.timeout.unwrap_or(Duration::from_secs(60));
+        let timeout = Duration::from_secs(300);
+        // let timeout = config.timeout.unwrap_or(Duration::from_secs(300));
         let http_client = HttpClient::new(timeout)?
             .with_headers(config.extra_headers.clone().unwrap_or_default());
         
