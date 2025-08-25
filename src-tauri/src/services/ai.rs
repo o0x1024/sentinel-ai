@@ -1,4 +1,4 @@
-use crate::ai_adapter::RawMessage;
+use crate::ai_adapter::core::AiAdapterManager;
 use crate::commands::ai::{ModelConfig, ModelInfo};
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::database::Database;
@@ -6,8 +6,8 @@ use crate::services::mcp::McpService;
 use anyhow::Result;
 use chrono::Utc;
 use crate::ai_adapter::types::ToolCall;
-use crate::ai_adapter::raw_message::{RawChatRequest, RawChatOptions};
 
+use crate::ai_adapter::types::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -31,11 +31,11 @@ pub struct SchedulerConfig {
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            intent_analysis_model: "deepseek-chat".to_string(),
-            planner_model: "deepseek-chat".to_string(),
-            replanner_model: "deepseek-chat".to_string(),
-            executor_model: "deepseek-chat".to_string(),
-            evaluator_model: "deepseek-chat".to_string(),
+            intent_analysis_model: String::new(),
+            planner_model: String::new(),
+            replanner_model: String::new(),
+            executor_model: String::new(),
+            evaluator_model: String::new(),
             default_strategy: "adaptive".to_string(),
         }
     }
@@ -195,6 +195,9 @@ impl AiServiceManager {
                 "deepseek" => Some("https://api.deepseek.com".to_string()),
                 "google" => Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
                 "ollama" => Some("http://localhost:11434".to_string()),
+                "moonshot" => Some("https://api.moonshot.ai".to_string()),
+                "modelscope" => Some("https://api-inference.modelscope.cn/v1".to_string()),
+                "openrouter" => Some("https://openrouter.ai/api/v1".to_string()),
                 _ => None,
             };
             
@@ -204,6 +207,9 @@ impl AiServiceManager {
                 "deepseek" => "deepseek-chat",
                 "google" => "gemini-pro",
                 "ollama" => "llama2",
+                "moonshot" => "moonshot-v1",
+                "modelscope" => "qwen2.5-coder-32b-instruct",
+                "openrouter" => "gpt-4o",
                 _ => "default",
             }.to_string();
             
@@ -251,7 +257,6 @@ impl AiServiceManager {
 
     // 添加AI服务
     pub async fn add_service(&self, name: String, config: AiConfig) -> Result<()> {
-        use crate::ai_adapter::core::AiAdapterManager;
         use crate::ai_adapter::types::ProviderConfig;
         
         // 创建提供商配置
@@ -265,19 +270,21 @@ impl AiServiceManager {
             extra_headers: None,
         };
         
-        // 向全局 AiAdapterManager 注册提供商（使用小写名称确保一致性）
+        // 向全局 AI 客户端注册提供商（使用小写名称确保一致性）
         let provider_name = config.provider.to_lowercase();
-        let adapter_manager = AiAdapterManager::global();
         
         // 使用ProviderFactory创建提供商实例
         use crate::ai_adapter::providers::ProviderFactory;
         match ProviderFactory::create(provider_config) {
             Ok(provider) => {
-                if let Err(e) = adapter_manager.register_provider(provider) {
-                    tracing::warn!("Failed to register provider {}: {}", provider_name, e);
+                // 注册到全局AI适配器管理器
+                let adapter_manager = AiAdapterManager::global();
+                if let Err(e) = adapter_manager.register_provider(provider.clone()) {
+                    tracing::warn!("Failed to register provider {} to AiAdapterManager: {}", provider_name, e);
                 } else {
-                    tracing::info!("Successfully registered provider: {}", provider_name);
+                    tracing::info!("Successfully registered provider {} to AiAdapterManager: {}", provider_name, provider.name());
                 }
+
             }
             Err(e) => {
                 tracing::warn!("Failed to create provider {}: {}", provider_name, e);
@@ -386,32 +393,50 @@ impl AiServiceManager {
                 }
                 Err(e) => {
                     tracing::error!("Failed to parse 'providers_config' as map: {}. Falling back to env vars. Content: {}", e, config_str);
-                    return self.init_services_from_env().await;
                 }
             }
         } else {
             tracing::info!("'providers_config' not found in database. Trying to initialize from environment variables.");
-            return self.init_services_from_env().await;
         }
 
-        // 如果没有从数据库配置中成功添加任何服务，则尝试从环境变量初始化
-        if self.services.read().unwrap().is_empty() {
-            tracing::info!("No services initialized from database, attempting to initialize from environment variables.");
-            if let Err(e) = self.init_services_from_env().await {
-                tracing::error!(
-                    "Failed to initialize services from environment variables: {}",
-                    e
-                );
+
+        // 在成功注册完providers后，尝试读取并应用全局默认Provider
+        if let Ok(Some(default_provider)) = self.db.get_config("ai", "default_provider").await {
+            let provider_key = default_provider.to_lowercase();
+            if self.get_service(&provider_key).is_some() {
+                if let Err(e) = self.set_default_alias_to(&provider_key).await {
+                    tracing::warn!("Failed to set default alias to '{}': {}", provider_key, e);
+                }
+                // 同步设置到全局AI适配器管理器
+                if let Ok(adapter_manager) = crate::ai_adapter::core::AiAdapterManager::global().get_client() {
+                    if let Ok(mut client) = adapter_manager.write() {
+                        if let Err(e) = client.set_default_provider(&provider_key) {
+                            tracing::warn!("Failed to set global default provider to '{}': {}", provider_key, e);
+                        } else {
+                            tracing::info!("Global default provider set to '{}'", provider_key);
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Configured default provider '{}' not found among initialized services", provider_key);
             }
         }
 
-        // 如果仍然没有任何服务，创建一个默认的别名服务
-        if self.services.read().unwrap().is_empty() {
-            tracing::warn!(
-                "No AI services could be initialized. Creating a default alias service."
-            );
-            if let Err(e) = self.create_default_alias().await {
-                tracing::error!("Failed to create default alias service: {}", e);
+        // 确保至少有一个default服务
+        if !self.services.read().unwrap().contains_key("default") {
+            if self.services.read().unwrap().is_empty() {
+                tracing::warn!(
+                    "No AI services configured. Creating a minimal default service for session management."
+                );
+                // 创建一个最小化的默认服务用于会话管理
+                if let Err(e) = self.create_minimal_default_service().await {
+                    tracing::error!("Failed to create minimal default service: {}", e);
+                }
+            } else {
+                tracing::info!("Creating default service alias from existing services.");
+                if let Err(e) = self.create_default_alias().await {
+                    tracing::error!("Failed to create default alias service: {}", e);
+                }
             }
         }
 
@@ -423,132 +448,6 @@ impl AiServiceManager {
         Ok(())
     }
 
-    // 从环境变量初始化服务
-    async fn init_services_from_env(&self) -> anyhow::Result<()> {
-        // 检查各种API密钥环境变量，为每个可用的提供商添加服务
-
-        // OpenAI
-        if std::env::var("OPENAI_API_KEY").is_ok() {
-            let config = AiConfig {
-                provider: "openai".to_string(),
-                model: "gpt-4o".to_string(),
-                api_key: std::env::var("OPENAI_API_KEY").ok(),
-                api_base: std::env::var("OPENAI_API_BASE").ok(),
-                organization: std::env::var("OPENAI_ORGANIZATION").ok(),
-                temperature: Some(0.7),
-                max_tokens: Some(1000),
-            };
-            self.add_service("openai".to_string(), config).await?;
-            tracing::info!("Added OpenAI service");
-        }
-
-        // Anthropic
-        if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-            let config = AiConfig {
-                provider: "anthropic".to_string(),
-                model: "claude-3-sonnet-20240229".to_string(),
-                api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
-                api_base: std::env::var("ANTHROPIC_API_BASE").ok(),
-                organization: None,
-                temperature: Some(0.7),
-                max_tokens: Some(1000),
-            };
-            self.add_service("anthropic".to_string(), config).await?;
-            tracing::info!("Added Anthropic service");
-        }
-
-        // Gemini
-        if std::env::var("GEMINI_API_KEY").is_ok() {
-            let config = AiConfig {
-                provider: "gemini".to_string(),
-                model: "gemini-1.5-pro".to_string(),
-                api_key: std::env::var("GEMINI_API_KEY").ok(),
-                api_base: None,
-                organization: None,
-                temperature: Some(0.7),
-                max_tokens: Some(1000),
-            };
-            self.add_service("gemini".to_string(), config).await?;
-            tracing::info!("Added Gemini service");
-        }
-
-        // DeepSeek
-        if std::env::var("DEEPSEEK_API_KEY").is_ok() {
-            let config = AiConfig {
-                provider: "deepseek".to_string(),
-                model: "deepseek-chat".to_string(),
-                api_key: std::env::var("DEEPSEEK_API_KEY").ok(),
-                api_base: std::env::var("DEEPSEEK_API_BASE").ok(),
-                organization: None,
-                temperature: Some(0.7),
-                max_tokens: Some(1000),
-            };
-            self.add_service("deepseek".to_string(), config).await?;
-            tracing::info!("Added DeepSeek service");
-        }
-
-        // Groq
-        if std::env::var("GROQ_API_KEY").is_ok() {
-            let config = AiConfig {
-                provider: "groq".to_string(),
-                model: "llama3-70b-8192".to_string(),
-                api_key: std::env::var("GROQ_API_KEY").ok(),
-                api_base: None,
-                organization: None,
-                temperature: Some(0.7),
-                max_tokens: Some(1000),
-            };
-            self.add_service("groq".to_string(), config).await?;
-            tracing::info!("Added Groq service");
-        }
-
-        // Cohere
-        if std::env::var("COHERE_API_KEY").is_ok() {
-            let config = AiConfig {
-                provider: "cohere".to_string(),
-                model: "command-r".to_string(),
-                api_key: std::env::var("COHERE_API_KEY").ok(),
-                api_base: None,
-                organization: None,
-                temperature: Some(0.7),
-                max_tokens: Some(1000),
-            };
-            self.add_service("cohere".to_string(), config).await?;
-            tracing::info!("Added Cohere service");
-        }
-
-        // xAI/Grok
-        if std::env::var("XAI_API_KEY").is_ok() {
-            let config = AiConfig {
-                provider: "xai".to_string(),
-                model: "grok-1".to_string(),
-                api_key: std::env::var("XAI_API_KEY").ok(),
-                api_base: None,
-                organization: None,
-                temperature: Some(0.7),
-                max_tokens: Some(1000),
-            };
-            self.add_service("xai".to_string(), config).await?;
-            tracing::info!("Added xAI/Grok service");
-        }
-
-        // Ollama (本地)
-        let config = AiConfig {
-            provider: "ollama".to_string(),
-            model: "llama3:8b".to_string(),
-            api_key: None,
-            api_base: Some("http://localhost:11434".to_string()),
-            organization: None,
-            temperature: Some(0.7),
-            max_tokens: Some(1000),
-        };
-        match self.add_service("ollama".to_string(), config).await {
-            Ok(_) => tracing::info!("Added Ollama service"),
-            Err(e) => tracing::warn!("Failed to add Ollama service: {}", e),
-        }
-
-        Ok(())
-    }
 
 
     // 创建default别名，指向首选的AI服务
@@ -568,6 +467,9 @@ impl AiServiceManager {
             "gemini",
             "groq",
             "ollama",
+            "moonshot",
+            "openrouter",
+            "modelscope",
         ];
 
         for provider in preferred_providers {
@@ -615,6 +517,73 @@ impl AiServiceManager {
         Ok(())
     }
 
+    /// 将 default 别名指向指定的 provider 对应的服务
+    pub async fn set_default_alias_to(&self, provider: &str) -> anyhow::Result<()> {
+        let provider_lc = provider.to_lowercase();
+        // 找到目标服务：优先通过服务配置中的 provider 字段匹配，其次按服务名（不区分大小写）匹配
+        let service = {
+            let services = self.services.read().unwrap();
+            // 先按配置中的 provider 字段匹配（小写）
+            if let Some((_name, svc)) = services.iter().find(|(_n, svc)| {
+                svc.get_config().provider.to_lowercase() == provider_lc
+            }) {
+                Some(svc.clone())
+            } else {
+                // 再按服务名匹配（不区分大小写）
+                services.iter().find_map(|(n, svc)| {
+                    if n.to_lowercase() == provider_lc { Some(svc.clone()) } else { None }
+                })
+            }
+        };
+        let Some(service) = service else {
+            anyhow::bail!("Target provider service '{}' not found", provider);
+        };
+
+        // 构造新配置
+        let original_config = service.get_config();
+        let config = AiConfig {
+            provider: original_config.provider.clone(),
+            model: original_config.model.clone(),
+            api_key: original_config.api_key.clone(),
+            api_base: original_config.api_base.clone(),
+            organization: original_config.organization.clone(),
+            temperature: original_config.temperature,
+            max_tokens: original_config.max_tokens,
+        };
+
+        // 如已存在 default，移除
+        {
+            let mut services = self.services.write().unwrap();
+            services.remove("default");
+        }
+
+        // 新建 default 别名
+        self.add_service("default".to_string(), config).await?;
+        tracing::info!("Default service alias now points to '{}'", provider_lc);
+        Ok(())
+    }
+
+    // 创建最小化的默认服务（用于会话管理，无需实际AI功能）
+    async fn create_minimal_default_service(&self) -> anyhow::Result<()> {
+        tracing::info!("Creating minimal default service for session management");
+        
+        // 创建一个虚拟的AI配置，仅用于会话管理
+        let config = AiConfig {
+            provider: "mock".to_string(),
+            model: "session-manager".to_string(),
+            api_key: Some("dummy".to_string()),
+            api_base: None,
+            organization: None,
+            temperature: Some(0.7),
+            max_tokens: Some(1000),
+        };
+        
+        self.add_service("default".to_string(), config).await?;
+        tracing::info!("Created minimal default service for session management");
+        
+        Ok(())
+    }
+
     // 调度策略相关方法
     // 获取调度策略配置
     pub async fn get_scheduler_config(&self) -> anyhow::Result<SchedulerConfig> {
@@ -648,7 +617,7 @@ impl AiServiceManager {
         Ok(config)
     }
     
-    // 根据阶段获取对应的AI服务
+    /// 根据调度策略阶段获取对应的AI模型服务
     pub async fn get_service_for_stage(&self, stage: SchedulerStage) -> anyhow::Result<Option<AiService>> {
         let config = self.get_scheduler_config().await?;
         
@@ -669,7 +638,7 @@ impl AiServiceManager {
     async fn find_service_by_model(&self, model_id: &str) -> anyhow::Result<Option<AiService>> {
         let services = self.services.read().unwrap();
         
-        // 遍历所有服务，找到包含指定模型的服务
+        // 首先检查是否有服务直接支持该模型
         for (_service_name, service) in services.iter() {
             let config = service.get_config();
             
@@ -692,29 +661,129 @@ impl AiServiceManager {
                     max_retries: 3,
                 };
                 
+                info!("为模型 {} 找到匹配的提供商 {}", model_id, config.provider);
                 return Ok(Some(new_service));
             }
         }
         
-        // 如果没有找到，返回默认服务
-        Ok(self.get_service("default"))
+        // 如果找不到支持该模型的服务，尝试根据模型名推断提供商
+        let inferred_provider = self.infer_provider_from_model(model_id);
+        if let Some(provider_name) = inferred_provider {
+            // 查找该提供商的服务
+            for (_service_name, service) in services.iter() {
+                let config = service.get_config();
+                if config.provider.to_lowercase() == provider_name.to_lowercase() {
+                    // 创建使用指定模型的服务副本
+                    let mut new_config = config.clone();
+                    new_config.model = model_id.to_string();
+                    
+                    let new_service = AiService {
+                        config: new_config,
+                        db: self.db.clone(),
+                        app_handle: self.app_handle.read().unwrap().clone(),
+                        mcp_service: self.mcp_service.clone(),
+                        max_retries: 3,
+                    };
+                    
+                    info!("通过推断为模型 {} 找到提供商 {}", model_id, provider_name);
+                    return Ok(Some(new_service));
+                }
+            }
+        }
+        
+        warn!("找不到支持模型 {} 的服务", model_id);
+        Ok(None)
     }
     
-    // 检查模型是否被指定提供商支持
-    fn is_model_supported_by_service(&self, model_id: &str, provider: &str) -> bool {
-        match provider {
-            "openai" => model_id.starts_with("gpt-") || model_id.starts_with("o1-"),
-            "anthropic" => model_id.starts_with("claude-"),
-            "gemini" => model_id.starts_with("gemini-"),
-            "deepseek" => model_id.starts_with("deepseek-") || model_id == "deepseek-chat" || model_id == "deepseek-coder",
-            "groq" => model_id.contains("llama") || model_id.contains("mixtral") || model_id.contains("gemma"),
-            "cohere" => model_id.starts_with("command-"),
-            "xai" => model_id.starts_with("grok-"),
-            "ollama" => true, // Ollama可以支持多种本地模型
-            _ => false,
+    /// 根据模型名推断提供商
+    fn infer_provider_from_model(&self, model_id: &str) -> Option<String> {
+        let model_lower = model_id.to_lowercase();
+        
+        if model_lower.starts_with("gpt-") || model_lower.starts_with("o1-") {
+            Some("openai".to_string())
+        } else if model_lower.starts_with("claude-") {
+            Some("anthropic".to_string())
+        } else if model_lower.starts_with("deepseek-") {
+            Some("deepseek".to_string())
+        } else if model_lower.starts_with("gemini-") {
+            Some("google".to_string())
+        } else if model_lower.starts_with("glm-") {
+            Some("zhipu".to_string())
+        } else if model_lower.starts_with("moonshot-") || model_lower.starts_with("kimi-") {
+            Some("moonshot".to_string())
+        } else if model_lower.starts_with("command-") || model_lower.starts_with("c4ai-") {
+            Some("cohere".to_string())
+        } else if model_lower.starts_with("grok-") {
+            Some("xai".to_string())
+        } else if model_lower.starts_with("llama") || model_lower.starts_with("mixtral") || model_lower.starts_with("gemma") {
+            Some("groq".to_string())
+        } else {
+            None
         }
     }
 
+    /// 检查模型是否被指定提供商支持
+    fn is_model_supported_by_service(&self, model_id: &str, provider: &str) -> bool {
+        match provider.to_lowercase().as_str() {
+            "openai" => model_id.starts_with("gpt-") || model_id.starts_with("o1-"),
+            "anthropic" => model_id.starts_with("claude-"),
+            "deepseek" => model_id.starts_with("deepseek-"),
+            "groq" => model_id.starts_with("llama") || model_id.starts_with("mixtral") || model_id.starts_with("gemma"),
+            "ollama" => true, // Ollama支持各种模型
+            "gemini" => model_id.starts_with("gemini-"),
+            "zhipu" => model_id.starts_with("glm-"),
+            "cohere" => model_id.starts_with("command-") || model_id.starts_with("c4ai-"),
+            "xai" => model_id.starts_with("grok-"),
+            "moonshot" => model_id.starts_with("moonshot-") || model_id.starts_with("kimi-"),
+            "modelscope" => {
+                // ModelScope 只支持特定的模型前缀，不支持所有模型
+                model_id.starts_with("qwen") || 
+                model_id.starts_with("baichuan") || 
+                model_id.starts_with("chatglm") ||
+                model_id.starts_with("internlm") ||
+                model_id.starts_with("yi-") ||
+                model_id.starts_with("deepseek-") // ModelScope 也提供 DeepSeek 模型
+            },
+            _ => false,
+        }
+    }
+    
+    /// 获取指定阶段的AI配置，用于框架动态切换模型
+    pub async fn get_ai_config_for_stage(&self, stage: SchedulerStage) -> anyhow::Result<Option<AiConfig>> {
+        let scheduler_config = self.get_scheduler_config().await?;
+        
+        let model_id = match stage {
+            SchedulerStage::IntentAnalysis => &scheduler_config.intent_analysis_model,
+            SchedulerStage::Planning => &scheduler_config.planner_model,
+            SchedulerStage::Replanning => &scheduler_config.replanner_model,
+            SchedulerStage::Execution => &scheduler_config.executor_model,
+            SchedulerStage::Evaluation => &scheduler_config.evaluator_model,
+        };
+        
+        if model_id.is_empty() {
+            return Ok(None);
+        }
+        
+        // 查找支持该模型的提供商配置
+        if let Some(service) = self.find_service_by_model(model_id).await? {
+            let config = service.get_config();
+            let ai_config = AiConfig {
+                provider: config.provider.clone(),
+                model: model_id.clone(),
+                api_key: config.api_key.clone(),
+                api_base: config.api_base.clone(),
+                organization: config.organization.clone(),
+                temperature: config.temperature,
+                max_tokens: config.max_tokens,
+            };
+            Ok(Some(ai_config))
+        } else {
+            Ok(None)
+        }
+    }
+    
+
+    
     pub async fn get_chat_models(&self) -> Result<Vec<ModelInfo>> {
         let mut all_models = Vec::new();
 
@@ -911,7 +980,37 @@ impl AiServiceManager {
         }
 
         if all_models.is_empty() {
-            tracing::warn!("Could not find any chat models from database configuration.");
+            tracing::warn!("Could not find any chat models from database configuration. Providing fallback models.");
+            
+            // 提供回退模型，即使没有API密钥配置
+            all_models = vec![
+                ModelInfo {
+                    provider: "openai".to_string(),
+                    name: "gpt-4o".to_string(),
+                    is_chat: true,
+                    is_embedding: false,
+                },
+                ModelInfo {
+                    provider: "openai".to_string(),
+                    name: "gpt-4o-mini".to_string(),
+                    is_chat: true,
+                    is_embedding: false,
+                },
+                ModelInfo {
+                    provider: "anthropic".to_string(),
+                    name: "claude-3-5-sonnet-20241022".to_string(),
+                    is_chat: true,
+                    is_embedding: false,
+                },
+                ModelInfo {
+                    provider: "openrouter".to_string(),
+                    name: "anthropic/claude-3.5-sonnet".to_string(),
+                    is_chat: true,
+                    is_embedding: false,
+                },
+            ];
+            
+            tracing::info!("Provided {} fallback models", all_models.len());
         }
 
         Ok(all_models)
@@ -921,16 +1020,43 @@ impl AiServiceManager {
         Ok(vec![])
     }
 
-    pub async fn get_default_model(&self, _model_type: &str) -> Result<Option<ModelInfo>> {
+    pub async fn get_default_model(&self, model_type: &str) -> Result<Option<ModelInfo>> {
+        // 从数据库获取默认模型配置
+        let config_key = format!("default_{}_model", model_type);
+        
+        if let Ok(Some(model_str)) = self.db.get_config("ai", &config_key).await {
+            // 解析模型字符串，格式：provider/model_name
+            if let Some((provider, model_name)) = model_str.split_once('/') {
+                return Ok(Some(ModelInfo {
+                    provider: provider.to_string(),
+                    name: model_name.to_string(),
+                    is_chat: true,
+                    is_embedding: false,
+                }));
+            }
+        }
+        
         Ok(None)
     }
 
     pub async fn set_default_model(
         &self,
-        _model_type: &str,
-        _provider: &str,
-        _model_name: &str,
+        model_type: &str,
+        provider: &str,
+        model_name: &str,
     ) -> Result<()> {
+        // 保存默认模型到数据库，格式：provider/model_name
+        let config_key = format!("default_{}_model", model_type);
+        let model_value = format!("{}/{}", provider, model_name);
+        
+        self.db.set_config(
+            "ai", 
+            &config_key, 
+            &model_value, 
+            Some(&format!("Default {} model", model_type))
+        ).await?;
+        
+        tracing::info!("Set default {} model to: {}", model_type, model_value);
         Ok(())
     }
 
@@ -948,13 +1074,7 @@ impl AiServiceManager {
 }
 
 impl AiService {
-    // 解析调度器配置的执行模型，失败则回退到当前配置
-    async fn resolve_executor_model(&self) -> String {
-        match self.db.get_config("scheduler", "executor_model").await {
-            Ok(Some(model)) if !model.trim().is_empty() => model,
-            _ => self.config.model.clone(),
-        }
-    }
+
     // 创建新的AI服务实例
     pub fn new(
         config: AiConfig,
@@ -992,8 +1112,39 @@ impl AiService {
         content: &str,
         conversation_id: Option<String>,
     ) -> Result<String> {
-        let conversation_id = conversation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        
+        // 如果没有会话ID，则不创建新会话，也不落库，仅进行一次无状态请求
+        if conversation_id.is_none() {
+            let user_msg = AiMessage {
+                id: Uuid::new_v4().to_string(),
+                conversation_id: "__stateless__".to_string(),
+                role: "user".to_string(),
+                content: content.to_string(),
+                metadata: None,
+                token_count: Some(content.len() as i32),
+                cost: None,
+                tool_calls: None,
+                attachments: None,
+                timestamp: Utc::now(),
+            };
+
+            let messages = vec![user_msg];
+            let model_name_owned = self.config.model.clone();
+            let model_name = &model_name_owned;
+            return self
+                .send_chat_stream(
+                    model_name,
+                    messages,
+                    "__stateless__",
+                    self.config.temperature,
+                    self.config.max_tokens,
+                    false,
+                    None, // 无状态请求不需要消息ID
+                )
+                .await;
+        }
+
+        let conversation_id = conversation_id.unwrap();
+
         // 获取MCP工具信息
         let mut system_prompt = "You are a helpful AI assistant.".to_string();
         if let Some(mcp_service) = &self.mcp_service {
@@ -1007,17 +1158,36 @@ impl AiService {
             }
         }
         
-        // 创建或获取对话
-        if self.db.get_ai_conversation(&conversation_id).await.is_err() {
-            // 创建一个使用指定conversation_id的对话
-            let mut conversation = AiConversation::new(
-                self.config.model.clone(),
-                self.config.provider.clone(),
-            );
-            conversation.id = conversation_id.clone();
-            conversation.title = Some("New Conversation".to_string());
-            self.db.create_ai_conversation(&conversation).await?;
-        }
+        // 创建或获取对话，确保对话记录存在
+        let conversation_exists = match self.db.get_ai_conversation(&conversation_id).await {
+            Ok(Some(_conv)) => true,
+            Ok(None) => {
+                // 对话不存在，尝试创建
+                let mut conversation = AiConversation::new(
+                    self.config.model.clone(),
+                    self.config.provider.clone(),
+                );
+                conversation.id = conversation_id.clone();
+                conversation.title = Some("New Conversation".to_string());
+                match self.db.create_ai_conversation(&conversation).await {
+                    Ok(_) => {
+                        info!("成功创建AI对话记录: {}", conversation_id);
+                        true
+                    }
+                    Err(e) => {
+                        warn!("创建AI对话记录失败: {}", e);
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("查询AI对话失败: {}", e);
+                false
+            }
+        };
+        
+        // 如果对话不存在且无法创建，则跳过数据库保存
+        let should_save_to_db = conversation_exists;
         
         // 获取历史消息
         let mut messages = match self.get_conversation_history(&conversation_id).await {
@@ -1034,7 +1204,7 @@ impl AiService {
                 id: Uuid::new_v4().to_string(),
                 conversation_id: conversation_id.clone(),
                 role: "system".to_string(),
-                content: system_prompt,
+                content: system_prompt.clone(),
                 metadata: None,
                 token_count: None,
                 cost: None,
@@ -1042,8 +1212,12 @@ impl AiService {
                 attachments: None,
                 timestamp: Utc::now(),
             };
-            if let Err(e) = self.db.create_ai_message(&system_msg).await {
-                debug!("系统消息保存失败: {}, 继续执行但不保存到数据库", e);
+            if should_save_to_db {
+                if let Err(e) = self.db.create_ai_message(&system_msg).await {
+                    debug!("系统消息保存失败: {}, 继续执行但不保存到数据库", e);
+                }
+            } else {
+                debug!("跳过系统消息保存：对话记录不存在");
             }
             messages.push(system_msg);
         }
@@ -1061,111 +1235,240 @@ impl AiService {
             attachments: None,
             timestamp: Utc::now(),
         };
-        match self.db.create_ai_message(&user_msg).await {
-            Ok(_) => messages.push(user_msg),
-            Err(e) => warn!("用户消息保存失败: {}, 继续执行但不保存到数据库", e),
+        if should_save_to_db {
+            match self.db.create_ai_message(&user_msg).await {
+                Ok(_) => {},
+                Err(e) => warn!("用户消息保存失败: {}, 继续执行但不保存到数据库", e),
+            }
+        } else {
+            debug!("跳过用户消息保存：对话记录不存在");
         }
+        messages.push(user_msg);
         
-        // 发送聊天请求
-        let model_name_owned = self.resolve_executor_model().await;
+        // 发送聊天请求 - 使用当前服务配置的模型，避免跨阶段模型错配
+        let model_name_owned = self.config.model.clone();
         let model_name = &model_name_owned;
-        self.send_chat_request(
+        self.send_chat_stream(
             model_name,
             messages,
             &conversation_id,
             self.config.temperature,
             self.config.max_tokens,
+            should_save_to_db,
+            None, // 这里也暂时不传递消息ID
         ).await
     }
 
-    // 流式发送消息
+    // 统一的流式发送消息方法
     pub async fn send_message_stream(
         &self,
         content: &str,
+        system_prompt: Option<&str>,
         conversation_id: Option<String>,
+        enable_events: bool,
+        message_id: Option<String>, // 新增消息ID参数
     ) -> Result<String> {
-        // 简化实现，直接调用普通发送消息
-        self.send_message(content, conversation_id).await
+        info!("发送流式消息请求 - 模型: {}", self.config.model);
+        
+        // 构建消息列表
+        let mut messages = Vec::new();
+        
+        // 处理对话历史和系统提示
+        match conversation_id {
+            Some(ref conv_id) => {
+                // 有状态请求：需要处理对话历史
+                
+                // 创建或获取对话，确保存在并记录是否可保存
+                let conversation_exists = match self.db.get_ai_conversation(conv_id).await {
+                    Ok(Some(_)) => true,
+                    Ok(None) => {
+                        let mut conversation = AiConversation::new(
+                            self.config.model.clone(),
+                            self.config.provider.clone(),
+                        );
+                        conversation.id = conv_id.clone();
+                        conversation.title = Some("New Conversation".to_string());
+                        match self.db.create_ai_conversation(&conversation).await {
+                            Ok(_) => {
+                                info!("成功创建AI对话记录: {}", conv_id);
+                                true
+                            }
+                            Err(e) => {
+                                warn!("创建AI对话记录失败: {}", e);
+                                false
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("查询AI对话失败: {}", e);
+                        false
+                    }
+                };
+                
+                // 获取历史消息
+                messages = self.get_conversation_history(conv_id).await.unwrap_or_else(|e| {
+                    warn!("获取对话历史失败: {}, 使用空消息列表", e);
+                    Vec::new()
+                });
+                
+                // 添加系统消息（如果提供了自定义提示且消息列表为空）
+                if let Some(sys_prompt) = system_prompt {
+                    if !sys_prompt.is_empty() && messages.is_empty() {
+                        let system_msg = AiMessage {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            conversation_id: conv_id.clone(),
+                            role: "system".to_string(),
+                            content: sys_prompt.to_string(),
+                            metadata: None,
+                            token_count: None,
+                            cost: None,
+                            tool_calls: None,
+                            attachments: None,
+                            timestamp: chrono::Utc::now(),
+                        };
+                        if conversation_exists {
+                            if let Err(e) = self.db.create_ai_message(&system_msg).await {
+                                debug!("系统消息保存失败: {}, 继续执行但不保存到数据库", e);
+                            }
+                        } else {
+                            debug!("跳过系统消息保存：对话记录不存在");
+                        }
+                        messages.push(system_msg);
+                    }
+                }
+                
+                // 保存用户消息
+                let user_msg = AiMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    conversation_id: conv_id.clone(),
+                    role: "user".to_string(),
+                    content: content.to_string(),
+                    metadata: None,
+                    token_count: Some(content.len() as i32),
+                    cost: None,
+                    tool_calls: None,
+                    attachments: None,
+                    timestamp: chrono::Utc::now(),
+                };
+                if conversation_exists {
+                    match self.db.create_ai_message(&user_msg).await {
+                        Ok(_) => {},
+                        Err(e) => warn!("用户消息保存失败: {}, 继续执行但不保存到数据库", e),
+                    }
+                } else {
+                    debug!("跳过用户消息保存：对话记录不存在");
+                }
+                messages.push(user_msg);
+                
+                // 调用底层的聊天流式方法
+                let model_name_owned = self.config.model.clone();
+                if enable_events {
+                    self.send_chat_stream_with_events(
+                        &model_name_owned,
+                        messages,
+                        conv_id,
+                        self.config.temperature,
+                        self.config.max_tokens,
+                        conversation_exists,
+                        message_id.clone(), // 传递消息ID
+                    ).await
+                } else {
+                    self.send_chat_stream(
+                        &model_name_owned,
+                        messages,
+                        conv_id,
+                        self.config.temperature,
+                        self.config.max_tokens,
+                        conversation_exists,
+                        message_id.clone(), // 传递消息ID
+                    ).await
+                }
+            }
+            None => {
+                // 无状态请求：直接构建简单消息列表
+                if let Some(sys_prompt) = system_prompt {
+                    if !sys_prompt.is_empty() {
+                        messages.push(AiMessage {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            conversation_id: "__stateless__".to_string(),
+                            role: "system".to_string(),
+                            content: sys_prompt.to_string(),
+                            metadata: None,
+                            token_count: None,
+                            cost: None,
+                            tool_calls: None,
+                            attachments: None,
+                            timestamp: chrono::Utc::now(),
+                        });
+                    }
+                }
+                
+                messages.push(AiMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    conversation_id: "__stateless__".to_string(),
+                    role: "user".to_string(),
+                    content: content.to_string(),
+                    metadata: None,
+                    token_count: Some(content.len() as i32),
+                    cost: None,
+                    tool_calls: None,
+                    attachments: None,
+                    timestamp: chrono::Utc::now(),
+                });
+                
+                // 调用底层的聊天流式方法（无状态，不保存到数据库）
+                let model_name_owned: String = self.config.model.clone();
+                if enable_events {
+                    self.send_chat_stream_with_events(
+                        &model_name_owned,
+                        messages,
+                        "__stateless__",
+                        self.config.temperature,
+                        self.config.max_tokens,
+                        false, // 无状态请求不保存到数据库
+                        None, // 无状态请求不需要消息ID
+                    ).await
+                } else {
+                    self.send_chat_stream(
+                        &model_name_owned,
+                        messages,
+                        "__stateless__",
+                        self.config.temperature,
+                        self.config.max_tokens,
+                        false, // 无状态请求不保存到数据库
+                        None, // 无状态请求不需要消息ID
+                    ).await
+                }
+            }
+        }
     }
 
-    // 带提示的流式发送消息
-    pub async fn send_message_stream_with_prompt(
+    // 发送聊天请求（带事件）- 流式版本
+    async fn send_chat_stream_with_events(
         &self,
-        content: &str,
-        system_prompt: Option<String>,
-        conversation_id: Option<String>,
+        model_name: &str,
+        messages: Vec<AiMessage>,
+        conversation_id: &str,
+        temperature: Option<f32>,
+        max_tokens: Option<u32>,
+        should_save_to_db: bool,
+        assistant_message_id: Option<String>,
     ) -> Result<String> {
-        let conversation_id = conversation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        
-        // 创建或获取对话
-        if self.db.get_ai_conversation(&conversation_id).await.is_err() {
-            // 创建一个使用指定conversation_id的对话
-            let mut conversation = AiConversation::new(
-                self.config.model.clone(),
-                self.config.provider.clone(),
-            );
-            conversation.id = conversation_id.clone();
-            conversation.title = Some("New Conversation".to_string());
-            self.db.create_ai_conversation(&conversation).await?;
-        }
-        
-        // 获取历史消息
-        let mut messages = self.get_conversation_history(&conversation_id).await?;
-        
-        // 添加系统消息（如果提供了自定义提示）
-        if let Some(prompt) = system_prompt {
-            let system_msg = AiMessage {
-                id: Uuid::new_v4().to_string(),
-                conversation_id: conversation_id.clone(),
-                role: "system".to_string(),
-                content: prompt,
-                metadata: None,
-                token_count: None,
-                cost: None,
-                tool_calls: None,
-                attachments: None,
-                timestamp: Utc::now(),
-            };
-            self.db.create_ai_message(&system_msg).await?;
-            messages.push(system_msg);
-        }
-        
-        // 保存用户消息
-        let user_msg = AiMessage {
-            id: Uuid::new_v4().to_string(),
-            conversation_id: conversation_id.clone(),
-            role: "user".to_string(),
-            content: content.to_string(),
-            metadata: None,
-            token_count: Some(content.len() as i32),
-            cost: None,
-            tool_calls: None,
-            attachments: None,
-            timestamp: Utc::now(),
-        };
-        self.db.create_ai_message(&user_msg).await?;
-        messages.push(user_msg);
-        
-        // 发送聊天请求
-        let model_name_owned = self.resolve_executor_model().await;
-        let model_name = &model_name_owned;
-        self.send_chat_request(
-            model_name,
-            messages,
-            &conversation_id,
-            self.config.temperature,
-            self.config.max_tokens,
-        ).await
+        // 简化实现，直接复用现有的 send_chat_stream 方法
+        // TODO: 后续可以添加事件发射逻辑
+        self.send_chat_stream(model_name, messages, conversation_id, temperature, max_tokens, should_save_to_db, assistant_message_id).await
     }
 
-    // 发送聊天请求（处理工具调用）
-    async fn send_chat_request(
+    // 发送聊天请求（处理工具调用） - 流式版本
+    async fn send_chat_stream(
         &self,
         model_name: &str,
         mut messages: Vec<AiMessage>,
         conversation_id: &str,
         temperature: Option<f32>,
         max_tokens: Option<u32>,
+        should_save_to_db: bool,
+        assistant_message_id: Option<String>, // 新增助手消息ID参数
     ) -> Result<String> {
         info!("Sending chat request to {} model", model_name);
 
@@ -1173,11 +1476,11 @@ impl AiService {
         let mut chat_messages = Vec::new();
         for msg in &messages {
             let role = match msg.role.as_str() {
-                "system" => crate::ai_adapter::types::MessageRole::System,
-                "user" => crate::ai_adapter::types::MessageRole::User,
-                "assistant" => crate::ai_adapter::types::MessageRole::Assistant,
-                "tool" => crate::ai_adapter::types::MessageRole::Tool,
-                _ => crate::ai_adapter::types::MessageRole::User,
+                "system" => MessageRole::System,
+                "user" => MessageRole::User,
+                "assistant" => MessageRole::Assistant,
+                "tool" => MessageRole::Tool,
+                _ => MessageRole::User,
             };
             let message = crate::ai_adapter::types::Message {
                 role,
@@ -1205,8 +1508,20 @@ impl AiService {
             chat_messages.push(message);
         }
 
-        // 准备工具
+        // 准备工具（并记录名称映射，保证API要求与本地注册一致）
         let mut tools_vec = Vec::new();
+        let mut tool_name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let sanitize = |original: &str| -> String {
+            let mut cleaned: String = original
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+                .collect();
+            if cleaned.is_empty() { return "f".to_string(); }
+            if !cleaned.chars().next().unwrap_or('f').is_ascii_alphabetic() {
+                cleaned.insert(0, 'f');
+            }
+            cleaned
+        };
         if let Some(mcp_service) = &self.mcp_service {
             if let Ok(available_tools) = mcp_service.get_available_tools().await {
                 for t in available_tools {
@@ -1215,9 +1530,11 @@ impl AiService {
                     } else {
                         t.parameters.schema.clone()
                     };
+                    let sanitized_name = sanitize(&t.name);
+                    tool_name_map.insert(sanitized_name.clone(), t.name.clone());
                     tools_vec.push(crate::ai_adapter::types::Tool {
                         r#type: "function".to_string(),
-                        name: t.name,
+                        name: sanitized_name,
                         description: t.description,
                         parameters: params_schema,
                     });
@@ -1234,73 +1551,14 @@ impl AiService {
             options.max_tokens = Some(tokens);
         }
 
-        // 转换为原始消息格式
-        let raw_messages: Vec<RawMessage> = chat_messages.into_iter().map(|msg| {
-            let role_str = match msg.role {
-                crate::ai_adapter::types::MessageRole::System => "system",
-                crate::ai_adapter::types::MessageRole::User => "user",
-                crate::ai_adapter::types::MessageRole::Assistant => "assistant",
-                crate::ai_adapter::types::MessageRole::Tool => "tool",
-            };
-            let content_str = match msg.content {
-                text => text,
-            };
-            RawMessage {
-                role: role_str.to_string(),
-                content: content_str,
-                name: msg.name,
-                tool_calls: msg.tool_calls.map(|tc| serde_json::to_value(tc).unwrap_or(serde_json::Value::Null)),
-                tool_call_id: msg.tool_call_id,
-            }
-        }).collect();
-        
-        let tools_json = if tools_vec.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_value(&tools_vec).unwrap_or(serde_json::Value::Null))
-        };
-        
-        let _raw_request = RawChatRequest {
-            messages: raw_messages.clone(),
-            tools: tools_json,
-            tool_choice: None,
-            model: Some(model_name.to_string()),
-            temperature: options.temperature,
-            max_tokens: options.max_tokens,
-            top_p: options.top_p,
-            frequency_penalty: options.frequency_penalty,
-            presence_penalty: options.presence_penalty,
-            stop: options.stop.clone(),
-            stream: options.stream,
-        };
-        
-        let _raw_options = RawChatOptions {
-            temperature: options.temperature,
-            max_tokens: options.max_tokens,
-            top_p: options.top_p,
-            frequency_penalty: options.frequency_penalty,
-            presence_penalty: options.presence_penalty,
-            stop: options.stop.clone(),
-            stream: options.stream,
-            tools: None,
-            tool_choice: None,
-            extra_headers: None,
-            timeout: None,
-        };
-        
+
+    
         // 转换为ChatRequest
-        let chat_request = crate::ai_adapter::types::ChatRequest {
+        let chat_request = ChatRequest {
             model: model_name.to_string(),
-            messages: raw_messages.iter().map(|msg| {
-                let role = match msg.role.as_str() {
-                    "system" => crate::ai_adapter::types::MessageRole::System,
-                    "user" => crate::ai_adapter::types::MessageRole::User,
-                    "assistant" => crate::ai_adapter::types::MessageRole::Assistant,
-                    "tool" => crate::ai_adapter::types::MessageRole::Tool,
-                    _ => crate::ai_adapter::types::MessageRole::User,
-                };
-                crate::ai_adapter::types::Message {
-                    role,
+            messages: chat_messages.iter().map(|msg| {
+                Message {
+                    role: msg.role.clone(),
                     content: msg.content.clone(),
                     name: msg.name.clone(),
                     tool_calls: None,
@@ -1314,14 +1572,164 @@ impl AiService {
             options: Some(options),
         };
         
-        // 发送请求
-        let client = crate::ai_adapter::global_client();
-        let response = client
-            .chat(Some(&self.config.provider), chat_request)
-            .await
+        // 发送请求 - 使用AiAdapterManager来获取提供商
+        let adapter_manager = AiAdapterManager::global();
+        let provider = adapter_manager.get_provider_or_default(&self.config.provider)
             .map_err(|e| {
                 anyhow::anyhow!("Web call failed for model '{}'. Cause: {}", model_name, e)
             })?;
+        
+        // 使用流式响应并实时发送事件
+        let mut stream = provider.send_chat_stream(&chat_request).await
+            .map_err(|e| {
+                anyhow::anyhow!("Web call failed for model '{}'. Cause: {}", model_name, e)
+            })?;
+
+        let mut content = String::new();
+        let mut response_id = String::new();
+        let mut response_model = String::new();
+        let mut finish_reason = None;
+        let mut usage = None;
+
+        // 发送流式开始事件
+        if let Some(app_handle) = &self.app_handle {
+            let unknown_id = "unknown".to_string();
+            let message_id_to_use = assistant_message_id.as_ref()
+                .or_else(|| messages.last().map(|m| &m.id))
+                .unwrap_or(&unknown_id);
+            let start_message = serde_json::json!({
+                "conversation_id": conversation_id,
+                "message_id": message_id_to_use
+            });
+            if let Err(e) = app_handle.emit("ai_stream_start", &start_message) {
+                warn!("Failed to emit ai_stream_start event: {}", e);
+            }
+        }
+
+        // 处理流式响应并实时发送事件
+        use futures::StreamExt;
+        while let Some(chunk_result) = stream.stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    // 只有当chunk中有实际内容时才处理
+                    if !chunk.content.is_empty() {
+                        // 累积内容
+                        content.push_str(&chunk.content);
+                        debug!("Stream chunk received: '{}', total content length: {}", chunk.content, content.len());
+                        
+                        // 检查是否完成（在移动之前）
+                        let is_complete = chunk.finish_reason.is_some();
+                        
+                        // 更新响应元数据
+                        if response_id.is_empty() {
+                            response_id = chunk.id;
+                        }
+                        if response_model.is_empty() {
+                            response_model = chunk.model;
+                        }
+                        if chunk.usage.is_some() {
+                            usage = chunk.usage;
+                        }
+                        if chunk.finish_reason.is_some() {
+                            finish_reason = chunk.finish_reason;
+                        }
+                        
+                        // 实时发送流式消息事件到前端
+                        if let Some(app_handle) = &self.app_handle {
+                            let message_id_to_use = assistant_message_id.as_ref()
+                                .cloned()
+                                .or_else(|| messages.last().map(|m| m.id.clone()))
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let stream_message = StreamMessage {
+                                conversation_id: conversation_id.to_string(),
+                                message_id: message_id_to_use,
+                                content: content.clone(), // 发送当前累积的完整内容
+                                is_complete,
+                                token_count: None,
+                                total_tokens: usage.as_ref().map(|u| u.total_tokens as u32),
+                                tool_calls: None,
+                            };
+                            
+                            if let Err(e) = app_handle.emit("ai_stream_message", &stream_message) {
+                                warn!("Failed to emit stream message: {}", e);
+                            } else {
+                                debug!("Emitted stream message: {} chars, complete: {}", content.len(), is_complete);
+                            }
+                        }
+                    } else {
+                        // 即使没有内容，也要检查是否完成
+                        if chunk.finish_reason.is_some() {
+                            let is_complete = true;
+                            finish_reason = chunk.finish_reason;
+                            
+                            if let Some(app_handle) = &self.app_handle {
+                                let message_id_to_use = assistant_message_id.as_ref()
+                                    .cloned()
+                                    .or_else(|| messages.last().map(|m| m.id.clone()))
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                let stream_message = StreamMessage {
+                                    conversation_id: conversation_id.to_string(),
+                                    message_id: message_id_to_use,
+                                    content: content.clone(),
+                                    is_complete,
+                                    token_count: None,
+                                    total_tokens: usage.as_ref().map(|u| u.total_tokens as u32),
+                                    tool_calls: None,
+                                };
+                                
+                                if let Err(e) = app_handle.emit("ai_stream_message", &stream_message) {
+                                    warn!("Failed to emit completion message: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    // 发送错误事件
+                    if let Some(app_handle) = &self.app_handle {
+                        let error_message = StreamError {
+                            conversation_id: conversation_id.to_string(),
+                            error: e.to_string(),
+                        };
+                        if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
+                            warn!("Failed to emit stream error: {}", emit_err);
+                        }
+                    }
+                    return Err(anyhow::anyhow!("Stream error: {}", e));
+                }
+            }
+        }
+        
+        // 发送完成事件
+        if let Some(app_handle) = &self.app_handle {
+            let unknown_id = "unknown".to_string();
+            let message_id_to_use = assistant_message_id.as_ref()
+                .or_else(|| messages.last().map(|m| &m.id))
+                .unwrap_or(&unknown_id);
+            let complete_message = serde_json::json!({
+                "conversation_id": conversation_id,
+                "message_id": message_id_to_use,
+                "total_tokens": usage.as_ref().map(|u| u.total_tokens)
+            });
+            if let Err(e) = app_handle.emit("ai_stream_complete", &complete_message) {
+                warn!("Failed to emit ai_stream_complete event: {}", e);
+            }
+        }
+
+        // 创建响应对象
+        let response = crate::ai_adapter::types::ChatResponse {
+            id: response_id,
+            model: response_model,
+            message: crate::ai_adapter::types::Message::assistant(&content),
+            choices: vec![crate::ai_adapter::types::Choice {
+                index: 0,
+                message: crate::ai_adapter::types::Message::assistant(&content),
+                finish_reason: finish_reason.clone(),
+            }],
+            usage,
+            finish_reason,
+            created_at: std::time::SystemTime::now(),
+        };
 
         // 检查是否包含工具调用
         let tool_calls = response.message.tool_calls.clone().unwrap_or_default();
@@ -1347,17 +1755,21 @@ impl AiService {
                 timestamp: Utc::now(),
             };
 
-            self.db.create_ai_message(&assistant_msg).await?;
+            if should_save_to_db {
+                self.db.create_ai_message(&assistant_msg).await?;
+            } else {
+                debug!("跳过助手工具调用消息保存：对话记录不存在");
+            }
             messages.push(assistant_msg);
 
             // 2. 执行每个工具调用
             let mut tool_messages = Vec::new();
             for tc in tool_calls {
-                let tool_name = &tc.name;
+                let exec_tool_name = tool_name_map.get(&tc.name).cloned().unwrap_or_else(|| tc.name.clone());
                 let args_val: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or_default();
 
                 let exec_res = if let Some(mcp) = &self.mcp_service {
-                    mcp.execute_tool(tool_name, args_val.clone()).await
+                    mcp.execute_tool(&exec_tool_name, args_val.clone()).await
                 } else {
                     Err(anyhow::anyhow!("MCP service unavailable"))
                 };
@@ -1374,7 +1786,7 @@ impl AiService {
                             content: result_str.clone(),
                             metadata: Some(format!(
                                 "{{\"tool_call_id\":\"{}\",\"tool_name\":\"{}\"}}",
-                                tc.id, tool_name
+                                tc.id, exec_tool_name
                             )),
                             token_count: Some(result_str.len() as i32),
                             cost: None,
@@ -1392,7 +1804,7 @@ impl AiService {
                             content: error_str.clone(),
                             metadata: Some(format!(
                                 "{{\"tool_call_id\":\"{}\",\"tool_name\":\"{}\"}}",
-                                tc.id, tool_name
+                                tc.id, exec_tool_name
                             )),
                             token_count: Some(error_str.len() as i32),
                             cost: None,
@@ -1403,7 +1815,11 @@ impl AiService {
                     }
                 };
 
-                self.db.create_ai_message(&tool_msg).await?;
+                if should_save_to_db {
+                    self.db.create_ai_message(&tool_msg).await?;
+                } else {
+                    debug!("跳过工具结果消息保存：对话记录不存在");
+                }
                 tool_messages.push(tool_msg);
             }
 
@@ -1411,12 +1827,14 @@ impl AiService {
 
             // 4. 再次调用API，附带工具结果，并使用 Box::pin 解决异步递归问题
             info!("Resending request with tool results...");
-            let recursive_call = self.send_chat_request(
+            let recursive_call = self.send_chat_stream(
                 model_name,
                 messages,
                 conversation_id,
                 temperature,
                 max_tokens,
+                should_save_to_db,
+                assistant_message_id.clone(), // 保持同样的消息ID
             );
             return Box::pin(recursive_call).await;
         }
@@ -1438,11 +1856,15 @@ impl AiService {
             timestamp: Utc::now(),
         };
 
-        match self.db.create_ai_message(&assistant_msg).await {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::error!("Failed to create assistant message: {}", e);
+        if should_save_to_db {
+            match self.db.create_ai_message(&assistant_msg).await {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!("Failed to create assistant message: {}", e);
+                }
             }
+        } else {
+            debug!("跳过助手回复保存：对话记录不存在");
         }
 
         Ok(answer.to_string())
@@ -1531,13 +1953,64 @@ Please analyze and output structured results.
         
         info!("🚀 开始发送请求到AI客户端...");
         
-        // 发送请求
-        let client = crate::ai_adapter::global_client();
-        let response = client.chat(Some(&self.config.provider), chat_req).await
+        // 发送请求 - 使用AiAdapterManager来获取提供商
+        let adapter_manager = AiAdapterManager::global();
+        let provider = adapter_manager.get_provider_or_default(&self.config.provider)
+            .map_err(|e| {
+                error!("❌ AI提供商获取失败: {}", e);
+                anyhow::anyhow!("Provider '{}' not found: {}", self.config.provider, e)
+            })?;
+        
+        // 使用流式响应并收集结果
+        let mut stream = provider.send_chat_stream(&chat_req).await
             .map_err(|e| {
                 error!("❌ AI客户端请求失败: {}", e);
                 anyhow::anyhow!("Chat request failed: {}", e)
             })?;
+
+        let mut content = String::new();
+        let mut response_id = String::new();
+        let mut response_model = String::new();
+        let mut finish_reason = None;
+        let mut usage = None;
+
+        // 收集流式响应（分析请求不需要实时发送事件）
+        use futures::StreamExt;
+        while let Some(chunk_result) = stream.stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    content.push_str(&chunk.content);
+                    if response_id.is_empty() {
+                        response_id = chunk.id;
+                    }
+                    if response_model.is_empty() {
+                        response_model = chunk.model;
+                    }
+                    if chunk.usage.is_some() {
+                        usage = chunk.usage;
+                    }
+                    if chunk.finish_reason.is_some() {
+                        finish_reason = chunk.finish_reason;
+                    }
+                }
+                Err(e) => return Err(anyhow::anyhow!("Stream error: {}", e)),
+            }
+        }
+
+        // 创建响应对象
+        let response = crate::ai_adapter::types::ChatResponse {
+            id: response_id,
+            model: response_model,
+            message: crate::ai_adapter::types::Message::assistant(&content),
+            choices: vec![crate::ai_adapter::types::Choice {
+                index: 0,
+                message: crate::ai_adapter::types::Message::assistant(&content),
+                finish_reason: finish_reason.clone(),
+            }],
+            usage,
+            finish_reason,
+            created_at: std::time::SystemTime::now(),
+        };
         
         info!("✅ 收到AI响应");
         

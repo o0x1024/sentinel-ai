@@ -240,8 +240,37 @@ Guidelines:
             }),
         };
         
-        let response = self.ai_provider.send_chat_request(&request).await
+        // 使用流式响应并收集结果
+        let mut stream = self.ai_provider.send_chat_stream(&request).await
             .map_err(|e| ReWOOError::AiProviderError(format!("Failed to generate plan: {}", e)))?;
+
+        let mut content = String::new();
+
+        // 收集流式响应
+        use futures::StreamExt;
+        while let Some(chunk_result) = stream.stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    content.push_str(&chunk.content);
+                }
+                Err(e) => return Err(ReWOOError::AiProviderError(format!("Stream error: {}", e))),
+            }
+        }
+
+        // 创建响应对象
+        let response = crate::ai_adapter::types::ChatResponse {
+            id: "stream_response".to_string(),
+            model: request.model.clone(),
+            message: crate::ai_adapter::types::Message::assistant(&content),
+            choices: vec![crate::ai_adapter::types::Choice {
+                index: 0,
+                message: crate::ai_adapter::types::Message::assistant(&content),
+                finish_reason: None,
+            }],
+            usage: None,
+            finish_reason: None,
+            created_at: std::time::SystemTime::now(),
+        };
         
         if let Some(choice) = response.choices.first() {
             return Ok(choice.message.content.clone());

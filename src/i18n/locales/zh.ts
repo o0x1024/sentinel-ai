@@ -48,6 +48,8 @@ export default {
     pending: '等待中',
     failed: '失败',
     cancelled: '已取消',
+    you: '您',
+    assistant: '助手',
     create: '创建',
     update: '更新',
     details: '详情',
@@ -267,7 +269,8 @@ export default {
       database: '数据库',
       system: '系统设置',
       security: '安全设置',
-      network: '网络设置'
+      network: '网络设置',
+      proxy_test: '代理测试'
     },
     language: '语言设置',
     selectLanguage: '选择语言',
@@ -1095,6 +1098,7 @@ export default {
 
 
   sidebar: {
+    promptManagement:"提示词管理",
     dashboard: '总览',
     scanTasks: '扫描任务',
     vulnerabilities: '漏洞管理',
@@ -1102,7 +1106,8 @@ export default {
     projects: '赏金项目',
     mcpTools: 'MCP工具',
     
-    agents: 'Agent管理',
+    smartAgent: '智能Agent控制台',
+    aiAssistant: 'AI助手',
     settings: '系统设置',
     language: '语言设置',
     performance: '性能监控',
@@ -1126,7 +1131,7 @@ export default {
     // 新增的翻译键值
     new: '新',
     vulnerabilityCount: '12',
-    agentCount: '5',
+
     remainingTimeDefault: '2小时15分钟',
     assets: '资产管理',
     intelligentTest: '智能安全测试',
@@ -1510,8 +1515,54 @@ export default {
        high: '高'
      },
      
-     createCustomAgent: '创建自定义Agent',
-     customAgentCreated: '自定义Agent创建成功',
-     type: '类型'
+         createCustomAgent: '创建自定义Agent',
+    customAgentCreated: '自定义Agent创建成功',
+    type: '类型'
+ },
+
+  // AI助手
+  aiAssistant: {
+    conversationHistory: '会话历史',
+    untitledConversation:"未命名会话",
+    currentSession:"当前会话",
+    noAgents: '暂无Agent',
+    selectAgent:"选择Agent",
+    sessionManagement: '会话管理',
+    title: 'AI智能助手',
+    welcome: {
+      title: 'AI智能助手',
+      description: '我是您的AI安全助手，可以帮您执行安全扫描、漏洞分析等任务。请告诉我您需要什么帮助？'
+    },
+    suggestions: {
+      portScan: '端口扫描',
+      vulnScan: '漏洞扫描',
+      subdomainEnum: '子域名枚举',
+      webAnalysis: 'Web应用分析'
+    },
+    activeAgents: '活跃Agent',
+    totalTasks: '总任务数',
+    executionStatus: '执行状态',
+    noActiveExecution: '暂无执行任务',
+    availableAgents: '可用Agent',
+    executionPlan: '执行计划',
+    toolExecution: '工具执行',
+    executionResult: '执行结果',
+    status: '状态',
+    duration: '耗时',
+    tasksCompleted: '完成任务',
+    architecture: '架构',
+    model: '模型',
+    inputPlaceholder: '描述您需要执行的安全任务... (Ctrl+Enter发送)',
+    typing: '正在输入...',
+    error: '错误',
+    planningExecution: '正在规划执行...',
+    settings: {
+      title: 'AI助手设置',
+      general: '通用设置',
+      architectures: '架构配置',
+      agents: 'Agent管理',
+      defaultArchitecture: '默认架构',
+      maxConcurrentTasks: '最大并发任务'
+    }
   }
 }

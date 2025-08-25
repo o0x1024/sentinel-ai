@@ -40,7 +40,8 @@
               {{ t('settings.scheduler.enableScheduler') }}
             </span>
             <input type="checkbox" class="toggle toggle-primary toggle-lg" 
-                   v-model="schedulerConfig.enabled">
+                   v-model="schedulerConfig.enabled"
+                   @change="saveSchedulerConfig">
           </label>
           <label class="label">
             <span class="label-text-alt">{{ t('settings.scheduler.enableSchedulerDesc') }}</span>
@@ -114,7 +115,7 @@
             </div>
             
             <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.intent_analysis">
+              <select class="select select-bordered" v-model="schedulerConfig.models.intent_analysis" @change="saveSchedulerConfig">
                 <option value="">{{ t('settings.scheduler.selectModel') }}</option>
                 <option v-for="model in availableModels" :key="model.id" :value="model.id">
                   {{ model.name }} - {{ model.provider }}
@@ -137,7 +138,7 @@
             </div>
             
             <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.planner">
+              <select class="select select-bordered" v-model="schedulerConfig.models.planner" @change="saveSchedulerConfig">
                 <option value="">{{ t('settings.scheduler.selectModel') }}</option>
                 <option v-for="model in availableModels" :key="model.id" :value="model.id">
                   {{ model.name }} - {{ model.provider }}
@@ -160,7 +161,30 @@
             </div>
             
             <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.executor">
+              <select class="select select-bordered" v-model="schedulerConfig.models.executor" @change="saveSchedulerConfig">
+                <option value="">{{ t('settings.scheduler.selectModel') }}</option>
+                <option v-for="model in availableModels" :key="model.id" :value="model.id">
+                  {{ model.name }} - {{ model.provider }}
+                </option>
+              </select>
+            </div>
+          </div>
+          
+          <!-- 重规划器模型 -->
+          <div class="border rounded-lg p-4">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <i class="fas fa-redo text-warning"></i>
+                <div>
+                  <h4 class="font-semibold">{{ t('settings.scheduler.replannerModel') }}</h4>
+                  <p class="text-sm text-base-content/70">{{ t('settings.scheduler.replannerModelDesc') }}</p>
+                </div>
+              </div>
+              <div class="badge badge-warning">{{ t('settings.scheduler.optional') }}</div>
+            </div>
+            
+            <div class="form-control">
+              <select class="select select-bordered" v-model="schedulerConfig.models.replanner" @change="saveSchedulerConfig">
                 <option value="">{{ t('settings.scheduler.selectModel') }}</option>
                 <option v-for="model in availableModels" :key="model.id" :value="model.id">
                   {{ model.name }} - {{ model.provider }}
@@ -183,7 +207,7 @@
             </div>
             
             <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.evaluator">
+              <select class="select select-bordered" v-model="schedulerConfig.models.evaluator" @change="saveSchedulerConfig">
                 <option value="">{{ t('settings.scheduler.selectModel') }}</option>
                 <option v-for="model in availableModels" :key="model.id" :value="model.id">
                   {{ model.name }} - {{ model.provider }}
@@ -207,7 +231,7 @@
           <label class="label">
             <span class="label-text">{{ t('settings.scheduler.defaultStrategy') }}</span>
           </label>
-          <select class="select select-bordered" v-model="schedulerConfig.default_strategy">
+          <select class="select select-bordered" v-model="schedulerConfig.default_strategy" @change="saveSchedulerConfig">
             <option value="adaptive">{{ t('settings.scheduler.strategies.adaptive') }}</option>
             <option value="conservative">{{ t('settings.scheduler.strategies.conservative') }}</option>
             <option value="aggressive">{{ t('settings.scheduler.strategies.aggressive') }}</option>
@@ -226,7 +250,8 @@
             </label>
             <input type="number" class="input input-bordered" 
                    v-model.number="schedulerConfig.max_retries" 
-                   min="1" max="10">
+                   min="1" max="10"
+                   @blur="saveSchedulerConfig">
           </div>
           
           <div class="form-control">
@@ -235,7 +260,8 @@
             </label>
             <input type="number" class="input input-bordered" 
                    v-model.number="schedulerConfig.timeout_seconds" 
-                   min="30" max="300">
+                   min="30" max="300"
+                   @blur="saveSchedulerConfig">
           </div>
         </div>
       </div>
@@ -255,20 +281,22 @@
             <div class="flex items-center justify-between mb-3">
               <h4 class="font-semibold">{{ t(`settings.scheduler.scenarios.${key}.title`) }}</h4>
               <input type="checkbox" class="toggle toggle-primary" 
-                     v-model="scenario.enabled">
+                     v-model="scenario.enabled"
+                     @change="saveSchedulerConfig">
             </div>
             
             <p class="text-sm text-base-content/70 mb-3">
               {{ t(`settings.scheduler.scenarios.${key}.description`) }}
             </p>
             
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
               <div class="form-control">
                 <label class="label">
                   <span class="label-text-alt">{{ t('settings.scheduler.intentAnalysisModel') }}</span>
                 </label>
                 <select class="select select-bordered select-sm" 
-                        v-model="scenario.models.intent_analysis">
+                        v-model="scenario.models.intent_analysis"
+                        @change="saveSchedulerConfig">
                   <option value="">{{ t('settings.scheduler.useDefault') }}</option>
                   <option v-for="model in availableModels" :key="model.id" :value="model.id">
                     {{ model.name }}
@@ -281,7 +309,22 @@
                   <span class="label-text-alt">{{ t('settings.scheduler.plannerModel') }}</span>
                 </label>
                 <select class="select select-bordered select-sm" 
-                        v-model="scenario.models.planner">
+                        v-model="scenario.models.planner"
+                        @change="saveSchedulerConfig">
+                  <option value="">{{ t('settings.scheduler.useDefault') }}</option>
+                  <option v-for="model in availableModels" :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+              </div>
+              
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.replannerModel') }}</span>
+                </label>
+                <select class="select select-bordered select-sm" 
+                        v-model="scenario.models.replanner"
+                        @change="saveSchedulerConfig">
                   <option value="">{{ t('settings.scheduler.useDefault') }}</option>
                   <option v-for="model in availableModels" :key="model.id" :value="model.id">
                     {{ model.name }}
@@ -294,7 +337,22 @@
                   <span class="label-text-alt">{{ t('settings.scheduler.executorModel') }}</span>
                 </label>
                 <select class="select select-bordered select-sm" 
-                        v-model="scenario.models.executor">
+                        v-model="scenario.models.executor"
+                        @change="saveSchedulerConfig">
+                  <option value="">{{ t('settings.scheduler.useDefault') }}</option>
+                  <option v-for="model in availableModels" :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+              </div>
+              
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.evaluatorModel') }}</span>
+                </label>
+                <select class="select select-bordered select-sm" 
+                        v-model="scenario.models.evaluator"
+                        @change="saveSchedulerConfig">
                   <option value="">{{ t('settings.scheduler.useDefault') }}</option>
                   <option v-for="model in availableModels" :key="model.id" :value="model.id">
                     {{ model.name }}
@@ -307,13 +365,7 @@
       </div>
     </div>
 
-    <!-- 保存按钮 -->
-    <div class="flex justify-end">
-      <button class="btn btn-primary" @click="saveSchedulerConfig" :disabled="saving">
-        <i class="fas fa-save"></i>
-        {{ saving ? t('settings.saving') : t('settings.scheduler.saveConfig') }}
-      </button>
-    </div>
+
   </div>
 </template>
 
@@ -345,7 +397,20 @@ const emit = defineEmits<Emits>()
 
 // Computed
 const schedulerConfig = computed({
-  get: () => props.schedulerConfig,
+  get: () => props.schedulerConfig ?? {
+    enabled: true,
+    models: {
+      intent_analysis: '',
+      planner: '',
+      replanner: '',
+      executor: '',
+      evaluator: ''
+    },
+    default_strategy: 'adaptive',
+    max_retries: 3,
+    timeout_seconds: 120,
+    scenarios: {}
+  },
   set: (value: any) => emit('update:schedulerConfig', value)
 })
 
@@ -365,15 +430,16 @@ const getConfiguredModelsCount = () => {
   let count = 0
   if (models.intent_analysis) count++
   if (models.planner) count++
+  if (models.replanner) count++
   if (models.executor) count++
   if (models.evaluator) count++
-  return `${count}/4`
+  return `${count}/5`
 }
 
 const getPerformanceLevel = () => {
   const count = getConfiguredModelsCount()
-  if (count === '4/4') return t('settings.scheduler.high')
-  if (count === '3/4') return t('settings.scheduler.medium')
+  if (count === '5/5') return t('settings.scheduler.high')
+  if (count === '4/5' || count === '3/5') return t('settings.scheduler.medium')
   return t('settings.scheduler.low')
 }
 
@@ -385,6 +451,7 @@ const getEstimatedCost = () => {
   // 根据配置的模型数量和类型估算成本
   if (models.intent_analysis) cost += 0.01
   if (models.planner) cost += 0.05
+  if (models.replanner) cost += 0.03
   if (models.executor) cost += 0.10
   if (models.evaluator) cost += 0.02
   

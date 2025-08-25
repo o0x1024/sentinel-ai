@@ -761,17 +761,48 @@
           <div v-if="currentTaskDetail.plan" class="card bg-base-200">
             <div class="card-body">
               <h4 class="card-title text-base mb-4">执行计划</h4>
-              <div class="space-y-2">
-                <div v-for="(step, index) in currentTaskDetail.plan.steps" :key="index" class="flex items-center gap-2">
-                  <div class="badge badge-sm">{{ index + 1 }}</div>
-                  <span class="text-sm">{{ step.description || step.action }}</span>
-                  <div v-if="step.status" class="badge badge-xs" :class="{
-                    'badge-success': step.status === 'completed',
-                    'badge-primary': step.status === 'executing',
-                    'badge-ghost': step.status === 'pending'
-                  }">
-                    {{ step.status === 'completed' ? '完成' : 
-                       step.status === 'executing' ? '执行中' : '待执行' }}
+              <div class="space-y-3">
+                <div v-for="(step, index) in currentTaskDetail.plan.steps" :key="step.id || index" 
+                     class="border border-base-300 rounded-lg p-3 hover:shadow-md transition-shadow cursor-pointer"
+                     @click="viewStepDetail(step)">
+                  <div class="flex items-center gap-3">
+                    <div class="badge badge-sm">{{ index + 1 }}</div>
+                    <div class="flex-1">
+                      <div class="font-medium text-sm">{{ step.action || step.description }}</div>
+                      <div v-if="step.description && step.action !== step.description" class="text-xs text-base-content/70 mt-1">
+                        {{ step.description }}
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <!-- 执行时间 -->
+                      <div v-if="step.started_at && step.completed_at" class="text-xs text-base-content/60">
+                        {{ Math.round((step.completed_at - step.started_at) / 1000) }}s
+                      </div>
+                      <!-- 状态标签 -->
+                      <div class="badge badge-xs" :class="{
+                        'badge-success': step.status === 'completed',
+                        'badge-primary': step.status === 'executing',
+                        'badge-warning': step.status === 'running',
+                        'badge-error': step.status === 'failed',
+                        'badge-ghost': step.status === 'pending'
+                      }">
+                        {{ getStepStatusText(step.status) }}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <!-- 结果预览 -->
+                  <div v-if="step.result && step.status === 'completed'" class="mt-2 text-xs text-success">
+                    <div class="bg-base-100 p-2 rounded border">
+                      <span class="font-medium">结果:</span> {{ getStepResultSummary(step.result) }}
+                    </div>
+                  </div>
+                  
+                  <!-- 错误信息 -->
+                  <div v-if="step.error" class="mt-2 text-xs text-error">
+                    <div class="bg-error/10 p-2 rounded border border-error/20">
+                      <span class="font-medium">错误:</span> {{ step.error }}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -797,6 +828,82 @@
       </div>
       <form method="dialog" class="modal-backdrop">
         <button>close</button>
+      </form>
+    </dialog>
+
+    <!-- 步骤详情对话框 -->
+    <dialog :class="['modal', { 'modal-open': stepDetailVisible }]">
+      <div class="modal-box max-w-4xl">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="font-bold text-lg">步骤详情</h3>
+          <button class="btn btn-sm btn-circle btn-ghost" @click="closeStepDetail">✕</button>
+        </div>
+        
+        <div v-if="selectedStepDetail" class="space-y-4">
+          <!-- 基本信息 -->
+          <div class="card bg-base-200">
+            <div class="card-body">
+              <h4 class="card-title text-base mb-3">基本信息</h4>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <span class="font-semibold">步骤名称:</span>
+                  <span class="ml-2">{{ selectedStepDetail.action || selectedStepDetail.description }}</span>
+                </div>
+                <div>
+                  <span class="font-semibold">状态:</span>
+                  <span class="ml-2 badge badge-xs" :class="{
+                    'badge-success': selectedStepDetail.status === 'completed',
+                    'badge-primary': selectedStepDetail.status === 'executing',
+                    'badge-warning': selectedStepDetail.status === 'running',
+                    'badge-error': selectedStepDetail.status === 'failed',
+                    'badge-ghost': selectedStepDetail.status === 'pending'
+                  }">
+                    {{ getStepStatusText(selectedStepDetail.status) }}
+                  </span>
+                </div>
+                <div>
+                  <span class="font-semibold">开始时间:</span>
+                  <span class="ml-2">{{ formatTimestamp(selectedStepDetail.started_at) }}</span>
+                </div>
+                <div>
+                  <span class="font-semibold">完成时间:</span>
+                  <span class="ml-2">{{ formatTimestamp(selectedStepDetail.completed_at) }}</span>
+                </div>
+                <div v-if="selectedStepDetail.started_at && selectedStepDetail.completed_at" class="col-span-2">
+                  <span class="font-semibold">执行耗时:</span>
+                  <span class="ml-2">{{ Math.round((selectedStepDetail.completed_at - selectedStepDetail.started_at) / 1000) }}秒</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 描述信息 -->
+          <div v-if="selectedStepDetail.description" class="card bg-base-200">
+            <div class="card-body">
+              <h4 class="card-title text-base mb-3">步骤描述</h4>
+              <p class="text-sm">{{ selectedStepDetail.description }}</p>
+            </div>
+          </div>
+          
+          <!-- 执行结果 -->
+          <div v-if="selectedStepDetail.result" class="card bg-base-200">
+            <div class="card-body">
+              <h4 class="card-title text-base mb-3">执行结果</h4>
+              <pre class="bg-base-100 p-4 rounded text-sm overflow-x-auto max-h-60">{{ JSON.stringify(selectedStepDetail.result, null, 2) }}</pre>
+            </div>
+          </div>
+          
+          <!-- 错误信息 -->
+          <div v-if="selectedStepDetail.error" class="card bg-error/10">
+            <div class="card-body">
+              <h4 class="card-title text-base mb-3 text-error">错误信息</h4>
+              <pre class="bg-base-100 p-4 rounded text-sm overflow-x-auto text-error">{{ selectedStepDetail.error }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button @click="closeStepDetail">close</button>
       </form>
     </dialog>
   </div>
@@ -848,6 +955,11 @@ interface DispatchStatus {
   description?: string
   plan?: {
     steps: Array<{
+      id?: string
+      started_at?: number
+      completed_at?: number
+      result?: any
+      error?: string
       description?: string
       action?: string
       status?: string
@@ -1325,6 +1437,59 @@ const getStatusDisplayText = (status: string): string => {
   return statusMap[status] || status
 }
 
+const getStepStatusText = (status: string): string => {
+  const stepStatusMap: Record<string, string> = {
+    'pending': '待执行',
+    'executing': '执行中',
+    'running': '执行中',
+    'completed': '已完成',
+    'failed': '失败',
+    'cancelled': '已取消'
+  }
+  return stepStatusMap[status] || status
+}
+
+const getStepResultSummary = (result: any): string => {
+  if (!result) return '-'
+  
+  if (typeof result === 'string') {
+    return result.length > 100 ? result.substring(0, 100) + '...' : result
+  }
+  
+  if (typeof result === 'object') {
+    if (result.message) {
+      return result.message
+    }
+    if (result.action) {
+      return `${result.action}: ${result.message || '执行完成'}`
+    }
+    return JSON.stringify(result).length > 100 
+      ? JSON.stringify(result).substring(0, 100) + '...'
+      : JSON.stringify(result)
+  }
+  
+  return String(result)
+}
+
+// 步骤详情对话框
+const stepDetailVisible = ref(false)
+const selectedStepDetail = ref<any>(null)
+
+const viewStepDetail = (step: any) => {
+  selectedStepDetail.value = step
+  stepDetailVisible.value = true
+}
+
+const closeStepDetail = () => {
+  stepDetailVisible.value = false
+  selectedStepDetail.value = null
+}
+
+const formatTimestamp = (timestamp: number): string => {
+  if (!timestamp) return '-'
+  return new Date(timestamp * 1000).toLocaleString('zh-CN')
+}
+
 // 生命周期
 onMounted(async () => {
   console.log('[PlanExecuteDemo] 组件挂载开始，执行初始化流程')
@@ -1332,6 +1497,9 @@ onMounted(async () => {
   try {
     // 检查引擎状态，默认未初始化
     engineStatus.value.initialized = false
+    
+    // 注册步骤状态更新事件监听器
+    setupExecutionEventListeners()
     
     console.log('[PlanExecuteDemo] 组件初始化完成，等待用户手动初始化引擎')
   } catch (error) {
@@ -1344,6 +1512,104 @@ onUnmounted(() => {
     realTimeConnection.value.close()
   }
 })
+
+// 设置执行事件监听器
+const setupExecutionEventListeners = () => {
+  const { listen } = require('@tauri-apps/api/event')
+  
+  // 监听步骤初始化事件
+  listen('execution_steps_initialized', (event: any) => {
+    console.log('[PlanExecuteDemo] 收到步骤初始化事件:', event.payload)
+    const { execution_id, steps } = event.payload
+    
+    // 更新对应任务的步骤状态
+    const task = taskList.value.find(t => t.task_id === execution_id)
+    if (task && task.plan) {
+      // 更新步骤状态
+      task.plan.steps = steps.map((step: any) => ({
+        id: step.id,
+        description: step.description,
+        action: step.name,
+        status: step.status,
+        started_at: step.started_at,
+        completed_at: step.completed_at,
+        result: step.result,
+        error: step.error
+      }))
+    }
+    
+    // 如果当前查看的是这个任务的详情，也要更新
+    if (currentTaskDetail.value && currentTaskDetail.value.task_id === execution_id) {
+      if (!currentTaskDetail.value.plan) {
+        currentTaskDetail.value.plan = { steps: [] }
+      }
+      currentTaskDetail.value.plan.steps = steps.map((step: any) => ({
+        id: step.id,
+        description: step.description,
+        action: step.name,
+        status: step.status,
+        started_at: step.started_at,
+        completed_at: step.completed_at,
+        result: step.result,
+        error: step.error
+      }))
+    }
+  })
+  
+  // 监听步骤开始事件
+  listen('execution_step_started', (event: any) => {
+    console.log('[PlanExecuteDemo] 收到步骤开始事件:', event.payload)
+    const { execution_id, step_id, step_name, started_at } = event.payload
+    
+    updateStepStatus(execution_id, step_id, {
+      status: 'executing',
+      started_at: started_at
+    })
+  })
+  
+  // 监听步骤完成事件
+  listen('execution_step_completed', (event: any) => {
+    console.log('[PlanExecuteDemo] 收到步骤完成事件:', event.payload)
+    const { execution_id, step_id, completed_at, result, status } = event.payload
+    
+    updateStepStatus(execution_id, step_id, {
+      status: status,
+      completed_at: completed_at,
+      result: result
+    })
+  })
+  
+  // 监听执行完成事件
+  listen('execution_completed', (event: any) => {
+    console.log('[PlanExecuteDemo] 收到执行完成事件:', event.payload)
+    const { execution_id } = event.payload
+    
+    // 重新加载任务列表以获取最新状态
+    loadTasks()
+  })
+}
+
+// 更新步骤状态
+const updateStepStatus = (execution_id: string, step_id: string, updates: any) => {
+  // 更新任务列表中的步骤状态
+  const task = taskList.value.find(t => t.task_id === execution_id)
+  if (task && task.plan && task.plan.steps) {
+    const step = task.plan.steps.find(s => s.id === step_id)
+    if (step) {
+      Object.assign(step, updates)
+    }
+  }
+  
+  // 更新当前查看的任务详情
+  if (currentTaskDetail.value && currentTaskDetail.value.task_id === execution_id) {
+    if (currentTaskDetail.value.plan && currentTaskDetail.value.plan.steps) {
+      const step = currentTaskDetail.value.plan.steps.find(s => s.id === step_id)
+      if (step) {
+        Object.assign(step, updates)
+      }
+    }
+  }
+}
 </script>
 
 <style scoped>

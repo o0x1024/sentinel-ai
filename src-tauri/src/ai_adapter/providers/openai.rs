@@ -9,7 +9,7 @@ use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
 use crate::ai_adapter::core::BaseProvider;
 use crate::models::ai::MessageRole;
-use crate::ai_adapter::http::HttpClient;
+use crate::ai_adapter::http::{HttpClient, SseParser};
 
 /// OpenAI提供商
 #[derive(Debug)]
@@ -47,8 +47,8 @@ impl OpenAiProvider {
         Ok(Self { base })
     }
     
-    /// 构建聊天请求
-    fn build_chat_request(&self, request: &ChatRequest) -> Result<Value> {
+    /// 构建API请求体
+    fn build_api_request(&self, request: &ChatRequest) -> Result<Value> {
         let mut body = json!({
             "model": request.model,
             "messages": self.convert_messages(&request.messages)?,
@@ -92,19 +92,7 @@ impl OpenAiProvider {
                 MessageRole::Tool => "tool",
             };
             
-            let content_str = match &message.content {
-                MessageContent::Text(text) => text.clone(),
-                MessageContent::Image(_) => {
-                    return Err(AiAdapterError::ValidationError(
-                        "Image content not yet supported".to_string(),
-                    ))
-                }
-                MessageContent::Mixed(_) => {
-                    return Err(AiAdapterError::ValidationError(
-                        "Mixed content not yet supported".to_string(),
-                    ))
-                }
-            };
+                let content_str = &message.content;
             
             let mut msg = json!({
                 "role": role_str,
@@ -222,7 +210,7 @@ impl OpenAiProvider {
         
         let message = Message {
             role: message_role,
-            content: MessageContent::Text(content),
+            content,
             name: None,
             tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
             tool_call_id: None,
@@ -258,6 +246,10 @@ impl AiProvider for OpenAiProvider {
         self.base.models.clone()
     }
     
+    fn build_chat_request(&self, request: &ChatRequest) -> Result<serde_json::Value> {
+        self.build_api_request(request)
+    }
+    
     async fn test_connection(&self) -> Result<bool> {
         let url = format!("{}/models", self.base.get_api_base("https://api.openai.com/v1"));
         let headers = self.base.build_auth_headers();
@@ -271,7 +263,7 @@ impl AiProvider for OpenAiProvider {
     async fn send_chat_request(&self, request: &ChatRequest) -> Result<ChatResponse> {
         let url = format!("{}/chat/completions", self.base.get_api_base("https://api.openai.com/v1"));
         let headers = self.base.build_auth_headers();
-        let body = self.build_chat_request(&request)?;
+        let body = self.build_api_request(&request)?;
         
         let response = self.base.execute_with_retry(|| {
             let url = url.clone();
@@ -288,7 +280,7 @@ impl AiProvider for OpenAiProvider {
     async fn send_chat_stream(&self, request: &ChatRequest) -> Result<ChatStream> {
         let url = format!("{}/chat/completions", self.base.get_api_base("https://api.openai.com/v1"));
         let headers = self.base.build_auth_headers();
-        let mut body = self.build_chat_request(&request)?;
+        let mut body = self.build_api_request(&request)?;
         body["stream"] = json!(true);
         
         let stream = self.base.execute_with_retry(|| {
@@ -300,24 +292,23 @@ impl AiProvider for OpenAiProvider {
             }
         }).await?;
         
-        // 转换流
-        let mapped_stream = stream.map(|result| {
-            match result {
-                Ok(chunk) => {
-                    // 解析SSE数据
-                    if chunk.starts_with(b"data: ") {
-                        let data = &chunk[6..];
-                        if data == b"[DONE]" {
-                            return Ok(StreamChunk {
-                                 id: "".to_string(),
-                                 model: "".to_string(),
-                                 content: "".to_string(),
-                                 usage: None,
-                                 finish_reason: Some("stop".to_string()),
-                             });
-                        }
-                        
-                        match serde_json::from_str::<Value>(std::str::from_utf8(data).unwrap_or("")) {
+        // 创建SSE解析器流
+        let sse_stream = SseParser::new(stream);
+        
+        // 转换为ChatStream
+        let mapped_stream = sse_stream.filter_map(|result| {
+            futures::future::ready(match result {
+                Ok(sse_event) => {
+                    if sse_event.event_type.as_deref() == Some("done") || sse_event.data == "[DONE]" {
+                        Some(Ok(StreamChunk {
+                            id: "".to_string(),
+                            model: "".to_string(),
+                            content: "".to_string(),
+                            usage: None,
+                            finish_reason: Some("stop".to_string()),
+                        }))
+                    } else if !sse_event.data.is_empty() {
+                        match serde_json::from_str::<Value>(&sse_event.data) {
                             Ok(json) => {
                                 let empty_choices = vec![];
                                 let choices = json["choices"].as_array().unwrap_or(&empty_choices);
@@ -325,25 +316,25 @@ impl AiProvider for OpenAiProvider {
                                     let delta = &choice["delta"];
                                     let content = delta["content"].as_str().unwrap_or("").to_string();
                                     
-                                    Ok(StreamChunk {
-                                         id: json["id"].as_str().unwrap_or("").to_string(),
-                                         model: json["model"].as_str().unwrap_or("").to_string(),
-                                         content,
-                                         usage: None,
-                                         finish_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-                                     })
+                                    Some(Ok(StreamChunk {
+                                        id: json["id"].as_str().unwrap_or("").to_string(),
+                                        model: json["model"].as_str().unwrap_or("").to_string(),
+                                        content,
+                                        usage: None,
+                                        finish_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
+                                    }))
                                 } else {
-                                    Err(AiAdapterError::StreamError("Empty choices in stream chunk".to_string()))
+                                    None // 跳过空选择
                                 }
                             },
-                            Err(e) => Err(AiAdapterError::SerializationError(e.to_string()))
+                            Err(e) => Some(Err(AiAdapterError::SerializationError(e.to_string())))
                         }
                     } else {
-                        Err(AiAdapterError::StreamError("Invalid SSE format".to_string()))
+                        None // 跳过空数据
                     }
                 },
-                Err(e) => Err(e)
-            }
+                Err(e) => Some(Err(e))
+            })
         });
         
         Ok(ChatStream {

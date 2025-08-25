@@ -47,6 +47,13 @@ impl AiProvider for GeminiProvider {
         // TODO: 实现Gemini连接测试
         Ok(true)
     }
+
+    fn build_chat_request(&self, request: &ChatRequest) -> Result<serde_json::Value> {
+        // TODO: 实现Gemini聊天请求
+        Err(AiAdapterError::UnknownError(
+            "Gemini provider not yet implemented".to_string()
+        ))
+    }
     
     async fn send_chat_request(&self, _request: &ChatRequest) -> Result<ChatResponse> {
         // TODO: 实现Gemini聊天请求
@@ -54,6 +61,7 @@ impl AiProvider for GeminiProvider {
             "Gemini provider not yet implemented".to_string()
         ))
     }
+
     
     async fn send_chat_stream(&self, _request: &ChatRequest) -> Result<ChatStreamResponse> {
         // TODO: 实现Gemini流式响应
@@ -68,6 +76,37 @@ impl AiProvider for GeminiProvider {
     
     fn get_last_response_info(&self) -> Option<HttpResponseInfo> {
         self.base.get_last_response_info()
+    }
+    
+    fn parse_stream(&self, chunk: &str) -> Result<Option<StreamChunk>> {
+        // TODO: 实现Gemini流式解析
+        // Gemini可能使用不同的流式格式，需要根据实际API文档实现
+        for line in chunk.lines() {
+            if line.starts_with("data: ") {
+                let data = &line[6..]; // 移除"data: "前缀
+                
+                if data == "[DONE]" {
+                    return Ok(None);
+                }
+                
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    // 这里需要根据Gemini的实际响应格式进行调整
+                    let content = json.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                    
+                    let chunk = StreamChunk {
+                        id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                        model: "gemini".to_string(),
+                        content,
+                        finish_reason: None,
+                        usage: None,
+                    };
+                    
+                    return Ok(Some(chunk));
+                }
+            }
+        }
+        
+        Ok(None)
     }
     
 }

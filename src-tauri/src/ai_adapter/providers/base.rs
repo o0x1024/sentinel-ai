@@ -167,6 +167,39 @@ impl AiProvider for BaseProvider {
         vec![]
     }
     
+    fn build_chat_request(&self, request: &ChatRequest) -> Result<serde_json::Value> {
+        // 基础实现：将消息转换为标准JSON格式
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": request.messages
+        });
+        
+        // 添加可选参数
+        if let Some(options) = &request.options {
+            if let Some(temperature) = options.temperature {
+                body["temperature"] = serde_json::json!(temperature);
+            }
+            if let Some(max_tokens) = options.max_tokens {
+                body["max_tokens"] = serde_json::json!(max_tokens);
+            }
+            if let Some(top_p) = options.top_p {
+                body["top_p"] = serde_json::json!(top_p);
+            }
+            if let Some(stop) = &options.stop {
+                body["stop"] = serde_json::json!(stop);
+            }
+        }
+        
+        // 添加工具
+        if let Some(tools) = &request.tools {
+            if !tools.is_empty() {
+                body["tools"] = serde_json::json!(tools);
+            }
+        }
+        
+        Ok(body)
+    }
+    
     async fn test_connection(&self) -> Result<bool> {
         // 基础实现总是返回true，具体提供商应该重写此方法
         Ok(true)
@@ -183,6 +216,13 @@ impl AiProvider for BaseProvider {
         // 基础实现抛出错误，具体提供商必须实现此方法
         Err(AiAdapterError::UnknownError(
             "send_chat_stream not implemented for base provider".to_string()
+        ))
+    }
+    
+    fn parse_stream(&self, _chunk: &str) -> Result<Option<StreamChunk>> {
+        // 基础实现抛出错误，具体提供商必须实现此方法
+        Err(AiAdapterError::UnknownError(
+            "parse_stream not implemented for base provider".to_string()
         ))
     }
     

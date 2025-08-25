@@ -13,12 +13,10 @@ pub enum StageType {
     Planner,
     Worker,
     Solver,
-    // LLMCompiler stages
+    // LLMCompiler & Plan&Execute stages
     Planning,
     Execution,
     Replan,
-    // Plan&Execute stages
-    Reflection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

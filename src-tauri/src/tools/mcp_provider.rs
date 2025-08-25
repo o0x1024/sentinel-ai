@@ -213,7 +213,7 @@ impl UnifiedTool for McpToolWrapper {
                 }
             }
         };
-        
+        // info!("execution_result: {:?}", execution_result);
         // 处理执行结果
         match execution_result {
             Ok(result) => {

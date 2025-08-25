@@ -27,6 +27,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::unified_types::ConnectionStatus;
+use super::error_classifier::{ErrorClassifier, ErrorContext, ErrorCategory, RecoveryExecutor};
 
 // Debug 实现将在文件末尾添加
 
@@ -108,6 +109,7 @@ pub struct McpSessionImpl {
     peer_info: Arc<RwLock<Option<InitializeResult>>>,
     tools_cache: Arc<RwLock<Vec<Tool>>>,
     last_heartbeat: Arc<RwLock<std::time::Instant>>,
+    error_classifier: Arc<RwLock<ErrorClassifier>>,
 }
 
 impl McpSessionImpl {
@@ -120,6 +122,7 @@ impl McpSessionImpl {
             peer_info: Arc::new(RwLock::new(None)),
             tools_cache: Arc::new(RwLock::new(Vec::new())),
             last_heartbeat: Arc::new(RwLock::new(std::time::Instant::now())),
+            error_classifier: Arc::new(RwLock::new(ErrorClassifier::new())),
         };
 
         session.connect().await?;
@@ -223,37 +226,73 @@ impl McpSessionImpl {
             cmd.arg(arg);
         }
 
-        // 配置子进程以避免信号传播问题
-        let transport = TokioChildProcess::new(cmd.configure(|child_cmd| {
-            #[cfg(unix)]
-            {
-                use std::process::Stdio;
-                // 创建新的进程组，避免接收父进程的信号
-                child_cmd
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                    
-                // 在Unix系统上设置进程组
-                unsafe {
-                    child_cmd.pre_exec(|| {
-                        // 创建新的会话，使子进程成为会话领导者
-                        libc::setsid();
-                        Ok(())
-                    });
-                }
+        info!("Starting child process: {} with args: {:?}", command, self.config.args);
+
+        // 配置子进程以避免信号传播问题，增加错误处理
+        let mut child_cmd_builder = cmd;
+        
+        #[cfg(unix)]
+        {
+            use std::process::Stdio;
+            // 创建新的进程组，避免接收父进程的信号
+            child_cmd_builder
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true); // 确保父进程退出时清理子进程
+                
+            // 在Unix系统上设置进程组
+            unsafe {
+                child_cmd_builder.pre_exec(|| {
+                    // 创建新的会话，使子进程成为会话领导者
+                    libc::setsid();
+                    Ok(())
+                });
             }
-            
-            #[cfg(windows)]
-            {
-                use std::process::Stdio;
-                child_cmd
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
+        }
+        
+        #[cfg(windows)]
+        {
+            use std::process::Stdio;
+            child_cmd_builder
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+        }
+
+        // 直接创建传输层，TokioChildProcess::new是同步函数
+        let transport = match TokioChildProcess::new(child_cmd_builder) {
+            Ok(transport) => {
+                info!("Child process transport created successfully for: {}", self.config.name);
+                transport
             }
-        }))?;
-        let client = ().serve(transport).await?;
+            Err(e) => {
+                error!("Failed to create child process transport for {}: {}", self.config.name, e);
+                return Err(anyhow!("Child process creation failed: {}", e));
+            }
+        };
+
+        // 使用超时来初始化服务
+        let client_result = tokio::time::timeout(
+            Duration::from_secs(30),
+            ().serve(transport)
+        ).await;
+
+        let client = match client_result {
+            Ok(Ok(client)) => {
+                info!("MCP client service initialized successfully for: {}", self.config.name);
+                client
+            }
+            Ok(Err(e)) => {
+                error!("Failed to initialize MCP client service for {}: {}", self.config.name, e);
+                return Err(anyhow!("Client service initialization failed: {}", e));
+            }
+            Err(_) => {
+                error!("Timeout initializing MCP client service for: {}", self.config.name);
+                return Err(anyhow!("Client service initialization timeout"));
+            }
+        };
 
         Ok(client)
     }
@@ -388,12 +427,12 @@ impl McpSessionImpl {
             Ok(tools) => {
                 let tools_count = tools.len();
                 *self.tools_cache.write().await = tools;
-                info!("Successfully refreshed tools cache with {} tools for server: {}", tools_count, self.config.name);
+                debug!("Successfully refreshed tools cache with {} tools for server: {}", tools_count, self.config.name);
                 
                 // 记录工具名称用于调试
                 let cached_tools = self.tools_cache.read().await;
                 for tool in cached_tools.iter() {
-                    info!("Cached tool: {} - {}", tool.name, tool.description.as_ref().map(|d| d.to_string()).unwrap_or_else(|| "No description".to_string()));
+                    debug!("Cached tool: {} - {}", tool.name, tool.description.as_ref().map(|d| d.to_string()).unwrap_or_else(|| "No description".to_string()));
                 }
             }
             Err(e) => {
@@ -515,10 +554,62 @@ impl McpSessionImpl {
 
     /// 检查连接健康状态
     async fn check_connection_health(&self) -> bool {
-        let last_heartbeat = *self.last_heartbeat.read().await;
-        let elapsed = last_heartbeat.elapsed();
-
-        elapsed < Duration::from_secs(60) // 1分钟超时
+        let status = self.connection_status.read().await;
+        if !matches!(*status, ConnectionStatus::Connected) {
+            return false;
+        }
+        
+        // 对于子进程类型，进行更深入的健康检查
+        if matches!(self.config.transport_type, TransportType::ChildProcess | TransportType::Stdio) {
+            // 尝试调用一个简单的API来验证连接
+            let service = self.service.read().await;
+            if let Some(service_any) = service.as_ref() {
+                // 检查服务是否还活着
+                if let Some(client) = service_any.downcast_ref::<RunningService<RoleClient, ()>>() {
+                    // 尝试调用list_tools来测试连接
+                    let test_params = rmcp::model::PaginatedRequestParam {
+                        cursor: None,
+                    };
+                    
+                    match tokio::time::timeout(
+                        Duration::from_secs(5),
+                        client.list_tools(Some(test_params))
+                    ).await {
+                        Ok(Ok(_)) => {
+                            // 更新心跳时间
+                            *self.last_heartbeat.write().await = std::time::Instant::now();
+                            true
+                        }
+                        Ok(Err(e)) => {
+                            warn!("Health check failed for {}: {}", self.config.name, e);
+                            false
+                        }
+                        Err(_) => {
+                            warn!("Health check timeout for: {}", self.config.name);
+                            false
+                        }
+                    }
+                } else {
+                    warn!("Service type mismatch during health check for: {}", self.config.name);
+                    false
+                }
+            } else {
+                warn!("No service available during health check for: {}", self.config.name);
+                false
+            }
+        } else {
+            // 对于HTTP类型的连接，检查心跳时间
+            let last_heartbeat = *self.last_heartbeat.read().await;
+            let elapsed = last_heartbeat.elapsed();
+            if elapsed > Duration::from_secs(300) { // 5分钟无心跳认为不健康
+                warn!("Connection stale for {}: no heartbeat for {:?}", self.config.name, elapsed);
+                false
+            } else {
+                // 更新心跳时间
+                *self.last_heartbeat.write().await = std::time::Instant::now();
+                true
+            }
+        }
     }
 
     /// 验证连接前提条件
@@ -689,7 +780,77 @@ impl McpSession for McpSessionImpl {
                         }
                         Err(e) => {
                             warn!("Failed to call tool via MCP server (type 1): {}", e);
-                            None
+                            
+                            // 使用智能错误分类器进行错误分析
+                            let error_context = ErrorContext {
+                                error_message: e.to_string(),
+                                error_code: None, // TODO: 提取实际错误代码
+                                error_type: None,
+                                tool_name: params.name.to_string(),
+                                connection_name: self.config.name.clone(),
+                                retry_count: 0, // TODO: 跟踪实际重试次数
+                                metadata: std::collections::HashMap::new(),
+                            };
+                            
+                            let (error_category, recovery_strategy) = {
+                                let mut classifier = self.error_classifier.write().await;
+                                classifier.classify_error(&error_context)
+                            };
+                            
+                            debug!("Error classified as {:?} with strategy {:?}", error_category, recovery_strategy);
+                            
+                            let should_reconnect = !matches!(error_category, ErrorCategory::NonRecoverable);
+                            
+                            if should_reconnect {
+                                warn!("Detected recoverable error (category: {:?}), attempting recovery for: {}", error_category, self.config.name);
+                                
+                                // 根据恢复策略计算延迟时间
+                                let delay_ms = RecoveryExecutor::calculate_delay(&recovery_strategy, error_context.retry_count);
+                                if let Some(delay) = delay_ms {
+                                    if delay > 0 {
+                                        info!("Waiting {}ms before attempting recovery", delay);
+                                        tokio::time::sleep(Duration::from_millis(delay)).await;
+                                    }
+                                }
+                                
+                                match self.reconnect().await {
+                                    Ok(()) => {
+                                        info!("Reconnection successful, retrying tool call for: {}", params.name);
+                                        
+                                        // 再次等待确保连接稳定
+                                        tokio::time::sleep(Duration::from_millis(200)).await;
+                                        
+                                        // 重新获取service并重试
+                                        let service = self.service.read().await;
+                                        if let Some(client) = service.as_ref().and_then(|s| s.downcast_ref::<RunningService<RoleClient, ()>>()) {
+                                            match client.call_tool(params.clone()).await {
+                                                Ok(result) => {
+                                                    info!("Tool call successful after reconnection: {}", params.name);
+                                                    Some(Ok(result))
+                                                }
+                                                Err(retry_e) => {
+                                                    error!("Tool call failed even after reconnection: {}", retry_e);
+                                                    // 如果重连后仍然失败，可能是子进程本身的问题
+                                                    if retry_e.to_string().contains("serde error") {
+                                                        error!("Child process may be outputting invalid JSON. Check MCP server implementation.");
+                                                    }
+                                                    None
+                                                }
+                                            }
+                                        } else {
+                                            error!("Service not available after reconnection");
+                                            None
+                                        }
+                                    }
+                                    Err(reconnect_err) => {
+                                        error!("Reconnection failed for {}: {}", self.config.name, reconnect_err);
+                                        None
+                                    }
+                                }
+                            } else {
+                                error!("Non-recoverable error for tool {}: {}", params.name, e);
+                                None
+                            }
                         }
                     }
                 } else if let Some(client) = service_any.downcast_ref::<RunningService<RoleClient, rmcp::model::InitializeRequestParam>>() {
@@ -700,6 +861,24 @@ impl McpSession for McpSessionImpl {
                         }
                         Err(e) => {
                             warn!("Failed to call tool via MCP server (type 2): {}", e);
+                            
+                            // 使用智能错误分类器进行错误分析
+                            let error_context = ErrorContext {
+                                error_message: e.to_string(),
+                                error_code: None,
+                                error_type: None,
+                                tool_name: params.name.to_string(),
+                                connection_name: self.config.name.clone(),
+                                retry_count: 0,
+                                metadata: std::collections::HashMap::new(),
+                            };
+                            
+                            let (error_category, _recovery_strategy) = {
+                                let mut classifier = self.error_classifier.write().await;
+                                classifier.classify_error(&error_context)
+                            };
+                            
+                            info!("Type 2 service error classified as: {:?}", error_category);
                             None
                         }
                     }
@@ -719,6 +898,24 @@ impl McpSession for McpSessionImpl {
                         }
                         Err(e) => {
                             warn!("Failed to call tool via HTTP MCP server: {}", e);
+                            
+                            // 使用智能错误分类器进行错误分析
+                            let error_context = ErrorContext {
+                                error_message: e.to_string(),
+                                error_code: None,
+                                error_type: None,
+                                tool_name: params.name.to_string(),
+                                connection_name: self.config.name.clone(),
+                                retry_count: 0,
+                                metadata: std::collections::HashMap::new(),
+                            };
+                            
+                            let (error_category, _recovery_strategy) = {
+                                let mut classifier = self.error_classifier.write().await;
+                                classifier.classify_error(&error_context)
+                            };
+                            
+                            info!("HTTP service error classified as: {:?}", error_category);
                             None
                         }
                     }
@@ -792,14 +989,30 @@ impl McpSession for McpSessionImpl {
             self.config.name
         );
 
-        // 关闭现有连接
-        *self.service.write().await = None;
+        // 强制关闭现有连接并清理资源
+        {
+            let mut service = self.service.write().await;
+            if service.is_some() {
+                info!("Cleaning up existing connection for: {}", self.config.name);
+                // 强制设置为None，触发Drop清理
+                *service = None;
+                // 等待资源清理
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+        
         *self.connection_status.write().await = ConnectionStatus::Disconnected;
+
+        // 对于子进程类型的连接，额外等待确保进程完全退出
+        if matches!(self.config.transport_type, TransportType::ChildProcess | TransportType::Stdio) {
+            info!("Waiting for child process cleanup for: {}", self.config.name);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
 
         // 智能重试机制
         let mut retry_count = 0;
         let max_retries = self.config.retry_attempts;
-        let mut delay = Duration::from_secs(1);
+        let mut delay = Duration::from_secs(2); // 增加初始延迟
 
         while retry_count < max_retries {
             retry_count += 1;
@@ -814,6 +1027,14 @@ impl McpSession for McpSessionImpl {
                         "Successfully reconnected to MCP server: {} on attempt {}",
                         self.config.name, retry_count
                     );
+                    
+                    // 连接成功后进行健康检查
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    if !self.check_connection_health().await {
+                        warn!("Connection health check failed after reconnection for: {}", self.config.name);
+                        continue;
+                    }
+                    
                     return Ok(());
                 }
                 Err(e) => {
@@ -829,8 +1050,8 @@ impl McpSession for McpSessionImpl {
                         );
                         tokio::time::sleep(delay).await;
                         
-                        // 指数退避，但限制最大延迟
-                        delay = std::cmp::min(delay * 2, Duration::from_secs(30));
+                        // 线性增长延迟，避免过度退避
+                        delay = std::cmp::min(delay + Duration::from_secs(1), Duration::from_secs(10));
                     } else {
                         return Err(anyhow!(
                             "Failed to reconnect to {} after {} attempts: {}",

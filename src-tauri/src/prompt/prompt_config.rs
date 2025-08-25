@@ -109,6 +109,10 @@ pub struct CustomTemplate {
     pub content: String,
     /// 模板类型
     pub template_type: TemplateType,
+    /// Prompt分类
+    pub category: Option<PromptCategory>,
+    /// 目标架构（如果是架构特定的）
+    pub target_architecture: Option<ArchitectureType>,
     /// 创建者
     pub creator: String,
     /// 创建时间
@@ -123,11 +127,19 @@ pub struct CustomTemplate {
     pub variables: Vec<String>,
     /// 模板元数据
     pub metadata: std::collections::HashMap<String, String>,
+    /// 是否为系统级模板
+    pub is_system: bool,
+    /// 优先级
+    pub priority: u32,
 }
 
 /// 模板类型
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub enum TemplateType {
+    /// 系统提示模板
+    SystemPrompt,
+    /// 意图分析模板
+    IntentClassifier,
     /// 规划器模板
     #[default]
     Planner,
@@ -141,6 +153,27 @@ pub enum TemplateType {
     Domain(String),
     /// 自定义模板
     Custom,
+}
+
+/// Prompt类型 - 区分LLM架构和普通prompt
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PromptCategory {
+    /// 系统级提示（跨架构通用）
+    System,
+    /// LLM架构特定（ReWOO、LLMCompiler、PlanExecute）
+    LlmArchitecture(ArchitectureType),
+    /// 应用级提示
+    Application,
+    /// 用户自定义
+    UserDefined,
+}
+
+/// 架构类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ArchitectureType {
+    ReWOO,
+    LLMCompiler,
+    PlanExecute,
 }
 
 /// 使用统计
@@ -532,6 +565,48 @@ impl PromptConfigManager {
     pub async fn list_configs(&self) -> Result<Vec<String>> {
         // TODO: 实现配置列表逻辑
         Ok(vec!["default".to_string()])
+    }
+
+    /// 获取特定类型的系统prompt
+    pub async fn get_system_prompt_by_type(&self, template_type: &TemplateType) -> Result<Option<String>> {
+        // 查找匹配的系统级模板
+        for template in self.custom_templates.values() {
+            if template.template_type == *template_type && template.is_system {
+                return Ok(Some(template.content.clone()));
+            }
+        }
+        
+        // 如果没找到，返回默认的模板内容
+        match template_type {
+            TemplateType::IntentClassifier => {
+                Ok(Some(self.get_default_intent_classifier_prompt()))
+            }
+            _ => Ok(None)
+        }
+    }
+    
+    /// 获取默认的意图分析器prompt
+    fn get_default_intent_classifier_prompt(&self) -> String {
+        r#"作为一个AI意图分类器，请分析用户输入并判断意图类型。
+
+请判断用户输入属于以下哪种类型：
+1. Chat - 普通对话（问候、闲聊、简单交流）
+2. Question - 知识性问答（询问概念、原理等，不需要实际执行）  
+3. Task - 任务执行（需要AI助手执行具体的安全扫描、分析等操作）
+
+判断标准：
+- Chat: 问候语、感谢、简单交流等
+- Question: 以"什么是"、"如何理解"等开头的概念性问题
+- Task: 包含"扫描"、"检测"、"分析"、"帮我执行"等行动指令
+
+请以JSON格式回复：
+{
+    "intent": "Chat|Question|Task",
+    "confidence": 0.0-1.0,
+    "reasoning": "分类理由",
+    "requires_agent": true/false,
+    "extracted_info": {"key": "value"}
+}"#.to_string()
     }
 
     /// 验证配置

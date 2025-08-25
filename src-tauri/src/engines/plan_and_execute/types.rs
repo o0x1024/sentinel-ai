@@ -7,6 +7,66 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 use uuid::Uuid;
 
+/// Plan-and-Execute 引擎整体配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanAndExecuteConfig {
+    /// 规划器配置
+    pub planner: crate::engines::plan_and_execute::planner::PlannerConfig,
+    /// 执行器配置
+    pub executor: crate::engines::plan_and_execute::executor::ExecutorConfig,
+    /// 重新规划器配置
+    pub replanner: crate::engines::plan_and_execute::replanner::ReplannerConfig,
+    /// 内存管理器配置
+    pub memory_manager: crate::engines::plan_and_execute::memory_manager::MemoryManagerConfig,
+    /// 引擎名称
+    pub engine_name: String,
+    /// 引擎版本
+    pub engine_version: String,
+    /// 是否启用调试模式
+    pub debug_mode: bool,
+    /// 性能指标收集配置
+    pub metrics_config: MetricsConfig,
+}
+
+/// 性能指标收集配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsConfig {
+    /// 是否启用指标收集
+    pub enabled: bool,
+    /// 指标收集间隔（秒）
+    pub collection_interval: u64,
+    /// 是否收集详细步骤指标
+    pub detailed_step_metrics: bool,
+    /// 是否收集资源使用指标
+    pub resource_metrics: bool,
+}
+
+impl Default for PlanAndExecuteConfig {
+    fn default() -> Self {
+        Self {
+            planner: crate::engines::plan_and_execute::planner::PlannerConfig::default(),
+            executor: crate::engines::plan_and_execute::executor::ExecutorConfig::default(),
+            replanner: crate::engines::plan_and_execute::replanner::ReplannerConfig::default(),
+            memory_manager: crate::engines::plan_and_execute::memory_manager::MemoryManagerConfig::default(),
+            engine_name: "Plan-and-Execute".to_string(),
+            engine_version: "1.0.0".to_string(),
+            debug_mode: false,
+            metrics_config: MetricsConfig::default(),
+        }
+    }
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            collection_interval: 60,
+            detailed_step_metrics: false,
+            resource_metrics: false,
+        }
+    }
+}
+
 /// 通用执行状态 - 参考 LangGraph 设计
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanExecuteState {
@@ -46,12 +106,14 @@ impl Default for PlanExecuteState {
 /// Plan-and-Execute 错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum PlanAndExecuteError {
+    #[error("Initialization failed: {0}")]
+    InitializationError(String),
+
     #[error("Planning failed: {0}")]
     PlanningFailed(String),
 
     #[error("AI error: {0}")]
     AiError(String),
-
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),

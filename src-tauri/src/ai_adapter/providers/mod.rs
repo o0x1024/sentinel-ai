@@ -7,6 +7,9 @@
 pub mod gemini;
 // pub mod ollama;
 pub mod deepseek;
+pub mod moonshot;
+pub mod openrouter;
+pub mod modelscope;
 // pub mod zhipu;
 // pub mod cohere;
 // pub mod groq;
@@ -22,6 +25,9 @@ pub mod base;
 // pub use xai::XaiProvider;
 pub use gemini::GeminiProvider;
 pub use deepseek::DeepSeekProvider;
+pub use moonshot::MoonshotProvider;
+pub use openrouter::OpenRouterProvider;
+pub use modelscope::ModelScopeProvider;
 // pub use zhipu::ZhipuProvider;
 // pub use cohere::CohereProvider;
 
@@ -70,6 +76,18 @@ impl ProviderFactory {
                 let provider = DeepSeekProvider::new(config)?;
                 Ok(Arc::new(provider))
             },
+            "moonshot" => {
+                let provider = MoonshotProvider::new(config)?;
+                Ok(Arc::new(provider))
+            },
+            "openrouter" => {
+                let provider = OpenRouterProvider::new(config)?;
+                Ok(Arc::new(provider))
+            },
+            "modelscope" => {
+                let provider = ModelScopeProvider::new(config)?;
+                Ok(Arc::new(provider))
+            },
             _ => Err(AiAdapterError::ProviderNotSupportedError(
                 format!("Unsupported provider: {}", config.name)
             ))
@@ -84,6 +102,9 @@ impl ProviderFactory {
             "gemini", 
             "ollama", 
             "deepseek",
+            "moonshot",
+            "openrouter",
+            "modelscope",
             // "zhipu",
             // "cohere",
             "groq",

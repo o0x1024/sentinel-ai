@@ -1,27 +1,124 @@
 <template>
   <div class="ai-settings">
-    <!-- AI提供商状态总览 -->
-    <div class="space-y-4 mb-6">
-      <div v-for="status in aiServiceStatus" :key="status.provider" 
-           class="card bg-base-100 shadow-sm border">
-        <div class="card-body p-4">
-          <div class="flex items-center gap-4">
-            <div class="text-2xl">
-              <i :class="getProviderIcon(status.provider)"></i>
+    <!-- 配置模式切换 -->
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="text-2xl font-bold">AI 配置</h2>
+      <div class="flex items-center gap-4">
+        <div class="form-control">
+          <label class="label cursor-pointer gap-2">
+            <span class="label-text">图形界面</span>
+            <input type="checkbox" class="toggle toggle-primary" 
+                   v-model="useGuiMode" />
+            <span class="label-text">手动编辑</span>
+          </label>
+        </div>
+        <button v-if="!useGuiMode" class="btn btn-primary btn-sm" @click="validateConfig">
+          <i class="fas fa-check"></i>
+          验证配置
+        </button>
+      </div>
+    </div>
+
+    <!-- 手动编辑模式 -->
+    <div v-if="!useGuiMode" class="card bg-base-100 shadow-sm mb-6">
+      <div class="card-body">
+        <h3 class="card-title mb-4">
+          <i class="fas fa-code"></i>
+          手动编辑 Providers 配置
+        </h3>
+        
+        <!-- JSON 编辑器 -->
+        <div class="space-y-4">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-sm text-base-content/70">
+              直接编辑 AI 提供商配置 JSON
+            </span>
+            <div class="badge badge-warning badge-sm" v-if="configError">
+              配置有误
             </div>
-            <div class="flex-1">
-              <h3 class="font-semibold text-lg">{{ getProviderName(status.provider) }}</h3>
-              <div class="flex items-center gap-2 mt-1">
-                <div class="badge" :class="status.is_available ? 'badge-success' : 'badge-error'">
-                  {{ status.is_available ? t('settings.ai.connected') : t('settings.ai.disconnected') }}
+            <div class="badge badge-success badge-sm" v-else-if="configValid">
+              配置有效
+            </div>
+          </div>
+          
+          <textarea 
+            class="textarea textarea-bordered font-mono text-sm h-96 w-full"
+            :class="{
+              'textarea-error': configError,
+              'textarea-success': configValid && !configError
+            }"
+            v-model="manualConfigText"
+            @input="onManualConfigChange"
+            placeholder="输入 providers 配置的 JSON 格式..."
+          ></textarea>
+          
+          <div v-if="configError" class="alert alert-error">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>{{ configError }}</span>
+          </div>
+          
+          <div class="flex gap-2">
+            <button class="btn btn-primary" @click="applyManualConfig" :disabled="!!configError">
+              <i class="fas fa-save"></i>
+              应用配置
+            </button>
+            <button class="btn btn-outline" @click="formatConfig">
+              <i class="fas fa-indent"></i>
+              格式化
+            </button>
+            <button class="btn btn-outline" @click="resetToDefault">
+              <i class="fas fa-undo"></i>
+              重置为默认
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图形界面模式 -->
+    <div v-if="useGuiMode">
+      <!-- AI提供商状态总览 -->
+      <div class="space-y-4 mb-6">
+        <!-- 默认Provider选择器 -->
+        <div class="card bg-base-100 shadow-sm border">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-4">
+              <i class="fas fa-star text-warning text-xl"></i>
+              <div class="flex-1">
+                <h3 class="font-semibold text-lg">默认 Provider</h3>
+                <div class="flex items-center gap-3 mt-2">
+                  <select class="select select-bordered select-sm"
+                          v-model="defaultProviderLocal"
+                          @change="onChangeDefaultProvider">
+                    <option v-for="provider in Object.keys(aiConfig.providers)" :key="provider" :value="provider.toLowerCase()">
+                      {{ provider }}
+                    </option>
+                  </select>
                 </div>
-                <span class="text-sm text-base-content/70">{{ status.models_loaded }} {{ t('settings.ai.modelsCount') }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-for="status in aiServiceStatus" :key="status.provider" 
+             class="card bg-base-100 shadow-sm border">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-4">
+              <div class="text-2xl">
+                <i :class="getProviderIcon(status.provider)"></i>
+              </div>
+              <div class="flex-1">
+                <h3 class="font-semibold text-lg">{{ getProviderName(status.provider) }}</h3>
+                <div class="flex items-center gap-2 mt-1">
+                  <div class="badge" :class="status.is_available ? 'badge-success' : 'badge-error'">
+                    {{ status.is_available ? t('settings.ai.connected') : t('settings.ai.disconnected') }}
+                  </div>
+                  <span class="text-sm text-base-content/70">{{ status.models_loaded }} {{ t('settings.ai.modelsCount') }}</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
 
     <!-- AI提供商配置选项卡 - 垂直布局 -->
     <div class="flex flex-col lg:flex-row gap-6 mb-6">
@@ -56,7 +153,8 @@
           <label class="label cursor-pointer">
             <span class="label-text">{{ t('settings.ai.enable') }} {{ getProviderName(selectedAiProvider) }}</span>
             <input type="checkbox" class="toggle toggle-primary" 
-                   v-model="selectedProviderConfig.enabled">
+                   v-model="selectedProviderConfig.enabled"
+                   @change="saveAiConfig">
           </label>
         </div>
 
@@ -68,7 +166,8 @@
           <div class="input-group">
             <input type="password" :placeholder="t('settings.apiKeyPlaceholder')" 
                    class="input input-bordered flex-1"
-                   v-model="selectedProviderConfig.api_key">
+                   v-model="selectedProviderConfig.api_key"
+                   @blur="saveAiConfig">
             <button class="btn btn-outline" @click="testConnection(selectedAiProvider)">
               <i class="fas fa-plug"></i>
               {{ t('settings.testConnection') }}
@@ -87,7 +186,8 @@
           </label>
           <input type="url" :placeholder="t('settings.ai.apiBaseUrl')" 
                  class="input input-bordered"
-                 v-model="selectedProviderConfig.api_base">
+                 v-model="selectedProviderConfig.api_base"
+                 @blur="saveAiConfig">
         </div>
 
         <!-- 组织ID (OpenAI) -->
@@ -97,7 +197,39 @@
           </label>
           <input type="text" :placeholder="t('settings.ai.organizationId')" 
                  class="input input-bordered"
-                 v-model="(selectedProviderConfig as any).organization">
+                 v-model="(selectedProviderConfig as any).organization"
+                 @blur="saveAiConfig">
+        </div>
+
+        <!-- OpenRouter特定配置 -->
+        <div v-if="selectedAiProvider === 'OpenRouter'" class="space-y-4">
+          <!-- HTTP Referer -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">HTTP Referer (可选)</span>
+            </label>
+            <input type="url" placeholder="https://yoursite.com" 
+                   class="input input-bordered"
+                   v-model="selectedProviderConfig.http_referer"
+                   @blur="saveAiConfig">
+            <label class="label">
+              <span class="label-text-alt">用于在 OpenRouter 上进行排名统计</span>
+            </label>
+          </div>
+
+          <!-- X-Title -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">应用名称 (可选)</span>
+            </label>
+            <input type="text" placeholder="我的AI应用" 
+                   class="input input-bordered"
+                   v-model="selectedProviderConfig.x_title"
+                   @blur="saveAiConfig">
+            <label class="label">
+              <span class="label-text-alt">用于在 OpenRouter 上显示站点标题</span>
+            </label>
+          </div>
         </div>
 
         <!-- 默认模型选择 -->
@@ -105,7 +237,7 @@
           <label class="label">
             <span class="label-text">{{ t('settings.ai.defaultModel') }}</span>
           </label>
-          <select class="select select-bordered" v-model="selectedProviderConfig.default_model">
+          <select class="select select-bordered" v-model="selectedProviderConfig.default_model" @change="saveAiConfig">
             <option value="">{{ t('settings.ai.selectModel') }}</option>
             <option v-for="model in selectedProviderConfig.models" 
                     :key="model.id" :value="model.id">
@@ -132,6 +264,7 @@
               max="1"
               step="0.1"
               class="range range-primary flex-1"
+              @change="saveAiConfig"
             />
             <span class="text-sm min-w-[60px]">{{ settings.ai.temperature }}</span>
           </div>
@@ -153,6 +286,7 @@
               max="8000"
               step="500"
               class="range range-primary flex-1"
+              @change="saveAiConfig"
             />
             <span class="text-sm min-w-[60px]">{{ settings.ai.maxTokens }}</span>
           </div>
@@ -222,7 +356,8 @@
             </label>
             <input type="text" :placeholder="t('settings.ai.providerNamePlaceholder')" 
                    class="input input-bordered"
-                   v-model="customProvider.name">
+                   v-model="customProvider.name"
+                   @blur="saveAiConfig">
           </div>
           
           <div class="form-control">
@@ -231,7 +366,8 @@
             </label>
             <input type="password" :placeholder="t('settings.apiKeyPlaceholder')" 
                    class="input input-bordered"
-                   v-model="customProvider.api_key">
+                   v-model="customProvider.api_key"
+                   @blur="saveAiConfig">
           </div>
           
           <div class="form-control">
@@ -240,7 +376,8 @@
             </label>
             <input type="url" placeholder="https://api.example.com/v1" 
                    class="input input-bordered"
-                   v-model="customProvider.api_base">
+                   v-model="customProvider.api_base"
+                   @blur="saveAiConfig">
           </div>
           
           <div class="form-control">
@@ -249,7 +386,8 @@
             </label>
             <input type="text" :placeholder="t('settings.ai.modelIdPlaceholder')" 
                    class="input input-bordered"
-                   v-model="customProvider.model_id">
+                   v-model="customProvider.model_id"
+                   @blur="saveAiConfig">
           </div>
         </div>
         
@@ -298,22 +436,22 @@
         </div>
       </div>
     </div>
-
-    <!-- 保存按钮 -->
-    <div class="flex justify-end mt-6">
-      <button class="btn btn-primary" @click="saveAiConfig">
-        <i class="fas fa-save"></i>
-        {{ t('settings.ai.saveConfig') }}
-      </button>
     </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+
+// 手动编辑模式相关状态
+const useGuiMode = ref(true)
+const manualConfigText = ref('')
+const configError = ref('')
+const configValid = ref(false)
 
 // Props
 interface Props {
@@ -333,11 +471,14 @@ interface Emits {
   'update:selectedAiProvider': [value: string]
   'update:settings': [value: any]
   'update:customProvider': [value: any]
+  'update:aiConfig': [value: any]
   'testConnection': [provider: string]
   'testCustomProvider': []
   'addCustomProvider': []
   'saveAiConfig': []
   'refreshModels': [provider: string]
+  'applyManualConfig': [config: any]
+  'setDefaultProvider': [provider: string]
 }
 
 const emit = defineEmits<Emits>()
@@ -351,7 +492,7 @@ const selectedAiProvider = computed({
 })
 
 const settings = computed({
-  get: () => props.settings,
+  get: () => props.settings ?? { ai: { temperature: 0.7, maxTokens: 2000 } },
   set: (value) => emit('update:settings', value)
 })
 
@@ -364,15 +505,35 @@ const selectedProviderConfig = computed(() => {
   return props.aiConfig.providers[props.selectedAiProvider]
 })
 
+// 默认 Provider 选择
+const defaultProviderLocal = ref('')
+
+watch(() => props.aiConfig, (cfg: any) => {
+  const dp = (cfg && (cfg as any).default_provider) || 'modelscope'
+  defaultProviderLocal.value = String(dp).toLowerCase()
+}, { immediate: true, deep: true })
+
+const onChangeDefaultProvider = async () => {
+  try {
+    const provider = defaultProviderLocal.value
+    emit('setDefaultProvider', provider)
+  } catch (e) {
+    console.error('Failed to set default provider', e)
+  }
+}
+
 // Methods
 const getProviderIcon = (provider: string) => {
   const icons: Record<string, string> = {
     'OpenAI': 'fas fa-brain',
     'Anthropic': 'fas fa-robot',
-      'Google': 'fab fa-google',
-      'Gemini': 'fab fa-google',
+    'Google': 'fab fa-google',
+    'Gemini': 'fab fa-google',
     'Ollama': 'fas fa-server',
-    'DeepSeek': 'fas fa-eye'
+    'DeepSeek': 'fas fa-eye',
+    'Moonshot': 'fas fa-moon',
+    'OpenRouter': 'fas fa-route',
+    'ModelScope': 'fas fa-cog'
   }
   return icons[provider] || 'fas fa-cog'
 }
@@ -381,10 +542,13 @@ const getProviderName = (provider: string) => {
   const names: Record<string, string> = {
     'OpenAI': 'OpenAI',
     'Anthropic': 'Anthropic',
-      'Google': 'Google',
-      'Gemini': 'Gemini',
+    'Google': 'Google',
+    'Gemini': 'Gemini',
     'Ollama': 'Ollama',
-    'DeepSeek': 'DeepSeek'
+    'DeepSeek': 'DeepSeek',
+    'Moonshot': 'Moonshot AI',
+    'OpenRouter': 'OpenRouter',
+    'ModelScope': 'ModelScope'
   }
   return names[provider] || provider
 }
@@ -412,6 +576,160 @@ const addCustomProvider = () => {
 const saveAiConfig = () => {
   emit('saveAiConfig')
 }
+
+// 手动编辑相关方法
+const onManualConfigChange = () => {
+  validateConfigText()
+}
+
+const validateConfigText = () => {
+  configError.value = ''
+  configValid.value = false
+  
+  if (!manualConfigText.value.trim()) {
+    return
+  }
+  
+  try {
+    const parsed = JSON.parse(manualConfigText.value)
+    
+    // 基本验证：确保是对象且包含 providers
+    if (typeof parsed !== 'object' || parsed === null) {
+      configError.value = '配置必须是有效的 JSON 对象'
+      return
+    }
+    
+    if (!parsed.providers || typeof parsed.providers !== 'object') {
+      configError.value = '配置必须包含 providers 对象'
+      return
+    }
+    
+    // 验证每个 provider 的基本结构
+    for (const [providerName, providerConfig] of Object.entries(parsed.providers)) {
+      if (typeof providerConfig !== 'object' || providerConfig === null) {
+        configError.value = `Provider "${providerName}" 必须是对象`
+        return
+      }
+      
+      const config = providerConfig as any
+      if (typeof config.enabled !== 'boolean') {
+        configError.value = `Provider "${providerName}" 缺少必需的 enabled 字段（布尔值）`
+        return
+      }
+    }
+    
+    configValid.value = true
+  } catch (error) {
+    configError.value = `JSON 解析错误: ${(error as Error).message}`
+  }
+}
+
+const validateConfig = () => {
+  validateConfigText()
+}
+
+const applyManualConfig = () => {
+  if (configError.value) {
+    return
+  }
+  
+  try {
+    const parsed = JSON.parse(manualConfigText.value)
+    emit('applyManualConfig', parsed)
+  } catch (error) {
+    configError.value = `应用配置失败: ${(error as Error).message}`
+  }
+}
+
+const formatConfig = () => {
+  if (!manualConfigText.value.trim()) {
+    return
+  }
+  
+  try {
+    const parsed = JSON.parse(manualConfigText.value)
+    manualConfigText.value = JSON.stringify(parsed, null, 2)
+    validateConfigText()
+  } catch (error) {
+    // 保持原始文本，不格式化无效的 JSON
+  }
+}
+
+const resetToDefault = () => {
+  const defaultConfig = {
+    providers: {
+      OpenAI: {
+        enabled: false,
+        api_key: '',
+        api_base: 'https://api.openai.com/v1',
+        default_model: '',
+        models: []
+      },
+      Anthropic: {
+        enabled: false,
+        api_key: '',
+        api_base: 'https://api.anthropic.com',
+        default_model: '',
+        models: []
+      },
+      Gemini: {
+        enabled: false,
+        api_key: '',
+        api_base: 'https://generativelanguage.googleapis.com/v1beta',
+        default_model: '',
+        models: []
+      },
+      Ollama: {
+        enabled: false,
+        api_base: 'http://localhost:11434',
+        default_model: '',
+        models: []
+      },
+      DeepSeek: {
+        enabled: false,
+        api_key: '',
+        api_base: 'https://api.deepseek.com/v1',
+        default_model: '',
+        models: []
+      },
+      Moonshot: {
+        enabled: false,
+        api_key: '',
+        api_base: 'https://api.moonshot.cn/v1',
+        default_model: '',
+        models: []
+      },
+      OpenRouter: {
+        enabled: false,
+        api_key: '',
+        api_base: 'https://openrouter.ai/api/v1',
+        default_model: '',
+        http_referer: '',
+        x_title: '',
+        models: []
+      }
+    }
+  }
+  
+  manualConfigText.value = JSON.stringify(defaultConfig, null, 2)
+  validateConfigText()
+}
+
+// 监听 aiConfig 变化，同步到手动编辑文本
+watch(() => props.aiConfig, (newConfig) => {
+  if (newConfig && !useGuiMode.value) {
+    manualConfigText.value = JSON.stringify(newConfig, null, 2)
+    validateConfigText()
+  }
+}, { immediate: true, deep: true })
+
+// 初始化手动编辑文本
+watch(useGuiMode, (isGuiMode) => {
+  if (!isGuiMode && props.aiConfig) {
+    manualConfigText.value = JSON.stringify(props.aiConfig, null, 2)
+    validateConfigText()
+  }
+})
 </script>
 
 <style scoped>

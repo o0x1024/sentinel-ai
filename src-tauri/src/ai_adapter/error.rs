@@ -38,6 +38,10 @@ pub enum AiAdapterError {
     ProviderNotFoundError(String),
     /// 参数验证错误
     ValidationError(String),
+    /// 响应解析错误
+    ResponseParseError(String),
+    /// API错误
+    ApiError(String),
     /// 未知错误
     UnknownError(String),
 }
@@ -61,6 +65,8 @@ impl fmt::Display for AiAdapterError {
             AiAdapterError::ProviderNotSupportedError(msg) => write!(f, "Provider not supported: {}", msg),
             AiAdapterError::ProviderNotFoundError(msg) => write!(f, "Provider not found: {}", msg),
             AiAdapterError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+            AiAdapterError::ResponseParseError(msg) => write!(f, "Response parse error: {}", msg),
+            AiAdapterError::ApiError(msg) => write!(f, "API error: {}", msg),
             AiAdapterError::UnknownError(msg) => write!(f, "Unknown error: {}", msg),
         }
     }
@@ -142,6 +148,8 @@ impl ErrorDetails {
                 AiAdapterError::ProviderNotSupportedError(_) => "provider_not_supported".to_string(),
                 AiAdapterError::ProviderNotFoundError(_) => "provider_not_found".to_string(),
                 AiAdapterError::ValidationError(_) => "validation".to_string(),
+                AiAdapterError::ResponseParseError(_) => "response_parse".to_string(),
+                AiAdapterError::ApiError(_) => "api".to_string(),
                 AiAdapterError::UnknownError(_) => "unknown".to_string(),
             },
             message: error.to_string(),

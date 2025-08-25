@@ -1,6 +1,5 @@
 <template>
-  <div class="h-screen bg-base-200 overflow-y-auto overflow-x-hidden transition-all duration-300 ease-in-out flex flex-col"
-       :class="{'w-20': collapsed, 'w-60': !collapsed}">
+  <div class="h-full bg-base-200 overflow-y-auto overflow-x-hidden transition-all duration-300 ease-in-out flex flex-col">
     
     <!-- 折叠模式显示图标导航 -->
     <div v-if="collapsed" class="flex flex-col items-center space-y-2 py-4 flex-1">
@@ -182,11 +181,18 @@ const mainMenuItems = computed(() => [
     badgeClass: ''
   },
   {
-    path: '/agents',
-    name: t('sidebar.agents', 'Agent管理'),
+    path: '/smart-agent',
+    name: t('sidebar.smartAgent', '智能Agent控制台'),
     icon: 'fas fa-robot',
-    badge: t('sidebar.agentCount', '5'),
-    badgeClass: 'badge-success'
+    badge: 'NEW',
+    badgeClass: 'badge-accent'
+  },
+  {
+    path: '/ai-assistant',
+    name: t('sidebar.aiAssistant', 'AI助手'),
+    icon: 'fas fa-brain',
+    badge: null,
+    badgeClass: ''
   },
   {
     path: '/workflow-monitor',
@@ -199,13 +205,6 @@ const mainMenuItems = computed(() => [
 
 // 工具与管理菜单项
 const toolMenuItems = computed(() => [
-  {
-    path: '/intelligent-test',
-    name: t('sidebar.intelligentTest', '智能安全测试'),
-    icon: 'fas fa-magic',
-    badge: t('sidebar.new', 'NEW'),
-    badgeClass: 'badge-accent'
-  },
   {
     path: '/plan-execute',
     name: 'Plan-and-Execute 演示',

@@ -1,9 +1,13 @@
+pub mod agent_commands;
 pub mod ai;
+pub mod ai_assistant_commands;
 pub mod asset;
 pub mod config;
 pub mod database;
 pub mod dictionary;
-// pub mod intelligent_dispatcher_commands;
+pub mod intelligent_dispatcher_commands;
+pub mod intent_classifier;
+pub mod intent_commands;
 pub mod mcp;
 pub mod performance;
 pub mod plan_execute_commands;
@@ -15,17 +19,22 @@ pub mod scan;
 pub mod scan_commands;
 pub mod scan_session_commands;
 pub mod test_mcp;
+pub mod test_proxy;
+pub mod test_agent_flow;
 pub mod unified_tools;
 pub mod vulnerability;
 pub mod window;
 
 // 重新导出所有命令
+pub use agent_commands::*;
 pub use ai::*;
+pub use ai_assistant_commands::*;
 pub use asset::*;
 pub use config::*;
 pub use database::*;
 pub use dictionary::*;
-// pub use intelligent_dispatcher_commands::*;
+pub use intelligent_dispatcher_commands::*;
+pub use intent_commands::*;
 pub use mcp::*;
 pub use performance::*;
 pub use plan_execute_commands::*;

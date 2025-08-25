@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use futures::StreamExt;
 
 use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
@@ -59,27 +60,6 @@ impl AiClient {
         Ok(())
     }
     
-    /// 发送聊天请求
-    pub async fn chat(
-        &self,
-        provider_name: Option<&str>,
-        request: ChatRequest,
-    ) -> Result<ChatResponse> {
-        let provider = self.get_provider(provider_name.unwrap_or_else(|| "deepseek"))?;
-        provider.send_chat_request(&request).await
-    }
-    
-    /// 发送流式聊天请求
-    pub async fn chat_stream(
-        &self,
-        provider_name: Option<&str>,
-        request: ChatRequest,
-    ) -> Result<ChatStream> {
-        let provider = self.get_provider(provider_name.unwrap_or_else(|| "deepseek"))?;
-        
-        // 注意：AiProvider trait 没有 supports_streaming 方法，直接尝试调用
-        provider.send_chat_stream(&request).await
-    }
     
     /// 获取提供商信息
     pub fn get_provider_info(&self, name: &str) -> Result<ProviderInfo> {
@@ -250,6 +230,8 @@ impl BaseProvider {
         }
     }
     
+
+
     /// 判断是否应该重试
     fn should_retry(&self, error: &AiAdapterError) -> bool {
         matches!(
@@ -284,29 +266,8 @@ impl BaseProvider {
         }
     }
     
-    /// 发送原始聊天请求
-    pub async fn send_raw_chat_request(
-        &self,
-        _model: &str,
-        _request: crate::ai_adapter::raw_message::RawChatRequest,
-        _options: Option<&crate::ai_adapter::raw_message::RawChatOptions>,
-    ) -> Result<crate::ai_adapter::raw_message::RawChatResponse> {
-        Err(AiAdapterError::ProviderNotSupportedError(
-            "Base provider does not implement send_raw_chat_request".to_string()
-        ))
-    }
     
-    /// 发送原始流式聊天请求
-    pub async fn send_raw_chat_stream(
-        &self,
-        _model: &str,
-        _request: crate::ai_adapter::raw_message::RawChatRequest,
-        _options: Option<&crate::ai_adapter::raw_message::RawChatOptions>,
-    ) -> Result<crate::ai_adapter::raw_message::RawChatStreamResponse> {
-        Err(AiAdapterError::ProviderNotSupportedError(
-            "Base provider does not implement send_raw_chat_stream".to_string()
-        ))
-    }
+
 }
 
 // BaseProvider 的 Provider trait 实现已删除，请使用 AiProvider trait
@@ -390,6 +351,49 @@ impl AiAdapterManager {
         let mut client = self.client.write()
             .map_err(|_| AiAdapterError::UnknownError("Failed to acquire write lock".to_string()))?;
         client.register_provider(provider)
+    }
+    
+    /// 设置默认提供商
+    pub fn set_default_provider(&self, name: &str) -> Result<()> {
+        let mut client = self.client.write()
+            .map_err(|_| AiAdapterError::UnknownError("Failed to acquire write lock".to_string()))?;
+        client.set_default_provider(name)
+    }
+
+    /// 获取提供商，若不存在则回退到全局默认提供商
+    pub fn get_provider_or_default(&self, name: &str) -> Result<Arc<dyn AiProvider>> {
+        // 先尝试按名称获取
+        {
+            let client = self.client.read()
+                .map_err(|_| AiAdapterError::UnknownError("Failed to acquire read lock".to_string()))?;
+            if let Ok(provider) = client.get_provider(name) {
+                return Ok(provider);
+            }
+        }
+
+        // 尝试使用全局默认提供商
+        {
+            let client = self.client.read()
+                .map_err(|_| AiAdapterError::UnknownError("Failed to acquire read lock".to_string()))?;
+            if let Ok(provider) = client.get_provider_internal(None) {
+                return Ok(provider);
+            }
+        }
+
+        // 如果没有设置默认，回退到第一个已注册的提供商（尽最大努力避免中断）
+        let client = self.client.read()
+            .map_err(|_| AiAdapterError::UnknownError("Failed to acquire read lock".to_string()))?;
+        if let Some((_k, v)) = client.providers.read()
+            .map_err(|_| AiAdapterError::UnknownError("Failed to acquire read lock".to_string()))?
+            .iter()
+            .next()
+        {
+            return Ok(v.clone());
+        }
+
+        Err(AiAdapterError::ConfigurationError(
+            "No providers are registered and no default provider is set".to_string()
+        ))
     }
     
     /// 获取客户端

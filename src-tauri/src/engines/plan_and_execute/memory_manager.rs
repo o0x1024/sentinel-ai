@@ -90,6 +90,14 @@ pub enum MemoryEntryType {
     CachedData,
     /// 学习数据
     LearningData,
+    /// 对话历史 - Plan-and-Execute上下文保持
+    ConversationHistory,
+    /// 执行计划历史
+    PlanHistory,
+    /// 重新规划历史
+    ReplanHistory,
+    /// 任务完整状态
+    TaskFullState,
 }
 
 /// 内存查询条件
@@ -731,7 +739,7 @@ impl MemoryManager {
             0.0
         };
         
-        // 估算内存使用量（简化计算）
+        // 估算内存使用量
         let memory_usage_bytes = store.len() * 1024; // 假设每个条目平均1KB
         
         let cleanup_stats = self.cleanup_stats.read().await.clone();
@@ -740,7 +748,7 @@ impl MemoryManager {
             total_entries: store.len(),
             entries_by_type,
             memory_usage_bytes,
-            cache_hit_rate: 0.85, // 简化实现
+            cache_hit_rate: 0.85,
             avg_access_count,
             oldest_entry_age_seconds: oldest_entry_age,
             cleanup_stats,
@@ -828,5 +836,360 @@ impl Default for MemoryQuery {
             limit: None,
             sort_by: SortBy::CreatedAt,
         }
+    }
+}
+
+// ===== Plan-and-Execute专用数据结构 =====
+
+/// 对话历史数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationHistoryData {
+    /// 任务ID
+    pub task_id: String,
+    /// 对话记录列表
+    pub records: Vec<ConversationRecord>,
+    /// 创建时间
+    pub created_at: SystemTime,
+    /// 更新时间
+    pub updated_at: SystemTime,
+}
+
+impl ConversationHistoryData {
+    pub fn new(task_id: String) -> Self {
+        let now = SystemTime::now();
+        Self {
+            task_id,
+            records: Vec::new(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+/// 单次对话记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationRecord {
+    /// 记录ID
+    pub id: String,
+    /// 记录类型
+    pub record_type: ConversationRecordType,
+    /// 内容
+    pub content: String,
+    /// 步骤ID（如果相关）
+    pub step_id: Option<String>,
+    /// 相关的计划ID（如果有）
+    pub plan_id: Option<String>,
+    /// 时间戳
+    pub timestamp: SystemTime,
+    /// 附加数据
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// 对话记录类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ConversationRecordType {
+    /// 用户输入
+    UserInput,
+    /// 系统响应
+    SystemResponse,
+    /// 步骤开始
+    StepStart,
+    /// 步骤完成
+    StepComplete,
+    /// 步骤失败
+    StepFailed,
+    /// 重新规划
+    Replan,
+    /// AI推理
+    AIReasoning,
+    /// 工具调用
+    ToolCall,
+    /// 工具结果
+    ToolResult,
+    /// 错误信息
+    Error,
+    /// 警告信息
+    Warning,
+    /// 状态更新
+    StatusUpdate,
+}
+
+/// 计划历史数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanHistoryData {
+    /// 任务ID
+    pub task_id: String,
+    /// 计划版本列表
+    pub plan_versions: Vec<PlanVersion>,
+    /// 创建时间
+    pub created_at: SystemTime,
+    /// 更新时间
+    pub updated_at: SystemTime,
+}
+
+/// 计划版本
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanVersion {
+    /// 版本号
+    pub version: u32,
+    /// 计划数据
+    pub plan: ExecutionPlan,
+    /// 创建原因
+    pub creation_reason: String,
+    /// 变更摘要
+    pub changes: Vec<String>,
+    /// 创建时间
+    pub created_at: SystemTime,
+    /// 执行结果（如果已执行）
+    pub execution_result: Option<crate::engines::plan_and_execute::executor::ExecutionResult>,
+}
+
+/// 任务完整状态数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskFullStateData {
+    /// 任务ID
+    pub task_id: String,
+    /// 原始任务请求
+    pub original_task: TaskRequest,
+    /// 当前计划
+    pub current_plan: Option<ExecutionPlan>,
+    /// 执行状态
+    pub execution_status: TaskStatus,
+    /// 已完成的步骤
+    pub completed_steps: Vec<String>,
+    /// 失败的步骤
+    pub failed_steps: Vec<String>,
+    /// 重新规划次数
+    pub replan_count: u32,
+    /// 关键决策点
+    pub decision_points: Vec<DecisionPoint>,
+    /// 创建时间
+    pub created_at: SystemTime,
+    /// 更新时间
+    pub updated_at: SystemTime,
+}
+
+/// 关键决策点
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionPoint {
+    /// 决策ID
+    pub id: String,
+    /// 决策类型
+    pub decision_type: DecisionType,
+    /// 决策描述
+    pub description: String,
+    /// 决策结果
+    pub result: String,
+    /// 置信度
+    pub confidence: f64,
+    /// 时间戳
+    pub timestamp: SystemTime,
+}
+
+/// 决策类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DecisionType {
+    /// 初始规划
+    InitialPlanning,
+    /// 重新规划
+    Replanning,
+    /// 步骤选择
+    StepSelection,
+    /// 工具选择
+    ToolSelection,
+    /// 错误处理
+    ErrorHandling,
+    /// 任务终止
+    TaskTermination,
+}
+
+/// Plan-and-Execute完整上下文
+#[derive(Debug, Clone)]
+pub struct PlanExecuteContext {
+    /// 任务ID
+    pub task_id: String,
+    /// 对话历史
+    pub conversation_history: Option<ConversationHistoryData>,
+    /// 计划历史
+    pub plan_history: Option<PlanHistoryData>,
+    /// 完整状态
+    pub full_state: Option<TaskFullStateData>,
+    /// 上下文构建时间
+    pub context_build_time: SystemTime,
+}
+
+impl MemoryManager {
+    // ===== Plan-and-Execute专用上下文管理方法 =====
+
+    /// 存储完整的任务对话历史
+    pub async fn store_conversation_history(
+        &self,
+        task_id: &str,
+        conversation_data: ConversationHistoryData,
+    ) -> Result<String, PlanAndExecuteError> {
+        let data = serde_json::to_value(&conversation_data)
+            .map_err(|e| PlanAndExecuteError::SerializationError(e))?;
+        
+        self.store(
+            MemoryEntryType::ConversationHistory,
+            data,
+            vec![
+                format!("task:{}", task_id),
+                "conversation".to_string(),
+                "plan_execute".to_string(),
+            ],
+            Priority::High, // 对话历史高优先级保持
+            Some(Duration::from_secs(24 * 60 * 60)), // 保持24小时
+        ).await
+    }
+
+    /// 获取任务的完整对话历史
+    pub async fn get_conversation_history(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<ConversationHistoryData>, PlanAndExecuteError> {
+        let query = MemoryQuery {
+            entry_types: Some(vec![MemoryEntryType::ConversationHistory]),
+            tags: Some(vec![format!("task:{}", task_id)]),
+            time_range: None,
+            priority: None,
+            limit: Some(1),
+            sort_by: SortBy::LastAccessed,
+        };
+        
+        let results = self.query(query).await?;
+        if let Some(entry) = results.first() {
+            let conversation_data: ConversationHistoryData = serde_json::from_value(entry.data.clone())
+                .map_err(|e| PlanAndExecuteError::SerializationError(e))?;
+            Ok(Some(conversation_data))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 更新对话历史（追加新的交互记录）
+    pub async fn append_conversation_record(
+        &self,
+        task_id: &str,
+        record: ConversationRecord,
+    ) -> Result<(), PlanAndExecuteError> {
+        let mut conversation_data = self.get_conversation_history(task_id).await?
+            .unwrap_or_else(|| ConversationHistoryData::new(task_id.to_string()));
+        
+        conversation_data.records.push(record);
+        conversation_data.updated_at = SystemTime::now();
+        
+        self.store_conversation_history(task_id, conversation_data).await?;
+        Ok(())
+    }
+
+    /// 存储计划历史
+    pub async fn store_plan_history(
+        &self,
+        task_id: &str,
+        plan_data: PlanHistoryData,
+    ) -> Result<String, PlanAndExecuteError> {
+        let data = serde_json::to_value(&plan_data)
+            .map_err(|e| PlanAndExecuteError::SerializationError(e))?;
+        
+        self.store(
+            MemoryEntryType::PlanHistory,
+            data,
+            vec![
+                format!("task:{}", task_id),
+                "plan_history".to_string(),
+                "plan_execute".to_string(),
+            ],
+            Priority::High,
+            Some(Duration::from_secs(24 * 60 * 60)),
+        ).await
+    }
+
+    /// 获取计划历史
+    pub async fn get_plan_history(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<PlanHistoryData>, PlanAndExecuteError> {
+        let query = MemoryQuery {
+            entry_types: Some(vec![MemoryEntryType::PlanHistory]),
+            tags: Some(vec![format!("task:{}", task_id)]),
+            time_range: None,
+            priority: None,
+            limit: Some(1),
+            sort_by: SortBy::LastAccessed,
+        };
+        
+        let results = self.query(query).await?;
+        if let Some(entry) = results.first() {
+            let plan_data: PlanHistoryData = serde_json::from_value(entry.data.clone())
+                .map_err(|e| PlanAndExecuteError::SerializationError(e))?;
+            Ok(Some(plan_data))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 存储任务完整状态（包含所有上下文）
+    pub async fn store_task_full_state(
+        &self,
+        task_id: &str,
+        full_state: TaskFullStateData,
+    ) -> Result<String, PlanAndExecuteError> {
+        let data = serde_json::to_value(&full_state)
+            .map_err(|e| PlanAndExecuteError::SerializationError(e))?;
+        
+        self.store(
+            MemoryEntryType::TaskFullState,
+            data,
+            vec![
+                format!("task:{}", task_id),
+                "full_state".to_string(),
+                "plan_execute".to_string(),
+            ],
+            Priority::Critical, // 最高优先级
+            Some(Duration::from_secs(7 * 24 * 60 * 60)), // 保持7天
+        ).await
+    }
+
+    /// 获取任务完整状态
+    pub async fn get_task_full_state(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<TaskFullStateData>, PlanAndExecuteError> {
+        let query = MemoryQuery {
+            entry_types: Some(vec![MemoryEntryType::TaskFullState]),
+            tags: Some(vec![format!("task:{}", task_id)]),
+            time_range: None,
+            priority: None,
+            limit: Some(1),
+            sort_by: SortBy::LastAccessed,
+        };
+        
+        let results = self.query(query).await?;
+        if let Some(entry) = results.first() {
+            let full_state: TaskFullStateData = serde_json::from_value(entry.data.clone())
+                .map_err(|e| PlanAndExecuteError::SerializationError(e))?;
+            Ok(Some(full_state))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 构建Plan-and-Execute的完整上下文
+    pub async fn build_plan_execute_context(
+        &self,
+        task_id: &str,
+    ) -> Result<PlanExecuteContext, PlanAndExecuteError> {
+        let conversation_history = self.get_conversation_history(task_id).await?;
+        let plan_history = self.get_plan_history(task_id).await?;
+        let full_state = self.get_task_full_state(task_id).await?;
+        
+        Ok(PlanExecuteContext {
+            task_id: task_id.to_string(),
+            conversation_history,
+            plan_history,
+            full_state,
+            context_build_time: SystemTime::now(),
+        })
     }
 }

@@ -2,10 +2,11 @@
 
 use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
+use crate::ai_adapter::http::SseParser;
 use async_trait::async_trait;
 use std::ops::Deref;
 use std::collections::HashMap;
-use tokio_util::bytes::Bytes;
+
 use crate::ai_adapter::providers::base::BaseProvider;
 /// DeepSeek提供商
 #[derive(Debug)]
@@ -182,104 +183,7 @@ impl DeepSeekProvider {
         })
     }
     
-    /// 解析流式响应
-    fn parse_stream(
-        &self,
-        stream: impl futures::Stream<Item = std::result::Result<Bytes, AiAdapterError>> + Send + 'static,
-    ) -> Box<dyn futures::Stream<Item = Result<StreamChunk>> + Send + Unpin> {
-        use futures::StreamExt;
-        use tokio_stream::wrappers::UnboundedReceiverStream;
-        
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        
-        tokio::spawn(async move {
-            let mut stream = std::pin::pin!(stream);
-            
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        let chunk_str = String::from_utf8_lossy(&chunk);
-                        
-                        // 处理SSE格式的数据
-                        for line in chunk_str.lines() {
-                            if line.starts_with("data: ") {
-                                let data = &line[6..]; // 移除"data: "前缀
-                                
-                                if data == "[DONE]" {
-                                    break;
-                                }
-                                
-                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                                    if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
-                                        if let Some(choice) = choices.first() {
-                                            let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
-                                            let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                                            let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
-                                            
-                                            let chunk = StreamChunk {
-                                                id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
-                                                model: json.get("model").and_then(|m| m.as_str()).unwrap_or("deepseek-chat").to_string(),
-                                                content,
-                                                finish_reason,
-                                                usage: None,
-                                            };
-                                            
-                                            if tx.send(Ok(chunk)).is_err() {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Err(e));
-                        break;
-                    }
-                }
-            }
-        });
-        
-        Box::new(UnboundedReceiverStream::new(rx))
-    }
     
-    /// 解析流式数据块
-    #[allow(unused)]
-    fn parse_stream_chunk(&self, chunk: &serde_json::Value) -> Result<StreamChunk> {
-        let id = chunk["id"].as_str().unwrap_or("").to_string();
-        let model = chunk["model"].as_str().unwrap_or("").to_string();
-        
-        // 从第一个choice的delta中获取content
-        let content = if let Some(choices) = chunk["choices"].as_array() {
-            if let Some(choice) = choices.first() {
-                if let Some(delta) = choice.get("delta") {
-                    delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string()
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
-        
-        let finish_reason = chunk["choices"].as_array()
-            .and_then(|choices| choices.first())
-            .and_then(|choice| choice["finish_reason"].as_str())
-            .map(|s| s.to_string());
-        
-        let usage = self.parse_usage(&chunk["usage"]);
-        
-        Ok(StreamChunk {
-            id,
-            model,
-            content,
-            finish_reason,
-            usage,
-        })
-    }
 
 }
 
@@ -298,6 +202,39 @@ impl AiProvider for DeepSeekProvider {
             "deepseek-chat".to_string(),
             "deepseek-coder".to_string(),
         ]
+    }
+    
+    fn build_chat_request(&self, request: &ChatRequest) -> Result<serde_json::Value> {
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": self.convert_messages(&request.messages)?,
+            "stream": false
+        });
+        
+        // 添加可选参数
+        if let Some(options) = &request.options {
+            if let Some(temperature) = options.temperature {
+                body["temperature"] = serde_json::json!(temperature);
+            }
+            if let Some(max_tokens) = options.max_tokens {
+                body["max_tokens"] = serde_json::json!(max_tokens);
+            }
+            if let Some(top_p) = options.top_p {
+                body["top_p"] = serde_json::json!(top_p);
+            }
+            if let Some(stop) = &options.stop {
+                body["stop"] = serde_json::json!(stop);
+            }
+        }
+        
+        // 添加工具
+        if let Some(tools) = &request.tools {
+            if !tools.is_empty() {
+                body["tools"] = serde_json::json!(tools);
+            }
+        }
+        
+        Ok(body)
     }
     
     async fn test_connection(&self) -> Result<bool> {
@@ -322,7 +259,6 @@ impl AiProvider for DeepSeekProvider {
     async fn send_chat_request(&self, request: &ChatRequest) -> Result<ChatResponse> {
         let url = format!("{}/chat/completions", self.get_api_base("https://api.deepseek.com"));
         
-        tracing::info!("🔍 发送请求: {:?}", request);
         // 构建请求头
         let mut headers = self.build_base_headers()?;
         headers.insert(
@@ -360,7 +296,21 @@ impl AiProvider for DeepSeekProvider {
             }
         }
         if let Some(tools) = &request.tools {
-            body["tools"] = serde_json::to_value(tools)?;
+            // DeepSeek 遵循 OpenAI 风格的工具格式: { "type": "function", "function": { name, description, parameters } }
+            let mapped_tools: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::Value::Array(mapped_tools);
         }
         
         let body_str = serde_json::to_string(&body)?;
@@ -387,13 +337,21 @@ impl AiProvider for DeepSeekProvider {
                 tracing::error!("DeepSeek post_json failed: {}", e);
                 // 打印部分请求体帮助定位422（注意避免敏感信息泄露）
                 if let Ok(body_str) = serde_json::to_string(&body) {
-                    let snippet = if body_str.len() > 2000 { &body_str[..2000] } else { &body_str };
+                    let snippet = if body_str.len() > 2000 {
+                        // 安全截断，确保在字符边界处切片
+                        body_str.char_indices()
+                            .take_while(|(i, _)| *i < 2000)
+                            .last()
+                            .map(|(i, c)| &body_str[..i + c.len_utf8()])
+                            .unwrap_or(&body_str[..0])
+                    } else { 
+                        &body_str 
+                    };
                     tracing::debug!("DeepSeek request body (truncated): {}", snippet);
                 }
                 e
             })?;
             
-        tracing::info!("📄 完整响应体: {}", serde_json::to_string(&response_json)?);
 
         // 记录请求和响应信息
         let response_info = HttpResponse {
@@ -448,7 +406,20 @@ impl AiProvider for DeepSeekProvider {
             }
         }
         if let Some(tools) = &request.tools {
-            body["tools"] = serde_json::to_value(tools)?;
+            let mapped_tools: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::Value::Array(mapped_tools);
         }
         
         let body_str = serde_json::to_string(&body)?;
@@ -470,8 +441,55 @@ impl AiProvider for DeepSeekProvider {
         let stream = self.http_client.post_stream(&url, &body, Some(headers_map))
             .await?;
         
-        // 创建流
-        let parsed_stream = self.parse_stream(stream);
+        // 使用SSE解析器处理流
+        use futures::StreamExt;
+        let sse_stream = SseParser::new(stream);
+        
+        let parsed_stream = sse_stream.filter_map(|result| {
+            futures::future::ready(match result {
+                Ok(sse_event) => {
+                    if sse_event.event_type.as_deref() == Some("done") || sse_event.data == "[DONE]" {
+                        Some(Ok(StreamChunk {
+                            id: "".to_string(),
+                            model: "".to_string(),
+                            content: "".to_string(),
+                            usage: None,
+                            finish_reason: Some("stop".to_string()),
+                        }))
+                    } else if !sse_event.data.is_empty() {
+                        match serde_json::from_str::<serde_json::Value>(&sse_event.data) {
+                            Ok(json) => {
+                                if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                                    if let Some(choice) = choices.first() {
+                                        let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                                        let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                        let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
+                                        
+                                        Some(Ok(StreamChunk {
+                                            id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                                            model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                                            content,
+                                            finish_reason,
+                                            usage: None,
+                                        }))
+                                    } else {
+                                        None // 跳过空选择
+                                    }
+                                } else {
+                                    None // 跳过无选择的数据
+                                }
+                            },
+                            Err(_) => None // 跳过解析失败的数据
+                        }
+                    } else {
+                        None // 跳过空数据
+                    }
+                },
+                Err(e) => Some(Err(e))
+            })
+        });
+        
+        let parsed_stream = Box::new(parsed_stream);
         
         Ok(ChatStreamResponse {
             stream: parsed_stream,
@@ -486,6 +504,41 @@ impl AiProvider for DeepSeekProvider {
     
     fn get_last_response_info(&self) -> Option<HttpResponse> {
         self.base.get_last_response_info()
+    }
+    
+    fn parse_stream(&self, chunk: &str) -> Result<Option<StreamChunk>> {
+        // 处理SSE格式的数据行
+        for line in chunk.lines() {
+            if line.starts_with("data: ") {
+                let data = &line[6..]; // 移除"data: "前缀
+                
+                if data == "[DONE]" {
+                    return Ok(None);
+                }
+                
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                        if let Some(choice) = choices.first() {
+                            let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                            let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                            let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
+                            
+                            let chunk = StreamChunk {
+                                id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                                model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                                content,
+                                finish_reason,
+                                usage: None,
+                            };
+                            
+                            return Ok(Some(chunk));
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(None)
     }
     
 }

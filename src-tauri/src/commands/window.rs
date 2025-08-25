@@ -2,7 +2,7 @@
 //! 
 //! 提供窗口创建、管理和控制的Tauri命令接口
 
-use tauri::{command, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{command, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,57 +20,68 @@ pub struct WindowConfig {
     pub always_on_top: Option<bool>,
 }
 
-/// 创建AI助手窗口
+/// 创建通用窗口
 #[command]
-pub async fn create_ai_chat_window(app: AppHandle) -> Result<String, String> {
+pub async fn create_window(app: AppHandle, config: WindowConfig) -> Result<String, String> {
     // 检查窗口是否已存在
-    if let Some(existing_window) = app.get_webview_window("ai-chat") {
+    if let Some(existing_window) = app.get_webview_window(&config.label) {
         // 如果窗口已存在，显示并聚焦
         existing_window.show().map_err(|e| e.to_string())?;
         existing_window.set_focus().map_err(|e| e.to_string())?;
-        return Ok("ai-chat".to_string());
+        return Ok(config.label);
     }
 
-    // AI助手窗口独立配置
-    let ai_window_width = 732.0;
-    let ai_window_height = 820.0;
-    
-    // 创建AI助手窗口（独立窗口，不依赖主窗口位置）
-    let ai_window = WebviewWindowBuilder::new(
+    // 创建窗口构建器
+    let mut builder = WebviewWindowBuilder::new(
         &app,
-        "ai-chat",
+        &config.label,
         WebviewUrl::App("index.html".into())
     )
-    .title("AI 助手")
-    .inner_size(ai_window_width, ai_window_height)
-    .center() // 居中显示
-    .resizable(true)
-    .decorations(true)
-    .always_on_top(false)
-    .visible(true)
-    .build()
-    .map_err(|e| e.to_string())?;
+    .title(&config.title)
+    .inner_size(config.width, config.height);
 
-    // 发送事件到新窗口，告诉它只显示AI助手组件
-    ai_window.emit("show-ai-chat-only", true)
-        .map_err(|e| e.to_string())?;
+    // 设置位置
+    if let (Some(x), Some(y)) = (config.x, config.y) {
+        builder = builder.position(x, y);
+    } else {
+        builder = builder.center();
+    }
 
-    Ok("ai-chat".to_string())
+    // 设置其他属性
+    if let Some(resizable) = config.resizable {
+        builder = builder.resizable(resizable);
+    }
+    if let Some(maximized) = config.maximized {
+        builder = builder.maximized(maximized);
+    }
+    if let Some(visible) = config.visible {
+        builder = builder.visible(visible);
+    }
+    if let Some(decorations) = config.decorations {
+        builder = builder.decorations(decorations);
+    }
+    if let Some(always_on_top) = config.always_on_top {
+        builder = builder.always_on_top(always_on_top);
+    }
+
+    let _window = builder.build().map_err(|e| e.to_string())?;
+
+    Ok(config.label)
 }
 
-/// 关闭AI助手窗口
+/// 关闭窗口
 #[command]
-pub async fn close_ai_chat_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("ai-chat") {
+pub async fn close_window(app: AppHandle, label: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(&label) {
         window.close().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-/// 切换AI助手窗口显示状态
+/// 切换窗口显示状态
 #[command]
-pub async fn toggle_ai_chat_window(app: AppHandle) -> Result<String, String> {
-    if let Some(window) = app.get_webview_window("ai-chat") {
+pub async fn toggle_window(app: AppHandle, label: String) -> Result<String, String> {
+    if let Some(window) = app.get_webview_window(&label) {
         if window.is_visible().unwrap_or(false) {
             window.hide().map_err(|e| e.to_string())?;
             Ok("hidden".to_string())
@@ -80,9 +91,7 @@ pub async fn toggle_ai_chat_window(app: AppHandle) -> Result<String, String> {
             Ok("shown".to_string())
         }
     } else {
-        // 窗口不存在，创建新窗口
-        create_ai_chat_window(app).await?;
-        Ok("created".to_string())
+        Err(format!("Window '{}' not found", label))
     }
 }
 

@@ -676,6 +676,10 @@ impl TemplateVersionManager {
             usage_stats: UsageStats::default(),
             variables: vec![], // 需要重新解析
             metadata: HashMap::new(),
+            category: None,
+            target_architecture: None,
+            is_system: false,
+            priority: 0,
         })
     }
 
@@ -797,6 +801,10 @@ mod tests {
             usage_stats: UsageStats::default(),
             variables: vec!["variable".to_string()],
             metadata: HashMap::new(),
+            category: None,
+            target_architecture: None,
+            is_system: false,
+            priority: 0,
         };
 
         // 测试保存和加载

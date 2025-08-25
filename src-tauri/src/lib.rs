@@ -1,8 +1,10 @@
 // 模块声明
+pub mod agents;
 pub mod ai_adapter;
 pub mod commands;
 pub mod database;
 pub mod engines;
+pub mod managers;
 pub mod models;
 pub mod services;
 pub mod tools;  // 包含原 MCP 功能
@@ -31,9 +33,10 @@ use services::{
 
 // 导入命令
 use commands::{
-    ai, asset, config, database as db_commands, dictionary, mcp as mcp_commands, performance,
+    agent_commands, ai, ai_assistant_commands, asset, config, database as db_commands, dictionary, 
+    intent_commands, mcp as mcp_commands, performance,
     plan_execute_commands, scan, scan_commands, scan_session_commands, vulnerability,
-    window, prompt_commands, rewoo_commands, unified_tools,
+    window, prompt_commands, rewoo_commands, unified_tools, intelligent_dispatcher_commands,
 };
 
 use crate::ai_adapter::http::{set_global_proxy, ProxyConfig};
@@ -281,6 +284,9 @@ pub fn run() {
 
                 let ai_manager = Arc::new(ai_manager);
 
+                // 初始化并管理 AI 适配器管理器（供 dispatch_intelligent_query 使用）
+                let ai_adapter_manager = Arc::new(crate::ai_adapter::core::AiAdapterManager::new());
+
                 // 初始化扫描会话服务
                 let scan_session_service = Arc::new(ScanSessionService::new(db_service.clone()));
 
@@ -312,6 +318,7 @@ pub fn run() {
                     tracing::error!("Global tool system not available to manage in Tauri state");
                 }
                 handle.manage(ai_manager);
+                handle.manage(ai_adapter_manager);
                 handle.manage(scan_session_service);
                 handle.manage(scan_service);
                 handle.manage(asset_service);
@@ -328,15 +335,29 @@ pub fn run() {
                 ));
                 handle.manage(rewoo_test_state);
 
-                // 初始化智能调度器状态
-                // let intelligent_dispatcher_state: commands::intelligent_dispatcher_commands::IntelligentDispatcherState = 
-                //     Arc::new(tokio::sync::RwLock::new(None));
-                // handle.manage(intelligent_dispatcher_state);
+                // 初始化Agent管理器状态
+                let agent_manager_state: commands::agent_commands::GlobalAgentManager = 
+                    Arc::new(tokio::sync::RwLock::new(None));
+                handle.manage(agent_manager_state);
 
                 // 初始化Plan-Execute引擎状态
                 let plan_execute_engine_state: commands::plan_execute_commands::PlanExecuteEngineState = 
                     Arc::new(tokio::sync::RwLock::new(None));
                 handle.manage(plan_execute_engine_state);
+
+                // 初始化意图分类器状态
+                let intent_classifier_state: commands::intent_commands::GlobalIntentClassifier = 
+                    Arc::new(tokio::sync::RwLock::new(None));
+                handle.manage(intent_classifier_state);
+
+                // 初始化执行管理器
+                let execution_manager = Arc::new(crate::managers::ExecutionManager::new());
+                handle.manage(execution_manager);
+
+                // 初始化智能调度器状态
+                let intelligent_dispatcher_state: commands::intelligent_dispatcher_commands::IntelligentDispatcherState = 
+                    Arc::new(tokio::sync::RwLock::new(None));
+                handle.manage(intelligent_dispatcher_state);
 
                 let client_manager_clone = client_manager.clone();
                 tauri::async_runtime::spawn(async move {
@@ -367,7 +388,9 @@ pub fn run() {
             ai::remove_ai_service,
             ai::create_ai_conversation,
             ai::send_ai_message,
-            ai::send_ai_message_stream,
+            ai::save_ai_message,
+            ai::send_ai_stream_message,
+            ai::cancel_ai_stream,
             ai::get_ai_conversations,
             ai::get_ai_conversation_history,
             ai::delete_ai_conversation,
@@ -392,11 +415,31 @@ pub fn run() {
             ai::get_ai_model_config,
             ai::update_ai_model_config,
             ai::save_ai_providers_config,
+            ai::set_default_provider,
             ai::stop_ai_stream,
             // 调度策略相关命令
             ai::get_scheduler_config,
             ai::save_scheduler_config,
             ai::get_service_for_stage,
+            // AI助手相关命令
+            ai_assistant_commands::dispatch_intelligent_query,
+            ai_assistant_commands::start_execution,
+            ai_assistant_commands::stop_execution,
+            ai_assistant_commands::get_ai_assistant_settings,
+            ai_assistant_commands::save_ai_assistant_settings,
+            ai_assistant_commands::get_agent_statistics,
+            ai_assistant_commands::get_available_architectures,
+            ai_assistant_commands::get_ai_assistant_agents,
+            ai_assistant_commands::save_ai_assistant_agents,
+            ai_assistant_commands::get_ai_architecture_prefs,
+            ai_assistant_commands::save_ai_architecture_prefs,
+            // 意图分类相关命令
+            intent_commands::initialize_intent_classifier,
+            intent_commands::classify_user_intent,
+            intent_commands::handle_chat_conversation,
+            intent_commands::handle_knowledge_question,
+            intent_commands::smart_route_user_request,
+            intent_commands::get_intent_classification_stats,
             // 数据库相关命令
             db_commands::execute_query,
             db_commands::get_query_history,
@@ -573,9 +616,9 @@ pub fn run() {
             commands::test_mcp::test_ai_service_tools,
             commands::test_mcp::get_mcp_tools_status,
             // 窗口管理相关命令
-            window::create_ai_chat_window,
-            window::close_ai_chat_window,
-            window::toggle_ai_chat_window,
+            window::create_window,
+            window::close_window,
+            window::toggle_window,
             window::get_window_info,
             window::set_window_position,
             window::set_window_size,
@@ -626,11 +669,36 @@ pub fn run() {
             rewoo_commands::simulate_tool_execution,
 
             // 智能调度器相关命令
-            // commands::intelligent_dispatcher_commands::intelligent_process_query,
-            // commands::intelligent_dispatcher_commands::get_execution_status,
-            // commands::intelligent_dispatcher_commands::get_execution_history,
-            // commands::intelligent_dispatcher_commands::cancel_execution,
-            // commands::intelligent_dispatcher_commands::get_dispatcher_statistics,
+            intelligent_dispatcher_commands::initialize_intelligent_dispatcher,
+            intelligent_dispatcher_commands::intelligent_process_query,
+            intelligent_dispatcher_commands::get_execution_status,
+            intelligent_dispatcher_commands::get_execution_history,
+            intelligent_dispatcher_commands::cancel_execution,
+            intelligent_dispatcher_commands::get_dispatcher_statistics,
+            intelligent_dispatcher_commands::submit_task_to_queue,
+            intelligent_dispatcher_commands::register_execution_node,
+            intelligent_dispatcher_commands::get_task_queue_statistics,
+            intelligent_dispatcher_commands::get_load_balancer_statistics,
+            
+            // Agent系统相关命令
+            agent_commands::initialize_agent_manager,
+            agent_commands::list_agents,
+            agent_commands::list_agent_architectures,
+            agent_commands::dispatch_multi_agent_task,
+            agent_commands::get_agent_task_status,
+            agent_commands::cancel_agent_task,
+            agent_commands::get_agent_system_stats,
+            agent_commands::get_dispatch_statistics,
+            
+            // 工作流监控相关命令
+            agent_commands::list_workflow_executions,
+            agent_commands::get_workflow_statistics,
+            agent_commands::get_workflow_execution,
+            agent_commands::get_workflow_execution_details,
+            agent_commands::cancel_workflow_execution,
+            agent_commands::get_agent_task_logs,
+            agent_commands::add_test_session_data,
+            
             plan_execute_commands::execute_plan_and_execute_task,
             plan_execute_commands::get_plan_execute_statistics,
             plan_execute_commands::list_plan_execute_architectures,
@@ -649,6 +717,15 @@ pub fn run() {
             plan_execute_commands::get_plan_execute_active_tasks,
             plan_execute_commands::get_plan_execute_task_history,
             plan_execute_commands::execute_generic_prompt_task,
+            // 代理测试命令
+            commands::test_proxy::test_proxy_dynamic_update,
+            commands::test_proxy::test_proxy_persistence,
+            commands::test_proxy::test_http_client_proxy_update,
+            
+            // Agent流程测试命令
+            commands::test_agent_flow::test_complete_agent_flow,
+            commands::test_agent_flow::test_tool_system_availability,
+            commands::test_agent_flow::test_tool_execution,
         ])
         .run(context)
         .expect("Failed to start Tauri application");
@@ -672,9 +749,14 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
                         no_proxy: config_json["no_proxy"].as_str().map(|s| s.to_string()),
                     };
                     
-                    // Set the global proxy configuration
-                    set_global_proxy(Some(proxy_config));
-                    tracing::info!("Loaded proxy configuration from database");
+                    // Set the global proxy configuration only if enabled
+                    if proxy_config.enabled {
+                        set_global_proxy(Some(proxy_config));
+                        tracing::info!("Loaded and enabled proxy configuration from database");
+                    } else {
+                        set_global_proxy(None);
+                        tracing::info!("Proxy configuration found but disabled, no proxy will be used");
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to parse proxy configuration JSON: {}", e);

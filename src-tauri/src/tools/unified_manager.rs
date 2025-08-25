@@ -14,7 +14,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::timeout;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // ============================================================================
@@ -45,7 +45,7 @@ impl UnifiedToolManager {
     /// 注册工具提供者
     pub async fn register_provider(&mut self, provider: Box<dyn ToolProvider>) -> Result<()> {
         let provider_name = provider.name().to_string();
-        info!("Registering tool provider: {}", provider_name);
+        debug!("Registering tool provider: {}", provider_name);
 
         if !provider.is_available().await {
             warn!("Tool provider {} is not available", provider_name);
@@ -57,7 +57,7 @@ impl UnifiedToolManager {
         
         for tool in tools {
             let tool_name = tool.name().to_string();
-            info!("Registering tool: {} from provider: {}", tool_name, provider_name);
+            debug!("Registering tool: {} from provider: {}", tool_name, provider_name);
             registry.insert(tool_name, tool);
         }
 

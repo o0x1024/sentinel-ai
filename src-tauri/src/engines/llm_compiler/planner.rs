@@ -48,7 +48,7 @@ impl LlmCompilerPlanner {
         let prompt = self.build_planning_prompt_with_tools(user_input, context, &available_tools).await?;
         
         // 调用LLM生成计划
-        let response = self.ai_service.send_message_stream_with_prompt(&prompt, None, None).await?;
+        let response = self.ai_service.send_message_stream(&prompt, Some("你是一个AI规划助手"), None, false, None).await?;
         
         // 解析LLM响应为DAG计划
         self.parse_dag_plan(&response, user_input).await
@@ -187,7 +187,7 @@ impl LlmCompilerPlanner {
         info!("开始重新规划，反馈: {}", feedback);
 
         let prompt = self.build_replanning_prompt(original_plan, execution_results, feedback);
-        let response = self.ai_service.send_message_stream_with_prompt(&prompt, None, None).await?;
+        let response = self.ai_service.send_message_stream(&prompt, Some("你是一个AI规划助手"), None, false, None).await?;
         
         self.parse_dag_plan(&response, &format!("重规划-{}", original_plan.name)).await
     }

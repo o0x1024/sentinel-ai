@@ -87,6 +87,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # 任何错误处理
 anyhow = "1.0"
+
+# TOML配置文件解析
+toml = "0.8"
 thiserror = "1.0"
 
 # 随机数生成

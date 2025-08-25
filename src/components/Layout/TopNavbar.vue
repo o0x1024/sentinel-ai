@@ -60,24 +60,6 @@
         </div>
       </div>
 
-      <!-- AI助手按钮组 -->
-      <div class="dropdown dropdown-end">
-        <div tabindex="0" role="button" class="btn btn-ghost btn-circle btn-sm sm:btn-md tooltip tooltip-bottom" data-tip="AI助手">
-          <i class="fas fa-robot text-lg sm:text-xl" :class="{ 'text-primary': showAIChat }"></i>
-        </div>
-        <ul tabindex="0" class="dropdown-content z-[60] menu p-2 shadow bg-base-100 rounded-box w-48">
-          <li>
-            <a @click="toggleAIChat">
-              <i class="fas fa-comment mr-2"></i>{{ t('aiChat.toggleInApp', '应用内聊天') }}
-            </a>
-          </li>
-          <li>
-            <a @click="openAIChatWindow">
-              <i class="fas fa-external-link-alt mr-2"></i>{{ t('aiChat.openWindow', '独立窗口') }}
-            </a>
-          </li>
-        </ul>
-      </div>
 
       <!-- 语言切换器 -->
       <div class="dropdown dropdown-end">
@@ -117,15 +99,11 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 
-// Props
-const props = defineProps<{
-  showAIChat: boolean
-}>()
+
 
 // Emits
 const emit = defineEmits<{
   toggleSidebar: []
-  toggleAIChat: []
   setTheme: [theme: string]
   switchLanguage: [lang: string]
 }>()
@@ -140,27 +118,6 @@ const searchQuery = ref('')
 // 通知相关
 const unreadNotifications = ref(3)
 const notifications = ref([
-  {
-    id: 1,
-    title: '扫描完成',
-    message: '目标 example.com 的扫描已完成',
-    icon: 'fas fa-check-circle text-success',
-    time: '2分钟前'
-  },
-  {
-    id: 2,
-    title: '发现漏洞',
-    message: '在 target.com 发现高危漏洞',
-    icon: 'fas fa-exclamation-triangle text-warning',
-    time: '5分钟前'
-  },
-  {
-    id: 3,
-    title: 'Agent状态',
-    message: 'Agent-001 已上线',
-    icon: 'fas fa-robot text-info',
-    time: '10分钟前'
-  }
 ])
 
 // 可用语言
@@ -181,18 +138,7 @@ const toggleSidebar = () => {
   emit('toggleSidebar')
 }
 
-const toggleAIChat = () => {
-  emit('toggleAIChat')
-}
 
-// 打开AI助手独立窗口
-const openAIChatWindow = async () => {
-  try {
-    await invoke('toggle_ai_chat_window')
-  } catch (error) {
-    console.error('Failed to open AI chat window:', error)
-  }
-}
 
 const setTheme = (theme: string) => {
   emit('setTheme', theme)
@@ -211,11 +157,6 @@ const performSearch = () => {
   }
 }
 
-const logout = () => {
-  // 退出登录逻辑
-  console.log('退出登录')
-  // 清除用户数据，导航到登录页面等
-}
 </script>
 
 <style scoped>

@@ -1,12 +1,13 @@
 import { createApp } from "vue";
 import { createPinia } from 'pinia';
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
 import App from "./App.vue";
 import "./style.css";
 import { performanceService } from './services/performance';
 import i18n from './i18n'; // 导入i18n配置
 import DialogPlugin from './composables/useDialog'; // 导入对话框插件
 import ToastPlugin from './composables/useToast'; // 导入Toast插件
+import { invoke } from '@tauri-apps/api/core'; // 导入Tauri API
 
 // 懒加载页面组件 - 性能优化
 const Dashboard = () => import('./views/Dashboard.vue');
@@ -16,13 +17,15 @@ const Vulnerabilities = () => import('./views/Vulnerabilities.vue');
 const AssetManagement = () => import('./views/AssetManagement.vue');
 const McpTools = () => import('./views/McpTools.vue');
 const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
-const AgentManager = () => import('./views/AgentManager.vue');
+
+const SmartAgentConsole = () => import('./views/SmartAgentConsole.vue');
 const WorkflowMonitor = () => import('./views/WorkflowMonitor.vue');
-const IntelligentSecurityTest = () => import('./components/IntelligentSecurityTest.vue');
+// const IntelligentSecurityTest = () => import('./components/IntelligentSecurityTest.vue');
 const PlanExecuteDemo = () => import('./components/PlanExecuteDemo.vue');
 const ReWOOTestPanel = () => import('./components/ReWOOTestPanel.vue');
 const LLMCompilerTest = () => import('./views/LLMCompilerTest.vue');
 const PromptManagement = () => import('./views/PromptManagement.vue');
+const AIAssistant = () => import('./views/AIAssistant.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
@@ -81,23 +84,24 @@ const routes = [
     component: DictionaryManagement,
     meta: { title: '字典管理' }
   },
+
   { 
-    path: '/agents', 
-    name: 'AgentManager', 
-    component: AgentManager,
-    meta: { title: 'Agent管理' }
+    path: '/smart-agent', 
+    name: 'SmartAgentConsole', 
+    component: SmartAgentConsole,
+    meta: { title: '智能Agent控制台' }
+  },
+  { 
+    path: '/ai-assistant', 
+    name: 'AIAssistant', 
+    component: AIAssistant,
+    meta: { title: 'AI助手' }
   },
   { 
     path: '/workflow-monitor', 
     name: 'WorkflowMonitor', 
     component: WorkflowMonitor,
     meta: { title: '工作流监控' }
-  },
-  { 
-    path: '/intelligent-test', 
-    name: 'IntelligentSecurityTest', 
-    component: IntelligentSecurityTest,
-    meta: { title: '智能安全测试' }
   },
   { 
     path: '/plan-execute', 
@@ -134,7 +138,7 @@ const routes = [
 
 const router = createRouter({
   history: createWebHistory(),
-  routes,
+  routes: routes as RouteRecordRaw[],
 });
 
 // 存储已创建的计时器
@@ -195,4 +199,21 @@ app.use(i18n); // 使用i18n
 app.use(DialogPlugin); // 注册对话框插件
 app.use(ToastPlugin); // 注册Toast插件
 
+// 初始化核心系统组件
+const initializeCoreComponents = async () => {
+  try {
+    // 初始化Agent管理器
+    await invoke('initialize_agent_manager');
+    console.log('Agent manager initialized successfully');
+  } catch (error) {
+    console.warn('Agent manager initialization warning:', error);
+  }
+};
+
+// 在应用挂载后初始化核心组件
 app.mount("#app");
+
+// 延迟初始化以确保应用已完全加载
+setTimeout(() => {
+  initializeCoreComponents();
+}, 1000);

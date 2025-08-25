@@ -297,7 +297,8 @@ export default {
       database: 'Database',
       system: 'System Settings',
       security: 'Security Settings',
-      network: 'Network Settings'
+      network: 'Network Settings',
+      proxy_test: 'Proxy Testing'
     },
       ai: {
         basicConfig: 'Basic Configuration',
@@ -946,7 +947,7 @@ export default {
     vulnerabilities: 'Vulnerabilities',
     dictionary: 'Dictionary Management',
     mcpTools: 'MCP Tools',
-    agents: 'Agent Management',
+    smartAgent: 'Smart Agent Console',
     settings: 'System Settings',
     language: 'Language Settings',
     performance: 'Performance Monitor',
@@ -970,7 +971,7 @@ export default {
     // New translation keys
     new: 'NEW',
     vulnerabilityCount: '12',
-    agentCount: '5',
+
     remainingTimeDefault: '2h 15m remaining',
     assets: 'Asset Management',
     intelligentTest: 'Intelligent Security Test',

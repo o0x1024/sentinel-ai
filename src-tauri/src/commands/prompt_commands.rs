@@ -299,6 +299,10 @@ pub async fn save_prompt_template(
                 metadata: metadata.unwrap_or_default().into_iter()
                     .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
                     .collect(),
+                category: None,
+                target_architecture: None,
+                is_system: false,
+                priority: 0,
             };
             service.template_manager_mut().save_template(&template_id, &template).await
                 .map_err(|e| format!("Failed to save template: {}", e))?;

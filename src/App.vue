@@ -6,8 +6,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import TopNavbar from './components/Layout/TopNavbar.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
-import AIChat from './components/AIChat.vue'
-import AIChatWindow from './components/AIChatWindow.vue'
+
 import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
 
@@ -16,26 +15,8 @@ const router = useRouter()
 // 初始化i18n
 const { t, locale } = useI18n()
 
-// AI助手控制
-const showAIChat = ref(false)
-const isAIChatWindow = ref(false)
 
-// 检查当前窗口是否为AI助手窗口
-const checkWindowType = async () => {
-  try {
-    const currentWindow = getCurrentWindow()
-    const label = await currentWindow.label
-    isAIChatWindow.value = label === 'ai-chat'
-  } catch (error) {
-    console.error('Failed to get window label:', error)
-    isAIChatWindow.value = false
-  }
-}
 
-// 切换AI助手显示状态
-const toggleAIChat = () => {
-  showAIChat.value = !showAIChat.value
-}
 
 // 侧边栏控制
 const sidebarCollapsed = ref(false)
@@ -57,9 +38,6 @@ const closeMobileMenu = () => {
 // 注册AI助手快捷键 (Alt+A)
 const setupAIChatShortcut = () => {
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.altKey && e.key === 'a') {
-      toggleAIChat()
-    }
     // ESC键关闭移动端菜单
     if (e.key === 'Escape' && showMobileMenu.value) {
       closeMobileMenu()
@@ -80,50 +58,29 @@ const setupAIChatShortcut = () => {
   window.addEventListener('keydown', handleKeyDown)
   document.addEventListener('click', handleClickOutside)
 
-  // 监听自定义事件，用于响应侧边栏的AI助手按钮点击
-  window.addEventListener('toggle-ai-chat', () => {
-    toggleAIChat()
-  })
 
   onUnmounted(() => {
     window.removeEventListener('keydown', handleKeyDown)
     document.removeEventListener('click', handleClickOutside)
-    window.removeEventListener('toggle-ai-chat', toggleAIChat)
   })
 }
 
-// 事件监听器清理函数
-let unlistenAIChat: (() => void) | null = null
+
 
 // 在组件挂载时导航到Dashboard (如果当前在根路径)
 onMounted(async () => {
-  // 检查窗口类型
-  await checkWindowType()
-  
-  // 如果不是AI助手窗口，执行正常的路由逻辑
-  if (!isAIChatWindow.value) {
-    // 只有在根路径时才重定向，避免路由冲突
-    if (router.currentRoute.value.path === '/') {
-      router.replace('/dashboard')
-    }
-    
-    // 设置AI助手快捷键
-    setupAIChatShortcut()
+  // 只有在根路径时才重定向，避免路由冲突
+  if (router.currentRoute.value.path === '/') {
+    router.replace('/dashboard')
   }
   
-  // 监听显示AI聊天的事件（用于AI助手窗口）
-  if (isAIChatWindow.value) {
-    unlistenAIChat = await listen('show-ai-chat-only', (event) => {
-      console.log('Received show-ai-chat-only event:', event.payload)
-    })
-  }
+  // 设置AI助手快捷键
+  setupAIChatShortcut()
 })
 
 // 组件卸载时清理事件监听器
 onUnmounted(() => {
-  if (unlistenAIChat) {
-    unlistenAIChat()
-  }
+
 })
 
 // 主题管理
@@ -242,18 +199,10 @@ window.updateUIScale = (newScale: number) => {
 
 <template>
   <div id="app" class="min-h-screen bg-base-100">
-    <!-- AI助手独立窗口 -->
-    <template v-if="isAIChatWindow">
-      <AIChatWindow />
-    </template>
-    
     <!-- 主应用窗口 -->
-    <template v-else>
       <!-- 顶部导航栏 -->
       <TopNavbar 
-        :showAIChat="showAIChat"
         @toggle-sidebar="toggleSidebar"
-        @toggle-a-i-chat="toggleAIChat"
         @set-theme="setTheme"
         @switch-language="switchLanguage"
       />
@@ -283,11 +232,6 @@ window.updateUIScale = (newScale: number) => {
         </main>
       </div>
 
-      <!-- AI助手聊天框 -->
-      <AIChat v-if="showAIChat" @close="showAIChat = false" />
-    </template>
-    
-    <!-- Toast组件 -->
     <Toast />
   </div>
 </template>

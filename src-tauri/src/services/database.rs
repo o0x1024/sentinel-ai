@@ -45,6 +45,32 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn get_scan_task(&self, id: &str) -> Result<Option<ScanTask>>;
     async fn get_scan_tasks_by_target(&self, target: &str) -> Result<Vec<ScanTask>>;
     async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()>;
+    
+    // Agent任务相关方法
+    async fn create_agent_task(&self, task: &crate::agents::traits::AgentTask) -> Result<()>;
+    async fn get_agent_task(&self, id: &str) -> Result<Option<crate::agents::traits::AgentTask>>;
+    async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<crate::agents::traits::AgentTask>>;
+    async fn update_agent_task_status(&self, id: &str, status: &str, agent_name: Option<&str>, architecture: Option<&str>) -> Result<()>;
+    async fn update_agent_task_timing(&self, id: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, execution_time_ms: Option<u64>) -> Result<()>;
+    async fn update_agent_task_error(&self, id: &str, error_message: &str) -> Result<()>;
+    
+    // Agent会话相关方法
+    async fn create_agent_session(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()>;
+    async fn update_agent_session_status(&self, session_id: &str, status: &str) -> Result<()>;
+    async fn get_agent_session(&self, session_id: &str) -> Result<Option<crate::agents::session::AgentSessionData>>;
+    
+    // Agent执行日志相关方法
+    async fn add_agent_session_log(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()>;
+    async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<crate::agents::traits::SessionLog>>;
+    
+    // Agent执行结果相关方法
+    async fn save_agent_execution_result(&self, session_id: &str, result: &crate::agents::traits::AgentExecutionResult) -> Result<()>;
+    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<crate::agents::traits::AgentExecutionResult>>;
+    
+    // Agent执行步骤相关方法
+    async fn save_agent_execution_step(&self, session_id: &str, step: &crate::commands::agent_commands::WorkflowStepDetail) -> Result<()>;
+    async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>>;
+    async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -556,7 +582,99 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
+        // 创建Agent任务表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS agent_tasks (
+                id TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                target TEXT,
+                parameters TEXT NOT NULL DEFAULT '{}',
+                user_id TEXT NOT NULL,
+                priority TEXT NOT NULL DEFAULT 'Normal',
+                timeout_seconds INTEGER,
+                status TEXT NOT NULL DEFAULT 'Created',
+                agent_name TEXT,
+                architecture TEXT,
+                session_id TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                started_at DATETIME,
+                completed_at DATETIME,
+                execution_time_ms INTEGER,
+                error_message TEXT
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
 
+        // 创建Agent会话表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS agent_sessions (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Created',
+                agent_name TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建Agent执行日志表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS agent_session_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'agent_session',
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建Agent执行结果表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS agent_execution_results (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                success BOOLEAN NOT NULL,
+                data TEXT,
+                error_message TEXT,
+                execution_time_ms INTEGER NOT NULL,
+                resources_used TEXT DEFAULT '{}',
+                artifacts TEXT DEFAULT '[]',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建Agent执行步骤表（用于详细的步骤跟踪）
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS agent_execution_steps (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                step_name TEXT NOT NULL,
+                step_order INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Pending',
+                started_at DATETIME,
+                completed_at DATETIME,
+                duration_ms INTEGER,
+                result_data TEXT,
+                error_message TEXT,
+                retry_count INTEGER DEFAULT 0,
+                dependencies TEXT DEFAULT '[]',
+                tool_result TEXT,
+                FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
 
         // 创建配置表
         sqlx::query(
@@ -652,6 +770,51 @@ impl DatabaseService {
 
         // 创建索引
 
+        // Agent任务索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_user_id ON agent_tasks(user_id)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_created_at ON agent_tasks(created_at)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent_name ON agent_tasks(agent_name)")
+            .execute(&mut *tx)
+            .await?;
+
+        // Agent会话索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_sessions_task_id ON agent_sessions(task_id)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_sessions_status ON agent_sessions(status)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_sessions_agent_name ON agent_sessions(agent_name)")
+            .execute(&mut *tx)
+            .await?;
+
+        // Agent会话日志索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_session_logs_session_id ON agent_session_logs(session_id)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_session_logs_timestamp ON agent_session_logs(timestamp)")
+            .execute(&mut *tx)
+            .await?;
+
+        // Agent执行结果索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_execution_results_session_id ON agent_execution_results(session_id)")
+            .execute(&mut *tx)
+            .await?;
+
+        // Agent执行步骤索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_execution_steps_session_id ON agent_execution_steps(session_id)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_execution_steps_order ON agent_execution_steps(session_id, step_order)")
+            .execute(&mut *tx)
+            .await?;
 
         // 扫描任务索引
         sqlx::query(
@@ -844,7 +1007,7 @@ impl DatabaseService {
             ("llmcompiler", "replan", "LLMC Replan", "你是一个重新规划器。当执行出现问题时，请调整执行计划。\n原始计划：{original_plan}\n执行状态：{execution_status}\n错误信息：{error_info}"),
             ("planexecute", "planning", "P&E Planning", "你是一个策略规划师。请为用户的目标制定详细的执行计划。\n用户目标：{user_goal}"),
             ("planexecute", "execution", "P&E Execution", "你是一个执行专家。请执行计划中的当前步骤。\n执行计划：{plan}\n当前步骤：{current_step}\n前置结果：{previous_results}"),
-            ("planexecute", "reflection", "P&E Reflection", "你是一个反思分析师。请评估执行结果并提供改进建议。\n执行计划：{plan}\n执行结果：{results}\n目标达成情况：{goal_achievement}"),
+            ("planexecute", "replan", "P&E Replan", "你是一个重新规划师。请评估执行结果并在必要时调整计划。\n执行计划：{plan}\n执行结果：{results}\n目标达成情况：{goal_achievement}"),
         ];
 
         for (arch, stage, name, content) in defaults {
@@ -2284,6 +2447,406 @@ impl Database for DatabaseService {
 
     async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()> {
         self.update_scan_task_status(id, status, progress).await
+    }
+    
+    // Agent任务相关方法实现
+    async fn create_agent_task(&self, task: &crate::agents::traits::AgentTask) -> Result<()> {
+        let pool = self.get_pool()?;
+        let parameters_json = serde_json::to_string(&task.parameters)?;
+        let priority_str = format!("{:?}", task.priority);
+        
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, description, target, parameters, user_id, priority, timeout_seconds, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'Created', ?)"
+        )
+        .bind(&task.id)
+        .bind(&task.description)
+        .bind(&task.target)
+        .bind(&parameters_json)
+        .bind(&task.user_id)
+        .bind(&priority_str)
+        .bind(task.timeout.map(|t| t as i64))
+        .bind(chrono::Utc::now())
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    async fn get_agent_task(&self, id: &str) -> Result<Option<crate::agents::traits::AgentTask>> {
+        let pool = self.get_pool()?;
+        let row = sqlx::query("SELECT id, description, target, parameters, user_id, priority, timeout_seconds FROM agent_tasks WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+            
+        if let Some(row) = row {
+            let parameters_json: String = row.get("parameters");
+            let parameters = serde_json::from_str(&parameters_json).unwrap_or_default();
+            let priority_str: String = row.get("priority");
+            let priority = match priority_str.as_str() {
+                "Low" => crate::agents::traits::TaskPriority::Low,
+                "High" => crate::agents::traits::TaskPriority::High,
+                "Critical" => crate::agents::traits::TaskPriority::Critical,
+                _ => crate::agents::traits::TaskPriority::Normal,
+            };
+            let timeout_seconds: Option<i64> = row.get("timeout_seconds");
+            
+            Ok(Some(crate::agents::traits::AgentTask {
+                id: row.get("id"),
+                description: row.get("description"),
+                target: row.get("target"),
+                parameters,
+                user_id: row.get("user_id"),
+                priority,
+                timeout: timeout_seconds.map(|t| t as u64),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<crate::agents::traits::AgentTask>> {
+        let pool = self.get_pool()?;
+        let rows = if let Some(user_id) = user_id {
+            sqlx::query("SELECT id, description, target, parameters, user_id, priority, timeout_seconds FROM agent_tasks WHERE user_id = ? ORDER BY created_at DESC")
+                .bind(user_id)
+                .fetch_all(pool)
+                .await?
+        } else {
+            sqlx::query("SELECT id, description, target, parameters, user_id, priority, timeout_seconds FROM agent_tasks ORDER BY created_at DESC")
+                .fetch_all(pool)
+                .await?
+        };
+        
+        let mut tasks = Vec::new();
+        for row in rows {
+            let parameters_json: String = row.get("parameters");
+            let parameters = serde_json::from_str(&parameters_json).unwrap_or_default();
+            let priority_str: String = row.get("priority");
+            let priority = match priority_str.as_str() {
+                "Low" => crate::agents::traits::TaskPriority::Low,
+                "High" => crate::agents::traits::TaskPriority::High,
+                "Critical" => crate::agents::traits::TaskPriority::Critical,
+                _ => crate::agents::traits::TaskPriority::Normal,
+            };
+            let timeout_seconds: Option<i64> = row.get("timeout_seconds");
+            
+            tasks.push(crate::agents::traits::AgentTask {
+                id: row.get("id"),
+                description: row.get("description"),
+                target: row.get("target"),
+                parameters,
+                user_id: row.get("user_id"),
+                priority,
+                timeout: timeout_seconds.map(|t| t as u64),
+            });
+        }
+        
+        Ok(tasks)
+    }
+    
+    async fn update_agent_task_status(&self, id: &str, status: &str, agent_name: Option<&str>, architecture: Option<&str>) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            "UPDATE agent_tasks SET status = ?, agent_name = ?, architecture = ? WHERE id = ?"
+        )
+        .bind(status)
+        .bind(agent_name)
+        .bind(architecture)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    async fn update_agent_task_timing(&self, id: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, execution_time_ms: Option<u64>) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            "UPDATE agent_tasks SET started_at = ?, completed_at = ?, execution_time_ms = ? WHERE id = ?"
+        )
+        .bind(started_at)
+        .bind(completed_at)
+        .bind(execution_time_ms.map(|t| t as i64))
+        .bind(id)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    async fn update_agent_task_error(&self, id: &str, error_message: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            "UPDATE agent_tasks SET error_message = ? WHERE id = ?"
+        )
+        .bind(error_message)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    // Agent会话相关方法实现
+    async fn create_agent_session(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            "INSERT INTO agent_sessions (id, task_id, status, agent_name, created_at, updated_at)
+             VALUES (?, ?, 'Created', ?, ?, ?)"
+        )
+        .bind(session_id)
+        .bind(task_id)
+        .bind(agent_name)
+        .bind(chrono::Utc::now())
+        .bind(chrono::Utc::now())
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    async fn update_agent_session_status(&self, session_id: &str, status: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            "UPDATE agent_sessions SET status = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(status)
+        .bind(chrono::Utc::now())
+        .bind(session_id)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    async fn get_agent_session(&self, session_id: &str) -> Result<Option<crate::agents::session::AgentSessionData>> {
+        let pool = self.get_pool()?;
+        let row = sqlx::query("SELECT id, task_id, status, agent_name, created_at, updated_at FROM agent_sessions WHERE id = ?")
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await?;
+            
+        if let Some(row) = row {
+            let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
+            let updated_at: chrono::DateTime<chrono::Utc> = row.get("updated_at");
+            
+            Ok(Some(crate::agents::session::AgentSessionData {
+                session_id: row.get("id"),
+                task_id: row.get("task_id"),
+                status: row.get("status"),
+                agent_name: row.get("agent_name"),
+                created_at,
+                updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    // Agent执行日志相关方法实现
+    async fn add_agent_session_log(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            "INSERT INTO agent_session_logs (session_id, level, message, source, timestamp)
+             VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(session_id)
+        .bind(level)
+        .bind(message)
+        .bind(source)
+        .bind(chrono::Utc::now())
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<crate::agents::traits::SessionLog>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query("SELECT level, message, source, timestamp FROM agent_session_logs WHERE session_id = ? ORDER BY timestamp ASC")
+            .bind(session_id)
+            .fetch_all(pool)
+            .await?;
+        
+        let mut logs = Vec::new();
+        for row in rows {
+            let level_str: String = row.get("level");
+            let level = match level_str.as_str() {
+                "Debug" => crate::agents::traits::LogLevel::Debug,
+                "Info" => crate::agents::traits::LogLevel::Info,
+                "Warn" => crate::agents::traits::LogLevel::Warn,
+                "Error" => crate::agents::traits::LogLevel::Error,
+                _ => crate::agents::traits::LogLevel::Info,
+            };
+            
+            logs.push(crate::agents::traits::SessionLog {
+                level,
+                message: row.get("message"),
+                timestamp: row.get("timestamp"),
+                source: row.get("source"),
+            });
+        }
+        
+        Ok(logs)
+    }
+    
+    // Agent执行结果相关方法实现
+    async fn save_agent_execution_result(&self, session_id: &str, result: &crate::agents::traits::AgentExecutionResult) -> Result<()> {
+        let pool = self.get_pool()?;
+        let data_json = serde_json::to_string(&result.data)?;
+        let resources_json = serde_json::to_string(&result.resources_used)?;
+        let artifacts_json = serde_json::to_string(&result.artifacts)?;
+        
+        sqlx::query(
+            "INSERT INTO agent_execution_results (id, session_id, success, data, error_message, execution_time_ms, resources_used, artifacts, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&result.id)
+        .bind(session_id)
+        .bind(result.success)
+        .bind(&data_json)
+        .bind(&result.error)
+        .bind(result.execution_time_ms as i64)
+        .bind(&resources_json)
+        .bind(&artifacts_json)
+        .bind(chrono::Utc::now())
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<crate::agents::traits::AgentExecutionResult>> {
+        let pool = self.get_pool()?;
+        let row = sqlx::query("SELECT id, success, data, error_message, execution_time_ms, resources_used, artifacts FROM agent_execution_results WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await?;
+            
+        if let Some(row) = row {
+            let data_json: String = row.get("data");
+            let data = serde_json::from_str(&data_json).ok();
+            let resources_json: String = row.get("resources_used");
+            let resources_used = serde_json::from_str(&resources_json).unwrap_or_default();
+            let artifacts_json: String = row.get("artifacts");
+            let artifacts = serde_json::from_str(&artifacts_json).unwrap_or_default();
+            let execution_time_ms: i64 = row.get("execution_time_ms");
+            
+            Ok(Some(crate::agents::traits::AgentExecutionResult {
+                id: row.get("id"),
+                success: row.get("success"),
+                data,
+                error: row.get("error_message"),
+                execution_time_ms: execution_time_ms as u64,
+                resources_used,
+                artifacts,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    // Agent执行步骤相关方法实现
+    async fn save_agent_execution_step(&self, session_id: &str, step: &crate::commands::agent_commands::WorkflowStepDetail) -> Result<()> {
+        let pool = self.get_pool()?;
+        let dependencies_json = serde_json::to_string(&step.dependencies)?;
+        let result_data_json = serde_json::to_string(&step.result_data)?;
+        let tool_result_json = serde_json::to_string(&step.tool_result)?;
+        
+        // 从step_id中提取step_order（假设step_id类似于"step_1", "step_2"等）
+        let step_order = step.step_id.trim_start_matches("step_")
+            .parse::<i32>()
+            .unwrap_or(0);
+        
+        let started_at = step.started_at.as_ref()
+            .and_then(|s| s.parse::<i64>().ok())
+            .map(|ts| chrono::DateTime::from_timestamp(ts, 0))
+            .flatten();
+        let completed_at = step.completed_at.as_ref()
+            .and_then(|s| s.parse::<i64>().ok())
+            .map(|ts| chrono::DateTime::from_timestamp(ts, 0))
+            .flatten();
+        
+        sqlx::query(
+            "INSERT OR REPLACE INTO agent_execution_steps 
+             (id, session_id, step_name, step_order, status, started_at, completed_at, duration_ms, result_data, error_message, retry_count, dependencies, tool_result)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&step.step_id)
+        .bind(session_id)
+        .bind(&step.step_name)
+        .bind(step_order)
+        .bind(&step.status)
+        .bind(started_at)
+        .bind(completed_at)
+        .bind(step.duration_ms as i64)
+        .bind(&result_data_json)
+        .bind(&step.error)
+        .bind(step.retry_count as i64)
+        .bind(&dependencies_json)
+        .bind(&tool_result_json)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query("SELECT id, step_name, status, started_at, completed_at, duration_ms, result_data, error_message, retry_count, dependencies, tool_result FROM agent_execution_steps WHERE session_id = ? ORDER BY step_order ASC")
+            .bind(session_id)
+            .fetch_all(pool)
+            .await?;
+        
+        let mut steps = Vec::new();
+        for row in rows {
+            let dependencies_json: String = row.get("dependencies");
+            let dependencies = serde_json::from_str(&dependencies_json).unwrap_or_default();
+            let result_data_json: String = row.get("result_data");
+            let result_data = serde_json::from_str(&result_data_json).ok();
+            let tool_result_json: String = row.get("tool_result");
+            let tool_result = serde_json::from_str(&tool_result_json).ok();
+            
+            let started_at: Option<chrono::DateTime<chrono::Utc>> = row.get("started_at");
+            let completed_at: Option<chrono::DateTime<chrono::Utc>> = row.get("completed_at");
+            let duration_ms: i64 = row.get("duration_ms");
+            let retry_count: i64 = row.get("retry_count");
+            
+            steps.push(crate::commands::agent_commands::WorkflowStepDetail {
+                step_id: row.get("id"),
+                step_name: row.get("step_name"),
+                status: row.get("status"),
+                started_at: started_at.map(|dt| dt.timestamp().to_string()),
+                completed_at: completed_at.map(|dt| dt.timestamp().to_string()),
+                duration_ms: duration_ms as u64,
+                result_data,
+                error: row.get("error_message"),
+                retry_count: retry_count as u32,
+                dependencies,
+                tool_result,
+            });
+        }
+        
+        Ok(steps)
+    }
+    
+    async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            "UPDATE agent_execution_steps SET status = ?, started_at = ?, completed_at = ?, duration_ms = ?, error_message = ? WHERE id = ?"
+        )
+        .bind(status)
+        .bind(started_at)
+        .bind(completed_at)
+        .bind(duration_ms.map(|d| d as i64))
+        .bind(error_message)
+        .bind(step_id)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
     }
 }
 

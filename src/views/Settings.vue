@@ -48,7 +48,9 @@
                 @save-ai-config="saveAiConfig"
                 @test-custom-provider="testCustomProvider"
                 @add-custom-provider="addCustomProvider"
-                @refresh-models="refreshModels" />
+                @refresh-models="refreshModels"
+                @apply-manual-config="applyManualConfig"
+                @set-default-provider="setDefaultProvider" />
 
     <!-- 调度策略设置 -->
     <SchedulerSettings v-if="activeCategory === 'scheduler'" 
@@ -84,13 +86,13 @@
     <div v-if="activeCategory === 'network'" class="card bg-base-100 shadow-md mb-6">
       <div class="card-body gap-4">
         <div class="flex items-center gap-3">
-          <input type="checkbox" class="toggle toggle-primary" v-model="network.proxy.enabled" />
+          <input type="checkbox" class="toggle toggle-primary" v-model="network.proxy.enabled" @change="saveProxy" />
           <span class="font-medium">{{ t('settings.network.enableGlobalProxy', '启用全局代理') }}</span>
             </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label class="label"><span class="label-text">{{ t('settings.network.scheme', '协议') }}</span></label>
-            <select v-model="network.proxy.scheme" class="select select-bordered w-full">
+            <select v-model="network.proxy.scheme" class="select select-bordered w-full" @change="saveProxy">
               <option value="http">http</option>
               <option value="https">https</option>
               <option value="socks5">socks5</option>
@@ -99,29 +101,25 @@
           </div>
           <div>
             <label class="label"><span class="label-text">{{ t('settings.network.host', '主机') }}</span></label>
-            <input v-model.trim="network.proxy.host" class="input input-bordered w-full" placeholder="127.0.0.1" />
+            <input v-model.trim="network.proxy.host" class="input input-bordered w-full" placeholder="127.0.0.1" @blur="saveProxy" />
             </div>
           <div>
             <label class="label"><span class="label-text">{{ t('settings.network.port', '端口') }}</span></label>
-            <input v-model.number="network.proxy.port" class="input input-bordered w-full" type="number" placeholder="7890" />
+            <input v-model.number="network.proxy.port" class="input input-bordered w-full" type="number" placeholder="7890" @blur="saveProxy" />
           </div>
           <div>
             <label class="label"><span class="label-text">{{ t('settings.network.noProxy', '不走代理') }}</span></label>
-            <input v-model.trim="network.proxy.no_proxy" class="input input-bordered w-full" placeholder="localhost,127.0.0.1" />
+            <input v-model.trim="network.proxy.no_proxy" class="input input-bordered w-full" placeholder="localhost,127.0.0.1" @blur="saveProxy" />
             </div>
           <div>
             <label class="label"><span class="label-text">{{ t('settings.network.username', '用户名(可选)') }}</span></label>
-            <input v-model.trim="network.proxy.username" class="input input-bordered w-full" />
+            <input v-model.trim="network.proxy.username" class="input input-bordered w-full" @blur="saveProxy" />
           </div>
                         <div>
             <label class="label"><span class="label-text">{{ t('settings.network.password', '密码(可选)') }}</span></label>
-            <input v-model.trim="network.proxy.password" class="input input-bordered w-full" type="password" />
+            <input v-model.trim="network.proxy.password" class="input input-bordered w-full" type="password" @blur="saveProxy" />
                         </div>
                         </div>
-        <div class="flex justify-end gap-2">
-          <button class="btn btn-outline" @click="loadProxy">{{ t('common.refresh', '刷新') }}</button>
-          <button class="btn btn-primary" @click="saveProxy">{{ t('common.save', '保存') }}</button>
-            </div>
           </div>
         </div>
 
@@ -138,6 +136,9 @@
                       @emergency-shutdown="emergencyShutdown"
                       @wipe-security-data="wipeSecurityData"
                       @save-security-config="saveSecurityConfig" />
+
+    <!-- 代理测试 -->
+    <ProxyTestPanel v-if="activeCategory === 'proxy_test'" />
   </div>
 </template>
 
@@ -151,6 +152,7 @@ import SchedulerSettings from '@/components/Settings/SchedulerSettings.vue'
 import DatabaseSettings from '@/components/Settings/DatabaseSettings.vue'
 import GeneralSettings from '@/components/Settings/GeneralSettings.vue'
 import SecuritySettings from '@/components/Settings/SecuritySettings.vue'
+import ProxyTestPanel from '@/components/ProxyTestPanel.vue'
 
 const { t } = useI18n()
 
@@ -166,11 +168,12 @@ const categories = [
   { id: 'database', icon: 'fas fa-database' },
   { id: 'system', icon: 'fas fa-cog' },
   { id: 'security', icon: 'fas fa-shield-alt' },
-  { id: 'network', icon: 'fas fa-network-wired' }
+  { id: 'network', icon: 'fas fa-network-wired' },
+  { id: 'proxy_test', icon: 'fas fa-vial' }
 ]
 
 // 设置数据
-const settings = reactive({
+const settings = ref({
   ai: {
     temperature: 0.7,
     maxTokens: 2000
@@ -249,7 +252,7 @@ const settings = reactive({
 // AI相关数据
 const selectedAiProvider = ref('OpenAI')
 const aiServiceStatus = ref([])
-const aiConfig = ref({ providers: {} })
+const aiConfig = ref<any>({ providers: {}, default_provider: 'openai' })
 const aiUsageStats = ref({})
 const customProvider = reactive({
   name: '',
@@ -326,8 +329,8 @@ const loadSettings = async () => {
         scenarios: schedulerConfig.scenarios || {}
       }
       
-      Object.assign(settings.scheduler, transformedConfig)
-      console.log('Loaded scheduler config:', settings.scheduler)
+      Object.assign(settings.value.scheduler, transformedConfig)
+      console.log('Loaded scheduler config:', settings.value.scheduler)
     }
     
     // 加载代理设置
@@ -506,6 +509,18 @@ const saveAiConfig = async () => {
   }
 }
 
+const setDefaultProvider = async (provider: string) => {
+  try {
+    await invoke('set_default_provider', { request: { provider } })
+    // 同步前端状态
+    aiConfig.value.default_provider = provider
+    dialog.toast.success(`默认 Provider 已设置为 ${provider}`)
+  } catch (e) {
+    console.error('Failed to set default provider', e)
+    dialog.toast.error('设置默认 Provider 失败')
+  }
+}
+
 const testCustomProvider = async () => {
   // 测试自定义提供商逻辑
   dialog.toast.info('测试自定义提供商...')
@@ -516,21 +531,42 @@ const addCustomProvider = async () => {
   dialog.toast.success('自定义提供商已添加')
 }
 
+const applyManualConfig = async (config: any) => {
+  try {
+    // 验证配置格式
+    if (!config || typeof config !== 'object' || !config.providers) {
+      dialog.toast.error('配置格式无效')
+      return
+    }
+    
+    // 更新本地配置
+    aiConfig.value = config
+    
+    // 保存到后端
+    await invoke('save_ai_config', { config: config })
+    
+    dialog.toast.success('手动配置已应用并保存')
+  } catch (error) {
+    console.error('Failed to apply manual config:', error)
+    dialog.toast.error(`应用配置失败: ${error}`)
+  }
+}
+
 // 调度器相关方法
 const saveSchedulerConfig = async () => {
   try {
     // 转换前端嵌套结构为后端期望的扁平结构
     const flatConfig = {
-      enabled: settings.scheduler.enabled,
-      intent_analysis_model: settings.scheduler.models.intent_analysis,
-      planner_model: settings.scheduler.models.planner,
-      replanner_model: settings.scheduler.models.replanner,
-      executor_model: settings.scheduler.models.executor,
-      evaluator_model: settings.scheduler.models.evaluator,
-      default_strategy: settings.scheduler.default_strategy,
-      max_retries: settings.scheduler.max_retries,
-      timeout_seconds: settings.scheduler.timeout_seconds,
-      scenarios: settings.scheduler.scenarios
+      enabled: settings.value.scheduler.enabled,
+      intent_analysis_model: settings.value.scheduler.models.intent_analysis,
+      planner_model: settings.value.scheduler.models.planner,
+      replanner_model: settings.value.scheduler.models.replanner,
+      executor_model: settings.value.scheduler.models.executor,
+      evaluator_model: settings.value.scheduler.models.evaluator,
+      default_strategy: settings.value.scheduler.default_strategy,
+      max_retries: settings.value.scheduler.max_retries,
+      timeout_seconds: settings.value.scheduler.timeout_seconds,
+      scenarios: settings.value.scheduler.scenarios
     }
     
     await invoke('save_scheduler_config', { config: flatConfig })

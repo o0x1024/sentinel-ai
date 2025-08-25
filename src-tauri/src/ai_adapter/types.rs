@@ -105,6 +105,63 @@ impl Message {
     }
 }
 
+impl ChatRequest {
+    /// 创建包含system prompt的聊天请求
+    pub fn with_system_prompt(model: &str, system_prompt: &str, user_prompt: &str) -> Self {
+        Self {
+            model: model.to_string(),
+            messages: vec![
+                Message::system(system_prompt),
+                Message::user(user_prompt),
+            ],
+            tools: None,
+            tool_choice: None,
+            user: None,
+            extra_params: None,
+            options: Some(ChatOptions::default()),
+        }
+    }
+    
+    /// 创建包含上下文消息的聊天请求
+    pub fn with_context(model: &str, system_prompt: Option<&str>, user_prompt: &str, context_messages: &[Message]) -> Self {
+        let mut messages = Vec::new();
+        
+        // 添加系统消息（如果有）
+        if let Some(system) = system_prompt {
+            messages.push(Message::system(system));
+        }
+        
+        // 添加上下文消息
+        messages.extend(context_messages.iter().cloned());
+        
+        // 添加用户消息
+        messages.push(Message::user(user_prompt));
+        
+        Self {
+            model: model.to_string(),
+            messages,
+            tools: None,
+            tool_choice: None,
+            user: None,
+            extra_params: None,
+            options: Some(ChatOptions::default()),
+        }
+    }
+    
+    /// 创建简单的用户消息请求
+    pub fn simple(model: &str, user_prompt: &str) -> Self {
+        Self {
+            model: model.to_string(),
+            messages: vec![Message::user(user_prompt)],
+            tools: None,
+            tool_choice: None,
+            user: None,
+            extra_params: None,
+            options: Some(ChatOptions::default()),
+        }
+    }
+}
+
 // ===== 工具相关类型 =====
 
 /// 工具定义
@@ -271,14 +328,25 @@ pub trait AiProvider: Send + Sync + std::fmt::Debug {
     /// 获取支持的模型列表
     fn supported_models(&self) -> Vec<String>;
     
+    /// 检查是否支持流式响应
+    fn supports_streaming(&self) -> bool {
+        true // 默认支持流式响应
+    }
+    
     /// 测试连接
     async fn test_connection(&self) -> crate::ai_adapter::error::Result<bool>;
     
-    /// 发送聊天请求
+    /// 构建聊天请求 - 将通用ChatRequest转换为提供商特定格式
+    fn build_chat_request(&self, request: &ChatRequest) -> crate::ai_adapter::error::Result<serde_json::Value>;
+    
+    /// 发送聊天请求（保留为兼容性方法，当不支持流式时使用）
     async fn send_chat_request(&self, request: &ChatRequest) -> crate::ai_adapter::error::Result<ChatResponse>;
     
-    /// 发送流式聊天请求
+    /// 发送流式聊天请求（现在作为主要方法）
     async fn send_chat_stream(&self, request: &ChatRequest) -> crate::ai_adapter::error::Result<ChatStreamResponse>;
+    
+    /// 解析流式响应块
+    fn parse_stream(&self, chunk: &str) -> crate::ai_adapter::error::Result<Option<StreamChunk>>;
     
     /// 获取最后一次请求信息
     fn get_last_request_info(&self) -> Option<HttpRequestInfo>;

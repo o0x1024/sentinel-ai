@@ -1,9 +1,21 @@
 <template>
   <div class="p-4 h-full flex gap-4">
-    <!-- 左侧：架构/阶段 + 搜索 + 模板列表 -->
+    <!-- 左侧：分类选择 + 架构/阶段 + 搜索 + 模板列表 -->
     <div class="w-80 card bg-base-100 shadow-md overflow-hidden flex flex-col">
       <div class="card-body p-4 pb-3">
-        <h3 class="card-title text-sm">{{ $t('promptMgmt.archStage') }}</h3>
+        <!-- Prompt分类选择器 -->
+        <div class="mb-4">
+          <h4 class="card-title text-xs mb-2">Prompt分类</h4>
+          <select v-model="selectedCategory" class="select select-sm select-bordered w-full">
+            <option v-for="cat in promptCategories" :key="cat.value" :value="cat.value">
+              {{ cat.label }} - {{ cat.description }}
+            </option>
+          </select>
+        </div>
+        
+        <!-- 架构/阶段选择 - 仅在LLM架构分类时显示 -->
+        <div v-if="selectedCategory === 'LlmArchitecture'">
+          <h3 class="card-title text-sm">{{ $t('promptMgmt.archStage') }}</h3>
         <ul class="menu menu-sm rounded-box mt-2">
           <li v-for="group in groups" :key="group.value">
             <h2 class="menu-title">{{ group.label }}</h2>
@@ -20,6 +32,30 @@
             </ul>
           </li>
         </ul>
+        </div>
+        
+        <!-- 系统级提示 - 仅在系统分类时显示 -->
+        <div v-if="selectedCategory === 'System'">
+          <h3 class="card-title text-sm">系统级提示模板</h3>
+          <div class="text-xs opacity-70 mt-1">管理跨架构通用的系统提示</div>
+          <div class="mt-2">
+            <button class="btn btn-xs btn-outline" @click="createIntentClassifierTemplate">
+              创建意图分析器模板
+            </button>
+          </div>
+        </div>
+        
+        <!-- 应用级提示 - 仅在应用分类时显示 -->
+        <div v-if="selectedCategory === 'Application'">
+          <h3 class="card-title text-sm">应用级提示模板</h3>
+          <div class="text-xs opacity-70 mt-1">管理应用特定的提示模板</div>
+        </div>
+        
+        <!-- 用户自定义 - 仅在用户自定义分类时显示 -->
+        <div v-if="selectedCategory === 'UserDefined'">
+          <h3 class="card-title text-sm">用户自定义模板</h3>
+          <div class="text-xs opacity-70 mt-1">管理用户创建的自定义模板</div>
+        </div>
       </div>
       <div class="px-4 pb-2">
         <input v-model.trim="searchQuery" class="input input-sm input-bordered w-full" :placeholder="$t('promptMgmt.searchTemplates') as string" />
@@ -109,6 +145,34 @@
           <div class="card-body p-4 h-full overflow-hidden" v-if="editingTemplate">
             <input v-model="editingTemplate.name" class="input input-sm input-bordered mb-2" :placeholder="$t('promptMgmt.namePlaceholder') as string" />
             <textarea v-model="editingTemplate.description" class="textarea textarea-bordered mb-2" rows="2" :placeholder="$t('promptMgmt.descPlaceholder') as string"></textarea>
+            
+            <!-- 新增字段 -->
+            <div class="grid grid-cols-2 gap-2 mb-2">
+              <div>
+                <label class="label label-text text-xs">模板类型</label>
+                <select v-model="editingTemplate.template_type" class="select select-xs select-bordered w-full">
+                  <option value="SystemPrompt">系统提示</option>
+                  <option value="IntentClassifier">意图分析器</option>
+                  <option value="Planner">规划器</option>
+                  <option value="Executor">执行器</option>
+                  <option value="Replanner">重规划器</option>
+                  <option value="ReportGenerator">报告生成器</option>
+                  <option value="Custom">自定义</option>
+                </select>
+              </div>
+              <div>
+                <label class="label label-text text-xs">优先级</label>
+                <input v-model.number="editingTemplate.priority" type="number" class="input input-xs input-bordered w-full" min="0" max="100" />
+              </div>
+            </div>
+            
+            <div class="flex items-center gap-4 mb-2">
+              <label class="cursor-pointer label">
+                <input v-model="editingTemplate.is_system" type="checkbox" class="checkbox checkbox-xs" />
+                <span class="label-text text-xs ml-2">系统级模板</span>
+              </label>
+            </div>
+            
             <textarea v-model="editingTemplate.content" class="textarea textarea-bordered font-mono text-sm h-full grow" :placeholder="$t('promptMgmt.contentPlaceholder') as string"></textarea>
           </div>
           <div class="card-body p-4 h-full flex items-center justify-center text-sm opacity-60" v-else>
@@ -158,7 +222,9 @@ import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 
 type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute'
-type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Replan' | 'Reflection'
+type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Replan'
+type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
+type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'ReportGenerator' | 'Domain' | 'Custom'
 
 interface PromptTemplate {
   id?: number
@@ -171,6 +237,12 @@ interface PromptTemplate {
   is_active: boolean
   created_at?: string | null
   updated_at?: string | null
+  // 新增字段
+  category?: PromptCategory
+  template_type?: TemplateType
+  target_architecture?: ArchitectureType
+  is_system?: boolean
+  priority?: number
 }
 
 interface PromptGroup {
@@ -192,6 +264,13 @@ interface PromptGroupItem {
   updated_at?: string | null
 }
 
+const promptCategories = [
+  { value: 'System', label: '系统级', description: '跨架构通用的系统提示' },
+  { value: 'LlmArchitecture', label: 'LLM架构', description: '特定架构的提示模板' },
+  { value: 'Application', label: '应用级', description: '应用特定的提示模板' },
+  { value: 'UserDefined', label: '用户自定义', description: '用户创建的自定义模板' },
+]
+
 const groups = [
   { value: 'ReWOO', label: 'ReWOO', stages: [
     { value: 'Planner', label: 'Planner' },
@@ -206,7 +285,7 @@ const groups = [
   { value: 'PlanExecute', label: 'Plan&Execute', stages: [
     { value: 'Planning', label: 'Planning' },
     { value: 'Execution', label: 'Execution' },
-    { value: 'Reflection', label: 'Reflection' },
+    { value: 'Replan', label: 'Replan' },
   ]},
 ]
 
@@ -219,6 +298,7 @@ const searchQuery = ref('')
 const isDirty = ref(false)
 const toast = useToast()
 const { t } = useI18n()
+const selectedCategory = ref<PromptCategory>('LlmArchitecture')
 
 // 组相关
 const promptGroups = ref<PromptGroup[]>([])
@@ -231,6 +311,18 @@ const preview = computed(() => editingTemplate.value?.content ?? '')
 const filteredTemplates = computed(() => {
   const q = searchQuery.value.toLowerCase().trim()
   let list = templates.value
+  
+  // 根据选择的分类过滤
+  if (selectedCategory.value === 'System') {
+    list = list.filter(t => t.is_system || t.template_type === 'SystemPrompt' || t.template_type === 'IntentClassifier')
+  } else if (selectedCategory.value === 'LlmArchitecture') {
+    list = list.filter(t => t.category === 'LlmArchitecture' || (!t.category && t.architecture && t.stage))
+  } else if (selectedCategory.value === 'Application') {
+    list = list.filter(t => t.category === 'Application')
+  } else if (selectedCategory.value === 'UserDefined') {
+    list = list.filter(t => t.category === 'UserDefined')
+  }
+  
   if (q) {
     list = list.filter(t =>
       t.name?.toLowerCase().includes(q) ||
@@ -243,7 +335,7 @@ const filteredTemplates = computed(() => {
 const stagesOfSelectedArch = computed<StageType[]>(() => {
   if (selected.value.architecture === 'ReWOO') return ['Planner','Worker','Solver'] as StageType[]
   if (selected.value.architecture === 'LLMCompiler') return ['Planning','Execution','Replan'] as StageType[]
-  return ['Planning','Execution','Reflection'] as StageType[]
+  return ['Planning','Execution','Replan'] as StageType[]
 })
 
 const allTemplatesByStage = computed<Record<string, PromptTemplate[]>>(() => {
@@ -322,14 +414,35 @@ async function loadActiveId() {
 }
 
 function newTemplate() {
-  editingTemplate.value = {
-    name: `${selected.value.architecture}-${selected.value.stage}-${Date.now()}`,
+  const baseTemplate = {
+    name: selectedCategory.value === 'LlmArchitecture' 
+      ? `${selected.value.architecture}-${selected.value.stage}-${Date.now()}`
+      : `${selectedCategory.value}-${Date.now()}`,
     description: '',
-    architecture: selected.value.architecture,
-    stage: selected.value.stage,
     content: '',
     is_default: false,
     is_active: true,
+    // 新增字段
+    category: selectedCategory.value,
+    template_type: selectedCategory.value === 'System' ? 'SystemPrompt' as TemplateType : 'Custom' as TemplateType,
+    is_system: selectedCategory.value === 'System',
+    priority: 50,
+  }
+  
+  // 根据分类设置不同的字段
+  if (selectedCategory.value === 'LlmArchitecture') {
+    editingTemplate.value = {
+      ...baseTemplate,
+      architecture: selected.value.architecture,
+      stage: selected.value.stage,
+      target_architecture: selected.value.architecture,
+    }
+  } else {
+    editingTemplate.value = {
+      ...baseTemplate,
+      architecture: 'ReWOO' as ArchitectureType, // 默认值，可能不会使用
+      stage: 'Planner' as StageType, // 默认值，可能不会使用
+    }
   }
 }
 
@@ -507,6 +620,45 @@ async function onChangeGroupItem(stage: string) {
   if (!activePromptId.value && defaultGroupId.value === selectedGroupId.value && stage === selected.value.stage) {
     activePromptId.value = templateId as number
   }
+}
+
+// 创建意图分析器模板
+function createIntentClassifierTemplate() {
+  const defaultContent = `作为一个AI意图分类器，请分析用户输入并判断意图类型。
+
+请判断用户输入属于以下哪种类型：
+1. Chat - 普通对话（问候、闲聊、简单交流）
+2. Question - 知识性问答（询问概念、原理等，不需要实际执行）  
+3. Task - 任务执行（需要AI助手执行具体的安全扫描、分析等操作）
+
+判断标准：
+- Chat: 问候语、感谢、简单交流等
+- Question: 以"什么是"、"如何理解"等开头的概念性问题
+- Task: 包含"扫描"、"检测"、"分析"、"帮我执行"等行动指令
+
+请以JSON格式回复：
+{
+    "intent": "Chat|Question|Task",
+    "confidence": 0.0-1.0,
+    "reasoning": "分类理由",
+    "requires_agent": true/false,
+    "extracted_info": {"key": "value"}
+}`
+
+  editingTemplate.value = {
+    name: `意图分析器-${Date.now()}`,
+    description: '用于分析用户输入意图的系统提示模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'System' as PromptCategory,
+    template_type: 'IntentClassifier' as TemplateType,
+    is_system: true,
+    priority: 90, // 高优先级
+  }
+  isDirty.value = false // 这是新创建的模板，不算脏数据
 }
 </script>
 

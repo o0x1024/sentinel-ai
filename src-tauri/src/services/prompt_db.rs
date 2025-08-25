@@ -305,7 +305,6 @@ impl PromptRepository {
             StageType::Planning => "planning",
             StageType::Execution => "execution",
             StageType::Replan => "replan",
-            StageType::Reflection => "reflection",
         }
     }
 
@@ -325,7 +324,7 @@ impl PromptRepository {
             "planning" => StageType::Planning,
             "execution" => StageType::Execution,
             "replan" => StageType::Replan,
-            _ => StageType::Reflection,
+            _ => StageType::Replan, // Default to Replan for unknown stages
         }
     }
 }

@@ -39,6 +39,7 @@ pub struct ExecutionStatistics {
 }
 
 /// Plan-and-Execute数据库仓库
+#[derive(Debug)]
 pub struct PlanExecuteRepository {
     /// 数据库连接池
     pool: SqlitePool,

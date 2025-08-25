@@ -24,6 +24,8 @@ pub mod batch_progress_manager;
 // 统一工具系统
 pub mod unified_types;
 pub mod unified_manager;
+pub mod error_classifier;
+pub mod error_config_loader;
 
 // 框架适配器系统
 pub mod framework_adapters;
@@ -56,6 +58,8 @@ pub use batch_progress_manager::{
 // 重新导出统一工具系统
 pub use unified_types::*;
 pub use unified_manager::*;
+pub use error_classifier::*;
+pub use error_config_loader::*;
 
 // 重新导出框架适配器系统
 pub use framework_adapters::{

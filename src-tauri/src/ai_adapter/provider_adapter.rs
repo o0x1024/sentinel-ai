@@ -7,7 +7,6 @@ use async_trait::async_trait;
 
 use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
-use crate::ai_adapter::raw_message::*;
 
 /// AI提供商适配器trait
 #[async_trait]
@@ -40,17 +39,17 @@ pub trait AiProviderAdapter: Send + Sync {
     async fn send_raw_chat_request(
         &self,
         model: &str,
-        request: RawChatRequest,
-        options: Option<&RawChatOptions>,
-    ) -> Result<RawChatResponse>;
+        request: ChatRequest,
+        options: Option<&ChatOptions>,
+    ) -> Result<ChatResponse>;
     
     /// 发送原始流式聊天请求
     async fn send_raw_chat_stream(
         &self,
         model: &str,
-        request: RawChatRequest,
-        options: Option<&RawChatOptions>,
-    ) -> Result<RawChatStreamResponse>;
+        request: ChatRequest,
+        options: Option<&ChatOptions>,
+    ) -> Result<ChatStreamResponse>;
 }
 
 /// 基础提供商适配器实现
@@ -141,9 +140,9 @@ impl AiProviderAdapter for BaseProviderAdapter {
     async fn send_raw_chat_request(
         &self,
         _model: &str,
-        _request: RawChatRequest,
-        _options: Option<&RawChatOptions>,
-    ) -> Result<RawChatResponse> {
+        _request: ChatRequest,
+        _options: Option<&ChatOptions>,
+    ) -> Result<ChatResponse> {
         Err(AiAdapterError::ProviderNotSupportedError(
             "Base adapter does not implement send_raw_chat_request".to_string()
         ))
@@ -152,9 +151,9 @@ impl AiProviderAdapter for BaseProviderAdapter {
     async fn send_raw_chat_stream(
         &self,
         _model: &str,
-        _request: RawChatRequest,
-        _options: Option<&RawChatOptions>,
-    ) -> Result<RawChatStreamResponse> {
+        _request: ChatRequest,
+        _options: Option<&ChatOptions>,
+    ) -> Result<ChatStreamResponse> {
         Err(AiAdapterError::ProviderNotSupportedError(
             "Base adapter does not implement send_raw_chat_stream".to_string()
         ))

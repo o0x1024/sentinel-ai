@@ -2,12 +2,13 @@ use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::{AiConfig, AiServiceManager, AiToolCall};
 use crate::services::database::{Database, DatabaseService};
 use anyhow::Result;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
-
+use uuid::Uuid;
 
 // DTO for Tauri command argument to avoid CommandArg bound issues
 #[derive(Debug, Clone, Deserialize)]
@@ -85,16 +86,24 @@ pub struct SendMessageRequest {
     pub service_name: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SaveMessageRequest {
+    pub conversation_id: String,
+    pub role: String,
+    pub content: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SendStreamMessageRequest {
     pub conversation_id: String,
     pub message: String,
-    pub service_name: Option<String>,
+    pub service_name: String,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     pub system_prompt: Option<String>,
+    pub message_id: Option<String>, // 前端传递的消息ID
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -152,6 +161,11 @@ pub struct SaveAiConfigRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct SetDefaultProviderRequest {
+    pub provider: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AiServiceStatusResponse {
     pub provider: String,
     pub is_available: bool,
@@ -185,6 +199,129 @@ pub async fn list_ai_services(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<Vec<String>, String> {
     Ok(ai_manager.list_services())
+}
+
+// 发送流式聊天消息
+#[tauri::command]
+pub async fn send_ai_stream_message(
+    request: SendStreamMessageRequest,
+    app_handle: AppHandle,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<String, String> {
+    tracing::info!(
+        "Starting stream message for conversation: {}",
+        request.conversation_id
+    );
+
+    // 获取AI服务，如果指定了provider和model，则动态创建服务配置
+    let service = if let (Some(provider), Some(model)) = (&request.provider, &request.model) {
+        tracing::info!("Creating dynamic AI service with provider: {}, model: {}", provider, model);
+        
+        // 从AI管理器获取提供商配置
+        if let Ok(Some(provider_config)) = ai_manager.get_provider_config(provider).await {
+            // 创建临时服务配置，使用指定的模型
+            let mut dynamic_config = provider_config;
+            dynamic_config.model = model.clone();
+            
+            if let Some(temp) = request.temperature {
+                dynamic_config.temperature = Some(temp);
+            }
+            if let Some(max_tokens) = request.max_tokens {
+                dynamic_config.max_tokens = Some(max_tokens);
+            }
+            
+            // 创建临时AI服务
+            let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
+            let mcp_service = ai_manager.get_mcp_service();
+            
+            let mut temp_service = crate::services::ai::AiService::new(
+                dynamic_config,
+                db_service.inner().clone(),
+                Some(app_handle.clone()),
+                mcp_service,
+            );
+            temp_service.set_app_handle(app_handle.clone());
+            temp_service
+        } else {
+            tracing::warn!("Provider {} not found, falling back to default service", provider);
+            let mut default_service = ai_manager
+                .get_service(&request.service_name)
+                .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
+            default_service.set_app_handle(app_handle.clone());
+            default_service
+        }
+    } else {
+        // 使用默认服务
+        let mut service = ai_manager
+            .get_service(&request.service_name)
+            .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
+        service.set_app_handle(app_handle.clone());
+        service
+    };
+
+    // 使用前端传递的消息ID，如果没有则生成新的
+    let message_id = request
+        .message_id
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    // 创建取消令牌
+    let _cancellation_token = create_cancellation_token(&request.conversation_id);
+
+    // 在后台执行流式聊天，直接使用AI服务的流式响应
+    let conversation_id = request.conversation_id.clone();
+    let message = request.message.clone();
+    let service_clone = service.clone();
+    let system_prompt = request.system_prompt.clone();
+    let message_id_clone = message_id.clone();
+
+    tokio::spawn(async move {
+        // 发送开始事件（为了与前端配合）
+        if let Err(e) = app_handle.emit(
+            "ai_stream_start",
+            &serde_json::json!({
+                "conversation_id": conversation_id,
+                "message_id": message_id_clone
+            }),
+        ) {
+            tracing::error!("Failed to emit stream start event: {}", e);
+        }
+
+        // 直接调用AI服务的流式方法，它内部已经处理所有的事件发送
+        match service_clone
+            .send_message_stream(
+                &message,
+                system_prompt.as_deref(),
+                Some(conversation_id.clone()),
+                true,                           // enable_events
+                Some(message_id_clone.clone()), // 传递消息ID
+            )
+            .await
+        {
+            Ok(_response_content) => {
+                tracing::info!(
+                    "Stream chat completed successfully for conversation: {}",
+                    conversation_id
+                );
+            }
+            Err(e) => {
+                tracing::error!("Stream chat failed: {}", e);
+                // AI服务内部已经处理了错误事件发送，这里不需要重复发送
+            }
+        }
+
+        // 清理取消令牌
+        remove_cancellation_token(&conversation_id);
+    });
+
+    Ok(message_id)
+}
+
+// 取消流式聊天
+#[tauri::command]
+pub async fn cancel_ai_stream(conversation_id: String) -> Result<(), String> {
+    tracing::info!("Cancelling stream for conversation: {}", conversation_id);
+    cancel_conversation_stream(&conversation_id);
+    Ok(())
 }
 
 // 打印所有AI对话消息
@@ -358,6 +495,7 @@ pub async fn send_ai_message(
     request: SendMessageRequest,
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<String, String> {
+    tracing::info!("Sending AI message: {:?}", request);
     if let Some(service) = ai_manager.get_service(&request.service_name) {
         service
             .send_message(&request.message, Some(request.conversation_id))
@@ -368,20 +506,29 @@ pub async fn send_ai_message(
     }
 }
 
-// 发送AI消息（流式）- 统一入口，通过多Agent调度系统
+// 仅保存AI消息到对话（不触发模型回复）
 #[tauri::command]
-pub async fn send_ai_message_stream(
-    _request: SendStreamMessageRequest,
-    _app: tauri::AppHandle,
-) {
-    
+pub async fn save_ai_message(
+    request: SaveMessageRequest,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    let message = AiMessage {
+        id: Uuid::new_v4().to_string(),
+        conversation_id: request.conversation_id,
+        role: request.role,
+        content: request.content,
+        metadata: None,
+        token_count: None,
+        cost: None,
+        tool_calls: None,
+        attachments: None,
+        timestamp: Utc::now(),
+    };
 
-   
+    db.create_ai_message(&message)
+        .await
+        .map_err(|e| e.to_string())
 }
-
-// run_ai_interaction_cycle 函数已移除
-// 该功能现在由多Agent调度系统处理
-
 
 // 删除AI对话
 #[tauri::command]
@@ -493,9 +640,12 @@ pub async fn configure_ai_service(
             "anthropic" => "ANTHROPIC_API_KEY",
             "gemini" => "GEMINI_API_KEY",
             "deepseek" => "DEEPSEEK_API_KEY",
+            "moonshot" => "MOONSHOT_API_KEY",
             "groq" => "GROQ_API_KEY",
             "cohere" => "COHERE_API_KEY",
             "xai" => "XAI_API_KEY",
+            "openrouter" => "OPENROUTER_API_KEY",
+            "modelscope" => "MODEL_SCOPE_API_KEY",
             _ => {
                 tracing::warn!("Unknown AI provider: {}", config.provider);
                 return Err(format!("Unsupported AI provider: {}", config.provider));
@@ -563,118 +713,7 @@ pub async fn get_ai_conversation_history(
 // 获取所有可用的AI模型
 #[tauri::command]
 pub async fn get_available_ai_models() -> Result<Vec<AiModelInfo>, String> {
-    let mut models = Vec::new();
-
-    // 基于环境变量返回默认模型列表
-    // 这个函数主要用于初始化，实际的模型列表由前端通过update_ai_models命令更新
-
-    // OpenAI模型
-    if std::env::var("OPENAI_API_KEY").is_ok() {
-        models.push(AiModelInfo {
-            provider: "openai".to_string(),
-            models: vec![
-                "gpt-4o".to_string(),
-                "gpt-4o-mini".to_string(),
-                "gpt-4-turbo".to_string(),
-                "gpt-4".to_string(),
-                "gpt-3.5-turbo".to_string(),
-            ],
-        });
-    }
-
-    // Anthropic模型
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        models.push(AiModelInfo {
-            provider: "anthropic".to_string(),
-            models: vec![
-                "claude-3-opus-20240229".to_string(),
-                "claude-3-sonnet-20240229".to_string(),
-                "claude-3-haiku-20240307".to_string(),
-                "claude-2.1".to_string(),
-                "claude-2.0".to_string(),
-                "claude-instant-1.2".to_string(),
-            ],
-        });
-    }
-
-    // Gemini模型
-    if std::env::var("GEMINI_API_KEY").is_ok() {
-        models.push(AiModelInfo {
-            provider: "gemini".to_string(),
-            models: vec![
-                "gemini-2.0-pro".to_string(),
-                "gemini-2.0-flash".to_string(),
-                "gemini-1.5-pro".to_string(),
-                "gemini-1.5-flash".to_string(),
-                "gemini-1.0-pro".to_string(),
-            ],
-        });
-    }
-
-    // DeepSeek模型
-    if std::env::var("DEEPSEEK_API_KEY").is_ok() {
-        models.push(AiModelInfo {
-            provider: "deepseek".to_string(),
-            models: vec![
-                "deepseek-coder".to_string(),
-                "deepseek-chat".to_string(),
-                "deepseek-llm-7b".to_string(),
-                "deepseek-llm-67b".to_string(),
-            ],
-        });
-    }
-
-    // xAI模型
-    if std::env::var("XAI_API_KEY").is_ok() {
-        models.push(AiModelInfo {
-            provider: "xai".to_string(),
-            models: vec!["grok-1".to_string()],
-        });
-    }
-
-    // Groq模型
-    if std::env::var("GROQ_API_KEY").is_ok() {
-        models.push(AiModelInfo {
-            provider: "groq".to_string(),
-            models: vec![
-                "llama3-8b-8192".to_string(),
-                "llama3-70b-8192".to_string(),
-                "mixtral-8x7b-32768".to_string(),
-            ],
-        });
-    }
-
-    // Cohere模型
-    if std::env::var("COHERE_API_KEY").is_ok() {
-        models.push(AiModelInfo {
-            provider: "cohere".to_string(),
-            models: vec![
-                "command-r".to_string(),
-                "command-r-plus".to_string(),
-                "command-light".to_string(),
-            ],
-        });
-    }
-
-    // Ollama模型（本地模型，不需要API密钥）
-    models.push(AiModelInfo {
-        provider: "ollama".to_string(),
-        models: vec![
-            "llama3.2:3b".to_string(),
-            "llama3.2:8b".to_string(),
-            "llama3.2:70b".to_string(),
-            "llama3:8b".to_string(),
-            "llama3:70b".to_string(),
-            "mistral:7b".to_string(),
-            "mixtral:8x7b".to_string(),
-            "codellama:7b".to_string(),
-            "codellama:13b".to_string(),
-            "codellama:34b".to_string(),
-            "phi3:mini".to_string(),
-            "phi3:medium".to_string(),
-            "phi3:small".to_string(),
-        ],
-    });
+    let models = Vec::new();
 
     Ok(models)
 }
@@ -721,7 +760,10 @@ pub async fn get_provider_models(
         "anthropic" => test_anthropic_connection(request).await?,
         "gemini" => test_gemini_connection(request).await?,
         "deepseek" => test_deepseek_connection(request).await?,
+        "moonshot" => test_moonshot_connection(request).await?,
         "ollama" => test_ollama_connection(request).await?,
+        "openrouter" => test_openrouter_connection(request).await?,
+        "modelscope" => test_modelscope_connection(request).await?,
         _ => return Err(format!("Unsupported AI provider: {}", provider)),
     };
 
@@ -743,12 +785,183 @@ pub async fn test_ai_connection(
         "anthropic" => test_anthropic_connection(request).await,
         "gemini" => test_gemini_connection(request).await,
         "deepseek" => test_deepseek_connection(request).await,
+        "moonshot" => test_moonshot_connection(request).await,
         "ollama" => test_ollama_connection(request).await,
+        "openrouter" => test_openrouter_connection(request).await,
+        "modelscope" => test_modelscope_connection(request).await,
         _ => Ok(TestConnectionResponse {
             success: false,
             message: format!("Unsupported AI provider: {}", request.provider),
             models: None,
         }),
+    }
+}
+
+// 测试ModelScope连接
+async fn test_modelscope_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
+    if request.api_key.is_none() {
+        return Ok(TestConnectionResponse {
+            success: false,
+            message: "ModelScope API key cannot be empty".to_string(),
+            models: None,
+        });
+    }
+
+    let client = reqwest::Client::new();
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "https://api-inference.modelscope.cn/v1/models".to_string());
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "Authorization",
+        format!("Bearer {}", request.api_key.unwrap())
+            .parse()
+            .map_err(|e| format!("无效的API密钥: {}", e))?,
+    );
+
+    if let Some(org) = &request.organization {
+        if !org.is_empty() {
+            headers.insert(
+                "x-title",
+                org.parse().map_err(|e| format!("无效的组织ID: {}", e))?,
+            );
+        }
+    }
+
+    // 测试连接 - 获取模型列表
+    let response = client
+        .get(format!("{}/models", api_base))
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to ModelScope: {}", e))?;
+
+    if response.status().is_success() {
+        let models_response: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        // 提取模型ID列表
+        if let Some(models_array) = models_response.get("data").and_then(|d| d.as_array()) {
+            let models: Vec<String> = models_array
+                .iter()
+                .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
+                .collect();
+
+            Ok(TestConnectionResponse {
+                success: true,
+                message: format!(
+                    "Successfully connected to ModelScope, found {} models",
+                    models.len()
+                ),
+                models: Some(models),
+            })
+        } else {
+            Ok(TestConnectionResponse {
+                success: true,
+                message: "Successfully connected to ModelScope, but failed to get model list"
+                    .to_string(),
+                models: None,
+            })
+        }
+    } else {
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        Ok(TestConnectionResponse {
+            success: false,
+            message: format!("Failed to connect to ModelScope: {}", error_text),
+            models: None,
+        })
+    }
+}
+
+// 测试OpenRouter连接
+pub async fn test_openrouter_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
+    if request.api_key.is_none() {
+        return Ok(TestConnectionResponse {
+            success: false,
+            message: "OpenRouter API key cannot be empty".to_string(),
+            models: None,
+        });
+    }
+
+    let client = reqwest::Client::new();
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "Authorization",
+        format!("Bearer {}", request.api_key.unwrap())
+            .parse()
+            .map_err(|e| format!("无效的API密钥: {}", e))?,
+    );
+
+    if let Some(org) = &request.organization {
+        if !org.is_empty() {
+            headers.insert(
+                "x-title",
+                org.parse().map_err(|e| format!("无效的组织ID: {}", e))?,
+            );
+        }
+    }
+
+    // 测试连接 - 获取模型列表
+    let response = client
+        .get(format!("{}/models", api_base))
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to OpenRouter: {}", e))?;
+
+    if response.status().is_success() {
+        let models_response: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        // 提取模型ID列表
+        if let Some(models_array) = models_response.get("data").and_then(|d| d.as_array()) {
+            let models: Vec<String> = models_array
+                .iter()
+                .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
+                .collect();
+
+            Ok(TestConnectionResponse {
+                success: true,
+                message: format!(
+                    "Successfully connected to OpenRouter, found {} models",
+                    models.len()
+                ),
+                models: Some(models),
+            })
+        } else {
+            Ok(TestConnectionResponse {
+                success: true,
+                message: "Successfully connected to ModelScope, but failed to get model list"
+                    .to_string(),
+                models: None,
+            })
+        }
+    } else {
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        Ok(TestConnectionResponse {
+            success: false,
+            message: format!("Failed to connect to ModelScope: {}", error_text),
+            models: None,
+        })
     }
 }
 
@@ -1045,10 +1258,8 @@ async fn test_deepseek_connection(
                 success: true,
                 message: "Successfully connected to DeepSeek, using default model list".to_string(),
                 models: Some(vec![
-                    "deepseek-coder".to_string(),
+                    "deepseek-reasoner".to_string(),
                     "deepseek-chat".to_string(),
-                    "deepseek-llm-7b".to_string(),
-                    "deepseek-llm-67b".to_string(),
                 ]),
             })
         }
@@ -1123,6 +1334,85 @@ async fn test_ollama_connection(
     }
 }
 
+// 测试Moonshot连接
+async fn test_moonshot_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
+    if request.api_key.is_none() {
+        return Ok(TestConnectionResponse {
+            success: false,
+            message: "Moonshot API key cannot be empty".to_string(),
+            models: None,
+        });
+    }
+
+    let client = reqwest::Client::new();
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "https://api.moonshot.cn/v1".to_string());
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "Authorization",
+        format!("Bearer {}", request.api_key.unwrap())
+            .parse()
+            .map_err(|e| format!("无效的API密钥: {}", e))?,
+    );
+
+    // 测试连接 - 获取模型列表
+    let response = client
+        .get(format!("{}/models", api_base))
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to Moonshot: {}", e))?;
+
+    if response.status().is_success() {
+        let models_response: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        // 提取模型ID列表
+        if let Some(models_array) = models_response.get("data").and_then(|d| d.as_array()) {
+            let models: Vec<String> = models_array
+                .iter()
+                .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
+                .collect();
+
+            Ok(TestConnectionResponse {
+                success: true,
+                message: format!(
+                    "Successfully connected to Moonshot, found {} models",
+                    models.len()
+                ),
+                models: Some(models),
+            })
+        } else {
+            // 如果无法解析模型列表，使用默认模型
+            Ok(TestConnectionResponse {
+                success: true,
+                message: "Successfully connected to Moonshot, using default model list".to_string(),
+                models: Some(vec![
+                    "moonshot-v1-8k".to_string(),
+                    "moonshot-v1-32k".to_string(),
+                    "moonshot-v1-128k".to_string(),
+                ]),
+            })
+        }
+    } else {
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "未知错误".to_string());
+        Ok(TestConnectionResponse {
+            success: false,
+            message: format!("Failed to connect to Moonshot: {}", error_text),
+            models: None,
+        })
+    }
+}
+
 // 保存AI配置
 #[tauri::command]
 pub async fn save_ai_config(
@@ -1187,10 +1477,10 @@ pub async fn save_ai_config(
                 if models.is_empty() {
                     tracing::warn!("No chat models found after reloading AI services");
                 } else {
-                    tracing::info!("Successfully loaded {} chat models", models.len());
-                    for model in &models {
-                        tracing::info!("  - {}/{}", model.provider, model.name);
-                    }
+                    // tracing::info!("Successfully loaded {} chat models", models.len());
+                    // for model in &models {
+                    //     tracing::info!("  - {}/{}", model.provider, model.name);
+                    // }
                 }
             }
             Err(e) => {
@@ -1207,6 +1497,48 @@ pub async fn save_ai_config(
         tracing::warn!("Failed to emit ai_config_updated event: {}", e);
     } else {
         tracing::info!("Emitted ai_config_updated event to frontend");
+    }
+
+    Ok(())
+}
+
+/// 设置全局默认 AI Provider（保存到DB并更新运行态别名与全局适配器默认）
+#[tauri::command]
+pub async fn set_default_provider(
+    request: SetDefaultProviderRequest,
+    db: State<'_, Arc<DatabaseService>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let provider = request.provider.to_lowercase();
+
+    // 保存到数据库
+    db.set_config(
+        "ai",
+        "default_provider",
+        &provider,
+        Some("Global default AI provider"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 应用到运行时：调整 default 别名并设置全局适配器默认 provider
+    if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
+        if let Err(e) = ai_manager.set_default_alias_to(&provider).await {
+            tracing::warn!("Failed to update default alias: {}", e);
+        }
+    }
+
+    if let Ok(adapter_manager) = crate::ai_adapter::core::AiAdapterManager::global().get_client() {
+        if let Ok(mut client) = adapter_manager.write() {
+            if let Err(e) = client.set_default_provider(&provider) {
+                tracing::warn!("Failed to set global default provider in adapter: {}", e);
+            }
+        }
+    }
+
+    // 通知前端
+    if let Err(e) = app.emit("ai_default_provider_updated", &provider) {
+        tracing::warn!("Failed to emit ai_default_provider_updated event: {}", e);
     }
 
     Ok(())
@@ -1360,10 +1692,10 @@ pub async fn get_ai_chat_models(
             if models.is_empty() {
                 tracing::warn!("No chat models found");
             } else {
-                tracing::info!("Found {} chat models", models.len());
-                for model in &models {
-                    tracing::info!("  - {}/{}", model.provider, model.name);
-                }
+                // tracing::info!("Found {} chat models", models.len());
+                // for model in &models {
+                //     tracing::info!("  - {}/{}", model.provider, model.name);
+                // }
             }
             Ok(models)
         }
@@ -1527,62 +1859,66 @@ pub async fn get_ai_config(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<serde_json::Value, String> {
     tracing::info!("Getting AI configuration");
-    
+
     // 构建AI配置对象
     let mut ai_config = serde_json::json!({
         "providers": {}
     });
-    
+
     // 从数据库获取AI提供商配置
     match db.get_config("ai", "providers_config").await {
         Ok(Some(providers_json)) => {
             if let Ok(providers) = serde_json::from_str::<serde_json::Value>(&providers_json) {
                 ai_config["providers"] = providers;
             }
-        },
+        }
         Ok(None) => {
             tracing::info!("No AI providers configuration found, using defaults from @ai_adapter");
             // 返回默认提供商配置（未启用，便于前端展示并填写）
             ai_config["providers"] = default_providers_config();
-        },
+        }
         Err(e) => {
             tracing::warn!("Failed to load AI providers configuration: {}", e);
             // 发生错误时也提供默认配置，避免前端空列表
             ai_config["providers"] = default_providers_config();
         }
     }
-    
+
     // 获取其他AI配置项
     if let Ok(Some(default_provider)) = db.get_config("ai", "default_provider").await {
         ai_config["default_provider"] = serde_json::Value::String(default_provider);
     }
-    
+
     if let Ok(Some(default_model)) = db.get_config("ai", "default_model").await {
         ai_config["default_model"] = serde_json::Value::String(default_model);
     }
-    
+
     if let Ok(Some(system_prompt)) = db.get_config("ai", "system_prompt").await {
         ai_config["system_prompt"] = serde_json::Value::String(system_prompt);
     }
-    
+
     if let Ok(Some(temperature_str)) = db.get_config("ai", "temperature").await {
         if let Ok(temperature) = temperature_str.parse::<f64>() {
-            ai_config["temperature"] = serde_json::Value::Number(serde_json::Number::from_f64(temperature).unwrap_or(serde_json::Number::from_f64(0.7).unwrap()));
+            ai_config["temperature"] = serde_json::Value::Number(
+                serde_json::Number::from_f64(temperature)
+                    .unwrap_or(serde_json::Number::from_f64(0.7).unwrap()),
+            );
         }
     }
-    
+
     if let Ok(Some(max_tokens_str)) = db.get_config("ai", "max_tokens").await {
         if let Ok(max_tokens) = max_tokens_str.parse::<u32>() {
-            ai_config["max_tokens"] = serde_json::Value::Number(serde_json::Number::from(max_tokens));
+            ai_config["max_tokens"] =
+                serde_json::Value::Number(serde_json::Number::from(max_tokens));
         }
     }
-    
+
     if let Ok(Some(stream_response_str)) = db.get_config("ai", "stream_response").await {
         if let Ok(stream_response) = stream_response_str.parse::<bool>() {
             ai_config["stream_response"] = serde_json::Value::Bool(stream_response);
         }
     }
-    
+
     tracing::info!("Successfully retrieved AI configuration");
     Ok(ai_config)
 }
@@ -1691,6 +2027,20 @@ fn default_providers_config() -> serde_json::Value {
             }),
         ),
         (
+            "Moonshot",
+            json!({
+                "id": "moonshot",
+                "provider": "moonshot",
+                "name": "Moonshot AI",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.moonshot.cn/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
             "xAI",
             json!({
                 "id": "xai",
@@ -1699,6 +2049,36 @@ fn default_providers_config() -> serde_json::Value {
                 "enabled": false,
                 "api_key": null,
                 "api_base": "https://api.x.ai/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "OpenRouter",
+            json!({
+                "id": "openrouter",
+                "provider": "openrouter",
+                "name": "OpenRouter",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://openrouter.ai/api/v1",
+                "organization": null,
+                "default_model": "",
+                "models": [],
+                "http_referer": null,
+                "x_title": null
+            }),
+        ),
+        (
+            "ModelScope",
+            json!({
+                "id": "modelscope",
+                "provider": "modelscope",
+                "name": "ModelScope",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api-inference.modelscope.cn/v1",
                 "organization": null,
                 "default_model": "",
                 "models": []
@@ -1721,12 +2101,12 @@ pub async fn get_scheduler_config(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<crate::services::ai::SchedulerConfig, String> {
     tracing::info!("Getting scheduler configuration");
-    
+
     match ai_manager.get_scheduler_config().await {
         Ok(config) => {
             tracing::info!("Successfully retrieved scheduler configuration");
             Ok(config)
-        },
+        }
         Err(e) => {
             let error_msg = format!("Failed to get scheduler configuration: {}", e);
             tracing::error!("{}", error_msg);
@@ -1742,7 +2122,7 @@ pub async fn save_scheduler_config(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     tracing::info!("Saving scheduler configuration");
-    
+
     // 保存各个阶段的模型配置
     db.set_config(
         "scheduler",
@@ -1752,7 +2132,7 @@ pub async fn save_scheduler_config(
     )
     .await
     .map_err(|e| e.to_string())?;
-    
+
     db.set_config(
         "scheduler",
         "planner_model",
@@ -1761,7 +2141,7 @@ pub async fn save_scheduler_config(
     )
     .await
     .map_err(|e| e.to_string())?;
-    
+
     db.set_config(
         "scheduler",
         "replanner_model",
@@ -1770,7 +2150,7 @@ pub async fn save_scheduler_config(
     )
     .await
     .map_err(|e| e.to_string())?;
-    
+
     db.set_config(
         "scheduler",
         "executor_model",
@@ -1779,7 +2159,7 @@ pub async fn save_scheduler_config(
     )
     .await
     .map_err(|e| e.to_string())?;
-    
+
     db.set_config(
         "scheduler",
         "evaluator_model",
@@ -1788,7 +2168,7 @@ pub async fn save_scheduler_config(
     )
     .await
     .map_err(|e| e.to_string())?;
-    
+
     // 保存默认重规划策略
     db.set_config(
         "scheduler",
@@ -1798,7 +2178,7 @@ pub async fn save_scheduler_config(
     )
     .await
     .map_err(|e| e.to_string())?;
-    
+
     tracing::info!("Successfully saved scheduler configuration");
     Ok(())
 }
@@ -1810,7 +2190,7 @@ pub async fn get_service_for_stage(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<Option<AiServiceInfo>, String> {
     tracing::info!("Getting AI service for stage: {:?}", stage);
-    
+
     match ai_manager.get_service_for_stage(stage.clone()).await {
         Ok(Some(service)) => {
             let config = service.get_config();
@@ -1819,13 +2199,18 @@ pub async fn get_service_for_stage(
                 provider: config.provider.clone(),
                 model: config.model.clone(),
             };
-            tracing::info!("Found service for stage {:?}: {}/{}", stage, info.provider, info.model);
+            tracing::info!(
+                "Found service for stage {:?}: {}/{}",
+                stage,
+                info.provider,
+                info.model
+            );
             Ok(Some(info))
-        },
+        }
         Ok(None) => {
             tracing::warn!("No service found for stage {:?}", stage);
             Ok(None)
-        },
+        }
         Err(e) => {
             let error_msg = format!("Failed to get service for stage {:?}: {}", stage, e);
             tracing::error!("{}", error_msg);

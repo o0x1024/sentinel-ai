@@ -294,7 +294,9 @@ export interface LlmConfigRequest {
 export enum LlmProvider {
   OpenAI = 'openai',
   Anthropic = 'anthropic',
-  Google = 'google'
+  Google = 'google',
+  ModelScope = 'modelscope',
+  OpenRouter = 'openrouter'
 }
 
 /**

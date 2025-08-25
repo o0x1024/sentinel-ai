@@ -1,0 +1,114 @@
+# MCP工具错误分类配置
+# 此文件定义了如何分类和处理MCP工具执行错误
+
+# 全局配置
+[global]
+# 默认最大重试次数
+max_retries = 3
+# 默认超时时间（毫秒）
+default_timeout_ms = 30000
+
+# 错误分类规则
+# 规则按优先级执行，数字越大优先级越高
+
+[[rules]]
+name = "Browser Context Closed"
+priority = 100
+error_code = -32603
+message_pattern = "(?i)(target page|context|browser).*closed|page\\.goto.*closed"
+category = "ResourceUnavailable"
+recovery_strategy = { DelayedReconnect = { delay_ms = 2000 } }
+
+[[rules]]
+name = "Playwright Browser Error"
+priority = 95
+message_pattern = "(?i)playwright.*browser.*closed|browser.*disconnected"
+category = "ResourceUnavailable"
+recovery_strategy = { DelayedReconnect = { delay_ms = 1500 } }
+
+[[rules]]
+name = "Transport Connection Error"
+priority = 90
+message_pattern = "(?i)transport\\s+(closed|error|failed)|connection\\s+(closed|lost|failed)"
+category = "Transport"
+recovery_strategy = { ExponentialBackoff = { initial_delay_ms = 1000, max_delay_ms = 30000, multiplier = 2.0 } }
+
+[[rules]]
+name = "Serialization Error"
+priority = 80
+message_pattern = "(?i)serde\\s+error|serialization|deserialization|json\\s+parse"
+category = "Serialization"
+recovery_strategy = "ImmediateReconnect"
+
+[[rules]]
+name = "Broken Pipe"
+priority = 85
+message_pattern = "(?i)broken\\s+pipe|pipe\\s+error"
+category = "Transport"
+recovery_strategy = { DelayedReconnect = { delay_ms = 1500 } }
+
+[[rules]]
+name = "Stream Read Error"
+priority = 75
+message_pattern = "(?i)error\\s+reading\\s+from\\s+stream|stream\\s+error"
+category = "Transport"
+recovery_strategy = { DelayedReconnect = { delay_ms = 1000 } }
+
+[[rules]]
+name = "Timeout Error"
+priority = 70
+error_code = -32003
+message_pattern = "(?i)timeout|timed\\s+out"
+category = "Timeout"
+recovery_strategy = { DelayedReconnect = { delay_ms = 2000 } }
+
+[[rules]]
+name = "Authentication Error"
+priority = 65
+message_pattern = "(?i)auth|unauthorized|forbidden|permission"
+category = "Authentication"
+recovery_strategy = "NoRetry"
+
+[[rules]]
+name = "Server Internal Error"
+priority = 60
+error_code = -32603
+category = "ServerInternal"
+recovery_strategy = { DelayedReconnect = { delay_ms = 3000 } }
+
+[[rules]]
+name = "Method Not Found"
+priority = 50
+error_code = -32601
+category = "NonRecoverable"
+recovery_strategy = "NoRetry"
+
+[[rules]]
+name = "Invalid Parameters"
+priority = 50
+error_code = -32602
+category = "NonRecoverable"
+recovery_strategy = "NoRetry"
+
+# 特定工具的自定义规则
+[tool_specific]
+
+# Playwright工具特定配置
+[tool_specific.playwright]
+max_retries = 5  # 浏览器工具允许更多重试
+[[tool_specific.playwright.rules]]
+name = "Page Navigation Timeout"
+priority = 110
+message_pattern = "(?i)page\\.goto.*timeout|navigation.*timeout"
+category = "Timeout"
+recovery_strategy = { DelayedReconnect = { delay_ms = 5000 } }
+
+# 网络工具特定配置
+[tool_specific.network]
+max_retries = 2  # 网络工具重试次数较少
+[[tool_specific.network.rules]]
+name = "Network Unreachable"
+priority = 80
+message_pattern = "(?i)network\\s+unreachable|host\\s+unreachable"
+category = "NonRecoverable"
+recovery_strategy = "NoRetry"

@@ -6,6 +6,7 @@ use crate::ai_adapter::core::AiAdapterManager;
 use crate::ai_adapter::types::{ChatRequest, Message, MessageRole, ChatOptions};
 use crate::services::prompt_db::PromptRepository;
 use crate::services::mcp::McpService;
+use crate::services::ai::{AiServiceManager, SchedulerStage};
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::engines::plan_and_execute::types::*;
 use crate::tools::{ToolInfo};
@@ -131,6 +132,7 @@ pub struct Planner {
     prompt_repo: Option<PromptRepository>,
     framework_adapter: Option<Arc<dyn crate::tools::FrameworkToolAdapter>>,
     mcp_service: Option<Arc<McpService>>,
+    ai_service_manager: Option<Arc<AiServiceManager>>,
 }
 
 impl Planner {
@@ -138,9 +140,15 @@ impl Planner {
     pub fn new(config: PlannerConfig, prompt_repo: Option<PromptRepository>) -> Result<Self, PlanAndExecuteError> {
         let ai_manager = AiAdapterManager::global();
         
-        // 验证AI提供商是否可用
-        ai_manager.get_provider(&config.ai_provider)
-            .map_err(|e| PlanAndExecuteError::ConfigError(format!("AI provider '{}' not available: {}", config.ai_provider, e)))?;
+        // 验证AI提供商是否可用（仅在非空时校验；空由调度器/默认回退处理）
+        if !config.ai_provider.is_empty() {
+            if let Err(e) = ai_manager.get_provider_or_default(&config.ai_provider) {
+                log::warn!(
+                    "AI provider '{}' not registered at init: {}. Will resolve at runtime via scheduler or fallback.",
+                    config.ai_provider, e
+                );
+            }
+        }
         
         // 尝试获取Plan & Execute框架适配器
         let framework_adapter = match crate::tools::get_global_adapter_manager() {
@@ -164,6 +172,7 @@ impl Planner {
             prompt_repo,
             framework_adapter,
             mcp_service: None,
+            ai_service_manager: None,
         })
     }
 
@@ -175,9 +184,15 @@ impl Planner {
     ) -> Result<Self, PlanAndExecuteError> {
         let ai_manager = AiAdapterManager::global();
         
-        // 验证AI提供商是否可用
-        ai_manager.get_provider(&config.ai_provider)
-            .map_err(|e| PlanAndExecuteError::ConfigError(format!("AI provider '{}' not available: {}", config.ai_provider, e)))?;
+        // 验证AI提供商是否可用（仅在非空时校验；空由调度器/默认回退处理）
+        if !config.ai_provider.is_empty() {
+            if let Err(e) = ai_manager.get_provider_or_default(&config.ai_provider) {
+                log::warn!(
+                    "AI provider '{}' not registered at init: {}. Will resolve at runtime via scheduler or fallback.",
+                    config.ai_provider, e
+                );
+            }
+        }
         
         // 尝试获取Plan & Execute框架适配器
         let framework_adapter = match crate::tools::get_global_adapter_manager() {
@@ -201,7 +216,97 @@ impl Planner {
             prompt_repo,
             framework_adapter,
             mcp_service,
+            ai_service_manager: None,
         })
+    }
+
+    /// 创建带有AI服务管理器的规划器实例（用于动态模型切换）
+    pub fn with_ai_service_manager(
+        config: PlannerConfig, 
+        prompt_repo: Option<PromptRepository>,
+        mcp_service: Option<Arc<McpService>>,
+        ai_service_manager: Arc<AiServiceManager>,
+    ) -> Result<Self, PlanAndExecuteError> {
+        let ai_manager = AiAdapterManager::global();
+        
+        // 验证AI提供商是否可用（仅在非空时校验；空由调度器/默认回退处理）
+        if !config.ai_provider.is_empty() {
+            if let Err(e) = ai_manager.get_provider(&config.ai_provider) {
+                log::warn!(
+                    "AI provider '{}' not registered at init: {}. Will resolve at runtime via scheduler or fallback.",
+                    config.ai_provider, e
+                );
+            }
+        }
+        
+        // 尝试获取Plan & Execute框架适配器
+        let framework_adapter = match crate::tools::get_global_adapter_manager() {
+            Ok(_adapter_manager) => {
+                let adapter = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        crate::tools::get_framework_adapter(crate::tools::FrameworkType::PlanAndExecute).await
+                    })
+                });
+                match adapter {
+                    Ok(adapter) => Some(adapter),
+                    Err(e) => {
+                        log::warn!("Failed to get framework adapter: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to get framework adapter: {}", e);
+                None
+            }
+        };
+        
+        Ok(Self {
+            config,
+            ai_manager,
+            prompt_repo,
+            framework_adapter,
+            mcp_service,
+            ai_service_manager: Some(ai_service_manager),
+        })
+    }
+
+    /// 获取当前规划阶段应使用的AI配置
+    async fn get_planning_ai_config(&self) -> Result<Option<crate::services::ai::AiConfig>, PlanAndExecuteError> {
+        if let Some(ref ai_service_manager) = self.ai_service_manager {
+            match ai_service_manager.get_ai_config_for_stage(SchedulerStage::Planning).await {
+                Ok(config) => Ok(config),
+                Err(e) => {
+                    log::warn!("Failed to get AI config for planning stage: {}, using default", e);
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 对外暴露：根据调度阶段获取AI配置
+    pub async fn get_ai_config_for_stage(&self, stage: SchedulerStage) -> Result<Option<crate::services::ai::AiConfig>, PlanAndExecuteError> {
+        if let Some(ref ai_service_manager) = self.ai_service_manager {
+            match ai_service_manager.get_ai_config_for_stage(stage.clone()).await {
+                Ok(config) => Ok(config),
+                Err(e) => {
+                    log::warn!("Failed to get AI config for stage {:?}: {}", stage, e);
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 对外暴露：获取本地配置中的备用 provider 与 model
+    pub fn get_fallback_provider_and_model(&self) -> (String, String) {
+        (
+            self.config.ai_provider.clone(),
+            self.config.model_config.model_name.clone(),
+        )
     }
 
     /// 创建执行计划 - 基于通用 Prompt 模板
@@ -277,8 +382,15 @@ impl Planner {
 
     /// 获取默认规划模板
     fn get_default_planning_template(&self) -> String {
-        r#"你是一个Plan-and-Execute规划器。基于以下任务信息，生成一个由清晰、可执行步骤组成的计划。
+        r#"你是一个Plan-and-Execute规划器的战略层(Planner)。你的任务是将复杂问题分解为清晰的可执行步骤。
 
+Plan-and-Execute架构流程：
+1. Planner（战略层）：分析任务，生成初始计划
+2. Agent（执行层）：选择工具，执行具体步骤
+3. Tools（工具层）：调用具体工具，返回结果
+4. Replan（反思层）：评估结果，决定是否需要新计划
+
+任务信息：
 任务名称: {task_name}
 任务描述: {task_description}
 任务类型: {task_type}
@@ -289,26 +401,41 @@ impl Planner {
 可用工具（名称与参数签名）：
 {tools}
 
-重要：请严格以JSON返回，键为"steps"，每个步骤为一个对象，格式如下：
+**重要规划原则**：
+- 每个步骤应该是原子操作（一个步骤完成一个明确的子任务）
+- 步骤之间应该有逻辑依赖关系
+- 考虑可能的失败情况和重新规划需求
+- 优先使用ToolCall步骤来获取外部数据
+- 使用AiReasoning步骤来分析和综合信息
+
+严格按以下JSON格式返回计划：
 {
   "steps": [
     {
       "name": "步骤名称",
-      "description": "做什么、为什么",
-      "step_type": "ToolCall|AiReasoning|DataProcessing|Conditional|Parallel|Wait|ManualConfirmation",
+      "description": "清晰描述这一步要做什么，为什么需要这一步",
+      "step_type": "ToolCall|AiReasoning|DataProcessing|Conditional|Wait",
       "tool": {
-        "name": "可用工具名称",
-        "args": { "param1": "value", "param2": 123 }
+        "name": "工具名称",
+        "args": { "参数名": "参数值" }
       }
     }
   ]
 }
 
-规则：
-- 如需使用工具，必须提供tool.name与tool.args(JSON对象)，参数名需与工具签名匹配；
-- 不使用工具时，可省略tool字段或将step_type设置为AiReasoning等；
-- 步骤数量建议3-10；
-- 仅返回JSON，不要附加其它文本。"#.to_string()
+步骤类型说明：
+- ToolCall: 调用外部工具获取数据，必须提供tool字段
+- AiReasoning: AI分析推理，用于处理获取的数据
+- DataProcessing: 数据处理和转换
+- Conditional: 条件判断
+- Wait: 等待一段时间
+
+注意：
+1. 每个ToolCall步骤必须指定具体的tool.name和tool.args
+2. 工具参数必须与工具签名匹配
+3. 步骤数量建议2-6个，保持合理
+4. 只返回JSON，不要其他文本
+5. 确保步骤逻辑顺序正确"#.to_string()
     }
 
     /// 构建工具信息块
@@ -377,14 +504,40 @@ impl Planner {
 
     /// 调用 AI 进行规划
     async fn call_ai_for_planning(&self, prompt: &str) -> Result<String, PlanAndExecuteError> {
-        let provider = self.ai_manager.get_provider(&self.config.ai_provider)
+        // 尝试获取调度策略配置的规划模型
+        let ai_config = self.get_planning_ai_config().await?;
+        
+        let (provider_name, model_name) = if let Some(config) = ai_config {
+            log::info!("使用调度策略配置的规划模型: {} ({})", config.model, config.provider);
+            (config.provider, config.model)
+        } else {
+            log::info!("使用默认规划模型: {} ({})", self.config.model_config.model_name, self.config.ai_provider);
+            (self.config.ai_provider.clone(), self.config.model_config.model_name.clone())
+        };
+        
+        let provider = self.ai_manager.get_provider_or_default(&provider_name)
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
         
-        let request = self.build_ai_request(prompt)?;
-        let response = provider.send_chat_request(&request).await
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+        let request = self.build_ai_request_with_model(prompt, &model_name)?;
         
-        Ok(response.message.content.clone())
+        // 使用流式响应并收集结果
+        let mut stream = provider.send_chat_stream(&request).await
+            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+
+        let mut content = String::new();
+
+        // 收集流式响应
+        use futures::StreamExt;
+        while let Some(chunk_result) = stream.stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    content.push_str(&chunk.content);
+                }
+                Err(e) => return Err(PlanAndExecuteError::AiAdapterError(e.to_string())),
+            }
+        }
+        
+        Ok(content)
     }
 
     /// 解析规划响应
@@ -394,7 +547,7 @@ impl Planner {
             return Ok(plan);
         }
 
-        // 回退：解析为纯文本步骤
+        // 备用方案：解析为纯文本步骤
         let steps = self.extract_steps_from_response(response)?;
         let steps_count = steps.len();
         
@@ -428,11 +581,16 @@ impl Planner {
 
     /// JSON解析：从LLM返回的结构化计划中构建可执行计划
     fn parse_planning_response_json(&self, response: &str) -> Result<ExecutionPlan, PlanAndExecuteError> {
+        log::info!("开始解析规划响应JSON");
         let json_str = Self::extract_json_string(response)
             .ok_or_else(|| PlanAndExecuteError::PlanningFailed("No JSON content found in response".to_string()))?;
 
+        log::info!("提取的JSON字符串: {}", json_str);
+
         let json: Value = serde_json::from_str(&json_str)
             .map_err(|e| PlanAndExecuteError::PlanningFailed(format!("Invalid JSON plan: {}", e)))?;
+        
+        log::info!("JSON解析成功，开始解析steps数组");
 
         let steps_val = json.get("steps").ok_or_else(||
             PlanAndExecuteError::PlanningFailed("Missing 'steps' field in JSON plan".to_string())
@@ -446,7 +604,7 @@ impl Planner {
         for (i, step) in steps_arr.iter().enumerate() {
             let name = step.get("name").and_then(|v| v.as_str()).unwrap_or(&format!("Step {}", i + 1)).to_string();
             let description = step.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let mut step_type_str = step.get("step_type").and_then(|v| v.as_str()).unwrap_or("AiReasoning");
+            let step_type_str = step.get("step_type").and_then(|v| v.as_str()).unwrap_or("AiReasoning");
             let mut step_type = match step_type_str {
                 "ToolCall" => StepType::ToolCall,
                 "AiReasoning" => StepType::AiReasoning,
@@ -460,7 +618,10 @@ impl Planner {
 
             // 读取可选工具信息
             let mut tool_config: Option<ToolConfig> = None;
+            log::debug!("步骤 '{}' 的tool字段: {:?}", name, step.get("tool"));
             if let Some(tool_obj) = step.get("tool").and_then(|v| v.as_object()) {
+                log::debug!("解析步骤 '{}' 的工具配置: {:?}", name, tool_obj);
+                log::debug!("工具对象的name字段: {:?}", tool_obj.get("name"));
                 if let Some(tool_name) = tool_obj.get("name").and_then(|v| v.as_str()) {
                     // 解析args对象
                     let args_map = tool_obj.get("args").and_then(|v| v.as_object()).cloned().unwrap_or_default();
@@ -473,14 +634,27 @@ impl Planner {
                         timeout: Some(300),
                         env_vars: HashMap::new(),
                     });
+                    log::debug!("成功为步骤 '{}' 创建工具配置: {}", name, tool_name);
 
-                    // 如果包含工具但未显式声明为ToolCall，则强制为ToolCall
-                    if !matches!(step_type, StepType::ToolCall) {
+                    // 只有在非Wait类型且包含真实工具时才强制为ToolCall
+                    if !matches!(step_type, StepType::ToolCall | StepType::Wait) {
+                        log::debug!("步骤 '{}' 类型从 {:?} 强制更改为 ToolCall", name, step_type);
                         step_type = StepType::ToolCall;
-                        step_type_str = "ToolCall";
                     }
+                    
+                    // 如果是Wait类型但包含Wait工具配置，则清除工具配置
+                    if matches!(step_type, StepType::Wait) && tool_name == "Wait" {
+                        log::debug!("步骤 '{}' 是Wait类型，清除工具配置，使用内置Wait处理", name);
+                        tool_config = None;
+                    }
+                } else {
+                    log::debug!("步骤 '{}' 的工具对象没有name字段: {:?}", name, tool_obj);
                 }
+            } else {
+                log::debug!("步骤 '{}' 没有工具配置或工具不是对象类型", name);
             }
+            
+            log::info!("步骤 '{}': 类型={:?}, 工具配置={}", name, step_type, if tool_config.is_some() { "有" } else { "无" });
 
             built_steps.push(ExecutionStep {
                 id: format!("step_{}", i + 1),
@@ -512,6 +686,18 @@ impl Planner {
             metadata: HashMap::new(),
         };
 
+        // 验证创建的计划中每个步骤的工具配置
+        log::info!("验证创建的ExecutionPlan:");
+        for step in &plan.steps {
+            log::info!("  步骤 '{}': 类型={:?}, 工具配置={}", 
+                      step.name, step.step_type, 
+                      if let Some(ref config) = step.tool_config { 
+                          format!("有({})", config.tool_name) 
+                      } else { 
+                          "无".to_string() 
+                      });
+        }
+
         Ok(plan)
     }
 
@@ -542,7 +728,7 @@ impl Planner {
                 return Some(trimmed.to_string());
             }
         }
-        // 回退：扫描首个{ 和最后一个}
+        // 备用方案：扫描首个{ 和最后一个}
         if let (Some(s), Some(e)) = (response.find('{'), response.rfind('}')) {
             if e > s {
                 return Some(response[s..=e].to_string());
@@ -647,6 +833,36 @@ impl Planner {
         })
     }
 
+    /// 构建 AI 请求（支持自定义模型）
+    fn build_ai_request_with_model(&self, prompt: &str, model_name: &str) -> Result<ChatRequest, PlanAndExecuteError> {
+        let request = ChatRequest {
+            model: model_name.to_string(),
+            messages: vec![
+                Message {
+                    role: MessageRole::User,
+                    content: prompt.to_string(),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                }
+            ],
+            options: Some(ChatOptions {
+                temperature: Some(self.config.model_config.temperature),
+                max_tokens: Some(self.config.model_config.max_tokens),
+                top_p: Some(self.config.model_config.top_p),
+                ..Default::default()
+            }),
+            tools: None,
+            tool_choice: None,
+            user: None,
+            extra_params: None,
+        };
+        
+        log::debug!("构建AI请求，模型: {}, 温度: {}", 
+                   model_name, self.config.model_config.temperature);
+        Ok(request)
+    }
+
     /// 构建 AI 请求
     fn build_ai_request(&self, prompt: &str) -> Result<ChatRequest, PlanAndExecuteError> {
         Ok(ChatRequest {
@@ -690,9 +906,9 @@ pub enum TaskComplexity {
 impl Default for PlannerConfig {
     fn default() -> Self {
         Self {
-            ai_provider: "deepseek".to_string(),
+            ai_provider: "".to_string(),
             model_config: ModelConfig {
-                model_name: "deepseek-chat".to_string(),
+                model_name: "".to_string(),
                 temperature: 0.7,
                 max_tokens: 4000,
                 top_p: 0.9,

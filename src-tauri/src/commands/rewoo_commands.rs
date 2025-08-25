@@ -14,7 +14,7 @@ use log::{info, error};
 
 /// ReWOO 测试状态管理
 pub struct ReWOOTestState {
-    pub engine: Option<ReWOOEngine>,
+    pub engine: Option<ReWooEngine>,
     pub sessions: HashMap<String, ReWOOSession>,
     pub test_results: Vec<TestResult>,
 }
@@ -95,7 +95,7 @@ pub async fn init_rewoo_engine(
     let mut test_state = state.lock().map_err(|e| format!("状态锁定失败: {}", e))?;
     
     // 模拟引擎初始化
-    test_state.engine = None; // 实际应该创建 ReWOOEngine 实例
+    test_state.engine = None; // 实际应该创建 ReWooEngine 实例
     
     Ok("ReWOO 引擎初始化成功".to_string())
 }
@@ -127,7 +127,7 @@ pub async fn execute_rewoo_test(
     test_config: TestConfig,
     _app_handle: tauri::AppHandle,
     state: State<'_, Arc<Mutex<ReWOOTestState>>>,
-    db: State<'_, Arc<DatabaseService>>,
+    _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let test_id = Uuid::new_v4().to_string();
     let started_at = SystemTime::now();
@@ -234,7 +234,7 @@ pub async fn execute_rewoo_test(
         });
         
         // 直接从 AiAdapterManager 获取 Provider
-        adapter_manager.get_provider(provider_name)
+        adapter_manager.get_provider_or_default(provider_name)
             .map_err(|e| format!("无法获取AI Provider '{}': {}", provider_name, e))?
     };
     tracing::info!("使用AI Provider: {:?}", ai_provider);
@@ -279,12 +279,8 @@ pub async fn execute_rewoo_test(
         }
     };
     
-    // 创建ReWOO引擎
-    let mut rewoo_engine = match crate::engines::rewoo::ReWOOEngine::new(
-        ai_provider,
-        test_config.rewoo_config.clone(),
-        db.inner().clone(),
-    ).await {
+    // 创建ReWOO引擎（使用简化的构造函数）
+    let mut rewoo_engine = match crate::engines::rewoo::ReWooEngine::new().await {
         Ok(engine) => {
             test_result.logs.push(LogEntry {
                 timestamp: SystemTime::now(),

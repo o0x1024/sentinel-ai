@@ -7,7 +7,6 @@ pub mod error;
 pub mod http;
 pub mod core;
 pub mod providers;
-pub mod raw_message;
 pub mod provider_adapter;
 
 // 重新导出核心类型
@@ -15,7 +14,6 @@ pub use types::*;
 pub use error::{AiAdapterError, Result, ErrorDetails};
 pub use core::{AiClient, BaseProvider};
 pub use http::HttpClient;
-pub use raw_message::*;
 
 // 重新导出工具模块
 pub mod utils;

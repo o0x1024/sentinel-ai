@@ -129,7 +129,7 @@ impl McpService {
 
     /// 获取所有可用工具（包括内置和外部连接的工具）
     pub async fn get_available_tools(&self) -> Result<Vec<crate::tools::ToolInfo>> {
-        tracing::info!("[MCP] get_available_tools called, self ptr: {:p}", self);
+        tracing::debug!("[MCP] get_available_tools called, self ptr: {:p}", self);
         let mut tool_infos = Vec::new();
 
         // 获取内置工具
@@ -176,7 +176,7 @@ impl McpService {
                         // 获取缓存的工具
                         match session.list_tools_paginated(None).await {
                             Ok(tools_result) => {
-                                tracing::info!("[MCP] Found {} tools from connected server: {}", tools_result.tools.len(), server_name);
+                                tracing::debug!("[MCP] Found {} tools from connected server: {}", tools_result.tools.len(), server_name);
                                 
                                 for rmcp_tool in tools_result.tools.iter() {
                                     // 转换为内部工具格式
@@ -266,7 +266,7 @@ impl McpService {
     /// 动态注册新工具
     pub async fn register_tool(&self, tool_name: String, tool_description: String) -> Result<()> {
         // 简化实现，实际应该创建工具并注册
-        tracing::info!("Registering tool: {} - {}", tool_name, tool_description);
+        tracing::debug!("Registering tool: {} - {}", tool_name, tool_description);
         Ok(())
     }
 
