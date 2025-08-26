@@ -104,7 +104,7 @@ async fn setup_signal_handlers(
     // 防止信号处理器被过早释放
     std::mem::forget(handle);
     
-    tracing::info!("Signal handlers set up successfully");
+    tracing::debug!("Signal handlers set up successfully");
 }
 
 #[cfg(not(unix))]
@@ -234,7 +234,7 @@ pub fn run() {
                 if let Err(e) = crate::tools::initialize_global_tool_system(db_service.clone()).await {
                     tracing::error!("Failed to initialize global tool system: {}", e);
                 } else {
-                    tracing::info!("Global tool system initialized successfully");
+                    tracing::debug!("Global tool system initialized successfully");
                 }
 
                 // 初始化全局适配器管理器（为三个框架提供统一的工具调用接口）
@@ -243,7 +243,7 @@ pub fn run() {
                     if let Err(e) = crate::tools::initialize_global_adapter_manager(tool_manager).await {
                         tracing::error!("Failed to initialize global adapter manager: {}", e);
                     } else {
-                        tracing::info!("Global adapter manager initialized successfully");
+                        tracing::debug!("Global adapter manager initialized successfully");
                     }
                 } else {
                     tracing::error!("Cannot initialize adapter manager: global tool system not available");
@@ -262,14 +262,14 @@ pub fn run() {
                 if let Err(e) = mcp_service.auto_restore_server_state().await {
                     tracing::warn!("Failed to auto-restore MCP server state: {}", e);
                 } else {
-                    tracing::info!("MCP server state auto-restored successfully");
+                    tracing::debug!("MCP server state auto-restored successfully");
                 }
 
                 // Initialize global proxy configuration from database
                 if let Err(e) = initialize_global_proxy(&db_service).await {
                     tracing::warn!("Failed to initialize global proxy configuration: {}", e);
                 } else {
-                    tracing::info!("Global proxy configuration initialized successfully");
+                    tracing::debug!("Global proxy configuration initialized successfully");
                 }
 
                 let mut ai_manager = AiServiceManager::new(db_service.clone());
@@ -279,7 +279,7 @@ pub fn run() {
                 if let Err(e) = ai_manager.init_default_services().await {
                     tracing::error!("Failed to initialize AI services: {}", e);
                 } else {
-                    tracing::info!("AI services initialized successfully");
+                    tracing::debug!("AI services initialized successfully");
                 }
 
                 let ai_manager = Arc::new(ai_manager);
@@ -364,7 +364,7 @@ pub fn run() {
                     if let Err(e) = client_manager_clone.initialize().await {
                         tracing::error!("Failed to initialize MCP client: {}", e);
                     } else {
-                        tracing::info!("MCP client initialized successfully");
+                        tracing::debug!("MCP client initialized successfully");
                         
                         // MCP 客户端初始化完成后，将 MCP 工具同步到全局工具系统
                         if let Ok(tool_system) = crate::tools::get_global_tool_system() {
@@ -412,6 +412,7 @@ pub fn run() {
             ai::get_ai_embedding_models,
             ai::get_default_ai_model,
             ai::set_default_ai_model,
+            ai::set_default_chat_model,
             ai::get_ai_model_config,
             ai::update_ai_model_config,
             ai::save_ai_providers_config,
@@ -440,6 +441,9 @@ pub fn run() {
             intent_commands::handle_knowledge_question,
             intent_commands::smart_route_user_request,
             intent_commands::get_intent_classification_stats,
+            // 新增流式命令
+            intent_commands::handle_chat_conversation_stream,
+            intent_commands::handle_knowledge_question_stream,
             // 数据库相关命令
             db_commands::execute_query,
             db_commands::get_query_history,
@@ -752,7 +756,7 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
                     // Set the global proxy configuration only if enabled
                     if proxy_config.enabled {
                         set_global_proxy(Some(proxy_config));
-                        tracing::info!("Loaded and enabled proxy configuration from database");
+                        tracing::debug!("Loaded and enabled proxy configuration from database");
                     } else {
                         set_global_proxy(None);
                         tracing::info!("Proxy configuration found but disabled, no proxy will be used");

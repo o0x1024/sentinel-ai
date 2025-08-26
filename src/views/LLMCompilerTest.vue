@@ -1,5 +1,5 @@
 <template>
-  <div class="llm-compiler-test-page">
+  <div class="llm-compiler-test-page page-content-padded safe-top">
     <!-- 页面头部 -->
     <div class="card bg-base-100 shadow-xl mb-6">
       <div class="card-body">

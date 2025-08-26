@@ -251,12 +251,43 @@ pub async fn send_ai_stream_message(
             default_service
         }
     } else {
-        // 使用默认服务
-        let mut service = ai_manager
-            .get_service(&request.service_name)
-            .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
-        service.set_app_handle(app_handle.clone());
-        service
+        // 当没有指定provider和model时，尝试使用默认Chat模型配置
+        match ai_manager.get_default_chat_model().await {
+            Ok(Some((provider, model_name))) => {
+                tracing::info!("Using default chat model for stream: {}/{}", provider, model_name);
+                
+                // 根据model_name找到对应的服务
+                if let Ok(Some(service)) = ai_manager.find_service_by_model(&model_name).await {
+                    tracing::info!("Found service for default chat model: {}", model_name);
+                    let mut service_with_handle = service;
+                    service_with_handle.set_app_handle(app_handle.clone());
+                    service_with_handle
+                } else {
+                    tracing::warn!("No service found for default chat model {}, using default service", model_name);
+                    let mut default_service = ai_manager
+                        .get_service(&request.service_name)
+                        .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
+                    default_service.set_app_handle(app_handle.clone());
+                    default_service
+                }
+            },
+            Ok(None) => {
+                tracing::info!("No default chat model configured, using default service");
+                let mut service = ai_manager
+                    .get_service(&request.service_name)
+                    .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
+                service.set_app_handle(app_handle.clone());
+                service
+            },
+            Err(e) => {
+                tracing::warn!("Failed to get default chat model: {}, using default service", e);
+                let mut service = ai_manager
+                    .get_service(&request.service_name)
+                    .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
+                service.set_app_handle(app_handle.clone());
+                service
+            }
+        }
     };
 
     // 使用前端传递的消息ID，如果没有则生成新的
@@ -1776,6 +1807,34 @@ pub async fn set_default_ai_model(
         .map_err(|e| e.to_string())
 }
 
+/// 设置默认Chat模型（UI专用）
+#[tauri::command]
+pub async fn set_default_chat_model(
+    model: String,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    // 保存完整的模型ID到数据库
+    db.set_config(
+        "ai",
+        "default_chat_model",
+        &model,
+        Some("Default chat model")
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    // 如果模型格式为 provider/model_name，解析并更新AI管理器
+    if let Some((provider, model_name)) = model.split_once('/') {
+        if let Err(e) = ai_manager.set_default_chat_model(provider, model_name).await {
+            tracing::warn!("Failed to update AI manager default chat model: {}", e);
+        }
+    }
+    
+    tracing::info!("Set default chat model to: {}", model);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_ai_model_config(
     ai_manager: State<'_, Arc<AiServiceManager>>,
@@ -1891,6 +1950,10 @@ pub async fn get_ai_config(
 
     if let Ok(Some(default_model)) = db.get_config("ai", "default_model").await {
         ai_config["default_model"] = serde_json::Value::String(default_model);
+    }
+
+    if let Ok(Some(default_chat_model)) = db.get_config("ai", "default_chat_model").await {
+        ai_config["default_chat_model"] = serde_json::Value::String(default_chat_model);
     }
 
     if let Ok(Some(system_prompt)) = db.get_config("ai", "system_prompt").await {

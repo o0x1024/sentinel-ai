@@ -1,5 +1,5 @@
 <template>
-  <div class="smart-agent-console">
+  <div class="smart-agent-console page-content-padded safe-top">
     <!-- 导航标签 -->
     <div class="tabs tabs-boxed mb-6">
       <a 

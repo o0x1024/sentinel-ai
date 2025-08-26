@@ -735,7 +735,7 @@ impl McpServerManager {
         let mut server = self.server.write().await;
         server.update_config(config).await?;
 
-        tracing::info!(
+        tracing::debug!(
             "Loaded MCP server configuration from {:?}",
             self.config_path
         );

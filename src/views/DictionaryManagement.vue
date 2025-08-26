@@ -1,5 +1,5 @@
 <template>
-  <div class="dictionary-management-page">
+  <div class="dictionary-management-page page-content-padded safe-top">
     <div class="flex justify-between items-center mb-6">
       <h2 class="text-2xl font-bold">{{ t('dictionary.title', '字典管理') }}</h2>
       <div class="flex gap-2">

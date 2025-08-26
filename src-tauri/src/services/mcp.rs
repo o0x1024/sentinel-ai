@@ -163,7 +163,7 @@ impl McpService {
         }
 
         // 获取客户端连接的工具（主要工具来源）
-        tracing::info!("[MCP] Checking client connections for tools");
+        tracing::debug!("[MCP] Checking client connections for tools");
         
         // 从客户端管理器获取所有连接的MCP服务器的工具
         let status_map = self.client_manager.get_all_connection_status().await;
@@ -525,7 +525,7 @@ impl McpService {
                     serde_json::Value::String(s) => s != "0" && s.to_lowercase() != "false",
                     _ => false,
                 };
-                tracing::info!("Restored MCP server '{}' state: enabled={}", server_name, enabled);
+                tracing::debug!("Restored MCP server '{}' state: enabled={}", server_name, enabled);
                 return Ok(enabled);
             }
         }
@@ -561,7 +561,7 @@ impl McpService {
                 // 即使启动失败，也不返回错误，只是记录日志
             }
         } else {
-            tracing::info!("MCP server was disabled in previous session, not auto-starting");
+            tracing::debug!("MCP server was disabled in previous session, not auto-starting");
         }
         
         Ok(())

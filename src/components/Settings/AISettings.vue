@@ -79,23 +79,60 @@
     <div v-if="useGuiMode">
       <!-- AI提供商状态总览 -->
       <div class="space-y-4 mb-6">
-        <!-- 默认Provider选择器 -->
+        <!-- 默认设置卡片 -->
         <div class="card bg-base-100 shadow-sm border">
           <div class="card-body p-4">
-            <div class="flex items-center gap-4">
-              <i class="fas fa-star text-warning text-xl"></i>
-              <div class="flex-1">
-                <h3 class="font-semibold text-lg">默认 Provider</h3>
-                <div class="flex items-center gap-3 mt-2">
-                  <select class="select select-bordered select-sm"
-                          v-model="defaultProviderLocal"
-                          @change="onChangeDefaultProvider">
-                    <option v-for="provider in Object.keys(aiConfig.providers)" :key="provider" :value="provider.toLowerCase()">
-                      {{ provider }}
-                    </option>
-                  </select>
-                </div>
+            <div class="flex items-center gap-4 mb-4">
+              <i class="fas fa-cog text-primary text-xl"></i>
+              <h3 class="font-semibold text-lg">默认配置</h3>
+            </div>
+            
+            <!-- 默认Provider和模型选择器 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- 默认Provider选择器 -->
+              <div class="space-y-2">
+                <label class="label">
+                  <span class="label-text font-medium flex items-center gap-2">
+                    <i class="fas fa-star text-warning"></i>
+                    默认 Provider
+                  </span>
+                </label>
+                <select class="select select-bordered w-full"
+                        v-model="defaultProviderLocal"
+                        @change="onChangeDefaultProvider">
+                  <option v-for="provider in Object.keys(aiConfig.providers)" :key="provider" :value="provider">
+                    {{ provider }}
+                  </option>
+                </select>
               </div>
+              
+              <!-- 默认模型选择器 -->
+              <div class="space-y-2">
+                <label class="label">
+                  <span class="label-text font-medium flex items-center gap-2">
+                    <i class="fas fa-robot text-primary"></i>
+                    默认 Chat 模型
+                  </span>
+                </label>
+                <select class="select select-bordered w-full"
+                        v-model="defaultChatModelLocal"
+                        @change="onChangeDefaultChatModel"
+                        :disabled="!defaultProviderLocal || !getProviderModels(defaultProviderLocal).length">
+                  <option value="">{{ t('settings.ai.selectModel') }}</option>
+                  <option v-for="model in getProviderModels(defaultProviderLocal)" 
+                          :key="model.id" 
+                          :value="model.id"
+                          :selected="model.id === defaultChatModelLocal">
+                    {{ model.name }}{{ model.description ? ' - ' + model.description : '' }}
+                  </option>
+                </select>
+              </div>
+            </div>
+            
+            <!-- 提示信息 -->
+            <div class="flex items-center gap-2 mt-3 text-sm text-base-content/70">
+              <i class="fas fa-info-circle"></i>
+              <span>AI助手将使用此配置进行对话</span>
             </div>
           </div>
         </div>
@@ -479,6 +516,7 @@ interface Emits {
   'refreshModels': [provider: string]
   'applyManualConfig': [config: any]
   'setDefaultProvider': [provider: string]
+  'setDefaultChatModel': [model: string]
 }
 
 const emit = defineEmits<Emits>()
@@ -507,19 +545,73 @@ const selectedProviderConfig = computed(() => {
 
 // 默认 Provider 选择
 const defaultProviderLocal = ref('')
+// 默认 Chat 模型选择
+const defaultChatModelLocal = ref('')
 
 watch(() => props.aiConfig, (cfg: any) => {
+  
   const dp = (cfg && (cfg as any).default_provider) || 'modelscope'
-  defaultProviderLocal.value = String(dp).toLowerCase()
+  // 查找匹配的提供商名称（不区分大小写）
+  const matchedProvider = Object.keys(cfg?.providers || {}).find(key => 
+    key.toLowerCase() === String(dp).toLowerCase()
+  )
+  defaultProviderLocal.value = matchedProvider || String(dp)
+  
+  // 初始化默认 Chat 模型
+  const dcm = (cfg && (cfg as any).default_chat_model) || ''
+  
+  // 解析 default_chat_model 格式：provider/model_name
+  if (dcm && dcm.includes('/')) {
+    // 处理复杂的模型ID，如 "modelscope/Qwen/Qwen2-VL-7B-Instruct"
+    // 提取 provider/ 之后的所有内容作为模型名
+    const slashIndex = dcm.indexOf('/')
+    const modelName = slashIndex !== -1 ? dcm.substring(slashIndex + 1) : dcm
+    defaultChatModelLocal.value = modelName || ''
+  } else {
+    defaultChatModelLocal.value = String(dcm)
+  }
 }, { immediate: true, deep: true })
 
 const onChangeDefaultProvider = async () => {
   try {
     const provider = defaultProviderLocal.value
-    emit('setDefaultProvider', provider)
+    // 发送小写格式的提供商名称给后端
+    emit('setDefaultProvider', provider.toLowerCase())
+    
+    // 当提供商变化时，清空默认模型选择
+    defaultChatModelLocal.value = ''
+    emit('setDefaultChatModel', '')
   } catch (e) {
     console.error('Failed to set default provider', e)
   }
+}
+
+const onChangeDefaultChatModel = async () => {
+  try {
+    const model = defaultChatModelLocal.value
+    emit('setDefaultChatModel', model)
+  } catch (e) {
+    console.error('Failed to set default chat model', e)
+  }
+}
+
+// 获取指定提供商的模型列表
+const getProviderModels = (providerKey: string) => {
+  if (!providerKey || !props.aiConfig.providers) {
+    return []
+  }
+  
+  // 查找匹配的提供商（不区分大小写）
+  const provider = Object.keys(props.aiConfig.providers).find(key => 
+    key.toLowerCase() === providerKey.toLowerCase()
+  )
+  
+  if (!provider) {
+    return []
+  }
+  
+  const models = props.aiConfig.providers[provider]?.models || []
+  return models
 }
 
 // Methods

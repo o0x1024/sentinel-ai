@@ -71,12 +71,12 @@ pub fn build_client_with_global_proxy(timeout: Duration) -> Result<Client> {
             if let (Some(host), Some(port)) = (cfg.host.as_ref(), cfg.port) {
                 let scheme = cfg.scheme.as_deref().unwrap_or("http");
                 let proxy_url = format!("{}://{}:{}", scheme, host, port);
-                tracing::info!("Configuring HTTP client with proxy: {}", proxy_url);
+                tracing::debug!("Configuring HTTP client with proxy: {}", proxy_url);
                 let mut proxy = Proxy::all(&proxy_url)
                     .map_err(|e| AiAdapterError::ConfigurationError(e.to_string()))?;
                 if let (Some(u), Some(p)) = (cfg.username.as_ref(), cfg.password.as_ref()) {
                     proxy = proxy.basic_auth(u, p);
-                    tracing::info!("Using proxy authentication for user: {}", u);
+                    tracing::debug!("Using proxy authentication for user: {}", u);
                 }
                 builder = builder.proxy(proxy);
             } else {

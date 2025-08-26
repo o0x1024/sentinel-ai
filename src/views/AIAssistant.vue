@@ -1,5 +1,5 @@
 <template>
-  <div class="ai-assistant-view h-full flex flex-col bg-base-100 overflow-hidden">
+  <div class="ai-assistant-view page-content-full h-full flex flex-col bg-base-100 overflow-hidden">
     <!-- 头部控制栏 -->
     <div class="navbar bg-base-200 shadow-sm border-b border-base-300 flex-shrink-0">
       <div class="navbar-start">
@@ -57,9 +57,9 @@
     </div>
 
     <!-- 主内容区 -->
-    <div class="flex-1 flex overflow-hidden min-h-0 max-h-full">
+    <div class="flex-1 overflow-hidden min-h-0">
       <!-- 聊天区域 -->
-      <div class="flex-1 flex flex-col min-h-0 max-w-full">
+      <div class="h-full flex flex-col">
         <EnhancedAIChat 
           :selected-architecture="selectedArchitecture"
           :selected-agent="selectedAgent"

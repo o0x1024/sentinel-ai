@@ -1,5 +1,5 @@
 <template>
-  <div class="container mx-auto p-6">
+  <div class="page-content-padded safe-top">
     <div class="mb-6">
       <h1 class="text-3xl font-bold text-gray-800 mb-2">工作流监控</h1>
       <p class="text-gray-600">查看和管理工作流执行状态</p>

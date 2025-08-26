@@ -8,7 +8,7 @@ use crate::tools::mapping::map_pipeline_input_to_tool_inputs;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use futures;
-use serde_json::Value;
+use serde_json::{de, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -466,7 +466,7 @@ impl ToolSystem {
 
     /// 初始化工具系统
     pub async fn initialize(&self, db_service: Arc<DatabaseService>) -> Result<()> {
-        info!("Initializing tool system");
+        debug!("Initializing tool system");
         
         // 注册内置工具提供者
         {
@@ -478,19 +478,19 @@ impl ToolSystem {
         // 初始化时将内置工具写入数据库（幂等）
         self.persist_builtin_tools_to_db(db_service.clone()).await?;
         
-        info!("Tool system initialized successfully");
+        debug!("Tool system initialized successfully");
         Ok(())
     }
 
     /// 添加MCP工具提供者
     pub async fn add_mcp_provider_to_system(&self, mcp_service: Arc<crate::services::mcp::McpService>) -> Result<()> {
-        info!("Adding MCP tool provider to system");
+        debug!("Adding MCP tool provider to system");
         
         // 尝试创建MCP工具提供者
         if let Some(mcp_provider) = crate::tools::create_mcp_tool_provider(mcp_service).await? {
             let mut manager = self.manager.write().await;
             manager.register_provider(mcp_provider).await?;
-            info!("MCP tool provider registered successfully");
+            debug!("MCP tool provider registered successfully");
         } else {
             warn!("MCP tool provider not available, skipping registration");
         }
@@ -617,7 +617,7 @@ pub async fn initialize_global_tool_system(db_service: Arc<DatabaseService>) -> 
     GLOBAL_TOOL_SYSTEM.set(system)
         .map_err(|_| anyhow!("Global tool system already initialized"))?;
     
-    info!("Global tool system initialized successfully");
+    debug!("Global tool system initialized successfully");
     Ok(())
 }
 

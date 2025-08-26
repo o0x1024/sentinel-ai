@@ -1,5 +1,5 @@
 <template>
-  <div class="agent-creator">
+  <div class="agent-creator page-content-padded">
     <!-- 创建向导步骤 -->
     <div class="w-full mb-8">
       <div class="steps-container">

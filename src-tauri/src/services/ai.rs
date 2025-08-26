@@ -90,6 +90,10 @@ pub struct StreamMessage {
     pub token_count: Option<u32>,
     pub total_tokens: Option<u32>,
     pub tool_calls: Option<Vec<AiToolCall>>,
+    // New fields for incremental streaming support
+    pub is_incremental: bool,  // true for incremental chunks, false for full content
+    pub content_delta: Option<String>,  // incremental content chunk when is_incremental=true
+    pub total_content_length: Option<usize>,  // total accumulated content length
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -282,7 +286,7 @@ impl AiServiceManager {
                 if let Err(e) = adapter_manager.register_provider(provider.clone()) {
                     tracing::warn!("Failed to register provider {} to AiAdapterManager: {}", provider_name, e);
                 } else {
-                    tracing::info!("Successfully registered provider {} to AiAdapterManager: {}", provider_name, provider.name());
+                    tracing::debug!("Successfully registered provider {} to AiAdapterManager: {}", provider_name, provider.name());
                 }
 
             }
@@ -339,19 +343,19 @@ impl AiServiceManager {
 
     // 初始化默认服务
     pub async fn init_default_services(&self) -> anyhow::Result<()> {
-        tracing::info!("Initializing default AI services...");
+        tracing::debug!("Initializing default AI services...");
 
         // 从数据库加载并解析providers_config
         if let Ok(Some(config_str)) = self.db.get_config("ai", "providers_config").await {
             match serde_json::from_str::<HashMap<String, ProviderConfig>>(&config_str) {
                 Ok(providers) => {
-                    tracing::info!("Successfully parsed 'providers_config' from DB.");
+                    tracing::debug!("Successfully parsed 'providers_config' from DB.");
                     for (_id, provider_config) in providers {
                         if !provider_config.enabled {
                             continue;
                         }
 
-                        tracing::info!("Initializing enabled provider: {}", provider_config.name);
+                        tracing::debug!("Initializing enabled provider: {}", provider_config.name);
 
                         let api_key = provider_config.api_key.as_deref().map(String::from);
                         std::env::set_var(
@@ -377,8 +381,8 @@ impl AiServiceManager {
                             api_key: api_key,
                             api_base: api_base,
                             organization: organization,
-                            temperature: None,
-                            max_tokens: None,
+                            temperature: Some(0.7),
+                            max_tokens: Some(4096), // 确保有默认值，避免响应被截断
                         };
 
                         if let Err(e) = self.add_service(provider_config.name.clone(), config).await
@@ -440,7 +444,7 @@ impl AiServiceManager {
             }
         }
 
-        tracing::info!(
+        tracing::debug!(
             "Finished initializing AI services. Total services: {}",
             self.services.read().unwrap().len()
         );
@@ -487,7 +491,7 @@ impl AiServiceManager {
                         max_tokens: original_config.max_tokens,
                     };
                     self.add_service("default".to_string(), config).await?;
-                    tracing::info!("Created default service alias, pointing to {}", provider);
+                    tracing::debug!("Created default service alias, pointing to {}", provider);
                     return Ok(());
                 }
             }
@@ -565,13 +569,14 @@ impl AiServiceManager {
 
     // 创建最小化的默认服务（用于会话管理，无需实际AI功能）
     async fn create_minimal_default_service(&self) -> anyhow::Result<()> {
-        tracing::info!("Creating minimal default service for session management");
+        tracing::warn!("Creating minimal default service - no AI providers are configured!");
+        tracing::warn!("Please configure at least one AI provider (OpenAI, Anthropic, DeepSeek, etc.) in the Settings > AI Configuration to enable AI chat functionality.");
         
         // 创建一个虚拟的AI配置，仅用于会话管理
         let config = AiConfig {
-            provider: "mock".to_string(),
-            model: "session-manager".to_string(),
-            api_key: Some("dummy".to_string()),
+            provider: "unconfigured".to_string(),
+            model: "no-model-configured".to_string(),
+            api_key: None,
             api_base: None,
             organization: None,
             temperature: Some(0.7),
@@ -579,7 +584,7 @@ impl AiServiceManager {
         };
         
         self.add_service("default".to_string(), config).await?;
-        tracing::info!("Created minimal default service for session management");
+        tracing::warn!("Created minimal default service - AI chat will not work until providers are configured");
         
         Ok(())
     }
@@ -635,41 +640,116 @@ impl AiServiceManager {
     }
     
     // 根据模型ID查找对应的AI服务
-    async fn find_service_by_model(&self, model_id: &str) -> anyhow::Result<Option<AiService>> {
-        let services = self.services.read().unwrap();
-        
+    pub async fn find_service_by_model(&self, model_id: &str) -> anyhow::Result<Option<AiService>> {
         // 首先检查是否有服务直接支持该模型
-        for (_service_name, service) in services.iter() {
-            let config = service.get_config();
+        let direct_match = {
+            let services = self.services.read().unwrap();
             
-            // 检查服务的默认模型是否匹配
-            if config.model == model_id {
-                return Ok(Some(service.clone()));
-            }
-            
-            // 检查服务是否支持该模型（通过提供商推断）
-            if self.is_model_supported_by_service(model_id, &config.provider) {
-                // 创建一个使用指定模型的服务副本
-                let mut new_config = config.clone();
-                new_config.model = model_id.to_string();
+            for (_service_name, service) in services.iter() {
+                let config = service.get_config();
                 
-                let new_service = AiService {
-                    config: new_config,
-                    db: self.db.clone(),
-                    app_handle: self.app_handle.read().unwrap().clone(),
-                    mcp_service: self.mcp_service.clone(),
-                    max_retries: 3,
+                // 检查服务的默认模型是否匹配
+                if config.model == model_id {
+                    return Ok(Some(service.clone()));
+                }
+            }
+            None::<AiService>
+        };
+        
+        if direct_match.is_some() {
+            return Ok(direct_match);
+        }
+        
+        // 检查服务是否支持该模型（通过提供商推断）
+        let supported_service = {
+            let services = self.services.read().unwrap();
+            let mut result: Option<AiService> = None;
+            
+            for (_service_name, service) in services.iter() {
+                let config = service.get_config();
+                
+                // 需要在这里检查支持，但不能使用async方法
+                // 我们只检查硬编码规则
+                let hardcoded_support = match config.provider.to_lowercase().as_str() {
+                    "openai" => model_id.starts_with("gpt-") || model_id.starts_with("o1-"),
+                    "anthropic" => model_id.starts_with("claude-"),
+                    "deepseek" => model_id.starts_with("deepseek-"),
+                    "groq" => model_id.starts_with("llama") || model_id.starts_with("mixtral") || model_id.starts_with("gemma"),
+                    "ollama" => true, // Ollama支持各种模型
+                    "gemini" => model_id.starts_with("gemini-"),
+                    "zhipu" => model_id.starts_with("glm-"),
+                    "cohere" => model_id.starts_with("command-") || model_id.starts_with("c4ai-"),
+                    "xai" => model_id.starts_with("grok-"),
+                    "moonshot" => model_id.starts_with("moonshot-") || model_id.starts_with("kimi-"),
+                    "modelscope" => {
+                        model_id.starts_with("qwen") || 
+                        model_id.starts_with("baichuan") || 
+                        model_id.starts_with("chatglm") ||
+                        model_id.starts_with("internlm") ||
+                        model_id.starts_with("yi-") ||
+                        model_id.starts_with("deepseek-")
+                    },
+                    _ => false,
                 };
                 
-                info!("为模型 {} 找到匹配的提供商 {}", model_id, config.provider);
-                return Ok(Some(new_service));
+                if hardcoded_support {
+                    // 创建一个使用指定模型的服务副本
+                    let mut new_config = config.clone();
+                    new_config.model = model_id.to_string();
+                    
+                    let new_service = AiService {
+                        config: new_config,
+                        db: self.db.clone(),
+                        app_handle: self.app_handle.read().unwrap().clone(),
+                        mcp_service: self.mcp_service.clone(),
+                        max_retries: 3,
+                    };
+                    
+                    info!("为模型 {} 找到匹配的提供商 {}", model_id, config.provider);
+                    result = Some(new_service);
+                    break;
+                }
+            }
+            result
+        };
+        
+        if supported_service.is_some() {
+            return Ok(supported_service);
+        }
+        
+        // 检查数据库中的providers_config是否支持该模型
+        if self.is_model_supported_by_any_provider(model_id).await {
+            // 如果数据库支持，尝试推断提供商
+            if let Some(provider_name) = self.infer_provider_from_model(model_id).await {
+                // 查找该提供商的服务
+                let services = self.services.read().unwrap();
+                for (_service_name, service) in services.iter() {
+                    let config = service.get_config();
+                    if config.provider.to_lowercase() == provider_name.to_lowercase() {
+                        // 创建使用指定模型的服务副本
+                        let mut new_config = config.clone();
+                        new_config.model = model_id.to_string();
+                        
+                        let new_service = AiService {
+                            config: new_config,
+                            db: self.db.clone(),
+                            app_handle: self.app_handle.read().unwrap().clone(),
+                            mcp_service: self.mcp_service.clone(),
+                            max_retries: 3,
+                        };
+                        
+                        info!("通过数据库配置为模型 {} 找到提供商 {}", model_id, provider_name);
+                        return Ok(Some(new_service));
+                    }
+                }
             }
         }
         
         // 如果找不到支持该模型的服务，尝试根据模型名推断提供商
-        let inferred_provider = self.infer_provider_from_model(model_id);
+        let inferred_provider = self.infer_provider_from_model(model_id).await;
         if let Some(provider_name) = inferred_provider {
             // 查找该提供商的服务
+            let services = self.services.read().unwrap();
             for (_service_name, service) in services.iter() {
                 let config = service.get_config();
                 if config.provider.to_lowercase() == provider_name.to_lowercase() {
@@ -696,35 +776,98 @@ impl AiServiceManager {
     }
     
     /// 根据模型名推断提供商
-    fn infer_provider_from_model(&self, model_id: &str) -> Option<String> {
+    async fn infer_provider_from_model(&self, model_id: &str) -> Option<String> {
         let model_lower = model_id.to_lowercase();
+        tracing::debug!("开始为模型 {} 推断提供商", model_id);
         
+        // 首先检查硬编码的模型前缀
         if model_lower.starts_with("gpt-") || model_lower.starts_with("o1-") {
-            Some("openai".to_string())
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: openai", model_id);
+            return Some("openai".to_string());
         } else if model_lower.starts_with("claude-") {
-            Some("anthropic".to_string())
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: anthropic", model_id);
+            return Some("anthropic".to_string());
         } else if model_lower.starts_with("deepseek-") {
-            Some("deepseek".to_string())
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: deepseek", model_id);
+            return Some("deepseek".to_string());
         } else if model_lower.starts_with("gemini-") {
-            Some("google".to_string())
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: google", model_id);
+            return Some("google".to_string());
         } else if model_lower.starts_with("glm-") {
-            Some("zhipu".to_string())
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: zhipu", model_id);
+            return Some("zhipu".to_string());
         } else if model_lower.starts_with("moonshot-") || model_lower.starts_with("kimi-") {
-            Some("moonshot".to_string())
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: moonshot", model_id);
+            return Some("moonshot".to_string());
         } else if model_lower.starts_with("command-") || model_lower.starts_with("c4ai-") {
-            Some("cohere".to_string())
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: cohere", model_id);
+            return Some("cohere".to_string());
         } else if model_lower.starts_with("grok-") {
-            Some("xai".to_string())
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: xai", model_id);
+            return Some("xai".to_string());
         } else if model_lower.starts_with("llama") || model_lower.starts_with("mixtral") || model_lower.starts_with("gemma") {
-            Some("groq".to_string())
-        } else {
-            None
+            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: groq", model_id);
+            return Some("groq".to_string());
         }
+        
+        tracing::debug!("硬编码前缀未匹配，尝试从数据库providers_config查找模型 {}", model_id);
+        
+        // 如果硬编码前缀没找到，尝试从数据库中的providers_config查找
+        if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
+            if let Ok(providers) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&providers_json) {
+                for (_key, provider_data) in providers {
+                    if let Some(provider_obj) = provider_data.as_object() {
+                        // 检查提供商是否启用
+                        if !provider_obj.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            continue;
+                        }
+                        
+                        let provider_name = provider_obj.get("provider").and_then(|v| v.as_str());
+                        
+                        // 检查该提供商的模型列表中是否包含该模型
+                        if let Some(models_val) = provider_obj.get("models") {
+                            if let Some(models_arr) = models_val.as_array() {
+                                for model_val in models_arr {
+                                    if let Some(model_obj) = model_val.as_object() {
+                                        if let Some(model_name) = model_obj.get("id").and_then(|v| v.as_str()) {
+                                            // 支持精确匹配和部分匹配
+                                            if model_name == model_id || 
+                                               model_name.to_lowercase() == model_lower ||
+                                               model_id.contains(model_name) || 
+                                               model_name.contains(model_id) {
+                                                if let Some(provider) = provider_name {
+                                                    tracing::info!("通过数据库providers_config为模型 {} 找到提供商 {}", model_id, provider);
+                                                    return Some(provider.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // 如果模型列表为空，检查默认模型
+                        if let Some(default_model) = provider_obj.get("default_model").and_then(|v| v.as_str()) {
+                            if default_model == model_id || default_model.to_lowercase() == model_lower {
+                                if let Some(provider) = provider_name {
+                                    tracing::info!("通过数据库providers_config的默认模型为模型 {} 找到提供商 {}", model_id, provider);
+                                    return Some(provider.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        tracing::debug!("无法为模型 {} 推断出提供商", model_id);
+        None
     }
 
     /// 检查模型是否被指定提供商支持
-    fn is_model_supported_by_service(&self, model_id: &str, provider: &str) -> bool {
-        match provider.to_lowercase().as_str() {
+    async fn is_model_supported_by_service(&self, model_id: &str, provider: &str) -> bool {
+        // 首先检查硬编码的支持规则
+        let hardcoded_support = match provider.to_lowercase().as_str() {
             "openai" => model_id.starts_with("gpt-") || model_id.starts_with("o1-"),
             "anthropic" => model_id.starts_with("claude-"),
             "deepseek" => model_id.starts_with("deepseek-"),
@@ -745,7 +888,91 @@ impl AiServiceManager {
                 model_id.starts_with("deepseek-") // ModelScope 也提供 DeepSeek 模型
             },
             _ => false,
+        };
+        
+        if hardcoded_support {
+            return true;
         }
+        
+        // 如果硬编码规则不支持，检查数据库中的providers_config
+        if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
+            if let Ok(providers) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&providers_json) {
+                for (_key, provider_data) in providers {
+                    if let Some(provider_obj) = provider_data.as_object() {
+                        let provider_name = provider_obj.get("provider").and_then(|v| v.as_str());
+                        
+                        // 检查是否为目标提供商
+                        if let Some(p_name) = provider_name {
+                            if p_name.to_lowercase() == provider.to_lowercase() {
+                                // 检查该提供商的模型列表
+                                if let Some(models_val) = provider_obj.get("models") {
+                                    if let Some(models_arr) = models_val.as_array() {
+                                        for model_val in models_arr {
+                                            if let Some(model_obj) = model_val.as_object() {
+                                                if let Some(model_name) = model_obj.get("id").and_then(|v| v.as_str()) {
+                                                    if model_name == model_id || 
+                                                       model_name.to_lowercase() == model_id.to_lowercase() ||
+                                                       model_id.contains(model_name) || 
+                                                       model_name.contains(model_id) {
+                                                        return true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // 检查默认模型
+                                if let Some(default_model) = provider_obj.get("default_model").and_then(|v| v.as_str()) {
+                                    if default_model == model_id || default_model.to_lowercase() == model_id.to_lowercase() {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        false
+    }
+    
+    /// 检查数据库中是否有任何提供商支持该模型
+    async fn is_model_supported_by_any_provider(&self, model_id: &str) -> bool {
+        if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
+            if let Ok(providers) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&providers_json) {
+                for (_key, provider_data) in providers {
+                    if let Some(provider_obj) = provider_data.as_object() {
+                        // 检查该提供商的模型列表
+                        if let Some(models_val) = provider_obj.get("models") {
+                            if let Some(models_arr) = models_val.as_array() {
+                                for model_val in models_arr {
+                                    if let Some(model_obj) = model_val.as_object() {
+                                        if let Some(model_name) = model_obj.get("id").and_then(|v| v.as_str()) {
+                                            if model_name == model_id || 
+                                               model_name.to_lowercase() == model_id.to_lowercase() ||
+                                               model_id.contains(model_name) || 
+                                               model_name.contains(model_id) {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // 检查默认模型
+                        if let Some(default_model) = provider_obj.get("default_model").and_then(|v| v.as_str()) {
+                            if default_model == model_id || default_model.to_lowercase() == model_id.to_lowercase() {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
     
     /// 获取指定阶段的AI配置，用于框架动态切换模型
@@ -1059,6 +1286,20 @@ impl AiServiceManager {
         tracing::info!("Set default {} model to: {}", model_type, model_value);
         Ok(())
     }
+    
+    pub async fn get_default_chat_model(&self) -> Result<Option<(String, String)>> {
+        if let Ok(Some(model_str)) = self.db.get_config("ai", "default_chat_model").await {
+            // 解析模型字符串，格式：provider/model_name
+            if let Some((provider, model_name)) = model_str.split_once('/') {
+                return Ok(Some((provider.to_string(), model_name.to_string())));
+            }
+        }
+        Ok(None)
+    }
+    
+    pub async fn set_default_chat_model(&self, provider: &str, model_name: &str) -> Result<()> {
+        self.set_default_model("chat", provider, model_name).await
+    }
 
     pub async fn get_model_config(
         &self,
@@ -1104,6 +1345,57 @@ impl AiService {
     // 获取配置信息
     pub fn get_config(&self) -> &AiConfig {
         &self.config
+    }
+
+    /// 检查模型是否支持工具调用
+    fn model_supports_tools(&self, model_name: &str) -> bool {
+        let provider = &self.config.provider;
+        let model_lower = model_name.to_lowercase();
+        
+        match provider.to_lowercase().as_str() {
+            "openai" => {
+                // OpenAI models that support tools
+                model_lower.contains("gpt-4") || model_lower.contains("gpt-3.5-turbo")
+            },
+            "anthropic" => {
+                // Anthropic Claude models that support tools
+                model_lower.contains("claude-3")
+            },
+            "deepseek" => {
+                // DeepSeek models that support tools
+                model_lower.contains("chat")
+            },
+            "gemini" | "google" => {
+                // Most Gemini models support tools
+                true
+            },
+            "ollama" => {
+                // Most Ollama models support tools, but depends on the specific model
+                true
+            },
+            "moonshot" => {
+                // Moonshot models support tools
+                true
+            },
+            "modelscope" => {
+                // ModelScope provider: only certain models support tools
+                // Moonshot models running on ModelScope typically don't support tools
+                if model_lower.contains("moonshot") || model_lower.contains("kimi") {
+                    false
+                } else {
+                    // Other models on ModelScope like Qwen may support tools
+                    model_lower.contains("qwen") || model_lower.contains("baichuan")
+                }
+            },
+            "openrouter" => {
+                // OpenRouter: depends on the underlying model
+                model_lower.contains("gpt-4") || model_lower.contains("claude-3") || model_lower.contains("gemini")
+            },
+            _ => {
+                // Default to false for unknown providers
+                false
+            }
+        }
     }
 
     // 发送消息
@@ -1470,7 +1762,45 @@ impl AiService {
         should_save_to_db: bool,
         assistant_message_id: Option<String>, // 新增助手消息ID参数
     ) -> Result<String> {
-        info!("Sending chat request to {} model", model_name);
+        info!("Sending chat request to {} model with provider {}", model_name, self.config.provider);
+
+        // 检查是否是未配置的提供商
+        if self.config.provider == "unconfigured" || self.config.provider == "mock" {
+            let error_msg = "AI provider not configured. Please go to Settings > AI Configuration to set up an AI provider (OpenAI, Anthropic, DeepSeek, etc.)";
+            error!("{}", error_msg);
+            
+            // 发送错误事件
+            if let Some(app_handle) = &self.app_handle {
+                let error_message = StreamError {
+                    conversation_id: conversation_id.to_string(),
+                    error: error_msg.to_string(),
+                };
+                if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
+                    warn!("Failed to emit stream error for unconfigured provider: {}", emit_err);
+                }
+            }
+            
+            return Err(anyhow::anyhow!(error_msg));
+        }
+        
+        // 检查API密钥
+        if self.config.api_key.is_none() || self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
+            let error_msg = format!("API key not configured for provider '{}'. Please check your AI configuration settings.", self.config.provider);
+            error!("{}", error_msg);
+            
+            // 发送错误事件
+            if let Some(app_handle) = &self.app_handle {
+                let error_message = StreamError {
+                    conversation_id: conversation_id.to_string(),
+                    error: error_msg.clone(),
+                };
+                if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
+                    warn!("Failed to emit stream error for missing API key: {}", emit_err);
+                }
+            }
+            
+            return Err(anyhow::anyhow!(error_msg));
+        }
 
         // 转换消息格式为新的类型系统
         let mut chat_messages = Vec::new();
@@ -1522,22 +1852,31 @@ impl AiService {
             }
             cleaned
         };
-        if let Some(mcp_service) = &self.mcp_service {
-            if let Ok(available_tools) = mcp_service.get_available_tools().await {
-                for t in available_tools {
-                    let params_schema = if t.parameters.schema.is_null() {
-                        serde_json::json!({"type":"object","properties":{}})
-                    } else {
-                        t.parameters.schema.clone()
-                    };
-                    let sanitized_name = sanitize(&t.name);
-                    tool_name_map.insert(sanitized_name.clone(), t.name.clone());
-                    tools_vec.push(crate::ai_adapter::types::Tool {
-                        r#type: "function".to_string(),
-                        name: sanitized_name,
-                        description: t.description,
-                        parameters: params_schema,
-                    });
+        
+        // 检查模型是否支持工具调用
+        let supports_tools = self.model_supports_tools(model_name);
+        if !supports_tools {
+            info!("Model {} does not support tool calling, skipping tools", model_name);
+        }
+        
+        if supports_tools {
+            if let Some(mcp_service) = &self.mcp_service {
+                if let Ok(available_tools) = mcp_service.get_available_tools().await {
+                    for t in available_tools {
+                        let params_schema = if t.parameters.schema.is_null() {
+                            serde_json::json!({"type":"object","properties":{}})
+                        } else {
+                            t.parameters.schema.clone()
+                        };
+                        let sanitized_name = sanitize(&t.name);
+                        tool_name_map.insert(sanitized_name.clone(), t.name.clone());
+                        tools_vec.push(crate::ai_adapter::types::Tool {
+                            r#type: "function".to_string(),
+                            name: sanitized_name,
+                            description: t.description,
+                            parameters: params_schema,
+                        });
+                    }
                 }
             }
         }
@@ -1574,16 +1913,24 @@ impl AiService {
         
         // 发送请求 - 使用AiAdapterManager来获取提供商
         let adapter_manager = AiAdapterManager::global();
+        info!("Getting provider for: {}", self.config.provider);
         let provider = adapter_manager.get_provider_or_default(&self.config.provider)
             .map_err(|e| {
+                error!("Failed to get provider '{}': {}", self.config.provider, e);
                 anyhow::anyhow!("Web call failed for model '{}'. Cause: {}", model_name, e)
             })?;
+        
+        info!("Sending chat stream request to provider: {} with model: {}", provider.name(), model_name);
+        debug!("Chat request: {:?}", chat_request);
         
         // 使用流式响应并实时发送事件
         let mut stream = provider.send_chat_stream(&chat_request).await
             .map_err(|e| {
+                error!("Stream request failed for model '{}' on provider '{}': {}", model_name, provider.name(), e);
                 anyhow::anyhow!("Web call failed for model '{}'. Cause: {}", model_name, e)
             })?;
+        
+        info!("Stream created successfully, starting to process chunks");
 
         let mut content = String::new();
         let mut response_id = String::new();
@@ -1597,25 +1944,54 @@ impl AiService {
             let message_id_to_use = assistant_message_id.as_ref()
                 .or_else(|| messages.last().map(|m| &m.id))
                 .unwrap_or(&unknown_id);
+            
+            info!("Emitting ai_stream_start with message_id: {} for conversation: {}", 
+                message_id_to_use, conversation_id);
+            
             let start_message = serde_json::json!({
                 "conversation_id": conversation_id,
                 "message_id": message_id_to_use
             });
             if let Err(e) = app_handle.emit("ai_stream_start", &start_message) {
                 warn!("Failed to emit ai_stream_start event: {}", e);
+            } else {
+                debug!("Successfully emitted ai_stream_start event");
             }
         }
 
         // 处理流式响应并实时发送事件
         use futures::StreamExt;
+        let mut chunk_count = 0;
+        let mut last_sent_length = 0;  // Track last sent content length for incremental updates
+        let stream_start_time = std::time::Instant::now();
+        let mut last_chunk_time = stream_start_time;
+        
         while let Some(chunk_result) = stream.stream.next().await {
+            chunk_count += 1;
+            let chunk_receive_time = std::time::Instant::now();
+            let chunk_interval = chunk_receive_time.duration_since(last_chunk_time).as_millis();
+            last_chunk_time = chunk_receive_time;
+            
+            debug!("Processing chunk #{}, interval: {}ms", chunk_count, chunk_interval);
+            
+            // Performance monitoring - log every 10 chunks or if interval is high
+            if chunk_count % 10 == 0 || chunk_interval > 1000 {
+                let elapsed = chunk_receive_time.duration_since(stream_start_time).as_millis();
+                info!("🚀 Streaming performance: chunk #{}, total_elapsed: {}ms, chunk_interval: {}ms, chars_processed: {}", 
+                      chunk_count, elapsed, chunk_interval, content.len());
+            }
             match chunk_result {
                 Ok(chunk) => {
-                    // 只有当chunk中有实际内容时才处理
-                    if !chunk.content.is_empty() {
-                        // 累积内容
-                        content.push_str(&chunk.content);
-                        debug!("Stream chunk received: '{}', total content length: {}", chunk.content, content.len());
+                    debug!("Received chunk: content='{}', finish_reason={:?}, id='{}', model='{}'", 
+                           chunk.content, chunk.finish_reason, chunk.id, chunk.model);
+                    
+                    // 只有当chunk中有实际内容或完成信号时才处理
+                    if !chunk.content.is_empty() || chunk.finish_reason.is_some() {
+                        // 立即累积内容（仅当有内容时）
+                        if !chunk.content.is_empty() {
+                            content.push_str(&chunk.content);
+                            debug!("Stream chunk received: '{}', total content length: {}", chunk.content, content.len());
+                        }
                         
                         // 检查是否完成（在移动之前）
                         let is_complete = chunk.finish_reason.is_some();
@@ -1634,31 +2010,47 @@ impl AiService {
                             finish_reason = chunk.finish_reason;
                         }
                         
-                        // 实时发送流式消息事件到前端
-                        if let Some(app_handle) = &self.app_handle {
-                            let message_id_to_use = assistant_message_id.as_ref()
-                                .cloned()
-                                .or_else(|| messages.last().map(|m| m.id.clone()))
-                                .unwrap_or_else(|| "unknown".to_string());
-                            let stream_message = StreamMessage {
-                                conversation_id: conversation_id.to_string(),
-                                message_id: message_id_to_use,
-                                content: content.clone(), // 发送当前累积的完整内容
-                                is_complete,
-                                token_count: None,
-                                total_tokens: usage.as_ref().map(|u| u.total_tokens as u32),
-                                tool_calls: None,
-                            };
-                            
-                            if let Err(e) = app_handle.emit("ai_stream_message", &stream_message) {
-                                warn!("Failed to emit stream message: {}", e);
-                            } else {
-                                debug!("Emitted stream message: {} chars, complete: {}", content.len(), is_complete);
+                        // 实时发送流式消息事件到前端（仅当有内容或完成时）
+                        if !chunk.content.is_empty() || is_complete {
+                            if let Some(app_handle) = &self.app_handle {
+                                let message_id_to_use = assistant_message_id.as_ref()
+                                    .cloned()
+                                    .or_else(|| messages.last().map(|m| m.id.clone()))
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                
+                                debug!("Emitting immediate stream message - message_id: {}, chunk_content: '{}', total_length: {}, is_complete: {}", 
+                                    message_id_to_use, chunk.content, content.len(), is_complete);
+                                
+                                // 创建增量流式消息，优先发送delta内容
+                                let stream_message = StreamMessage {
+                                    conversation_id: conversation_id.to_string(),
+                                    message_id: message_id_to_use.clone(),
+                                    content: if !chunk.content.is_empty() { chunk.content.clone() } else { content.clone() }, // 发送chunk内容或总内容
+                                    is_complete,
+                                    token_count: None,
+                                    total_tokens: usage.as_ref().map(|u| u.total_tokens as u32),
+                                    tool_calls: None,
+                                    // 增量流式字段
+                                    is_incremental: !chunk.content.is_empty(), // 只有当有内容时才是增量更新
+                                    content_delta: if !chunk.content.is_empty() { Some(chunk.content.clone()) } else { None },
+                                    total_content_length: Some(content.len()),
+                                };
+                                
+                                if let Err(e) = app_handle.emit("ai_stream_message", &stream_message) {
+                                    warn!("Failed to emit stream message: {}", e);
+                                } else {
+                                    debug!("Emitted immediate stream message: '{}' chars in chunk, {} total chars, complete: {}", 
+                                           chunk.content.len(), content.len(), is_complete);
+                                }
+                                
+                                last_sent_length = content.len();
                             }
                         }
                     } else {
                         // 即使没有内容，也要检查是否完成
+                        debug!("Empty chunk content, finish_reason: {:?}", chunk.finish_reason);
                         if chunk.finish_reason.is_some() {
+                            warn!("Stream completed with empty content after {} chunks. Total content length: {}", chunk_count, content.len());
                             let is_complete = true;
                             finish_reason = chunk.finish_reason;
                             
@@ -1675,6 +2067,10 @@ impl AiService {
                                     token_count: None,
                                     total_tokens: usage.as_ref().map(|u| u.total_tokens as u32),
                                     tool_calls: None,
+                                    // Completion message - send full content for fallback
+                                    is_incremental: false,
+                                    content_delta: None,
+                                    total_content_length: Some(content.len()),
                                 };
                                 
                                 if let Err(e) = app_handle.emit("ai_stream_message", &stream_message) {
@@ -1685,18 +2081,80 @@ impl AiService {
                     }
                 }
                 Err(e) => {
+                    error!("Stream chunk error after {} chunks: {}", chunk_count, e);
                     // 发送错误事件
                     if let Some(app_handle) = &self.app_handle {
                         let error_message = StreamError {
                             conversation_id: conversation_id.to_string(),
                             error: e.to_string(),
                         };
+                        info!("Emitting ai_stream_error event for conversation_id: {}", conversation_id);
                         if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
                             warn!("Failed to emit stream error: {}", emit_err);
                         }
                     }
                     return Err(anyhow::anyhow!("Stream error: {}", e));
                 }
+            }
+        }
+        
+        // Log completion status and validate response
+        if chunk_count == 0 {
+            warn!("Stream completed with no chunks received for model '{}' on provider '{}'! This suggests an API configuration issue.", 
+                  model_name, provider.name());
+            
+            // Send error event for empty stream
+            if let Some(app_handle) = &self.app_handle {
+                let error_message = StreamError {
+                    conversation_id: conversation_id.to_string(),
+                    error: format!("No response received from AI provider '{}' with model '{}'. Please check your API configuration.", provider.name(), model_name),
+                };
+                info!("Emitting ai_stream_error for empty stream, conversation_id: {}", conversation_id);
+                if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
+                    warn!("Failed to emit stream error for empty response: {}", emit_err);
+                }
+                
+                // Also emit stream complete to ensure frontend resets
+                let complete_message = serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
+                    "total_content_length": 0,
+                    "error": true
+                });
+                let _ = app_handle.emit("ai_stream_complete", &complete_message);
+            }
+            return Err(anyhow::anyhow!("No response received from AI provider. Please check your API configuration."));
+        } else if content.is_empty() && finish_reason.is_none() {
+            // 只有当没有内容并且没有完成状态时才报错
+            warn!("Stream completed with {} chunks but empty content and no finish_reason for model '{}' on provider '{}'! This suggests an API or model configuration issue.", 
+                  chunk_count, model_name, provider.name());
+            
+            // Send error event for empty content
+            if let Some(app_handle) = &self.app_handle {
+                let error_message = StreamError {
+                    conversation_id: conversation_id.to_string(),
+                    error: format!("AI provider '{}' returned empty response with model '{}'. This may indicate an API key issue or the model doesn't support your request.", provider.name(), model_name),
+                };
+                info!("Emitting ai_stream_error for empty content, conversation_id: {}", conversation_id);
+                if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
+                    warn!("Failed to emit stream error for empty content: {}", emit_err);
+                }
+                
+                // Also emit stream complete to ensure frontend resets
+                let complete_message = serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
+                    "total_content_length": 0,
+                    "error": true
+                });
+                let _ = app_handle.emit("ai_stream_complete", &complete_message);
+            }
+            return Err(anyhow::anyhow!("AI provider returned empty response. Please check your API key and model configuration."));
+        } else {
+            if content.is_empty() {
+                info!("Stream completed with {} chunks and empty content but valid finish_reason: {:?}", chunk_count, finish_reason);
+            } else {
+                info!("Stream completed successfully after {} chunks, total content length: {}", chunk_count, content.len());
             }
         }
         
@@ -1709,10 +2167,14 @@ impl AiService {
             let complete_message = serde_json::json!({
                 "conversation_id": conversation_id,
                 "message_id": message_id_to_use,
-                "total_tokens": usage.as_ref().map(|u| u.total_tokens)
+                "total_tokens": usage.as_ref().map(|u| u.total_tokens),
+                "total_content_length": content.len()
             });
+            info!("Emitting ai_stream_complete event for message_id: {}, conversation_id: {}", message_id_to_use, conversation_id);
             if let Err(e) = app_handle.emit("ai_stream_complete", &complete_message) {
                 warn!("Failed to emit ai_stream_complete event: {}", e);
+            } else {
+                debug!("Successfully emitted ai_stream_complete event");
             }
         }
 
@@ -1762,17 +2224,73 @@ impl AiService {
             }
             messages.push(assistant_msg);
 
+            // Emit tool execution start event
+            if let Some(app_handle) = &self.app_handle {
+                let execution_start_event = serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
+                    "tool_calls": tool_calls.iter().map(|tc| {
+                        serde_json::json!({
+                            "id": tc.id,
+                            "name": tc.name,
+                            "status": "pending"
+                        })
+                    }).collect::<Vec<_>>()
+                });
+                if let Err(e) = app_handle.emit("tool_execution_started", &execution_start_event) {
+                    warn!("Failed to emit tool execution start event: {}", e);
+                }
+            }
+
             // 2. 执行每个工具调用
             let mut tool_messages = Vec::new();
-            for tc in tool_calls {
+            for (tool_index, tc) in tool_calls.iter().enumerate() {
                 let exec_tool_name = tool_name_map.get(&tc.name).cloned().unwrap_or_else(|| tc.name.clone());
                 let args_val: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or_default();
+
+                // Emit tool execution step start event
+                if let Some(app_handle) = &self.app_handle {
+                    let step_start_event = serde_json::json!({
+                        "conversation_id": conversation_id,
+                        "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
+                        "tool_call_id": tc.id,
+                        "tool_name": exec_tool_name,
+                        "step_index": tool_index,
+                        "total_tools": tool_calls.len(),
+                        "status": "executing",
+                        "started_at": chrono::Utc::now().timestamp()
+                    });
+                    if let Err(e) = app_handle.emit("tool_step_started", &step_start_event) {
+                        warn!("Failed to emit tool step start event: {}", e);
+                    }
+                }
 
                 let exec_res = if let Some(mcp) = &self.mcp_service {
                     mcp.execute_tool(&exec_tool_name, args_val.clone()).await
                 } else {
                     Err(anyhow::anyhow!("MCP service unavailable"))
                 };
+
+                // Emit tool execution step complete event
+                let tool_completed_at = chrono::Utc::now().timestamp();
+                if let Some(app_handle) = &self.app_handle {
+                    let step_complete_event = serde_json::json!({
+                        "conversation_id": conversation_id,
+                        "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
+                        "tool_call_id": tc.id,
+                        "tool_name": exec_tool_name,
+                        "step_index": tool_index,
+                        "total_tools": tool_calls.len(),
+                        "status": if exec_res.is_ok() { "completed" } else { "failed" },
+                        "completed_at": tool_completed_at,
+                        "result": exec_res.as_ref().ok(),
+                        "error": exec_res.as_ref().err().map(|e| e.to_string()),
+                        "progress": ((tool_index + 1) as f32 / tool_calls.len() as f32 * 100.0) as u32
+                    });
+                    if let Err(e) = app_handle.emit("tool_step_completed", &step_complete_event) {
+                        warn!("Failed to emit tool step complete event: {}", e);
+                    }
+                }
 
                 // 3. 创建工具响应消息
                 let tool_msg = match &exec_res {
@@ -1825,6 +2343,34 @@ impl AiService {
 
             messages.extend(tool_messages);
 
+            // Emit tool execution complete event
+            if let Some(app_handle) = &self.app_handle {
+                let execution_complete_event = serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
+                    "total_tools": tool_calls.len(),
+                    "completed_tools": tool_calls.len(),
+                    "status": "all_completed"
+                });
+                if let Err(e) = app_handle.emit("tool_execution_completed", &execution_complete_event) {
+                    warn!("Failed to emit tool execution complete event: {}", e);
+                }
+            }
+
+            // Emit tool execution complete event
+            if let Some(app_handle) = &self.app_handle {
+                let execution_complete_event = serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
+                    "total_tools": tool_calls.len(),
+                    "completed_tools": tool_calls.len(),
+                    "status": "all_completed"
+                });
+                if let Err(e) = app_handle.emit("tool_execution_completed", &execution_complete_event) {
+                    warn!("Failed to emit tool execution complete event: {}", e);
+                }
+            }
+
             // 4. 再次调用API，附带工具结果，并使用 Box::pin 解决异步递归问题
             info!("Resending request with tool results...");
             let recursive_call = self.send_chat_stream(
@@ -1840,9 +2386,15 @@ impl AiService {
         }
 
         // 如果没有工具调用，保存助手响应并返回
-        let answer = match &response.message.content {
+        let mut answer = match &response.message.content {
             text => text.clone(),
         };
+        
+        // 如果助手响应为空，提供有用的错误信息
+        if answer.trim().is_empty() {
+            warn!("Assistant response is empty for model '{}' on provider '{}'", model_name, provider.name());
+            answer = format!("抱歉，AI模型 {} 没有返回任何响应。这可能是由于：\n\n1. API配置问题（请检查API密钥和基础URL）\n2. 模型暂时不可用\n3. 请求被限流\n\n请尝试重新发送消息或切换到其他模型。", model_name);
+        }
         let assistant_msg = AiMessage {
             id: Uuid::new_v4().to_string(),
             conversation_id: conversation_id.to_string(),
@@ -2050,6 +2602,10 @@ Please analyze and output structured results.
                 token_count: None, // TODO: token计数
                 total_tokens: None,
                 tool_calls,
+                // Default to non-incremental for helper function (fallback mode)
+                is_incremental: false,
+                content_delta: None,
+                total_content_length: Some(content.len()),
             };
             if let Err(e) = app_handle.emit("ai_stream_message", &message) {
                 error!("Failed to emit stream message: {}", e);

@@ -5,6 +5,7 @@ use super::session::DefaultAgentSession;
 // 引擎适配器将在注册时直接使用
 use async_trait::async_trait;
 use anyhow::{Result, anyhow};
+use tracing::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -89,7 +90,7 @@ impl AgentManager {
     
     /// 初始化管理器，注册默认的Agent和Engine
     pub async fn initialize(&self) -> Result<()> {
-        info!("Initializing Agent Manager");
+        debug!("Initializing Agent Manager");
         
         // 注册执行引擎
         self.register_default_engines().await?;
@@ -97,7 +98,7 @@ impl AgentManager {
         // 注册默认Agent
         self.register_default_agents().await?;
         
-        info!("Agent Manager initialized successfully");
+        debug!("Agent Manager initialized successfully");
         Ok(())
     }
     
@@ -107,7 +108,7 @@ impl AgentManager {
         ai_service_manager: Arc<crate::services::AiServiceManager>,
         db_service: Arc<crate::services::database::DatabaseService>,
     ) -> Result<()> {
-        info!("Initializing Agent Manager with dependencies");
+        debug!("Initializing Agent Manager with dependencies");
         
         // 注册具有完整依赖的执行引擎
         self.register_engines_with_dependencies(ai_service_manager, db_service).await?;
@@ -115,7 +116,7 @@ impl AgentManager {
         // 注册默认Agent
         self.register_default_agents().await?;
         
-        info!("Agent Manager initialized successfully with full dependencies");
+        debug!("Agent Manager initialized successfully with full dependencies");
         Ok(())
     }
     
@@ -130,7 +131,7 @@ impl AgentManager {
         match crate::engines::plan_and_execute::engine_adapter::PlanAndExecuteEngine::new().await {
             Ok(engine) => {
                 engines.insert("plan_execute".to_string(), Arc::new(engine));
-                info!("Registered Plan-and-Execute engine adapter");
+                debug!("Registered Plan-and-Execute engine adapter");
             }
             Err(e) => {
                 warn!("Failed to register Plan-and-Execute engine: {}", e);
@@ -180,7 +181,7 @@ impl AgentManager {
         ).await {
             Ok(engine) => {
                 engines.insert("plan_execute".to_string(), Arc::new(engine));
-                info!("Registered Plan-and-Execute engine adapter with full dependencies");
+                debug!("Registered Plan-and-Execute engine adapter with full dependencies");
             }
             Err(e) => {
                 warn!("Failed to register Plan-and-Execute engine with dependencies: {}", e);

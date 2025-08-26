@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6">
+  <div class="page-content-padded safe-top space-y-6">
     <!-- 页面标题和操作按钮 -->
     <div class="flex items-center justify-between">
       <h1 class="text-3xl font-bold">{{ $t('assetManagement.title', '资产管理') }}</h1>

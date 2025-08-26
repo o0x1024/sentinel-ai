@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -33,7 +33,7 @@ impl McpToolProvider {
 
     /// 刷新MCP工具列表
     async fn refresh_tools(&self) -> Result<()> {
-        info!("Refreshing MCP tools from service");
+        debug!("Refreshing MCP tools from service");
         
         // 从MCP服务获取工具列表
         let tool_infos = self.mcp_service.get_available_tools().await?;

@@ -1,5 +1,5 @@
 <template>
-  <div class="p-6">
+  <div class="page-content-padded safe-top space-y-6">
     <!-- 统计卡片 -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
       <div class="stat-card">

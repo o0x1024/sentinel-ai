@@ -20,6 +20,7 @@ use rmcp::{
 
 // 移除未使用的导入
 use serde::{Deserialize, Serialize};
+use serde_json::de;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -131,7 +132,7 @@ impl McpSessionImpl {
 
     /// 建立连接
     async fn connect(&self) -> Result<()> {
-        info!("Connecting to MCP server: {}", self.config.name);
+        debug!("Connecting to MCP server: {}", self.config.name);
 
         // 更新连接状态
         *self.connection_status.write().await = ConnectionStatus::Connecting;
@@ -152,7 +153,7 @@ impl McpSessionImpl {
                     Box::new(self.connect_child_process().await?)
                 },
                 TransportType::Stdio => {
-                    info!("Establishing STDIO connection...");
+                    debug!("Establishing STDIO connection...");
                     Box::new(self.connect_stdio().await?)
                 },
                 TransportType::SseClient => {
@@ -180,7 +181,7 @@ impl McpSessionImpl {
         let timeout_duration = Duration::from_secs(timeout_seconds);
         match tokio::time::timeout(timeout_duration, connect_future).await {
             Ok(Ok(())) => {
-                info!("Transport connection established for: {}", self.config.name);
+                debug!("Transport connection established for: {}", self.config.name);
             }
             Ok(Err(e)) => {
                 let detailed_error = format!("Connection failed for '{}': {}. Check if the command exists and is accessible.", self.config.name, e);
@@ -200,7 +201,7 @@ impl McpSessionImpl {
         *self.connection_status.write().await = ConnectionStatus::Connected;
 
         // 初始化会话
-        info!("Initializing session for: {}", self.config.name);
+        debug!("Initializing session for: {}", self.config.name);
         if let Err(e) = self.initialize_session().await {
             warn!("Session initialization failed for {}: {}", self.config.name, e);
             // 不要因为会话初始化失败而断开连接，只记录警告
@@ -209,7 +210,7 @@ impl McpSessionImpl {
         // 启动心跳检测
         self.start_heartbeat().await;
 
-        info!("Successfully connected to MCP server: {}", self.config.name);
+        debug!("Successfully connected to MCP server: {}", self.config.name);
         Ok(())
     }
 
@@ -300,7 +301,7 @@ impl McpSessionImpl {
     /// 通过标准输入输出连接
     /// 对于STDIO传输，我们实际上使用子进程方式，因为STDIO需要外部进程管理
     async fn connect_stdio(&self) -> Result<RunningService<RoleClient, ()>> {
-        info!("Connecting via STDIO transport (using child process)");
+        debug!("Connecting via STDIO transport (using child process)");
 
         // STDIO传输实际上需要启动一个子进程
         // 如果没有指定命令，则返回错误
@@ -447,20 +448,20 @@ impl McpSessionImpl {
     async fn discover_tools(&self) -> Result<Vec<Tool>> {
         let service = self.service.read().await;
         if let Some(service_any) = service.as_ref() {
-            info!("Attempting to discover tools for server: {}", self.config.name);
+            debug!("Attempting to discover tools for server: {}", self.config.name);
             
             // 尝试多种类型转换方式，因为rmcp的类型系统比较复杂
             
             // 尝试不同的类型转换
             match &self.config.transport_type {
                 TransportType::ChildProcess | TransportType::Stdio => {
-                    info!("Attempting child process/stdio type conversion for: {}", self.config.name);
+                    debug!("Attempting child process/stdio type conversion for: {}", self.config.name);
                     
                     // 尝试第一种类型转换
                     if let Some(client) = service_any.downcast_ref::<RunningService<RoleClient, ()>>() {
                         match client.list_tools(None).await {
                             Ok(result) => {
-                                info!("Successfully discovered {} tools from MCP server (type 1)", result.tools.len());
+                                debug!("Successfully discovered {} tools from MCP server (type 1)", result.tools.len());
                                 return Ok(result.tools);
                             }
                             Err(e) => {
@@ -475,7 +476,7 @@ impl McpSessionImpl {
                     if let Some(client) = service_any.downcast_ref::<RunningService<RoleClient, rmcp::model::InitializeRequestParam>>() {
                         match client.list_tools(None).await {
                             Ok(result) => {
-                                info!("Successfully discovered {} tools from MCP server (type 2)", result.tools.len());
+                                debug!("Successfully discovered {} tools from MCP server (type 2)", result.tools.len());
                                 return Ok(result.tools);
                             }
                             Err(e) => {
@@ -487,13 +488,13 @@ impl McpSessionImpl {
                     }
                 }
                 TransportType::SseClient | TransportType::HttpStreaming => {
-                    info!("Attempting HTTP type conversion for: {}", self.config.name);
+                    debug!("Attempting HTTP type conversion for: {}", self.config.name);
                     
                     // 对于HTTP类型的连接，尝试不同的类型转换
                     if let Some(client) = service_any.downcast_ref::<RunningService<RoleClient, rmcp::model::InitializeRequestParam>>() {
                         match client.list_tools(None).await {
                             Ok(result) => {
-                                info!("Successfully discovered {} tools from HTTP MCP server", result.tools.len());
+                                debug!("Successfully discovered {} tools from HTTP MCP server", result.tools.len());
                                 return Ok(result.tools);
                             }
                             Err(e) => {
@@ -508,7 +509,7 @@ impl McpSessionImpl {
                     if let Some(client) = service_any.downcast_ref::<RunningService<RoleClient, ()>>() {
                         match client.list_tools(None).await {
                             Ok(result) => {
-                                info!("Successfully discovered {} tools from HTTP MCP server (alt type)", result.tools.len());
+                                debug!("Successfully discovered {} tools from HTTP MCP server (alt type)", result.tools.len());
                                 return Ok(result.tools);
                             }
                             Err(e) => {
@@ -520,7 +521,7 @@ impl McpSessionImpl {
             }
             
             // 如果所有类型转换都失败，提供基于服务器名称的默认工具
-            info!("All type conversions failed, providing default tools for: {}", self.config.name);
+            debug!("All type conversions failed, providing default tools for: {}", self.config.name);
             return Ok(vec![]);
         }
 
@@ -614,7 +615,7 @@ impl McpSessionImpl {
 
     /// 验证连接前提条件
     async fn validate_connection_prerequisites(&self) -> Result<()> {
-        info!("Validating connection prerequisites for: {}", self.config.name);
+        debug!("Validating connection prerequisites for: {}", self.config.name);
 
         // 检查命令是否存在
         if let Some(command) = &self.config.command {
@@ -637,7 +638,7 @@ impl McpSessionImpl {
             }
         }
 
-        info!("All connection prerequisites validated for: {}", self.config.name);
+        debug!("All connection prerequisites validated for: {}", self.config.name);
         Ok(())
     }
 
@@ -649,7 +650,7 @@ impl McpSessionImpl {
             ("which", vec![command])
         };
 
-        info!("Checking if command '{}' exists...", command);
+        debug!("Checking if command '{}' exists...", command);
         
         let output = tokio::process::Command::new(check_cmd)
             .args(check_args)
@@ -671,7 +672,7 @@ impl McpSessionImpl {
     /// 验证NPM包可用性
     async fn validate_npm_package_availability(&self) -> Result<()> {
         // 检查网络连接
-        info!("Checking network connectivity for npm registry...");
+        debug!("Checking network connectivity for npm registry...");
         
         // 简单的网络检查 - ping npm registry
         let ping_result = if cfg!(target_os = "windows") {
@@ -769,7 +770,7 @@ impl McpSession for McpSessionImpl {
         // 直接在这里实现工具调用逻辑，避免引用生命周期问题
         let call_result = match &self.config.transport_type {
             TransportType::ChildProcess | TransportType::Stdio => {
-                info!("Attempting child process/stdio tool call for: {}", self.config.name);
+                debug!("Attempting child process/stdio tool call for: {}", self.config.name);
                 
                 // 尝试第一种类型转换
                 if let Some(client) = service_any.downcast_ref::<RunningService<RoleClient, ()>>() {
@@ -1217,7 +1218,7 @@ impl McpClientManager {
                         };
 
                         configs.insert(db_config.name.clone(), config);
-                        info!("Loaded MCP server config: {}", db_config.name);
+                        debug!("Loaded MCP server config: {}", db_config.name);
                     }
 
                     info!(
@@ -1242,7 +1243,7 @@ impl McpClientManager {
             warn!("Failed to start health monitor: {}", e);
         }
 
-        info!("MCP client manager initialized successfully");
+        debug!("MCP client manager initialized successfully");
         Ok(())
     }
 
@@ -1360,7 +1361,7 @@ impl McpClientManager {
 
     /// 自动连接启用的服务器 (并发版本)
     async fn auto_connect_enabled_servers(&self) {
-        info!("Starting concurrent auto-connection to enabled MCP servers...");
+        debug!("Starting concurrent auto-connection to enabled MCP servers...");
         
         let configs = self.configs.read().await;
         if configs.is_empty() {
@@ -1382,7 +1383,7 @@ impl McpClientManager {
             .map(|(server_name, _config)| {
                 let manager = self.clone();
                 async move {
-                    info!("Auto-connecting to MCP server: {}", server_name);
+                    debug!("Auto-connecting to MCP server: {}", server_name);
                     let start_time = std::time::Instant::now();
                     
                     let result = manager.connect_to_server(&server_name).await;
@@ -1398,7 +1399,7 @@ impl McpClientManager {
                             
                             // 提供连接失败的详细信息
                             if e.to_string().contains("timeout") {
-                                info!("Consider checking network connectivity or increasing timeout for: {}", server_name);
+                                debug!("Consider checking network connectivity or increasing timeout for: {}", server_name);
                             } else if e.to_string().contains("Command") {
                                 info!("Consider checking if required commands are installed for: {}", server_name);
                             }
@@ -1442,7 +1443,7 @@ impl McpClientManager {
         // 计算性能提升
         if successful_connections > 1 && total_connection_time > total_elapsed {
             let speedup = total_connection_time.as_millis() as f64 / total_elapsed.as_millis() as f64;
-            info!("Concurrent connection speedup: {:.2}x faster than sequential", speedup);
+            debug!("Concurrent connection speedup: {:.2}x faster than sequential", speedup);
         }
         
         // 等待一小段时间确保所有连接都已处理
@@ -1482,7 +1483,7 @@ impl McpClientManager {
             }
         });
         
-        info!("Health monitor started for MCP connections");
+        debug!("Health monitor started for MCP connections");
         Ok(())
     }
 
@@ -1695,7 +1696,7 @@ impl McpClientManager {
             .map(|server_name| {
                 let manager = self.clone();
                 async move {
-                    info!("Connecting to MCP server: {}", server_name);
+                    debug!("Connecting to MCP server: {}", server_name);
                     let start_time = std::time::Instant::now();
                     
                     let result = manager.connect_to_server(&server_name).await;

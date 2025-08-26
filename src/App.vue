@@ -198,7 +198,7 @@ window.updateUIScale = (newScale: number) => {
 </script>
 
 <template>
-  <div id="app" class="min-h-screen bg-base-100">
+  <div id="app" class="h-screen bg-base-100 overflow-hidden">
     <!-- 主应用窗口 -->
       <!-- 顶部导航栏 -->
       <TopNavbar 
@@ -208,11 +208,11 @@ window.updateUIScale = (newScale: number) => {
       />
 
       <!-- 主要内容区域 - 受缩放影响 -->
-      <div :class="appClasses" :style="appStyles" class="flex pt-16">
+      <div :class="appClasses" :style="appStyles" class="flex h-[calc(100vh-4rem)]">
         <!-- 侧边栏 -->
         <Sidebar 
           :collapsed="sidebarCollapsed" 
-          class="fixed left-0 top-16 h-[calc(100vh-4rem)] transition-all duration-300 z-40"
+          class="fixed left-0 top-16 h-[calc(100vh-4rem)] transition-all duration-300 z-1000 "
           :class="{
             'w-16': sidebarCollapsed,
             'w-64': !sidebarCollapsed
@@ -221,14 +221,13 @@ window.updateUIScale = (newScale: number) => {
         
         <!-- 主内容区 -->
         <main 
-          class="flex-1 transition-all duration-300 overflow-hidden p-4 pt-4"
+          class="flex-1 transition-all duration-300 overflow-y-auto mt-16"
           :class="{
             'ml-16': sidebarCollapsed,
             'ml-64': !sidebarCollapsed
           }"
-          style="min-height: calc(100vh - 4rem);"
         >
-          <router-view />
+          <router-view class="min-h-full" />
         </main>
       </div>
 
@@ -237,6 +236,47 @@ window.updateUIScale = (newScale: number) => {
 </template>
 
 <style>
+/* 页面布局样式 */
+.page-content {
+  min-height: 100%;
+  overflow-y: auto;
+}
+
+.page-content-padded {
+  min-height: 100%;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+/* 专门为AI助手等全屏组件设计，不允许滚动 */
+.page-content-full {
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+}
+
+/* 可滚动的内容区域 */
+.page-content-scrollable {
+  height: 100%;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+/* 防止内容被导航栏遮挡的安全区域 */
+.safe-top {
+  padding-top: 1rem;
+}
+
+.safe-top-lg {
+  padding-top: 2rem;
+}
+
+/* 对于需要完整视口高度的组件，确保不被遮挡 */
+.navbar-safe-area {
+  min-height: calc(100% - 1rem);
+  padding-top: 0.5rem;
+}
+
 /* 全局样式 */
 html,
 body {

@@ -6,6 +6,7 @@ use super::framework_adapters::*;
 use super::unified_types::*;
 use super::UnifiedToolManager;
 use anyhow::{anyhow, Result};
+use tracing::debug;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
@@ -30,15 +31,15 @@ impl AdapterFactory {
     pub fn create_adapter(&self, framework_type: FrameworkType) -> Arc<dyn FrameworkToolAdapter> {
         match framework_type {
             FrameworkType::PlanAndExecute => {
-                info!("Creating Plan & Execute adapter");
+                debug!("Creating Plan & Execute adapter");
                 Arc::new(PlanAndExecuteAdapter::new(self.tool_manager.clone()))
             }
             FrameworkType::ReWOO => {
-                info!("Creating ReWOO adapter");
+                debug!("Creating ReWOO adapter");
                 Arc::new(ReWOOAdapter::new(self.tool_manager.clone()))
             }
             FrameworkType::LLMCompiler => {
-                info!("Creating LLM Compiler adapter");
+                debug!("Creating LLM Compiler adapter");
                 Arc::new(LLMCompilerAdapter::new(self.tool_manager.clone()))
             }
         }
@@ -46,13 +47,13 @@ impl AdapterFactory {
 
     /// 创建LLM Compiler兼容的EngineToolAdapter
     pub fn create_engine_adapter(&self) -> Arc<dyn EngineToolAdapter> {
-        info!("Creating Engine Tool Adapter for LLM Compiler compatibility");
+        debug!("Creating Engine Tool Adapter for LLM Compiler compatibility");
         Arc::new(LLMCompilerAdapter::new(self.tool_manager.clone()))
     }
 
     /// 创建基础适配器
     pub fn create_base_adapter(&self, config: AdapterConfig) -> Arc<dyn FrameworkToolAdapter> {
-        info!("Creating base adapter with custom config");
+        debug!("Creating base adapter with custom config");
         Arc::new(BaseFrameworkAdapter::new(self.tool_manager.clone(), config))
     }
 }
@@ -86,7 +87,7 @@ impl AdapterRegistry {
 
         let adapter = self.factory.create_adapter(framework_type);
         self.adapters.insert(framework_type, adapter.clone());
-        info!("Registered adapter for framework: {}", framework_type);
+        debug!("Registered adapter for framework: {}", framework_type);
         adapter
     }
 
@@ -112,7 +113,7 @@ impl AdapterRegistry {
 
         let adapter = self.factory.create_engine_adapter();
         self.engine_adapter = Some(adapter.clone());
-        info!("Registered engine adapter for LLM Compiler compatibility");
+        debug!("Registered engine adapter for LLM Compiler compatibility");
         adapter
     }
 
@@ -143,14 +144,14 @@ impl AdapterRegistry {
 
     /// 预注册所有框架适配器
     pub fn preregister_all(&mut self) {
-        info!("Pre-registering all framework adapters");
+        debug!("Pre-registering all framework adapters");
         
         self.register_adapter(FrameworkType::PlanAndExecute);
         self.register_adapter(FrameworkType::ReWOO);
         self.register_adapter(FrameworkType::LLMCompiler);
         self.register_engine_adapter();
         
-        info!("All framework adapters pre-registered successfully");
+        debug!("All framework adapters pre-registered successfully");
     }
 }
 
@@ -184,12 +185,12 @@ impl GlobalAdapterManager {
 
     /// 预初始化所有适配器
     pub async fn initialize_all(&self) -> Result<()> {
-        info!("Initializing global adapter manager");
+        debug!("Initializing global adapter manager");
         
         let mut registry = self.registry.write().await;
         registry.preregister_all();
         
-        info!("Global adapter manager initialized successfully");
+        debug!("Global adapter manager initialized successfully");
         Ok(())
     }
 
@@ -224,7 +225,7 @@ pub async fn initialize_global_adapter_manager(tool_manager: Arc<RwLock<UnifiedT
     GLOBAL_ADAPTER_MANAGER.set(manager)
         .map_err(|_| anyhow!("Global adapter manager already initialized"))?;
     
-    info!("Global adapter manager initialized successfully");
+    debug!("Global adapter manager initialized successfully");
     Ok(())
 }
 

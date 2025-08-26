@@ -1,17 +1,16 @@
 //! ModelScope提供商实现
 //!
-//! ModelScope API推理服务的适配器实现
+//! ModelScope API推理服务的适配器实现（兼容OpenAI API格式）
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use std::collections::HashMap;
-
 
 use crate::ai_adapter::core::BaseProvider;
 use crate::ai_adapter::error::{AiAdapterError, Result};
-use crate::ai_adapter::http::{HttpClient, SseParser};
+use crate::ai_adapter::http::HttpClient;
 use crate::ai_adapter::types::*;
 use crate::models::ai::MessageRole;
 
@@ -31,8 +30,13 @@ impl ModelScopeProvider {
             ));
         }
 
-        // ModelScope支持的热门模型
+        // ModelScope支持的热门模型（兼容OpenAI格式）
         let models = vec![
+            "qwen-turbo".to_string(),
+            "qwen-plus".to_string(),
+            "qwen-max".to_string(),
+            "Qwen/Qwen2-VL-7B-Instruct".to_string(),
+            "Qwen/Qwen2-7B-Instruct".to_string(),
         ];
 
         let mut final_config = config;
@@ -48,7 +52,7 @@ impl ModelScopeProvider {
             final_config,
             models,
             true,  // 支持流式
-            false, // 暂不支持工具调用
+            true,  // 支持工具调用（兼容OpenAI）
         )?;
 
         Ok(Self { base })
@@ -85,7 +89,7 @@ impl ModelScopeProvider {
         Ok(headers)
     }
 
-    /// 构建聊天请求
+    /// 构建聊天请求（OpenAI兼容格式）
     fn build_chat_request(&self, request: &ChatRequest) -> Result<Value> {
         let mut body = json!({
             "model": request.model,
@@ -114,6 +118,17 @@ impl ModelScopeProvider {
             }
         }
 
+        // // 添加工具支持（OpenAI兼容）
+        // if let Some(tools) = &request.tools {
+        //     if !tools.is_empty() {
+        //         body["tools"] = json!(self.convert_tools(tools)?);
+        //     }
+        // }
+        
+        // // 添加工具选择（OpenAI兼容）
+        // if let Some(tool_choice) = &request.tool_choice {
+        //     body["tool_choice"] = json!(tool_choice);
+        // }
 
         // 添加用户标识符（可选）
         if let Some(user) = &request.user {
@@ -130,7 +145,7 @@ impl ModelScopeProvider {
         Ok(body)
     }
 
-    /// 转换消息格式为ModelScope格式
+    /// 转换消息格式为OpenAI兼容格式
     fn convert_messages(&self, messages: &[Message]) -> Result<Value> {
         let mut converted = Vec::new();
 
@@ -139,10 +154,7 @@ impl ModelScopeProvider {
                 MessageRole::System => "system",
                 MessageRole::User => "user",
                 MessageRole::Assistant => "assistant",
-                MessageRole::Tool => {
-                    // ModelScope暂不支持工具消息，跳过或转换为用户消息
-                    continue;
-                }
+                MessageRole::Tool => "tool", // 支持工具消息（OpenAI兼容）
             };
 
             let mut msg = json!({
@@ -150,14 +162,62 @@ impl ModelScopeProvider {
                 "content": message.content
             });
 
-            // 如果有名称，添加name字段
+            // 添加名称字段
             if let Some(name) = &message.name {
                 msg["name"] = json!(name);
+            }
+            
+            // 添加工具调用（OpenAI兼容）
+            if let Some(tool_calls) = &message.tool_calls {
+                if !tool_calls.is_empty() {
+                    msg["tool_calls"] = json!(self.convert_tool_calls(tool_calls)?);
+                }
+            }
+            
+            // 添加工具调用ID（用于工具响应）
+            if let Some(tool_call_id) = &message.tool_call_id {
+                msg["tool_call_id"] = json!(tool_call_id);
             }
 
             converted.push(msg);
         }
 
+        Ok(json!(converted))
+    }
+    
+    /// 转换工具定义（OpenAI兼容）
+    fn convert_tools(&self, tools: &[Tool]) -> Result<Value> {
+        let mut converted = Vec::new();
+        
+        for tool in tools {
+            converted.push(json!({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters
+                }
+            }));
+        }
+        
+        Ok(json!(converted))
+    }
+    
+    /// 转换工具调用（OpenAI兼容）
+    fn convert_tool_calls(&self, tool_calls: &[ToolCall]) -> Result<Value> {
+        let mut converted = Vec::new();
+        
+        for tool_call in tool_calls {
+            converted.push(json!({
+                "id": tool_call.id,
+                "type": "function",
+                "function": {
+                    "name": tool_call.name,
+                    "arguments": tool_call.arguments
+                }
+            }));
+        }
+        
         Ok(json!(converted))
     }
 
@@ -238,9 +298,15 @@ impl ModelScopeProvider {
         })
     }
     
-         /// 解析流式响应块（静态方法）
-    fn parse_chunk_data(chunk_str: &str) -> Result<StreamChunk> {
-        // 解析SSE数据格式，支持多行数据
+    /// 解析SSE流式响应块（通用方法，兼容OpenAI格式）
+    fn parse_sse_chunk(chunk_str: &str) -> Result<Option<StreamChunk>> {
+        debug!("Parsing ModelScope SSE chunk: {}", chunk_str);
+        
+        let mut accumulated_content = String::new();
+        let mut last_chunk_info = None;
+        let mut has_finish_reason = false;
+        
+        // 处理SSE格式的数据行（与OpenAI兼容格式）
         for line in chunk_str.lines() {
             let line = line.trim(); // 去除行首尾空白字符
             
@@ -253,63 +319,121 @@ impl ModelScopeProvider {
                     continue;
                 }
                 
+                // 检查结束标记
                 if data == "[DONE]" {
-                    return Ok(StreamChunk {
-                        id: "".to_string(),
-                        model: "".to_string(),
-                        content: "".to_string(),
-                        usage: None,
-                        finish_reason: Some("stop".to_string()),
-                    });
+                    debug!("ModelScope stream finished with [DONE]");
+                    return Ok(None); // 返回None表示流结束
                 }
                 
-                // 尝试解析JSON，并处理可能的解析错误
+                // 尝试解析JSON
                 match serde_json::from_str::<Value>(data) {
                     Ok(json) => {
-                        let empty_vec = vec![];
-                        let choices = json["choices"].as_array().unwrap_or(&empty_vec);
-                        if let Some(choice) = choices.first() {
-                            let delta = &choice["delta"];
-                            let content = delta["content"].as_str().unwrap_or("").to_string();
-                            
-                            // 解析使用情况（如果存在）
-                            let usage = if let Some(usage_obj) = json["usage"].as_object() {
-                                Some(Usage {
-                                    prompt_tokens: usage_obj["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                                    completion_tokens: usage_obj["completion_tokens"].as_u64().unwrap_or(0) as u32,
-                                    total_tokens: usage_obj["total_tokens"].as_u64().unwrap_or(0) as u32,
-                                })
+                        debug!("ModelScope JSON parsed: {}", json);
+                        
+                        // 解析choices数组
+                        if let Some(choices) = json["choices"].as_array() {
+                            for choice in choices {
+                                let delta = &choice["delta"];
+                                
+                                // ModelScope可能在多个字段中返回内容
+                                let mut content = String::new();
+                                
+                                // 1. 检查标准content字段
+                                if let Some(content_str) = delta["content"].as_str() {
+                                    content.push_str(content_str);
+                                }
+                                
+                                // 2. 检查reasoning_content字段（ModelScope特有）
+                                if let Some(reasoning_content) = delta["reasoning_content"].as_str() {
+                                    if !content.is_empty() {
+                                        content.push('\n'); // 如果已有内容，添加换行分隔
+                                    }
+                                    content.push_str(reasoning_content);
+                                    debug!("ModelScope using reasoning_content: '{}'", reasoning_content);
+                                }
+                                
+                                // 3. 检查function_call字段（如果有工具调用）
+                                if let Some(function_call) = delta["function_call"].as_object() {
+                                    if let Some(arguments) = function_call["arguments"].as_str() {
+                                        if !content.is_empty() {
+                                            content.push('\n');
+                                        }
+                                        content.push_str(arguments);
+                                        debug!("ModelScope using function_call arguments: '{}'", arguments);
+                                    }
+                                }
+                                
+                                if !content.is_empty() {
+                                    accumulated_content.push_str(&content);
+                                    debug!("ModelScope delta content accumulated: '{}', total_len: {}", content, accumulated_content.len());
+                                }
+                                
+                                // 检查完成原因
+                                if let Some(finish_reason_str) = choice["finish_reason"].as_str() {
+                                    has_finish_reason = true;
+                                    debug!("ModelScope finish_reason: {}", finish_reason_str);
+                                }
+                                
+                                // 保存块信息用于最终构建
+                                last_chunk_info = Some((
+                                    json["id"].as_str().unwrap_or("unknown").to_string(),
+                                    json["model"].as_str().unwrap_or("").to_string(),
+                                    choice["finish_reason"].as_str().map(|s| s.to_string()),
+                                    if let Some(usage_obj) = json["usage"].as_object() {
+                                        Some(Usage {
+                                            prompt_tokens: usage_obj["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                                            completion_tokens: usage_obj["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                                            total_tokens: usage_obj["total_tokens"].as_u64().unwrap_or(0) as u32,
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                ));
+                            }
+                        } else {
+                            // 如果没有choices，检查是否有直接的content字段（某些接口可能这样返回）
+                            if let Some(direct_content) = json["content"].as_str() {
+                                accumulated_content.push_str(direct_content);
+                                debug!("ModelScope using direct content: '{}'", direct_content);
+                                
+                                last_chunk_info = Some((
+                                    json["id"].as_str().unwrap_or("unknown").to_string(),
+                                    json["model"].as_str().unwrap_or("").to_string(),
+                                    json["finish_reason"].as_str().map(|s| s.to_string()),
+                                    None
+                                ));
                             } else {
-                                None
-                            };
-                            
-                            return Ok(StreamChunk {
-                                id: json["id"].as_str().unwrap_or("").to_string(),
-                                model: json["model"].as_str().unwrap_or("").to_string(),
-                                content,
-                                usage,
-                                finish_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-                            });
+                                debug!("ModelScope chunk without choices or content (metadata): {}", json);
+                            }
                         }
                     }
                     Err(e) => {
                         // 记录JSON解析错误，但不中断流处理
-                        log::debug!("Failed to parse ModelScope SSE data as JSON: {} | Data: {}", e, data);
-                        // 继续处理下一行，不返回错误
-                        continue;
+                        debug!("Failed to parse ModelScope SSE data as JSON: {} | Data: {}", e, data);
+                        continue; // 继续处理下一行
                     }
                 }
             }
         }
         
-        // 如果没有找到有效的数据，返回空内容块
-        Ok(StreamChunk {
-            id: "".to_string(),
-            model: "".to_string(),
-            content: "".to_string(),
-            usage: None,
-            finish_reason: None,
-        })
+        // 构建最终的chunk，只有在有内容或有完成原因时才返回
+        if !accumulated_content.is_empty() || has_finish_reason {
+            if let Some((id, model, finish_reason, usage)) = last_chunk_info {
+                let chunk = StreamChunk {
+                    id,
+                    model,
+                    content: accumulated_content,
+                    usage,
+                    finish_reason,
+                };
+                
+                return Ok(Some(chunk));
+            }
+        }
+        
+        // 如果没有找到有效的数据，返回空值
+        debug!("ModelScope chunk processed, no valid content found");
+        Ok(None)
     }
 }
 
@@ -328,35 +452,8 @@ impl AiProvider for ModelScopeProvider {
     }
 
     fn build_chat_request(&self, request: &ChatRequest) -> Result<serde_json::Value> {
-        let mut body = serde_json::json!({
-            "model": request.model,
-            "messages": self.convert_messages(&request.messages)?,
-        });
-        
-        // 添加可选参数
-        if let Some(options) = &request.options {
-            if let Some(temperature) = options.temperature {
-                body["temperature"] = serde_json::json!(temperature);
-            }
-            if let Some(max_tokens) = options.max_tokens {
-                body["max_tokens"] = serde_json::json!(max_tokens);
-            }
-            if let Some(top_p) = options.top_p {
-                body["top_p"] = serde_json::json!(top_p);
-            }
-            if let Some(stop) = &options.stop {
-                body["stop"] = serde_json::json!(stop);
-            }
-        }
-        
-        // 添加工具支持
-        if let Some(tools) = &request.tools {
-            if !tools.is_empty() {
-                body["tools"] = serde_json::json!(tools);
-            }
-        }
-        
-        Ok(body)
+        // 使用内部OpenAI兼容的方法
+        self.build_chat_request(request)
     }
 
     async fn test_connection(&self) -> Result<bool> {
@@ -422,7 +519,7 @@ impl AiProvider for ModelScopeProvider {
         info!("Sending ModelScope stream chat request for model: {}", request.model);
         
         let url = format!("{}/chat/completions", self.get_api_base());
-        let headers = self.build_auth_headers()?;
+        let headers = self.base.build_auth_headers();
         let mut body = self.build_chat_request(request)?;
         body["stream"] = json!(true);
         
@@ -438,41 +535,136 @@ impl AiProvider for ModelScopeProvider {
             }
         }).await?;
         
-        // 使用SSE解析器处理流
+        // 使用SSE解析器处理流式响应，确保正确处理事件边界
+        use crate::ai_adapter::http::SseParser;
+        use futures::StreamExt;
         let sse_stream = SseParser::new(stream);
         
         let mapped_stream = sse_stream.filter_map(|result| {
-            futures::future::ready(match result {
-                Ok(sse_event) => {
-                    if sse_event.event_type.as_deref() == Some("done") || sse_event.data == "[DONE]" {
-                        Some(Ok(StreamChunk {
-                            id: "".to_string(),
-                            model: "".to_string(),
-                            content: "".to_string(),
-                            usage: None,
-                            finish_reason: Some("stop".to_string()),
-                        }))
-                    } else if !sse_event.data.is_empty() {
-                        match Self::parse_chunk_data(&sse_event.data) {
-                            Ok(chunk) => Some(Ok(chunk)),
+            async move {
+                match result {
+                    Ok(sse_event) => {
+                        debug!("ModelScope SSE event: type={:?}, data_len={}", sse_event.event_type, sse_event.data.len());
+                        
+                        // 处理[DONE]事件
+                        if sse_event.data.trim() == "[DONE]" {
+                            debug!("ModelScope stream completed with [DONE]");
+                            return None;
+                        }
+                        
+                        // 解析JSON数据
+                        match serde_json::from_str::<Value>(&sse_event.data) {
+                            Ok(json) => {
+                                debug!("ModelScope SSE JSON parsed: {}", json);
+                                
+                                let mut accumulated_content = String::new();
+                                let mut finish_reason = None;
+                                let mut chunk_id = "unknown".to_string();
+                                let mut chunk_model = String::new();
+                                let mut usage = None;
+                                
+                                // 解析choices数组
+                                if let Some(choices) = json["choices"].as_array() {
+                                    for choice in choices {
+                                        let delta = &choice["delta"];
+                                        
+                                        // ModelScope可能在多个字段中返回内容
+                                        let mut content = String::new();
+                                        
+                                        // 1. 检查标准content字段
+                                        if let Some(content_str) = delta["content"].as_str() {
+                                            content.push_str(content_str);
+                                        }
+                                        
+                                        // 2. 检查reasoning_content字段（ModelScope特有）
+                                        if let Some(reasoning_content) = delta["reasoning_content"].as_str() {
+                                            content.push_str(reasoning_content);
+                                            debug!("ModelScope using reasoning_content: '{}'", reasoning_content);
+                                        }
+                                        
+                                        // 3. 检查function_call字段（如果有工具调用）
+                                        if let Some(function_call) = delta["function_call"].as_object() {
+                                            if let Some(arguments) = function_call["arguments"].as_str() {
+                                                content.push_str(arguments);
+                                                debug!("ModelScope using function_call arguments: '{}'", arguments);
+                                            }
+                                        }
+                                        
+                                        if !content.is_empty() {
+                                            accumulated_content.push_str(&content);
+                                            debug!("ModelScope content accumulated: '{}', total_len: {}", content, accumulated_content.len());
+                                        }
+                                        
+                                        // 检查完成原因
+                                        if let Some(finish_reason_str) = choice["finish_reason"].as_str() {
+                                            finish_reason = Some(finish_reason_str.to_string());
+                                            debug!("ModelScope finish_reason: {}", finish_reason_str);
+                                        }
+                                    }
+                                } else {
+                                    // 如果没有choices，检查是否有直接的content字段
+                                    if let Some(direct_content) = json["content"].as_str() {
+                                        accumulated_content.push_str(direct_content);
+                                        debug!("ModelScope using direct content: '{}'", direct_content);
+                                    }
+                                }
+                                
+                                // 获取元数据
+                                chunk_id = json["id"].as_str().unwrap_or("unknown").to_string();
+                                chunk_model = json["model"].as_str().unwrap_or("").to_string();
+                                
+                                // 解析使用情况
+                                if let Some(usage_obj) = json["usage"].as_object() {
+                                    usage = Some(Usage {
+                                        prompt_tokens: usage_obj["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                                        completion_tokens: usage_obj["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                                        total_tokens: usage_obj["total_tokens"].as_u64().unwrap_or(0) as u32,
+                                    });
+                                }
+                                
+                                // 优化：立即返回任何非空内容的chunk以提高流式响应速度
+                                if !accumulated_content.is_empty() {
+                                    let chunk = StreamChunk {
+                                        id: chunk_id,
+                                        model: chunk_model,
+                                        content: accumulated_content,
+                                        usage,
+                                        finish_reason: finish_reason.clone(),
+                                    };
+                                    
+                                    Some(Ok(chunk))
+                                } else if finish_reason.is_some() {
+                                    // 发送完成信号chunk（即使内容为空）
+                                    let chunk = StreamChunk {
+                                        id: chunk_id,
+                                        model: chunk_model,
+                                        content: String::new(),
+                                        usage,
+                                        finish_reason,
+                                    };
+                                    
+                                    Some(Ok(chunk))
+                                } else {
+                                    debug!("ModelScope chunk with no content or finish reason, skipping");
+                                    None
+                                }
+                            },
                             Err(e) => {
-                                warn!("Failed to parse ModelScope chunk: {}", e);
-                                None // 跳过解析失败的数据
+                                debug!("Failed to parse ModelScope SSE data as JSON: {} | Data: {}", e, sse_event.data);
+                                None // 跳过无效的JSON数据
                             }
                         }
-                    } else {
-                        None // 跳过空数据
+                    },
+                    Err(e) => {
+                        warn!("ModelScope SSE parsing error: {}", e);
+                        Some(Err(e))
                     }
-                },
-                Err(e) => {
-                    warn!("Stream error: {}", e);
-                    Some(Err(e))
                 }
-            })
+            }
         });
         
         Ok(ChatStreamResponse {
-            stream: Box::new(mapped_stream),
+            stream: Box::new(mapped_stream.boxed()),
             request_info: self.base.get_last_request_info(),
             response_info: self.base.get_last_response_info(),
         })
@@ -487,54 +679,7 @@ impl AiProvider for ModelScopeProvider {
     }
     
     fn parse_stream(&self, chunk: &str) -> Result<Option<StreamChunk>> {
-        // 处理SSE格式的数据行（与OpenAI兼容格式）
-        for line in chunk.lines() {
-            let line = line.trim(); // 去除行首尾空白字符
-            
-            if line.starts_with("data: ") {
-                let data = &line[6..]; // 移除"data: "前缀
-                let data = data.trim(); // 去除数据部分的空白字符
-                
-                // 跳过空数据行
-                if data.is_empty() {
-                    continue;
-                }
-                
-                if data == "[DONE]" {
-                    return Ok(None);
-                }
-                
-                // 尝试解析JSON，并处理可能的解析错误
-                match serde_json::from_str::<serde_json::Value>(data) {
-                    Ok(json) => {
-                        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
-                            if let Some(choice) = choices.first() {
-                                let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
-                                let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                                let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
-                                
-                                let chunk = StreamChunk {
-                                    id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
-                                    model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
-                                    content,
-                                    finish_reason,
-                                    usage: None,
-                                };
-                                
-                                return Ok(Some(chunk));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        // 记录JSON解析错误，但不中断流处理
-                        log::debug!("Failed to parse ModelScope SSE data as JSON: {} | Data: {}", e, data);
-                        // 继续处理下一行，不返回错误
-                        continue;
-                    }
-                }
-            }
-        }
-        
-        Ok(None)
+        // 使用统一的SSE解析方法（OpenAI兼容）
+        Self::parse_sse_chunk(chunk)
     }
 }

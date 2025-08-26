@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-page">
+  <div class="settings-page page-content-padded safe-top">
     <div class="flex justify-between items-center mb-6">
       <h2 class="text-2xl font-bold">{{ t('settings.title', '系统设置') }}</h2>
       <div class="flex gap-2">
@@ -50,7 +50,8 @@
                 @add-custom-provider="addCustomProvider"
                 @refresh-models="refreshModels"
                 @apply-manual-config="applyManualConfig"
-                @set-default-provider="setDefaultProvider" />
+                @set-default-provider="setDefaultProvider"
+                @set-default-chat-model="setDefaultChatModel" />
 
     <!-- 调度策略设置 -->
     <SchedulerSettings v-if="activeCategory === 'scheduler'" 
@@ -330,7 +331,6 @@ const loadSettings = async () => {
       }
       
       Object.assign(settings.value.scheduler, transformedConfig)
-      console.log('Loaded scheduler config:', settings.value.scheduler)
     }
     
     // 加载代理设置
@@ -518,6 +518,64 @@ const setDefaultProvider = async (provider: string) => {
   } catch (e) {
     console.error('Failed to set default provider', e)
     dialog.toast.error('设置默认 Provider 失败')
+  }
+}
+
+const setDefaultChatModel = async (model: string) => {
+  try {
+    if (!model) {
+      // 清空默认模型
+      aiConfig.value.default_chat_model = ''
+      console.log('Settings: Cleared default_chat_model')
+      dialog.toast.success('已清空默认 Chat 模型')
+      return
+    }
+    
+    // 获取当前默认提供商（小写格式）
+    const currentProviderLower = aiConfig.value.default_provider || 'openai'
+    
+    // 在提供商配置中查找匹配的提供商（不区分大小写）
+    const providerConfigKey = Object.keys(aiConfig.value.providers || {}).find(key => 
+      key.toLowerCase() === currentProviderLower.toLowerCase()
+    )
+    
+    if (!providerConfigKey) {
+      dialog.toast.error('当前默认提供商配置不存在')
+      console.error('Provider not found:', {
+        searchFor: currentProviderLower,
+        availableProviders: Object.keys(aiConfig.value.providers || {}),
+        aiConfigDefaultProvider: aiConfig.value.default_provider
+      })
+      return
+    }
+    
+    const providerConfig = aiConfig.value.providers[providerConfigKey]
+    if (!providerConfig) {
+      dialog.toast.error('提供商配置无效')
+      return
+    }
+    
+    // 从提供商的模型列表中找到匹配的模型
+    const modelInfo = providerConfig.models?.find((m: any) => m.id === model)
+    if (!modelInfo) {
+      dialog.toast.error('选择的模型不存在于当前提供商')
+      return
+    }
+    
+    // 调用后端API设置默认Chat模型 - 使用正确的命令
+    const modelValue = `${currentProviderLower.toLowerCase()}/${model}`
+    await invoke('set_default_chat_model', {
+      model: modelValue
+    })
+    
+    // 同步前端状态 - 保存为 'provider/model' 格式
+    aiConfig.value.default_chat_model = modelValue
+    console.log('Updated frontend default_chat_model state:', modelValue)
+    
+    dialog.toast.success(`默认 Chat 模型已设置为 ${modelInfo.name}`)
+  } catch (e) {
+    console.error('Failed to set default chat model', e)
+    dialog.toast.error('设置默认 Chat 模型失败')
   }
 }
 

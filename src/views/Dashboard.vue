@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6">
+  <div class="page-content-padded space-y-6">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between">
       <h1 class="text-3xl font-bold">{{ $t('dashboard.title') }}</h1>

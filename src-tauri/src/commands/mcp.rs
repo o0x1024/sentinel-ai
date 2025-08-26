@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 use tokio::sync::Mutex;
-use tracing::{warn, info, error};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use crate::services::database::DatabaseService;
 use crate::services::mcp::McpConnectionInfo;
@@ -989,7 +989,7 @@ pub async fn add_child_process_mcp_server(
         ("which", vec![command.clone()])
     };
 
-    info!("Checking if command '{}' exists...", command);
+    debug!("Checking if command '{}' exists...", command);
     let check_result = tokio::process::Command::new(check_cmd)
         .args(check_args)
         .output()

@@ -1,5 +1,5 @@
 <template>
-  <div class="architecture-demo">
+  <div class="architecture-demo page-content-padded safe-top">
     <!-- 页面标题 -->
     <div class="mb-6">
       <h1 class="text-3xl font-bold mb-2">智能体架构演示</h1>

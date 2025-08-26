@@ -1,5 +1,5 @@
 <template>
-  <div class="p-4 h-full flex gap-4">
+  <div class="page-content-padded safe-top h-full flex gap-4">
     <!-- 左侧：分类选择 + 架构/阶段 + 搜索 + 模板列表 -->
     <div class="w-80 card bg-base-100 shadow-md overflow-hidden flex flex-col">
       <div class="card-body p-4 pb-3">
