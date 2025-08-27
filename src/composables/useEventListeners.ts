@@ -15,6 +15,7 @@ interface ChatMessage {
   currentStep?: string
   totalSteps?: number
   completedSteps?: number
+  selectedArchitecture?: string
 }
 
 export const useEventListeners = (
@@ -89,6 +90,13 @@ export const useEventListeners = (
       handleStreamComplete(event.payload as any)
     })
 
+    // Task progress listener
+    const unlistenTaskProgress = await listen('task-progress', (event) => {
+      handleTaskProgress(event.payload as any)
+    })
+
+
+
     // Steps initialization listener
     const unlistenStepsInit = await listen('execution_steps_initialized', (event) => {
       handleStepsInit(event.payload as any)
@@ -124,6 +132,29 @@ export const useEventListeners = (
       handleToolExecutionCompleted(event.payload as any)
     })
 
+    // New task streaming event listeners
+    const unlistenTaskPlan = await listen('task_stream_plan', (event) => {
+      handleTaskPlan(event.payload as any)
+    })
+
+    const unlistenTaskPlanComplete = await listen('task_stream_plan_complete', (event) => {
+      handleTaskPlanComplete(event.payload as any)
+    })
+
+
+
+    const unlistenTaskResults = await listen('task_stream_results', (event) => {
+      handleTaskResults(event.payload as any)
+    })
+
+    const unlistenTaskComplete = await listen('task_stream_complete', (event) => {
+      handleTaskComplete(event.payload as any)
+    })
+
+    const unlistenTaskError = await listen('task_stream_error', (event) => {
+      handleTaskError(event.payload as any)
+    })
+
     unlistenCallbacks.push(
       unlistenProgress,
       unlistenComplete,
@@ -137,7 +168,13 @@ export const useEventListeners = (
       unlistenToolExecStart,
       unlistenToolStepStart,
       unlistenToolStepComplete,
-      unlistenToolExecComplete
+      unlistenToolExecComplete,
+      unlistenTaskPlan,
+      unlistenTaskPlanComplete,
+      unlistenTaskProgress,
+      unlistenTaskResults,
+      unlistenTaskComplete,
+      unlistenTaskError
     )
   }
 
@@ -212,6 +249,7 @@ export const useEventListeners = (
     
     streamCharCount.value += (data.content_delta || data.content || '').length
 
+    // Handle execution context messages (legacy support)
     if (data.execution_id === currentExecutionId.value) {
       const lastAssistantMessage = messages.value.filter(m => m.role === 'assistant').pop()
       if (lastAssistantMessage) {
@@ -230,6 +268,7 @@ export const useEventListeners = (
       scrollToBottom()
     }
 
+    // Handle conversation context messages (primary path)
     if (data.conversation_id === currentConversationId.value && data.message_id) {
       const targetMessage = messages.value.find(m => m.id === data.message_id)
       if (targetMessage) {
@@ -241,18 +280,19 @@ export const useEventListeners = (
   }
 
   const handleMessageStreamUpdate = (targetMessage: ChatMessage, data: any) => {
-    const newContent = data.content || ''
     targetMessage.isStreaming = true
 
     if (data.is_complete) {
-      completeStreamMessage(targetMessage, newContent, data.message_id)
+      completeStreamMessage(targetMessage, data.content || '', data.message_id)
     } else {
+      // Prioritize incremental updates for better performance
       if (data.is_incremental && data.content_delta) {
         // For incremental updates, add the delta content
         typewriterHandlers.updateTypewriterContentIncremental(data.message_id, data.content_delta)
-      } else if (newContent) {
-        // For non-incremental updates, treat the full content as incremental
-        typewriterHandlers.updateTypewriterContentIncremental(data.message_id, newContent)
+      } else if (data.content && !data.is_incremental) {
+        // For non-incremental updates, treat the full content as new content
+        // This is a fallback for providers that don't support incremental streaming
+        typewriterHandlers.updateTypewriterContentIncremental(data.message_id, data.content)
       }
     }
     scrollToBottom()
@@ -354,8 +394,17 @@ export const useEventListeners = (
         
         const actualContent = typewriterHandlers.getFinalContentFromTypewriterState(targetMessage.id) || targetMessage.content || ''
         
+        // Enhanced empty response detection based on memory workflow
         if (!actualContent || actualContent.trim().length === 0) {
-          targetMessage.content = `⚠️ **AI返回了空响应**\n\n这可能是由于配置问题导致的。请检查AI配置设置。`
+          console.warn('Detected empty AI response, applying proper handling')
+          
+          // Check if this is an error completion
+          if (data.error) {
+            targetMessage.content = `⚠️ **AI响应错误**\n\n无法获取AI响应，请检查网络连接和API配置。\n\n💡 **建议：**\n- 检查网络连接\n- 验证API密钥是否有效\n- 点击下方"重新发送"按钮重试`
+          } else {
+            // Standard empty response with helpful guidance
+            targetMessage.content = `⚠️ **AI返回了空响应**\n\n这可能是由于以下原因：\n\n1. **API配置问题** - 请检查AI配置设置\n2. **模型暂时不可用** - 请稍后重试\n3. **请求被限流** - 请等待几分钟后重试\n4. **内容被过滤** - 请尝试重新表述您的问题\n\n💡 **解决方案：**\n- 点击左侧导航栏的"设置" → "AI配置"检查配置\n- 尝试切换到其他AI模型\n- 点击下方"重新发送"按钮重试`
+          }
           targetMessage.hasError = true
         } else {
           targetMessage.content = actualContent
@@ -580,6 +629,222 @@ export const useEventListeners = (
       if (currentConversationId.value) {
         saveMessagesToConversation([targetMessage]).catch(console.error)
       }
+    }
+  }
+
+  // New task streaming event handlers
+  const handleTaskPlan = (data: any) => {
+    console.log('Task plan received:', data)
+    const targetMessage = messages.value.find(m => m.id === data.message_id)
+    if (targetMessage) {
+      if (data.is_incremental && data.content_delta) {
+        // Handle incremental plan content
+        if (typewriterHandlers.updateTypewriterContentIncremental) {
+          typewriterHandlers.updateTypewriterContentIncremental(data.message_id, data.content_delta)
+        } else {
+          targetMessage.content += data.content_delta
+        }
+      } else {
+        targetMessage.content = data.content
+      }
+      
+      targetMessage.currentStep = '生成执行计划'
+      targetMessage.executionProgress = 10
+      scrollToBottom()
+    }
+  }
+
+  const handleTaskPlanComplete = (data: any) => {
+    console.log('Task plan complete:', data)
+    const targetMessage = messages.value.find(m => m.id === data.message_id)
+    if (targetMessage) {
+      targetMessage.executionPlan = data.execution_plan
+      targetMessage.content = data.content
+      targetMessage.currentStep = '准备执行'
+      targetMessage.executionProgress = 20
+      
+      // Setup execution plan UI
+      if (data.execution_plan && data.execution_plan.steps) {
+        targetMessage.totalSteps = data.execution_plan.steps.length
+        targetMessage.completedSteps = 0
+      }
+      
+      scrollToBottom()
+    }
+  }
+
+  const handleTaskProgress = (data: any) => {
+    console.log('Task progress received:', data)
+    const targetMessage = messages.value.find(m => 
+      m.role === 'assistant' && 
+      new Date(m.timestamp).getTime() > Date.now() - 300000 // Within last 5 minutes
+    )
+    
+    if (targetMessage) {
+      targetMessage.currentStep = data.step_name || data.content
+      targetMessage.executionProgress = data.progress || 0
+      
+      // 显示选择的架构信息
+      if (data.selected_architecture) {
+        targetMessage.selectedArchitecture = data.selected_architecture
+        const architectureNames = {
+          'intelligent-dispatcher': 'Intelligent Dispatcher',
+          'plan-execute': 'Plan-and-Execute',
+          'rewoo': 'ReWOO',
+          'llm-compiler': 'LLM Compiler'
+        }
+        const displayName = architectureNames[data.selected_architecture] || data.selected_architecture
+        targetMessage.content = `${data.content || ''}\n\n**已选择架构**: ${displayName}`
+      } else if (data.content) {
+        targetMessage.content = data.content
+      }
+      
+      if (data.status === 'completed') {
+        targetMessage.completedSteps = data.step_index + 1
+      }
+      
+      // Update tool executions if available
+      if (!targetMessage.toolExecutions) {
+        targetMessage.toolExecutions = []
+      }
+      
+      const existingTool = targetMessage.toolExecutions.find((t: any) => 
+        t.name === data.step_name || t.id === data.step_name
+      )
+      
+      if (existingTool) {
+        existingTool.status = data.status
+        existingTool.progress = data.progress * 100
+        existingTool.result = data.result
+        existingTool.error = data.error
+      } else {
+        targetMessage.toolExecutions.push({
+          id: data.step_name,
+          name: data.step_name,
+          status: data.status,
+          progress: data.progress * 100,
+          step_index: data.step_index,
+          total_steps: data.total_steps,
+          result: data.result,
+          error: data.error
+        })
+      }
+      
+      scrollToBottom()
+    }
+  }
+
+  const handleTaskResults = (data: any) => {
+    console.log('Task results received:', data)
+    const targetMessage = messages.value.find(m => m.id === data.message_id)
+    if (targetMessage) {
+      if (data.is_incremental && data.content_delta) {
+        // Handle incremental results content
+        if (typewriterHandlers.updateTypewriterContentIncremental) {
+          typewriterHandlers.updateTypewriterContentIncremental(data.message_id, data.content_delta)
+        } else {
+          if (!targetMessage.executionResult) {
+            targetMessage.executionResult = ''
+          }
+          targetMessage.executionResult += data.content_delta
+        }
+      } else {
+        targetMessage.executionResult = data.content
+      }
+      
+      targetMessage.currentStep = '生成结果报告'
+      targetMessage.executionProgress = Math.min(80 + (data.total_content_length || 0) / 50, 95)
+      scrollToBottom()
+    }
+  }
+
+  const handleTaskComplete = (data: any) => {
+    console.log('Task complete:', data)
+    const targetMessage = messages.value.find(m => 
+      m.id === data.message_id || 
+      (m.role === 'assistant' && new Date(m.timestamp).getTime() > Date.now() - 300000)
+    )
+    
+    if (targetMessage) {
+      targetMessage.isStreaming = false
+      targetMessage.executionProgress = 100
+      targetMessage.currentStep = undefined
+      
+      // Set final execution results
+      if (data.results_content) {
+        targetMessage.executionResult = data.results_content
+      }
+      
+      if (data.execution_plan) {
+        targetMessage.executionPlan = data.execution_plan
+      }
+      
+      if (data.total_steps) {
+        targetMessage.totalSteps = data.total_steps
+        targetMessage.completedSteps = data.total_steps
+      }
+      
+      // Emit completion events
+      if (mainEmit && typeof mainEmit === 'function') {
+        mainEmit('execution-completed', {
+          execution_id: data.execution_id,
+          results: targetMessage.executionResult,
+          plan: targetMessage.executionPlan
+        })
+      }
+      
+      if (streamCompletedEmit && typeof streamCompletedEmit === 'function') {
+        streamCompletedEmit({
+          conversation_id: data.conversation_id,
+          message_id: data.message_id,
+          execution_id: data.execution_id
+        })
+      }
+      
+      // Reset loading states
+      currentExecutionId.value = null
+      
+      scrollToBottom()
+      
+      // Save to conversation
+      if (currentConversationId.value) {
+        saveMessagesToConversation([targetMessage]).catch(console.error)
+      }
+    }
+  }
+
+  const handleTaskError = (data: any) => {
+    console.error('Task error:', data)
+    const targetMessage = messages.value.find(m => 
+      m.role === 'assistant' && 
+      new Date(m.timestamp).getTime() > Date.now() - 300000
+    )
+    
+    if (targetMessage) {
+      targetMessage.isStreaming = false
+      targetMessage.hasError = true
+      
+      const errorMessage = `任务执行失败（${data.phase}）: ${data.error}`
+      if (data.phase === 'plan') {
+        targetMessage.content = errorMessage
+      } else if (data.phase === 'results') {
+        targetMessage.executionResult = errorMessage
+      } else {
+        targetMessage.content += '\n\n' + errorMessage
+      }
+      
+      // Emit error events
+      if (streamErrorEmit && typeof streamErrorEmit === 'function') {
+        streamErrorEmit({
+          conversation_id: data.conversation_id,
+          execution_id: data.execution_id,
+          error: data.error,
+          phase: data.phase
+        })
+      }
+      
+      currentExecutionId.value = null
+      scrollToBottom()
     }
   }
 

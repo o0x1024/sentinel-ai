@@ -529,7 +529,7 @@ impl LlmCompilerEngine {
             info!("开始调用AI生成最终响应，提示词长度: {} 字符", response_prompt.len());
             debug!("AI响应生成提示词: {}", response_prompt);
             
-            match ai_service.send_message_stream(&response_prompt, Some("你是一个AI任务处理助手"), None, false, None).await {
+            match ai_service.send_message_stream(&response_prompt, Some("你是一个AI任务处理助手"), None, None).await {
                 Ok(ai_response) => {
                     if ai_response.trim().is_empty() {
                         warn!("AI返回了空响应，使用默认响应");

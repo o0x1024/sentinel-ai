@@ -103,7 +103,7 @@ pub struct ExecutionStatusUpdate {
     pub message: Option<String>,
 }
 
-/// 智能查询调度
+/// 智能查询调度 - 支持自动架构选择
 #[tauri::command]
 pub async fn dispatch_intelligent_query(
     request: DispatchQueryRequest,
@@ -115,10 +115,63 @@ pub async fn dispatch_intelligent_query(
 ) -> Result<DispatchResult, String> {
     info!("Dispatching intelligent query: {}", request.query);
     
-    let execution_id = Uuid::new_v4().to_string();
+    // 提取任务模式标识和相关信息
+    let is_task_mode = request.options.as_ref()
+        .and_then(|opts| opts.get("task_mode"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    
+    let conversation_id = request.options.as_ref()
+        .and_then(|opts| opts.get("conversation_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    
+    let message_id = request.options.as_ref()
+        .and_then(|opts| opts.get("message_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    
+    let execution_id = request.options.as_ref()
+        .and_then(|opts| opts.get("execution_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    
+    // 如果是任务模式且架构为"auto"，进行智能选择
+    let selected_architecture = if is_task_mode && request.architecture == "auto" {
+        // 发送任务分析开始事件
+        let _ = app.emit("task-progress", serde_json::json!({
+            "conversation_id": conversation_id,
+            "execution_id": execution_id,
+            "phase": "analysis",
+            "content": "正在分析任务类型和复杂度...",
+            "progress": 10.0
+        }));
+        
+        let auto_selected = select_best_architecture(&request.query).await
+            .map_err(|e| format!("Failed to select architecture: {}", e))?;
+        
+        info!("Auto-selected architecture: {} for query: {}", auto_selected, request.query);
+        
+        // 发送架构选择结果事件
+        let _ = app.emit("task-progress", serde_json::json!({
+            "conversation_id": conversation_id,
+            "execution_id": execution_id,
+            "phase": "planning",
+            "content": format!("已选择 {} 架构执行任务...", get_architecture_display_name(&auto_selected)),
+            "progress": 25.0,
+            "selected_architecture": auto_selected
+        }));
+        
+        auto_selected
+    } else {
+        request.architecture.clone()
+    };
     
     // 根据选择的架构创建调度器
-    let result = match request.architecture.as_str() {
+    let result = match selected_architecture.as_str() {
         "plan-execute" => {
             dispatch_with_plan_execute(
                 execution_id.clone(),
@@ -158,13 +211,25 @@ pub async fn dispatch_intelligent_query(
                 app.clone(),
             ).await
         },
-        _ => Err(format!("Unsupported architecture: {}", request.architecture))
+        _ => Err(format!("Unsupported architecture: {}", selected_architecture))
     };
     
     // 如果调度成功，自动开始执行
     if let Ok(ref dispatch_result) = result {
         let execution_id_clone = dispatch_result.execution_id.clone();
         let app_clone = app.clone();
+        
+        // 发送执行开始事件
+        if is_task_mode {
+            let _ = app.emit("task-progress", serde_json::json!({
+                "conversation_id": conversation_id,
+                "execution_id": execution_id,
+                "phase": "execution",
+                "content": "任务执行已开始...",
+                "progress": 50.0,
+                "selected_architecture": selected_architecture
+            }));
+        }
         
         // 异步开始执行，不阻塞调度响应
         tokio::spawn(async move {
@@ -174,7 +239,11 @@ pub async fn dispatch_intelligent_query(
         });
     }
     
-    result
+    // 更新返回结果中的架构信息
+    result.map(|mut dispatch_result| {
+        dispatch_result.selected_architecture = selected_architecture;
+        dispatch_result
+    })
 }
 
 /// 使用Plan-and-Execute架构调度
@@ -408,6 +477,7 @@ async fn dispatch_with_real_intelligent_dispatcher(
                 dispatcher_state.clone(),
                 app.state::<Arc<AiServiceManager>>(),
                 mcp_service.clone(),
+                app.state::<Arc<crate::services::database::DatabaseService>>(),
             ).await;
             
             if let Err(e) = init_result {
@@ -929,6 +999,42 @@ fn extract_step_results_from_agent_result(result: &crate::agents::traits::AgentE
     
     // 如果没有找到step_results，返回空对象
     serde_json::json!({})
+}
+
+/// 智能选择最佳架构
+async fn select_best_architecture(user_input: &str) -> Result<String, String> {
+    // 简单的规则基础架构选择
+    let input_lower = user_input.to_lowercase();
+    
+    // 分析任务特征
+    let has_complex_analysis = input_lower.contains("分析") || input_lower.contains("analysis");
+    let has_scanning = input_lower.contains("扫描") || input_lower.contains("scan");
+    let has_monitoring = input_lower.contains("监控") || input_lower.contains("monitor");
+    let has_multiple_steps = input_lower.contains("步骤") || input_lower.contains("多个") || input_lower.contains("multiple");
+    let has_parallel_tasks = input_lower.contains("同时") || input_lower.contains("并行") || input_lower.contains("parallel");
+    
+    // 架构选择逻辑
+    if has_parallel_tasks || (has_scanning && has_multiple_steps) {
+        Ok("llm-compiler".to_string())
+    } else if has_complex_analysis {
+        Ok("rewoo".to_string())
+    } else if has_monitoring || input_lower.len() > 100 {
+        Ok("plan-execute".to_string())
+    } else {
+        // 对于一般任务，使用智能调度器
+        Ok("intelligent-dispatcher".to_string())
+    }
+}
+
+/// 获取架构的显示名称
+fn get_architecture_display_name(architecture: &str) -> &str {
+    match architecture {
+        "plan-execute" => "Plan-and-Execute",
+        "rewoo" => "ReWOO",
+        "llm-compiler" => "LLM Compiler",
+        "intelligent-dispatcher" => "Intelligent Dispatcher",
+        _ => architecture,
+    }
 }
 
 

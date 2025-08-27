@@ -1419,20 +1419,29 @@ impl Executor {
         let mut stream = provider.send_chat_stream(&request).await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
 
+        // 流式响应处理状态
         let mut content = String::new();
+        let mut chunk_count = 0;
+        let mut response_id = String::new();
+        let mut response_model = String::new();
 
-        // 收集流式响应
+        // 收集流式响应 - 参考 AiService 中的实现
         use futures::StreamExt;
         while let Some(chunk_result) = stream.stream.next().await {
             match chunk_result {
                 Ok(chunk) => {
-                    content.push_str(&chunk.content);
+                    //需要处理报错 EOF while parsing a value at line 1 column 0    
+                    if !chunk.content.is_empty() {
+                        let choice = serde_json::from_str::<serde_json::Value>(&chunk.content)?;
+                        // 取content的值  INFO sentinel_ai_lib::engines::intelligent_dispatcher::query_analyzer: 107: choice: Object {"choices": Array [Object {"delta": Object {"content": String(""), "role": String("assistant")}, "finish_reason": Null, "index": Number(0)}], "created": Number(1756283183), "id": String("chatcmpl-68aec12f1e91f778fae1cc59"), "model": String("moonshot-v1-8k"), "object": String("chat.completion.chunk"), "system_fingerprint": String("fpv0_ff52a3ef")}
+                        let content_str = choice["choices"][0]["delta"]["content"].as_str().unwrap_or("");
+                        content.push_str(content_str);
+                    }
                 }
                 Err(e) => return Err(PlanAndExecuteError::AiAdapterError(e.to_string())),
             }
         }
 
-        tracing::info!("AI reasoning result: {}", content);
         Ok(serde_json::json!({
             "reasoning_result": content,
             "step_name": step.name

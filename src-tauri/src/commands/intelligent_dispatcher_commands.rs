@@ -243,6 +243,7 @@ pub async fn initialize_intelligent_dispatcher(
     dispatcher_state: State<'_, IntelligentDispatcherState>,
     ai_service_manager: State<'_, Arc<AiServiceManager>>,
     mcp_service: State<'_, Arc<McpService>>,
+    db_service: State<'_, Arc<crate::services::database::DatabaseService>>,
 ) -> Result<CommandResponse<String>, String> {
     info!("🚀 [智能调度器] 开始初始化服务");
     
@@ -255,13 +256,29 @@ pub async fn initialize_intelligent_dispatcher(
         }
     }
     
+    // 创建执行管理器
+    let execution_manager = Arc::new(crate::managers::ExecutionManager::new());
+    
     // 创建工作流引擎
     let workflow_engine = Arc::new(workflow_engine::WorkflowEngine::new());
     
-    // 初始化智能调度器
-    match IntelligentDispatcher::new(
+    // 验证数据库服务是否已初始化
+    match db_service.inner().get_pool() {
+        Ok(_) => {
+            info!("✅ [智能调度器] 数据库服务已验证初始化完成");
+        }
+        Err(e) => {
+            error!("❌ [智能调度器] 数据库服务未初始化: {}", e);
+            return Ok(CommandResponse::error(format!("数据库服务未初始化: {}", e)));
+        }
+    }
+
+    // 使用已初始化的数据库服务创建智能调度器
+    match IntelligentDispatcher::new_with_dependencies(
         ai_service_manager.inner().clone(),
         mcp_service.inner().clone(),
+        db_service.inner().clone(),
+        execution_manager,
         workflow_engine,
     ).await {
         Ok(dispatcher) => {
@@ -295,6 +312,13 @@ pub async fn intelligent_process_query(
         let mut state = dispatcher_state.write().await;
         match state.as_mut() {
             Some(dispatcher) => {
+                // 验证调度器内部的数据库服务是否有效
+                if let Err(e) = dispatcher.validate_database_connection() {
+                    error!("❌ [智能调度器] 检测到数据库服务未初始化，强制重建调度器: {}", e);
+                    // 清除旧的调度器实例，强制重新初始化
+                    *state = None;
+                    return Ok(CommandResponse::error("调度器数据库服务异常，请重试".to_string()));
+                }
                 info!("✅ [智能调度器] 服务已初始化，继续处理");
                 dispatcher.process_query(&request.user_input).await
             }

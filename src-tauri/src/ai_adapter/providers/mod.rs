@@ -2,7 +2,7 @@
 //! 
 //! 包含各种AI服务提供商的实现
 
-// pub mod openai;
+pub mod openai;
 // pub mod anthropic;
 pub mod gemini;
 // pub mod ollama;
@@ -18,7 +18,7 @@ pub mod modelscope;
 pub mod base;
 
 // 重新导出提供商
-// pub use openai::OpenAiProvider;
+pub use openai::OpenAiProvider;
 // pub use anthropic::AnthropicProvider;
 // pub use ollama::OllamaProvider;
 // pub use groq::GroqProvider;

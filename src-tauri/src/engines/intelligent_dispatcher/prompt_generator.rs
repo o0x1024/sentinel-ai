@@ -34,32 +34,29 @@ pub struct PromptGenerationResult {
 
 /// 动态Prompt生成器
 pub struct DynamicPromptGenerator {
-    /// Prompt模板管理器
-    template_manager: PromptTemplateManager,
-    /// Prompt优化器
-    optimizer: PromptOptimizer,
-    /// Prompt构建器
-    builder: PromptBuilder,
+    /// Prompt模板管理器 - 使用Option以支持回退模式
+    template_manager: Option<PromptTemplateManager>,
+    /// Prompt优化器 - 使用Option以支持回退模式
+    optimizer: Option<PromptOptimizer>,
+    /// Prompt构建器 - 使用Option以支持回退模式
+    builder: Option<PromptBuilder>,
+    /// 是否使用回退模式
+    use_fallback: bool,
 }
 
 impl DynamicPromptGenerator {
-    /// 创建新的Prompt生成器
+    /// 创建新的Prompt生成器（使用回退模式）
     pub fn new() -> Self {
-        // 由于集成系统需要复杂的初始化，这里先创建简化版本
-        // 实际使用时回退到硬编码模板
-        // 由于Prompt系统组件没有Default实现，这里先创建空的占位符
-        // 实际使用时会回退到硬编码模板
         Self::new_fallback()
     }
 
     /// 创建回退版本的生成器（不依赖Prompt系统）
     fn new_fallback() -> Self {
-        // 创建简化版本，所有组件都设为None或空状态
-        // 这样generate_prompt方法会直接使用硬编码模板
         Self {
-            template_manager: unsafe { std::mem::zeroed() }, // 占位符，不会实际使用
-            optimizer: unsafe { std::mem::zeroed() },
-            builder: unsafe { std::mem::zeroed() },
+            template_manager: None,
+            optimizer: None,
+            builder: None,
+            use_fallback: true,
         }
     }
 
@@ -70,10 +67,33 @@ impl DynamicPromptGenerator {
         builder: PromptBuilder,
     ) -> Self {
         Self {
-            template_manager,
-            optimizer,
-            builder,
+            template_manager: Some(template_manager),
+            optimizer: Some(optimizer),
+            builder: Some(builder),
+            use_fallback: false,
         }
+    }
+
+    /// 尝试创建完整的Prompt生成器，失败时回退到简化模式
+    pub async fn new_with_auto_fallback() -> Self {
+        // 尝试初始化完整的prompt系统
+        match Self::try_initialize_full_system().await {
+            Ok(generator) => {
+                info!("Successfully initialized full prompt system");
+                generator
+            }
+            Err(e) => {
+                log::warn!("Failed to initialize full prompt system, using fallback mode: {}", e);
+                Self::new_fallback()
+            }
+        }
+    }
+
+    /// 尝试初始化完整的prompt系统
+    async fn try_initialize_full_system() -> Result<Self> {
+        // 这里可以添加实际的初始化逻辑
+        // 目前返回错误以使用回退模式
+        Err(anyhow::anyhow!("Full prompt system initialization not implemented yet"))
     }
 
     /// 生成Prompt
@@ -84,17 +104,42 @@ impl DynamicPromptGenerator {
         user_input: &str,
         context: Option<&str>,
     ) -> Result<PromptGenerationResult> {
-        info!("Generating dynamic prompts for architecture: {}", selection.selected_architecture);
+        info!("Generating dynamic prompts for architecture: {} (fallback mode: {})", 
+              selection.selected_architecture, self.use_fallback);
 
-        let result = match selection.selected_architecture.as_str() {
-            "LlmCompiler" => self.generate_llm_compiler_prompts(analysis, selection, user_input, context),
-            "ReWoo" => self.generate_rewoo_prompts(analysis, selection, user_input, context),
-            "PlanAndExecute" => self.generate_plan_execute_prompts(analysis, selection, user_input, context),
-            _ => self.generate_default_prompts(analysis, selection, user_input, context),
+        let result = if self.use_fallback {
+            // 使用回退模式生成prompt
+            self.generate_fallback_prompts(analysis, selection, user_input, context)
+        } else {
+            // 使用完整的prompt系统
+            match selection.selected_architecture.as_str() {
+                "LlmCompiler" => self.generate_llm_compiler_prompts(analysis, selection, user_input, context),
+                "ReWoo" => self.generate_rewoo_prompts(analysis, selection, user_input, context),
+                "PlanAndExecute" => self.generate_plan_execute_prompts(analysis, selection, user_input, context),
+                _ => self.generate_default_prompts(analysis, selection, user_input, context),
+            }
         };
 
         info!("Prompt generation completed with quality score: {:.2}", result.quality_score);
         Ok(result)
+    }
+
+    /// 回退模式生成prompt
+    fn generate_fallback_prompts(
+        &self,
+        analysis: &QueryAnalysisResult,
+        selection: &ArchitectureSelectionResult,
+        user_input: &str,
+        context: Option<&str>,
+    ) -> PromptGenerationResult {
+        info!("Using fallback prompt generation for architecture: {}", selection.selected_architecture);
+        
+        match selection.selected_architecture.as_str() {
+            "LlmCompiler" => self.generate_llm_compiler_fallback_prompts(analysis, selection, user_input, context),
+            "ReWoo" => self.generate_rewoo_fallback_prompts(analysis, selection, user_input, context),
+            "PlanAndExecute" => self.generate_plan_execute_fallback_prompts(analysis, selection, user_input, context),
+            _ => self.generate_default_fallback_prompts(analysis, selection, user_input, context),
+        }
     }
 
     /// 获取基础模板方法
@@ -667,6 +712,127 @@ TaskN: [工具名] 基于#E(N-1)的最终任务 -> #EN
         }
     }
 
+    /// 生成LLM Compiler回退模式Prompt
+    fn generate_llm_compiler_fallback_prompts(
+        &self,
+        analysis: &QueryAnalysisResult,
+        _selection: &ArchitectureSelectionResult,
+        user_input: &str,
+        _context: Option<&str>,
+    ) -> PromptGenerationResult {
+        let mut variables = HashMap::new();
+        variables.insert("user_input".to_string(), serde_json::Value::String(user_input.to_string()));
+        variables.insert("task_type".to_string(), serde_json::Value::String(analysis.task_type.clone()));
+        variables.insert("complexity".to_string(), serde_json::Value::String(analysis.complexity_level.clone()));
+        variables.insert("parallelization".to_string(), serde_json::Value::String(analysis.parallelization_potential.clone()));
+        variables.insert("max_parallel_tasks".to_string(), serde_json::Value::Number(serde_json::Number::from(4)));
+        variables.insert("timeout_per_task".to_string(), serde_json::Value::Number(serde_json::Number::from(60)));
+        variables.insert("retry_policy".to_string(), serde_json::Value::String("3 retries".to_string()));
+
+        let planner_prompt = self.simple_variable_replacement(&self.get_llm_compiler_planner_template(), &variables);
+        let executor_prompt = self.simple_variable_replacement(&self.get_llm_compiler_executor_template(), &variables);
+        let analyzer_prompt = Some(self.simple_variable_replacement(&self.get_llm_compiler_analyzer_template(), &variables));
+
+        PromptGenerationResult {
+            planner_prompt,
+            executor_prompt,
+            analyzer_prompt,
+            tool_selector_prompt: None,
+            quality_score: 0.75,
+            generation_strategy: "LLMCompiler回退模式".to_string(),
+        }
+    }
+
+    /// 生成ReWOO回退模式Prompt
+    fn generate_rewoo_fallback_prompts(
+        &self,
+        analysis: &QueryAnalysisResult,
+        _selection: &ArchitectureSelectionResult,
+        user_input: &str,
+        _context: Option<&str>,
+    ) -> PromptGenerationResult {
+        let mut variables = HashMap::new();
+        variables.insert("user_input".to_string(), serde_json::Value::String(user_input.to_string()));
+        variables.insert("task_type".to_string(), serde_json::Value::String(analysis.task_type.clone()));
+        variables.insert("complexity".to_string(), serde_json::Value::String(analysis.complexity_level.clone()));
+        variables.insert("key_indicators".to_string(), serde_json::Value::String(analysis.key_indicators.join(", ")));
+        variables.insert("max_parallel_tasks".to_string(), serde_json::Value::Number(serde_json::Number::from(3)));
+
+        let planner_prompt = self.simple_variable_replacement(&self.get_rewoo_planner_template(), &variables);
+        let executor_prompt = self.simple_variable_replacement(&self.get_rewoo_executor_template(), &variables);
+        let analyzer_prompt = Some(self.simple_variable_replacement(&self.get_rewoo_analyzer_template(), &variables));
+
+        PromptGenerationResult {
+            planner_prompt,
+            executor_prompt,
+            analyzer_prompt,
+            tool_selector_prompt: None,
+            quality_score: 0.75,
+            generation_strategy: "ReWOO回退模式".to_string(),
+        }
+    }
+
+    /// 生成Plan-Execute回退模式Prompt
+    fn generate_plan_execute_fallback_prompts(
+        &self,
+        analysis: &QueryAnalysisResult,
+        _selection: &ArchitectureSelectionResult,
+        user_input: &str,
+        _context: Option<&str>,
+    ) -> PromptGenerationResult {
+        let mut variables = HashMap::new();
+        variables.insert("user_input".to_string(), serde_json::Value::String(user_input.to_string()));
+        variables.insert("task_type".to_string(), serde_json::Value::String(analysis.task_type.clone()));
+        variables.insert("complexity".to_string(), serde_json::Value::String(analysis.complexity_level.clone()));
+        variables.insert("estimated_steps".to_string(), serde_json::Value::Number(serde_json::Number::from(analysis.estimated_steps)));
+        variables.insert("target_domain".to_string(), serde_json::Value::String(
+            analysis.target_domain.clone().unwrap_or_else(|| "general".to_string())
+        ));
+
+        let planner_prompt = self.simple_variable_replacement(&self.get_plan_execute_planner_template(), &variables);
+        let executor_prompt = self.simple_variable_replacement(&self.get_plan_execute_executor_template(), &variables);
+
+        PromptGenerationResult {
+            planner_prompt,
+            executor_prompt,
+            analyzer_prompt: None,
+            tool_selector_prompt: None,
+            quality_score: 0.75,
+            generation_strategy: "Plan-Execute回退模式".to_string(),
+        }
+    }
+
+    /// 生成默认回退模式Prompt
+    fn generate_default_fallback_prompts(
+        &self,
+        analysis: &QueryAnalysisResult,
+        _selection: &ArchitectureSelectionResult,
+        user_input: &str,
+        _context: Option<&str>,
+    ) -> PromptGenerationResult {
+        let planner_prompt = format!(
+            "请为以下任务制定执行计划：{}\n\n任务类型：{}\n复杂度：{}\n目标领域：{}\n\n请提供详细的步骤规划。",
+            user_input, 
+            analysis.task_type, 
+            analysis.complexity_level, 
+            analysis.target_domain.as_deref().unwrap_or("general")
+        );
+
+        let executor_prompt = format!(
+            "请执行以下任务：{}\n\n请按步骤进行，使用适当的工具，并提供详细的执行结果。",
+            user_input
+        );
+
+        PromptGenerationResult {
+            planner_prompt,
+            executor_prompt,
+            analyzer_prompt: None,
+            tool_selector_prompt: None,
+            quality_score: 0.65,
+            generation_strategy: "默认回退模式".to_string(),
+        }
+    }
+
     /// 生成默认Prompt（使用集成系统）
     fn generate_default_prompts(
         &self,
@@ -705,7 +871,7 @@ TaskN: [工具名] 基于#E(N-1)的最终任务 -> #EN
     }
 
     /// 简化的变量替换方法（不依赖PromptBuilder）
-    fn simple_variable_replacement(&self, template: &str, variables: &HashMap<String, serde_json::Value>) -> String {
+    pub fn simple_variable_replacement(&self, template: &str, variables: &HashMap<String, serde_json::Value>) -> String {
         let mut result = template.to_string();
         
         for (key, value) in variables {

@@ -1,42 +1,61 @@
 use crate::ai_adapter::core::AiAdapterManager;
 use crate::commands::ai::{ModelConfig, ModelInfo};
 use crate::models::database::{AiConversation, AiMessage};
-use crate::services::database::Database;
+use crate::services::database::{Database, DatabaseService};
 use crate::services::mcp::McpService;
+use crate::services::stream_helper::{StreamEventEmitter, StreamProcessor};
 use anyhow::Result;
 use chrono::Utc;
 use crate::ai_adapter::types::ToolCall;
 
 use crate::ai_adapter::types::*;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{de, Value};
 use std::collections::HashMap;
 
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // 调度策略相关结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchedulerConfig {
+    pub enabled: bool,
     pub intent_analysis_model: String,
+    pub intent_analysis_provider: String,
     pub planner_model: String,
+    pub planner_provider: String,
     pub replanner_model: String,
+    pub replanner_provider: String,
     pub executor_model: String,
+    pub executor_provider: String,
     pub evaluator_model: String,
+    pub evaluator_provider: String,
     pub default_strategy: String,
+    pub max_retries: i32,
+    pub timeout_seconds: i32,
+    pub scenarios: serde_json::Value,
 }
 
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             intent_analysis_model: String::new(),
+            intent_analysis_provider: String::new(),
             planner_model: String::new(),
+            planner_provider: String::new(),
             replanner_model: String::new(),
+            replanner_provider: String::new(),
             executor_model: String::new(),
+            executor_provider: String::new(),
             evaluator_model: String::new(),
+            evaluator_provider: String::new(),
             default_strategy: "adaptive".to_string(),
+            max_retries: 3,
+            timeout_seconds: 120,
+            scenarios: serde_json::Value::Object(serde_json::Map::new()),
         }
     }
 }
@@ -90,16 +109,50 @@ pub struct StreamMessage {
     pub token_count: Option<u32>,
     pub total_tokens: Option<u32>,
     pub tool_calls: Option<Vec<AiToolCall>>,
-    // New fields for incremental streaming support
+    // Enhanced streaming support
     pub is_incremental: bool,  // true for incremental chunks, false for full content
     pub content_delta: Option<String>,  // incremental content chunk when is_incremental=true
     pub total_content_length: Option<usize>,  // total accumulated content length
+    // Intent-specific streaming fields
+    pub intent_type: Option<String>,  // "chat", "question", "task"
+    pub stream_phase: Option<String>,  // "content", "plan", "execution", "results"
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskStreamMessage {
+    pub conversation_id: String,
+    pub message_id: String,
+    pub execution_id: String,
+    pub phase: String,  // "plan", "execution", "results"
+    pub content: String,
+    pub execution_plan: Option<serde_json::Value>,
+    pub progress: Option<f32>,
+    pub current_step: Option<String>,
+    pub completed_steps: Option<u32>,
+    pub total_steps: Option<u32>,
+    pub is_complete: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskProgressMessage {
+    pub conversation_id: String,
+    pub execution_id: String,
+    pub step_name: String,
+    pub step_index: u32,
+    pub total_steps: u32,
+    pub progress: f32,
+    pub status: String,  // "running", "completed", "error"
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamError {
     pub conversation_id: String,
+    pub message_id: Option<String>,
+    pub execution_id: Option<String>,
     pub error: String,
+    pub error_type: String,  // "stream", "task_execution", "plan_generation"
 }
 
 #[derive(Debug, Clone)]
@@ -599,24 +652,61 @@ impl AiServiceManager {
             config.intent_analysis_model = intent_model;
         }
         
+        if let Ok(Some(intent_provider)) = self.db.get_config("scheduler", "intent_analysis_provider").await {
+            config.intent_analysis_provider = intent_provider;
+        }
+        
         if let Ok(Some(planner_model)) = self.db.get_config("scheduler", "planner_model").await {
             config.planner_model = planner_model;
+        }
+        
+        if let Ok(Some(planner_provider)) = self.db.get_config("scheduler", "planner_provider").await {
+            config.planner_provider = planner_provider;
         }
         
         if let Ok(Some(replanner_model)) = self.db.get_config("scheduler", "replanner_model").await {
             config.replanner_model = replanner_model;
         }
         
+        if let Ok(Some(replanner_provider)) = self.db.get_config("scheduler", "replanner_provider").await {
+            config.replanner_provider = replanner_provider;
+        }
+        
         if let Ok(Some(executor_model)) = self.db.get_config("scheduler", "executor_model").await {
             config.executor_model = executor_model;
+        }
+        
+        if let Ok(Some(executor_provider)) = self.db.get_config("scheduler", "executor_provider").await {
+            config.executor_provider = executor_provider;
         }
         
         if let Ok(Some(evaluator_model)) = self.db.get_config("scheduler", "evaluator_model").await {
             config.evaluator_model = evaluator_model;
         }
         
+        if let Ok(Some(evaluator_provider)) = self.db.get_config("scheduler", "evaluator_provider").await {
+            config.evaluator_provider = evaluator_provider;
+        }
+        
         if let Ok(Some(default_strategy)) = self.db.get_config("scheduler", "default_strategy").await {
             config.default_strategy = default_strategy;
+        }
+        
+        if let Ok(Some(enabled_str)) = self.db.get_config("scheduler", "enabled").await {
+            config.enabled = enabled_str.parse().unwrap_or(true);
+        }
+        
+        if let Ok(Some(max_retries_str)) = self.db.get_config("scheduler", "max_retries").await {
+            config.max_retries = max_retries_str.parse().unwrap_or(3);
+        }
+        
+        if let Ok(Some(timeout_str)) = self.db.get_config("scheduler", "timeout_seconds").await {
+            config.timeout_seconds = timeout_str.parse().unwrap_or(120);
+        }
+        
+        if let Ok(Some(scenarios_str)) = self.db.get_config("scheduler", "scenarios").await {
+            config.scenarios = serde_json::from_str(&scenarios_str)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
         }
         
         Ok(config)
@@ -626,19 +716,58 @@ impl AiServiceManager {
     pub async fn get_service_for_stage(&self, stage: SchedulerStage) -> anyhow::Result<Option<AiService>> {
         let config = self.get_scheduler_config().await?;
         
-        let model_id = match stage {
-            SchedulerStage::IntentAnalysis => config.intent_analysis_model,
-            SchedulerStage::Planning => config.planner_model,
-            SchedulerStage::Replanning => config.replanner_model,
-            SchedulerStage::Execution => config.executor_model,
-            SchedulerStage::Evaluation => config.evaluator_model,
+        let (model_id, provider_name) = match stage {
+            SchedulerStage::IntentAnalysis => (config.intent_analysis_model, config.intent_analysis_provider),
+            SchedulerStage::Planning => (config.planner_model, config.planner_provider),
+            SchedulerStage::Replanning => (config.replanner_model, config.replanner_provider),
+            SchedulerStage::Execution => (config.executor_model, config.executor_provider),
+            SchedulerStage::Evaluation => (config.evaluator_model, config.evaluator_provider),
         };
         
-        // 根据模型ID找到对应的服务
-        let service = self.find_service_by_model(&model_id).await?;
+        // 根据提供商和模型ID找到对应的服务
+        let service = self.find_service_by_provider_and_model(&provider_name, &model_id).await?;
         Ok(service)
     }
     
+    // 根据提供商和模型ID查找对应的AI服务
+    pub async fn find_service_by_provider_and_model(&self, provider_name: &str, model_id: &str) -> anyhow::Result<Option<AiService>> {
+        if model_id.is_empty() {
+            return Ok(None);
+        }
+
+        // 如果指定了提供商，优先根据提供商查找
+        if !provider_name.is_empty() {
+            // 先收集匹配的服务，然后释放锁
+            let matching_services = {
+                let services = self.services.read().unwrap();
+                services.iter()
+                    .filter_map(|(_service_name, service)| {
+                        let config = service.get_config();
+                        if config.provider.to_lowercase() == provider_name.to_lowercase() {
+                            Some((service.clone(), config.provider.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            // 现在可以安全地进行async操作
+            for (service, provider) in matching_services {
+                if self.is_model_supported_by_service(model_id, &provider).await {
+                    tracing::info!("Found service for provider '{}' and model '{}': {}", 
+                                  provider_name, model_id, provider);
+                    return Ok(Some(service));
+                }
+            }
+            
+            tracing::warn!("No service found for provider '{}' with model '{}'", provider_name, model_id);
+        }
+        
+        // 如果没有指定提供商或没找到匹配的服务，回退到按模型查找
+        self.find_service_by_model(model_id).await
+    }
+
     // 根据模型ID查找对应的AI服务
     pub async fn find_service_by_model(&self, model_id: &str) -> anyhow::Result<Option<AiService>> {
         // 首先检查是否有服务直接支持该模型
@@ -979,12 +1108,12 @@ impl AiServiceManager {
     pub async fn get_ai_config_for_stage(&self, stage: SchedulerStage) -> anyhow::Result<Option<AiConfig>> {
         let scheduler_config = self.get_scheduler_config().await?;
         
-        let model_id = match stage {
-            SchedulerStage::IntentAnalysis => &scheduler_config.intent_analysis_model,
-            SchedulerStage::Planning => &scheduler_config.planner_model,
-            SchedulerStage::Replanning => &scheduler_config.replanner_model,
-            SchedulerStage::Execution => &scheduler_config.executor_model,
-            SchedulerStage::Evaluation => &scheduler_config.evaluator_model,
+        let (model_id, provider_name) = match stage {
+            SchedulerStage::IntentAnalysis => (&scheduler_config.intent_analysis_model, &scheduler_config.intent_analysis_provider),
+            SchedulerStage::Planning => (&scheduler_config.planner_model, &scheduler_config.planner_provider),
+            SchedulerStage::Replanning => (&scheduler_config.replanner_model, &scheduler_config.replanner_provider),
+            SchedulerStage::Execution => (&scheduler_config.executor_model, &scheduler_config.executor_provider),
+            SchedulerStage::Evaluation => (&scheduler_config.evaluator_model, &scheduler_config.evaluator_provider),
         };
         
         if model_id.is_empty() {
@@ -992,7 +1121,7 @@ impl AiServiceManager {
         }
         
         // 查找支持该模型的提供商配置
-        if let Some(service) = self.find_service_by_model(model_id).await? {
+        if let Some(service) = self.find_service_by_provider_and_model(provider_name, model_id).await? {
             let config = service.get_config();
             let ai_config = AiConfig {
                 provider: config.provider.clone(),
@@ -1557,7 +1686,6 @@ impl AiService {
         content: &str,
         system_prompt: Option<&str>,
         conversation_id: Option<String>,
-        enable_events: bool,
         message_id: Option<String>, // 新增消息ID参数
     ) -> Result<String> {
         info!("发送流式消息请求 - 模型: {}", self.config.model);
@@ -1654,17 +1782,7 @@ impl AiService {
                 
                 // 调用底层的聊天流式方法
                 let model_name_owned = self.config.model.clone();
-                if enable_events {
-                    self.send_chat_stream_with_events(
-                        &model_name_owned,
-                        messages,
-                        conv_id,
-                        self.config.temperature,
-                        self.config.max_tokens,
-                        conversation_exists,
-                        message_id.clone(), // 传递消息ID
-                    ).await
-                } else {
+
                     self.send_chat_stream(
                         &model_name_owned,
                         messages,
@@ -1674,7 +1792,7 @@ impl AiService {
                         conversation_exists,
                         message_id.clone(), // 传递消息ID
                     ).await
-                }
+                
             }
             None => {
                 // 无状态请求：直接构建简单消息列表
@@ -1710,17 +1828,7 @@ impl AiService {
                 
                 // 调用底层的聊天流式方法（无状态，不保存到数据库）
                 let model_name_owned: String = self.config.model.clone();
-                if enable_events {
-                    self.send_chat_stream_with_events(
-                        &model_name_owned,
-                        messages,
-                        "__stateless__",
-                        self.config.temperature,
-                        self.config.max_tokens,
-                        false, // 无状态请求不保存到数据库
-                        None, // 无状态请求不需要消息ID
-                    ).await
-                } else {
+
                     self.send_chat_stream(
                         &model_name_owned,
                         messages,
@@ -1730,26 +1838,11 @@ impl AiService {
                         false, // 无状态请求不保存到数据库
                         None, // 无状态请求不需要消息ID
                     ).await
-                }
+                
             }
         }
     }
 
-    // 发送聊天请求（带事件）- 流式版本
-    async fn send_chat_stream_with_events(
-        &self,
-        model_name: &str,
-        messages: Vec<AiMessage>,
-        conversation_id: &str,
-        temperature: Option<f32>,
-        max_tokens: Option<u32>,
-        should_save_to_db: bool,
-        assistant_message_id: Option<String>,
-    ) -> Result<String> {
-        // 简化实现，直接复用现有的 send_chat_stream 方法
-        // TODO: 后续可以添加事件发射逻辑
-        self.send_chat_stream(model_name, messages, conversation_id, temperature, max_tokens, should_save_to_db, assistant_message_id).await
-    }
 
     // 发送聊天请求（处理工具调用） - 流式版本
     async fn send_chat_stream(
@@ -1764,47 +1857,43 @@ impl AiService {
     ) -> Result<String> {
         info!("Sending chat request to {} model with provider {}", model_name, self.config.provider);
 
-        // 检查是否是未配置的提供商
+        // Get or generate message ID
+        let message_id = assistant_message_id
+            .or_else(|| messages.last().map(|m| m.id.clone()))
+            .unwrap_or_else(|| "unknown".to_string());
+        
+        // Create stream event emitter
+        let stream_emitter = StreamEventEmitter::new(
+            self.app_handle.clone(),
+            conversation_id.to_string(),
+            message_id.clone(),
+        );
+
+        // Validate provider configuration
         if self.config.provider == "unconfigured" || self.config.provider == "mock" {
             let error_msg = "AI provider not configured. Please go to Settings > AI Configuration to set up an AI provider (OpenAI, Anthropic, DeepSeek, etc.)";
             error!("{}", error_msg);
-            
-            // 发送错误事件
-            if let Some(app_handle) = &self.app_handle {
-                let error_message = StreamError {
-                    conversation_id: conversation_id.to_string(),
-                    error: error_msg.to_string(),
-                };
-                if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
-                    warn!("Failed to emit stream error for unconfigured provider: {}", emit_err);
-                }
-            }
-            
+            stream_emitter.emit_stream_error(error_msg, "configuration")?;
             return Err(anyhow::anyhow!(error_msg));
         }
         
-        // 检查API密钥
+        // Validate API key
         if self.config.api_key.is_none() || self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
             let error_msg = format!("API key not configured for provider '{}'. Please check your AI configuration settings.", self.config.provider);
             error!("{}", error_msg);
-            
-            // 发送错误事件
-            if let Some(app_handle) = &self.app_handle {
-                let error_message = StreamError {
-                    conversation_id: conversation_id.to_string(),
-                    error: error_msg.clone(),
-                };
-                if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
-                    warn!("Failed to emit stream error for missing API key: {}", emit_err);
-                }
-            }
-            
+            stream_emitter.emit_stream_error(&error_msg, "configuration")?;
             return Err(anyhow::anyhow!(error_msg));
         }
 
         // 转换消息格式为新的类型系统
         let mut chat_messages = Vec::new();
         for msg in &messages {
+            // 过滤掉内容为空的消息，避免发送到AI提供商
+            if msg.content.trim().is_empty() {
+                debug!("Skipping message with empty content: id={}, role={}", msg.id, msg.role);
+                continue;
+            }
+            
             let role = match msg.role.as_str() {
                 "system" => MessageRole::System,
                 "user" => MessageRole::User,
@@ -1923,7 +2012,8 @@ impl AiService {
         info!("Sending chat stream request to provider: {} with model: {}", provider.name(), model_name);
         debug!("Chat request: {:?}", chat_request);
         
-        // 使用流式响应并实时发送事件
+        // Use streaming response and emit events in real-time
+        use futures::StreamExt;
         let mut stream = provider.send_chat_stream(&chat_request).await
             .map_err(|e| {
                 error!("Stream request failed for model '{}' on provider '{}': {}", model_name, provider.name(), e);
@@ -1932,37 +2022,19 @@ impl AiService {
         
         info!("Stream created successfully, starting to process chunks");
 
+        // Create stream processor
+        let stream_processor = StreamProcessor::new(self.config.provider.clone());
+        
+        // Send stream start event
+        stream_emitter.emit_stream_start()?;
+
+        // Process streaming response
         let mut content = String::new();
         let mut response_id = String::new();
         let mut response_model = String::new();
-        let mut finish_reason = None;
+        let mut finish_reason: Option<String> = None;
         let mut usage = None;
-
-        // 发送流式开始事件
-        if let Some(app_handle) = &self.app_handle {
-            let unknown_id = "unknown".to_string();
-            let message_id_to_use = assistant_message_id.as_ref()
-                .or_else(|| messages.last().map(|m| &m.id))
-                .unwrap_or(&unknown_id);
-            
-            info!("Emitting ai_stream_start with message_id: {} for conversation: {}", 
-                message_id_to_use, conversation_id);
-            
-            let start_message = serde_json::json!({
-                "conversation_id": conversation_id,
-                "message_id": message_id_to_use
-            });
-            if let Err(e) = app_handle.emit("ai_stream_start", &start_message) {
-                warn!("Failed to emit ai_stream_start event: {}", e);
-            } else {
-                debug!("Successfully emitted ai_stream_start event");
-            }
-        }
-
-        // 处理流式响应并实时发送事件
-        use futures::StreamExt;
         let mut chunk_count = 0;
-        let mut last_sent_length = 0;  // Track last sent content length for incremental updates
         let stream_start_time = std::time::Instant::now();
         let mut last_chunk_time = stream_start_time;
         
@@ -1975,208 +2047,86 @@ impl AiService {
             debug!("Processing chunk #{}, interval: {}ms", chunk_count, chunk_interval);
             
             // Performance monitoring - log every 10 chunks or if interval is high
-            if chunk_count % 10 == 0 || chunk_interval > 1000 {
-                let elapsed = chunk_receive_time.duration_since(stream_start_time).as_millis();
-                info!("🚀 Streaming performance: chunk #{}, total_elapsed: {}ms, chunk_interval: {}ms, chars_processed: {}", 
-                      chunk_count, elapsed, chunk_interval, content.len());
-            }
+            // if chunk_count % 10 == 0 || chunk_interval > 1000 {
+            //     let elapsed = chunk_receive_time.duration_since(stream_start_time).as_millis();
+            //     info!("🚀 Streaming performance: chunk #{}, total_elapsed: {}ms, chunk_interval: {}ms, chars_processed: {}", 
+            //           chunk_count, elapsed, chunk_interval, content.len());
+            // }
+            
             match chunk_result {
-                Ok(chunk) => {
-                    debug!("Received chunk: content='{}', finish_reason={:?}, id='{}', model='{}'", 
-                           chunk.content, chunk.finish_reason, chunk.id, chunk.model);
+                Ok(raw_chunk) => {
+                    debug!("Received raw chunk: id='{}', content='{}', finish_reason={:?}", 
+                           raw_chunk.id, raw_chunk.content, raw_chunk.finish_reason);
                     
-                    // 只有当chunk中有实际内容或完成信号时才处理
-                    if !chunk.content.is_empty() || chunk.finish_reason.is_some() {
-                        // 立即累积内容（仅当有内容时）
-                        if !chunk.content.is_empty() {
-                            content.push_str(&chunk.content);
-                            debug!("Stream chunk received: '{}', total content length: {}", chunk.content, content.len());
-                        }
+                    // Process the chunk using our processor
+                    if let Some(chunk) = stream_processor.parse_chunk(&raw_chunk) {
+                        debug!("Processing parsed chunk: content='{}', finish_reason={:?}, id='{}', model='{}'", 
+                               chunk.content, chunk.finish_reason, chunk.id, chunk.model);
                         
-                        // 检查是否完成（在移动之前）
-                        let is_complete = chunk.finish_reason.is_some();
-                        
-                        // 更新响应元数据
-                        if response_id.is_empty() {
-                            response_id = chunk.id;
-                        }
-                        if response_model.is_empty() {
-                            response_model = chunk.model;
-                        }
-                        if chunk.usage.is_some() {
-                            usage = chunk.usage;
-                        }
-                        if chunk.finish_reason.is_some() {
-                            finish_reason = chunk.finish_reason;
-                        }
-                        
-                        // 实时发送流式消息事件到前端（仅当有内容或完成时）
-                        if !chunk.content.is_empty() || is_complete {
-                            if let Some(app_handle) = &self.app_handle {
-                                let message_id_to_use = assistant_message_id.as_ref()
-                                    .cloned()
-                                    .or_else(|| messages.last().map(|m| m.id.clone()))
-                                    .unwrap_or_else(|| "unknown".to_string());
+                        // Only process if there's actual content or completion signal
+                        if !chunk.content.is_empty() || chunk.finish_reason.is_some() {
+                            // Accumulate content immediately
+                            if !chunk.content.is_empty() {
+                                content.push_str(&chunk.content);
+                                debug!("Stream chunk received: '{}', total content length: {}", chunk.content, content.len());
                                 
-                                debug!("Emitting immediate stream message - message_id: {}, chunk_content: '{}', total_length: {}, is_complete: {}", 
-                                    message_id_to_use, chunk.content, content.len(), is_complete);
-                                
-                                // 创建增量流式消息，优先发送delta内容
-                                let stream_message = StreamMessage {
-                                    conversation_id: conversation_id.to_string(),
-                                    message_id: message_id_to_use.clone(),
-                                    content: if !chunk.content.is_empty() { chunk.content.clone() } else { content.clone() }, // 发送chunk内容或总内容
-                                    is_complete,
-                                    token_count: None,
-                                    total_tokens: usage.as_ref().map(|u| u.total_tokens as u32),
-                                    tool_calls: None,
-                                    // 增量流式字段
-                                    is_incremental: !chunk.content.is_empty(), // 只有当有内容时才是增量更新
-                                    content_delta: if !chunk.content.is_empty() { Some(chunk.content.clone()) } else { None },
-                                    total_content_length: Some(content.len()),
-                                };
-                                
-                                if let Err(e) = app_handle.emit("ai_stream_message", &stream_message) {
-                                    warn!("Failed to emit stream message: {}", e);
-                                } else {
-                                    debug!("Emitted immediate stream message: '{}' chars in chunk, {} total chars, complete: {}", 
-                                           chunk.content.len(), content.len(), is_complete);
-                                }
-                                
-                                last_sent_length = content.len();
+                                // Emit incremental stream chunk
+                                stream_emitter.emit_stream_chunk(&chunk.content, &content)?;
                             }
-                        }
-                    } else {
-                        // 即使没有内容，也要检查是否完成
-                        debug!("Empty chunk content, finish_reason: {:?}", chunk.finish_reason);
-                        if chunk.finish_reason.is_some() {
-                            warn!("Stream completed with empty content after {} chunks. Total content length: {}", chunk_count, content.len());
-                            let is_complete = true;
-                            finish_reason = chunk.finish_reason;
                             
-                            if let Some(app_handle) = &self.app_handle {
-                                let message_id_to_use = assistant_message_id.as_ref()
-                                    .cloned()
-                                    .or_else(|| messages.last().map(|m| m.id.clone()))
-                                    .unwrap_or_else(|| "unknown".to_string());
-                                let stream_message = StreamMessage {
-                                    conversation_id: conversation_id.to_string(),
-                                    message_id: message_id_to_use,
-                                    content: content.clone(),
-                                    is_complete,
-                                    token_count: None,
-                                    total_tokens: usage.as_ref().map(|u| u.total_tokens as u32),
-                                    tool_calls: None,
-                                    // Completion message - send full content for fallback
-                                    is_incremental: false,
-                                    content_delta: None,
-                                    total_content_length: Some(content.len()),
-                                };
+                            // Check if complete
+                            let is_complete = chunk.finish_reason.is_some();
+                            
+                            // Update response metadata
+                            if response_id.is_empty() {
+                                response_id = chunk.id;
+                            }
+                            if response_model.is_empty() {
+                                response_model = chunk.model;
+                            }
+                            if chunk.usage.is_some() {
+                                usage = chunk.usage;
+                            }
+                            if chunk.finish_reason.is_some() {
+                                finish_reason = chunk.finish_reason;
+                            }
+                        } else {
+                            // Check for completion even without content
+                            debug!("Empty chunk content, finish_reason: {:?}", chunk.finish_reason);
+                            if chunk.finish_reason.is_some() {
+                                warn!("Stream completed with empty content after {} chunks. Total content length: {}", chunk_count, content.len());
+                                finish_reason = chunk.finish_reason;
                                 
-                                if let Err(e) = app_handle.emit("ai_stream_message", &stream_message) {
-                                    warn!("Failed to emit completion message: {}", e);
-                                }
+                                // Emit empty response
+                                stream_emitter.emit_empty_response()?;
                             }
                         }
                     }
                 }
                 Err(e) => {
                     error!("Stream chunk error after {} chunks: {}", chunk_count, e);
-                    // 发送错误事件
-                    if let Some(app_handle) = &self.app_handle {
-                        let error_message = StreamError {
-                            conversation_id: conversation_id.to_string(),
-                            error: e.to_string(),
-                        };
-                        info!("Emitting ai_stream_error event for conversation_id: {}", conversation_id);
-                        if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
-                            warn!("Failed to emit stream error: {}", emit_err);
-                        }
-                    }
+                    stream_emitter.emit_stream_error(&e.to_string(), "stream")?;
                     return Err(anyhow::anyhow!("Stream error: {}", e));
                 }
             }
         }
         
-        // Log completion status and validate response
-        if chunk_count == 0 {
-            warn!("Stream completed with no chunks received for model '{}' on provider '{}'! This suggests an API configuration issue.", 
-                  model_name, provider.name());
-            
-            // Send error event for empty stream
-            if let Some(app_handle) = &self.app_handle {
-                let error_message = StreamError {
-                    conversation_id: conversation_id.to_string(),
-                    error: format!("No response received from AI provider '{}' with model '{}'. Please check your API configuration.", provider.name(), model_name),
-                };
-                info!("Emitting ai_stream_error for empty stream, conversation_id: {}", conversation_id);
-                if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
-                    warn!("Failed to emit stream error for empty response: {}", emit_err);
-                }
-                
-                // Also emit stream complete to ensure frontend resets
-                let complete_message = serde_json::json!({
-                    "conversation_id": conversation_id,
-                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
-                    "total_content_length": 0,
-                    "error": true
-                });
-                let _ = app_handle.emit("ai_stream_complete", &complete_message);
-            }
-            return Err(anyhow::anyhow!("No response received from AI provider. Please check your API configuration."));
-        } else if content.is_empty() && finish_reason.is_none() {
-            // 只有当没有内容并且没有完成状态时才报错
-            warn!("Stream completed with {} chunks but empty content and no finish_reason for model '{}' on provider '{}'! This suggests an API or model configuration issue.", 
-                  chunk_count, model_name, provider.name());
-            
-            // Send error event for empty content
-            if let Some(app_handle) = &self.app_handle {
-                let error_message = StreamError {
-                    conversation_id: conversation_id.to_string(),
-                    error: format!("AI provider '{}' returned empty response with model '{}'. This may indicate an API key issue or the model doesn't support your request.", provider.name(), model_name),
-                };
-                info!("Emitting ai_stream_error for empty content, conversation_id: {}", conversation_id);
-                if let Err(emit_err) = app_handle.emit("ai_stream_error", &error_message) {
-                    warn!("Failed to emit stream error for empty content: {}", emit_err);
-                }
-                
-                // Also emit stream complete to ensure frontend resets
-                let complete_message = serde_json::json!({
-                    "conversation_id": conversation_id,
-                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
-                    "total_content_length": 0,
-                    "error": true
-                });
-                let _ = app_handle.emit("ai_stream_complete", &complete_message);
-            }
-            return Err(anyhow::anyhow!("AI provider returned empty response. Please check your API key and model configuration."));
-        } else {
-            if content.is_empty() {
-                info!("Stream completed with {} chunks and empty content but valid finish_reason: {:?}", chunk_count, finish_reason);
-            } else {
-                info!("Stream completed successfully after {} chunks, total content length: {}", chunk_count, content.len());
-            }
+        // Validate stream completion
+        if let Err(e) = stream_processor.validate_completion(chunk_count, content.len(), &finish_reason) {
+            stream_emitter.emit_stream_error(&e.to_string(), "stream")?;
+            return Err(e);
         }
         
-        // 发送完成事件
-        if let Some(app_handle) = &self.app_handle {
-            let unknown_id = "unknown".to_string();
-            let message_id_to_use = assistant_message_id.as_ref()
-                .or_else(|| messages.last().map(|m| &m.id))
-                .unwrap_or(&unknown_id);
-            let complete_message = serde_json::json!({
-                "conversation_id": conversation_id,
-                "message_id": message_id_to_use,
-                "total_tokens": usage.as_ref().map(|u| u.total_tokens),
-                "total_content_length": content.len()
-            });
-            info!("Emitting ai_stream_complete event for message_id: {}, conversation_id: {}", message_id_to_use, conversation_id);
-            if let Err(e) = app_handle.emit("ai_stream_complete", &complete_message) {
-                warn!("Failed to emit ai_stream_complete event: {}", e);
-            } else {
-                debug!("Successfully emitted ai_stream_complete event");
-            }
+        // Handle empty content with valid finish reason
+        if content.is_empty() && finish_reason.is_some() {
+            info!("Stream completed with {} chunks and empty content but valid finish_reason: {:?}", chunk_count, finish_reason);
+            stream_emitter.emit_empty_response()?;
+        } else {
+            info!("Stream completed successfully after {} chunks, total content length: {}", chunk_count, content.len());
         }
+        
+        // Emit stream completion
+        stream_emitter.emit_stream_complete(&content, usage.as_ref().map(|u| u.total_tokens as u32))?;
 
         // 创建响应对象
         let response = crate::ai_adapter::types::ChatResponse {
@@ -2225,45 +2175,16 @@ impl AiService {
             messages.push(assistant_msg);
 
             // Emit tool execution start event
-            if let Some(app_handle) = &self.app_handle {
-                let execution_start_event = serde_json::json!({
-                    "conversation_id": conversation_id,
-                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
-                    "tool_calls": tool_calls.iter().map(|tc| {
-                        serde_json::json!({
-                            "id": tc.id,
-                            "name": tc.name,
-                            "status": "pending"
-                        })
-                    }).collect::<Vec<_>>()
-                });
-                if let Err(e) = app_handle.emit("tool_execution_started", &execution_start_event) {
-                    warn!("Failed to emit tool execution start event: {}", e);
-                }
-            }
+            stream_emitter.emit_tool_execution_start(&tool_calls)?;
 
-            // 2. 执行每个工具调用
+            // Execute each tool call
             let mut tool_messages = Vec::new();
             for (tool_index, tc) in tool_calls.iter().enumerate() {
                 let exec_tool_name = tool_name_map.get(&tc.name).cloned().unwrap_or_else(|| tc.name.clone());
                 let args_val: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or_default();
 
-                // Emit tool execution step start event
-                if let Some(app_handle) = &self.app_handle {
-                    let step_start_event = serde_json::json!({
-                        "conversation_id": conversation_id,
-                        "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
-                        "tool_call_id": tc.id,
-                        "tool_name": exec_tool_name,
-                        "step_index": tool_index,
-                        "total_tools": tool_calls.len(),
-                        "status": "executing",
-                        "started_at": chrono::Utc::now().timestamp()
-                    });
-                    if let Err(e) = app_handle.emit("tool_step_started", &step_start_event) {
-                        warn!("Failed to emit tool step start event: {}", e);
-                    }
-                }
+                // Emit tool step start
+                stream_emitter.emit_tool_step_start(&tc.id, &exec_tool_name, tool_index, tool_calls.len())?;
 
                 let exec_res = if let Some(mcp) = &self.mcp_service {
                     mcp.execute_tool(&exec_tool_name, args_val.clone()).await
@@ -2271,26 +2192,8 @@ impl AiService {
                     Err(anyhow::anyhow!("MCP service unavailable"))
                 };
 
-                // Emit tool execution step complete event
-                let tool_completed_at = chrono::Utc::now().timestamp();
-                if let Some(app_handle) = &self.app_handle {
-                    let step_complete_event = serde_json::json!({
-                        "conversation_id": conversation_id,
-                        "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
-                        "tool_call_id": tc.id,
-                        "tool_name": exec_tool_name,
-                        "step_index": tool_index,
-                        "total_tools": tool_calls.len(),
-                        "status": if exec_res.is_ok() { "completed" } else { "failed" },
-                        "completed_at": tool_completed_at,
-                        "result": exec_res.as_ref().ok(),
-                        "error": exec_res.as_ref().err().map(|e| e.to_string()),
-                        "progress": ((tool_index + 1) as f32 / tool_calls.len() as f32 * 100.0) as u32
-                    });
-                    if let Err(e) = app_handle.emit("tool_step_completed", &step_complete_event) {
-                        warn!("Failed to emit tool step complete event: {}", e);
-                    }
-                }
+                // Emit tool step complete
+                stream_emitter.emit_tool_step_complete(&tc.id, &exec_tool_name, tool_index, tool_calls.len(), &exec_res)?;
 
                 // 3. 创建工具响应消息
                 let tool_msg = match &exec_res {
@@ -2344,34 +2247,9 @@ impl AiService {
             messages.extend(tool_messages);
 
             // Emit tool execution complete event
-            if let Some(app_handle) = &self.app_handle {
-                let execution_complete_event = serde_json::json!({
-                    "conversation_id": conversation_id,
-                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
-                    "total_tools": tool_calls.len(),
-                    "completed_tools": tool_calls.len(),
-                    "status": "all_completed"
-                });
-                if let Err(e) = app_handle.emit("tool_execution_completed", &execution_complete_event) {
-                    warn!("Failed to emit tool execution complete event: {}", e);
-                }
-            }
+            stream_emitter.emit_tool_execution_complete(tool_calls.len())?;
 
-            // Emit tool execution complete event
-            if let Some(app_handle) = &self.app_handle {
-                let execution_complete_event = serde_json::json!({
-                    "conversation_id": conversation_id,
-                    "message_id": assistant_message_id.as_ref().unwrap_or(&"unknown".to_string()),
-                    "total_tools": tool_calls.len(),
-                    "completed_tools": tool_calls.len(),
-                    "status": "all_completed"
-                });
-                if let Err(e) = app_handle.emit("tool_execution_completed", &execution_complete_event) {
-                    warn!("Failed to emit tool execution complete event: {}", e);
-                }
-            }
-
-            // 4. 再次调用API，附带工具结果，并使用 Box::pin 解决异步递归问题
+            // Recursively call with tool results
             info!("Resending request with tool results...");
             let recursive_call = self.send_chat_stream(
                 model_name,
@@ -2380,7 +2258,7 @@ impl AiService {
                 temperature,
                 max_tokens,
                 should_save_to_db,
-                assistant_message_id.clone(), // 保持同样的消息ID
+                Some(message_id), // Maintain the same message ID
             );
             return Box::pin(recursive_call).await;
         }
@@ -2420,197 +2298,6 @@ impl AiService {
         }
 
         Ok(answer.to_string())
-    }
-
-
-    // 分析查询 - 无状态分析，不保存到数据库
-    pub async fn analyze_query(&self, query: &str){
-        info!("Analyzing query: {}", query);
-        
-        // 使用结构化的系统提示来分析查询
-        let _system_prompt = format!(r#"
-You are a task analysis expert. Please analyze the user query and extract key features.
-
-**Analysis Dimensions:**
-1. Task type identification
-2. Parallelization potential assessment
-3. Complexity level judgment
-4. Time sensitivity analysis
-5. Resource requirement assessment
-
-**User Query:** {}
-
-**Output Format:**
-```json
-{{
-  "task_type": "security_testing|data_analysis|research|business_process",
-  "sub_category": "specific sub-type",
-  "parallelization_potential": "high|medium|low",
-  "complexity_level": "simple|medium|complex", 
-  "time_sensitivity": "high|medium|low",
-  "dependency_complexity": "simple|medium|complex",
-  "estimated_steps": "number",
-  "resource_requirements": "light|medium|heavy",
-  "key_indicators": ["keyword1", "keyword2", ...],
-  "target_domain": "target domain or IP"
-}}
-```
-
-Please analyze and output structured results.
-        "#, query);
-        
-
-    }
-
-    // 发送分析请求 - 无状态，不保存到数据库
-    #[allow(unused)]
-    async fn send_analysis_request(&self, query: &str, system_prompt: &str) -> Result<String> {
-        info!("🔍 发送分析请求到 {} 模型", self.config.model);
-        info!("📝 查询内容: {}", query);
-        debug!("🎯 系统提示长度: {} 字符", system_prompt.len());
-        
-        // 构建消息列表（不保存到数据库）
-        let mut chat_messages = Vec::new();
-        chat_messages.push(crate::ai_adapter::types::Message::system(system_prompt));
-        chat_messages.push(crate::ai_adapter::types::Message::user(query));
-        
-        info!("📨 构建的消息数量: {}", chat_messages.len());
-        
-        // 构建原始参数
-        let mut raw_params = std::collections::HashMap::new();
-        if let Some(temp) = self.config.temperature {
-            raw_params.insert("temperature".to_string(), serde_json::Value::from(temp as f64));
-            debug!("🌡️ 设置温度参数: {}", temp);
-        }
-        if let Some(tokens) = self.config.max_tokens {
-            raw_params.insert("max_tokens".to_string(), serde_json::Value::from(tokens));
-            debug!("🔢 设置最大token数: {}", tokens);
-        }
-        
-        // 构建请求（不使用工具）
-        let chat_req = crate::ai_adapter::types::ChatRequest {
-            model: self.config.model.clone(),
-            messages: chat_messages,
-            tools: None,
-            tool_choice: None,
-            user: None,
-            extra_params: None,
-            options: Some(crate::ai_adapter::types::ChatOptions {
-                temperature: self.config.temperature,
-                max_tokens: self.config.max_tokens,
-                stream: Some(false),
-                ..Default::default()
-            }),
-        };
-        
-        info!("🚀 开始发送请求到AI客户端...");
-        
-        // 发送请求 - 使用AiAdapterManager来获取提供商
-        let adapter_manager = AiAdapterManager::global();
-        let provider = adapter_manager.get_provider_or_default(&self.config.provider)
-            .map_err(|e| {
-                error!("❌ AI提供商获取失败: {}", e);
-                anyhow::anyhow!("Provider '{}' not found: {}", self.config.provider, e)
-            })?;
-        
-        // 使用流式响应并收集结果
-        let mut stream = provider.send_chat_stream(&chat_req).await
-            .map_err(|e| {
-                error!("❌ AI客户端请求失败: {}", e);
-                anyhow::anyhow!("Chat request failed: {}", e)
-            })?;
-
-        let mut content = String::new();
-        let mut response_id = String::new();
-        let mut response_model = String::new();
-        let mut finish_reason = None;
-        let mut usage = None;
-
-        // 收集流式响应（分析请求不需要实时发送事件）
-        use futures::StreamExt;
-        while let Some(chunk_result) = stream.stream.next().await {
-            match chunk_result {
-                Ok(chunk) => {
-                    content.push_str(&chunk.content);
-                    if response_id.is_empty() {
-                        response_id = chunk.id;
-                    }
-                    if response_model.is_empty() {
-                        response_model = chunk.model;
-                    }
-                    if chunk.usage.is_some() {
-                        usage = chunk.usage;
-                    }
-                    if chunk.finish_reason.is_some() {
-                        finish_reason = chunk.finish_reason;
-                    }
-                }
-                Err(e) => return Err(anyhow::anyhow!("Stream error: {}", e)),
-            }
-        }
-
-        // 创建响应对象
-        let response = crate::ai_adapter::types::ChatResponse {
-            id: response_id,
-            model: response_model,
-            message: crate::ai_adapter::types::Message::assistant(&content),
-            choices: vec![crate::ai_adapter::types::Choice {
-                index: 0,
-                message: crate::ai_adapter::types::Message::assistant(&content),
-                finish_reason: finish_reason.clone(),
-            }],
-            usage,
-            finish_reason,
-            created_at: std::time::SystemTime::now(),
-        };
-        
-        info!("✅ 收到AI响应");
-        
-        // 提取响应内容
-        let content = response.message.content;
-        let content_str = match &content {
-            text => text.clone(),
-        };
-        info!("📝 响应内容长度: {} 字符", content_str.len());
-        debug!("📄 响应内容: {}", content_str);
-        
-        // 记录使用统计
-        if let Some(usage) = &response.usage {
-            info!("📊 Token使用统计: prompt={}, completion={}, total={}", 
-                usage.prompt_tokens, usage.completion_tokens, usage.total_tokens);
-        }
-        
-        Ok(content_str)
-    }
-    
-    // 辅助函数：发送流式消息到前端
-    #[allow(unused)]
-    async fn emit_stream_message(
-        &self,
-        conversation_id: &str,
-        message_id: &str,
-        content: &str,
-        is_complete: bool,
-        tool_calls: Option<Vec<AiToolCall>>,
-    ) {
-        if let Some(app_handle) = &self.app_handle {
-            let message = StreamMessage {
-                conversation_id: conversation_id.to_string(),
-                message_id: message_id.to_string(),
-                content: content.to_string(),
-                is_complete,
-                token_count: None, // TODO: token计数
-                total_tokens: None,
-                tool_calls,
-                // Default to non-incremental for helper function (fallback mode)
-                is_incremental: false,
-                content_delta: None,
-                total_content_length: Some(content.len()),
-            };
-            if let Err(e) = app_handle.emit("ai_stream_message", &message) {
-                error!("Failed to emit stream message: {}", e);
-            }
-        }
     }
 
 
@@ -2710,6 +2397,7 @@ Please analyze and output structured results.
     pub async fn archive_conversation(&self, conversation_id: &str) -> Result<()> {
         self.db.archive_ai_conversation(conversation_id).await
     }
+
 
 
 }

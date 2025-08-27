@@ -326,7 +326,8 @@ impl Planner {
         let confidence = self.calculate_basic_confidence(&plan).await?;
         let risk_assessment = self.assess_generic_risks(&plan).await?;
         let resource_requirements = self.calculate_basic_resources(&plan).await?;
-        
+        tracing::info!("plan:{:?}", plan);
+
         let result = PlanningResult {
             plan,
             confidence,
@@ -334,7 +335,6 @@ impl Planner {
             risk_assessment,
             resource_requirements,
         };
-        
         log::info!("任务 '{}' 的执行计划创建完成，置信度: {:.2}", task.name, confidence);
         Ok(result)
     }
@@ -524,14 +524,23 @@ Plan-and-Execute架构流程：
         let mut stream = provider.send_chat_stream(&request).await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
 
+        // 流式响应处理状态
         let mut content = String::new();
+        let mut response_id = String::new();
+        
 
-        // 收集流式响应
+        // 收集流式响应 - 参考 AiService 中的实现
         use futures::StreamExt;
         while let Some(chunk_result) = stream.stream.next().await {
             match chunk_result {
                 Ok(chunk) => {
-                    content.push_str(&chunk.content);
+                    //需要处理报错 EOF while parsing a value at line 1 column 0    
+                    if !chunk.content.is_empty() {
+                        let choice = serde_json::from_str::<serde_json::Value>(&chunk.content)?;
+                        // 取content的值  INFO sentinel_ai_lib::engines::intelligent_dispatcher::query_analyzer: 107: choice: Object {"choices": Array [Object {"delta": Object {"content": String(""), "role": String("assistant")}, "finish_reason": Null, "index": Number(0)}], "created": Number(1756283183), "id": String("chatcmpl-68aec12f1e91f778fae1cc59"), "model": String("moonshot-v1-8k"), "object": String("chat.completion.chunk"), "system_fingerprint": String("fpv0_ff52a3ef")}
+                        let content_str = choice["choices"][0]["delta"]["content"].as_str().unwrap_or("");
+                        content.push_str(content_str);
+                    }
                 }
                 Err(e) => return Err(PlanAndExecuteError::AiAdapterError(e.to_string())),
             }
@@ -546,37 +555,7 @@ Plan-and-Execute架构流程：
         if let Ok(plan) = self.parse_planning_response_json(response) {
             return Ok(plan);
         }
-
-        // 备用方案：解析为纯文本步骤
-        let steps = self.extract_steps_from_response(response)?;
-        let steps_count = steps.len();
-        
-        let plan = ExecutionPlan {
-            id: Uuid::new_v4().to_string(),
-            task_id: Uuid::new_v4().to_string(),
-            name: "Generated Plan".to_string(),
-            description: "AI generated execution plan".to_string(),
-            steps: steps.into_iter().enumerate().map(|(i, step_desc)| {
-                ExecutionStep {
-                    id: format!("step_{}", i + 1),
-                    name: format!("Step {}", i + 1),
-                    description: step_desc,
-                    step_type: StepType::AiReasoning,
-                    tool_config: None,
-                    parameters: HashMap::new(),
-                    estimated_duration: 60,
-                    retry_config: RetryConfig::default(),
-                    preconditions: Vec::new(),
-                    postconditions: Vec::new(),
-                }
-            }).collect(),
-            estimated_duration: (steps_count as u64) * 60,
-            created_at: SystemTime::now(),
-            dependencies: HashMap::new(),
-            metadata: HashMap::new(),
-        };
-        
-        Ok(plan)
+        Err(PlanAndExecuteError::PlanningFailed("No JSON content found in response".to_string()))
     }
 
     /// JSON解析：从LLM返回的结构化计划中构建可执行计划

@@ -1,9 +1,9 @@
 //! OpenAI提供商实现
-
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use futures_util::StreamExt;
+use log::{debug, warn};
 
 use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
@@ -18,6 +18,88 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
+    /// Parse raw OpenAI stream chunk data
+    /// This static method can be called by upper layers to parse provider-specific response format
+    pub fn parse_stream_chunk(raw_content: &str) -> Result<Option<StreamChunk>> {
+        // First, try to parse the raw content directly as JSON (for when it's already JSON)
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(raw_content) {
+            if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                if let Some(choice) = choices.first() {
+                    let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                    let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
+                    
+                    let chunk = StreamChunk {
+                        id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                        model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                        content,
+                        finish_reason,
+                        usage: None,
+                    };
+                    
+                    debug!("Parsed OpenAI chunk: id='{}', content='{}', finish_reason={:?}", 
+                           chunk.id, chunk.content, chunk.finish_reason);
+                    
+                    return Ok(Some(chunk));
+                }
+            }
+        }
+        
+        // Handle SSE format data lines (compatible with OpenAI format)
+        for line in raw_content.lines() {
+            let line = line.trim();
+            
+            if line.starts_with("data: ") {
+                let data = &line[6..]; // Remove "data: " prefix
+                let data = data.trim();
+                
+                // Skip empty data lines
+                if data.is_empty() {
+                    continue;
+                }
+                
+                if data == "[DONE]" {
+                    return Ok(None);
+                }
+                
+                // Try to parse JSON and handle possible parsing errors
+                match serde_json::from_str::<serde_json::Value>(data) {
+                    Ok(json) => {
+                        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                            if let Some(choice) = choices.first() {
+                                let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                                let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
+                                
+                                let chunk = StreamChunk {
+                                    id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                                    model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                                    content,
+                                    finish_reason,
+                                    usage: None,
+                                };
+                                
+                                debug!("Parsed OpenAI SSE chunk: id='{}', content='{}', finish_reason={:?}", 
+                                       chunk.id, chunk.content, chunk.finish_reason);
+                                
+                                return Ok(Some(chunk));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Log JSON parsing error but don't interrupt stream processing
+                        log::debug!("Failed to parse SSE data as JSON: {} | Data: {}", e, data);
+                        // Continue processing next line, don't return error
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        warn!("No valid chunk found in raw content: {}", raw_content);
+        Ok(None)
+    }
+
     /// 创建新的OpenAI提供商实例
     pub fn new(config: ProviderConfig) -> Result<Self> {
         // 验证配置
@@ -230,6 +312,145 @@ impl OpenAiProvider {
             created_at: std::time::SystemTime::now(),
         })
     }
+
+
+    fn parse_sse_chunk(chunk_str: &str) -> Result<Option<StreamChunk>> {
+        debug!("Parsing ModelScope SSE chunk: {}", chunk_str);
+        
+        let mut accumulated_content = String::new();
+        let mut last_chunk_info = None;
+        let mut has_finish_reason = false;
+        
+        // 处理SSE格式的数据行（与OpenAI兼容格式）
+        for line in chunk_str.lines() {
+            let line = line.trim(); // 去除行首尾空白字符
+            
+            if line.starts_with("data: ") {
+                let data = &line[6..]; // 移除"data: "前缀
+                let data = data.trim(); // 去除数据部分的空白字符
+                
+                // 跳过空数据行
+                if data.is_empty() {
+                    continue;
+                }
+                
+                // 检查结束标记
+                if data == "[DONE]" {
+                    debug!("ModelScope stream finished with [DONE]");
+                    return Ok(None); // 返回None表示流结束
+                }
+                
+                // 尝试解析JSON
+                match serde_json::from_str::<Value>(data) {
+                    Ok(json) => {
+                        debug!("ModelScope JSON parsed: {}", json);
+                        
+                        // 解析choices数组
+                        if let Some(choices) = json["choices"].as_array() {
+                            for choice in choices {
+                                let delta = &choice["delta"];
+                                
+                                // ModelScope可能在多个字段中返回内容
+                                let mut content = String::new();
+                                
+                                // 1. 检查标准content字段
+                                if let Some(content_str) = delta["content"].as_str() {
+                                    content.push_str(content_str);
+                                }
+                                
+                                // 2. 检查reasoning_content字段（ModelScope特有）
+                                if let Some(reasoning_content) = delta["reasoning_content"].as_str() {
+                                    if !content.is_empty() {
+                                        content.push('\n'); // 如果已有内容，添加换行分隔
+                                    }
+                                    content.push_str(reasoning_content);
+                                    debug!("ModelScope using reasoning_content: '{}'", reasoning_content);
+                                }
+                                
+                                // 3. 检查function_call字段（如果有工具调用）
+                                if let Some(function_call) = delta["function_call"].as_object() {
+                                    if let Some(arguments) = function_call["arguments"].as_str() {
+                                        if !content.is_empty() {
+                                            content.push('\n');
+                                        }
+                                        content.push_str(arguments);
+                                        debug!("ModelScope using function_call arguments: '{}'", arguments);
+                                    }
+                                }
+                                
+                                if !content.is_empty() {
+                                    accumulated_content.push_str(&content);
+                                    debug!("ModelScope delta content accumulated: '{}', total_len: {}", content, accumulated_content.len());
+                                }
+                                
+                                // 检查完成原因
+                                if let Some(finish_reason_str) = choice["finish_reason"].as_str() {
+                                    has_finish_reason = true;
+                                    debug!("ModelScope finish_reason: {}", finish_reason_str);
+                                }
+                                
+                                // 保存块信息用于最终构建
+                                last_chunk_info = Some((
+                                    json["id"].as_str().unwrap_or("unknown").to_string(),
+                                    json["model"].as_str().unwrap_or("").to_string(),
+                                    choice["finish_reason"].as_str().map(|s| s.to_string()),
+                                    if let Some(usage_obj) = json["usage"].as_object() {
+                                        Some(Usage {
+                                            prompt_tokens: usage_obj["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                                            completion_tokens: usage_obj["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                                            total_tokens: usage_obj["total_tokens"].as_u64().unwrap_or(0) as u32,
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                ));
+                            }
+                        } else {
+                            // 如果没有choices，检查是否有直接的content字段（某些接口可能这样返回）
+                            if let Some(direct_content) = json["content"].as_str() {
+                                accumulated_content.push_str(direct_content);
+                                debug!("ModelScope using direct content: '{}'", direct_content);
+                                
+                                last_chunk_info = Some((
+                                    json["id"].as_str().unwrap_or("unknown").to_string(),
+                                    json["model"].as_str().unwrap_or("").to_string(),
+                                    json["finish_reason"].as_str().map(|s| s.to_string()),
+                                    None
+                                ));
+                            } else {
+                                debug!("ModelScope chunk without choices or content (metadata): {}", json);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // 记录JSON解析错误，但不中断流处理
+                        debug!("Failed to parse ModelScope SSE data as JSON: {} | Data: {}", e, data);
+                        continue; // 继续处理下一行
+                    }
+                }
+            }
+        }
+        
+        // 构建最终的chunk，只有在有内容或有完成原因时才返回
+        if !accumulated_content.is_empty() || has_finish_reason {
+            if let Some((id, model, finish_reason, usage)) = last_chunk_info {
+                let chunk = StreamChunk {
+                    id,
+                    model,
+                    content: accumulated_content,
+                    usage,
+                    finish_reason,
+                };
+                
+                return Ok(Some(chunk));
+            }
+        }
+        
+        // 如果没有找到有效的数据，返回空值
+        debug!("ModelScope chunk processed, no valid content found");
+        Ok(None)
+    }
+    
 }
 
 #[async_trait]
@@ -259,7 +480,11 @@ impl AiProvider for OpenAiProvider {
             Err(_) => Ok(false),
         }
     }
-    
+    fn parse_stream(&self, chunk: &str) -> Result<Option<StreamChunk>> {
+        // 使用统一的SSE解析方法（OpenAI兼容）
+        Self::parse_sse_chunk(chunk)
+    }
+
     async fn send_chat_request(&self, request: &ChatRequest) -> Result<ChatResponse> {
         let url = format!("{}/chat/completions", self.base.get_api_base("https://api.openai.com/v1"));
         let headers = self.base.build_auth_headers();

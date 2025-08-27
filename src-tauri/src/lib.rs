@@ -34,7 +34,7 @@ use services::{
 // 导入命令
 use commands::{
     agent_commands, ai, ai_assistant_commands, asset, config, database as db_commands, dictionary, 
-    intent_commands, mcp as mcp_commands, performance,
+    mcp as mcp_commands, performance,
     plan_execute_commands, scan, scan_commands, scan_session_commands, vulnerability,
     window, prompt_commands, rewoo_commands, unified_tools, intelligent_dispatcher_commands,
 };
@@ -345,11 +345,6 @@ pub fn run() {
                     Arc::new(tokio::sync::RwLock::new(None));
                 handle.manage(plan_execute_engine_state);
 
-                // 初始化意图分类器状态
-                let intent_classifier_state: commands::intent_commands::GlobalIntentClassifier = 
-                    Arc::new(tokio::sync::RwLock::new(None));
-                handle.manage(intent_classifier_state);
-
                 // 初始化执行管理器
                 let execution_manager = Arc::new(crate::managers::ExecutionManager::new());
                 handle.manage(execution_manager);
@@ -390,6 +385,7 @@ pub fn run() {
             ai::send_ai_message,
             ai::save_ai_message,
             ai::send_ai_stream_message,
+
             ai::cancel_ai_stream,
             ai::get_ai_conversations,
             ai::get_ai_conversation_history,
@@ -434,16 +430,6 @@ pub fn run() {
             ai_assistant_commands::save_ai_assistant_agents,
             ai_assistant_commands::get_ai_architecture_prefs,
             ai_assistant_commands::save_ai_architecture_prefs,
-            // 意图分类相关命令
-            intent_commands::initialize_intent_classifier,
-            intent_commands::classify_user_intent,
-            intent_commands::handle_chat_conversation,
-            intent_commands::handle_knowledge_question,
-            intent_commands::smart_route_user_request,
-            intent_commands::get_intent_classification_stats,
-            // 新增流式命令
-            intent_commands::handle_chat_conversation_stream,
-            intent_commands::handle_knowledge_question_stream,
             // 数据库相关命令
             db_commands::execute_query,
             db_commands::get_query_history,

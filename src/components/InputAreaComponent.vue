@@ -24,6 +24,15 @@
 
         <!-- Right: Configuration settings -->
         <div class="flex items-center gap-2">
+          <!-- Mode toggle -->
+          <div class="flex items-center gap-1">
+            <label class="cursor-pointer label gap-1 text-xs" title="切换聊天模式">
+              <span class="label-text text-xs" :class="{ 'text-primary font-medium': !isTaskMode, 'text-base-content/60': isTaskMode }">对话</span>
+              <input type="checkbox" :checked="isTaskMode" @change="$emit('toggle-mode', ($event.target as HTMLInputElement).checked)" class="toggle toggle-primary toggle-xs" />
+              <span class="label-text text-xs" :class="{ 'text-primary font-medium': isTaskMode, 'text-base-content/60': !isTaskMode }">任务</span>
+            </label>
+          </div>
+          
           <!-- Debug toggle -->
           <button @click="$emit('toggle-debug')" 
                   class="btn btn-xs btn-ghost gap-1"
@@ -155,7 +164,7 @@
           @input="$emit('update:input-message', ($event.target as HTMLTextAreaElement).value)"
           @keydown.enter.ctrl="$emit('send-message')"
           :disabled="isLoading"
-          placeholder="描述您需要执行的安全任务... (Ctrl+Enter发送)"
+          :placeholder="isTaskMode ? '描述您需要执行的安全任务... (Ctrl+Enter发送)' : '与AI助手对话... (Ctrl+Enter发送)'"
           class="textarea textarea-bordered w-full resize-none border border-base-300 focus:border-primary transition-colors"
           rows="2"
         ></textarea>
@@ -195,6 +204,7 @@ const props = defineProps<{
   currentConversationId: string | null
   isLoadingConversations: boolean
   showConversationsList: boolean
+  isTaskMode: boolean
 }>()
 
 defineEmits([
@@ -208,7 +218,8 @@ defineEmits([
   'switch-conversation',
   'delete-conversation',
   'clear-conversation',
-  'update:show-conversations-list'
+  'update:show-conversations-list',
+  'toggle-mode'
 ])
 
 const { getArchBadgeClass, getArchBadgeText } = useMessageUtils()

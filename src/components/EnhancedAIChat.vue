@@ -35,6 +35,12 @@
           <span class="font-medium text-sm text-base-content/80">
             {{ message.role === 'user' ? t('common.you', '您') : t('common.assistant', 'AI助手') }}
           </span>
+          <!-- 显示选择的架构 -->
+          <span v-if="message.selectedArchitecture && message.role === 'assistant'" 
+                class="text-xs text-accent ml-2 px-2 py-0.5 bg-accent/10 rounded-full">
+            <i class="fas fa-cogs mr-1"></i>
+            {{ getArchitectureName(message.selectedArchitecture) }}
+          </span>
           <time class="text-xs text-base-content/60 ml-2 px-2 py-0.5 bg-base-200 rounded-full">
             {{ formatTime(message.timestamp) }}
           </time>
@@ -115,9 +121,11 @@
       :current-conversation-id="currentConversationId"
       :is-loading-conversations="isLoadingConversations"
       :show-conversations-list="showConversationsList"
+      :is-task-mode="isTaskMode"
       @send-message="sendMessage"
       @stop-execution="stopExecution"
       @toggle-debug="showDebugInfo = !showDebugInfo"
+      @toggle-mode="isTaskMode = $event"
       @select-architecture="selectArchitecture"
       @create-conversation="createNewConversation"
       @load-conversations="loadConversations"
@@ -182,6 +190,7 @@ interface ChatMessage {
   currentStep?: string
   totalSteps?: number
   completedSteps?: number
+  selectedArchitecture?: string
 }
 
 interface DispatchResult {
@@ -250,6 +259,7 @@ const showConversationsList = ref(false)
 const stepDetailVisible = ref(false)
 const selectedStepDetail = ref<any>(null)
 const loadingTimeoutId = ref<number | null>(null)
+const isTaskMode = ref(false)
 
 // Timeout mechanism to reset loading state
 const resetLoadingWithTimeout = (timeoutMs = 30000) => { // 30 seconds timeout
@@ -292,7 +302,7 @@ const scrollToBottom = () => {
   })
 }
 
-// Event listeners setup
+// Event listeners setup with optimized stream handling
 const eventListeners = useEventListeners(
   messages,
   currentExecutionId,
@@ -311,6 +321,15 @@ const eventListeners = useEventListeners(
       isLoading.value = false
       streamStartTime.value = null
       streamCharCount.value = 0
+      
+      // Check for empty response and show helpful error message
+      if (data.total_content_length === 0 || data.error) {
+        const lastAssistantMessage = messages.value.filter(m => m.role === 'assistant').pop()
+        if (lastAssistantMessage && (!lastAssistantMessage.content || lastAssistantMessage.content.trim().length === 0)) {
+          lastAssistantMessage.hasError = true
+          console.warn('Detected empty response in stream completion')
+        }
+      }
     },
     'stream-error': (data: any) => {
       console.log('Stream error event received:', data)
@@ -318,6 +337,32 @@ const eventListeners = useEventListeners(
       isLoading.value = false
       streamStartTime.value = null
       streamCharCount.value = 0
+      
+      // Find and mark the target message as having an error
+      const targetMessage = data.messageId 
+        ? messages.value.find(m => m.id === data.messageId)
+        : messages.value.filter(m => m.role === 'assistant').pop()
+      
+      if (targetMessage) {
+        targetMessage.hasError = true
+        targetMessage.isStreaming = false
+      }
+    },
+    'task-completed': (data: any) => {
+      console.log('Task completed event received:', data)
+      clearLoadingTimeout()
+      isLoading.value = false
+      streamStartTime.value = null
+      streamCharCount.value = 0
+      currentExecutionId.value = null
+    },
+    'task-error': (data: any) => {
+      console.log('Task error event received:', data)
+      clearLoadingTimeout()
+      isLoading.value = false
+      streamStartTime.value = null
+      streamCharCount.value = 0
+      currentExecutionId.value = null
     }
   },
   scrollToBottom,
@@ -368,101 +413,81 @@ const sendMessage = async () => {
       await createNewConversation()
     }
     
-    // Route user request intelligently
-    const routeResult = await invoke<any>('smart_route_user_request', {
-      userInput: userInput
-    })
-
-    if (routeResult.type === 'chat' || routeResult.type === 'question') {
-      if (routeResult.needs_streaming) {
-        if (routeResult.initial_response) {
-          assistantMessage.content = routeResult.initial_response
-        }
-        
-        streamStartTime.value = Date.now()
-        streamCharCount.value = 0
-        
-        try {
-          if (routeResult.type === 'chat') {
-            await invoke('handle_chat_conversation_stream', {
-              userInput: userInput,
-              conversationId: currentConversationId.value,
-              messageId: assistantMessage.id
-            })
-          } else if (routeResult.type === 'question') {
-            await invoke('handle_knowledge_question_stream', {
-              userInput: userInput,
-              conversationId: currentConversationId.value,
-              messageId: assistantMessage.id
-            })
+    // Handle based on user-selected mode
+    if (isTaskMode.value) {
+      // Task mode - execute tasks with agent execution
+      if (!currentConversationId.value) {
+        await createNewConversation()
+      }
+      
+      // Generate unique execution ID
+      const executionId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      currentExecutionId.value = executionId
+      
+      // Start task execution streaming
+      assistantMessage.content = '正在生成执行计划...'
+      assistantMessage.executionPlan = null
+      assistantMessage.currentStep = '计划生成'
+      
+      try {
+        await invoke('dispatch_intelligent_query', {
+          request: {
+            query: userInput,
+            architecture: 'auto', // 让系统自动选择架构
+            agent_id: null,
+            options: {
+              conversation_id: currentConversationId.value,
+              message_id: assistantMessage.id,
+              execution_id: executionId,
+              task_mode: true
+            }
           }
-          // Note: Don't reset isLoading here - let the stream events handle it
-        } catch (streamError) {
-          console.error('Failed to start streaming:', streamError)
-          assistantMessage.content = `启动流式响应失败: ${streamError}`
-          assistantMessage.hasError = true
-          assistantMessage.isStreaming = false
-          clearLoadingTimeout()
-          isLoading.value = false
-          streamStartTime.value = null
-          streamCharCount.value = 0
-        }
-      } else {
-        const responseContent = routeResult.response?.content || routeResult.initial_response || ''
+        })
         
-        if (!responseContent || responseContent.trim() === '') {
-          assistantMessage.content = '抱歉，没有收到有效的响应内容。请重试或检查AI服务配置。'
-          assistantMessage.hasError = true
-        } else {
-          assistantMessage.content = responseContent
-        }
+        emit('execution-started', {
+          id: executionId,
+          name: '智能任务执行',
+          description: userInput,
+          progress: 0,
+          status: 'running'
+        })
         
+        // Note: Don't reset isLoading here - let the task events handle it
+      } catch (taskError) {
+        console.error('Failed to start intelligent task execution:', taskError)
+        assistantMessage.content = `智能任务调度失败: ${taskError}`
+        assistantMessage.hasError = true
         assistantMessage.isStreaming = false
         clearLoadingTimeout()
         isLoading.value = false
         streamStartTime.value = null
         streamCharCount.value = 0
-        
-        if (currentConversationId.value) {
-          try {
-            await saveMessagesToConversation([userMessage, {
-              ...assistantMessage,
-              timestamp: new Date()
-            }])
-          } catch (error) {
-            console.error('Failed to save messages to conversation:', error)
-          }
-        }
       }
-    } else if (routeResult.type === 'task' && routeResult.needs_agent_execution) {
-      if (!currentConversationId.value) {
-        await createNewConversation()
-      }
-      
-      const dispatchResult = await invoke<DispatchResult>('dispatch_intelligent_query', {
-        request: {
-          query: userInput,
-          architecture: mapArchitectureToId(props.selectedArchitecture),
-          agent_id: props.selectedAgent?.id
-        }
-      })
-
-      assistantMessage.executionPlan = dispatchResult.execution_plan
-      assistantMessage.content = dispatchResult.initial_response || t('aiAssistant.planningExecution', '正在规划执行...')
-      currentExecutionId.value = dispatchResult.execution_id
-
-      emit('execution-started', {
-        id: dispatchResult.execution_id,
-        name: dispatchResult.execution_plan?.name || 'AI任务执行',
-        description: userInput,
-        progress: 0,
-        status: 'running'
-      })
     } else {
-      assistantMessage.content = `分类结果: ${routeResult.classification.intent} (置信度: ${(routeResult.classification.confidence * 100).toFixed(1)}%)`
-      assistantMessage.isStreaming = false
-      clearLoadingTimeout()
-      isLoading.value = false
+      // Chat mode - normal conversation
+      streamStartTime.value = Date.now()
+      streamCharCount.value = 0
+      
+      try {
+        await invoke('send_ai_stream_message', {
+          request: {
+            conversation_id: currentConversationId.value,
+            message: userInput,
+            service_name: 'default',
+            message_id: assistantMessage.id
+          }
+        })
+        // Note: Don't reset isLoading here - let the stream events handle it
+      } catch (streamError) {
+        console.error('Failed to start streaming:', streamError)
+        assistantMessage.content = `启动流式响应失败: ${streamError}`
+        assistantMessage.hasError = true
+        assistantMessage.isStreaming = false
+        clearLoadingTimeout()
+        isLoading.value = false
+        streamStartTime.value = null
+        streamCharCount.value = 0
+      }
     }
 
   } catch (error) {
@@ -583,7 +608,22 @@ const mapArchitectureToId = (architectureName: string) => {
 }
 
 const isConfigError = (content: string) => {
-  return content.includes('配置') || content.includes('API') || content.includes('provider')
+  return content.includes('配置') || 
+         content.includes('API') || 
+         content.includes('provider') ||
+         content.includes('not configured') ||
+         content.includes('空响应') ||
+         content.includes('configuration')
+}
+
+const getArchitectureName = (architecture: string) => {
+  const architectureNames: Record<string, string> = {
+    'intelligent-dispatcher': 'Intelligent Dispatcher',
+    'plan-execute': 'Plan-and-Execute',
+    'rewoo': 'ReWOO',
+    'llm-compiler': 'LLM Compiler'
+  }
+  return architectureNames[architecture] || architecture
 }
 
 // Step detail methods
@@ -653,13 +693,6 @@ const debugTypewriterState = (messageId: string) => {
 
 // Lifecycle
 onMounted(async () => {
-  try {
-    await invoke('initialize_intent_classifier')
-    console.log('Intent classifier initialized successfully')
-  } catch (error) {
-    console.error('Failed to initialize intent classifier:', error)
-  }
-
   restoreSessionState()
   await loadConversations()
   await eventListeners.setupEventListeners()

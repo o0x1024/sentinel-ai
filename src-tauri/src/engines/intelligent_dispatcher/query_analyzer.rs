@@ -67,19 +67,42 @@ impl QueryAnalyzer {
         // 构建分析Prompt
         let analysis_prompt = self.build_analysis_prompt(user_input);
         
-        // 动态选择模型：优先使用调度器配置的意图分析模型，其次使用默认模型，最后回退到 provider 自带第一个模型
-        let model = match self.ai_service_manager.get_scheduler_config().await {
-            Ok(cfg) if !cfg.intent_analysis_model.trim().is_empty() => cfg.intent_analysis_model,
+        // 动态选择模型和提供商：优先使用调度器配置，其次使用默认模型
+        let (model, provider) = match self.ai_service_manager.get_scheduler_config().await {
+            Ok(cfg) if !cfg.intent_analysis_model.trim().is_empty() => {
+                let model = cfg.intent_analysis_model.clone();
+                let provider_name = if !cfg.intent_analysis_provider.trim().is_empty() {
+                    cfg.intent_analysis_provider.clone()
+                } else {
+                    // 如果没有配置提供商，尝试从模型名推断
+                    self.infer_provider_from_model(&model)
+                };
+                (model, provider_name)
+            },
             _ => {
                 // 从AI服务获取一个默认模型（如果实现了）
                 match self.ai_service_manager.get_default_model("chat").await {
-                    Ok(Some(m)) => m.name,
+                    Ok(Some(m)) => (m.name, m.provider),
                     _ => {
-                        // 最后回退：直接让 provider 自行决定（传空模型或使用其首选）
-                        String::new()
+                        // 最后回退：使用空模型，让当前provider自行决定
+                        (String::new(), String::new())
                     }
                 }
             }
+        };
+
+        // 根据提供商获取对应的AI适配器
+        let ai_provider = if !provider.is_empty() {
+            use crate::ai_adapter::core::AiAdapterManager;
+            match AiAdapterManager::global().get_provider_or_default(&provider) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("Failed to get provider '{}': {}, falling back to default", provider, e);
+                    self.ai_provider.clone()
+                }
+            }
+        } else {
+            self.ai_provider.clone()
         };
 
         let chat_request = crate::ai_adapter::types::ChatRequest {
@@ -92,8 +115,8 @@ impl QueryAnalyzer {
             options: None,
         };
         
-        // 使用流式响应并收集结果
-        let mut stream = self.ai_provider.send_chat_stream(&chat_request).await
+        // 使用动态选择的提供商发送请求
+        let mut stream = ai_provider.send_chat_stream(&chat_request).await
             .map_err(|e| anyhow::anyhow!("AI analysis failed: {}", e))?;
 
         let mut content = String::new();
@@ -103,13 +126,20 @@ impl QueryAnalyzer {
         while let Some(chunk_result) = stream.stream.next().await {
             match chunk_result {
                 Ok(chunk) => {
-                    content.push_str(&chunk.content);
+                    //需要处理报错 EOF while parsing a value at line 1 column 0    
+                    if !chunk.content.is_empty() {
+                        let choice = serde_json::from_str::<serde_json::Value>(&chunk.content)?;
+                        // 取content的值  INFO sentinel_ai_lib::engines::intelligent_dispatcher::query_analyzer: 107: choice: Object {"choices": Array [Object {"delta": Object {"content": String(""), "role": String("assistant")}, "finish_reason": Null, "index": Number(0)}], "created": Number(1756283183), "id": String("chatcmpl-68aec12f1e91f778fae1cc59"), "model": String("moonshot-v1-8k"), "object": String("chat.completion.chunk"), "system_fingerprint": String("fpv0_ff52a3ef")}
+                        let content_str = choice["choices"][0]["delta"]["content"].as_str().unwrap_or("");
+                        content.push_str(content_str);
+                    }
                 }
                 Err(e) => return Err(anyhow::anyhow!("Stream error: {}", e)),
             }
         }
             
         let response = content;
+        tracing::info!("response: {}", response);
 
         // 解析AI响应
         let analysis_result = self.parse_analysis_response(&response, user_input)?;
@@ -120,6 +150,30 @@ impl QueryAnalyzer {
               analysis_result.parallelization_potential);
 
         Ok(analysis_result)
+    }
+
+    /// 根据模型名推断提供商
+    fn infer_provider_from_model(&self, model: &str) -> String {
+        if model.contains("moonshot") || model.contains("kimi") {
+            "moonshot".to_string()
+        } else if model.contains("gpt") || model.contains("openai") {
+            "openai".to_string()
+        } else if model.contains("claude") || model.contains("anthropic") {
+            "anthropic".to_string()
+        } else if model.contains("deepseek") {
+            "deepseek".to_string()
+        } else if model.contains("gemini") || model.contains("google") {
+            "gemini".to_string()
+        } else if model.contains("qwen") || model.contains("baichuan") {
+            "modelscope".to_string()
+        } else if model.contains("groq") {
+            "groq".to_string()
+        } else if model.contains("openrouter") {
+            "openrouter".to_string()
+        } else {
+            // 默认回退
+            String::new()
+        }
     }
 
     /// 构建分析Prompt
@@ -326,3 +380,4 @@ impl QueryAnalyzer {
         s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
     }
 }
+

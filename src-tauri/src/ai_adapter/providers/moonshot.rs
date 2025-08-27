@@ -54,6 +54,88 @@ impl Deref for MoonshotProvider {
 }
 
 impl MoonshotProvider {
+    /// Parse raw Moonshot stream chunk data
+    /// This static method can be called by upper layers to parse provider-specific response format
+    pub fn parse_stream_chunk(raw_content: &str) -> Result<Option<StreamChunk>> {
+        // First, try to parse the raw content directly as JSON (for when it's already JSON)
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(raw_content) {
+            if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                if let Some(choice) = choices.first() {
+                    let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                    let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
+                    
+                    let chunk = StreamChunk {
+                        id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                        model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                        content,
+                        finish_reason,
+                        usage: None,
+                    };
+                    
+                    debug!("Parsed Moonshot chunk: id='{}', content='{}', finish_reason={:?}", 
+                           chunk.id, chunk.content, chunk.finish_reason);
+                    
+                    return Ok(Some(chunk));
+                }
+            }
+        }
+        
+        // Handle SSE format data lines (compatible with OpenAI format)
+        for line in raw_content.lines() {
+            let line = line.trim();
+            
+            if line.starts_with("data: ") {
+                let data = &line[6..]; // Remove "data: " prefix
+                let data = data.trim();
+                
+                // Skip empty data lines
+                if data.is_empty() {
+                    continue;
+                }
+                
+                if data == "[DONE]" {
+                    return Ok(None);
+                }
+                
+                // Try to parse JSON and handle possible parsing errors
+                match serde_json::from_str::<serde_json::Value>(data) {
+                    Ok(json) => {
+                        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                            if let Some(choice) = choices.first() {
+                                let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                                let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
+                                
+                                let chunk = StreamChunk {
+                                    id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                                    model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                                    content,
+                                    finish_reason,
+                                    usage: None,
+                                };
+                                
+                                debug!("Parsed Moonshot SSE chunk: id='{}', content='{}', finish_reason={:?}", 
+                                       chunk.id, chunk.content, chunk.finish_reason);
+                                
+                                return Ok(Some(chunk));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Log JSON parsing error but don't interrupt stream processing
+                        log::debug!("Failed to parse SSE data as JSON: {} | Data: {}", e, data);
+                        // Continue processing next line, don't return error
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        warn!("No valid chunk found in raw content: {}", raw_content);
+        Ok(None)
+    }
+
     /// 创建新的 Moonshot 提供商实例
     pub fn new(config: ProviderConfig) -> Result<Self> {
         let base = BaseProvider::new(
@@ -165,39 +247,6 @@ impl MoonshotProvider {
                 }
             }
         }
-        
-        // 设置工具（Moonshot/Kimi 遵循 OpenAI 风格的工具格式）
-        // if let Some(tools) = &request.tools {
-        //     if !tools.is_empty() {
-        //         let mapped_tools: Vec<serde_json::Value> = tools
-        //             .iter()
-        //             .map(|t| {
-        //                 let sanitized = sanitize_function_name(&t.name);
-        //                 if sanitized != t.name {
-        //                     warn!(
-        //                         "Sanitized function name: '{}' -> '{}'",
-        //                         t.name,
-        //                         sanitized
-        //                     );
-        //                 }
-        //                 serde_json::json!({
-        //                     "type": "function",
-        //                     "function": {
-        //                         "name": sanitized,
-        //                         "description": t.description,
-        //                         "parameters": t.parameters
-        //                     }
-        //                 })
-        //             })
-        //             .collect();
-        //         body["tools"] = serde_json::Value::Array(mapped_tools);
-        //     }
-        // }
-        
-        // 设置工具选择
-        // if let Some(tool_choice) = &request.tool_choice {
-        //     body["tool_choice"] = serde_json::to_value(tool_choice)?;
-        // }
         
         // 添加其他参数
         if let Some(extra_params) = &request.extra_params {
@@ -479,56 +528,32 @@ impl AiProvider for MoonshotProvider {
         
         let stream = self.http_client.post_stream(&url, &body, Some(header_map)).await?;
         
-        // 使用SSE解析器处理流
+        // 使用SSE解析器处理流，但只做基本的SSE解析，返回原始JSON数据
         let sse_stream = SseParser::new(stream);
+        let model_name = request.model.clone();
         
-        let processed_stream = sse_stream.filter_map(|result| {
+        let processed_stream = sse_stream.filter_map(move |result| {
+            let model_name = model_name.clone();
             futures::future::ready(match result {
                 Ok(sse_event) => {
                     if sse_event.event_type.as_deref() == Some("done") || sse_event.data == "[DONE]" {
                         Some(Ok(StreamChunk {
-                            id: "".to_string(),
-                            model: "".to_string(),
-                            content: "".to_string(),
+                            id: "finish".to_string(),
+                            model: model_name.clone(),
+                            content: String::new(),
                             finish_reason: Some("stop".to_string()),
                             usage: None,
                         }))
-                    } else if !sse_event.data.is_empty() {
-                        match serde_json::from_str::<serde_json::Value>(&sse_event.data) {
-                            Ok(chunk_value) => {
-                                let id = chunk_value["id"].as_str().unwrap_or("").to_string();
-                                let model = chunk_value["model"].as_str().unwrap_or("").to_string();
-                                
-                                let mut content = String::new();
-                                let mut finish_reason = None;
-                                
-                                if let Some(choices_array) = chunk_value["choices"].as_array() {
-                                    for choice_value in choices_array {
-                                        let delta = &choice_value["delta"];
-                                        
-                                        if let Some(delta_content) = delta["content"].as_str() {
-                                            content.push_str(delta_content);
-                                        }
-                                        
-                                        if let Some(reason) = choice_value["finish_reason"].as_str() {
-                                            finish_reason = Some(reason.to_string());
-                                        }
-                                    }
-                                }
-                                
-                                Some(Ok(StreamChunk {
-                                    id,
-                                    model,
-                                    content,
-                                    finish_reason,
-                                    usage: None,
-                                }))
-                            },
-                            Err(e) => {
-                                log::debug!("Failed to parse Moonshot SSE data as JSON: {} | Data: {}", e, sse_event.data);
-                                None // 跳过解析失败的数据
-                            }
-                        }
+                    } else if !sse_event.data.trim().is_empty() {
+                        // 返回原始JSON数据作为content，让上层调用者解析
+                        // 这样可以保持provider的简洁性，将具体的解析逻辑移到调用层
+                        Some(Ok(StreamChunk {
+                            id: "raw".to_string(),
+                            model: model_name.clone(),
+                            content: sse_event.data.clone(), // 原始JSON数据
+                            finish_reason: None,
+                            usage: None,
+                        }))
                     } else {
                         None // 跳过空数据
                     }

@@ -183,10 +183,15 @@ const settings = ref({
     enabled: true,
     models: {
       intent_analysis: '',
+      intent_analysis_provider: '',
       planner: '',
+      planner_provider: '',
       replanner: '',
+      replanner_provider: '',
       executor: '',
-      evaluator: ''
+      executor_provider: '',
+      evaluator: '',
+      evaluator_provider: ''
     },
     default_strategy: 'adaptive',
     max_retries: 3,
@@ -319,10 +324,15 @@ const loadSettings = async () => {
         enabled: schedulerConfig.enabled ?? true,
         models: {
           intent_analysis: schedulerConfig.intent_analysis_model || '',
+          intent_analysis_provider: schedulerConfig.intent_analysis_provider || '',
           planner: schedulerConfig.planner_model || '',
+          planner_provider: schedulerConfig.planner_provider || '',
           replanner: schedulerConfig.replanner_model || '',
+          replanner_provider: schedulerConfig.replanner_provider || '',
           executor: schedulerConfig.executor_model || '',
-          evaluator: schedulerConfig.evaluator_model || ''
+          executor_provider: schedulerConfig.executor_provider || '',
+          evaluator: schedulerConfig.evaluator_model || '',
+          evaluator_provider: schedulerConfig.evaluator_provider || ''
         },
         default_strategy: schedulerConfig.default_strategy || 'adaptive',
         max_retries: schedulerConfig.max_retries || 3,
@@ -617,10 +627,15 @@ const saveSchedulerConfig = async () => {
     const flatConfig = {
       enabled: settings.value.scheduler.enabled,
       intent_analysis_model: settings.value.scheduler.models.intent_analysis,
+      intent_analysis_provider: settings.value.scheduler.models.intent_analysis_provider,
       planner_model: settings.value.scheduler.models.planner,
+      planner_provider: settings.value.scheduler.models.planner_provider,
       replanner_model: settings.value.scheduler.models.replanner,
+      replanner_provider: settings.value.scheduler.models.replanner_provider,
       executor_model: settings.value.scheduler.models.executor,
+      executor_provider: settings.value.scheduler.models.executor_provider,
       evaluator_model: settings.value.scheduler.models.evaluator,
+      evaluator_provider: settings.value.scheduler.models.evaluator_provider,
       default_strategy: settings.value.scheduler.default_strategy,
       max_retries: settings.value.scheduler.max_retries,
       timeout_seconds: settings.value.scheduler.timeout_seconds,

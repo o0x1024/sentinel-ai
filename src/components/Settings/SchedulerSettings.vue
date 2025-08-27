@@ -114,13 +114,35 @@
               <div class="badge badge-primary">{{ t('settings.scheduler.required') }}</div>
             </div>
             
-            <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.intent_analysis" @change="saveSchedulerConfig">
-                <option value="">{{ t('settings.scheduler.selectModel') }}</option>
-                <option v-for="model in availableModels" :key="model.id" :value="model.id">
-                  {{ model.name }} - {{ model.provider }}
-                </option>
-              </select>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.provider') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.intent_analysis_provider" 
+                        @change="onProviderChange('intent_analysis', $event.target.value)">
+                  <option value="">{{ t('settings.scheduler.selectProvider') }}</option>
+                  <option v-for="provider in availableProviders" :key="provider" :value="provider">
+                    {{ provider }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.model') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.intent_analysis" 
+                        @change="saveSchedulerConfig"
+                        :disabled="!schedulerConfig.models.intent_analysis_provider">
+                  <option value="">{{ t('settings.scheduler.selectModel') }}</option>
+                  <option v-for="model in getProviderModels(schedulerConfig.models.intent_analysis_provider)" 
+                          :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
           
@@ -137,13 +159,35 @@
               <div class="badge badge-secondary">{{ t('settings.scheduler.required') }}</div>
             </div>
             
-            <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.planner" @change="saveSchedulerConfig">
-                <option value="">{{ t('settings.scheduler.selectModel') }}</option>
-                <option v-for="model in availableModels" :key="model.id" :value="model.id">
-                  {{ model.name }} - {{ model.provider }}
-                </option>
-              </select>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.provider') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.planner_provider" 
+                        @change="onProviderChange('planner', $event.target.value)">
+                  <option value="">{{ t('settings.scheduler.selectProvider') }}</option>
+                  <option v-for="provider in availableProviders" :key="provider" :value="provider">
+                    {{ provider }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.model') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.planner" 
+                        @change="saveSchedulerConfig"
+                        :disabled="!schedulerConfig.models.planner_provider">
+                  <option value="">{{ t('settings.scheduler.selectModel') }}</option>
+                  <option v-for="model in getProviderModels(schedulerConfig.models.planner_provider)" 
+                          :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
           
@@ -160,13 +204,35 @@
               <div class="badge badge-accent">{{ t('settings.scheduler.required') }}</div>
             </div>
             
-            <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.executor" @change="saveSchedulerConfig">
-                <option value="">{{ t('settings.scheduler.selectModel') }}</option>
-                <option v-for="model in availableModels" :key="model.id" :value="model.id">
-                  {{ model.name }} - {{ model.provider }}
-                </option>
-              </select>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.provider') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.executor_provider" 
+                        @change="onProviderChange('executor', $event.target.value)">
+                  <option value="">{{ t('settings.scheduler.selectProvider') }}</option>
+                  <option v-for="provider in availableProviders" :key="provider" :value="provider">
+                    {{ provider }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.model') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.executor" 
+                        @change="saveSchedulerConfig"
+                        :disabled="!schedulerConfig.models.executor_provider">
+                  <option value="">{{ t('settings.scheduler.selectModel') }}</option>
+                  <option v-for="model in getProviderModels(schedulerConfig.models.executor_provider)" 
+                          :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
           
@@ -183,13 +249,35 @@
               <div class="badge badge-warning">{{ t('settings.scheduler.optional') }}</div>
             </div>
             
-            <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.replanner" @change="saveSchedulerConfig">
-                <option value="">{{ t('settings.scheduler.selectModel') }}</option>
-                <option v-for="model in availableModels" :key="model.id" :value="model.id">
-                  {{ model.name }} - {{ model.provider }}
-                </option>
-              </select>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.provider') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.replanner_provider" 
+                        @change="onProviderChange('replanner', $event.target.value)">
+                  <option value="">{{ t('settings.scheduler.selectProvider') }}</option>
+                  <option v-for="provider in availableProviders" :key="provider" :value="provider">
+                    {{ provider }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.model') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.replanner" 
+                        @change="saveSchedulerConfig"
+                        :disabled="!schedulerConfig.models.replanner_provider">
+                  <option value="">{{ t('settings.scheduler.selectModel') }}</option>
+                  <option v-for="model in getProviderModels(schedulerConfig.models.replanner_provider)" 
+                          :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
           
@@ -206,13 +294,35 @@
               <div class="badge badge-success">{{ t('settings.scheduler.optional') }}</div>
             </div>
             
-            <div class="form-control">
-              <select class="select select-bordered" v-model="schedulerConfig.models.evaluator" @change="saveSchedulerConfig">
-                <option value="">{{ t('settings.scheduler.selectModel') }}</option>
-                <option v-for="model in availableModels" :key="model.id" :value="model.id">
-                  {{ model.name }} - {{ model.provider }}
-                </option>
-              </select>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.provider') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.evaluator_provider" 
+                        @change="onProviderChange('evaluator', $event.target.value)">
+                  <option value="">{{ t('settings.scheduler.selectProvider') }}</option>
+                  <option v-for="provider in availableProviders" :key="provider" :value="provider">
+                    {{ provider }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.scheduler.model') }}</span>
+                </label>
+                <select class="select select-bordered" 
+                        v-model="schedulerConfig.models.evaluator" 
+                        @change="saveSchedulerConfig"
+                        :disabled="!schedulerConfig.models.evaluator_provider">
+                  <option value="">{{ t('settings.scheduler.selectModel') }}</option>
+                  <option v-for="model in getProviderModels(schedulerConfig.models.evaluator_provider)" 
+                          :key="model.id" :value="model.id">
+                    {{ model.name }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -370,7 +480,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -397,24 +507,106 @@ const emit = defineEmits<Emits>()
 
 // Computed
 const schedulerConfig = computed({
-  get: () => props.schedulerConfig ?? {
-    enabled: true,
-    models: {
-      intent_analysis: '',
-      planner: '',
-      replanner: '',
-      executor: '',
-      evaluator: ''
-    },
-    default_strategy: 'adaptive',
-    max_retries: 3,
-    timeout_seconds: 120,
-    scenarios: {}
+  get: () => {
+    const defaultConfig = {
+      enabled: true,
+      models: {
+        intent_analysis: '',
+        intent_analysis_provider: '',
+        planner: '',
+        planner_provider: '',
+        replanner: '',
+        replanner_provider: '',
+        executor: '',
+        executor_provider: '',
+        evaluator: '',
+        evaluator_provider: ''
+      },
+      default_strategy: 'adaptive',
+      max_retries: 3,
+      timeout_seconds: 120,
+      scenarios: {}
+    }
+    
+    if (!props.schedulerConfig) {
+      return defaultConfig
+    }
+    
+    // 确保所有必需字段都存在
+    return {
+      enabled: props.schedulerConfig.enabled ?? defaultConfig.enabled,
+      models: {
+        intent_analysis: props.schedulerConfig.models?.intent_analysis ?? defaultConfig.models.intent_analysis,
+        intent_analysis_provider: props.schedulerConfig.models?.intent_analysis_provider ?? defaultConfig.models.intent_analysis_provider,
+        planner: props.schedulerConfig.models?.planner ?? defaultConfig.models.planner,
+        planner_provider: props.schedulerConfig.models?.planner_provider ?? defaultConfig.models.planner_provider,
+        replanner: props.schedulerConfig.models?.replanner ?? defaultConfig.models.replanner,
+        replanner_provider: props.schedulerConfig.models?.replanner_provider ?? defaultConfig.models.replanner_provider,
+        executor: props.schedulerConfig.models?.executor ?? defaultConfig.models.executor,
+        executor_provider: props.schedulerConfig.models?.executor_provider ?? defaultConfig.models.executor_provider,
+        evaluator: props.schedulerConfig.models?.evaluator ?? defaultConfig.models.evaluator,
+        evaluator_provider: props.schedulerConfig.models?.evaluator_provider ?? defaultConfig.models.evaluator_provider
+      },
+      default_strategy: props.schedulerConfig.default_strategy ?? defaultConfig.default_strategy,
+      max_retries: props.schedulerConfig.max_retries ?? defaultConfig.max_retries,
+      timeout_seconds: props.schedulerConfig.timeout_seconds ?? defaultConfig.timeout_seconds,
+      scenarios: props.schedulerConfig.scenarios ?? defaultConfig.scenarios
+    }
   },
   set: (value: any) => emit('update:schedulerConfig', value)
 })
 
+// Computed properties for providers
+const availableProviders = computed(() => {
+  const providers = new Set<string>()
+  props.availableModels.forEach(model => {
+    providers.add(model.provider)
+  })
+  return Array.from(providers).sort()
+})
+
 // Methods
+const getProviderModels = (provider: string) => {
+  if (!provider) return []
+  return props.availableModels.filter(model => model.provider === provider)
+}
+
+const onProviderChange = (stage: string, provider: string) => {
+  // 当提供商改变时，重置该阶段的模型选择
+  const modelKey = stage as keyof typeof schedulerConfig.value.models
+  if (schedulerConfig.value.models[modelKey] !== undefined) {
+    schedulerConfig.value.models[modelKey] = ''
+  }
+  saveSchedulerConfig()
+}
+
+// 根据模型ID推断提供商
+const inferProviderFromModel = (modelId: string) => {
+  if (!modelId) return ''
+  const model = props.availableModels.find(m => m.id === modelId)
+  return model ? model.provider : ''
+}
+
+// 初始化提供商字段（基于现有的模型ID）
+const initializeProviders = () => {
+  const config = schedulerConfig.value
+  if (config.models.intent_analysis && !config.models.intent_analysis_provider) {
+    config.models.intent_analysis_provider = inferProviderFromModel(config.models.intent_analysis)
+  }
+  if (config.models.planner && !config.models.planner_provider) {
+    config.models.planner_provider = inferProviderFromModel(config.models.planner)
+  }
+  if (config.models.replanner && !config.models.replanner_provider) {
+    config.models.replanner_provider = inferProviderFromModel(config.models.replanner)
+  }
+  if (config.models.executor && !config.models.executor_provider) {
+    config.models.executor_provider = inferProviderFromModel(config.models.executor)
+  }
+  if (config.models.evaluator && !config.models.evaluator_provider) {
+    config.models.evaluator_provider = inferProviderFromModel(config.models.evaluator)
+  }
+}
+
 const getCurrentStrategyName = () => {
   const strategies: Record<string, string> = {
     'adaptive': t('settings.scheduler.strategies.adaptive'),
@@ -483,6 +675,20 @@ const applyEconomicPreset = () => {
 const saveSchedulerConfig = () => {
   emit('saveSchedulerConfig')
 }
+
+// 监听props变化，当模型列表可用时初始化提供商
+watch(() => [props.availableModels, props.schedulerConfig], () => {
+  if (props.availableModels.length > 0 && props.schedulerConfig) {
+    initializeProviders()
+  }
+}, { deep: true, immediate: true })
+
+// 组件挂载时初始化提供商
+onMounted(() => {
+  if (props.availableModels.length > 0 && props.schedulerConfig) {
+    initializeProviders()
+  }
+})
 </script>
 
 <style scoped>

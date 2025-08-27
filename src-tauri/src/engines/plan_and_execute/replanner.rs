@@ -881,17 +881,99 @@ impl Replanner {
         let mut stream = provider.send_chat_stream(&request).await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
 
+        // 流式响应处理状态
         let mut content = String::new();
+        let mut chunk_count = 0;
+        let mut response_id = String::new();
+        let mut response_model = String::new();
+        let mut finish_reason = None;
+        let mut usage = None;
+        
+        let stream_start_time = std::time::Instant::now();
+        let mut last_chunk_time = stream_start_time;
 
-        // 收集流式响应
+        // 收集流式响应 - 参考 AiService 中的实现
         use futures::StreamExt;
         while let Some(chunk_result) = stream.stream.next().await {
-            match chunk_result {
-                Ok(chunk) => {
-                    content.push_str(&chunk.content);
-                }
-                Err(e) => return Err(PlanAndExecuteError::AiAdapterError(e.to_string())),
+            chunk_count += 1;
+            let chunk_receive_time = std::time::Instant::now();
+            let chunk_interval = chunk_receive_time.duration_since(last_chunk_time).as_millis();
+            last_chunk_time = chunk_receive_time;
+            
+            log::debug!("Processing replanning chunk #{}, interval: {}ms", chunk_count, chunk_interval);
+            
+            // 性能监控 - 每10个chunk或间隔过长时记录日志
+            if chunk_count % 10 == 0 || chunk_interval > 1000 {
+                let elapsed = chunk_receive_time.duration_since(stream_start_time).as_millis();
+                log::info!("🚀 Replanning stream performance: chunk #{}, total_elapsed: {}ms, chunk_interval: {}ms, chars_processed: {}", 
+                          chunk_count, elapsed, chunk_interval, content.len());
             }
+            
+            match chunk_result {
+                Ok(raw_chunk) => {
+                    log::debug!("Received replanning raw chunk: id='{}', content='{}', finish_reason={:?}", 
+                               raw_chunk.id, raw_chunk.content, raw_chunk.finish_reason);
+                    
+                    // 只有在有实际内容或完成信号时才处理
+                    if !raw_chunk.content.is_empty() || raw_chunk.finish_reason.is_some() {
+                        // 累积内容
+                        if !raw_chunk.content.is_empty() {
+                            content.push_str(&raw_chunk.content);
+                            log::debug!("Replanning stream chunk received: '{}', total content length: {}", 
+                                       raw_chunk.content, content.len());
+                        }
+                        
+                        // 更新响应元数据
+                        if response_id.is_empty() {
+                            response_id = raw_chunk.id.clone();
+                        }
+                        if response_model.is_empty() {
+                            response_model = raw_chunk.model.clone();
+                        }
+                        if raw_chunk.usage.is_some() {
+                            usage = raw_chunk.usage.clone();
+                        }
+                        if raw_chunk.finish_reason.is_some() {
+                            finish_reason = raw_chunk.finish_reason.clone();
+                        }
+                    } else {
+                        // 检查无内容的完成情况
+                        log::debug!("Empty replanning chunk content, finish_reason: {:?}", raw_chunk.finish_reason);
+                        if raw_chunk.finish_reason.is_some() {
+                            log::warn!("Replanning stream completed with empty content after {} chunks. Total content length: {}", 
+                                      chunk_count, content.len());
+                            finish_reason = raw_chunk.finish_reason.clone();
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Replanning stream chunk error after {} chunks: {}", chunk_count, e);
+                    return Err(PlanAndExecuteError::AiAdapterError(format!("Stream error: {}", e)));
+                }
+            }
+        }
+        
+        // 验证流式完成
+        if content.is_empty() && finish_reason.is_none() {
+            let error_msg = format!("Replanning stream ended without content or finish signal after {} chunks", chunk_count);
+            log::error!("{}", error_msg);
+            return Err(PlanAndExecuteError::AiAdapterError(error_msg));
+        }
+        
+        // 处理空内容但有有效完成原因的情况
+        if content.is_empty() && finish_reason.is_some() {
+            log::info!("Replanning stream completed with {} chunks and empty content but valid finish_reason: {:?}", 
+                      chunk_count, finish_reason);
+            return Err(PlanAndExecuteError::PlanningFailed("AI returned empty replanning response".to_string()));
+        }
+        
+        log::info!("Replanning stream completed successfully after {} chunks, total content length: {}", 
+                  chunk_count, content.len());
+        
+        // 记录token使用情况
+        if let Some(usage_info) = usage {
+            log::info!("Replanning tokens used: input={}, output={}, total={}", 
+                      usage_info.prompt_tokens, usage_info.completion_tokens, usage_info.total_tokens);
         }
         
         Ok(content)

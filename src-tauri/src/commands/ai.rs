@@ -215,25 +215,29 @@ pub async fn send_ai_stream_message(
 
     // 获取AI服务，如果指定了provider和model，则动态创建服务配置
     let service = if let (Some(provider), Some(model)) = (&request.provider, &request.model) {
-        tracing::info!("Creating dynamic AI service with provider: {}, model: {}", provider, model);
-        
+        tracing::info!(
+            "Creating dynamic AI service with provider: {}, model: {}",
+            provider,
+            model
+        );
+
         // 从AI管理器获取提供商配置
         if let Ok(Some(provider_config)) = ai_manager.get_provider_config(provider).await {
             // 创建临时服务配置，使用指定的模型
             let mut dynamic_config = provider_config;
             dynamic_config.model = model.clone();
-            
+
             if let Some(temp) = request.temperature {
                 dynamic_config.temperature = Some(temp);
             }
             if let Some(max_tokens) = request.max_tokens {
                 dynamic_config.max_tokens = Some(max_tokens);
             }
-            
+
             // 创建临时AI服务
             let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
             let mcp_service = ai_manager.get_mcp_service();
-            
+
             let mut temp_service = crate::services::ai::AiService::new(
                 dynamic_config,
                 db_service.inner().clone(),
@@ -243,7 +247,10 @@ pub async fn send_ai_stream_message(
             temp_service.set_app_handle(app_handle.clone());
             temp_service
         } else {
-            tracing::warn!("Provider {} not found, falling back to default service", provider);
+            tracing::warn!(
+                "Provider {} not found, falling back to default service",
+                provider
+            );
             let mut default_service = ai_manager
                 .get_service(&request.service_name)
                 .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
@@ -254,8 +261,12 @@ pub async fn send_ai_stream_message(
         // 当没有指定provider和model时，尝试使用默认Chat模型配置
         match ai_manager.get_default_chat_model().await {
             Ok(Some((provider, model_name))) => {
-                tracing::info!("Using default chat model for stream: {}/{}", provider, model_name);
-                
+                tracing::info!(
+                    "Using default chat model for stream: {}/{}",
+                    provider,
+                    model_name
+                );
+
                 // 根据model_name找到对应的服务
                 if let Ok(Some(service)) = ai_manager.find_service_by_model(&model_name).await {
                     tracing::info!("Found service for default chat model: {}", model_name);
@@ -263,14 +274,17 @@ pub async fn send_ai_stream_message(
                     service_with_handle.set_app_handle(app_handle.clone());
                     service_with_handle
                 } else {
-                    tracing::warn!("No service found for default chat model {}, using default service", model_name);
+                    tracing::warn!(
+                        "No service found for default chat model {}, using default service",
+                        model_name
+                    );
                     let mut default_service = ai_manager
                         .get_service(&request.service_name)
                         .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
                     default_service.set_app_handle(app_handle.clone());
                     default_service
                 }
-            },
+            }
             Ok(None) => {
                 tracing::info!("No default chat model configured, using default service");
                 let mut service = ai_manager
@@ -278,9 +292,12 @@ pub async fn send_ai_stream_message(
                     .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
                 service.set_app_handle(app_handle.clone());
                 service
-            },
+            }
             Err(e) => {
-                tracing::warn!("Failed to get default chat model: {}, using default service", e);
+                tracing::warn!(
+                    "Failed to get default chat model: {}, using default service",
+                    e
+                );
                 let mut service = ai_manager
                     .get_service(&request.service_name)
                     .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
@@ -323,7 +340,6 @@ pub async fn send_ai_stream_message(
                 &message,
                 system_prompt.as_deref(),
                 Some(conversation_id.clone()),
-                true,                           // enable_events
                 Some(message_id_clone.clone()), // 传递消息ID
             )
             .await
@@ -1819,18 +1835,21 @@ pub async fn set_default_chat_model(
         "ai",
         "default_chat_model",
         &model,
-        Some("Default chat model")
+        Some("Default chat model"),
     )
     .await
     .map_err(|e| e.to_string())?;
-    
+
     // 如果模型格式为 provider/model_name，解析并更新AI管理器
     if let Some((provider, model_name)) = model.split_once('/') {
-        if let Err(e) = ai_manager.set_default_chat_model(provider, model_name).await {
+        if let Err(e) = ai_manager
+            .set_default_chat_model(provider, model_name)
+            .await
+        {
             tracing::warn!("Failed to update AI manager default chat model: {}", e);
         }
     }
-    
+
     tracing::info!("Set default chat model to: {}", model);
     Ok(())
 }
@@ -2198,9 +2217,27 @@ pub async fn save_scheduler_config(
 
     db.set_config(
         "scheduler",
+        "intent_analysis_provider",
+        &config.intent_analysis_provider,
+        Some("Intent analysis provider for scheduler"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "scheduler",
         "planner_model",
         &config.planner_model,
         Some("Planner model for scheduler"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "scheduler",
+        "planner_provider",
+        &config.planner_provider,
+        Some("Planner provider for scheduler"),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -2216,9 +2253,27 @@ pub async fn save_scheduler_config(
 
     db.set_config(
         "scheduler",
+        "replanner_provider",
+        &config.replanner_provider,
+        Some("Replanner provider for scheduler"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "scheduler",
         "executor_model",
         &config.executor_model,
         Some("Executor model for scheduler"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "scheduler",
+        "executor_provider",
+        &config.executor_provider,
+        Some("Executor provider for scheduler"),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -2232,12 +2287,63 @@ pub async fn save_scheduler_config(
     .await
     .map_err(|e| e.to_string())?;
 
+    db.set_config(
+        "scheduler",
+        "evaluator_provider",
+        &config.evaluator_provider,
+        Some("Evaluator provider for scheduler"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     // 保存默认重规划策略
     db.set_config(
         "scheduler",
         "default_strategy",
         &config.default_strategy,
         Some("Default replanning strategy"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 保存启用状态
+    db.set_config(
+        "scheduler",
+        "enabled",
+        &config.enabled.to_string(),
+        Some("Scheduler enabled status"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 保存最大重试次数
+    db.set_config(
+        "scheduler",
+        "max_retries",
+        &config.max_retries.to_string(),
+        Some("Maximum retry attempts"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 保存超时时间
+    db.set_config(
+        "scheduler",
+        "timeout_seconds",
+        &config.timeout_seconds.to_string(),
+        Some("Timeout in seconds"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 保存场景配置
+    let scenarios_str = serde_json::to_string(&config.scenarios)
+        .map_err(|e| format!("Failed to serialize scenarios: {}", e))?;
+    db.set_config(
+        "scheduler",
+        "scenarios",
+        &scenarios_str,
+        Some("Scenario configurations"),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -2281,3 +2387,14 @@ pub async fn get_service_for_stage(
         }
     }
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HandleTaskExecutionStreamRequest {
+    pub user_input: String,
+    pub conversation_id: String,
+    pub message_id: String,
+    pub execution_id: String,
+}
+
+
+

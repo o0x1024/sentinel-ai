@@ -219,6 +219,13 @@ impl IntelligentDispatcher {
             execution_history: Arc::new(RwLock::new(Vec::new())),
         })
     }
+
+    /// 验证数据库连接是否有效
+    pub fn validate_database_connection(&self) -> Result<()> {
+        self.database_service.get_pool()
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!("Database connection validation failed: {}", e))
+    }
     
     /// 智能处理用户查询
     pub async fn process_query(&mut self, user_input: &str) -> Result<DispatchResult> {

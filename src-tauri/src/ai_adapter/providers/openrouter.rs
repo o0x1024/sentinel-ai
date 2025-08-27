@@ -29,6 +29,88 @@ impl Deref for OpenRouterProvider {
 }
 
 impl OpenRouterProvider {
+    /// Parse raw OpenRouter stream chunk data (compatible with OpenAI format)
+    /// This static method can be called by upper layers to parse provider-specific response format
+    pub fn parse_stream_chunk(raw_content: &str) -> Result<Option<StreamChunk>> {
+        // First, try to parse the raw content directly as JSON (for when it's already JSON)
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(raw_content) {
+            if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                if let Some(choice) = choices.first() {
+                    let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                    let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
+                    
+                    let chunk = StreamChunk {
+                        id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                        model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                        content,
+                        finish_reason,
+                        usage: None,
+                    };
+                    
+                    debug!("Parsed OpenRouter chunk: id='{}', content='{}', finish_reason={:?}", 
+                           chunk.id, chunk.content, chunk.finish_reason);
+                    
+                    return Ok(Some(chunk));
+                }
+            }
+        }
+        
+        // Handle SSE format data lines (compatible with OpenAI format)
+        for line in raw_content.lines() {
+            let line = line.trim();
+            
+            if line.starts_with("data: ") {
+                let data = &line[6..]; // Remove "data: " prefix
+                let data = data.trim();
+                
+                // Skip empty data lines
+                if data.is_empty() {
+                    continue;
+                }
+                
+                if data == "[DONE]" {
+                    return Ok(None);
+                }
+                
+                // Try to parse JSON and handle possible parsing errors
+                match serde_json::from_str::<serde_json::Value>(data) {
+                    Ok(json) => {
+                        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                            if let Some(choice) = choices.first() {
+                                let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                                let content = delta.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                let finish_reason = choice.get("finish_reason").and_then(|f| f.as_str()).map(|s| s.to_string());
+                                
+                                let chunk = StreamChunk {
+                                    id: json.get("id").and_then(|i| i.as_str()).unwrap_or("unknown").to_string(),
+                                    model: json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                                    content,
+                                    finish_reason,
+                                    usage: None,
+                                };
+                                
+                                debug!("Parsed OpenRouter SSE chunk: id='{}', content='{}', finish_reason={:?}", 
+                                       chunk.id, chunk.content, chunk.finish_reason);
+                                
+                                return Ok(Some(chunk));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Log JSON parsing error but don't interrupt stream processing
+                        log::debug!("Failed to parse SSE data as JSON: {} | Data: {}", e, data);
+                        // Continue processing next line, don't return error
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        warn!("No valid chunk found in raw content: {}", raw_content);
+        Ok(None)
+    }
+
     /// 创建新的OpenRouter提供商实例
     pub fn new(config: ProviderConfig) -> Result<Self> {
         // 验证配置
