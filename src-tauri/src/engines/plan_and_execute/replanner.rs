@@ -10,6 +10,7 @@ use crate::services::ai::AiServiceManager;
 use crate::services::mcp::McpService;
 use crate::engines::plan_and_execute::executor::{ExecutionResult, StepResult, StepStatus};
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -307,12 +308,14 @@ impl Replanner {
         prompt_repo: Option<PromptRepository>,
         mcp_service: Option<Arc<McpService>>,
         ai_service_manager: Arc<AiServiceManager>,
+        app_handle: Option<Arc<AppHandle>>,
     ) -> Result<Self, PlanAndExecuteError> {
         let planner = Planner::with_ai_service_manager(
             planner_config, 
             prompt_repo, 
             mcp_service, 
-            ai_service_manager
+            ai_service_manager,
+            app_handle,
         )?;
         
         Ok(Self {

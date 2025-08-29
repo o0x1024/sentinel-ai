@@ -1,11 +1,10 @@
 pub mod agent_commands;
 pub mod ai;
-pub mod ai_assistant_commands;
+pub mod ai_commands;
 pub mod asset;
 pub mod config;
 pub mod database;
 pub mod dictionary;
-pub mod intelligent_dispatcher_commands;
 pub mod mcp;
 pub mod performance;
 pub mod plan_execute_commands;
@@ -26,7 +25,7 @@ pub mod window;
 // 重新导出所有命令
 pub use agent_commands::*;
 pub use ai::*;
-pub use ai_assistant_commands::*;
+pub use ai_commands::*;
 pub use asset::*;
 pub use config::*;
 pub use database::*;

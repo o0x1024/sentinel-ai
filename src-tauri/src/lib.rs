@@ -33,10 +33,10 @@ use services::{
 
 // 导入命令
 use commands::{
-    agent_commands, ai, ai_assistant_commands, asset, config, database as db_commands, dictionary, 
+    agent_commands, ai, ai_commands, asset, config, database as db_commands, dictionary,
     mcp as mcp_commands, performance,
     plan_execute_commands, scan, scan_commands, scan_session_commands, vulnerability,
-    window, prompt_commands, rewoo_commands, unified_tools, intelligent_dispatcher_commands,
+    window, prompt_commands, rewoo_commands, unified_tools,
 };
 
 use crate::ai_adapter::http::{set_global_proxy, ProxyConfig};
@@ -324,35 +324,12 @@ pub fn run() {
                 handle.manage(asset_service);
                 
 
-                // 初始化Prompt服务状态
-                let prompt_service_state: commands::prompt_commands::PromptServiceState = 
-                    Arc::new(tokio::sync::RwLock::new(None));
-                handle.manage(prompt_service_state);
 
-                // 初始化ReWOO测试状态
-                let rewoo_test_state = Arc::new(std::sync::Mutex::new(
-                    commands::rewoo_commands::ReWOOTestState::default()
-                ));
-                handle.manage(rewoo_test_state);
-
-                // 初始化Agent管理器状态
-                let agent_manager_state: commands::agent_commands::GlobalAgentManager = 
-                    Arc::new(tokio::sync::RwLock::new(None));
-                handle.manage(agent_manager_state);
-
-                // 初始化Plan-Execute引擎状态
-                let plan_execute_engine_state: commands::plan_execute_commands::PlanExecuteEngineState = 
-                    Arc::new(tokio::sync::RwLock::new(None));
-                handle.manage(plan_execute_engine_state);
 
                 // 初始化执行管理器
                 let execution_manager = Arc::new(crate::managers::ExecutionManager::new());
                 handle.manage(execution_manager);
 
-                // 初始化智能调度器状态
-                let intelligent_dispatcher_state: commands::intelligent_dispatcher_commands::IntelligentDispatcherState = 
-                    Arc::new(tokio::sync::RwLock::new(None));
-                handle.manage(intelligent_dispatcher_state);
 
                 let client_manager_clone = client_manager.clone();
                 tauri::async_runtime::spawn(async move {
@@ -371,6 +348,27 @@ pub fn run() {
                             }
                         }
                     }
+
+                                    // 初始化Prompt服务状态
+                let prompt_service_state: commands::prompt_commands::PromptServiceState = 
+                Arc::new(tokio::sync::RwLock::new(None));
+            handle.manage(prompt_service_state);
+
+            // 初始化ReWOO测试状态
+            let rewoo_test_state = Arc::new(std::sync::Mutex::new(
+                commands::rewoo_commands::ReWOOTestState::default()
+            ));
+            handle.manage(rewoo_test_state);
+
+            // 初始化Agent管理器状态
+            let agent_manager_state: commands::agent_commands::GlobalAgentManager = 
+                Arc::new(tokio::sync::RwLock::new(None));
+            handle.manage(agent_manager_state);
+
+            // 初始化Plan-Execute引擎状态
+            let plan_execute_engine_state: commands::plan_execute_commands::PlanExecuteEngineState = 
+                Arc::new(tokio::sync::RwLock::new(None));
+            handle.manage(plan_execute_engine_state);
                 });
             });
 
@@ -382,7 +380,6 @@ pub fn run() {
             ai::add_ai_service,
             ai::remove_ai_service,
             ai::create_ai_conversation,
-            ai::send_ai_message,
             ai::save_ai_message,
             ai::send_ai_stream_message,
 
@@ -392,44 +389,18 @@ pub fn run() {
             ai::delete_ai_conversation,
             ai::update_ai_conversation_title,
             ai::archive_ai_conversation,
-            ai::get_ai_service_info,
-            ai::configure_ai_service,
-            ai::get_available_ai_models,
-            ai::update_ai_models,
             ai::test_ai_connection,
             ai::get_provider_models,
             ai::save_ai_config,
             ai::get_ai_config,
-            ai::get_ai_usage_stats,
-            ai::reload_ai_services,
-            ai::get_ai_service_status,
             ai::print_ai_conversations,
-            ai::get_ai_chat_models,
-            ai::get_ai_embedding_models,
-            ai::get_default_ai_model,
-            ai::set_default_ai_model,
             ai::set_default_chat_model,
-            ai::get_ai_model_config,
-            ai::update_ai_model_config,
-            ai::save_ai_providers_config,
             ai::set_default_provider,
-            ai::stop_ai_stream,
             // 调度策略相关命令
             ai::get_scheduler_config,
             ai::save_scheduler_config,
             ai::get_service_for_stage,
-            // AI助手相关命令
-            ai_assistant_commands::dispatch_intelligent_query,
-            ai_assistant_commands::start_execution,
-            ai_assistant_commands::stop_execution,
-            ai_assistant_commands::get_ai_assistant_settings,
-            ai_assistant_commands::save_ai_assistant_settings,
-            ai_assistant_commands::get_agent_statistics,
-            ai_assistant_commands::get_available_architectures,
-            ai_assistant_commands::get_ai_assistant_agents,
-            ai_assistant_commands::save_ai_assistant_agents,
-            ai_assistant_commands::get_ai_architecture_prefs,
-            ai_assistant_commands::save_ai_architecture_prefs,
+
             // 数据库相关命令
             db_commands::execute_query,
             db_commands::get_query_history,
@@ -658,17 +629,16 @@ pub fn run() {
             rewoo_commands::get_available_tools,
             rewoo_commands::simulate_tool_execution,
 
-            // 智能调度器相关命令
-            intelligent_dispatcher_commands::initialize_intelligent_dispatcher,
-            intelligent_dispatcher_commands::intelligent_process_query,
-            intelligent_dispatcher_commands::get_execution_status,
-            intelligent_dispatcher_commands::get_execution_history,
-            intelligent_dispatcher_commands::cancel_execution,
-            intelligent_dispatcher_commands::get_dispatcher_statistics,
-            intelligent_dispatcher_commands::submit_task_to_queue,
-            intelligent_dispatcher_commands::register_execution_node,
-            intelligent_dispatcher_commands::get_task_queue_statistics,
-            intelligent_dispatcher_commands::get_load_balancer_statistics,
+            ai_commands::dispatch_intelligent_query,
+            ai_commands::stop_execution,
+            ai_commands::get_ai_assistant_settings,
+            ai_commands::save_ai_assistant_settings,
+            ai_commands::get_agent_statistics,
+            ai_commands::get_available_architectures,
+            ai_commands::get_ai_assistant_agents,
+            ai_commands::save_ai_assistant_agents,
+            ai_commands::get_ai_architecture_prefs,
+            ai_commands::save_ai_architecture_prefs,
             
             // Agent系统相关命令
             agent_commands::initialize_agent_manager,

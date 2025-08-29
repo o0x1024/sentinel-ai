@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tauri::AppHandle;
 use uuid::Uuid;
 
 /// Plan-and-Execute引擎适配器
@@ -68,6 +69,7 @@ impl PlanAndExecuteEngine {
         ai_service_manager: Arc<AiServiceManager>,
         config: PlanAndExecuteConfig,
         db_service: Arc<DatabaseService>,
+        app_handle: Option<Arc<AppHandle>>,
     ) -> Result<Self> {
         let engine_info = EngineInfo {
             name: "Plan-and-Execute".to_string(),
@@ -101,7 +103,8 @@ impl PlanAndExecuteEngine {
             config.planner.clone(), 
             prompt_repo.clone(),
             mcp_service.clone(),
-            ai_service_manager.clone()
+            ai_service_manager.clone(),
+            app_handle.clone(),
         ) {
             Ok(p) => Some(Arc::new(p)),
             Err(e) => {
@@ -116,6 +119,7 @@ impl PlanAndExecuteEngine {
             prompt_repo.clone(),
             mcp_service.clone(),
             ai_service_manager.clone(),
+            app_handle.clone(),
         ) {
             Ok(r) => Some(Arc::new(r)),
             Err(e) => {
@@ -129,7 +133,8 @@ impl PlanAndExecuteEngine {
             config.executor.clone(), 
             db_service.clone(), 
             Some(ai_service_manager.clone()),
-            replanner.clone()
+            replanner.clone(),
+            app_handle.clone(),
         )));
         
         let memory_manager = Some(Arc::new(MemoryManager::new(config.memory_manager.clone())));
@@ -195,23 +200,19 @@ impl ExecutionEngine for PlanAndExecuteEngine {
     
     async fn execute_plan(
         &self, 
-        plan: &AgentExecutionPlan, 
-        session: &mut dyn AgentSession
+        plan: &AgentExecutionPlan
     ) -> Result<AgentExecutionResult> {
         let start_time = std::time::Instant::now();
         
-        session.add_log(LogLevel::Info, "=== Plan-and-Execute架构开始执行 ===".to_string()).await?;
-        session.add_log(LogLevel::Info, format!("计划名称: {}, 步骤数: {}", plan.name, plan.steps.len())).await?;
-        
         // 如果有完整的Plan-and-Execute引擎，使用原生流程
         if let Some(executor) = &self.executor {
-            session.add_log(LogLevel::Info, "使用完整Plan-and-Execute引擎 (Planner->Agent->Tools->Replan)".to_string()).await?;
+            // session.add_log(LogLevel::Info, "使用完整Plan-and-Execute引擎 (Planner->Agent->Tools->Replan)".to_string()).await?;
             
             // 将AgentExecutionPlan转换为ExecutionPlan
             match self.convert_agent_plan_to_execution_plan(plan).await {
                 Ok(execution_plan) => {
                     // 创建TaskRequest用于执行
-                    let task_request = TaskRequest {
+                    let task_request: TaskRequest = TaskRequest {
                         id: Uuid::new_v4().to_string(),
                         name: plan.name.clone(),
                         description: format!("执行Plan-and-Execute任务: {}", plan.name),
@@ -224,22 +225,21 @@ impl ExecutionEngine for PlanAndExecuteEngine {
                         created_at: std::time::SystemTime::now(),
                     };
                     
-                    session.add_log(LogLevel::Info, "=== 启动Plan-and-Execute主循环 ===".to_string()).await?;
+                    // session.add_log(LogLevel::Info, "=== 启动Plan-and-Execute主循环 ===".to_string()).await?;
                     
                     // 使用executor执行计划（包含完整的Planner->Agent->Tools->Replan流程）
                     match executor.execute_plan(&execution_plan, &task_request).await {
                         Ok(execution_result) => {
-                            session.add_log(LogLevel::Info, format!("Plan-and-Execute执行完成: {:?}", execution_result.status)).await?;
+                            // session.add_log(LogLevel::Info, format!("Plan-and-Execute执行完成: {:?}", execution_result.status)).await?;
                             return self.convert_execution_result_to_agent_result(execution_result, start_time).await;
                         }
                         Err(e) => {
-                            session.add_log(LogLevel::Error, format!("Plan-and-Execute引擎失败: {}", e)).await?;
+                            // session.add_log(LogLevel::Error, format!("Plan-and-Execute引擎失败: {}", e)).await?;
                             log::warn!("Executor failed, falling back: {}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    session.add_log(LogLevel::Error, format!("计划转换失败: {}", e)).await?;
                     log::warn!("Plan conversion failed, falling back: {}", e);
                 }
             }
@@ -377,49 +377,6 @@ impl PlanAndExecuteEngine {
             log::warn!("未配置重新规划器，无法执行计划优化");
             Ok(None)
         }
-    }
-    
-
-    
-    /// 执行工具调用步骤
-   
-    
-    /// 执行LLM调用步骤
-    async fn execute_llm_step(
-        &self, 
-        step: &AgentExecutionStep, 
-        session: &mut dyn AgentSession
-    ) -> Result<serde_json::Value> {
-        session.add_log(LogLevel::Info, format!("Executing LLM step: {}", step.name)).await?;
-        
-        // 模拟智能分析
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        
-        Ok(serde_json::json!({
-            "step_type": "llm_call",
-            "step_name": step.name,
-            "status": "completed",
-            "analysis": format!("Intelligent analysis completed for: {}", step.description)
-        }))
-    }
-    
-    /// 执行数据处理步骤
-    async fn execute_data_processing_step(
-        &self, 
-        step: &AgentExecutionStep, 
-        session: &mut dyn AgentSession
-    ) -> Result<serde_json::Value> {
-        session.add_log(LogLevel::Info, format!("Executing data processing step: {}", step.name)).await?;
-        
-        // 模拟数据处理
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-        
-        Ok(serde_json::json!({
-            "step_type": "data_processing",
-            "step_name": step.name,
-            "status": "completed",
-            "processed_items": 42
-        }))
     }
     
     /// 转换AgentTask到TaskRequest

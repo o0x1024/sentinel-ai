@@ -56,7 +56,7 @@ impl DynamicPromptGenerator {
             template_manager: None,
             optimizer: None,
             builder: None,
-            use_fallback: true,
+            use_fallback: false,
         }
     }
 

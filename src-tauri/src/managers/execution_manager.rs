@@ -38,12 +38,11 @@ impl EngineInstance {
     pub async fn execute_plan(
         &self,
         plan: &AgentExecutionPlan,
-        session: &mut dyn AgentSession,
     ) -> Result<AgentExecutionResult> {
         match self {
-            EngineInstance::PlanExecute(engine) => engine.execute_plan(plan, session).await,
-            EngineInstance::ReWOO(engine) => engine.execute_plan(plan, session).await,
-            EngineInstance::LLMCompiler(engine) => engine.execute_plan(plan, session).await,
+            EngineInstance::PlanExecute(engine) => engine.execute_plan(plan).await,
+            EngineInstance::ReWOO(engine) => engine.execute_plan(plan).await,
+            EngineInstance::LLMCompiler(engine) => engine.execute_plan(plan).await,
         }
     }
 
@@ -137,7 +136,6 @@ impl ExecutionManager {
     pub async fn execute_plan(
         &self,
         execution_id: &str,
-        session: &mut dyn AgentSession,
     ) -> Result<AgentExecutionResult> {
         // 获取执行上下文
         let context = self.get_execution_context(execution_id).await
@@ -146,7 +144,7 @@ impl ExecutionManager {
         // 获取引擎实例并执行
         let engines = self.engine_instances.read().await;
         if let Some(engine) = engines.get(execution_id) {
-            engine.execute_plan(&context.plan, session).await
+            engine.execute_plan(&context.plan).await
         } else {
             Err(anyhow::anyhow!("Engine instance not found: {}", execution_id))
         }

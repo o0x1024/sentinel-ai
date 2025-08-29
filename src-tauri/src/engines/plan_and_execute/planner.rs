@@ -2,8 +2,6 @@
 //! 
 //! 基于 Prompt 驱动的通用规划逻辑，不针对特定任务类型做特殊处理
 
-use crate::ai_adapter::core::AiAdapterManager;
-use crate::ai_adapter::types::{ChatRequest, Message, MessageRole, ChatOptions};
 use crate::services::prompt_db::PromptRepository;
 use crate::services::mcp::McpService;
 use crate::services::ai::{AiServiceManager, SchedulerStage};
@@ -12,6 +10,7 @@ use crate::engines::plan_and_execute::types::*;
 use crate::tools::{ToolInfo};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::AppHandle;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use std::sync::Arc;
@@ -128,7 +127,6 @@ pub struct ResourceRequirements {
 #[derive(Debug)]
 pub struct Planner {
     config: PlannerConfig,
-    ai_manager: &'static AiAdapterManager,
     prompt_repo: Option<PromptRepository>,
     framework_adapter: Option<Arc<dyn crate::tools::FrameworkToolAdapter>>,
     mcp_service: Option<Arc<McpService>>,
@@ -138,18 +136,6 @@ pub struct Planner {
 impl Planner {
     /// 创建新的规划器实例
     pub fn new(config: PlannerConfig, prompt_repo: Option<PromptRepository>) -> Result<Self, PlanAndExecuteError> {
-        let ai_manager = AiAdapterManager::global();
-        
-        // 验证AI提供商是否可用（仅在非空时校验；空由调度器/默认回退处理）
-        if !config.ai_provider.is_empty() {
-            if let Err(e) = ai_manager.get_provider_or_default(&config.ai_provider) {
-                log::warn!(
-                    "AI provider '{}' not registered at init: {}. Will resolve at runtime via scheduler or fallback.",
-                    config.ai_provider, e
-                );
-            }
-        }
-        
         // 尝试获取Plan & Execute框架适配器
         let framework_adapter = match crate::tools::get_global_adapter_manager() {
             Ok(adapter_manager) => {
@@ -168,7 +154,6 @@ impl Planner {
         
         Ok(Self {
             config,
-            ai_manager,
             prompt_repo,
             framework_adapter,
             mcp_service: None,
@@ -182,18 +167,6 @@ impl Planner {
         prompt_repo: Option<PromptRepository>,
         mcp_service: Option<Arc<McpService>>
     ) -> Result<Self, PlanAndExecuteError> {
-        let ai_manager = AiAdapterManager::global();
-        
-        // 验证AI提供商是否可用（仅在非空时校验；空由调度器/默认回退处理）
-        if !config.ai_provider.is_empty() {
-            if let Err(e) = ai_manager.get_provider_or_default(&config.ai_provider) {
-                log::warn!(
-                    "AI provider '{}' not registered at init: {}. Will resolve at runtime via scheduler or fallback.",
-                    config.ai_provider, e
-                );
-            }
-        }
-        
         // 尝试获取Plan & Execute框架适配器
         let framework_adapter = match crate::tools::get_global_adapter_manager() {
             Ok(adapter_manager) => {
@@ -212,7 +185,6 @@ impl Planner {
         
         Ok(Self {
             config,
-            ai_manager,
             prompt_repo,
             framework_adapter,
             mcp_service,
@@ -226,19 +198,8 @@ impl Planner {
         prompt_repo: Option<PromptRepository>,
         mcp_service: Option<Arc<McpService>>,
         ai_service_manager: Arc<AiServiceManager>,
+        app_handle: Option<Arc<AppHandle>>,
     ) -> Result<Self, PlanAndExecuteError> {
-        let ai_manager = AiAdapterManager::global();
-        
-        // 验证AI提供商是否可用（仅在非空时校验；空由调度器/默认回退处理）
-        if !config.ai_provider.is_empty() {
-            if let Err(e) = ai_manager.get_provider(&config.ai_provider) {
-                log::warn!(
-                    "AI provider '{}' not registered at init: {}. Will resolve at runtime via scheduler or fallback.",
-                    config.ai_provider, e
-                );
-            }
-        }
-        
         // 尝试获取Plan & Execute框架适配器
         let framework_adapter = match crate::tools::get_global_adapter_manager() {
             Ok(_adapter_manager) => {
@@ -263,7 +224,6 @@ impl Planner {
         
         Ok(Self {
             config,
-            ai_manager,
             prompt_repo,
             framework_adapter,
             mcp_service,
@@ -315,7 +275,7 @@ impl Planner {
         
         // 1. 构建通用规划 Prompt
         let planning_prompt = self.build_generic_planning_prompt(task).await?;
-        
+            
         // 2. 调用 AI 进行规划
         let planning_response = self.call_ai_for_planning(&planning_prompt).await?;
         
@@ -515,38 +475,38 @@ Plan-and-Execute架构流程：
             (self.config.ai_provider.clone(), self.config.model_config.model_name.clone())
         };
         
-        let provider = self.ai_manager.get_provider_or_default(&provider_name)
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        
-        let request = self.build_ai_request_with_model(prompt, &model_name)?;
-        
-        // 使用流式响应并收集结果
-        let mut stream = provider.send_chat_stream(&request).await
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-
-        // 流式响应处理状态
-        let mut content = String::new();
-        let mut response_id = String::new();
-        
-
-        // 收集流式响应 - 参考 AiService 中的实现
-        use futures::StreamExt;
-        while let Some(chunk_result) = stream.stream.next().await {
-            match chunk_result {
-                Ok(chunk) => {
-                    //需要处理报错 EOF while parsing a value at line 1 column 0    
-                    if !chunk.content.is_empty() {
-                        let choice = serde_json::from_str::<serde_json::Value>(&chunk.content)?;
-                        // 取content的值  INFO sentinel_ai_lib::engines::intelligent_dispatcher::query_analyzer: 107: choice: Object {"choices": Array [Object {"delta": Object {"content": String(""), "role": String("assistant")}, "finish_reason": Null, "index": Number(0)}], "created": Number(1756283183), "id": String("chatcmpl-68aec12f1e91f778fae1cc59"), "model": String("moonshot-v1-8k"), "object": String("chat.completion.chunk"), "system_fingerprint": String("fpv0_ff52a3ef")}
-                        let content_str = choice["choices"][0]["delta"]["content"].as_str().unwrap_or("");
-                        content.push_str(content_str);
-                    }
+        // 获取AI服务
+        let ai_service = if let Some(ref ai_service_manager) = self.ai_service_manager {
+            match ai_service_manager.find_service_by_provider_and_model(&provider_name, &model_name).await {
+                Ok(Some(service)) => service,
+                Ok(None) => {
+                    return Err(PlanAndExecuteError::AiAdapterError(format!(
+                        "无法找到提供商 '{}' 的模型 '{}'", provider_name, model_name
+                    )));
+                },
+                Err(e) => {
+                    return Err(PlanAndExecuteError::AiAdapterError(format!(
+                        "查找AI服务失败: {}", e
+                    )));
                 }
-                Err(e) => return Err(PlanAndExecuteError::AiAdapterError(e.to_string())),
             }
-        }
+        } else {
+            return Err(PlanAndExecuteError::AiAdapterError(
+                "AI服务管理器未初始化".to_string()
+            ));
+        };
         
-        Ok(content)
+        // 使用流式消息API发送请求
+        let execution_id = uuid::Uuid::new_v4().to_string();
+        let result = ai_service.send_message_stream(
+            prompt, 
+            None, // 系统提示
+            Some(execution_id.clone()), // 会话ID
+            Some(execution_id.clone()), // 消息ID
+        ).await.map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+        
+        log::info!("AI响应内容: {}", result);
+        Ok(result)
     }
 
     /// 解析规划响应
@@ -560,16 +520,13 @@ Plan-and-Execute架构流程：
 
     /// JSON解析：从LLM返回的结构化计划中构建可执行计划
     fn parse_planning_response_json(&self, response: &str) -> Result<ExecutionPlan, PlanAndExecuteError> {
-        log::info!("开始解析规划响应JSON");
         let json_str = Self::extract_json_string(response)
             .ok_or_else(|| PlanAndExecuteError::PlanningFailed("No JSON content found in response".to_string()))?;
 
-        log::info!("提取的JSON字符串: {}", json_str);
 
         let json: Value = serde_json::from_str(&json_str)
             .map_err(|e| PlanAndExecuteError::PlanningFailed(format!("Invalid JSON plan: {}", e)))?;
         
-        log::info!("JSON解析成功，开始解析steps数组");
 
         let steps_val = json.get("steps").ok_or_else(||
             PlanAndExecuteError::PlanningFailed("Missing 'steps' field in JSON plan".to_string())
@@ -812,62 +769,7 @@ Plan-and-Execute架构流程：
         })
     }
 
-    /// 构建 AI 请求（支持自定义模型）
-    fn build_ai_request_with_model(&self, prompt: &str, model_name: &str) -> Result<ChatRequest, PlanAndExecuteError> {
-        let request = ChatRequest {
-            model: model_name.to_string(),
-            messages: vec![
-                Message {
-                    role: MessageRole::User,
-                    content: prompt.to_string(),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                }
-            ],
-            options: Some(ChatOptions {
-                temperature: Some(self.config.model_config.temperature),
-                max_tokens: Some(self.config.model_config.max_tokens),
-                top_p: Some(self.config.model_config.top_p),
-                ..Default::default()
-            }),
-            tools: None,
-            tool_choice: None,
-            user: None,
-            extra_params: None,
-        };
-        
-        log::debug!("构建AI请求，模型: {}, 温度: {}", 
-                   model_name, self.config.model_config.temperature);
-        Ok(request)
-    }
-
-    /// 构建 AI 请求
-    fn build_ai_request(&self, prompt: &str) -> Result<ChatRequest, PlanAndExecuteError> {
-        Ok(ChatRequest {
-            model: self.config.model_config.model_name.clone(),
-            messages: vec![Message {
-                role: MessageRole::User,
-                content: prompt.to_string(),
-                name: None,
-                tool_calls: None,
-                tool_call_id: None,
-            }],
-            tools: None,
-            tool_choice: None,
-            user: None,
-            extra_params: None,
-            options: Some(ChatOptions {
-                temperature: Some(self.config.model_config.temperature),
-                max_tokens: Some(self.config.model_config.max_tokens),
-                top_p: Some(self.config.model_config.top_p),
-                frequency_penalty: None,
-                presence_penalty: None,
-                stop: None,
-                stream: Some(false),
-            }),
-        })
-    }
+    // 这些方法不再需要，因为我们现在使用AiService的send_message_stream方法
 
 
 

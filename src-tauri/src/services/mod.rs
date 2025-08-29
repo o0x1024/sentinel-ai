@@ -7,7 +7,6 @@ pub mod performance;
 pub mod prompt_db;
 pub mod scan;
 pub mod scan_session;
-pub mod stream_helper;
 pub mod vulnerability;
 pub mod prompt_service;
 

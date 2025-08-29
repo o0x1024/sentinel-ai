@@ -21,9 +21,9 @@ const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 const SmartAgentConsole = () => import('./views/SmartAgentConsole.vue');
 const WorkflowMonitor = () => import('./views/WorkflowMonitor.vue');
 // const IntelligentSecurityTest = () => import('./components/IntelligentSecurityTest.vue');
-const PlanExecuteDemo = () => import('./components/PlanExecuteDemo.vue');
-const ReWOOTestPanel = () => import('./components/ReWOOTestPanel.vue');
-const LLMCompilerTest = () => import('./views/LLMCompilerTest.vue');
+// const PlanExecuteDemo = () => import('./components/PlanExecuteDemo.vue');
+// const ReWOOTestPanel = () => import('./components/ReWOOTestPanel.vue');
+// const LLMCompilerTest = () => import('./views/LLMCompilerTest.vue');
 const PromptManagement = () => import('./views/PromptManagement.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
 
@@ -103,24 +103,24 @@ const routes = [
     component: WorkflowMonitor,
     meta: { title: '工作流监控' }
   },
-  { 
-    path: '/plan-execute', 
-    name: 'PlanExecuteDemo', 
-    component: PlanExecuteDemo,
-    meta: { title: 'Plan-and-Execute 演示' }
-  },
-  { 
-    path: '/rewoo-test', 
-    name: 'ReWOOTestPanel', 
-    component: ReWOOTestPanel,
-    meta: { title: 'ReWOO 架构测试' }
-  },
-  { 
-    path: '/llm-compiler-test', 
-    name: 'LLMCompilerTest', 
-    component: LLMCompilerTest,
-    meta: { title: 'LLMCompiler 引擎测试' }
-  },
+  // { 
+  //   path: '/plan-execute', 
+  //   name: 'PlanExecuteDemo', 
+  //   component: PlanExecuteDemo,
+  //   meta: { title: 'Plan-and-Execute 演示' }
+  // },
+  // { 
+  //   path: '/rewoo-test', 
+  //   name: 'ReWOOTestPanel', 
+  //   component: ReWOOTestPanel,
+  //   meta: { title: 'ReWOO 架构测试' }
+  // },
+  // { 
+  //   path: '/llm-compiler-test', 
+  //   name: 'LLMCompilerTest', 
+  //   component: LLMCompilerTest,
+  //   meta: { title: 'LLMCompiler 引擎测试' }
+  // },
 
   { 
     path: '/settings', 

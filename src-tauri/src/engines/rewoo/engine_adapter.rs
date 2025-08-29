@@ -279,28 +279,22 @@ impl ExecutionEngine for ReWooEngine {
     
     async fn execute_plan(
         &self, 
-        plan: &ExecutionPlan, 
-        session: &mut dyn AgentSession
+        plan: &ExecutionPlan
     ) -> Result<AgentExecutionResult> {
         let _start_time = std::time::Instant::now();
         
-        session.add_log(LogLevel::Info, format!("Starting ReWOO execution with {} steps", plan.steps.len())).await?;
-        
+    
         // 如果有完整的ReWOO组件，使用原有的执行逻辑
         if let (Some(_planner), Some(_worker), Some(_solver)) = (&self.planner, &self.worker, &self.solver) {
-            session.add_log(LogLevel::Info, "Using original ReWOO engine execution".to_string()).await?;
-            
-            match self.execute_rewoo_flow(plan, session).await {
+            match self.execute_rewoo_flow(plan).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
-                    session.add_log(LogLevel::Warn, format!("Original ReWOO execution failed, falling back: {}", e)).await?;
+                    return Err(e.into());
                 }
             }
+        } else {
+            return Err(anyhow::anyhow!("ReWooEngine execute_plan error"));
         }
-        
-        // 回退到工具系统执行
-        session.add_log(LogLevel::Info, "Using fallback execution with tool system".to_string()).await?;
-        self.execute_fallback_rewoo(plan, session).await
     }
     
     async fn get_progress(&self, _session_id: &str) -> Result<ExecutionProgress> {
@@ -319,8 +313,7 @@ impl ReWooEngine {
     /// 执行完整的ReWOO流程（使用原有组件）
     async fn execute_rewoo_flow(
         &self,
-        _plan: &ExecutionPlan,
-        session: &mut dyn AgentSession,
+        plan: &ExecutionPlan,
     ) -> Result<AgentExecutionResult> {
         let session_id = Uuid::new_v4().to_string();
         let start_time = std::time::Instant::now();
@@ -329,7 +322,7 @@ impl ReWooEngine {
         let mut rewoo_session = ReWOOSession::new(session_id.clone(), "ReWOO execution task".to_string());
         
         // 执行ReWOO状态图流程
-        let result = self.execute_rewoo_state_graph(&mut rewoo_session, session).await;
+        let result = self.execute_rewoo_state_graph(&mut rewoo_session).await;
         
         // 更新会话结束时间
         if result.is_ok() {
@@ -384,27 +377,23 @@ impl ReWooEngine {
     async fn execute_rewoo_state_graph(
         &self,
         rewoo_session: &mut ReWOOSession,
-        session: &mut dyn AgentSession,
     ) -> Result<String, ReWOOError> {
         let planner = self.planner.as_ref().unwrap();
         let worker = self.worker.as_ref().unwrap();
         let solver = self.solver.as_ref().unwrap();
         
         // 1. Planning 阶段
-        session.add_log(LogLevel::Info, "Starting ReWOO Planning phase".to_string()).await.map_err(|e| ReWOOError::ToolSystemError(e.to_string()))?;
         let planning_start = SystemTime::now();
         planner.plan(&mut rewoo_session.state).await?;
         rewoo_session.metrics.planning_time_ms = planning_start.elapsed().unwrap_or_default().as_millis() as u64;
         rewoo_session.metrics.tool_calls = rewoo_session.state.steps.len() as u32;
         
         // 2. Working 阶段 - 执行所有步骤
-        session.add_log(LogLevel::Info, "Starting ReWOO Working phase".to_string()).await.map_err(|e| ReWOOError::ToolSystemError(e.to_string()))?;
         let working_start = SystemTime::now();
-        self.execute_rewoo_working_phase(rewoo_session, worker, planner, session).await?;
+        self.execute_rewoo_working_phase(rewoo_session, worker, planner).await?;
         rewoo_session.metrics.working_time_ms = working_start.elapsed().unwrap_or_default().as_millis() as u64;
         
         // 3. Solving 阶段
-        session.add_log(LogLevel::Info, "Starting ReWOO Solving phase".to_string()).await.map_err(|e| ReWOOError::ToolSystemError(e.to_string()))?;
         let solving_start = SystemTime::now();
         let answer = solver.solve(&rewoo_session.state).await?;
         rewoo_session.metrics.solving_time_ms = solving_start.elapsed().unwrap_or_default().as_millis() as u64;
@@ -418,13 +407,10 @@ impl ReWooEngine {
         rewoo_session: &mut ReWOOSession,
         worker: &ReWOOWorker,
         planner: &ReWOOPlanner,
-        session: &mut dyn AgentSession,
     ) -> Result<(), ReWOOError> {
         while let Some(current_step) = planner.get_current_step(&rewoo_session.state) {
             // 解析当前步骤
             let parsed_step = planner.parse_step(&current_step)?;
-            
-            session.add_log(LogLevel::Info, format!("Executing ReWOO step: {}", parsed_step.variable)).await.map_err(|e| ReWOOError::ToolSystemError(e.to_string()))?;
             
             // 验证步骤
             worker.validate_step(&parsed_step).await?;
@@ -514,103 +500,6 @@ impl ReWooEngine {
         Ok(plan)
     }
     
-    /// 回退执行ReWOO（使用工具系统）
-    async fn execute_fallback_rewoo(
-        &self,
-        plan: &ExecutionPlan,
-        session: &mut dyn AgentSession,
-    ) -> Result<AgentExecutionResult> {
-        let start_time = std::time::Instant::now();
-        
-        // 步骤1: 创建推理计划
-        session.add_log(LogLevel::Info, "Creating reasoning plan with variable placeholders".to_string()).await?;
-        let reasoning_plan = format!("Plan: #E1 = {}[{}] #E2 = analyze[#E1] #E3 = summarize[#E2]",
-            "port_scan", "target_host");
-        
-        // 步骤2: 并行执行工具（ReWOO特色）
-        session.add_log(LogLevel::Info, "Executing tools in parallel with variable substitution".to_string()).await?;
-        let mut tool_results = Vec::new();
-        let mut tools_executed = 0;
-        
-        // 使用工具系统执行ReWOO特有的变量替换执行
-        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
-            // 执行E1: 扫描工具
-            session.add_log(LogLevel::Info, "Executing E1: port_scan with ReWOO strategy".to_string()).await?;
-            match self.execute_rewoo_tool_with_system(&tool_system, "port_scan", "127.0.0.1", session).await {
-                Ok(result) => {
-                    tool_results.push(("E1".to_string(), format!("port_scan completed: {:?}", result)));
-                    tools_executed += 1;
-                }
-                Err(e) => {
-                    tool_results.push(("E1".to_string(), format!("port_scan failed: {}", e)));
-                }
-            }
-            
-            // 模拟E2: 分析步骤（ReWOO的变量替换）
-            session.add_log(LogLevel::Info, "Executing E2: analysis with variable substitution".to_string()).await?;
-            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-            tool_results.push(("E2".to_string(), "Analysis completed based on #E1 results".to_string()));
-            
-            // 模拟E3: 总结步骤
-            session.add_log(LogLevel::Info, "Executing E3: solving with ReWOO solver".to_string()).await?;
-            tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-            tool_results.push(("E3".to_string(), "Final answer generated from #E2 analysis".to_string()));
-        } else {
-            session.add_log(LogLevel::Warn, "Tool system not available, using simulated results".to_string()).await?;
-            tool_results = vec![
-                ("E1".to_string(), "Simulated scan results".to_string()),
-                ("E2".to_string(), "Simulated analysis".to_string()),
-                ("E3".to_string(), "Simulated summary".to_string()),
-            ];
-        }
-        
-        // 步骤3: 求解最终答案
-        session.add_log(LogLevel::Info, "Generating final answer using ReWOO solver".to_string()).await?;
-        let final_answer = format!("ReWOO execution completed. {} tools executed successfully. Results: {:?}", 
-            tools_executed, tool_results);
-        
-        let execution_time = start_time.elapsed().as_millis() as u64;
-        
-        // 创建结果
-        let result = AgentExecutionResult {
-            id: Uuid::new_v4().to_string(),
-            success: true,
-            data: Some(serde_json::json!({
-                "engine": "rewoo_fallback",
-                "plan_id": plan.id,
-                "reasoning_plan": reasoning_plan,
-                "tool_results": tool_results,
-                "final_answer": final_answer,
-                "tools_executed": tools_executed,
-                "execution_strategy": "fallback_parallel_with_variable_substitution"
-            })),
-            error: None,
-            execution_time_ms: execution_time,
-            resources_used: [
-                ("cpu_usage".to_string(), 40.0),
-                ("memory_mb".to_string(), 512.0),
-                ("parallel_tool_calls".to_string(), tools_executed as f64),
-                ("token_efficiency".to_string(), 85.0),
-            ].into_iter().collect(),
-            artifacts: vec![
-                ExecutionArtifact {
-                    artifact_type: ArtifactType::AnalysisResult,
-                    name: "rewoo_execution_trace".to_string(),
-                    data: serde_json::json!({
-                        "reasoning_plan": reasoning_plan,
-                        "tool_results": tool_results,
-                        "final_answer": final_answer,
-                        "tools_executed": tools_executed
-                    }),
-                    created_at: chrono::Utc::now(),
-                }
-            ],
-        };
-        
-        session.add_log(LogLevel::Info, format!("ReWOO execution completed successfully in {}ms with {} tools executed", execution_time, tools_executed)).await?;
-        
-        Ok(result)
-    }
     
     /// 执行ReWOO风格的工具调用（使用全局工具系统）
     async fn execute_rewoo_tool_with_system(

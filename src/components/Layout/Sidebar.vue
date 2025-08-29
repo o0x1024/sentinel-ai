@@ -205,27 +205,27 @@ const mainMenuItems = computed(() => [
 
 // 工具与管理菜单项
 const toolMenuItems = computed(() => [
-  {
-    path: '/plan-execute',
-    name: 'Plan-and-Execute 演示',
-    icon: 'fas fa-project-diagram',
-    badge: 'BETA',
-    badgeClass: 'badge-warning'
-  },
-  {
-    path: '/rewoo-test',
-    name: 'ReWOO 架构测试',
-    icon: 'fas fa-cogs',
-    badge: 'TEST',
-    badgeClass: 'badge-info'
-  },
-  {
-    path: '/llm-compiler-test',
-    name: 'LLMCompiler 引擎测试',
-    icon: 'fas fa-microchip',
-    badge: 'NEW',
-    badgeClass: 'badge-success'
-  },
+  // {
+  //   path: '/plan-execute',
+  //   name: 'Plan-and-Execute 演示',
+  //   icon: 'fas fa-project-diagram',
+  //   badge: 'BETA',
+  //   badgeClass: 'badge-warning'
+  // },
+  // {
+  //   path: '/rewoo-test',
+  //   name: 'ReWOO 架构测试',
+  //   icon: 'fas fa-cogs',
+  //   badge: 'TEST',
+  //   badgeClass: 'badge-info'
+  // },
+  // {
+  //   path: '/llm-compiler-test',
+  //   name: 'LLMCompiler 引擎测试',
+  //   icon: 'fas fa-microchip',
+  //   badge: 'NEW',
+  //   badgeClass: 'badge-success'
+  // },
   {
     path: '/mcp-tools',
     name: t('sidebar.mcpTools', 'MCP工具'),

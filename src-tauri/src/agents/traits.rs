@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::Result;
 use uuid::Uuid;
+use tauri::AppHandle;
 
 /// Agent能力枚举
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,7 +55,7 @@ pub enum TaskPriority {
 }
 
 /// Agent会话状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize,PartialEq)]
 pub enum AgentSessionStatus {
     /// 已创建
     Created,
@@ -146,7 +147,7 @@ pub trait AgentSession: Send + Sync {
 }
 
 /// 日志级别
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize,PartialEq)]
 pub enum LogLevel {
     Debug,
     Info,
@@ -249,7 +250,7 @@ pub trait ExecutionEngine: Send + Sync {
     async fn create_plan(&self, task: &AgentTask) -> Result<ExecutionPlan>;
     
     /// 执行计划
-    async fn execute_plan(&self, plan: &ExecutionPlan, session: &mut dyn AgentSession) -> Result<AgentExecutionResult>;
+    async fn execute_plan(&self, plan: &ExecutionPlan) -> Result<AgentExecutionResult>;
     
     /// 获取执行进度
     async fn get_progress(&self, session_id: &str) -> Result<ExecutionProgress>;

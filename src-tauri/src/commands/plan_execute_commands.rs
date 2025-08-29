@@ -331,6 +331,7 @@ pub async fn start_plan_execute_engine(
     engine_state: State<'_, PlanExecuteEngineState>,
     ai_service_manager: State<'_, Arc<crate::services::AiServiceManager>>,
     database_service: State<'_, Arc<DatabaseService>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<CommandResponse<String>, String> {
     info!("🚀 [Plan-Execute] 启动引擎");
     
@@ -343,17 +344,20 @@ pub async fn start_plan_execute_engine(
     
     // 创建默认配置
     let config = crate::engines::plan_and_execute::types::PlanAndExecuteConfig::default();
-    
+
+    // 创建Plan-and-Execute引擎
     match PlanAndExecuteEngine::new_with_dependencies(
         ai_service_manager.inner().clone(),
         config,
         database_service.inner().clone(),
+        Some(Arc::new(app_handle.clone())),
     ).await {
-        Ok( engine) => {
+        Ok(engine) => {
+            let mut engine_state = engine_state.write().await;
+            *engine_state = Some(engine);
             // 由于已删除 start 方法，直接返回成功
             match Ok::<(), String>(()) {
                 Ok(_) => {
-                    *state = Some(engine);
                     info!("✅ [Plan-Execute] 引擎启动成功");
                     Ok(CommandResponse::success("引擎启动成功".to_string()))
                 }

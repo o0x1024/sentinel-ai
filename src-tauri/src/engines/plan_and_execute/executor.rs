@@ -4,17 +4,16 @@
 
 use crate::engines::plan_and_execute::types::*;
 use crate::engines::plan_and_execute::replanner::Replanner;
-use crate::tools::{UnifiedToolManager, ToolExecutionParams, ToolExecutionResult, get_global_tool_system};
-use crate::engines::ExecutionError;
+use crate::tools::{UnifiedToolManager, ToolExecutionParams, ToolExecutionResult, get_global_tool_system, ExecutionStatus};
+use crate::engines::{ExecutionError, StreamMessageType, UnifiedStreamMessage};
 use crate::services::database::DatabaseService;
 use crate::services::ai::{AiServiceManager, SchedulerStage};
-use crate::ai_adapter::core::AiAdapterManager;
-use crate::ai_adapter::types::{ChatRequest, Message, MessageRole, ChatOptions};
 use crate::database::plan_execute_repository::PlanExecuteRepository;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::timeout;
 
@@ -427,9 +426,19 @@ pub struct Executor {
     ai_service_manager: Option<Arc<AiServiceManager>>,
     replanner: Option<Arc<Replanner>>,
     repository: Arc<PlanExecuteRepository>,
+    app_handle: Option<Arc<AppHandle>>,
 }
 
 impl Executor {
+    /// 统一发送流式消息到前端
+    fn emit_stream_message(&self, message: UnifiedStreamMessage) {
+        if let Some(app_handle) = &self.app_handle {
+            if let Err(e) = app_handle.emit("ai_stream_message", message) {
+                log::error!("Failed to emit unified stream message: {}", e);
+            }
+        }
+    }
+
     /// 创建新的执行器实例
     pub fn new(config: ExecutorConfig, db_service: Arc<DatabaseService>) -> Self {
         let pool = db_service.get_pool().expect("Failed to get database pool").clone();
@@ -443,6 +452,7 @@ impl Executor {
             ai_service_manager: None,
             replanner: None,
             repository,
+            app_handle: None,
         }
     }
 
@@ -459,6 +469,7 @@ impl Executor {
             ai_service_manager: Some(ai_service_manager),
             replanner: None,
             repository,
+            app_handle: None,
         }
     }
 
@@ -467,7 +478,8 @@ impl Executor {
         config: ExecutorConfig, 
         db_service: Arc<DatabaseService>, 
         ai_service_manager: Option<Arc<AiServiceManager>>,
-        replanner: Option<Arc<Replanner>>
+        replanner: Option<Arc<Replanner>>,
+        app_handle: Option<Arc<AppHandle>>,
     ) -> Self {
         let pool = db_service.get_pool().expect("Failed to get database pool").clone();
         let repository = Arc::new(PlanExecuteRepository::new(pool));
@@ -480,6 +492,7 @@ impl Executor {
             ai_service_manager,
             replanner,
             repository,
+            app_handle,
         }
     }
 
@@ -513,7 +526,7 @@ impl Executor {
         let _start_time = SystemTime::now();
         let mut current_plan = plan.clone();
         let mut replan_attempts = 0;
-        let max_replan_attempts = 3; // 最大重新规划次数
+        let max_replan_attempts = 2; // 最大重新规划次数
         let mut overall_step_results = HashMap::new();
         let mut overall_errors = Vec::new();
         
@@ -521,7 +534,7 @@ impl Executor {
         let mut consecutive_failures = 0;
         let mut total_execution_time = 0u64;
         let max_total_execution_time = 30 * 60 * 1000; // 30分钟最大执行时间
-        let max_consecutive_failures = 3; // 最大连续失败次数
+        let max_consecutive_failures = 1; // 最大连续失败次数
         
         // Plan-and-Execute主循环：Planner -> Agent -> Tools -> Replan -> Agent...
         loop {
@@ -868,6 +881,27 @@ impl Executor {
             // 调用Tools层执行具体步骤
             match self.execute_step(step, context).await {
                 Ok(result) => {
+                    self.emit_stream_message(UnifiedStreamMessage {
+                        execution_id: context.task_id.clone(),
+                        message_id: None,
+                        conversation_id: None,
+                        message_type: StreamMessageType::ToolUpdate,
+                        content_delta: None,
+                        tool_execution: Some(serde_json::json!({
+                            "id": &step.id,
+                            "name": &step.name,
+                            "status": &result.status,
+                            "result": &result.result_data,
+                            "error": &result.error,
+                            "started_at": result.started_at,
+                            "completed_at": result.completed_at,
+                        })),
+                        execution_plan: None,
+                        final_content: None,
+                        error: None,
+                        is_complete: false,
+                    });
+
                     if result.status == StepStatus::Completed {
                         log::info!("✓ 步骤执行成功: {}", step.name);
                         completed_steps.push(step.id.clone());
@@ -1304,9 +1338,69 @@ impl Executor {
             
             let manager = context.tool_manager.read().await;
             match timeout(timeout_duration, manager.call_tool(&tool_config.tool_name, tool_params)).await {
-                Ok(Ok(result)) => Ok(result.output),
-                Ok(Err(error)) => Err(PlanAndExecuteError::ToolFailed(error.to_string())),
-                Err(_) => Err(PlanAndExecuteError::ToolFailed("工具调用超时".to_string())),
+                Ok(Ok(result)) => {
+                    self.emit_stream_message(UnifiedStreamMessage {
+                        execution_id: context.task_id.clone(),
+                        message_id: None,
+                        conversation_id: None,
+                        message_type: StreamMessageType::ToolUpdate,
+                        content_delta: None,
+                        tool_execution: Some(serde_json::json!({
+                            "id": &step.id,
+                            "name": &step.name,
+                            "status": &result.status,
+                            "result": &result.output,
+                            "is_error": result.status != ExecutionStatus::Completed,
+                        })),
+                        execution_plan: None,
+                        final_content: None,
+                        error: None,
+                        is_complete: false,
+                    });
+                    Ok(result.output)
+                },
+                Ok(Err(error)) => {
+                    let err_msg = error.to_string();
+                    self.emit_stream_message(UnifiedStreamMessage {
+                        execution_id: context.task_id.clone(),
+                        message_id: None,
+                        conversation_id: None,
+                        message_type: StreamMessageType::ToolUpdate,
+                        content_delta: None,
+                        tool_execution: Some(serde_json::json!({
+                            "id": &step.id,
+                            "name": &step.name,
+                            "status": "Failed",
+                            "error": &err_msg,
+                        })),
+                        execution_plan: None,
+                        final_content: None,
+                        error: Some(err_msg.clone()),
+                        is_complete: false,
+                    });
+                    Err(PlanAndExecuteError::ToolFailed(err_msg))
+                },
+                Err(_) => {
+                    let err_msg = "工具调用超时".to_string();
+                    self.emit_stream_message(UnifiedStreamMessage {
+                        execution_id: context.task_id.clone(),
+                        message_id: None,
+                        conversation_id: None,
+                        message_type: StreamMessageType::ToolUpdate,
+                        content_delta: None,
+                        tool_execution: Some(serde_json::json!({
+                            "id": &step.id,
+                            "name": &step.name,
+                            "status": "Failed",
+                            "error": &err_msg,
+                        })),
+                        execution_plan: None,
+                        final_content: None,
+                        error: Some(err_msg.clone()),
+                        is_complete: false,
+                    });
+                    Err(PlanAndExecuteError::ToolFailed(err_msg))
+                },
             }
         } else {
             Err(PlanAndExecuteError::ConfigError("工具调用步骤缺少工具配置".to_string()))
@@ -1359,9 +1453,10 @@ impl Executor {
             )
         };
 
-        // 解析执行阶段应使用的provider与model：优先调度器Execution -> 调度器Planning -> 本地配置
-        let (provider_name, model_name) = if let Some(ref ai_service_manager) = self.ai_service_manager {
-            match ai_service_manager.get_ai_config_for_stage(SchedulerStage::Execution).await {
+        // 获取AI服务
+        let ai_service = if let Some(ref ai_service_manager) = self.ai_service_manager {
+            // 解析执行阶段应使用的provider与model：优先调度器Execution -> 调度器Planning -> 本地配置
+            let (provider_name, model_name) = match ai_service_manager.get_ai_config_for_stage(SchedulerStage::Execution).await {
                 Ok(Some(cfg)) => {
                     log::info!("Using scheduler Execution config: {} ({})", cfg.model, cfg.provider);
                     (cfg.provider, cfg.model)
@@ -1378,69 +1473,69 @@ impl Executor {
                         }
                     }
                 }
+            };
+
+            if model_name.trim().is_empty() {
+                return Err(PlanAndExecuteError::ConfigError("Executor model is empty; please configure scheduler or executor.model_config.model_name".to_string()));
+            }
+
+            // 获取AI服务
+            match ai_service_manager.find_service_by_provider_and_model(&provider_name, &model_name).await {
+                Ok(Some(service)) => service,
+                Ok(None) => {
+                    return Err(PlanAndExecuteError::AiAdapterError(format!(
+                        "无法找到提供商 '{}' 的模型 '{}'", provider_name, model_name
+                    )));
+                },
+                Err(e) => {
+                    return Err(PlanAndExecuteError::AiAdapterError(format!(
+                        "查找AI服务失败: {}", e
+                    )));
+                }
             }
         } else {
-            log::info!("AI service manager not set; using local executor config: {} ({})", self.config.model_config.model_name, self.config.ai_provider);
-            (self.config.ai_provider.clone(), self.config.model_config.model_name.clone())
+            return Err(PlanAndExecuteError::AiAdapterError(
+                "AI服务管理器未初始化".to_string()
+            ));
         };
+        
+        // 使用流式消息API发送请求
+        let execution_id = context.task_id.clone();
+        
+        // 使用send_message_stream发送请求
+        let content = ai_service.send_message_stream(
+            &prompt, 
+            None, // 系统提示
+            Some(execution_id.clone()), // 会话ID
+            Some(execution_id.clone()), // 消息ID
+        ).await.map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+        
+        // 发送最终内容通知
+        self.emit_stream_message(UnifiedStreamMessage {
+            execution_id: context.task_id.clone(),
+            message_id: None,
+            conversation_id: None,
+            message_type: StreamMessageType::FinalResult,
+            content_delta: None,
+            tool_execution: None,
+            execution_plan: None,
+            final_content: Some(content.clone()),
+            error: None,
+            is_complete: true,
+        });
 
-        if model_name.trim().is_empty() {
-            return Err(PlanAndExecuteError::ConfigError("Executor model is empty; please configure scheduler or executor.model_config.model_name".to_string()));
-        }
-
-        let ai_manager = AiAdapterManager::global();
-        let provider = ai_manager.get_provider_or_default(&provider_name)
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        let request = ChatRequest {
-            model: model_name,
-            messages: vec![Message {
-                role: MessageRole::User,
-                content: prompt,
-                name: None,
-                tool_calls: None,
-                tool_call_id: None,
-            }],
-            tools: None,
-            tool_choice: None,
-            user: None,
-            extra_params: None,
-            options: Some(ChatOptions {
-                temperature: Some(self.config.model_config.temperature),
-                max_tokens: Some(self.config.model_config.max_tokens),
-                top_p: Some(self.config.model_config.top_p),
-                frequency_penalty: None,
-                presence_penalty: None,
-                stop: None,
-                stream: Some(false),
-            }),
-        };
-
-        // 使用流式响应并收集结果
-        let mut stream = provider.send_chat_stream(&request).await
-            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-
-        // 流式响应处理状态
-        let mut content = String::new();
-        let mut chunk_count = 0;
-        let mut response_id = String::new();
-        let mut response_model = String::new();
-
-        // 收集流式响应 - 参考 AiService 中的实现
-        use futures::StreamExt;
-        while let Some(chunk_result) = stream.stream.next().await {
-            match chunk_result {
-                Ok(chunk) => {
-                    //需要处理报错 EOF while parsing a value at line 1 column 0    
-                    if !chunk.content.is_empty() {
-                        let choice = serde_json::from_str::<serde_json::Value>(&chunk.content)?;
-                        // 取content的值  INFO sentinel_ai_lib::engines::intelligent_dispatcher::query_analyzer: 107: choice: Object {"choices": Array [Object {"delta": Object {"content": String(""), "role": String("assistant")}, "finish_reason": Null, "index": Number(0)}], "created": Number(1756283183), "id": String("chatcmpl-68aec12f1e91f778fae1cc59"), "model": String("moonshot-v1-8k"), "object": String("chat.completion.chunk"), "system_fingerprint": String("fpv0_ff52a3ef")}
-                        let content_str = choice["choices"][0]["delta"]["content"].as_str().unwrap_or("");
-                        content.push_str(content_str);
-                    }
-                }
-                Err(e) => return Err(PlanAndExecuteError::AiAdapterError(e.to_string())),
-            }
-        }
+        self.emit_stream_message(UnifiedStreamMessage {
+            execution_id: context.task_id.clone(),
+            message_id: None,
+            conversation_id: None,
+            message_type: StreamMessageType::Content,
+            content_delta: None,
+            tool_execution: None,
+            execution_plan: None,
+            final_content: Some(content.clone()),
+            error: None,
+            is_complete: true,
+        });
 
         Ok(serde_json::json!({
             "reasoning_result": content,

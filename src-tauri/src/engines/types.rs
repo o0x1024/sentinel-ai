@@ -128,6 +128,60 @@ pub enum StepType {
     ManualConfirmation,
 }
 
+
+/// 流式消息类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum StreamMessageType {
+    /// AI生成的内容块
+    Content,
+    /// 工具执行状态更新
+    ToolUpdate,
+    /// 计划更新
+    PlanUpdate,
+    /// 最终结果
+    FinalResult,
+    /// 错误信息
+    Error,
+}
+
+/// 统一流式消息结构体
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedStreamMessage {
+    /// 执行ID
+    pub execution_id: String,
+    /// 消息ID（可选）
+    pub message_id: Option<String>,
+    /// 对话ID（可选）
+    pub conversation_id: Option<String>,
+    /// 消息类型
+    pub message_type: StreamMessageType,
+    
+    /// 内容块 (用于 Content 类型)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_delta: Option<String>,
+    
+    /// 工具执行信息 (用于 ToolUpdate 类型)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_execution: Option<serde_json::Value>,
+    
+    /// 执行计划 (用于 PlanUpdate 类型)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_plan: Option<serde_json::Value>,
+    
+    /// 最终内容 (用于 FinalResult 类型)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_content: Option<String>,
+    
+    /// 错误信息 (用于 Error 类型)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    
+    /// 是否为流的最后一个消息
+    pub is_complete: bool,
+}
+
+
+
 /// 工具配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolConfig {

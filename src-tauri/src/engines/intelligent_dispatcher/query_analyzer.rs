@@ -139,7 +139,7 @@ impl QueryAnalyzer {
         }
             
         let response = content;
-        tracing::info!("response: {}", response);
+        // tracing::info!("response: {}", response);
 
         // 解析AI响应
         let analysis_result = self.parse_analysis_response(&response, user_input)?;

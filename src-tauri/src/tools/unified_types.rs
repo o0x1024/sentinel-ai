@@ -345,7 +345,7 @@ pub struct McpServerConfig {
 // ============================================================================
 
 /// 执行状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ExecutionStatus {
     Pending,
     Running,

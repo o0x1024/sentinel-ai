@@ -1,11 +1,16 @@
-import { marked } from 'marked'
+import { remark } from 'remark';
+import remarkHtml from 'remark-html';
+import remarkGfm from 'remark-gfm';
 
-// Initialize marked options
-marked.setOptions({ breaks: true, gfm: true })
 
 export const useMessageUtils = () => {
   // Render markdown content
-  const renderMarkdown = (content: string) => marked(content)
+  const renderMarkdown = (content: string) => {
+    return remark()
+    .use(remarkHtml)
+    .use(remarkGfm)
+    .processSync(content).toString();
+  };
 
   // Format time display
   const formatTime = (timestamp: Date) => {

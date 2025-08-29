@@ -10,8 +10,6 @@ pub mod llm_compiler;
 
 pub mod plan_and_execute;
 
-// 智能调度器模块
-pub mod intelligent_dispatcher;
 
 // 重新导出核心类型和trait
 pub use types::*;

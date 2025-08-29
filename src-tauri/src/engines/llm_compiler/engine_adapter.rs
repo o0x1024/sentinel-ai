@@ -247,29 +247,23 @@ impl ExecutionEngine for LlmCompilerEngine {
     
     async fn execute_plan(
         &self, 
-        plan: &ExecutionPlan, 
-        session: &mut dyn AgentSession
+        plan: &ExecutionPlan
     ) -> Result<AgentExecutionResult> {
         let _start_time = std::time::Instant::now();
-        
-        session.add_log(LogLevel::Info, format!("Starting LLMCompiler execution with {} steps", plan.steps.len())).await?;
         
         // 如果有完整的LLMCompiler组件，使用原有的工作流执行逻辑
         if let (Some(_planner), Some(_task_fetcher), Some(_executor_pool), Some(_joiner), Some(_ai_service)) = 
            (&self.planner, &self.task_fetcher, &self.executor_pool, &self.joiner, &self.ai_service) {
-            session.add_log(LogLevel::Info, "Using original LLMCompiler engine workflow".to_string()).await?;
             
-            match self.execute_llm_compiler_workflow(plan, session).await {
+            match self.execute_llm_compiler_workflow(plan).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
-                    session.add_log(LogLevel::Warn, format!("Original LLMCompiler execution failed, falling back: {}", e)).await?;
+                    return Err(e.into());
                 }
             }
+        } else {
+            return Err(anyhow::anyhow!("LLMCompilerEngine execute_plan error"));
         }
-        
-        // 回退到工具系统执行
-        session.add_log(LogLevel::Info, "Using fallback execution with tool system".to_string()).await?;
-        self.execute_fallback_llm_compiler(plan, session).await
     }
     
     async fn get_progress(&self, _session_id: &str) -> Result<ExecutionProgress> {
@@ -297,8 +291,7 @@ impl LlmCompilerEngine {
     /// 执行原有的LLMCompiler工作流逻辑
     async fn execute_llm_compiler_workflow(
         &self,
-        _plan: &ExecutionPlan,
-        session: &mut dyn AgentSession,
+        _plan: &ExecutionPlan
     ) -> Result<AgentExecutionResult> {
         let workflow_start = std::time::Instant::now();
         
@@ -328,7 +321,6 @@ impl LlmCompilerEngine {
         // 主执行循环
         for round in 1..=self.config.max_iterations {
             info!("开始执行轮次: {}/{}", round, self.config.max_iterations);
-            session.add_log(LogLevel::Info, format!("Execution round: {}/{}", round, self.config.max_iterations)).await?;
             
             if round > 1 {
                 execution_summary.replanning_count = round - 1;
@@ -336,8 +328,6 @@ impl LlmCompilerEngine {
             
             // 1. 规划阶段
             if let Some(planner) = &self.planner {
-                info!("生成执行计划...");
-                session.add_log(LogLevel::Info, "Generating execution plan...".to_string()).await?;
                 
                 let execution_plan = planner.generate_dag_plan(user_query, &context).await?;
                 info!("执行计划包含 {} 个任务", execution_plan.nodes.len());
@@ -368,7 +358,6 @@ impl LlmCompilerEngine {
                     all_results.extend(round_results.clone());
                     
                     info!("轮次 {} 完成: 成功 {} 个任务, 失败 {} 个任务, 耗时 {}ms", round, completed_count, failed_count, round_duration);
-                    session.add_log(LogLevel::Info, format!("Round {} completed: {} successful, {} failed, {}ms", round, completed_count, failed_count, round_duration)).await?;
                     
                     // 4. 智能决策阶段
                     if let Some(joiner) = &self.joiner {
@@ -549,138 +538,6 @@ impl LlmCompilerEngine {
         }
     }
     
-    /// 回退执行方法
-    async fn execute_fallback_llm_compiler(
-        &self,
-        plan: &ExecutionPlan,
-        session: &mut dyn AgentSession,
-    ) -> Result<AgentExecutionResult> {
-        let start_time = std::time::Instant::now();
-        
-        // 步骤1: 创建任务DAG
-        session.add_log(LogLevel::Info, "Creating task dependency graph (DAG)".to_string()).await?;
-        let dag_structure = vec![
-            ("Task_A".to_string(), vec![]),
-            ("Task_B".to_string(), vec![]),
-            ("Task_C".to_string(), vec!["Task_A".to_string()]),
-            ("Task_D".to_string(), vec!["Task_A".to_string(), "Task_B".to_string()]),
-        ];
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
-        // 步骤2: 获取就绪任务
-        session.add_log(LogLevel::Info, "Fetching ready tasks for parallel execution".to_string()).await?;
-        let ready_tasks = vec!["Task_A", "Task_B"];
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        
-        // 步骤3: 并行执行（LLMCompiler特色）
-        session.add_log(LogLevel::Info, format!("Executing {} tasks in parallel", ready_tasks.len())).await?;
-        let mut parallel_results = Vec::new();
-        let mut tools_executed = 0;
-        
-        // 使用工具系统执行LLMCompiler的DAG并行执行
-        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
-            // 并行执行多个工具（LLMCompiler特色：真正的并发）
-            let mut task_futures = Vec::new();
-            
-            // Task A: 端口扫描
-            let target_a = "127.0.0.1";
-            session.add_log(LogLevel::Info, format!("Starting parallel task A: port_scan for {}", target_a)).await?;
-            let tool_system_a = tool_system.clone();
-            let task_a = tokio::spawn(async move {
-                Self::execute_dag_tool_static(&tool_system_a, "port_scan", target_a).await
-            });
-            task_futures.push(("Task_A", task_a));
-            
-            // Task B: 子域名扫描（如果可用）
-            session.add_log(LogLevel::Info, "Starting parallel task B: rsubdomain".to_string()).await?;
-            let tool_system_b = tool_system.clone();
-            let task_b = tokio::spawn(async move {
-                Self::execute_dag_tool_static(&tool_system_b, "rsubdomain", "example.com").await
-            });
-            task_futures.push(("Task_B", task_b));
-            
-            // 等待所有任务完成
-            for (task_name, future) in task_futures {
-                match future.await {
-                    Ok(Ok(result)) => {
-                        parallel_results.push((task_name.to_string(), format!("Task completed: {:?}", result)));
-                        tools_executed += 1;
-                    }
-                    Ok(Err(e)) => {
-                        parallel_results.push((task_name.to_string(), format!("Task failed: {}", e)));
-                    }
-                    Err(e) => {
-                        parallel_results.push((task_name.to_string(), format!("Task join error: {}", e)));
-                    }
-                }
-            }
-        } else {
-            // 模拟并行执行
-            parallel_results = vec![
-                ("Task_A".to_string(), "Simulated Result A".to_string()),
-                ("Task_B".to_string(), "Simulated Result B".to_string()),
-            ];
-        }
-        
-        // 步骤4: 解析依赖并继续执行
-        session.add_log(LogLevel::Info, "Resolving dependencies and executing next batch".to_string()).await?;
-        let next_batch_results = vec![
-            ("Task_C".to_string(), "Result C".to_string()),
-            ("Task_D".to_string(), "Result D".to_string()),
-        ];
-        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-        
-        // 步骤5: 聚合结果
-        session.add_log(LogLevel::Info, "Joining and aggregating all results".to_string()).await?;
-        let final_result = "All tasks completed successfully with maximum parallelization";
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
-        let execution_time = start_time.elapsed().as_millis() as u64;
-        
-        // 创建结果
-        let result = AgentExecutionResult {
-            id: uuid::Uuid::new_v4().to_string(),
-            success: true,
-            data: Some(serde_json::json!({
-                "engine": "llm_compiler",
-                "plan_id": plan.id,
-                "dag_structure": dag_structure,
-                "parallel_results": parallel_results,
-                "next_batch_results": next_batch_results,
-                "final_result": final_result,
-                "tools_executed": tools_executed,
-                "execution_strategy": "dag_parallel_execution",
-                "max_parallelism_achieved": tools_executed.max(2)
-            })),
-            error: None,
-            execution_time_ms: execution_time,
-            resources_used: [
-                ("cpu_usage".to_string(), 75.0),
-                ("memory_mb".to_string(), 1024.0),
-                ("concurrent_tasks".to_string(), 4.0),
-                ("parallelization_efficiency".to_string(), 95.0),
-            ].into_iter().collect(),
-            artifacts: vec![
-                ExecutionArtifact {
-                    artifact_type: ArtifactType::AnalysisResult,
-                    name: "dag_execution_trace".to_string(),
-                    data: serde_json::json!({
-                        "dag_structure": dag_structure,
-                        "execution_batches": [
-                            {"batch": 1, "tasks": ready_tasks, "results": parallel_results},
-                            {"batch": 2, "tasks": ["Task_C", "Task_D"], "results": next_batch_results}
-                        ],
-                        "final_result": final_result
-                    }),
-                    created_at: chrono::Utc::now(),
-                }
-            ],
-        };
-        
-        session.add_log(LogLevel::Info, format!("LLMCompiler execution completed successfully in {}ms with maximum parallelization", execution_time)).await?;
-        
-        Ok(result)
-    }
     
     /// 执行DAG中的单个工具（静态方法，用于并发执行）
     async fn execute_dag_tool_static(

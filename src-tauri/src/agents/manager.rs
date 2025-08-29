@@ -178,6 +178,7 @@ impl AgentManager {
             ai_service_manager.clone(),
             plan_execute_config,
             db_service.clone(),
+            None, // 在AgentManager上下文中，没有直接的AppHandle
         ).await {
             Ok(engine) => {
                 engines.insert("plan_execute".to_string(), Arc::new(engine));
@@ -853,7 +854,7 @@ impl DefaultAgent {
         session.update_status(AgentSessionStatus::Executing).await?;
         
         // 执行计划
-        let result = self.engine.execute_plan(&plan, session).await?;
+        let result = self.engine.execute_plan(&plan).await?;
         
         // 设置执行结果
         session.set_result(result).await?;

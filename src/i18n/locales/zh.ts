@@ -1525,7 +1525,7 @@ export default {
 
   // AI助手
   aiAssistant: {
-    generating: '正在生成...',
+    generating: '',
     conversationHistory: '会话历史',
     untitledConversation:"未命名会话",
     currentSession:"当前会话",

@@ -33,23 +33,15 @@
             </label>
           </div>
           
-          <!-- Debug toggle -->
-          <button @click="$emit('toggle-debug')" 
-                  class="btn btn-xs btn-ghost gap-1"
-                  :class="{ 'text-warning': showDebugInfo }"
-                  title="切换调试信息">
-            <i class="fas fa-bug text-xs"></i>
-            <span class="hidden sm:inline">调试</span>
-          </button>
-          
-          <!-- Architecture selector -->
-          <div class="dropdown dropdown-end">
+            <!-- Architecture selector -->
+          <div class="dropdown dropdown-top">
             <div tabindex="0" role="button" class="btn btn-xs btn-ghost gap-1">
               <i class="fas fa-layer-group text-xs"></i>
               <span class="hidden sm:inline">{{ selectedArchitecture }}</span>
               <i class="fas fa-chevron-down text-xs"></i>
             </div>
-            <ul tabindex="0" class="dropdown-content z-[1000] menu p-2 shadow bg-base-100 rounded-box w-72 max-h-96 overflow-y-auto">
+
+            <ul tabindex="0" class="dropdown-content z-[1000] menu p-2 shadow bg-base-100 rounded-box w-50 max-h-96 overflow-y-auto">
               <li v-for="arch in availableArchitectures" :key="arch.id">
                 <a @click="$emit('select-architecture', arch)" 
                    class="hover:bg-primary hover:text-primary-content py-2 px-3"
@@ -72,6 +64,16 @@
               </li>
             </ul>
           </div>
+          <!-- Debug toggle -->
+          <button @click="$emit('toggle-debug')" 
+                  class="btn btn-xs btn-ghost gap-1"
+                  :class="{ 'text-warning': showDebugInfo }"
+                  title="切换调试信息">
+            <i class="fas fa-bug text-xs"></i>
+            <span class="hidden sm:inline">调试</span>
+          </button>
+          
+
         </div>
       </div>
     </div>

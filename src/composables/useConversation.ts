@@ -1,28 +1,6 @@
 import { ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-
-interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-  isStreaming?: boolean
-  hasError?: boolean
-  executionPlan?: any
-  toolExecutions?: any[]
-  executionResult?: any
-  executionProgress?: number
-  currentStep?: string
-  totalSteps?: number
-  completedSteps?: number
-}
-
-interface Conversation {
-  id: string
-  title: string
-  created_at: string
-  total_messages: number
-}
+import type { ChatMessage, Conversation } from '../types/chat'
 
 export const useConversation = () => {
   const conversations = ref<Conversation[]>([])
@@ -102,9 +80,6 @@ export const useConversation = () => {
         serviceName: "default"
       })
       
-      const sessionKey = `ai_chat_session_${conversationId}`
-      localStorage.removeItem(sessionKey)
-      
       if (conversationId === currentConversationId.value) {
         currentConversationId.value = null
         messages.value = []
@@ -120,11 +95,6 @@ export const useConversation = () => {
   // Clear current conversation
   const clearCurrentConversation = () => {
     messages.value = []
-    
-    if (currentConversationId.value) {
-      const sessionKey = `ai_chat_session_${currentConversationId.value}`
-      localStorage.removeItem(sessionKey)
-    }
   }
 
   // Save messages to conversation
@@ -155,46 +125,6 @@ export const useConversation = () => {
     return conv?.title || '无标题会话'
   }
 
-  // Restore session state from localStorage
-  const restoreSessionState = () => {
-    const savedConversationId = localStorage.getItem('ai_chat_current_conversation_id')
-    if (savedConversationId) {
-      currentConversationId.value = savedConversationId
-      
-      const sessionKey = `ai_chat_session_${savedConversationId}`
-      const savedMessages = localStorage.getItem(sessionKey)
-      if (savedMessages) {
-        try {
-          const parsedMessages = JSON.parse(savedMessages)
-          messages.value = parsedMessages.map((msg: any) => ({
-            ...msg,
-            timestamp: new Date(msg.timestamp)
-          }))
-        } catch (error) {
-          console.error('Failed to restore session messages:', error)
-          messages.value = []
-        }
-      }
-    }
-  }
-
-  // Watch for conversation changes and persist to localStorage
-  watch(currentConversationId, (newId) => {
-    if (newId) {
-      localStorage.setItem('ai_chat_current_conversation_id', newId)
-    } else {
-      localStorage.removeItem('ai_chat_current_conversation_id')
-    }
-  })
-
-  // Watch for message changes and persist to localStorage
-  watch(messages, (newMessages) => {
-    if (currentConversationId.value) {
-      const sessionKey = `ai_chat_session_${currentConversationId.value}`
-      localStorage.setItem(sessionKey, JSON.stringify(newMessages))
-    }
-  }, { deep: true })
-
   return {
     conversations,
     currentConversationId,
@@ -207,6 +137,5 @@ export const useConversation = () => {
     clearCurrentConversation,
     saveMessagesToConversation,
     getCurrentConversationTitle,
-    restoreSessionState
   }
 }

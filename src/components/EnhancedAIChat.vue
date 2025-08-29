@@ -1,93 +1,97 @@
 <template>
-  <div class="enhanced-ai-chat w-full h-full flex flex-col bg-gradient-to-br from-base-100 to-base-200 overflow-hidden">
+  <div
+    class="enhanced-ai-chat w-full h-full flex flex-col bg-gradient-to-br from-base-100 to-base-200 overflow-hidden"
+  >
     <!-- Messages Area -->
     <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 max-w-full">
       <!-- Welcome Message -->
       <div v-if="messages.length === 0" class="flex justify-center items-center h-full">
         <div class="text-center">
           <div class="avatar placeholder mb-4">
-            <div class="bg-primary text-primary-content rounded-full w-16 flex items-center justify-center">
+            <div
+              class="bg-primary text-primary-content rounded-full w-16 flex items-center justify-center"
+            >
               <i class="fas fa-brain text-2xl"></i>
             </div>
           </div>
-          <h3 class="text-lg font-semibold mb-2">{{ t('aiAssistant.welcome.title', 'AI智能助手') }}</h3>
+          <h3 class="text-lg font-semibold mb-2">
+            {{ t('aiAssistant.welcome.title', 'AI智能助手') }}
+          </h3>
           <p class="text-base-content/70 max-w-md">
-            {{ t('aiAssistant.welcome.description', '我是您的AI安全助手，可以帮您执行安全扫描、漏洞分析等任务。请告诉我您需要什么帮助？') }}
+            {{
+              t(
+                'aiAssistant.welcome.description',
+                '我是您的AI安全助手，可以帮您执行安全扫描、漏洞分析等任务。请告诉我您需要什么帮助？'
+              )
+            }}
           </p>
         </div>
       </div>
 
       <!-- Message List -->
-      <div v-for="message in messages" :key="message.id" 
-           :class="['chat', message.role === 'user' ? 'chat-end' : 'chat-start', 'mb-4']">
+      <div
+        v-for="message in messages"
+        :key="message.id"
+        :class="['chat', message.role === 'user' ? 'chat-end' : 'chat-start', 'mb-4']"
+      >
         <div class="chat-image">
-          <div class="w-10 h-8 rounded-full shadow-lg border-2 border-base-300 bg-base-100 flex items-center justify-center">
-            <svg v-if="message.role === 'user'" class="w-6 h-6 text-primary flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+          <div
+            class="w-10 h-8 rounded-full shadow-lg border-2 border-base-300 bg-base-100 flex items-center justify-center"
+          >
+            <svg
+              v-if="message.role === 'user'"
+              class="w-6 h-6 text-primary flex-shrink-0"
+              fill="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
+              />
             </svg>
-            <svg v-else class="w-6 h-6 text-secondary flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.94-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+            <svg
+              v-else
+              class="w-6 h-6 text-secondary flex-shrink-0"
+              fill="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.94-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
+              />
             </svg>
           </div>
         </div>
-        
+
         <div class="chat-header mb-2">
           <span class="font-medium text-sm text-base-content/80">
             {{ message.role === 'user' ? t('common.you', '您') : t('common.assistant', 'AI助手') }}
-          </span>
-          <!-- 显示选择的架构 -->
-          <span v-if="message.selectedArchitecture && message.role === 'assistant'" 
-                class="text-xs text-accent ml-2 px-2 py-0.5 bg-accent/10 rounded-full">
-            <i class="fas fa-cogs mr-1"></i>
-            {{ getArchitectureName(message.selectedArchitecture) }}
           </span>
           <time class="text-xs text-base-content/60 ml-2 px-2 py-0.5 bg-base-200 rounded-full">
             {{ formatTime(message.timestamp) }}
           </time>
         </div>
-        
-        <div :class="[
-          'chat-bubble max-w-[85%] shadow-sm border transition-all duration-200',
-          message.role === 'user' 
-            ? 'bg-base-100 text-primary-content border-primary/20' 
-            : 'bg-base-100 text-base-content border-base-300 hover:border-base-400'
-        ]">
+
+        <div
+          :class="[
+            'chat-bubble max-w-[85%] shadow-sm border transition-all duration-200',
+            message.role === 'user'
+              ? 'bg-base-100 text-primary-content border-primary/20'
+              : 'bg-base-100 text-base-content border-base-300 hover:border-base-400',
+          ]"
+        >
           <!-- Message Content Display -->
-          <MessageContentDisplay 
+          <MessageContentDisplay
             :message="message"
-            :displayed-content="getDisplayedTypewriterContent(message.id)"
-            :is-typing="isMessageTyping(message.id)"
+            :displayed-content="message.content"
+            :is-typing="message.isStreaming ?? false"
             :stream-char-count="streamCharCount"
             :stream-speed="getStreamSpeed()"
-            @skip-typewriter="skipTypewriter(message.id)"
           />
-          
-          <!-- Tool Executions Display (Real-time Progress) -->
-          <ToolExecutionsDisplay 
-            v-if="message.toolExecutions?.length || message.isStreaming"
-            :tool-executions="message.toolExecutions || []"
-            :is-streaming="message.isStreaming"
-            :current-step="message.currentStep"
-          />
-          
-          <!-- Execution Plan Display -->
-          <ExecutionPlanDisplay 
-            v-if="message.executionPlan"
-            :execution-plan="message.executionPlan"
-            :execution-progress="message.executionProgress"
-            :current-step="message.currentStep"
-            :is-streaming="message.isStreaming"
-          />
-          
-          <!-- Execution Result Display -->
-          <ExecutionResultDisplay 
-            v-if="message.executionResult"
-            :execution-result="message.executionResult"
-            :message="message"
-          />
-          
+
           <!-- Error Actions -->
-          <div v-if="message.hasError && message.role === 'assistant'" class="mt-3 flex gap-2 flex-wrap">
+          <div
+            v-if="message.hasError && message.role === 'assistant'"
+            class="mt-3 flex gap-2 flex-wrap"
+          >
             <button @click="retryLastMessage" class="btn btn-sm btn-outline btn-primary">
               <i class="fas fa-redo"></i>
               重新发送
@@ -96,16 +100,15 @@
               <i class="fas fa-times"></i>
               清除错误
             </button>
-            <button 
+            <button
               v-if="isConfigError(message.content)"
-              @click="openAiSettings" 
+              @click="openAiSettings"
               class="btn btn-sm btn-outline btn-warning"
             >
               <i class="fas fa-cog"></i>
               打开AI设置
             </button>
           </div>
-          
         </div>
       </div>
     </div>
@@ -142,11 +145,8 @@
           <h3 class="font-bold text-lg">步骤详情</h3>
           <button class="btn btn-sm btn-circle btn-ghost" @click="closeStepDetail">✕</button>
         </div>
-        
-        <StepDetailDisplay 
-          v-if="selectedStepDetail"
-          :step="selectedStepDetail"
-        />
+
+        <StepDetailDisplay v-if="selectedStepDetail" :step="selectedStepDetail" />
       </div>
       <form method="dialog" class="modal-backdrop">
         <button @click="closeStepDetail">close</button>
@@ -162,16 +162,12 @@ import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 
 // Composables
-import { useTypewriter } from '../composables/useTypewriter'
 import { useConversation } from '../composables/useConversation'
 import { useMessageUtils } from '../composables/useMessageUtils'
 import { useEventListeners } from '../composables/useEventListeners'
 
 // Components
 import MessageContentDisplay from './MessageParts/MessageContentDisplay.vue'
-import ExecutionPlanDisplay from './MessageParts/ExecutionPlanDisplay.vue'
-import ToolExecutionsDisplay from './MessageParts/ToolExecutionsDisplay.vue'
-import ExecutionResultDisplay from './MessageParts/ExecutionResultDisplay.vue'
 import InputAreaComponent from './InputAreaComponent.vue'
 import StepDetailDisplay from './MessageParts/StepDetailDisplay.vue'
 
@@ -191,6 +187,7 @@ interface ChatMessage {
   totalSteps?: number
   completedSteps?: number
   selectedArchitecture?: string
+  execution_id?: string
 }
 
 interface DispatchResult {
@@ -209,27 +206,17 @@ const props = defineProps<{
   availableArchitectures?: any[]
 }>()
 
-const emit = defineEmits(['execution-started', 'execution-progress', 'execution-completed', 'architecture-changed'])
+const emit = defineEmits([
+  'execution-started',
+  'execution-progress',
+  'execution-completed',
+  'architecture-changed',
+])
 
 const { t } = useI18n()
 const router = useRouter()
 
 // Use composables
-const {
-  enableTypewriter,
-  typewriterSpeed,
-  updateTypewriterContentIncremental,
-  updateTypewriterContent,
-  stopTypewriter,
-  skipTypewriter,
-  getDisplayedTypewriterContent,
-  isMessageTyping,
-  getFinalContentFromTypewriterState,
-  getTypewriterMode,
-  getTypewriterProgress,
-  cleanupTypewriter
-} = useTypewriter()
-
 const {
   conversations,
   currentConversationId,
@@ -241,14 +228,12 @@ const {
   deleteConversation,
   clearCurrentConversation,
   saveMessagesToConversation,
-  getCurrentConversationTitle,
-  restoreSessionState
 } = useConversation()
 
 const { formatTime } = useMessageUtils()
 
 // Local state
-const inputMessage = ref('')
+const inputMessage = ref('搜索一下B站今天有什么热门视频')
 const isLoading = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
 const currentExecutionId = ref<string | null>(null)
@@ -259,25 +244,25 @@ const showConversationsList = ref(false)
 const stepDetailVisible = ref(false)
 const selectedStepDetail = ref<any>(null)
 const loadingTimeoutId = ref<number | null>(null)
-const isTaskMode = ref(false)
+const isTaskMode = ref(true)
 
 // Timeout mechanism to reset loading state
-const resetLoadingWithTimeout = (timeoutMs = 30000) => { // 30 seconds timeout
+const resetLoadingWithTimeout = (timeoutMs = 300000) => {
+  // 30 seconds timeout
   if (loadingTimeoutId.value) {
     clearTimeout(loadingTimeoutId.value)
   }
-  
+
   loadingTimeoutId.value = window.setTimeout(() => {
     if (isLoading.value) {
       console.warn('Loading state timeout reached, forcing reset')
       isLoading.value = false
       streamStartTime.value = null
       streamCharCount.value = 0
-      
+
       // Also stop any active typewriter
       const lastAssistantMessage = messages.value.filter(m => m.role === 'assistant').pop()
       if (lastAssistantMessage && lastAssistantMessage.isStreaming) {
-        stopTypewriter(lastAssistantMessage.id)
         lastAssistantMessage.isStreaming = false
         lastAssistantMessage.content += '\n\n[响应超时]'
       }
@@ -309,7 +294,6 @@ const eventListeners = useEventListeners(
   currentConversationId,
   streamStartTime,
   streamCharCount,
-  { updateTypewriterContentIncremental, updateTypewriterContent, stopTypewriter, getFinalContentFromTypewriterState },
   {
     'execution-started': emit,
     'execution-progress': emit,
@@ -321,13 +305,20 @@ const eventListeners = useEventListeners(
       isLoading.value = false
       streamStartTime.value = null
       streamCharCount.value = 0
-      
-      // Check for empty response and show helpful error message
-      if (data.total_content_length === 0 || data.error) {
-        const lastAssistantMessage = messages.value.filter(m => m.role === 'assistant').pop()
-        if (lastAssistantMessage && (!lastAssistantMessage.content || lastAssistantMessage.content.trim().length === 0)) {
-          lastAssistantMessage.hasError = true
-          console.warn('Detected empty response in stream completion')
+
+      const targetMessage = data.messageId
+        ? messages.value.find(m => m.id === data.messageId)
+        : messages.value.filter(m => m.role === 'assistant').pop()
+
+      if (targetMessage) {
+        targetMessage.isStreaming = false
+
+        // Check for empty response and show helpful error message
+        if (data.total_content_length === 0 || data.error) {
+          if (!targetMessage.content || targetMessage.content.trim().length === 0) {
+            targetMessage.hasError = true
+            console.warn('Detected empty response in stream completion')
+          }
         }
       }
     },
@@ -337,12 +328,12 @@ const eventListeners = useEventListeners(
       isLoading.value = false
       streamStartTime.value = null
       streamCharCount.value = 0
-      
+
       // Find and mark the target message as having an error
-      const targetMessage = data.messageId 
+      const targetMessage = data.messageId
         ? messages.value.find(m => m.id === data.messageId)
         : messages.value.filter(m => m.role === 'assistant').pop()
-      
+
       if (targetMessage) {
         targetMessage.hasError = true
         targetMessage.isStreaming = false
@@ -355,6 +346,14 @@ const eventListeners = useEventListeners(
       streamStartTime.value = null
       streamCharCount.value = 0
       currentExecutionId.value = null
+
+      const targetMessage = data.messageId
+        ? messages.value.find(m => m.id === data.messageId)
+        : messages.value.filter(m => m.role === 'assistant').pop()
+
+      if (targetMessage) {
+        targetMessage.isStreaming = false
+      }
     },
     'task-error': (data: any) => {
       console.log('Task error event received:', data)
@@ -363,9 +362,17 @@ const eventListeners = useEventListeners(
       streamStartTime.value = null
       streamCharCount.value = 0
       currentExecutionId.value = null
-    }
+
+      const targetMessage = data.messageId
+        ? messages.value.find(m => m.id === data.messageId)
+        : messages.value.filter(m => m.role === 'assistant').pop()
+
+      if (targetMessage) {
+        targetMessage.isStreaming = false
+        targetMessage.hasError = true
+      }
+    },
   },
-  scrollToBottom,
   saveMessagesToConversation
 )
 
@@ -373,85 +380,97 @@ const eventListeners = useEventListeners(
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || isLoading.value) return
 
-  const userMessage: ChatMessage = {
-    id: Date.now().toString(),
-    role: 'user',
-    content: inputMessage.value,
-    timestamp: new Date()
-  }
-  
-  messages.value.push(userMessage)
   const userInput = inputMessage.value
   inputMessage.value = ''
   isLoading.value = true
-  
+
   // Start timeout mechanism
   resetLoadingWithTimeout()
 
-  const assistantMessage: ChatMessage = {
-    id: `assistant_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    role: 'assistant',
-    content: '',
-    timestamp: new Date(),
-    isStreaming: true,
-    executionPlan: null,
-    toolExecutions: [],
-    executionResult: null,
-    executionProgress: 0,
-    currentStep: undefined,
-    totalSteps: 0,
-    completedSteps: 0
-  }
-  messages.value.push(assistantMessage)
-  
-  await nextTick()
-  scrollToBottom()
-
   try {
-    // Ensure current conversation exists
+    // Ensure current conversation exists BEFORE adding messages
     if (!currentConversationId.value) {
       await createNewConversation()
     }
+
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: userInput,
+      timestamp: new Date(),
+    }
+    messages.value.push(userMessage)
     
+    // Save user message immediately
+    await saveMessagesToConversation([userMessage])
+
+    const assistantMessage: ChatMessage = {
+      id: `assistant_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      isStreaming: true,
+      executionPlan: null,
+      toolExecutions: [],
+      executionResult: null,
+      executionProgress: 0,
+      currentStep: undefined,
+      totalSteps: 0,
+      completedSteps: 0,
+    }
+    messages.value.push(assistantMessage)
+
+    await nextTick()
+    scrollToBottom()
+
     // Handle based on user-selected mode
     if (isTaskMode.value) {
       // Task mode - execute tasks with agent execution
       if (!currentConversationId.value) {
         await createNewConversation()
       }
-      
+
       // Generate unique execution ID
       const executionId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       currentExecutionId.value = executionId
-      
+      assistantMessage.execution_id = executionId
+
       // Start task execution streaming
       assistantMessage.content = '正在生成执行计划...'
       assistantMessage.executionPlan = null
       assistantMessage.currentStep = '计划生成'
-      
+
       try {
+        const archNameToFind = props.selectedArchitecture;
+        const allArchitectures = [
+          { id: 'auto', name: 'Auto' },
+          ...getAvailableArchitectures()
+        ];
+        const selectedArchObject = allArchitectures.find(a => a.name === archNameToFind);
+        const architectureIdToSend = selectedArchObject ? selectedArchObject.id : 'auto';
+
         await invoke('dispatch_intelligent_query', {
           request: {
             query: userInput,
-            architecture: 'auto', // 让系统自动选择架构
+            architecture: architectureIdToSend,
             agent_id: null,
             options: {
               conversation_id: currentConversationId.value,
               message_id: assistantMessage.id,
               execution_id: executionId,
-              task_mode: true
-            }
-          }
+              task_mode: true,
+            },
+          },
         })
-        
+
         emit('execution-started', {
           id: executionId,
           name: '智能任务执行',
           description: userInput,
           progress: 0,
-          status: 'running'
+          status: 'running',
         })
-        
+
         // Note: Don't reset isLoading here - let the task events handle it
       } catch (taskError) {
         console.error('Failed to start intelligent task execution:', taskError)
@@ -468,14 +487,19 @@ const sendMessage = async () => {
       streamStartTime.value = Date.now()
       streamCharCount.value = 0
       
+      // Assign conversation_id as execution_id for chat mode to find the message
+      if (currentConversationId.value) {
+        assistantMessage.execution_id = currentConversationId.value
+      }
+
       try {
         await invoke('send_ai_stream_message', {
           request: {
             conversation_id: currentConversationId.value,
             message: userInput,
             service_name: 'default',
-            message_id: assistantMessage.id
-          }
+            message_id: assistantMessage.id,
+          },
         })
         // Note: Don't reset isLoading here - let the stream events handle it
       } catch (streamError) {
@@ -489,12 +513,15 @@ const sendMessage = async () => {
         streamCharCount.value = 0
       }
     }
-
   } catch (error) {
     console.error('Failed to send message:', error)
-    assistantMessage.content = `${t('aiAssistant.error', '错误')}: ${error}`
-    assistantMessage.isStreaming = false
-    assistantMessage.hasError = true
+    // Find the assistant message to update its state
+    const assistantMessage = messages.value[messages.value.length - 1];
+    if(assistantMessage && assistantMessage.role === 'assistant') {
+        assistantMessage.content = `${t('aiAssistant.error', '错误')}: ${error}`
+        assistantMessage.isStreaming = false
+        assistantMessage.hasError = true
+    }
     clearLoadingTimeout()
     isLoading.value = false
     streamStartTime.value = null
@@ -506,30 +533,29 @@ const stopExecution = async () => {
   if (currentExecutionId.value) {
     try {
       await invoke('stop_execution', {
-        execution_id: currentExecutionId.value
+        executionId: currentExecutionId.value,
       })
     } catch (error) {
       console.error('Failed to stop execution:', error)
     }
   }
-  
+
   if (currentConversationId.value) {
     try {
       await invoke('cancel_ai_stream', {
-        conversationId: currentConversationId.value
+        conversationId: currentConversationId.value,
       })
     } catch (error) {
       console.error('Failed to cancel stream:', error)
     }
   }
-  
+
   const lastAssistantMessage = messages.value.filter(m => m.role === 'assistant').pop()
   if (lastAssistantMessage && lastAssistantMessage.isStreaming) {
-    stopTypewriter(lastAssistantMessage.id)
     lastAssistantMessage.isStreaming = false
     lastAssistantMessage.content += '\n\n[用户中断了响应]'
   }
-  
+
   // Always reset loading state when stopping
   clearLoadingTimeout()
   isLoading.value = false
@@ -569,62 +595,48 @@ const getAvailableArchitectures = () => {
   if (props.availableArchitectures && props.availableArchitectures.length > 0) {
     return props.availableArchitectures
   }
-  
+
   return [
     {
       id: 'plan-execute',
       name: 'Plan-and-Execute',
       description: '计划执行架构：先制定计划，再逐步执行',
-      status: 'stable'
+      status: 'stable',
     },
     {
       id: 'rewoo',
       name: 'ReWOO',
       description: '推理无观察架构：减少工具调用的推理方法',
-      status: 'beta'
+      status: 'beta',
     },
     {
       id: 'llm-compiler',
       name: 'LLMCompiler',
       description: 'LLM编译器：并行执行任务的先进架构',
-      status: 'experimental'
+      status: 'experimental',
     },
     {
       id: 'intelligent-dispatcher',
       name: 'Intelligent Dispatcher',
       description: '智能调度器：AI驱动的智能任务分发',
-      status: 'ai-powered'
-    }
+      status: 'ai-powered',
+    },
   ]
 }
-const mapArchitectureToId = (architectureName: string) => {
-  const mapping: Record<string, string> = {
-    'Plan-and-Execute': 'plan-execute',
-    'ReWOO': 'rewoo',
-    'LLMCompiler': 'llm-compiler',
-    'Intelligent Dispatcher': 'intelligent-dispatcher'
-  }
-  return mapping[architectureName] || 'plan-execute'
-}
+
 
 const isConfigError = (content: string) => {
-  return content.includes('配置') || 
-         content.includes('API') || 
-         content.includes('provider') ||
-         content.includes('not configured') ||
-         content.includes('空响应') ||
-         content.includes('configuration')
+  return (
+    content.includes('配置') ||
+    content.includes('API') ||
+    content.includes('provider') ||
+    content.includes('not configured') ||
+    content.includes('空响应') ||
+    content.includes('configuration')
+  )
 }
 
-const getArchitectureName = (architecture: string) => {
-  const architectureNames: Record<string, string> = {
-    'intelligent-dispatcher': 'Intelligent Dispatcher',
-    'plan-execute': 'Plan-and-Execute',
-    'rewoo': 'ReWOO',
-    'llm-compiler': 'LLM Compiler'
-  }
-  return architectureNames[architecture] || architecture
-}
+
 
 // Step detail methods
 const closeStepDetail = () => {
@@ -632,82 +644,31 @@ const closeStepDetail = () => {
   selectedStepDetail.value = null
 }
 
-// Debug methods
-const testIncrementalTypewriter = (messageId: string) => {
-  console.log('Testing incremental typewriter for message:', messageId)
-  
-  const testChunks = [
-    'Hello ',
-    'this ',
-    'is ',
-    'a ',
-    'test ',
-    'of ',
-    'incremental ',
-    'typewriter ',
-    'functionality!'
-  ]
-  
-  const message = messages.value.find(m => m.id === messageId)
-  if (message) {
-    message.content = ''
-    message.isStreaming = true
-    
-    stopTypewriter(messageId)
-    
-    testChunks.forEach((chunk, index) => {
-      setTimeout(() => {
-        updateTypewriterContentIncremental(messageId, chunk)
-        
-        if (index === testChunks.length - 1) {
-          setTimeout(() => {
-            message.isStreaming = false
-            console.log('Test completed')
-          }, 500)
-        }
-      }, index * 200)
-    })
-  }
-}
-
-const debugDisplayState = (messageId: string) => {
-  const message = messages.value.find(m => m.id === messageId)
-  console.log('=== Display State Debug ===', {
-    messageId,
-    messageExists: !!message,
-    messageContent: message?.content || 'N/A',
-    messageIsStreaming: message?.isStreaming,
-    displayedContent: getDisplayedTypewriterContent(messageId),
-    isMessageTyping: isMessageTyping(messageId)
-  })
-}
-
-const debugTypewriterState = (messageId: string) => {
-  console.log('=== Typewriter Debug Info ===')
-  console.log('Message ID:', messageId)
-  console.log('Typewriter Mode:', getTypewriterMode(messageId))
-  console.log('Typewriter Progress:', getTypewriterProgress(messageId))
-  console.log('EnableTypewriter:', enableTypewriter.value)
-  console.log('TypewriterSpeed:', typewriterSpeed.value)
-}
 
 // Lifecycle
 onMounted(async () => {
-  restoreSessionState()
   await loadConversations()
+  if (conversations.value.length > 0 && !currentConversationId.value) {
+    await switchToConversation(conversations.value[0].id)
+  }
   await eventListeners.setupEventListeners()
 })
 
 onUnmounted(() => {
   clearLoadingTimeout()
-  cleanupTypewriter()
   eventListeners.cleanup()
 })
 </script>
 
 <style scoped>
 .enhanced-ai-chat {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
   position: relative;
   overflow: hidden;
   max-width: 100vw;
@@ -744,10 +705,12 @@ onUnmounted(() => {
 }
 
 @keyframes typewriter-cursor {
-  0%, 50% {
+  0%,
+  50% {
     opacity: 1;
   }
-  51%, 100% {
+  51%,
+  100% {
     opacity: 0;
   }
 }
@@ -777,8 +740,12 @@ onUnmounted(() => {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 0.7; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.7;
+  }
 }
 
 @keyframes typewriter-reveal {

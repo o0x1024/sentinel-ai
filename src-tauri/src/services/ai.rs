@@ -1,20 +1,20 @@
 use crate::ai_adapter::core::AiAdapterManager;
 use crate::commands::ai::{ModelConfig, ModelInfo};
+use crate::engines::types::{StreamMessageType, UnifiedStreamMessage};
 use crate::models::database::{AiConversation, AiMessage};
-use crate::services::database::{Database, DatabaseService};
+use crate::services::database::Database;
 use crate::services::mcp::McpService;
-use crate::services::stream_helper::{StreamEventEmitter, StreamProcessor};
 use anyhow::Result;
 use chrono::Utc;
 use crate::ai_adapter::types::ToolCall;
 
 use crate::ai_adapter::types::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{de, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -1551,6 +1551,8 @@ impl AiService {
             let messages = vec![user_msg];
             let model_name_owned = self.config.model.clone();
             let model_name = &model_name_owned;
+            // 由于这是无状态请求，我们需要使用一个固定的ID作为execution_id
+            let stateless_execution_id = "__stateless__".to_string();
             return self
                 .send_chat_stream(
                     model_name,
@@ -1560,6 +1562,7 @@ impl AiService {
                     self.config.max_tokens,
                     false,
                     None, // 无状态请求不需要消息ID
+                    Some(stateless_execution_id), // 使用固定ID作为执行ID
                 )
                 .await;
         }
@@ -1677,6 +1680,7 @@ impl AiService {
             self.config.max_tokens,
             should_save_to_db,
             None, // 这里也暂时不传递消息ID
+            Some(conversation_id.clone()), // 使用会话ID作为执行ID
         ).await
     }
 
@@ -1689,6 +1693,10 @@ impl AiService {
         message_id: Option<String>, // 新增消息ID参数
     ) -> Result<String> {
         info!("发送流式消息请求 - 模型: {}", self.config.model);
+        
+        // 生成或获取execution_id - 确保所有LLM交互都有一个唯一的execution_id
+        // 优先使用conversation_id作为execution_id，如果没有则生成新的
+        let execution_id = conversation_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
         
         // 构建消息列表
         let mut messages = Vec::new();
@@ -1791,6 +1799,7 @@ impl AiService {
                         self.config.max_tokens,
                         conversation_exists,
                         message_id.clone(), // 传递消息ID
+                        Some(execution_id.clone()), // 明确传递execution_id
                     ).await
                 
             }
@@ -1837,6 +1846,7 @@ impl AiService {
                         self.config.max_tokens,
                         false, // 无状态请求不保存到数据库
                         None, // 无状态请求不需要消息ID
+                        Some(execution_id.clone()), // 明确传递execution_id
                     ).await
                 
             }
@@ -1854,6 +1864,7 @@ impl AiService {
         max_tokens: Option<u32>,
         should_save_to_db: bool,
         assistant_message_id: Option<String>, // 新增助手消息ID参数
+        execution_id: Option<String>, // 新增执行ID参数
     ) -> Result<String> {
         info!("Sending chat request to {} model with provider {}", model_name, self.config.provider);
 
@@ -1862,18 +1873,14 @@ impl AiService {
             .or_else(|| messages.last().map(|m| m.id.clone()))
             .unwrap_or_else(|| "unknown".to_string());
         
-        // Create stream event emitter
-        let stream_emitter = StreamEventEmitter::new(
-            self.app_handle.clone(),
-            conversation_id.to_string(),
-            message_id.clone(),
-        );
-
+        // Get or generate execution ID - 优先使用传入的execution_id，其次使用conversation_id
+        let execution_id = execution_id
+            .unwrap_or_else(|| conversation_id.to_string());
+        
         // Validate provider configuration
         if self.config.provider == "unconfigured" || self.config.provider == "mock" {
             let error_msg = "AI provider not configured. Please go to Settings > AI Configuration to set up an AI provider (OpenAI, Anthropic, DeepSeek, etc.)";
             error!("{}", error_msg);
-            stream_emitter.emit_stream_error(error_msg, "configuration")?;
             return Err(anyhow::anyhow!(error_msg));
         }
         
@@ -1881,7 +1888,6 @@ impl AiService {
         if self.config.api_key.is_none() || self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
             let error_msg = format!("API key not configured for provider '{}'. Please check your AI configuration settings.", self.config.provider);
             error!("{}", error_msg);
-            stream_emitter.emit_stream_error(&error_msg, "configuration")?;
             return Err(anyhow::anyhow!(error_msg));
         }
 
@@ -1942,33 +1948,6 @@ impl AiService {
             cleaned
         };
         
-        // 检查模型是否支持工具调用
-        let supports_tools = self.model_supports_tools(model_name);
-        if !supports_tools {
-            info!("Model {} does not support tool calling, skipping tools", model_name);
-        }
-        
-        if supports_tools {
-            if let Some(mcp_service) = &self.mcp_service {
-                if let Ok(available_tools) = mcp_service.get_available_tools().await {
-                    for t in available_tools {
-                        let params_schema = if t.parameters.schema.is_null() {
-                            serde_json::json!({"type":"object","properties":{}})
-                        } else {
-                            t.parameters.schema.clone()
-                        };
-                        let sanitized_name = sanitize(&t.name);
-                        tool_name_map.insert(sanitized_name.clone(), t.name.clone());
-                        tools_vec.push(crate::ai_adapter::types::Tool {
-                            r#type: "function".to_string(),
-                            name: sanitized_name,
-                            description: t.description,
-                            parameters: params_schema,
-                        });
-                    }
-                }
-            }
-        }
 
         // 设置选项
         let mut options = crate::ai_adapter::types::ChatOptions::default();
@@ -2022,12 +2001,6 @@ impl AiService {
         
         info!("Stream created successfully, starting to process chunks");
 
-        // Create stream processor
-        let stream_processor = StreamProcessor::new(self.config.provider.clone());
-        
-        // Send stream start event
-        stream_emitter.emit_stream_start()?;
-
         // Process streaming response
         let mut content = String::new();
         let mut response_id = String::new();
@@ -2046,88 +2019,80 @@ impl AiService {
             
             debug!("Processing chunk #{}, interval: {}ms", chunk_count, chunk_interval);
             
-            // Performance monitoring - log every 10 chunks or if interval is high
-            // if chunk_count % 10 == 0 || chunk_interval > 1000 {
-            //     let elapsed = chunk_receive_time.duration_since(stream_start_time).as_millis();
-            //     info!("🚀 Streaming performance: chunk #{}, total_elapsed: {}ms, chunk_interval: {}ms, chars_processed: {}", 
-            //           chunk_count, elapsed, chunk_interval, content.len());
-            // }
-            
+
             match chunk_result {
                 Ok(raw_chunk) => {
                     debug!("Received raw chunk: id='{}', content='{}', finish_reason={:?}", 
                            raw_chunk.id, raw_chunk.content, raw_chunk.finish_reason);
-                    
-                    // Process the chunk using our processor
-                    if let Some(chunk) = stream_processor.parse_chunk(&raw_chunk) {
-                        debug!("Processing parsed chunk: content='{}', finish_reason={:?}, id='{}', model='{}'", 
-                               chunk.content, chunk.finish_reason, chunk.id, chunk.model);
-                        
-                        // Only process if there's actual content or completion signal
-                        if !chunk.content.is_empty() || chunk.finish_reason.is_some() {
-                            // Accumulate content immediately
-                            if !chunk.content.is_empty() {
-                                content.push_str(&chunk.content);
-                                debug!("Stream chunk received: '{}', total content length: {}", chunk.content, content.len());
-                                
-                                // Emit incremental stream chunk
-                                stream_emitter.emit_stream_chunk(&chunk.content, &content)?;
-                            }
-                            
-                            // Check if complete
-                            let is_complete = chunk.finish_reason.is_some();
-                            
-                            // Update response metadata
-                            if response_id.is_empty() {
-                                response_id = chunk.id;
-                            }
-                            if response_model.is_empty() {
-                                response_model = chunk.model;
-                            }
-                            if chunk.usage.is_some() {
-                                usage = chunk.usage;
-                            }
-                            if chunk.finish_reason.is_some() {
-                                finish_reason = chunk.finish_reason;
-                            }
-                        } else {
-                            // Check for completion even without content
-                            debug!("Empty chunk content, finish_reason: {:?}", chunk.finish_reason);
-                            if chunk.finish_reason.is_some() {
-                                warn!("Stream completed with empty content after {} chunks. Total content length: {}", chunk_count, content.len());
-                                finish_reason = chunk.finish_reason;
-                                
-                                // Emit empty response
-                                stream_emitter.emit_empty_response()?;
-                            }
-                        }
+
+                    if !raw_chunk.content.is_empty() {
+                        content.push_str(&raw_chunk.content);
+                        self.emit_stream_message(UnifiedStreamMessage {
+                            execution_id: execution_id.clone(), // 使用统一的execution_id
+                            message_id: None,
+                            conversation_id: Some(conversation_id.to_string()),
+                            message_type: StreamMessageType::Content,
+                            content_delta: Some(raw_chunk.content.clone()),
+                            tool_execution: None,
+                            execution_plan: None,
+                            final_content: None,
+                            error: None,
+                            is_complete: false,
+                        });
+                    }
+
+                    if let Some(reason) = raw_chunk.finish_reason {
+                        finish_reason = Some(reason);
+                    }
+                    if !raw_chunk.id.is_empty() {
+                        response_id = raw_chunk.id;
+                    }
+                    if !raw_chunk.model.is_empty() {
+                        response_model = raw_chunk.model
+                    }
+                    if let Some(chunk_usage) = raw_chunk.usage {
+                        usage = Some(chunk_usage);
                     }
                 }
                 Err(e) => {
                     error!("Stream chunk error after {} chunks: {}", chunk_count, e);
-                    stream_emitter.emit_stream_error(&e.to_string(), "stream")?;
+                    self.emit_stream_message(UnifiedStreamMessage {
+                        execution_id: execution_id.clone(), // 使用统一的execution_id
+                        message_id: None,
+                        conversation_id: Some(conversation_id.to_string()),
+                        message_type: StreamMessageType::Error,
+                        content_delta: None,
+                        tool_execution: None,
+                        execution_plan: None,
+                        final_content: None,
+                        error: Some(e.to_string()),
+                        is_complete: true,
+                    });
                     return Err(anyhow::anyhow!("Stream error: {}", e));
                 }
             }
         }
-        
-        // Validate stream completion
-        if let Err(e) = stream_processor.validate_completion(chunk_count, content.len(), &finish_reason) {
-            stream_emitter.emit_stream_error(&e.to_string(), "stream")?;
-            return Err(e);
-        }
-        
+
+        self.emit_stream_message(UnifiedStreamMessage {
+            execution_id: execution_id.clone(), // 使用统一的execution_id
+            message_id: None,
+            conversation_id: Some(conversation_id.to_string()),
+            message_type: StreamMessageType::FinalResult,
+            content_delta: None,
+            tool_execution: None,
+            execution_plan: None,
+            final_content: Some(content.clone()),
+            error: None,
+            is_complete: true,
+        });
+
         // Handle empty content with valid finish reason
         if content.is_empty() && finish_reason.is_some() {
             info!("Stream completed with {} chunks and empty content but valid finish_reason: {:?}", chunk_count, finish_reason);
-            stream_emitter.emit_empty_response()?;
         } else {
             info!("Stream completed successfully after {} chunks, total content length: {}", chunk_count, content.len());
         }
         
-        // Emit stream completion
-        stream_emitter.emit_stream_complete(&content, usage.as_ref().map(|u| u.total_tokens as u32))?;
-
         // 创建响应对象
         let response = crate::ai_adapter::types::ChatResponse {
             id: response_id,
@@ -2143,125 +2108,6 @@ impl AiService {
             created_at: std::time::SystemTime::now(),
         };
 
-        // 检查是否包含工具调用
-        let tool_calls = response.message.tool_calls.clone().unwrap_or_default();
-        if !tool_calls.is_empty() {
-            info!("Executing tool calls: {:?}", tool_calls);
-
-            // 1. 保存带有工具调用的助手消息
-            let answer_text = match &response.message.content {
-                text => text.clone(),
-            };
-            let assistant_msg = AiMessage {
-                id: Uuid::new_v4().to_string(),
-                conversation_id: conversation_id.to_string(),
-                role: "assistant".to_string(),
-                content: answer_text.to_string(),
-                metadata: None,
-                token_count: Some(answer_text.len() as i32),
-                cost: Some(0.0),
-                tool_calls: Some(
-                    serde_json::to_string(&tool_calls).unwrap_or_else(|_| "{}".to_string()),
-                ),
-                attachments: None,
-                timestamp: Utc::now(),
-            };
-
-            if should_save_to_db {
-                self.db.create_ai_message(&assistant_msg).await?;
-            } else {
-                debug!("跳过助手工具调用消息保存：对话记录不存在");
-            }
-            messages.push(assistant_msg);
-
-            // Emit tool execution start event
-            stream_emitter.emit_tool_execution_start(&tool_calls)?;
-
-            // Execute each tool call
-            let mut tool_messages = Vec::new();
-            for (tool_index, tc) in tool_calls.iter().enumerate() {
-                let exec_tool_name = tool_name_map.get(&tc.name).cloned().unwrap_or_else(|| tc.name.clone());
-                let args_val: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or_default();
-
-                // Emit tool step start
-                stream_emitter.emit_tool_step_start(&tc.id, &exec_tool_name, tool_index, tool_calls.len())?;
-
-                let exec_res = if let Some(mcp) = &self.mcp_service {
-                    mcp.execute_tool(&exec_tool_name, args_val.clone()).await
-                } else {
-                    Err(anyhow::anyhow!("MCP service unavailable"))
-                };
-
-                // Emit tool step complete
-                stream_emitter.emit_tool_step_complete(&tc.id, &exec_tool_name, tool_index, tool_calls.len(), &exec_res)?;
-
-                // 3. 创建工具响应消息
-                let tool_msg = match &exec_res {
-                    Ok(result) => {
-                        let result_str =
-                            serde_json::to_string(result).unwrap_or_else(|_| "{}".to_string());
-                        AiMessage {
-                            id: Uuid::new_v4().to_string(),
-                            conversation_id: conversation_id.to_string(),
-                            role: "tool".to_string(),
-                            content: result_str.clone(),
-                            metadata: Some(format!(
-                                "{{\"tool_call_id\":\"{}\",\"tool_name\":\"{}\"}}",
-                                tc.id, exec_tool_name
-                            )),
-                            token_count: Some(result_str.len() as i32),
-                            cost: None,
-                            tool_calls: None,
-                            attachments: None,
-                            timestamp: Utc::now(),
-                        }
-                    }
-                    Err(e) => {
-                        let error_str = format!("{{\"error\":\"{}\"}}", e);
-                        AiMessage {
-                            id: Uuid::new_v4().to_string(),
-                            conversation_id: conversation_id.to_string(),
-                            role: "tool".to_string(),
-                            content: error_str.clone(),
-                            metadata: Some(format!(
-                                "{{\"tool_call_id\":\"{}\",\"tool_name\":\"{}\"}}",
-                                tc.id, exec_tool_name
-                            )),
-                            token_count: Some(error_str.len() as i32),
-                            cost: None,
-                            tool_calls: None,
-                            attachments: None,
-                            timestamp: Utc::now(),
-                        }
-                    }
-                };
-
-                if should_save_to_db {
-                    self.db.create_ai_message(&tool_msg).await?;
-                } else {
-                    debug!("跳过工具结果消息保存：对话记录不存在");
-                }
-                tool_messages.push(tool_msg);
-            }
-
-            messages.extend(tool_messages);
-
-            // Emit tool execution complete event
-            stream_emitter.emit_tool_execution_complete(tool_calls.len())?;
-
-            // Recursively call with tool results
-            info!("Resending request with tool results...");
-            let recursive_call = self.send_chat_stream(
-                model_name,
-                messages,
-                conversation_id,
-                temperature,
-                max_tokens,
-                should_save_to_db,
-                Some(message_id), // Maintain the same message ID
-            );
-            return Box::pin(recursive_call).await;
-        }
 
         // 如果没有工具调用，保存助手响应并返回
         let mut answer = match &response.message.content {
@@ -2271,7 +2117,7 @@ impl AiService {
         // 如果助手响应为空，提供有用的错误信息
         if answer.trim().is_empty() {
             warn!("Assistant response is empty for model '{}' on provider '{}'", model_name, provider.name());
-            answer = format!("抱歉，AI模型 {} 没有返回任何响应。这可能是由于：\n\n1. API配置问题（请检查API密钥和基础URL）\n2. 模型暂时不可用\n3. 请求被限流\n\n请尝试重新发送消息或切换到其他模型。", model_name);
+            answer = format!("抱歉，AI模型 {} 在 {} 提供商上没有返回任何响应。这可能是由于：\n\n1. API配置问题（请检查API密钥和基础URL）\n2. 模型暂时不可用\n3. 请求被限流\n\n请尝试重新发送消息或切换到其他模型。", model_name, provider.name());
         }
         let assistant_msg = AiMessage {
             id: Uuid::new_v4().to_string(),
@@ -2398,6 +2244,13 @@ impl AiService {
         self.db.archive_ai_conversation(conversation_id).await
     }
 
-
+    /// 统一发送流式消息到前端
+    fn emit_stream_message(&self, message: UnifiedStreamMessage) {
+        if let Some(app_handle) = &self.app_handle {
+            if let Err(e) = app_handle.emit("ai_stream_message", message) {
+                log::error!("Failed to emit unified stream message: {}", e);
+            }
+        }
+    }
 
 }
