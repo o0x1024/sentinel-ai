@@ -200,6 +200,127 @@ fn default_notification_enabled() -> bool {
     true
 }
 
+// ===== 场景 Agent Profile（最小可用版本）=====
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentEngine { PlanExecute, Rewoo, LlmCompiler, Auto }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmId { pub provider: String, pub model: String, pub temperature: Option<f32>, pub max_tokens: Option<u32> }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfigBundle { pub default: LlmId }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioAgentProfile {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub enabled: bool,
+    pub version: Option<String>,
+    pub engine: AgentEngine,
+    pub llm: LlmConfigBundle,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[tauri::command]
+pub async fn list_scenario_agents(
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<ScenarioAgentProfile>, String> {
+    match db_service.get_config("ai_assistant", "scenario_agents").await {
+        Ok(Some(json_str)) => serde_json::from_str::<Vec<ScenarioAgentProfile>>(&json_str)
+            .map_err(|e| format!("Failed to parse scenario agents: {}", e)),
+        Ok(None) => Ok(vec![]),
+        Err(e) => Err(format!("Failed to load scenario agents: {}", e)),
+    }
+}
+
+#[tauri::command]
+pub async fn save_scenario_agent(
+    profile: ScenarioAgentProfile,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    let mut list = list_scenario_agents(db_service.clone()).await?;
+    // upsert by id
+    if let Some(idx) = list.iter().position(|p| p.id == profile.id) {
+        list[idx] = profile;
+    } else {
+        list.push(profile);
+    }
+    let json = serde_json::to_string(&list).map_err(|e| format!("Serialize scenario agents failed: {}", e))?;
+    db_service
+        .set_config("ai_assistant", "scenario_agents", &json, None)
+        .await
+        .map_err(|e| format!("Failed to save scenario agents: {}", e))
+}
+
+#[tauri::command]
+pub async fn delete_scenario_agent(
+    id: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    let mut list = list_scenario_agents(db_service.clone()).await?;
+    list.retain(|p| p.id != id);
+    let json = serde_json::to_string(&list).map_err(|e| format!("Serialize scenario agents failed: {}", e))?;
+    db_service
+        .set_config("ai_assistant", "scenario_agents", &json, None)
+        .await
+        .map_err(|e| format!("Failed to save scenario agents: {}", e))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioTaskDispatchRequest {
+    pub agent_id: String,
+    pub query: String,
+    pub options: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[tauri::command]
+pub async fn dispatch_scenario_task(
+    request: ScenarioTaskDispatchRequest,
+    db_service: State<'_, Arc<DatabaseService>>,
+    ai_service_manager: State<'_, Arc<AiServiceManager>>,
+    execution_manager: State<'_, Arc<crate::managers::ExecutionManager>>,
+    app_handle: AppHandle,
+) -> Result<DispatchResult, String> {
+    // 读取 Agent Profile
+    let agents = list_scenario_agents(db_service.clone()).await?;
+    let Some(profile) = agents.into_iter().find(|p| p.id == request.agent_id && p.enabled) else {
+        return Err(format!("Scenario agent not found or disabled: {}", request.agent_id));
+    };
+
+    // 选架构
+    let architecture = match profile.engine {
+        AgentEngine::PlanExecute => "plan-execute",
+        AgentEngine::Rewoo => "rewoo",
+        AgentEngine::LlmCompiler => "llm-compiler",
+        AgentEngine::Auto => "auto",
+    }.to_string();
+
+    // 透传到已有调度逻辑（最小改动：重用 dispatch_intelligent_query）
+    let exec_id = format!("exec_{}_{}", request.agent_id, uuid::Uuid::new_v4().to_string());
+    let mut options = request.options.unwrap_or_default();
+    options.insert("agent_id".to_string(), serde_json::Value::String(request.agent_id.clone()));
+
+    let dispatch_req = DispatchQueryRequest {
+        query: request.query,
+        architecture,
+        agent_id: Some(profile.id),
+        options: Some(options),
+    };
+
+    // 直接复用内部函数（并保持 start_execution 的行为）
+    dispatch_intelligent_query(
+        dispatch_req,
+        ai_service_manager,
+        db_service,
+        execution_manager,
+        app_handle,
+    ).await
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentStatistics {
     pub active_count: u32,

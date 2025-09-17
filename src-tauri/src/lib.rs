@@ -630,15 +630,15 @@ pub fn run() {
             rewoo_commands::simulate_tool_execution,
 
             ai_commands::dispatch_intelligent_query,
+            ai_commands::dispatch_scenario_task,
             ai_commands::stop_execution,
             ai_commands::get_ai_assistant_settings,
             ai_commands::save_ai_assistant_settings,
             ai_commands::get_agent_statistics,
-            ai_commands::get_available_architectures,
-            ai_commands::get_ai_assistant_agents,
-            ai_commands::save_ai_assistant_agents,
-            ai_commands::get_ai_architecture_prefs,
-            ai_commands::save_ai_architecture_prefs,
+            // 场景Agent配置
+            ai_commands::list_scenario_agents,
+            ai_commands::save_scenario_agent,
+            ai_commands::delete_scenario_agent,
             
             // Agent系统相关命令
             agent_commands::initialize_agent_manager,

@@ -60,14 +60,11 @@
     <div class="flex-1 overflow-hidden min-h-0">
       <!-- 聊天区域 -->
       <div class="h-full flex flex-col">
-        <EnhancedAIChat 
-          :selected-architecture="selectedArchitecture"
+        <AIChat 
           :selected-agent="selectedAgent"
-          :available-architectures="enabledArchitectures"
           @execution-started="handleExecutionStarted"
           @execution-progress="handleExecutionProgress"
           @execution-completed="handleExecutionCompleted"
-          @architecture-changed="handleArchitectureChanged"
         />
       </div>
     </div>
@@ -81,23 +78,14 @@
           <a class="tab" :class="{ 'tab-active': settingsTab === 'general' }" @click="settingsTab = 'general'">
             {{ t('aiAssistant.settings.general', '通用设置') }}
           </a>
-          <a class="tab" :class="{ 'tab-active': settingsTab === 'architectures' }" @click="settingsTab = 'architectures'">
-            {{ t('aiAssistant.settings.architectures', '架构配置') }}
-          </a>
+          
           <a class="tab" :class="{ 'tab-active': settingsTab === 'agents' }" @click="settingsTab = 'agents'">
             {{ t('aiAssistant.settings.agents', 'Agent管理') }}
           </a>
         </div>
 
         <div v-if="settingsTab === 'general'" class="space-y-4">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('aiAssistant.settings.defaultArchitecture', '默认架构') }}</span>
-            </label>
-            <select v-model="defaultArchitecture" class="select select-bordered">
-              <option v-for="arch in enabledArchitectures" :key="arch.id" :value="arch.id">{{ arch.name }}</option>
-            </select>
-          </div>
+          
           
           <div class="form-control">
             <label class="label">
@@ -107,31 +95,7 @@
           </div>
         </div>
 
-        <div v-else-if="settingsTab === 'architectures'" class="space-y-4">
-          <div class="overflow-x-auto">
-            <table class="table table-zebra">
-              <thead>
-                <tr>
-                  <th>{{ t('common.name', '名称') }}</th>
-                  <th>{{ t('common.status', '状态') }}</th>
-                  <th>{{ t('common.enabled', '启用') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="arch in allArchitectures" :key="arch.id">
-                  <td class="whitespace-nowrap">{{ arch.name }}</td>
-                  <td><div class="badge badge-sm" :class="getArchBadgeClass(arch.status)">{{ getArchBadgeText(arch.status) }}</div></td>
-                  <td>
-                    <input type="checkbox" class="toggle toggle-primary toggle-sm"
-                      :checked="enabledArchitectureIds.includes(arch.id)"
-                      @change="onArchToggle(arch.id, $event)"
-                    />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+        
 
         <div v-else-if="settingsTab === 'agents'" class="space-y-4">
           <div class="flex justify-between items-center">
@@ -169,7 +133,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import EnhancedAIChat from '@/components/EnhancedAIChat.vue'
+import AIChat from '@/components/AIChat.vue'
 
 const { t } = useI18n()
 
@@ -197,7 +161,6 @@ interface AgentStats {
 // 状态数据
 const activeAgentsCount = ref(0)
 const totalTasksCount = ref(0)
-const selectedArchitecture = ref('Plan-and-Execute')
 const selectedAgent = ref(null)
 const showSettings = ref(false)
 const settingsTab = ref('general')
@@ -207,20 +170,13 @@ const maxConcurrentTasks = ref(5)
 // 当前执行信息
 const currentExecution = ref(null)
 
-// 可用架构（从后端加载）
-const allArchitectures = ref<any[]>([])
-const enabledArchitectureIds = ref<string[]>([])
-const enabledArchitectures = computed(() => allArchitectures.value.filter(a => enabledArchitectureIds.value.includes(a.id)))
+// 架构选择已移除
 
 // 可用Agent（从后端加载/自定义）
 const availableAgents = ref<CustomAgent[]>([])
 const editingAgents = ref<CustomAgent[]>([])
 
-// 方法
-const selectArchitecture = (architecture) => {
-  selectedArchitecture.value = architecture.name
-  // 通知EnhancedAIChat组件架构变更
-}
+
 
 const selectAgent = (agent) => {
   selectedAgent.value = agent
@@ -239,12 +195,23 @@ const closeSettings = () => {
 
 const saveSettings = async () => {
   try {
-    // 保存基础设置
-    await invoke('save_ai_assistant_settings', { settings: { default_architecture: defaultArchitecture.value, max_concurrent_tasks: maxConcurrentTasks.value, auto_execute: false, notification_enabled: true } })
-    // 保存架构启用偏好
-    await invoke('save_ai_architecture_prefs', { enabledArchitectures: enabledArchitectureIds.value })
-    // 保存自定义Agent
-    await invoke('save_ai_assistant_agents', { agents: editingAgents.value })
+    // 保存基础设置（保留并兼容后端，不再暴露架构UI）
+    await invoke('save_ai_assistant_settings', { settings: { default_architecture: 'auto', max_concurrent_tasks: maxConcurrentTasks.value, auto_execute: false, notification_enabled: true } })
+    // 保存场景Agent（逐个 upsert）
+    for (const a of editingAgents.value) {
+      const profile = {
+        id: a.id,
+        name: a.name,
+        description: a.description,
+        enabled: a.status === 'active',
+        version: '1.0.0',
+        engine: (a.type === 'rewoo' || a.type === 'llm-compiler' || a.type === 'plan-execute') ? a.type : 'auto',
+        llm: { default: { provider: 'auto', model: 'auto', temperature: null, max_tokens: null } },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+      await invoke('save_scenario_agent', { profile })
+    }
     closeSettings()
   } catch (error) {
     console.error('Failed to save settings:', error)
@@ -261,37 +228,9 @@ const getStatusBadgeClass = (status) => {
   }
 }
 
-const getArchBadgeClass = (status: string) => {
-  switch (status) {
-    case 'stable': return 'badge-success'
-    case 'beta': return 'badge-warning'
-    case 'experimental': return 'badge-info'
-    case 'ai-powered': return 'badge-accent'
-    default: return 'badge-ghost'
-  }
-}
+// 架构徽章函数已移除
 
-const getArchBadgeText = (status: string) => {
-  switch (status) {
-    case 'stable': return 'STABLE'
-    case 'beta': return 'BETA'
-    case 'experimental': return 'EXPERIMENTAL'
-    case 'ai-powered': return 'AI'
-    default: return status?.toUpperCase?.() || 'N/A'
-  }
-}
-
-const toggleArchEnabled = (id: string, checked: boolean) => {
-  const set = new Set(enabledArchitectureIds.value)
-  if (checked) set.add(id)
-  else set.delete(id)
-  enabledArchitectureIds.value = Array.from(set)
-}
-
-const onArchToggle = (id: string, e: Event) => {
-  const target = e.target as HTMLInputElement
-  toggleArchEnabled(id, !!target?.checked)
-}
+// 架构开关已移除
 
 const addAgent = () => {
   editingAgents.value.push({
@@ -314,10 +253,7 @@ const handleExecutionStarted = (execution) => {
   activeAgentsCount.value++
 }
 
-const handleArchitectureChanged = (architecture) => {
-  selectedArchitecture.value = architecture.name
-  // 通知EnhancedAIChat组件架构变更
-}
+// 架构变更已移除
 
 const handleExecutionProgress = (progress) => {
   if (currentExecution.value) {
@@ -351,24 +287,7 @@ onMounted(async () => {
       maxConcurrentTasks.value = (settings.max_concurrent_tasks as number) || 5
       // 暂时先设置，等加载架构后再修正
     }
-    // 加载架构列表与启用偏好
-    try {
-      const archs = await invoke<any[]>('get_available_architectures')
-      allArchitectures.value = Array.isArray(archs) ? archs : []
-    } catch (error) {
-      console.warn('Failed to load architectures from backend, using defaults:', error)
-      // 使用默认架构
-      allArchitectures.value = [
-        { id: 'plan-execute', name: 'Plan-and-Execute', status: 'stable' },
-        { id: 'rewoo', name: 'ReWOO', status: 'beta' },
-        { id: 'llm-compiler', name: 'LLMCompiler', status: 'experimental' },
-        { id: 'intelligent-dispatcher', name: 'Intelligent Dispatcher', status: 'ai-powered' }
-      ]
-    }
-    
-    const prefs = await invoke<string[]>('get_ai_architecture_prefs').catch(() => [])
-    enabledArchitectureIds.value = Array.isArray(prefs) && prefs.length > 0 ? prefs : allArchitectures.value.map((a:any) => a.id)
-    selectedArchitecture.value = allArchitectures.value.find((a:any) => a.id === defaultArchitecture.value)?.name || 'Plan-and-Execute'
+    // 架构加载与偏好已移除
     
     // 加载Agent状态
     const agentStats = await invoke<AgentStats>('get_agent_statistics')
@@ -377,9 +296,16 @@ onMounted(async () => {
       totalTasksCount.value = agentStats.total_tasks || 0
     }
 
-    // 加载自定义Agent
-    const agents = await invoke<CustomAgent[]>('get_ai_assistant_agents').catch(() => [])
-    availableAgents.value = Array.isArray(agents) ? agents : []
+    // 加载场景Agent
+    const agents = await invoke<any[]>('list_scenario_agents').catch(() => [])
+    availableAgents.value = Array.isArray(agents) ? agents.map(a => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      type: a.engine,
+      status: a.enabled ? 'active' : 'idle',
+      tasks_completed: 0,
+    })) : []
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
   }
