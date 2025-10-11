@@ -13,7 +13,7 @@ pub struct ProxyTestResult {
     pub success: bool,
     pub message: String,
     pub proxy_config: Option<ProxyConfig>,
-    pub response_time_ms: Option<u64>,
+    pub response_time_ms: Option<f64>,
 }
 
 /// 测试代理配置动态更新功能
@@ -52,7 +52,7 @@ pub async fn test_proxy_dynamic_update() -> Result<ProxyTestResult, String> {
                 success: true,
                 message: "HTTP client successfully used updated proxy configuration".to_string(),
                 proxy_config: Some(test_proxy),
-                response_time_ms: Some(duration.as_millis() as u64),
+                response_time_ms: Some(duration.as_millis() as f64),
             }
         }
         Err(e) => {

@@ -265,7 +265,7 @@ export default {
     saving: '保存中...',
     categories: {
       ai: 'AI服务',
-      scheduler: '调度策略',
+      scheduler: '模型配置',
       database: '数据库',
       system: '系统设置',
       security: '安全设置',
@@ -281,6 +281,32 @@ export default {
     providers: '服务提供商',
     models: '模型',
     advanced: '高级设置',
+    ragConfig: 'RAG配置',
+    ragTestConnection: '测试RAG连接',
+    ragResetConfig: '重置RAG配置',
+    ragSaveConfig: '保存RAG配置',
+    testingConnection: '正在测试连接...',
+    connectionSuccess: '连接成功',
+    ragConnectionFailed: 'RAG连接失败',
+    configReset: '配置已重置',
+    configSaved: '配置已保存',
+    rag: {
+      ragModels: 'RAG模型',
+      embeddingModel: '嵌入模型',
+      embeddingModelDesc: '用于将文本转换为向量的模型',
+      batchSize: '批处理大小',
+      maxConcurrent: '最大并发数',
+      rerankingModel: '重排序模型',
+      rerankingModelDesc: '用于对检索结果进行重新排序的模型',
+      enableReranking: '启用重排序',
+      retrievalSettings: '检索设置',
+      topK: '返回结果数量',
+      topKDesc: '检索时返回的最相关结果数量',
+      mmrLambda: 'MMR参数',
+      mmrLambdaDesc: '最大边际相关性参数，平衡相关性和多样性',
+      similarityThreshold: '相似度阈值',
+      similarityThresholdDesc: '检索结果的最低相似度阈值'
+    },
     database: {
       title: '数据库设置',
       backupNotImplemented: '数据库备份功能将在Tauri集成后实现',
@@ -358,6 +384,7 @@ export default {
     },
     performance: '性能设置',
     security: {
+      saveConfig: '保存配置',
       title: '安全设置',
       status: '安全状态',
       score: '安全评分',
@@ -532,7 +559,7 @@ export default {
       refreshModels: '刷新模型'
     },
     scheduler: {
-      title: '调度策略配置',
+      title: '模型配置配置',
       description: '配置AI任务调度和重规划策略',
       currentStrategy: '当前策略',
       disabled: '已禁用',
@@ -594,9 +621,9 @@ export default {
       balanced: '平衡配置',
       economic: '经济配置',
       applyConfig: '应用配置',
-      saveConfig: '保存调度策略配置',
-      configSaved: '调度策略配置已保存',
-      configSaveFailed: '保存调度策略配置失败',
+      saveConfig: '保存模型配置配置',
+      configSaved: '模型配置配置已保存',
+      configSaveFailed: '保存模型配置配置失败',
       scenarioConfig: {
         allScenarios: '所有场景',
         severeFail: '严重失败',
@@ -641,6 +668,15 @@ export default {
       }
     },
     general: {
+      behavior: '行为',
+      startup: '启动',
+      autoStart: '开机启动',
+      autoStartHint: '系统启动时自动启动应用程序',
+      startMinimized: '启动时最小化',
+      restoreSession: '恢复会话',
+      restoreSessionHint: '启动时恢复上次会话状态',
+      checkUpdates: '检查更新',
+      saveConfig: '保存配置',
       version: '版本',
       buildDate: '构建日期',
       language: '语言',
@@ -1101,6 +1137,7 @@ export default {
 
 
   sidebar: {
+    agentManager: 'Agent管理',
     promptManagement:"提示词管理",
     dashboard: '总览',
     scanTasks: '扫描任务',
@@ -1533,6 +1570,10 @@ export default {
     selectAgent:"选择Agent",
     sessionManagement: '会话管理',
     title: 'AI智能助手',
+    tool: {
+      unnamed: '未命名任务',
+      validInfo: '有效信息',
+    },
     welcome: {
       title: 'AI智能助手',
       description: '我是您的AI安全助手，可以帮您执行安全扫描、漏洞分析等任务。请告诉我您需要什么帮助？'

@@ -199,7 +199,7 @@ pub struct BatchExecutionResult {
     pub results: Vec<ToolExecutionResult>,
     pub success_count: usize,
     pub failure_count: usize,
-    pub total_execution_time_ms: u64,
+    pub total_execution_time_ms: f64,
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
 }
@@ -211,7 +211,7 @@ pub struct ToolStatistics {
     pub total_executions: usize,
     pub successful_executions: usize,
     pub failed_executions: usize,
-    pub average_execution_time_ms: f64,
+    pub average_execution_time_ms: u64,
     pub total_execution_time_ms: u64,
 }
 
@@ -371,7 +371,7 @@ pub struct ExecutionArtifact {
     pub name: String,
     pub path: String,
     pub content_type: String,
-    pub size: u64,
+    pub size: f64,
     pub checksum: String,
 }
 
@@ -380,7 +380,7 @@ pub struct ExecutionArtifact {
 pub struct ExecutionMetadata {
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
-    pub duration: Option<u64>, // milliseconds
+    pub duration: Option<f64>, // milliseconds
     pub resource_usage: ResourceUsage,
 }
 

@@ -18,7 +18,7 @@ pub struct DispatchDecision {
     /// 置信度
     pub confidence: f32,
     /// 预估执行时长（秒）
-    pub estimated_duration: Option<u64>,
+    pub estimated_duration: Option<f64>,
     /// 建议的工作流
     pub suggested_workflow: Option<WorkflowDefinition>,
 }

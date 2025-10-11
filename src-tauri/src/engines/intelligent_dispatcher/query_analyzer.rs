@@ -107,7 +107,7 @@ impl QueryAnalyzer {
 
         let chat_request = crate::ai_adapter::types::ChatRequest {
             model,
-            messages: vec![crate::ai_adapter::types::Message::user(&analysis_prompt)],
+            messages: vec![crate::ai_adapter::types::Message::system(&analysis_prompt)],
             tools: None,
             tool_choice: None,
             user: None,

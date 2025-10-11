@@ -35,7 +35,7 @@ pub struct ExecutionStatistics {
     /// 成功率
     pub success_rate: f64,
     /// 平均执行时间（秒）
-    pub average_execution_time: f64,
+    pub average_execution_time: u64,
 }
 
 /// Plan-and-Execute数据库仓库
@@ -192,7 +192,7 @@ impl PlanExecuteRepository {
             let started_at: i64 = row.get("started_at");
             let completed_at: Option<i64> = row.get("completed_at");
             let current_step: Option<i32> = row.get("current_step");
-            let progress: f32 = row.get("progress");
+            let progress: u32 = row.get("progress");
             let context_json: String = row.get("context");
             let metadata_json: String = row.get("metadata");
             
@@ -249,7 +249,7 @@ impl PlanExecuteRepository {
             let started_at: i64 = row.get("started_at");
             let completed_at: Option<i64> = row.get("completed_at");
             let current_step: Option<i32> = row.get("current_step");
-            let progress: f32 = row.get("progress");
+            let progress: u32 = row.get("progress")     ;
             let context_json: String = row.get("context");
             let metadata_json: String = row.get("metadata");
             
@@ -320,7 +320,7 @@ impl PlanExecuteRepository {
             
         // 计算平均执行时间（仅针对已完成的会话）
         let avg_time = if completed_sessions > 0 {
-            sqlx::query_scalar::<_, Option<f64>>(
+            sqlx::query_scalar::<_, Option<u64>>(
                 "SELECT AVG(CAST((julianday(datetime(completed_at, 'unixepoch')) - julianday(datetime(started_at, 'unixepoch'))) * 86400 AS REAL)) 
                  FROM execution_sessions 
                  WHERE status = 'Completed' AND completed_at IS NOT NULL"
@@ -328,9 +328,9 @@ impl PlanExecuteRepository {
             .fetch_one(&self.pool)
             .await
             .map_err(|e| RepositoryError::DatabaseError(format!("查询平均执行时间失败: {}", e)))?
-            .unwrap_or(0.0)
+            .unwrap_or(0)
         } else {
-            0.0
+            0
         };
         
         Ok(ExecutionStatistics {

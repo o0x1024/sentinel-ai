@@ -9,6 +9,8 @@ pub mod models;
 pub mod services;
 pub mod tools;  // 包含原 MCP 功能
 pub mod prompt;
+pub mod utils;
+pub mod rag;
 
 
 // 导入依赖
@@ -35,7 +37,7 @@ use services::{
 use commands::{
     agent_commands, ai, ai_commands, asset, config, database as db_commands, dictionary,
     mcp as mcp_commands, performance,
-    plan_execute_commands, scan, scan_commands, scan_session_commands, vulnerability,
+    plan_execute_commands, rag_commands, scan, scan_commands, scan_session_commands, vulnerability,
     window, prompt_commands, rewoo_commands, unified_tools,
 };
 
@@ -237,6 +239,13 @@ pub fn run() {
                     tracing::debug!("Global tool system initialized successfully");
                 }
 
+                // 初始化全局RAG服务
+                if let Err(e) = crate::commands::rag_commands::initialize_global_rag_service(db_service.clone()).await {
+                    tracing::error!("Failed to initialize global RAG service: {}", e);
+                } else {
+                    tracing::debug!("Global RAG service initialized successfully");
+                }
+
                 // 初始化全局适配器管理器（为三个框架提供统一的工具调用接口）
                 if let Ok(tool_system) = crate::tools::get_global_tool_system() {
                     let tool_manager = tool_system.get_manager();
@@ -396,7 +405,11 @@ pub fn run() {
             ai::print_ai_conversations,
             ai::set_default_chat_model,
             ai::set_default_provider,
-            // 调度策略相关命令
+            // LM Studio相关命令
+            ai::refresh_lm_studio_models,
+            ai::get_lm_studio_status,
+            ai::test_lm_studio_provider_connection,
+            // 模型配置相关命令
             ai::get_scheduler_config,
             ai::save_scheduler_config,
             ai::get_service_for_stage,
@@ -616,6 +629,11 @@ pub fn run() {
             commands::prompt_api::upsert_prompt_group_item_api,
             commands::prompt_api::list_prompt_group_items_api,
             commands::prompt_api::remove_prompt_group_item_api,
+            commands::prompt_api::preview_resolved_prompt_api,
+            // Extended prompt APIs
+            commands::prompt_api::list_prompt_templates_filtered_api,
+            commands::prompt_api::duplicate_prompt_template_api,
+            commands::prompt_api::evaluate_prompt_api,
 
             // ReWOO测试相关命令
             rewoo_commands::init_rewoo_engine,
@@ -629,12 +647,15 @@ pub fn run() {
             rewoo_commands::get_available_tools,
             rewoo_commands::simulate_tool_execution,
 
-            ai_commands::dispatch_intelligent_query,
             ai_commands::dispatch_scenario_task,
             ai_commands::stop_execution,
             ai_commands::get_ai_assistant_settings,
             ai_commands::save_ai_assistant_settings,
             ai_commands::get_agent_statistics,
+            ai::get_ai_usage_stats,
+            // Tools catalog for AgentManager (simple list)
+            ai_commands::list_unified_tools,
+            ai_commands::list_unified_tools_grouped,
             // 场景Agent配置
             ai_commands::list_scenario_agents,
             ai_commands::save_scenario_agent,
@@ -686,6 +707,32 @@ pub fn run() {
             commands::test_agent_flow::test_complete_agent_flow,
             commands::test_agent_flow::test_tool_system_availability,
             commands::test_agent_flow::test_tool_execution,
+            // Chat with automatic web search & summarization
+            commands::send_ai_stream_with_search,
+            
+            // RAG相关命令
+            rag_commands::rag_ingest_source,
+            rag_commands::rag_query,
+            rag_commands::rag_clear_collection,
+            rag_commands::rag_get_status,
+            rag_commands::rag_initialize_service,
+            rag_commands::rag_shutdown_service,
+            rag_commands::rag_get_supported_file_types,
+            // 前端兼容的RAG命令
+            rag_commands::get_rag_status,
+            rag_commands::create_rag_collection,
+            rag_commands::query_rag,
+            rag_commands::delete_rag_collection,
+            // RAG配置命令
+            rag_commands::get_rag_config,
+            rag_commands::save_rag_config,
+            rag_commands::reset_rag_config,
+            rag_commands::reload_rag_service,
+            // 文件夹操作命令
+            rag_commands::get_folder_files,
+            // AI助手RAG集成命令
+            rag_commands::assistant_rag_answer,
+            rag_commands::ensure_default_rag_collection,
         ])
         .run(context)
         .expect("Failed to start Tauri application");

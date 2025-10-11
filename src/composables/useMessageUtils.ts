@@ -1,15 +1,24 @@
 import { remark } from 'remark';
 import remarkHtml from 'remark-html';
 import remarkGfm from 'remark-gfm';
+import remarkDirective from 'remark-directive';
+import remarkFrontmatter from 'remark-frontmatter';
 
 
 export const useMessageUtils = () => {
   // Render markdown content
   const renderMarkdown = (content: string) => {
+    // 预处理：将单独的换行符转换为双换行符，以便Markdown正确处理
+    const preprocessed = content
+      .replace(/\n{2,}/g, '\n\n') // 多个连续换行符合并为双换行符
+
+    
     return remark()
-    .use(remarkHtml)
     .use(remarkGfm)
-    .processSync(content).toString();
+    .use(remarkDirective)
+    .use(remarkFrontmatter)
+    .use(remarkHtml, { sanitize: false, allowDangerousHtml: true })
+    .processSync(preprocessed).toString();
   };
 
   // Format time display

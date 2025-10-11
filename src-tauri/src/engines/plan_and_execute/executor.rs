@@ -3,18 +3,23 @@
 //! 负责按照计划逐步执行子任务，调用具体的工具和服务
 
 use crate::engines::plan_and_execute::types::*;
+use crate::services::prompt_db::PromptRepository;
 use crate::engines::plan_and_execute::replanner::Replanner;
+use crate::engines::plan_and_execute::memory_manager::MemoryManager;
 use crate::tools::{UnifiedToolManager, ToolExecutionParams, ToolExecutionResult, get_global_tool_system, ExecutionStatus};
-use crate::engines::{ExecutionError, StreamMessageType, UnifiedStreamMessage};
+use crate::engines::ExecutionError;
 use crate::services::database::DatabaseService;
 use crate::services::ai::{AiServiceManager, SchedulerStage};
+use crate::utils::ordered_message::{ChunkType, emit_message_chunk_arc};
 use crate::database::plan_execute_repository::PlanExecuteRepository;
+use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
+use crate::models::prompt::ArchitectureType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tauri::{AppHandle, Emitter};
-use tokio::sync::{Mutex, RwLock};
+use tauri::AppHandle;
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::timeout;
 
 
@@ -35,6 +40,16 @@ pub struct ExecutorConfig {
     pub ai_provider: String,
     /// AI模型配置（用于AI推理步骤）
     pub model_config: ExecutorModelConfig,
+    /// 最大重新规划次数
+    pub max_replan_attempts: u32,
+    /// 最大总执行时间（毫秒）
+    pub max_total_execution_time: u64,
+    /// 最大连续失败次数
+    pub max_consecutive_failures: u32,
+    /// 计划相似度阈值（避免无效重规划）
+    pub plan_similarity_threshold: f64,
+    /// 质量评估阈值（低于此值触发策略调整）
+    pub quality_threshold: f64,
 }
 
 /// 执行器模型配置
@@ -425,18 +440,154 @@ pub struct Executor {
     db_service: Arc<DatabaseService>,
     ai_service_manager: Option<Arc<AiServiceManager>>,
     replanner: Option<Arc<Replanner>>,
+    memory_manager: Option<Arc<MemoryManager>>,
     repository: Arc<PlanExecuteRepository>,
     app_handle: Option<Arc<AppHandle>>,
 }
 
 impl Executor {
-    /// 统一发送流式消息到前端
-    fn emit_stream_message(&self, message: UnifiedStreamMessage) {
-        if let Some(app_handle) = &self.app_handle {
-            if let Err(e) = app_handle.emit("ai_stream_message", message) {
-                log::error!("Failed to emit unified stream message: {}", e);
+    /// 解析 execution_id（优先任务参数中的 execution_id，其次回退 task_id）
+    async fn resolve_execution_id(&self, context: &ExecutionContext) -> String {
+        let mut execution_id = context.task_id.clone();
+        let shared = context.shared_data.read().await;
+        if let Some(params_val) = shared.get("task_parameters") {
+            if let Some(obj) = params_val.as_object() {
+                if let Some(eid) = obj.get("execution_id").and_then(|v| v.as_str()) {
+                    if !eid.is_empty() { execution_id = eid.to_string(); }
+                }
             }
         }
+        execution_id
+    }
+    /// 从上下文解析 message_id 与 conversation_id（优先任务参数，其次回退到 task_id）
+    async fn resolve_message_and_conversation_ids(&self, context: &ExecutionContext) -> (String, Option<String>) {
+        // 默认回退
+        let mut message_id = context.task_id.clone();
+        let mut conversation_id: Option<String> = None;
+
+        // 在共享数据里查找 task_parameters.message_id / conversation_id
+        let shared = context.shared_data.read().await;
+        if let Some(params_val) = shared.get("task_parameters") {
+            if let Some(obj) = params_val.as_object() {
+                if let Some(mid) = obj.get("message_id").and_then(|v| v.as_str()) {
+                    if !mid.is_empty() { message_id = mid.to_string(); }
+                }
+                if let Some(cid) = obj.get("conversation_id").and_then(|v| v.as_str()) {
+                    if !cid.is_empty() { conversation_id = Some(cid.to_string()); }
+                }
+            }
+        }
+
+        (message_id, conversation_id)
+    }
+
+
+    fn apply_placeholders(template: &str, pairs: &[(&str, &str)]) -> String {
+        let mut out = template.to_string();
+        for (k, v) in pairs { out = out.replace(k, v); }
+        out
+    }
+    /// 发送有序消息块到前端
+    fn emit_message_chunk(
+        &self,
+        execution_id: &str,
+        message_id: &str,
+        conversation_id: Option<&str>,
+        chunk_type: ChunkType,
+        content: &str,
+        is_final: bool,
+        stage: Option<&str>,
+        tool_name: Option<&str>,
+    ) {
+        if let Some(app_handle) = &self.app_handle {
+            emit_message_chunk_arc(
+                app_handle,
+                execution_id,
+                message_id,
+                conversation_id,
+                chunk_type,
+                content,
+                is_final,
+                stage,
+                tool_name,
+            );
+        }
+    }
+
+    /// 便捷方法：发送工具执行结果
+    async fn emit_tool_result(&self, context: &ExecutionContext, step_name: &str, result: &StepResult, tool_name: Option<&str>) {
+        let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+
+        // 构造标准JSON
+        let status_str = match result.status {
+            StepStatus::Completed => "Completed",
+            StepStatus::Running => "Running",
+            StepStatus::Failed => "Failed",
+            StepStatus::Pending => "Pending",
+            StepStatus::Skipped => "Skipped",
+            StepStatus::Retrying => "Retrying",
+            StepStatus::Cancelled => "Cancelled",
+        };
+        let success = matches!(result.status, StepStatus::Completed);
+        let output = result.result_data.clone().unwrap_or(serde_json::json!(null));
+        let json = serde_json::json!({
+            "step_name": step_name,
+            "tool_name": tool_name.unwrap_or("") ,
+            "status": status_str,
+            "success": success,
+            "output": output,
+            "error": result.error,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+        });
+        let content = serde_json::to_string(&json).unwrap_or_else(|_| "{}".to_string());
+
+        if let Some(app_handle) = &self.app_handle {
+            let execution_id = self.resolve_execution_id(context).await;
+            emit_message_chunk_arc(
+                app_handle,
+                &execution_id,
+                &message_id,
+                conversation_id.as_deref(),
+                ChunkType::ToolResult,
+                &content,
+                false,
+                Some("executor"),
+                tool_name,
+            );
+        }
+    }
+
+    /// 便捷方法：发送计划信息
+    async fn emit_plan_info(&self, context: &ExecutionContext, plan_content: &str) {
+        let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+        let execution_id = self.resolve_execution_id(context).await;
+        self.emit_message_chunk(
+            &execution_id,
+            &message_id,
+            conversation_id.as_deref(),
+            ChunkType::PlanInfo,
+            plan_content,
+            false,
+            Some("planner"),
+            None,
+        );
+    }
+
+    /// 便捷方法：发送错误信息
+    async fn emit_error(&self, context: &ExecutionContext, error_msg: &str) {
+        let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+        let execution_id = self.resolve_execution_id(context).await;
+        self.emit_message_chunk(
+            &execution_id,
+            &message_id,
+            conversation_id.as_deref(),
+            ChunkType::Error,
+            error_msg,
+            true,
+            Some("executor"),
+            None,
+        );
     }
 
     /// 创建新的执行器实例
@@ -451,6 +602,7 @@ impl Executor {
             db_service,
             ai_service_manager: None,
             replanner: None,
+            memory_manager: None,
             repository,
             app_handle: None,
         }
@@ -468,6 +620,7 @@ impl Executor {
             db_service,
             ai_service_manager: Some(ai_service_manager),
             replanner: None,
+            memory_manager: None,
             repository,
             app_handle: None,
         }
@@ -491,6 +644,32 @@ impl Executor {
             db_service,
             ai_service_manager,
             replanner,
+            memory_manager: None,
+            repository,
+            app_handle,
+        }
+    }
+
+    /// 创建带有完整依赖的执行器实例（包含重新规划器和内存管理器）
+    pub fn with_full_dependencies(
+        config: ExecutorConfig, 
+        db_service: Arc<DatabaseService>, 
+        ai_service_manager: Option<Arc<AiServiceManager>>,
+        replanner: Option<Arc<Replanner>>,
+        memory_manager: Option<Arc<MemoryManager>>,
+        app_handle: Option<Arc<AppHandle>>,
+    ) -> Self {
+        let pool = db_service.get_pool().expect("Failed to get database pool").clone();
+        let repository = Arc::new(PlanExecuteRepository::new(pool));
+        
+        Self {
+            config,
+            context: Arc::new(Mutex::new(None)),
+            metrics: Arc::new(Mutex::new(ExecutionMetrics::default())),
+            db_service,
+            ai_service_manager,
+            replanner,
+            memory_manager,
             repository,
             app_handle,
         }
@@ -526,15 +705,15 @@ impl Executor {
         let _start_time = SystemTime::now();
         let mut current_plan = plan.clone();
         let mut replan_attempts = 0;
-        let max_replan_attempts = 2; // 最大重新规划次数
+        let max_replan_attempts = self.config.max_replan_attempts;
         let mut overall_step_results = HashMap::new();
         let mut overall_errors = Vec::new();
         
         // 新增：明确的终止条件
         let mut consecutive_failures = 0;
         let mut total_execution_time = 0u64;
-        let max_total_execution_time = 30 * 60 * 1000; // 30分钟最大执行时间
-        let max_consecutive_failures = 1; // 最大连续失败次数
+        let max_total_execution_time = self.config.max_total_execution_time;
+        let max_consecutive_failures = self.config.max_consecutive_failures;
         
         // Plan-and-Execute主循环：Planner -> Agent -> Tools -> Replan -> Agent...
         loop {
@@ -593,6 +772,21 @@ impl Executor {
                         errors: overall_errors,
                         enhanced_feedback: execution_result.enhanced_feedback,
                     };
+                    // 统一发送一次最终块，通知前端结束会话
+                    if let Some(ctx) = self.context.lock().await.as_ref() {
+                        let execution_id = self.resolve_execution_id(ctx).await;
+                        let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(ctx).await;
+                        self.emit_message_chunk(
+                            &execution_id,
+                            &message_id,
+                            conversation_id.as_deref(),
+                            ChunkType::Meta,
+                            "任务执行完成",
+                            true,
+                            Some("executor"),
+                            None,
+                        );
+                    }
                     return Ok(final_result);
                 },
                 TaskStatus::Failed => {
@@ -640,12 +834,15 @@ impl Executor {
                                     current_plan = new_plan;
                                     replan_attempts += 1;
                                         
-                                        // 记录循环执行时间
-                                        let loop_duration = loop_start_time.elapsed()
-                                            .unwrap_or_default().as_millis() as u64;
-                                        total_execution_time += loop_duration;
-                                        
-                                    continue; // 回到Agent执行层，执行新计划
+                        // 记录循环执行时间
+                        let loop_duration = loop_start_time.elapsed()
+                            .unwrap_or_default().as_millis() as u64;
+                        total_execution_time += loop_duration;
+                        
+                        // 在重新规划前更新记忆
+                        self.update_memory_with_execution_results(task, &current_plan, &execution_result).await;
+                        
+                    continue; // 回到Agent执行层，执行新计划
                                     } else {
                                         log::error!("新计划验证失败，停止执行");
                                         overall_errors.push(crate::engines::ExecutionError {
@@ -786,6 +983,9 @@ impl Executor {
             log::error!("保存执行结果到数据库失败: {}", e);
         }
         
+        // 最终记忆更新
+        self.update_memory_with_execution_results(task, &current_plan, &final_result).await;
+        
         Ok(final_result)
     }
 
@@ -807,7 +1007,7 @@ impl Executor {
         
         // 3. 检查是否与当前计划过于相似（避免无效重新规划）
         let similarity = self.calculate_plan_similarity(new_plan, current_plan).await;
-        if similarity > 0.9 {
+        if similarity > self.config.plan_similarity_threshold {
             log::warn!("新计划与当前计划过于相似 ({:.2}), 验证失败", similarity);
             return false;
         }
@@ -826,9 +1026,243 @@ impl Executor {
             return false;
         }
         
+        // 6. 新增：依赖循环检测
+        if !self.validate_dependencies_no_cycle(new_plan).await {
+            log::warn!("新计划存在循环依赖，验证失败");
+            return false;
+        }
+        
+        // 7. 新增：前置条件验证
+        if !self.validate_preconditions(new_plan).await {
+            log::warn!("新计划前置条件不满足，验证失败");
+            return false;
+        }
+        
+        // 8. 新增：关键路径预估时间检查
+        if !self.validate_critical_path_timing(new_plan).await {
+            log::warn!("新计划关键路径超过剩余时间预算，验证失败");
+            return false;
+        }
+        
         log::info!("新计划验证通过: {} 个步骤, 预估时间 {} 秒", 
                   new_plan.steps.len(), new_plan.estimated_duration);
         true
+    }
+
+    /// 验证依赖关系无循环（DFS检测）
+    async fn validate_dependencies_no_cycle(&self, plan: &ExecutionPlan) -> bool {
+        let mut visited = std::collections::HashSet::new();
+        let mut rec_stack = std::collections::HashSet::new();
+        
+        for step in &plan.steps {
+            if !visited.contains(&step.id) {
+                if self.has_cycle_dfs(&step.id, &plan.dependencies, &mut visited, &mut rec_stack) {
+                    return false;
+                }
+            }
+        }
+        
+        true
+    }
+    
+    /// DFS检测循环依赖
+    fn has_cycle_dfs(
+        &self,
+        step_id: &str,
+        dependencies: &HashMap<String, Vec<String>>,
+        visited: &mut std::collections::HashSet<String>,
+        rec_stack: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        visited.insert(step_id.to_string());
+        rec_stack.insert(step_id.to_string());
+        
+        if let Some(deps) = dependencies.get(step_id) {
+            for dep in deps {
+                if !visited.contains(dep) {
+                    if self.has_cycle_dfs(dep, dependencies, visited, rec_stack) {
+                        return true;
+                    }
+                } else if rec_stack.contains(dep) {
+                    return true; // 发现循环
+                }
+            }
+        }
+        
+        rec_stack.remove(step_id);
+        false
+    }
+    
+    /// 验证前置条件是否满足
+    async fn validate_preconditions(&self, plan: &ExecutionPlan) -> bool {
+        let context_guard = self.context.lock().await;
+        if let Some(context) = context_guard.as_ref() {
+            let shared_data = context.shared_data.read().await;
+            
+            for step in &plan.steps {
+                for precondition in &step.preconditions {
+                    // 检查前置条件是否在共享数据中存在且为真
+                    if !self.evaluate_condition(precondition, &shared_data).await {
+                        log::warn!("步骤 '{}' 的前置条件 '{}' 不满足", step.name, precondition);
+                        return false;
+                    }
+                }
+            }
+        }
+        
+        true
+    }
+    
+    /// 评估条件表达式
+    async fn evaluate_condition(&self, condition: &str, shared_data: &HashMap<String, serde_json::Value>) -> bool {
+        // 简单的条件评估：检查键是否存在且为真值
+        if let Some(value) = shared_data.get(condition) {
+            match value {
+                serde_json::Value::Bool(b) => *b,
+                serde_json::Value::String(s) => !s.is_empty(),
+                serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0) > 0.0,
+                serde_json::Value::Array(a) => !a.is_empty(),
+                serde_json::Value::Object(o) => !o.is_empty(),
+                serde_json::Value::Null => false,
+            }
+        } else {
+            // 如果条件不存在，默认为真（宽松模式）
+            true
+        }
+    }
+    
+    /// 验证关键路径时间预算
+    async fn validate_critical_path_timing(&self, plan: &ExecutionPlan) -> bool {
+        // 简单的关键路径计算：所有步骤的最大预估时间总和
+        let total_estimated_time: u64 = plan.steps.iter()
+            .map(|step| step.estimated_duration)
+            .sum();
+        
+        // 检查是否超过剩余时间预算（使用配置的最大执行时间）
+        let remaining_budget = self.config.max_total_execution_time / 1000; // 转换为秒
+        
+        if total_estimated_time > remaining_budget {
+            log::warn!("关键路径预估时间 {}s 超过剩余预算 {}s", 
+                      total_estimated_time, remaining_budget);
+            return false;
+        }
+        
+        true
+    }
+    
+    /// 反馈驱动的策略调整
+    async fn apply_feedback_driven_adjustments(&self, execution_result: &mut ExecutionResult) {
+        log::info!("=== 反馈驱动策略调整 ===");
+        
+        let quality_score = execution_result.enhanced_feedback.quality_assessment.overall_score;
+        log::info!("当前质量分数: {:.2}", quality_score);
+        
+        // 策略调整1: 基于质量分数动态调整错误处理策略
+        if (quality_score as f64) < self.config.quality_threshold {
+            log::info!("质量分数低于阈值 ({:.2} < {:.2}), 调整错误处理策略", 
+                      quality_score, self.config.quality_threshold);
+            
+            // 记录策略调整建议到增强反馈中
+            execution_result.enhanced_feedback.improvement_suggestions.push(
+                "建议调整错误处理策略: 从严格模式改为容错模式以提高完成率".to_string()
+            );
+            
+            // 检查资源使用情况
+            if execution_result.enhanced_feedback.resource_analysis.cpu_usage.utilization_rate > 0.8 {
+                execution_result.enhanced_feedback.improvement_suggestions.push(
+                    format!("检测到 CPU 使用率过高 ({:.1}%), 建议降低并发执行数", 
+                           execution_result.enhanced_feedback.resource_analysis.cpu_usage.utilization_rate * 100.0)
+                );
+            }
+        }
+        
+        // 策略调整2: 基于失败模式调整重试策略
+        let failure_ratio = execution_result.failed_steps.len() as f64 / 
+                           (execution_result.completed_steps.len() + execution_result.failed_steps.len()) as f64;
+        
+        if failure_ratio > 0.3 {
+            log::info!("失败率过高 ({:.1}%), 建议调整重试策略", failure_ratio * 100.0);
+            execution_result.enhanced_feedback.improvement_suggestions.push(
+                format!("失败率过高 ({:.1}%), 建议增加重试次数或调整超时设置", failure_ratio * 100.0)
+            );
+        }
+        
+        // 策略调整3: 基于性能指标调整超时设置
+        let avg_duration = execution_result.metrics.avg_step_duration_ms;
+        let timeout_ms = self.config.default_timeout * 1000;
+        
+        if avg_duration > timeout_ms / 2 {
+            log::info!("平均步骤耗时较长 ({}ms), 建议调整超时设置", avg_duration);
+            execution_result.enhanced_feedback.improvement_suggestions.push(
+                format!("平均步骤耗时 {}ms 接近超时限制, 建议增加超时时间或优化步骤", avg_duration)
+            );
+        }
+        
+        // 策略调整4: 基于错误类型调整工具选择
+        let tool_errors = execution_result.errors.iter()
+            .filter(|e| matches!(e.error_type, crate::engines::types::ErrorType::Tool))
+            .count();
+        
+        if tool_errors > 0 {
+            execution_result.enhanced_feedback.improvement_suggestions.push(
+                format!("检测到 {} 个工具相关错误, 建议检查工具配置或选择备选工具", tool_errors)
+            );
+        }
+        
+        log::info!("策略调整完成，生成 {} 条改进建议", 
+                  execution_result.enhanced_feedback.improvement_suggestions.len());
+    }
+    
+    /// 更新记忆管理器中的执行结果
+    async fn update_memory_with_execution_results(
+        &self, 
+        task: &TaskRequest, 
+        plan: &ExecutionPlan, 
+        execution_result: &ExecutionResult
+    ) {
+        if let Some(ref memory_manager) = self.memory_manager {
+            log::info!("更新记忆管理器中的执行结果");
+            
+            // 构建执行摘要
+            let execution_summary = format!(
+                "Task: {} | Plan: {} | Status: {:?} | Completed: {}/{} steps | Duration: {}ms",
+                task.name,
+                plan.name,
+                execution_result.status,
+                execution_result.completed_steps.len(),
+                execution_result.completed_steps.len() + execution_result.failed_steps.len(),
+                execution_result.metrics.total_duration_ms
+            );
+            
+            // 简化的记忆更新：存储执行摘要作为通用记忆条目
+            let memory_data = serde_json::json!({
+                "execution_summary": execution_summary,
+                "task_id": task.id,
+                "plan_id": plan.id,
+                "plan_name": plan.name,
+                "status": format!("{:?}", execution_result.status),
+                "completed_steps": execution_result.completed_steps.len(),
+                "failed_steps": execution_result.failed_steps.len(),
+                "total_duration_ms": execution_result.metrics.total_duration_ms,
+                "avg_step_duration_ms": execution_result.metrics.avg_step_duration_ms,
+                "quality_score": execution_result.enhanced_feedback.quality_assessment.overall_score
+            });
+            
+            // 使用通用的存储方法
+            match memory_manager.store(
+                crate::engines::plan_and_execute::memory_manager::MemoryEntryType::ExecutionState,
+                memory_data,
+                vec!["execution".to_string(), "plan_and_execute".to_string()],
+                crate::engines::plan_and_execute::types::Priority::Medium,
+                None
+            ).await {
+                Ok(_) => log::info!("执行结果记忆存储成功"),
+                Err(e) => log::warn!("存储执行结果记忆失败: {}", e),
+            }
+            
+            log::info!("记忆更新完成");
+        } else {
+            log::debug!("未配置记忆管理器，跳过记忆更新");
+        }
     }
 
     /// 计算两个计划的相似度
@@ -874,33 +1308,57 @@ impl Executor {
         let mut failed_steps = Vec::new();
         let mut errors = Vec::new();
         
-        // 逐步执行每个计划步骤
-        for (index, step) in plan.steps.iter().enumerate() {
-            log::info!("Agent执行步骤 {}/{}: {}", index + 1, plan.steps.len(), step.name);
+        // 检查是否有可并发执行的步骤
+        let (concurrent_steps, sequential_steps): (Vec<_>, Vec<_>) = plan.steps.iter()
+            .enumerate()
+            .partition(|(_, step)| self.can_execute_concurrently(step));
+        
+        // 创建并发控制信号量 (暂未使用，为未来真正的并发实现准备)
+        let _semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_steps as usize));
+        
+        // 并发执行可并发的工具调用步骤
+        if !concurrent_steps.is_empty() {
+            log::info!("检测到 {} 个可并发步骤，使用并发执行", concurrent_steps.len());
+            
+            // 为了简化实现，先串行执行但记录并发能力
+            for (index, step) in concurrent_steps {
+                log::info!("并发模式执行步骤 {}: {} (当前为串行实现)", index + 1, step.name);
+                
+                match self.execute_step(step, context).await {
+                    Ok(result) => {
+                        if result.status == StepStatus::Completed {
+                            completed_steps.push(step.id.clone());
+                        } else {
+                            failed_steps.push(step.id.clone());
+                        }
+                        step_results.insert(step.id.clone(), result);
+                    },
+                    Err(e) => {
+                        log::error!("并发步骤执行异常: {}: {}", step.name, e);
+                        failed_steps.push(step.id.clone());
+                        errors.push(ExecutionError {
+                            error_type: crate::engines::types::ErrorType::Tool,
+                            message: format!("并发步骤 '{}' 执行异常", step.name),
+                            details: Some(e.to_string()),
+                            error_code: None,
+                            retryable: true,
+                            timestamp: SystemTime::now(),
+                        });
+                    }
+                }
+            }
+        }
+        
+        // 串行执行其他步骤
+        for (index, step) in sequential_steps {
+            log::info!("Agent串行执行步骤 {}/{}: {}", index + 1, plan.steps.len(), step.name);
             
             // 调用Tools层执行具体步骤
             match self.execute_step(step, context).await {
                 Ok(result) => {
-                    self.emit_stream_message(UnifiedStreamMessage {
-                        execution_id: context.task_id.clone(),
-                        message_id: None,
-                        conversation_id: None,
-                        message_type: StreamMessageType::ToolUpdate,
-                        content_delta: None,
-                        tool_execution: Some(serde_json::json!({
-                            "id": &step.id,
-                            "name": &step.name,
-                            "status": &result.status,
-                            "result": &result.result_data,
-                            "error": &result.error,
-                            "started_at": result.started_at,
-                            "completed_at": result.completed_at,
-                        })),
-                        execution_plan: None,
-                        final_content: None,
-                        error: None,
-                        is_complete: false,
-                    });
+                    // 优先传递 step.tool_config 中的 tool_name 作为展示
+                    let _tool_name = step.tool_config.as_ref().map(|c| c.tool_name.as_str());
+                    // self.emit_tool_result(context, &step.name, &result, tool_name).await;
 
                     if result.status == StepStatus::Completed {
                         log::info!("✓ 步骤执行成功: {}", step.name);
@@ -937,7 +1395,19 @@ impl Executor {
                         timestamp: SystemTime::now(),
                     });
                     
-                    if matches!(self.config.execution_mode, ExecutionMode::Strict) {
+                    if {
+                        // 基于任务参数的严格模式覆盖
+                        let strict_mode_param = {
+                            let shared = context.shared_data.read().await;
+                            shared
+                                .get("task_parameters")
+                                .and_then(|v| v.as_object())
+                                .and_then(|m| m.get("execution_strict_mode"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                        };
+                        matches!(self.config.execution_mode, ExecutionMode::Strict) || strict_mode_param
+                    } {
                         break; // 严格模式下，异常就停止
                     }
                 }
@@ -945,7 +1415,19 @@ impl Executor {
         }
         
         // 构建执行结果
-        self.build_execution_result(start_time, step_results, errors).await
+        let mut execution_result = self.build_execution_result(start_time, step_results, errors).await?;
+        
+        // 反馈驱动的策略调整
+        self.apply_feedback_driven_adjustments(&mut execution_result).await;
+        
+        Ok(execution_result)
+    }
+    
+    /// 判断步骤是否可以并发执行
+    fn can_execute_concurrently(&self, step: &ExecutionStep) -> bool {
+        // 只有工具调用类型且标记为可并发的步骤才能并发执行
+        matches!(step.step_type, StepType::ToolCall | StepType::Parallel) &&
+        step.parameters.get("concurrent").and_then(|v| v.as_bool()).unwrap_or(false)
     }
 
     /// 带重新规划支持的执行方法
@@ -998,38 +1480,75 @@ impl Executor {
         self.build_execution_result(start_time, step_results.clone(), errors.clone()).await
     }
 
-    /// 判断是否应该触发重新规划
+    /// 统一的重新规划判定函数（聚合多种信号）
     async fn should_trigger_replan(
         &self,
         execution_result: &ExecutionResult,
         current_attempts: u32,
         max_attempts: u32,
     ) -> bool {
+        log::info!("=== 统一重新规划判定 ===");
+        
         // 如果已达到最大重试次数，不再重新规划
         if current_attempts >= max_attempts {
+            log::info!("已达到最大重新规划次数 ({}/{}), 不再重新规划", current_attempts, max_attempts);
             return false;
         }
         
         // 如果执行成功，不需要重新规划
         if matches!(execution_result.status, TaskStatus::Completed) {
+            log::info!("执行状态为完成，不需要重新规划");
             return false;
         }
         
-        // 如果有失败的步骤，考虑重新规划
-        if !execution_result.failed_steps.is_empty() {
-            return true;
-        }
+        let mut replan_signals = Vec::new();
         
-        // 检查是否有严重错误
-        if !execution_result.errors.is_empty() {
-            for error in &execution_result.errors {
-                if error.retryable {
-                    return true;
-                }
+        // 信号1: 失败步骤检查
+        if !execution_result.failed_steps.is_empty() {
+            let failed_ratio = execution_result.failed_steps.len() as f64 / 
+                              (execution_result.completed_steps.len() + execution_result.failed_steps.len()) as f64;
+            if failed_ratio > 0.3 {  // 失败率超过30%
+                replan_signals.push(format!("失败步骤过多: {:.1}%", failed_ratio * 100.0));
             }
         }
         
-        false
+        // 信号2: 可重试错误检查
+        let retryable_errors = execution_result.errors.iter()
+            .filter(|e| e.retryable)
+            .count();
+        if retryable_errors > 0 {
+            replan_signals.push(format!("存在 {} 个可重试错误", retryable_errors));
+        }
+        
+        // 信号3: 质量评估信号（来自增强反馈）
+        let quality_score = execution_result.enhanced_feedback.quality_assessment.overall_score;
+        if (quality_score as f64) < self.config.quality_threshold {
+            replan_signals.push(format!("质量分数过低: {:.2} < {:.2}", 
+                                      quality_score, self.config.quality_threshold));
+        }
+        
+        // 信号4: 性能信号（平均步骤时间过长）
+        let avg_duration = execution_result.metrics.avg_step_duration_ms;
+        if avg_duration > self.config.default_timeout * 1000 / 2 {  // 超过超时时间的一半
+            replan_signals.push(format!("平均步骤耗时过长: {}ms", avg_duration));
+        }
+        
+        // 信号5: 资源使用信号（来自增强反馈）
+        if execution_result.enhanced_feedback.resource_analysis.cpu_usage.utilization_rate > 0.8 {
+            replan_signals.push(format!("CPU资源使用率过高: {:.1}%", 
+                                      execution_result.enhanced_feedback.resource_analysis.cpu_usage.utilization_rate * 100.0));
+        }
+        
+        // 判定结果
+        let should_replan = !replan_signals.is_empty();
+        
+        if should_replan {
+            log::info!("决定重新规划，触发信号: {:?}", replan_signals);
+        } else {
+            log::info!("无重新规划信号，继续当前计划");
+        }
+        
+        should_replan
     }
 
     /// 执行单个步骤
@@ -1053,18 +1572,32 @@ impl Executor {
                     
                     // 将步骤执行结果存储到共享数据中，以便后续步骤可以访问
                     let mut shared_data = context.shared_data.write().await;
-                    shared_data.insert(format!("step_result_{}", step.id), result.clone());
+                    // shared_data.insert(format!("step_result_{}", step.id), result.clone());
                     shared_data.insert(format!("step_result_{}", step.name), result.clone());
+                    
+                    // 验证后置条件
+                    let mut step_status = StepStatus::Completed;
+                    let mut step_error = None;
+                    
+                    for postcondition in &step.postconditions {
+                        if !self.evaluate_condition(postcondition, &shared_data).await {
+                            log::warn!("步骤 '{}' 的后置条件 '{}' 验证失败", step.name, postcondition);
+                            step_status = StepStatus::Failed;
+                            step_error = Some(format!("后置条件验证失败: {}", postcondition));
+                            break;
+                        }
+                    }
+                    
                     drop(shared_data);
                     
                     return Ok(StepResult {
                         step_id: step.id.clone(),
-                        status: StepStatus::Completed,
+                        status: step_status,
                         started_at: start_time,
                         completed_at: Some(SystemTime::now()),
                         duration_ms: start_time.elapsed().unwrap_or_default().as_millis() as u64,
                         result_data: Some(result.clone()),
-                        error: None,
+                        error: step_error,
                         retry_count,
                         tool_result: None,
                     });
@@ -1072,12 +1605,35 @@ impl Executor {
                 Err(error) => {
                     retry_count += 1;
                     
-                    if retry_count <= step.retry_config.max_retries {
+                    // 基于任务参数覆盖重试配置
+                    let effective_retry = {
+                        let shared = context.shared_data.read().await;
+                        let mut cfg = step.retry_config.clone();
+                        if let Some(params) = shared.get("task_parameters").and_then(|v| v.as_object()) {
+                            if let Some(maxv) = params.get("execution_retry_max").and_then(|v| v.as_u64()) {
+                                cfg.max_retries = maxv as u32;
+                            }
+                            if let Some(backoff) = params.get("execution_retry_backoff").and_then(|v| v.as_str()) {
+                                cfg.backoff_strategy = match backoff {
+                                    "fixed" => BackoffStrategy::Fixed,
+                                    "linear" => BackoffStrategy::Linear,
+                                    _ => BackoffStrategy::Exponential,
+                                };
+                            }
+                            if let Some(interval_ms) = params.get("execution_retry_interval_ms").and_then(|v| v.as_u64()) {
+                                let secs = std::cmp::max(1, (interval_ms / 1000) as u64);
+                                cfg.retry_interval = secs;
+                            }
+                        }
+                        cfg
+                    };
+
+                    if retry_count <= effective_retry.max_retries {
                         log::warn!("步骤执行失败，准备重试 ({}/{}): {}", 
-                                 retry_count, step.retry_config.max_retries, error);
+                                 retry_count, effective_retry.max_retries, error);
                         
                         // 等待重试间隔
-                        let delay = self.calculate_retry_delay(&step.retry_config, retry_count);
+                        let delay = self.calculate_retry_delay(&effective_retry, retry_count);
                         tokio::time::sleep(Duration::from_secs(delay)).await;
                         
                         continue;
@@ -1150,7 +1706,56 @@ impl Executor {
         plan: &ExecutionPlan,
         task: &TaskRequest,
     ) -> Result<(), PlanAndExecuteError> {
-        let shared_data = Arc::new(RwLock::new(HashMap::new()));
+        let mut shared_data = HashMap::new();
+        
+        // 如果有内存管理器，从中构建上下文并加载到 shared_data
+        if let Some(ref memory_manager) = self.memory_manager {
+            log::info!("从 MemoryManager 构建Plan-and-Execute上下文");
+            
+            match memory_manager.build_plan_execute_context(&task.id).await {
+                Ok(context) => {
+                    // 添加会话历史到共享数据
+                    if let Some(ref history) = context.conversation_history {
+                        shared_data.insert(
+                            "conversation_history".to_string(),
+                            serde_json::to_value(history)
+                                .unwrap_or(serde_json::Value::Null)
+                        );
+                    }
+                    
+                    // 添加计划历史到共享数据
+                    if let Some(ref history) = context.plan_history {
+                        shared_data.insert(
+                            "plan_history".to_string(),
+                            serde_json::to_value(history)
+                                .unwrap_or(serde_json::Value::Null)
+                        );
+                    }
+                    
+                    // 添加任务全状态到共享数据
+                    if let Some(full_state) = context.full_state {
+                        shared_data.insert(
+                            "task_full_state".to_string(),
+                            serde_json::to_value(&full_state)
+                                .unwrap_or(serde_json::Value::Null)
+                        );
+                    }
+                    
+                    log::info!("成功加载内存上下文: {} 项历史数据", shared_data.len());
+                },
+                Err(e) => {
+                    log::warn!("构建Plan-and-Execute上下文失败，继续使用空上下文: {}", e);
+                }
+            }
+        }
+        
+        // 注入任务参数到共享上下文，供统一提示词解析使用
+        shared_data.insert(
+            "task_parameters".to_string(),
+            serde_json::to_value(&task.parameters).unwrap_or_else(|_| serde_json::json!({}))
+        );
+
+        let shared_data = Arc::new(RwLock::new(shared_data));
         let execution_state = Arc::new(RwLock::new(ExecutionState {
             current_steps: HashMap::new(),
             completed_steps: Vec::new(),
@@ -1175,91 +1780,7 @@ impl Executor {
         Ok(())
     }
 
-    async fn execute_strict_mode(
-        &self,
-        plan: &ExecutionPlan,
-        step_results: &mut HashMap<String, StepResult>,
-        _errors: &mut Vec<ExecutionError>,
-    ) -> Result<(), PlanAndExecuteError> {
-        let context_guard = self.context.lock().await;
-        let context = context_guard.as_ref().unwrap();
-        
-        for step in &plan.steps {
-            let result = self.execute_step(step, context).await?;
-            
-            if result.status == StepStatus::Failed {
-                step_results.insert(step.id.clone(), result);
-                return Err(PlanAndExecuteError::ExecutionFailed(
-                    format!("步骤 '{}' 执行失败，严格模式下停止执行", step.name)
-                ));
-            }
-            
-            step_results.insert(step.id.clone(), result);
-        }
-        
-        Ok(())
-    }
 
-    async fn execute_tolerant_mode(
-        &self,
-        plan: &ExecutionPlan,
-        step_results: &mut HashMap<String, StepResult>,
-        errors: &mut Vec<ExecutionError>,
-    ) -> Result<(), PlanAndExecuteError> {
-        let context_guard = self.context.lock().await;
-        let context = context_guard.as_ref().unwrap();
-        
-        for step in &plan.steps {
-            let result = self.execute_step(step, context).await?;
-            
-            if result.status == StepStatus::Failed {
-                log::warn!("步骤 '{}' 执行失败，容错模式下跳过并继续", step.name);
-                errors.push(ExecutionError {
-                    error_type: crate::engines::types::ErrorType::Tool,
-                    message: format!("步骤 '{}' 执行失败", step.name),
-                    details: result.error.clone(),
-                    error_code: None,
-                    retryable: false,
-                    timestamp: SystemTime::now(),
-                });
-            }
-            
-            step_results.insert(step.id.clone(), result);
-        }
-        
-        Ok(())
-    }
-
-    async fn execute_best_effort_mode(
-        &self,
-        plan: &ExecutionPlan,
-        step_results: &mut HashMap<String, StepResult>,
-        errors: &mut Vec<ExecutionError>,
-    ) -> Result<(), PlanAndExecuteError> {
-        let context_guard = self.context.lock().await;
-        let context = context_guard.as_ref().unwrap();
-        
-        // 按顺序执行步骤
-        for step in &plan.steps {
-            let result = self.execute_step(step, context).await?;
-            
-            if result.status == StepStatus::Failed {
-                log::warn!("步骤 '{}' 执行失败，最佳努力模式下记录错误并继续", step.name);
-                errors.push(ExecutionError {
-                    error_type: crate::engines::types::ErrorType::Tool,
-                    message: format!("步骤 '{}' 执行失败", step.name),
-                    details: result.error.clone(),
-                    error_code: None,
-                    retryable: false,
-                    timestamp: SystemTime::now(),
-                });
-            }
-            
-            step_results.insert(step.id.clone(), result);
-        }
-        
-        Ok(())
-    }
 
     async fn execute_step_once(
         &self,
@@ -1321,6 +1842,39 @@ impl Executor {
         context: &ExecutionContext,
     ) -> Result<serde_json::Value, PlanAndExecuteError> {
         if let Some(tool_config) = &step.tool_config {
+            // 读取任务参数中的工具白名单/黑名单与超时设置
+            let (allow_list, deny_list, default_timeout_opt) = {
+                let shared = context.shared_data.read().await;
+                if let Some(params) = shared.get("task_parameters").and_then(|v| v.as_object()) {
+                    let allow = params
+                        .get("tools_allow")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    let deny = params
+                        .get("tools_deny")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    let tmo = params.get("execution_timeout_sec").and_then(|v| v.as_u64());
+                    (allow, deny, tmo)
+                } else { (Vec::new(), Vec::new(), None) }
+            };
+
+            // 工具允许性检查
+            let tool_name = &tool_config.tool_name;
+            // 如果没有白名单（空数组），则不允许任何工具
+            if allow_list.is_empty() {
+                return Err(PlanAndExecuteError::ToolFailed(format!("工具 '{}' 不在允许列表中（未配置工具权限）", tool_name)));
+            }
+            // 如果有白名单且工具不在白名单中，拒绝
+            if !allow_list.iter().any(|n| n == tool_name) {
+                return Err(PlanAndExecuteError::ToolFailed(format!("工具 '{}' 不在允许列表中", tool_name)));
+            }
+            // 如果工具在黑名单中，拒绝
+            if deny_list.iter().any(|n| n == tool_name) {
+                return Err(PlanAndExecuteError::ToolFailed(format!("工具 '{}' 被禁止使用", tool_name)));
+            }
             // 合并工具参数（以步骤参数为优先，覆盖tool_args）
             let mut merged_inputs = tool_config.tool_args.clone();
             for (k, v) in &step.parameters { merged_inputs.insert(k.clone(), v.clone()); }
@@ -1328,77 +1882,68 @@ impl Executor {
             let tool_params = ToolExecutionParams {
                 inputs: merged_inputs,
                 context: HashMap::new(),
-                timeout: Some(std::time::Duration::from_secs(tool_config.timeout.unwrap_or(self.config.default_timeout))),
+                timeout: Some(std::time::Duration::from_secs(
+                    tool_config
+                        .timeout
+                        .or(default_timeout_opt.map(|v| v as u64))
+                        .unwrap_or(self.config.default_timeout)
+                )),
                 execution_id: None,
             };
             
             let timeout_duration = Duration::from_secs(
-                tool_config.timeout.unwrap_or(self.config.default_timeout)
+                tool_config
+                    .timeout
+                    .or(default_timeout_opt.map(|v| v as u64))
+                    .unwrap_or(self.config.default_timeout)
             );
             
             let manager = context.tool_manager.read().await;
             match timeout(timeout_duration, manager.call_tool(&tool_config.tool_name, tool_params)).await {
                 Ok(Ok(result)) => {
-                    self.emit_stream_message(UnifiedStreamMessage {
-                        execution_id: context.task_id.clone(),
-                        message_id: None,
-                        conversation_id: None,
-                        message_type: StreamMessageType::ToolUpdate,
-                        content_delta: None,
-                        tool_execution: Some(serde_json::json!({
-                            "id": &step.id,
-                            "name": &step.name,
-                            "status": &result.status,
-                            "result": &result.output,
-                            "is_error": result.status != ExecutionStatus::Completed,
-                        })),
-                        execution_plan: None,
-                        final_content: None,
-                        error: None,
-                        is_complete: false,
-                    });
+                    let tool_result_content = if result.status == ExecutionStatus::Completed {
+                        // 尝试多种方式提取工具执行结果
+                        if let Some(output_field) = result.output.get("output") {
+                            // 如果有 output 字段，使用它
+                            serde_json::to_string_pretty(output_field).unwrap_or_else(|_| output_field.to_string())
+                        } else if result.output.is_string() {
+                            // 如果整个 output 就是字符串
+                            result.output.as_str().unwrap_or("").to_string()
+                        } else {
+                            // 否则格式化整个 output 对象
+                            serde_json::to_string_pretty(&result.output).unwrap_or_else(|_| result.output.to_string())
+                        }
+                    } else {
+                        // 执行失败时的错误处理
+                        if let Some(error_msg) = result.output.as_str() {
+                            error_msg.to_string()
+                        } else {
+                            format!("工具执行失败: {}", serde_json::to_string(&result.output).unwrap_or("未知错误".to_string()))
+                        }
+                    };
+                    
+                    let execution_id = self.resolve_execution_id(context).await;
+                    let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+                    self.emit_message_chunk(
+                        &execution_id,
+                        &message_id,
+                        conversation_id.as_deref(),
+                        ChunkType::ToolResult,
+                        &tool_result_content,
+                        false,
+                        Some("executor"),
+                        Some(tool_config.tool_name.as_str()),
+                    );
                     Ok(result.output)
                 },
                 Ok(Err(error)) => {
                     let err_msg = error.to_string();
-                    self.emit_stream_message(UnifiedStreamMessage {
-                        execution_id: context.task_id.clone(),
-                        message_id: None,
-                        conversation_id: None,
-                        message_type: StreamMessageType::ToolUpdate,
-                        content_delta: None,
-                        tool_execution: Some(serde_json::json!({
-                            "id": &step.id,
-                            "name": &step.name,
-                            "status": "Failed",
-                            "error": &err_msg,
-                        })),
-                        execution_plan: None,
-                        final_content: None,
-                        error: Some(err_msg.clone()),
-                        is_complete: false,
-                    });
+                    self.emit_error(context, &format!("工具 {} 执行失败: {}", step.name, err_msg)).await;
                     Err(PlanAndExecuteError::ToolFailed(err_msg))
                 },
                 Err(_) => {
                     let err_msg = "工具调用超时".to_string();
-                    self.emit_stream_message(UnifiedStreamMessage {
-                        execution_id: context.task_id.clone(),
-                        message_id: None,
-                        conversation_id: None,
-                        message_type: StreamMessageType::ToolUpdate,
-                        content_delta: None,
-                        tool_execution: Some(serde_json::json!({
-                            "id": &step.id,
-                            "name": &step.name,
-                            "status": "Failed",
-                            "error": &err_msg,
-                        })),
-                        execution_plan: None,
-                        final_content: None,
-                        error: Some(err_msg.clone()),
-                        is_complete: false,
-                    });
+                    self.emit_error(context, &format!("工具 {} 执行超时", step.name)).await;
                     Err(PlanAndExecuteError::ToolFailed(err_msg))
                 },
             }
@@ -1435,41 +1980,200 @@ impl Executor {
             }
         }
         
-        let prompt = if has_previous_results {
+        // RAG知识检索 - 根据步骤描述检索相关知识
+        let mut rag_context = String::new();
+        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+            log::info!("尝试为AI推理步骤检索RAG知识: {}", step.name);
+            
+            // 构建RAG查询请求
+            let rag_request = crate::rag::models::AssistantRagRequest {
+                query: format!("{} {}", step.name, step.description),
+                collection_id: None, // 使用默认集合
+                conversation_history: None,
+                top_k: Some(3), // 只检索最相关的3个文档块
+                use_mmr: Some(true),
+                mmr_lambda: Some(0.7),
+                similarity_threshold: Some(0.6), // 较低的阈值，允许更多相关内容
+                reranking_enabled: Some(false), // 任务模式下暂时不启用重排序
+                model_provider: None,
+                model_name: None,
+                max_tokens: None,
+                temperature: None,
+            };
+            
+            match rag_service.query_for_assistant(&rag_request).await {
+                Ok((knowledge_context, citations)) => {
+                    if !knowledge_context.is_empty() {
+                        rag_context = format!("\n\n=== 相关知识背景 ({} 个来源) ===\n{}", citations.len(), knowledge_context);
+                        log::info!("为步骤 '{}' 检索到 {} 个知识来源", step.name, citations.len());
+                    } else {
+                        log::debug!("步骤 '{}' 未找到相关RAG知识", step.name);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("RAG知识检索失败: {}, 继续执行AI推理", e);
+                }
+            }
+        } else {
+            log::debug!("RAG服务未初始化，跳过知识检索");
+        }
+        
+        // 统一提示词解析：优先显式模板ID，其次统一解析器
+        let executor_tpl_prompt = {
+            if let Some(tpl_id_val) = step.parameters.get("prompt_template_executor_id") {
+                if let Some(tpl_id) = tpl_id_val.as_i64() {
+                    if let Ok(pool) = self.db_service.get_pool() {
+                        let repo = PromptRepository::new(pool.clone());
+                        if let Ok(Some(tpl)) = repo.get_template(tpl_id).await { Some(tpl.content) } else { None }
+                    } else { None }
+                } else { None }
+            } else {
+                if let Ok(pool) = self.db_service.get_pool() {
+                    let repo = PromptRepository::new(pool.clone());
+                    let resolver = PromptResolver::new(repo);
+                    let params_map: std::collections::HashMap<String, serde_json::Value> =
+                        if let Some(val) = context.shared_data.read().await.get("task_parameters") {
+                            if let Some(obj) = val.as_object() {
+                                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                            } else { std::collections::HashMap::new() }
+                        } else { std::collections::HashMap::new() };
+                    let agent_config = AgentPromptConfig::parse_agent_config(&params_map);
+                    match resolver
+                        .resolve_prompt(&agent_config, ArchitectureType::PlanExecute, CanonicalStage::Executor, Some(&"".to_string()))
+                        .await {
+                        Ok(content) if !content.is_empty() => Some(content),
+                        _ => None,
+                    }
+                } else { None }
+            }
+        };
+
+        if executor_tpl_prompt.is_none() {
+            log::info!("Executor template prompt resolved as empty; using fallback prompt");
+        }
+
+        let user_prompt = if let Some(template) = executor_tpl_prompt {
+            // 渲染变量
+            if let Ok(pool) = self.db_service.get_pool() {
+                let repo = PromptRepository::new(pool.clone());
+                let resolver = PromptResolver::new(repo);
+                let _keys_str = if shared_keys.is_empty() { "(none)".to_string() } else { shared_keys.join(", ") };
+                let mut var_ctx: HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+                var_ctx.insert("plan".to_string(), serde_json::Value::String(step.name.clone()));
+                var_ctx.insert("current_step".to_string(), serde_json::Value::String(step.description.clone()));
+                var_ctx.insert("previous_results".to_string(), serde_json::Value::String(context_data.clone()));
+                resolver.render_variables(&template, &var_ctx).unwrap_or(template)
+            } else {
+                template
+            }
+        } else if has_previous_results || !rag_context.is_empty() {
             format!(
-                "You are an expert reasoning module.\n\nStep: {step_name}\nDescription: {desc}\nParameters: {params}\n\nPrevious step results:{context}\n\nTask: Analyze the provided data and results from previous steps to provide a concise reasoning outcome. Use the data to generate meaningful insights for the user. Return plain text.",
+                "You are an expert reasoning module.\n\nStep: {step_name}\nDescription: {desc}\nParameters: {params}{rag_knowledge}\n\nPrevious step results:{context}\n\nTask: Analyze the provided data and results from previous steps{rag_instruction} to provide a concise reasoning outcome. Use the data to generate meaningful insights for the user. Return plain text.",
                 step_name = step.name,
                 desc = step.description,
                 params = params_str,
-                context = context_data
+                rag_knowledge = rag_context,
+                context = context_data,
+                rag_instruction = if !rag_context.is_empty() { " and relevant knowledge background" } else { "" }
             )
         } else {
             format!(
-                "You are an expert reasoning module.\n\nStep: {step_name}\nDescription: {desc}\nParameters: {params}\nShared context keys: {keys}\n\nTask: Provide a concise reasoning outcome. If applicable, produce actionable insights for subsequent steps. Return plain text.",
+                "You are an expert reasoning module.\n\nStep: {step_name}\nDescription: {desc}\nParameters: {params}{rag_knowledge}\nShared context keys: {keys}\n\nTask: Provide a concise reasoning outcome{rag_instruction}. If applicable, produce actionable insights for subsequent steps. Return plain text.",
                 step_name = step.name,
                 desc = step.description,
                 params = params_str,
-                keys = if shared_keys.is_empty() { "(none)".to_string() } else { shared_keys.join(", ") }
+                rag_knowledge = rag_context,
+                keys = if shared_keys.is_empty() { "(none)".to_string() } else { shared_keys.join(", ") },
+                rag_instruction = if !rag_context.is_empty() { " based on the provided knowledge background" } else { "" }
             )
         };
 
+        
+
         // 获取AI服务
         let ai_service = if let Some(ref ai_service_manager) = self.ai_service_manager {
-            // 解析执行阶段应使用的provider与model：优先调度器Execution -> 调度器Planning -> 本地配置
-            let (provider_name, model_name) = match ai_service_manager.get_ai_config_for_stage(SchedulerStage::Execution).await {
-                Ok(Some(cfg)) => {
-                    log::info!("Using scheduler Execution config: {} ({})", cfg.model, cfg.provider);
-                    (cfg.provider, cfg.model)
+            // 解析执行阶段应使用的provider与model：优先Agent覆盖 -> 调度器Execution -> 调度器Planning -> 本地配置
+            let (provider_name, model_name) = {
+                let shared = context.shared_data.read().await;
+                let (mut p, mut m): (Option<String>, Option<String>) = (None, None);
+                
+                // 1. 尝试Agent LLM覆盖
+                if let Some(params) = shared.get("task_parameters").and_then(|v| v.as_object()) {
+                    if let Some(llm) = params.get("llm").and_then(|v| v.get("default")) {
+                        let provider_str = llm.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                        let model_str = llm.get("model").and_then(|v| v.as_str()).unwrap_or("");
+                        
+                        // 跳过 "auto" 配置，让调度器配置生效
+                        if model_str != "auto" && !model_str.trim().is_empty() {
+                            p = if provider_str != "auto" && !provider_str.trim().is_empty() {
+                                Some(provider_str.to_string())
+                            } else {
+                                None
+                            };
+                            m = Some(model_str.to_string());
+                            log::info!("Using Agent LLM override - Model: {}, Provider: {:?}", model_str, p);
+                        } else {
+                            log::info!("Agent LLM config is 'auto' or empty, skipping to scheduler config");
+                        }
+                    }
                 }
-                _ => {
-                    match ai_service_manager.get_ai_config_for_stage(SchedulerStage::Planning).await {
+                
+                if let Some(model) = m.clone() {
+                    (p.unwrap_or_else(|| "".to_string()), model)
+                } else {
+                    // 2. 尝试调度器Execution阶段配置
+                    match ai_service_manager.get_ai_config_for_stage(SchedulerStage::Execution).await {
                         Ok(Some(cfg)) => {
-                            log::info!("Falling back to scheduler Planning config: {} ({})", cfg.model, cfg.provider);
+                            log::info!("Using scheduler Execution config - Model: {}, Provider: {}", cfg.model, cfg.provider);
                             (cfg.provider, cfg.model)
                         }
-                        _ => {
-                            log::info!("Using local executor config: {} ({})", self.config.model_config.model_name, self.config.ai_provider);
-                            (self.config.ai_provider.clone(), self.config.model_config.model_name.clone())
+                        Ok(None) => {
+                            log::info!("Scheduler Execution config is empty, trying Planning config");
+                            // 3. 尝试调度器Planning阶段配置
+                            match ai_service_manager.get_ai_config_for_stage(SchedulerStage::Planning).await {
+                                Ok(Some(cfg)) => {
+                                    log::info!("Falling back to scheduler Planning config: {} ({})", cfg.model, cfg.provider);
+                                    (cfg.provider, cfg.model)
+                                }
+                                Ok(None) => {
+                                    log::info!("Scheduler Planning config is also empty, trying local executor config");
+                                    // 4. 回退到本地配置
+                                    log::info!("Local executor config - Model: '{}', Provider: '{}'", 
+                                              self.config.model_config.model_name, self.config.ai_provider);
+                                    
+                                    // 如果本地配置也是空的，返回一个明确的错误
+                                    if self.config.model_config.model_name.trim().is_empty() {
+                                        return Err(PlanAndExecuteError::ConfigError(
+                                            "无法找到可用的执行器模型配置。请在调度器设置中配置执行器模型，或在Agent配置中设置LLM覆盖。".to_string()
+                                        ));
+                                    }
+                                    (self.config.model_config.model_name.clone(), self.config.ai_provider.clone())
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to get scheduler Planning config: {}", e);
+                                    log::info!("Local executor config - Model: '{}', Provider: '{}'", 
+                                              self.config.model_config.model_name, self.config.ai_provider);
+                                    
+                                    if self.config.model_config.model_name.trim().is_empty() {
+                                        return Err(PlanAndExecuteError::ConfigError(
+                                            "无法找到可用的执行器模型配置。请在调度器设置中配置执行器模型，或在Agent配置中设置LLM覆盖。".to_string()
+                                        ));
+                                    }
+                                    (self.config.model_config.model_name.clone(), self.config.ai_provider.clone())
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to get scheduler Execution config: {}", e);
+                            log::info!("Local executor config - Model: '{}', Provider: '{}'", 
+                                      self.config.model_config.model_name, self.config.ai_provider);
+                            
+                            if self.config.model_config.model_name.trim().is_empty() {
+                                return Err(PlanAndExecuteError::ConfigError(
+                                    "无法找到可用的执行器模型配置。请在调度器设置中配置执行器模型，或在Agent配置中设置LLM覆盖。".to_string()
+                                ));
+                            }
+                            (self.config.model_config.model_name.clone(), self.config.ai_provider.clone())
                         }
                     }
                 }
@@ -1479,18 +2183,23 @@ impl Executor {
                 return Err(PlanAndExecuteError::ConfigError("Executor model is empty; please configure scheduler or executor.model_config.model_name".to_string()));
             }
 
-            // 获取AI服务
-            match ai_service_manager.find_service_by_provider_and_model(&provider_name, &model_name).await {
+            // 优先按模型查找服务
+            match ai_service_manager.find_service_by_model(&model_name).await {
                 Ok(Some(service)) => service,
-                Ok(None) => {
-                    return Err(PlanAndExecuteError::AiAdapterError(format!(
-                        "无法找到提供商 '{}' 的模型 '{}'", provider_name, model_name
-                    )));
-                },
-                Err(e) => {
-                    return Err(PlanAndExecuteError::AiAdapterError(format!(
-                        "查找AI服务失败: {}", e
-                    )));
+                _ => {
+                    match ai_service_manager.find_service_by_provider_and_model(&provider_name, &model_name).await {
+                        Ok(Some(service)) => service,
+                        Ok(None) => {
+                            return Err(PlanAndExecuteError::AiAdapterError(format!(
+                                "无法找到提供商 '{}' 的模型 '{}'", provider_name, model_name
+                            )));
+                        },
+                        Err(e) => {
+                            return Err(PlanAndExecuteError::AiAdapterError(format!(
+                                "查找AI服务失败: {}", e
+                            )));
+                        }
+                    }
                 }
             }
         } else {
@@ -1499,44 +2208,23 @@ impl Executor {
             ));
         };
         
+
         // 使用流式消息API发送请求
-        let execution_id = context.task_id.clone();
+        // 绑定到前端该次助手消息ID，确保chunk落到正确消息上
+        let (bound_message_id, _conv_id_opt) = self.resolve_message_and_conversation_ids(context).await;
+        let content = ai_service
+            .send_message_stream(
+                Some(&user_prompt),
+                None, // 系统提示
+                None, // 不指定会话ID，保持无状态
+                Some(bound_message_id.clone()), // 消息ID用于前端显示
+                true,
+                false,
+                Some(ChunkType::Content),
+            )
+            .await
+            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
         
-        // 使用send_message_stream发送请求
-        let content = ai_service.send_message_stream(
-            &prompt, 
-            None, // 系统提示
-            Some(execution_id.clone()), // 会话ID
-            Some(execution_id.clone()), // 消息ID
-        ).await.map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
-        
-        // 发送最终内容通知
-        self.emit_stream_message(UnifiedStreamMessage {
-            execution_id: context.task_id.clone(),
-            message_id: None,
-            conversation_id: None,
-            message_type: StreamMessageType::FinalResult,
-            content_delta: None,
-            tool_execution: None,
-            execution_plan: None,
-            final_content: Some(content.clone()),
-            error: None,
-            is_complete: true,
-        });
-
-        self.emit_stream_message(UnifiedStreamMessage {
-            execution_id: context.task_id.clone(),
-            message_id: None,
-            conversation_id: None,
-            message_type: StreamMessageType::Content,
-            content_delta: None,
-            tool_execution: None,
-            execution_plan: None,
-            final_content: Some(content.clone()),
-            error: None,
-            is_complete: true,
-        });
-
         Ok(serde_json::json!({
             "reasoning_result": content,
             "step_name": step.name
@@ -2230,7 +2918,7 @@ impl Executor {
                         .unwrap_or_else(|| format!("step_{}", s.name)),
                     tool_version: None,
                     tool_args: s.parameters.clone(),
-                    timeout: Some(self.config.default_timeout as u64),
+                    timeout: Some(self.config.default_timeout as f64),
                     env_vars: std::collections::HashMap::new(),
                 },
                 estimated_duration: s.estimated_duration,
@@ -2273,9 +2961,9 @@ impl Executor {
             completed_at: Some(SystemTime::now()),
             current_step: Some(result.completed_steps.len() as i32),
             progress: if plan.steps.is_empty() { 
-                100.0 
+                100
             } else { 
-                (result.completed_steps.len() as f32 / plan.steps.len() as f32) * 100.0 
+                (result.completed_steps.len() as f32 / plan.steps.len() as f32) as u32
             },
             context: crate::engines::types::ExecutionContext {
                 user_id: None,
@@ -2368,6 +3056,11 @@ impl Default for ExecutorConfig {
                 max_tokens: 2000,
                 top_p: 0.9,
             },
+            max_replan_attempts: 2,
+            max_total_execution_time: 30 * 60 * 1000, // 30分钟
+            max_consecutive_failures: 1,
+            plan_similarity_threshold: 0.9,
+            quality_threshold: 0.7,
         }
     }
 }

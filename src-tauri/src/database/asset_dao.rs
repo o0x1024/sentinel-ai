@@ -147,7 +147,7 @@ impl AssetDao {
 
         if let Some(confidence) = request.confidence {
             if has_updates { query_builder.push(", "); }
-            query_builder.push("confidence = ").push_bind(confidence);
+            query_builder.push("confidence = ").push_bind(confidence as f64);
             has_updates = true;
         }
 
@@ -355,7 +355,7 @@ impl AssetDao {
         for row in type_rows {
             let asset_type: String = row.try_get(0)?;
             let count: i64 = row.try_get(1)?;
-            by_type.insert(asset_type, count as u64);
+            by_type.insert(asset_type, count as f64);
         }
 
         // 按状态统计
@@ -366,7 +366,7 @@ impl AssetDao {
         for row in status_rows {
             let status: String = row.try_get(0)?;
             let count: i64 = row.try_get(1)?;
-            by_status.insert(status, count as u64);
+            by_status.insert(status, count as f64);
         }
 
         // 按风险等级统计
@@ -377,7 +377,7 @@ impl AssetDao {
         for row in risk_rows {
             let risk_level: String = row.try_get(0)?;
             let count: i64 = row.try_get(1)?;
-            by_risk_level.insert(risk_level, count as u64);
+            by_risk_level.insert(risk_level, count as f64);
         }
 
         // 按来源统计
@@ -388,7 +388,7 @@ impl AssetDao {
         for row in source_rows {
             let source: String = row.try_get(0)?;
             let count: i64 = row.try_get(1)?;
-            by_source.insert(source, count as u64);
+            by_source.insert(source, count as f64);
         }
 
         // 最近24小时新增
@@ -406,13 +406,13 @@ impl AssetDao {
         .await?;
 
         Ok(AssetStats {
-            total_assets: total_assets as u64,
+            total_assets: total_assets as f64,
             by_type,
             by_status,
             by_risk_level,
             by_source,
-            recent_additions: recent_additions as u64,
-            stale_assets: stale_assets as u64,
+            recent_additions: recent_additions as f64,
+            stale_assets: stale_assets as f64,
         })
     }
 

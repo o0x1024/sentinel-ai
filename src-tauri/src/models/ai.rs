@@ -66,7 +66,7 @@ pub struct AiProviderConfig {
     pub enabled: bool,
     pub default_model: Option<String>,
     pub rate_limit: Option<RateLimit>,
-    pub timeout: Option<u64>,
+    pub timeout: Option<f64>,
     pub extra_headers: Option<HashMap<String, String>>,
 }
 
@@ -137,7 +137,7 @@ pub struct AiToolCall {
     pub result: Option<serde_json::Value>,
     pub error: Option<String>,
     pub timestamp: DateTime<Utc>,
-    pub execution_time: Option<u64>,
+    pub execution_time: Option<f64>,
 }
 
 /// AI 角色

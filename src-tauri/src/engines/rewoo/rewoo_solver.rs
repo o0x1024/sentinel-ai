@@ -7,7 +7,8 @@ use crate::ai_adapter::types::{ChatRequest, Message, MessageRole};
 use crate::ai_adapter::{AiProvider, ChatOptions};
 use std::sync::Arc;
 use crate::services::prompt_db::PromptRepository;
-use crate::models::prompt::{ArchitectureType, StageType};
+use crate::models::prompt::ArchitectureType;
+use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
 
 /// ReWOO Solver - 负责综合结果并生成最终答案
 pub struct ReWOOSolver {
@@ -16,6 +17,7 @@ pub struct ReWOOSolver {
     /// 配置
     config: SolverConfig,
     prompt_repo: Option<PromptRepository>,
+    runtime_params: Option<std::collections::HashMap<String, serde_json::Value>>, // 用于 prompt_ids 覆盖
 }
 
 impl ReWOOSolver {
@@ -29,7 +31,12 @@ impl ReWOOSolver {
             ai_provider,
             config,
             prompt_repo,
+            runtime_params: None,
         }
+    }
+    
+    pub fn set_runtime_params(&mut self, params: std::collections::HashMap<String, serde_json::Value>) {
+        self.runtime_params = Some(params);
     }
     
     /// 生成最终答案
@@ -50,24 +57,51 @@ impl ReWOOSolver {
         Ok(answer)
     }
     
-    /// 构建求解提示
+    /// 构建求解提示 - 支持任务域路由
     async fn build_solving_prompt(&self, state: &ReWOOState) -> Result<String, ReWOOError> {
-        // 构建执行计划字符串
+        // 首先推断任务域
+        let used_tools: Vec<String> = state.steps.iter()
+            .filter_map(|step| {
+                // 从步骤中提取工具名称
+                if let Some(start) = step.find(" = ") {
+                    if let Some(end) = step[start + 3..].find('[') {
+                        return Some(step[start + 3..start + 3 + end].to_string());
+                    }
+                }
+                None
+            })
+            .collect();
+            
+        let task_domain = TaskDomain::infer_from_task(&state.task, &used_tools);
+        log::info!("Inferred task domain: {:?} for task: {}", task_domain, state.task);
+        
+        // 根据任务域选择模板
+        self.build_domain_specific_prompt(state, &task_domain).await
+    }
+    
+    /// 构建领域特定的求解提示
+    async fn build_domain_specific_prompt(&self, state: &ReWOOState, domain: &TaskDomain) -> Result<String, ReWOOError> {
+        // 构建通用数据
         let execution_plan = state.steps.iter()
             .enumerate()
             .map(|(i, step)| format!("{}. {}", i + 1, step))
             .collect::<Vec<_>>()
             .join("\n");
 
-        // 构建执行结果字符串
         let execution_results = state.results.iter()
             .map(|(variable, result)| {
-                format!("**{}**: {}", variable, result)
+                let result_str = match result {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                        serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
+                    }
+                    _ => result.to_string(),
+                };
+                format!("**{}**: {}", variable, result_str)
             })
             .collect::<Vec<_>>()
             .join("\n");
 
-        // 构建执行统计
         let total_steps = state.steps.len();
         let completed_steps = state.results.len();
         let success_rate = if total_steps > 0 {
@@ -77,117 +111,43 @@ impl ReWOOSolver {
         };
         let execution_stats = format!("总步骤数: {}, 已完成: {}, 成功率: {}%", total_steps, completed_steps, success_rate);
 
-        // 默认的网络安全solver模板
-        let base_template = format!(r#"你是一名资深的网络安全分析师和报告撰写专家，负责综合分析所有安全测试结果并生成专业的安全评估报告。
+        // 根据任务域选择模板
+        let domain_template = match domain {
+            TaskDomain::CyberSecurity => self.build_security_template(state, &execution_plan, &execution_results, &execution_stats),
+            TaskDomain::DataAnalysis => self.build_data_analysis_template(state, &execution_plan, &execution_results, &execution_stats),
+            TaskDomain::QuestionAnswering => self.build_qa_template(state, &execution_plan, &execution_results, &execution_stats),
+            TaskDomain::ApiIntegration => self.build_api_template(state, &execution_plan, &execution_results, &execution_stats),
+            TaskDomain::InformationRetrieval => self.build_retrieval_template(state, &execution_plan, &execution_results, &execution_stats),
+            TaskDomain::ContentGeneration => self.build_content_template(state, &execution_plan, &execution_results, &execution_stats),
+            TaskDomain::General => self.build_general_template(state, &execution_plan, &execution_results, &execution_stats),
+        };
 
-**分析职责**:
-1. 整合所有工具扫描结果
-2. 识别关联性攻击路径
-3. 评估整体安全风险
-4. 提供专业的修复建议
-5. 生成符合行业标准的安全报告
-
-**分析框架**:
-- **资产发现**: 总结发现的数字资产
-- **攻击面分析**: 评估暴露的服务和端口
-- **漏洞分析**: 按严重程度分类漏洞
-- **风险评估**: 计算CVSS评分和业务影响
-- **攻击路径**: 分析可能的攻击链
-- **合规检查**: 对照安全标准和最佳实践
-
-**原始任务**: {task}
-
-**执行计划**:
-{execution_plan}
-
-**工具执行结果**:
-{execution_results}
-
-**执行统计**: {execution_stats}
-
-请基于以上测试结果生成综合安全评估报告，格式如下：
-
-## 安全评估报告
-
-### 执行摘要
-- 测试目标和范围
-- 发现的关键风险
-- 整体安全评级
-- 优先修复建议
-
-### 资产发现总结
-- 发现的子域名: X个
-- 开放端口服务: X个
-- Web应用程序: X个
-- 技术栈识别: 详细列表
-
-### 漏洞发现详情
-#### Critical级别漏洞 (数量: X)
-- 漏洞名称
-- 影响范围  
-- 技术细节
-- 利用复杂度
-- 修复建议
-
-#### High级别漏洞 (数量: X)
-[类似格式]
-
-#### Medium/Low级别漏洞
-[汇总描述]
-
-### 攻击路径分析
-基于发现的漏洞，分析可能的攻击场景和路径
-
-### 修复建议
-按优先级排序的具体修复措施
-
-### 合规性评估
-对照OWASP Top 10、CIS Controls等标准的符合情况
-
-**重要约束**:
-1. 基于执行结果提供的信息进行分析
-2. 如关键信息缺失，明确指出限制
-3. 提供具体的技术细节和证据
-4. 按风险等级对漏洞进行分类
-5. 生成专业、准确的安全评估报告
-6. 最大响应长度: {max_tokens} tokens
-
-请开始生成安全评估报告:"#, 
-            task = state.task,
-            execution_plan = execution_plan,
-            execution_results = execution_results,
-            execution_stats = execution_stats,
-            max_tokens = self.config.max_tokens
-        );
-
-        // 尝试获取动态prompt并应用占位符替换
+        // 统一提示词解析器：优先覆盖并支持用户配置
         if let Some(repo) = &self.prompt_repo {
-            match repo.get_active_prompt(ArchitectureType::ReWOO, StageType::Solver).await {
-                Ok(Some(dynamic)) => {
-                    let replaced = Self::apply_placeholders(&dynamic, vec![
-                        ("{{TASK}}", &state.task),
-                        ("{task}", &state.task),
-                        ("{{ORIGINAL_TASK}}", &state.task),
-                        ("{original_task}", &state.task),
-                        ("{{EXECUTION_PLAN}}", &execution_plan),
-                        ("{execution_plan}", &execution_plan),
-                        ("{{EXECUTION_RESULTS}}", &execution_results),
-                        ("{execution_results}", &execution_results),
-                        ("{{EXECUTION_STATS}}", &execution_stats),
-                        ("{execution_stats}", &execution_stats),
-                        ("{{MAX_TOKENS}}", &self.config.max_tokens.to_string()),
-                        ("{max_tokens}", &self.config.max_tokens.to_string()),
-                        ("{{ALL_RESULTS}}", &execution_results),
-                        ("{all_results}", &execution_results),
-                        ("{{PLAN_STEPS}}", &execution_plan),
-                        ("{plan_steps}", &execution_plan),
-                    ]);
-                    Ok(replaced)
-                },
-                _ => Ok(base_template),
-            }
+            let resolver = PromptResolver::new(repo.clone());
+            let empty: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+            let params_ref = self.runtime_params.as_ref().unwrap_or(&empty);
+            let agent_config = AgentPromptConfig::parse_agent_config(params_ref);
+
+            let template = resolver
+                .resolve_prompt(
+                    &agent_config,
+                    ArchitectureType::ReWOO,
+                    CanonicalStage::Evaluator,
+                    Some(&domain_template),
+                )
+                .await
+                .unwrap_or(domain_template.clone());
+
+            let replaced = Self::apply_placeholders(&template, vec![
+                ("{{TASK}}", &state.task), ("{task}", &state.task),
+                ("{{EXECUTION_PLAN}}", &execution_plan), ("{execution_plan}", &execution_plan),
+                ("{{EXECUTION_RESULTS}}", &execution_results), ("{execution_results}", &execution_results),
+                ("{{EXECUTION_STATS}}", &execution_stats), ("{execution_stats}", &execution_stats),
+            ]);
+            Ok(replaced)
         } else {
-            Ok(base_template)
+            Ok(domain_template)
         }
     }
 
@@ -205,7 +165,7 @@ impl ReWOOSolver {
         let request = ChatRequest {
             model: self.config.model_name.clone(),
             messages: vec![Message {
-                role: MessageRole::User,
+                role: MessageRole::System,
                 content: prompt.to_string(),
                 name: None,
                 tool_calls: None,
@@ -383,6 +343,166 @@ impl ReWOOSolver {
         }
         
         Ok(())
+    }
+    
+    /// 构建网络安全模板
+    fn build_security_template(&self, state: &ReWOOState, execution_plan: &str, execution_results: &str, execution_stats: &str) -> String {
+        format!(r#"你是一名资深的网络安全分析师和报告撰写专家，负责综合分析所有安全测试结果并生成专业的安全评估报告。
+
+**分析职责**:
+1. 整合所有工具扫描结果
+2. 识别关联性攻击路径
+3. 评估整体安全风险
+4. 提供专业的修复建议
+5. 生成符合行业标准的安全报告
+
+**原始任务**: {task}
+**执行计划**: {execution_plan}
+**工具执行结果**: {execution_results}
+**执行统计**: {execution_stats}
+
+请基于以上测试结果生成综合安全评估报告。"#, 
+            task = state.task,
+            execution_plan = execution_plan,
+            execution_results = execution_results,
+            execution_stats = execution_stats
+        )
+    }
+    
+    /// 构建数据分析模板
+    fn build_data_analysis_template(&self, state: &ReWOOState, execution_plan: &str, execution_results: &str, execution_stats: &str) -> String {
+        format!(r#"你是一名专业的数据分析师，擅长从复杂数据中提取洞察并生成清晰的分析报告。
+
+**分析任务**:
+1. 汇总和整理收集到的数据
+2. 识别数据模式和趋势
+3. 计算关键指标和统计数据
+4. 生成可视化建议
+5. 提供数据驱动的结论
+
+**原始任务**: {task}
+**执行计划**: {execution_plan}
+**数据收集结果**: {execution_results}
+**执行统计**: {execution_stats}
+
+请基于以上数据生成分析报告，包括：
+- 数据摘要
+- 关键发现
+- 趋势分析
+- 建议行动
+
+请开始分析："#,
+            task = state.task,
+            execution_plan = execution_plan,
+            execution_results = execution_results,
+            execution_stats = execution_stats
+        )
+    }
+    
+    /// 构建问答模板
+    fn build_qa_template(&self, state: &ReWOOState, execution_plan: &str, execution_results: &str, execution_stats: &str) -> String {
+        format!(r#"你是一个知识渊博的助手，根据执行的查询步骤为用户提供准确、全面的答案。
+
+**任务**: {task}
+
+**我执行了以下步骤来获取信息**:
+{execution_plan}
+
+**获得的信息**:
+{execution_results}
+
+**执行情况**: {execution_stats}
+
+请基于以上收集的信息，为原始问题提供一个清晰、准确、有用的答案。如果信息不足以完全回答问题，请明确指出限制并提供可能的建议。"#,
+            task = state.task,
+            execution_plan = execution_plan,
+            execution_results = execution_results,
+            execution_stats = execution_stats
+        )
+    }
+    
+    /// 构建 API 集成模板
+    fn build_api_template(&self, state: &ReWOOState, execution_plan: &str, execution_results: &str, execution_stats: &str) -> String {
+        format!(r#"你是一名 API 集成专家，帮助分析和总结 API 调用结果。
+
+**集成任务**: {task}
+**执行步骤**: {execution_plan}
+**API 响应结果**: {execution_results}
+**执行统计**: {execution_stats}
+
+请生成 API 集成总结报告，包括：
+- 成功的 API 调用概述
+- 返回数据的格式和内容分析
+- 错误处理情况
+- 集成建议和最佳实践"#,
+            task = state.task,
+            execution_plan = execution_plan,
+            execution_results = execution_results,
+            execution_stats = execution_stats
+        )
+    }
+    
+    /// 构建信息检索模板
+    fn build_retrieval_template(&self, state: &ReWOOState, execution_plan: &str, execution_results: &str, execution_stats: &str) -> String {
+        format!(r#"你是一名信息检索专家，帮助整理和总结搜索到的信息。
+
+**检索任务**: {task}
+**搜索策略**: {execution_plan}
+**检索结果**: {execution_results}
+**检索统计**: {execution_stats}
+
+请整理检索到的信息，生成结构化的总结报告：
+- 信息来源概述
+- 关键信息提取
+- 相关性评估
+- 推荐的后续查询方向"#,
+            task = state.task,
+            execution_plan = execution_plan,
+            execution_results = execution_results,
+            execution_stats = execution_stats
+        )
+    }
+    
+    /// 构建内容生成模板
+    fn build_content_template(&self, state: &ReWOOState, execution_plan: &str, execution_results: &str, execution_stats: &str) -> String {
+        format!(r#"你是一名内容创作专家，根据收集的素材生成高质量的内容。
+
+**创作任务**: {task}
+**素材收集过程**: {execution_plan}
+**收集的素材**: {execution_results}
+**收集统计**: {execution_stats}
+
+请基于以上素材生成符合要求的内容，确保：
+- 内容结构清晰
+- 信息准确可靠
+- 语言流畅自然
+- 符合目标受众需求"#,
+            task = state.task,
+            execution_plan = execution_plan,
+            execution_results = execution_results,
+            execution_stats = execution_stats
+        )
+    }
+    
+    /// 构建通用模板
+    fn build_general_template(&self, state: &ReWOOState, execution_plan: &str, execution_results: &str, execution_stats: &str) -> String {
+        format!(r#"请根据执行的步骤和结果，为用户的任务提供综合性的分析和总结。
+
+**任务**: {task}
+**执行计划**: {execution_plan}
+**执行结果**: {execution_results}
+**执行统计**: {execution_stats}
+
+请分析以上信息并生成：
+1. 任务执行摘要
+2. 关键发现和结果
+3. 可能的改进建议
+4. 总结性结论"#,
+            task = state.task,
+            execution_plan = execution_plan,
+            execution_results = execution_results,
+            execution_stats = execution_stats
+        )
     }
 }
 

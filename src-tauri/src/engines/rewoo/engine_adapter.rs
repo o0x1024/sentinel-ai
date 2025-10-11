@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use uuid::Uuid;
+use crate::utils::ordered_message::{ChunkType, emit_message_chunk};
 
 /// ReWOO引擎适配器 - 集成原有引擎逻辑
 pub struct ReWooEngine {
@@ -27,6 +28,8 @@ pub struct ReWooEngine {
     config: ReWOOConfig,
     sessions: HashMap<String, ReWOOSession>,
     ai_service_manager: Option<Arc<AiServiceManager>>,
+    runtime_params: Option<std::collections::HashMap<String, serde_json::Value>>,
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl ReWooEngine {
@@ -71,7 +74,7 @@ impl ReWooEngine {
             },
         };
 
-        Ok(Self { 
+        Ok(Self {
             engine_info,
             planner: None,
             worker: None,
@@ -79,6 +82,8 @@ impl ReWooEngine {
             config,
             sessions: HashMap::new(),
             ai_service_manager: None,
+            runtime_params: None,
+            app_handle: None,
         })
     }
     
@@ -121,11 +126,12 @@ impl ReWooEngine {
         let ai_provider = Self::get_ai_provider_from_service_manager(&ai_service_manager).await?;
         
         // 创建核心组件
-        let planner = match ReWOOPlanner::new(
+        let planner = match ReWOOPlanner::new_with_ai_service_manager(
             Arc::clone(&ai_provider),
             framework_adapter.clone(),
             config.planner.clone(),
             prompt_repo.clone(),
+            ai_service_manager.clone(),
         ) {
             Ok(p) => Some(p),
             Err(e) => {
@@ -145,7 +151,7 @@ impl ReWooEngine {
             prompt_repo.clone(),
         ));
 
-        Ok(Self { 
+        Ok(Self {
             engine_info,
             planner,
             worker,
@@ -153,7 +159,42 @@ impl ReWooEngine {
             config,
             sessions: HashMap::new(),
             ai_service_manager: Some(ai_service_manager),
+            runtime_params: None,
+            app_handle: None,
         })
+    }
+
+    pub fn set_runtime_params(&mut self, params: std::collections::HashMap<String, serde_json::Value>) {
+        self.runtime_params = Some(params.clone());
+        if let Some(planner) = &mut self.planner {
+            planner.set_runtime_params(params.clone());
+        }
+        if let Some(solver) = &mut self.solver {
+            solver.set_runtime_params(params);
+        }
+    }
+
+    /// 设置应用句柄用于发送消息
+    pub fn set_app_handle(&mut self, app_handle: tauri::AppHandle) {
+        self.app_handle = Some(app_handle);
+    }
+
+    /// 发送错误消息到前端
+    fn emit_error(&self, execution_id: &str, message_id: &str, conversation_id: Option<&str>, error_msg: &str) {
+        if let Some(ref app_handle) = self.app_handle {
+            let error_message = format!("ReWOO引擎执行失败: {}\n\n如需帮助，请检查执行配置或联系技术支持。", error_msg);
+            emit_message_chunk(
+                app_handle,
+                execution_id,
+                message_id,
+                conversation_id,
+                ChunkType::Error,
+                &error_message,
+                true,
+                Some("rewoo"),
+                None,
+            );
+        }
     }
     
     /// 从AI服务管理器获取AI provider
@@ -234,6 +275,7 @@ impl ExecutionEngine for ReWooEngine {
                 steps: Vec::new(),
                 results: HashMap::new(),
                 result: String::new(),
+                execution_trace: None,
             };
             
             // 使用planner生成计划
@@ -313,7 +355,7 @@ impl ReWooEngine {
     /// 执行完整的ReWOO流程（使用原有组件）
     async fn execute_rewoo_flow(
         &self,
-        plan: &ExecutionPlan,
+        _plan: &ExecutionPlan,
     ) -> Result<AgentExecutionResult> {
         let session_id = Uuid::new_v4().to_string();
         let start_time = std::time::Instant::now();
@@ -401,19 +443,54 @@ impl ReWooEngine {
         Ok(answer)
     }
     
-    /// 执行ReWOO工作阶段
+    /// 执行ReWOO工作阶段 - 支持依赖分析和并行执行
     async fn execute_rewoo_working_phase(
         &self,
         rewoo_session: &mut ReWOOSession,
         worker: &ReWOOWorker,
         planner: &ReWOOPlanner,
     ) -> Result<(), ReWOOError> {
+        // 如果启用并行执行，使用批次模式
+        if self.config.worker.enable_parallel {
+            return self.execute_rewoo_working_phase_batched(rewoo_session, worker, planner).await;
+        }
+        
+        // 否则使用原始的串行执行
         while let Some(current_step) = planner.get_current_step(&rewoo_session.state) {
-            // 解析当前步骤
-            let parsed_step = planner.parse_step(&current_step)?;
+            // 解析当前步骤 - 使用带推理的版本
+            let parsed_step = planner.parse_step_with_plan(&current_step, &rewoo_session.state.plan_string)?;
             
-            // 验证步骤
-            worker.validate_step(&parsed_step).await?;
+            // 验证步骤，如果失败则尝试纠错
+            match worker.validate_step(&parsed_step).await {
+                Ok(_) => {},
+                Err(e) => {
+                    log::warn!("Step validation failed for {}: {}", parsed_step.variable, e);
+                    
+                    // 生成纠错建议
+                    match planner.generate_correction_suggestions(&parsed_step, &e.to_string()).await {
+                        Ok(suggestions) => {
+                            if let Some(best_suggestion) = suggestions.into_iter()
+                                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal)) {
+                                
+                                log::info!("Applying correction suggestion for {}: {}", 
+                                    best_suggestion.step_variable, best_suggestion.reason);
+                                
+                                // 应用纠错建议
+                                planner.apply_correction(&mut rewoo_session.state, &best_suggestion)?;
+                                
+                                // 重新获取当前步骤（因为状态可能已更改）
+                                continue;
+                            }
+                        }
+                        Err(correction_err) => {
+                            log::warn!("Failed to generate correction suggestions: {}", correction_err);
+                        }
+                    }
+                    
+                    // 如果纠错失败，返回原始错误
+                    return Err(ReWOOError::ToolExecutionError(e.to_string()));
+                }
+            }
             
             // 替换变量
             let substituted_args = planner.substitute_variables(
@@ -432,11 +509,14 @@ impl ReWooEngine {
                 worker.execute_tool(&parsed_step, &substituted_args).await?
             };
             
-            // 更新状态
+            // 更新状态 - 优先使用结构化 JSON，回退到字符串
             if tool_result.success {
+                let result_value = tool_result.json_content
+                    .unwrap_or_else(|| serde_json::Value::String(tool_result.content.clone()));
+                
                 rewoo_session.state.results.insert(
                     parsed_step.variable.clone(),
-                    tool_result.content.clone(),
+                    result_value,
                 );
                 rewoo_session.metrics.successful_tool_calls += 1;
             } else {
@@ -447,6 +527,118 @@ impl ReWooEngine {
                     )
                 ));
             }
+        }
+        
+        Ok(())
+    }
+    
+    /// 执行ReWOO工作阶段 - 批次并行模式
+    async fn execute_rewoo_working_phase_batched(
+        &self,
+        rewoo_session: &mut ReWOOSession,
+        worker: &ReWOOWorker,
+        planner: &ReWOOPlanner,
+    ) -> Result<(), ReWOOError> {
+        // 创建执行批次
+        let batches = planner.create_execution_batches(&rewoo_session.state);
+        
+        log::info!("Executing {} batches in parallel mode", batches.len());
+        
+        for batch in batches {
+            log::info!("Executing batch {} with {} steps", batch.batch_id, batch.steps.len());
+            
+            // 准备批次中的所有步骤
+            let mut batch_tasks = Vec::new();
+            
+            for step_variable in &batch.steps {
+                // 找到对应的步骤字符串
+                if let Some(step_str) = rewoo_session.state.steps.iter()
+                    .find(|s| s.contains(step_variable)) {
+                    
+                    // 解析步骤
+                    let parsed_step = planner.parse_step_with_plan(step_str, &rewoo_session.state.plan_string)?;
+                    
+                    // 验证步骤，如果失败则尝试纠错
+                    match worker.validate_step(&parsed_step).await {
+                        Ok(_) => {},
+                        Err(e) => {
+                            log::warn!("Step validation failed for {}: {}", parsed_step.variable, e);
+                            
+                            // 在并行模式下，如果纠错失败则跳过该步骤
+                            if let Ok(suggestions) = planner.generate_correction_suggestions(&parsed_step, &e.to_string()).await {
+                                if let Some(best_suggestion) = suggestions.into_iter()
+                                    .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal)) {
+                                    
+                                    log::info!("Applying correction suggestion for {}: {}", 
+                                        best_suggestion.step_variable, best_suggestion.reason);
+                                    
+                                    // 应用纠错建议到状态
+                                    if planner.apply_correction(&mut rewoo_session.state, &best_suggestion).is_ok() {
+                                        // 重新解析纠正后的步骤
+                                        if let Some(corrected_step_str) = rewoo_session.state.steps.iter()
+                                            .find(|s| s.contains(step_variable)) {
+                                            if let Ok(corrected_parsed_step) = planner.parse_step_with_plan(corrected_step_str, &rewoo_session.state.plan_string) {
+                                                // 使用纠正后的步骤
+                                                let corrected_substituted_args = planner.substitute_variables(
+                                                    &corrected_parsed_step.args,
+                                                    &rewoo_session.state.results,
+                                                );
+                                                batch_tasks.push((corrected_parsed_step, corrected_substituted_args));
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            log::warn!("Skipping step {} due to validation failure: {}", step_variable, e);
+                            continue;
+                        }
+                    }
+                    
+                    // 替换变量
+                    let substituted_args = planner.substitute_variables(
+                        &parsed_step.args,
+                        &rewoo_session.state.results,
+                    );
+                    
+                    batch_tasks.push((parsed_step, substituted_args));
+                }
+            }
+            
+            // 并行执行当前批次
+            let batch_results = worker.execute_steps_parallel(batch_tasks).await;
+            
+            // 处理批次结果
+            for (i, result) in batch_results.into_iter().enumerate() {
+                let step_variable = &batch.steps[i];
+                match result {
+                    Ok(tool_result) => {
+                        if tool_result.success {
+                            let result_value = tool_result.json_content
+                                .unwrap_or_else(|| serde_json::Value::String(tool_result.content.clone()));
+                            
+                            rewoo_session.state.results.insert(
+                                step_variable.clone(),
+                                result_value,
+                            );
+                            rewoo_session.metrics.successful_tool_calls += 1;
+                        } else {
+                            return Err(ReWOOError::ToolExecutionError(
+                                format!("Step {} failed: {}", 
+                                    step_variable,
+                                    tool_result.error.unwrap_or_else(|| "Unknown error".to_string())
+                                )
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+            }
+            
+            log::info!("Batch {} completed successfully", batch.batch_id);
         }
         
         Ok(())
@@ -590,8 +782,8 @@ impl ReWooEngine {
         planner: &ReWOOPlanner,
     ) -> Result<(), ReWOOError> {
         while let Some(current_step) = planner.get_current_step(&rewoo_session.state) {
-            // 解析当前步骤
-            let parsed_step = planner.parse_step(&current_step)?;
+            // 解析当前步骤 - 使用带推理的版本
+            let parsed_step = planner.parse_step_with_plan(&current_step, &rewoo_session.state.plan_string)?;
             
             // 验证步骤
             worker.validate_step(&parsed_step).await?;
@@ -613,11 +805,14 @@ impl ReWooEngine {
                 worker.execute_tool(&parsed_step, &substituted_args).await?
             };
             
-            // 更新状态
+            // 更新状态 - 优先使用结构化 JSON，回退到字符串
             if tool_result.success {
+                let result_value = tool_result.json_content
+                    .unwrap_or_else(|| serde_json::Value::String(tool_result.content.clone()));
+                
                 rewoo_session.state.results.insert(
                     parsed_step.variable.clone(),
-                    tool_result.content.clone(),
+                    result_value,
                 );
                 rewoo_session.metrics.successful_tool_calls += 1;
             } else {

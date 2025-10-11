@@ -175,7 +175,7 @@ pub struct UserFeedback {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemMetrics {
     /// 响应时间（毫秒）
-    pub response_time_ms: u64,
+    pub response_time_ms: f64,
     /// Token使用量
     pub token_usage: TokenUsage,
     /// 内存使用（MB）
@@ -406,7 +406,7 @@ pub struct PerformanceAnalysis {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverallStats {
     /// 总请求数
-    pub total_requests: u64,
+    pub total_requests: f64,
     /// 成功率
     pub success_rate: f64,
     /// 平均响应时间
@@ -597,7 +597,7 @@ pub struct ScenarioResult {
     /// 详细结果
     pub details: HashMap<String, serde_json::Value>,
     /// 执行时间
-    pub execution_time_ms: u64,
+    pub execution_time_ms: f64,
 }
 
 /// 批量测试摘要
@@ -974,7 +974,7 @@ impl PromptOptimizer {
         }
         
         // 计算总体统计
-        let total_requests = filtered_data.len() as u64;
+        let total_requests = filtered_data.len() as f64;
         let success_rate = filtered_data.iter()
             .filter(|r| r.system_metrics.error_rate < 0.1)
             .count() as f64 / total_requests as f64;
@@ -1048,7 +1048,7 @@ impl PromptOptimizer {
                         (false, 0.0, HashMap::new())
                     });
                 
-                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+                let execution_time_ms = start_time.elapsed().as_millis() as f64;
                 
                 scenario_results.insert(scenario.scenario_id.clone(), ScenarioResult {
                     scenario_id: scenario.scenario_id.clone(),
@@ -1659,7 +1659,7 @@ impl RuleBasedStrategy {
             return None;
         }
         
-        let total: u64 = performance_data.iter()
+        let total: f64 = performance_data.iter()
             .map(|r| r.system_metrics.response_time_ms)
             .sum();
         

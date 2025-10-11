@@ -182,6 +182,7 @@ pub struct TemplateStats {
     pub validation_errors: usize,
 }
 
+
 impl Default for TemplateManagerConfig {
     fn default() -> Self {
         Self {

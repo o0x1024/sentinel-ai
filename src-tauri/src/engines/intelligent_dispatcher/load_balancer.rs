@@ -116,7 +116,7 @@ pub struct LoadBalancerConfig {
     /// 负载均衡策略
     pub strategy: LoadBalancingStrategy,
     /// 健康检查间隔 (秒)
-    pub health_check_interval: u64,
+    pub health_check_interval: f64,
     /// 节点超载阈值
     pub overload_threshold: f32,
     /// 启用自动故障转移
@@ -156,13 +156,13 @@ pub struct LoadBalancer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoadBalancerStatistics {
     /// 总任务分配数
-    pub total_assignments: u64,
+    pub total_assignments: f64,
     /// 成功分配数
-    pub successful_assignments: u64,
+    pub successful_assignments: f64,
     /// 失败分配数
-    pub failed_assignments: u64,
+    pub failed_assignments: f64,
     /// 节点故障转移次数
-    pub failover_count: u64,
+    pub failover_count: f64,
     /// 平均负载分布
     pub load_distribution: HashMap<String, f32>,
     /// 最后更新时间

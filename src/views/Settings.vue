@@ -43,6 +43,7 @@
                 :settings="settings"
                 :custom-provider="customProvider"
                 :ai-usage-stats="aiUsageStats"
+                :rag-config="ragConfig"
                 :saving="saving"
                 @test-connection="testConnection"
                 @save-ai-config="saveAiConfig"
@@ -51,17 +52,24 @@
                 @refresh-models="refreshModels"
                 @apply-manual-config="applyManualConfig"
                 @set-default-provider="setDefaultProvider"
-                @set-default-chat-model="setDefaultChatModel" />
+                @set-default-chat-model="setDefaultChatModel"
+                @save-rag-config="saveRagConfig"
+                @test-embedding-connection="testEmbeddingConnection"
+                @reset-rag-config="resetRagConfig" />
 
-    <!-- 调度策略设置 -->
-    <SchedulerSettings v-if="activeCategory === 'scheduler'" 
-                       :scheduler-config="settings.scheduler"
+    <!-- 模型配置设置 -->
+    <ModelSettings v-if="activeCategory === 'scheduler'" 
+                       v-model:scheduler-config="settings.scheduler"
+                       v-model:rag-config="ragConfig"
                        :available-models="availableModels"
                        :saving="saving"
                        @save-scheduler-config="saveSchedulerConfig"
                        @apply-high-performance-preset="applyHighPerformanceConfig"
                        @apply-balanced-preset="applyBalancedConfig"
-                       @apply-economic-preset="applyEconomicConfig" />
+                       @apply-economic-preset="applyEconomicConfig"
+                       @save-rag-config="saveRagConfig"
+                       @test-embedding-connection="testEmbeddingConnection"
+                       @reset-rag-config="resetRagConfig" />
 
     <!-- 数据库设置 -->
     <DatabaseSettings v-if="activeCategory === 'database'" 
@@ -77,52 +85,17 @@
     <!-- 通用设置 -->
     <GeneralSettings v-if="activeCategory === 'system'" 
                      :app-info="{}"
-                     :settings="settings"
+                     v-model:settings="settings"
                      :saving="saving"
                      @save-general-config="saveGeneralConfig"
                      @apply-font-size="applyFontSize"
                      @apply-ui-scale="applyUIScale" />
 
+
     <!-- 网络(代理)设置 -->
-    <div v-if="activeCategory === 'network'" class="card bg-base-100 shadow-md mb-6">
-      <div class="card-body gap-4">
-        <div class="flex items-center gap-3">
-          <input type="checkbox" class="toggle toggle-primary" v-model="network.proxy.enabled" @change="saveProxy" />
-          <span class="font-medium">{{ t('settings.network.enableGlobalProxy', '启用全局代理') }}</span>
-            </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.scheme', '协议') }}</span></label>
-            <select v-model="network.proxy.scheme" class="select select-bordered w-full" @change="saveProxy">
-              <option value="http">http</option>
-              <option value="https">https</option>
-              <option value="socks5">socks5</option>
-              <option value="socks5h">socks5h</option>
-            </select>
-          </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.host', '主机') }}</span></label>
-            <input v-model.trim="network.proxy.host" class="input input-bordered w-full" placeholder="127.0.0.1" @blur="saveProxy" />
-            </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.port', '端口') }}</span></label>
-            <input v-model.number="network.proxy.port" class="input input-bordered w-full" type="number" placeholder="7890" @blur="saveProxy" />
-          </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.noProxy', '不走代理') }}</span></label>
-            <input v-model.trim="network.proxy.no_proxy" class="input input-bordered w-full" placeholder="localhost,127.0.0.1" @blur="saveProxy" />
-            </div>
-          <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.username', '用户名(可选)') }}</span></label>
-            <input v-model.trim="network.proxy.username" class="input input-bordered w-full" @blur="saveProxy" />
-          </div>
-                        <div>
-            <label class="label"><span class="label-text">{{ t('settings.network.password', '密码(可选)') }}</span></label>
-            <input v-model.trim="network.proxy.password" class="input input-bordered w-full" type="password" @blur="saveProxy" />
-                        </div>
-                        </div>
-          </div>
-        </div>
+    <NetworkSettings v-if="activeCategory === 'network'" 
+                     :saving="saving" />
+    
 
     <!-- 安全设置 -->
     <SecuritySettings v-if="activeCategory === 'security'" 
@@ -138,29 +111,26 @@
                       @wipe-security-data="wipeSecurityData"
                       @save-security-config="saveSecurityConfig" />
 
-    <!-- 代理测试 -->
-    <ProxyTestPanel v-if="activeCategory === 'proxy_test'" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import AISettings from '@/components/Settings/AISettings.vue'
-import SchedulerSettings from '@/components/Settings/SchedulerSettings.vue'
+import ModelSettings from '@/components/Settings/ModelSettings.vue'
 import DatabaseSettings from '@/components/Settings/DatabaseSettings.vue'
 import GeneralSettings from '@/components/Settings/GeneralSettings.vue'
 import SecuritySettings from '@/components/Settings/SecuritySettings.vue'
-import ProxyTestPanel from '@/components/ProxyTestPanel.vue'
+import NetworkSettings from '@/components/Settings/NetworkSettings.vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // 响应式数据
 const activeCategory = ref('ai')
 const saving = ref(false)
-const network = reactive({ proxy: { enabled: false, scheme: 'http', host: '', port: 0, username: '', password: '', no_proxy: '' } })
 
 // 设置分类
 const categories = [
@@ -170,7 +140,6 @@ const categories = [
   { id: 'system', icon: 'fas fa-cog' },
   { id: 'security', icon: 'fas fa-shield-alt' },
   { id: 'network', icon: 'fas fa-network-wired' },
-  { id: 'proxy_test', icon: 'fas fa-vial' }
 ]
 
 // 设置数据
@@ -204,6 +173,35 @@ const settings = ref({
     autoBackup: true,
     backupInterval: 24,
     maxBackups: 10
+  },
+  general: {
+    theme: 'auto',
+    darkMode: false,
+    fontSize: 16,
+    compactMode: false,
+    language: 'auto',
+    region: 'auto',
+    timezone: 'auto',
+    dateFormat: 'YYYY-MM-DD',
+    autoStart: false,
+    startMinimized: false,
+    restoreSession: true,
+    checkUpdates: true,
+    closeToTray: false,
+    minimizeToTray: false,
+    alwaysOnTop: false,
+    windowOpacity: 1,
+    memoryLimit: 2048,
+    autoGC: true,
+    preload: false,
+    maxConnections: 5,
+    requestTimeout: 30,
+    retryCount: 3,
+    analytics: false,
+    errorReporting: true,
+    usageStats: false,
+    encryptLocalData: true,
+    uiScale: 100
   },
   system: {
     theme: 'dark',
@@ -260,6 +258,30 @@ const selectedAiProvider = ref('OpenAI')
 const aiServiceStatus = ref([])
 const aiConfig = ref<any>({ providers: {}, default_provider: 'openai' })
 const aiUsageStats = ref({})
+
+// RAG配置数据
+const ragConfig = ref({
+  embedding_provider: 'ollama',
+  embedding_model: 'nomic-embed-text',
+  embedding_dimensions: null,
+  embedding_api_key: '',
+  embedding_base_url: 'http://localhost:11434',
+  chunk_size_chars: 1000,
+  chunk_overlap_chars: 200,
+  top_k: 5,
+  mmr_lambda: 0.7,
+  batch_size: 10,
+  max_concurrent: 4
+})
+
+const loadAiUsageStats = async () => {
+  try {
+    const stats = await invoke('get_ai_usage_stats') as Record<string, { input_tokens: number, output_tokens: number, total_tokens: number, cost: number }>
+    aiUsageStats.value = stats || {}
+  } catch (e) {
+    console.warn('Failed to load AI usage stats', e)
+  }
+}
 const customProvider = reactive({
   name: '',
   api_key: '',
@@ -286,15 +308,16 @@ const availableModels = computed(() => {
   const models: any[] = []
   
   Object.values(aiConfig.value.providers || {}).forEach((provider: any) => {
-    // 修改条件：只要provider有models就包含，不需要enabled状态
-    // 这样用户在配置阶段就能看到所有可用模型
+    // 统一规范化 provider 名称
+    const providerName = provider.name || provider.provider || 'Unknown'
     if (provider.models && Array.isArray(provider.models)) {
       provider.models.forEach((model: any) => {
-        if (model.is_available) {
+        // 放宽条件：默认展示；若存在 is_available 显式为 false 则过滤
+        if (model.is_available !== false) {
           models.push({
             id: model.id,
             name: model.name,
-            provider: provider.name || provider.provider || 'Unknown',
+            provider: providerName,
             description: model.description || '',
             context_length: model.context_length || 4096,
             supports_tools: model.supports_tools || false,
@@ -312,12 +335,19 @@ const availableModels = computed(() => {
 // 方法
 const loadSettings = async () => {
   try {
-    // 加载AI配置
+    // 先加载AI配置
     const aiConfigData = await invoke('get_ai_config')
     aiConfig.value = aiConfigData as any
+    console.log('Loaded AI config:', aiConfig.value)
     
-    // 加载调度器配置
+    // 等待一个 tick 确保 aiConfig 更新完成
+    await nextTick()
+    
+    // 再加载调度器配置
     const schedulerConfig = await invoke('get_scheduler_config') as any
+    console.log('Loaded scheduler config from backend:', schedulerConfig)
+    let backendSchedulerApplied = false
+    
     if (schedulerConfig) {
       // 转换后端返回的扁平结构为前端期望的嵌套结构
       const transformedConfig = {
@@ -340,11 +370,58 @@ const loadSettings = async () => {
         scenarios: schedulerConfig.scenarios || {}
       }
       
+      console.log('Transformed scheduler config:', transformedConfig)
       Object.assign(settings.value.scheduler, transformedConfig)
+      backendSchedulerApplied = true
     }
     
-    // 加载代理设置
-    await loadProxy()
+    // 从 localStorage 加载通用设置
+    const savedSettings = localStorage.getItem('sentinel-settings')
+    if (savedSettings) {
+      try {
+        const parsed = JSON.parse(savedSettings)
+        console.log('Loading saved settings:', parsed)
+        
+        // 深度合并保存的设置到默认设置
+        if (parsed.general) {
+          Object.assign(settings.value.general, parsed.general)
+          console.log('Merged general settings:', settings.value.general)
+        }
+        if (parsed.system) {
+          Object.assign(settings.value.system, parsed.system)
+        }
+        if (parsed.ai) {
+          Object.assign(settings.value.ai, parsed.ai)
+        }
+        // 若后端已返回调度器配置，则不使用本地缓存覆盖
+        if (!backendSchedulerApplied && parsed.scheduler) {
+          Object.assign(settings.value.scheduler, parsed.scheduler)
+        }
+        if (parsed.database) {
+          Object.assign(settings.value.database, parsed.database)
+        }
+        if (parsed.security) {
+          Object.assign(settings.value.security, parsed.security)
+        }
+      } catch (e) {
+        console.warn('Failed to parse saved settings:', e)
+      }
+    }
+    
+    // 应用已保存的设置
+    if (settings.value.general?.theme) {
+      applyTheme(settings.value.general.theme)
+    }
+    if (settings.value.general?.fontSize) {
+      applyFontSize(settings.value.general.fontSize)
+    }
+    if (settings.value.general?.language) {
+      applyLanguage(settings.value.general.language)
+    }
+    if (settings.value.general?.uiScale) {
+      applyUIScale(settings.value.general.uiScale)
+    }
+    
     
     // 加载其他设置...
   } catch (error) {
@@ -362,7 +439,6 @@ const saveAllSettings = async () => {
       saveDatabaseConfig(),
       saveGeneralConfig(),
       saveSecurityConfig(),
-      saveProxy()
     ])
     dialog.toast.success('所有设置已保存')
   } catch (error) {
@@ -643,10 +719,10 @@ const saveSchedulerConfig = async () => {
     }
     
     await invoke('save_scheduler_config', { config: flatConfig })
-    dialog.toast.success('调度策略配置已保存')
+    dialog.toast.success('模型配置配置已保存')
   } catch (error) {
     console.error('Failed to save scheduler config:', error)
-    dialog.toast.error('保存调度策略配置失败')
+    dialog.toast.error('保存模型配置配置失败')
   }
 }
 
@@ -673,15 +749,130 @@ const saveDatabaseConfig = async () => {
 
 // 通用设置相关方法
 const saveGeneralConfig = async () => {
-  dialog.toast.success('通用设置已保存')
+  try {
+    // 保存到 localStorage
+    const settingsToSave = JSON.stringify(settings.value)
+    localStorage.setItem('sentinel-settings', settingsToSave)
+    console.log('Saved settings to localStorage:', settingsToSave)
+    
+    // 应用主题设置
+    if (settings.value.general?.theme) {
+      applyTheme(settings.value.general.theme)
+    }
+    
+    // 应用字体大小设置
+    if (settings.value.general?.fontSize) {
+      applyFontSize(settings.value.general.fontSize)
+    }
+    
+    // 应用语言设置
+    if (settings.value.general?.language) {
+      applyLanguage(settings.value.general.language)
+    }
+    
+    // 应用UI缩放设置
+    if (settings.value.general?.uiScale) {
+      applyUIScale(settings.value.general.uiScale)
+    }
+
+    // 同步 Tavily 到后端配置
+    try {
+      const key = (settings.value as any).general?.tavilyApiKey || ''
+      const maxResults = (settings.value as any).general?.tavilyMaxResults || 5
+      const configs = [
+        { category: 'ai', key: 'tavily_api_key', value: key, description: 'Tavily API key for web search', is_encrypted: true },
+        { category: 'ai', key: 'tavily_max_results', value: String(maxResults), description: 'Default max results for Tavily', is_encrypted: false },
+      ]
+      await invoke('save_config_batch', { configs })
+      console.log('Saved Tavily config to backend')
+    } catch (e) {
+      console.warn('Failed to save Tavily config to backend', e)
+    }
+    
+    dialog.toast.success('通用设置已保存并应用')
+  } catch (error) {
+    console.error('Failed to save general config:', error)
+    dialog.toast.error('保存通用设置失败')
+  }
 }
 
-const applyFontSize = () => {
-  // 应用字体大小逻辑
+const applyTheme = (theme: string) => {
+  // 处理 auto 主题：根据系统偏好自动选择
+  let finalTheme = theme
+  if (theme === 'auto') {
+    finalTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  
+  // 应用主题到文档
+  document.documentElement.setAttribute('data-theme', finalTheme)
+  localStorage.setItem('theme', finalTheme)
+  
+  // 更新深色模式状态
+  const isDark = ['dark', 'synthwave', 'halloween', 'forest', 'black', 'luxury', 'dracula'].includes(finalTheme)
+  if (settings.value.general) {
+    settings.value.general.darkMode = isDark
+  }
 }
 
-const applyUIScale = () => {
-  // 应用UI缩放逻辑
+const applyFontSize = (fontSize: number) => {
+  // 应用字体大小到根元素
+  const rootElement = document.documentElement
+  rootElement.style.fontSize = `${fontSize}px`
+  
+  // 同时更新全局字体大小变量
+  rootElement.style.setProperty('--font-size-base', `${fontSize}px`)
+  
+  // 保存到全局设置（兼容 App.vue 的逻辑）
+  if (window.updateFontSize) {
+    const sizeMap: Record<number, string> = {
+      12: 'small', 14: 'normal', 16: 'normal', 18: 'large', 20: 'large'
+    }
+    window.updateFontSize(sizeMap[fontSize] || 'normal')
+  }
+}
+
+const applyLanguage = (language: string) => {
+  // 处理 auto 语言：根据浏览器语言自动选择
+  let finalLang = language
+  if (language === 'auto') {
+    const browserLang = navigator.language.toLowerCase()
+    if (browserLang.startsWith('zh')) {
+      finalLang = browserLang.includes('tw') || browserLang.includes('hk') ? 'zh-TW' : 'zh-CN'
+    } else if (browserLang.startsWith('en')) {
+      finalLang = 'en-US'
+    } else {
+      finalLang = 'zh-CN' // 默认中文
+    }
+  }
+  
+  // 应用语言设置
+  const langCode = finalLang.split('-')[0] // 提取主语言代码
+  locale.value = langCode
+  // 与 i18n/index.ts 保持一致，写入 sentinel-language
+  localStorage.setItem('sentinel-language', langCode)
+}
+
+const applyUIScale = (scale: number) => {
+  // 应用UI缩放
+  const rootElement = document.documentElement
+  const scaleValue = scale / 100
+  
+  rootElement.style.setProperty('--ui-scale', scaleValue.toString())
+  rootElement.style.transform = `scale(${scaleValue})`
+  rootElement.style.transformOrigin = 'top left'
+  
+  if (scale !== 100) {
+    rootElement.style.width = `${10000 / scale}%`
+    rootElement.style.height = `${10000 / scale}%`
+  } else {
+    rootElement.style.width = '100%'
+    rootElement.style.height = '100%'
+  }
+  
+  // 保存到全局设置
+  if (window.updateUIScale) {
+    window.updateUIScale(scale)
+  }
 }
 
 // 安全相关方法
@@ -733,39 +924,8 @@ const saveSecurityConfig = async () => {
    dialog.toast.success('安全配置已保存')
  }
 
-// 网络代理
-const loadProxy = async () => {
-  try {
-    const cfg = await invoke('get_global_proxy_config') as any
-    network.proxy.enabled = !!cfg.enabled
-    network.proxy.scheme = cfg.scheme || 'http'
-    network.proxy.host = cfg.host || ''
-    network.proxy.port = cfg.port || 0
-    network.proxy.username = cfg.username || ''
-    network.proxy.password = cfg.password || ''
-    network.proxy.no_proxy = cfg.no_proxy || ''
-  } catch (e) {
-    console.warn('loadProxy failed', e)
-  }
-}
 
-const saveProxy = async () => {
-  try {
-    const cfg = {
-      enabled: network.proxy.enabled,
-      scheme: network.proxy.scheme,
-      host: network.proxy.host,
-      port: Number(network.proxy.port) || null,
-      username: network.proxy.username || null,
-      password: network.proxy.password || null,
-      no_proxy: network.proxy.no_proxy || null,
-    }
-    await invoke('set_global_proxy_config', { cfg })
-    dialog.toast.success('全局代理已保存并生效')
-  } catch (e) {
-    dialog.toast.error('保存全局代理失败')
-  }
-}
+
 
  // 调度器预设配置方法
  const applyHighPerformanceConfig = () => {
@@ -780,11 +940,99 @@ const saveProxy = async () => {
    dialog.toast.success('已应用经济配置')
  }
 
+// RAG配置相关方法
+const saveRagConfig = async () => {
+  try {
+    await invoke('save_rag_config', { config: ragConfig.value })
+    dialog.toast.success('RAG配置已保存')
+  } catch (error) {
+    console.error('Failed to save RAG config:', error)
+    dialog.toast.error('保存RAG配置失败')
+  }
+}
+
+const testEmbeddingConnection = async () => {
+  try {
+    dialog.toast.info('测试嵌入连接...')
+    const result = await invoke('test_embedding_connection', { 
+      config: {
+        provider: ragConfig.value.embedding_provider,
+        model: ragConfig.value.embedding_model,
+        api_key: ragConfig.value.embedding_api_key,
+        base_url: ragConfig.value.embedding_base_url
+      }
+    })
+    dialog.toast.success('嵌入连接测试成功')
+  } catch (error) {
+    console.error('Embedding connection test failed:', error)
+    dialog.toast.error(`嵌入连接测试失败: ${error}`)
+  }
+}
+
+const resetRagConfig = () => {
+  ragConfig.value = {
+    embedding_provider: 'ollama',
+    embedding_model: 'nomic-embed-text',
+    embedding_dimensions: null,
+    embedding_api_key: '',
+    embedding_base_url: 'http://localhost:11434',
+    chunk_size_chars: 1000,
+    chunk_overlap_chars: 200,
+    top_k: 5,
+    mmr_lambda: 0.7,
+    batch_size: 10,
+    max_concurrent: 4
+  }
+  dialog.toast.success('RAG配置已重置为默认值')
+}
+
+const loadRagConfig = async () => {
+  try {
+    const config = await invoke('get_rag_config')
+    if (config && typeof config === 'object') {
+      ragConfig.value = { ...ragConfig.value, ...(config as Record<string, any>) }
+    }
+  } catch (error) {
+    console.warn('Failed to load RAG config:', error)
+  }
+}
+
 // 生命周期
 onMounted(() => {
   loadSettings()
-  loadProxy()
+  loadAiUsageStats()
+  loadRagConfig()
 })
+
+// 自动持久化通用设置与即时应用
+watch(() => settings.value.general, (newGeneral, oldGeneral) => {
+  try {
+    // 保存完整设置对象，确保其他分类也被持久化
+    localStorage.setItem('sentinel-settings', JSON.stringify(settings.value))
+
+    // 主题变更时应用
+    if (newGeneral?.theme !== oldGeneral?.theme && newGeneral?.theme) {
+      applyTheme(newGeneral.theme)
+    }
+
+    // 字体大小变更时应用
+    if (newGeneral?.fontSize !== oldGeneral?.fontSize && typeof newGeneral?.fontSize === 'number') {
+      applyFontSize(newGeneral.fontSize)
+    }
+
+    // 语言变更时应用
+    if (newGeneral?.language !== oldGeneral?.language && newGeneral?.language) {
+      applyLanguage(newGeneral.language)
+    }
+
+    // UI 缩放变更时应用
+    if (newGeneral?.uiScale !== oldGeneral?.uiScale && typeof newGeneral?.uiScale === 'number') {
+      applyUIScale(newGeneral.uiScale)
+    }
+  } catch (e) {
+    console.warn('Auto-persist settings failed', e)
+  }
+}, { deep: true })
 </script>
 
 <style scoped>

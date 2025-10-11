@@ -7,7 +7,7 @@ use uuid::Uuid;
 pub struct DatabaseConfig {
     pub database_url: String,
     pub max_connections: u32,
-    pub connection_timeout: u64,
+    pub connection_timeout: f64,
     pub auto_migrate: bool,
     pub backup_enabled: bool,
     pub backup_interval_hours: u32,
@@ -17,10 +17,10 @@ pub struct DatabaseConfig {
 /// 数据库统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseStats {
-    pub scan_tasks_count: u64,
-    pub vulnerabilities_count: u64,
-    pub assets_count: u64,
-    pub conversations_count: u64,
+    pub scan_tasks_count: f64,
+    pub vulnerabilities_count: f64,
+    pub assets_count: f64,
+    pub conversations_count: f64,
     pub db_size_bytes: u64,
     pub last_backup: Option<DateTime<Utc>>,
 }
@@ -29,7 +29,7 @@ pub struct DatabaseStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableStats {
     pub table_name: String,
-    pub record_count: u64,
+    pub record_count: f64,
     pub size_mb: f64,
     pub last_updated: Option<DateTime<Utc>>,
 }
@@ -51,8 +51,8 @@ pub struct BackupInfo {
 pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<serde_json::Value>>,
-    pub row_count: u64,
-    pub execution_time_ms: u64,
+    pub row_count: f64,
+    pub execution_time_ms: f64,
     pub query: String,
 }
 

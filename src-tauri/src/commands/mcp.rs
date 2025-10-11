@@ -355,7 +355,7 @@ pub async fn get_mcp_tool_stats(state: State<'_, McpService>) -> Result<Value, S
 
 #[tauri::command]
 pub async fn cleanup_mcp_executions(
-    _older_than_hours: u64,
+    _older_than_hours: f64,
     _state: State<'_, McpService>,
 ) -> Result<usize, String> {
     // 兼容性实现
@@ -1061,7 +1061,7 @@ pub struct QuickCreateServerConfig {
     params: String,
     #[serde(rename = "envVars")]
     env_vars: String,
-    timeout: u64,
+    timeout: f64,
     #[serde(rename = "providerName")]
     provider_name: String,
     #[serde(rename = "providerWebsite")]

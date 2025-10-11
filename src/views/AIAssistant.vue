@@ -47,11 +47,21 @@
               </li>
             </ul>
           </div>
-          
-          <!-- 设置按钮 -->
-          <button class="btn btn-sm btn-ghost btn-circle" @click="openSettings" :title="t('common.settings', '设置')">
-            <i class="fas fa-cog"></i>
-          </button>
+          <!-- 会话管理 -->
+          <div class="flex items-center gap-1 ml-2">
+            <button @click="handleCreateConversation" class="btn btn-xs btn-ghost" :disabled="isLoadingConversations">
+              <i class="fas fa-plus"></i>
+            </button>
+            <button @click="openConversationsDrawer" class="btn btn-xs btn-ghost" :disabled="isLoadingConversations">
+              <i class="fas fa-list"></i>
+            </button>
+            <button v-if="currentConversationId" @click="handleClearConversation" class="btn btn-xs btn-ghost text-warning">
+              <i class="fas fa-broom"></i>
+            </button>
+            <div v-if="currentConversationId" class="ml-1 text-xs text-base-content/60 truncate max-w-[12rem]" :title="currentConversationTitle">
+              会话 ({{ currentConversationTitle }})
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -61,6 +71,7 @@
       <!-- 聊天区域 -->
       <div class="h-full flex flex-col">
         <AIChat 
+          ref="aiChatRef"
           :selected-agent="selectedAgent"
           @execution-started="handleExecutionStarted"
           @execution-progress="handleExecutionProgress"
@@ -69,59 +80,78 @@
       </div>
     </div>
 
-    <!-- 设置模态框 -->
-    <div v-if="showSettings" class="modal modal-open">
-      <div class="modal-box max-w-4xl">
-        <h3 class="font-bold text-lg mb-4">{{ t('aiAssistant.settings.title', 'AI助手设置') }}</h3>
-        
-        <div class="tabs tabs-bordered mb-4">
-          <a class="tab" :class="{ 'tab-active': settingsTab === 'general' }" @click="settingsTab = 'general'">
-            {{ t('aiAssistant.settings.general', '通用设置') }}
-          </a>
-          
-          <a class="tab" :class="{ 'tab-active': settingsTab === 'agents' }" @click="settingsTab = 'agents'">
-            {{ t('aiAssistant.settings.agents', 'Agent管理') }}
-          </a>
-        </div>
-
-        <div v-if="settingsTab === 'general'" class="space-y-4">
-          
-          
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('aiAssistant.settings.maxConcurrentTasks', '最大并发任务') }}</span>
-            </label>
-            <input v-model.number="maxConcurrentTasks" type="number" class="input input-bordered" min="1" max="10">
+    <!-- 会话列表抽屉 -->
+    <div class="fixed inset-0 z-50 mt-16" v-if="showConversationsList">
+      <div class="absolute inset-0 bg-black bg-opacity-50" @click="showConversationsList = false"></div>
+      <div class="absolute right-0 top-0 h-[calc(100vh-4rem)] w-80 bg-base-200 shadow-xl transform transition-transform duration-300 ease-in-out">
+        <div class="h-full p-4 overflow-y-auto">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-bold text-lg flex items-center gap-2">
+              <i class="fas fa-comments text-primary"></i>
+              会话历史
+            </h3>
+            <button @click="showConversationsList = false" class="btn btn-ghost btn-sm btn-circle">
+              <i class="fas fa-times"></i>
+            </button>
           </div>
-        </div>
-
-        
-
-        <div v-else-if="settingsTab === 'agents'" class="space-y-4">
-          <div class="flex justify-between items-center">
-            <h4 class="font-semibold">{{ t('aiAssistant.settings.customAgents', '自定义Agent') }}</h4>
-            <button class="btn btn-sm btn-primary" @click="addAgent"><i class="fas fa-plus"></i>{{ t('common.add', '添加') }}</button>
+          <div class="flex gap-2 mb-4">
+            <button @click="handleLoadConversations" class="btn btn-outline btn-sm flex-1" :disabled="isLoadingConversations">
+              <i class="fas fa-sync" :class="{ 'animate-spin': isLoadingConversations }"></i>
+              刷新
+            </button>
+            <button @click="handleCreateConversation" class="btn btn-primary btn-sm" :disabled="isLoadingConversations">
+              <i class="fas fa-plus"></i>
+              新建
+            </button>
           </div>
-          <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
-            <div v-for="(agent, idx) in editingAgents" :key="agent.id || idx" class="bg-base-200 rounded-lg p-3 grid grid-cols-6 gap-2 items-center">
-              <input v-model="agent.name" class="input input-sm input-bordered col-span-1" :placeholder="t('common.name', '名称')" />
-              <input v-model="agent.description" class="input input-sm input-bordered col-span-2" :placeholder="t('common.description', '描述')" />
-              <input v-model="agent.type" class="input input-sm input-bordered col-span-1" placeholder="Type" />
-              <select v-model="agent.status" class="select select-sm select-bordered col-span-1">
-                <option value="active">active</option>
-                <option value="idle">idle</option>
-              </select>
-              <div class="col-span-1 flex items-center gap-2 justify-end">
-                <input v-model.number="agent.tasks_completed" type="number" class="input input-sm input-bordered w-24" min="0" />
-                <button class="btn btn-sm btn-error" @click="removeAgent(idx)"><i class="fas fa-trash"></i></button>
+          <div v-if="drawerConversations.length === 0" class="text-center text-base-content/60 py-8">
+            <i class="fas fa-comments text-4xl opacity-30 mb-4"></i>
+            <p>暂无会话记录</p>
+          </div>
+          <div v-else class="space-y-3 max-h-[calc(100vh-200px)] overflow-y-auto">
+            <div 
+              v-for="conv in drawerConversations" 
+              :key="conv.id"
+              class="card bg-base-100 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer"
+              :class="{ 'ring-2 ring-primary': conv.id === currentConversationId }"
+              @click="handleSwitchConversation(conv.id)"
+            >
+              <div class="card-body p-3">
+                <div class="flex items-start justify-between">
+                  <div class="flex-1 min-w-0">
+                    <h4 class="font-medium text-sm truncate mb-1">
+                      {{ conv.title || '无标题会话' }}
+                    </h4>
+                    <div class="text-xs text-base-content/60 space-y-1">
+                      <div class="flex items-center gap-2">
+                        <i class="fas fa-clock"></i>
+                        {{ new Date(conv.created_at).toLocaleString() }}
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <i class="fas fa-comment-dots"></i>
+                        {{ conv.total_messages }} 条消息
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex flex-col gap-1">
+                    <button 
+                      v-if="conv.id === currentConversationId" 
+                      class="badge badge-primary badge-xs"
+                    >
+                      当前
+                    </button>
+                    <button 
+                      @click.stop="handleDeleteConversation(conv.id)" 
+                      class="btn btn-ghost btn-xs text-error hover:bg-error hover:text-error-content"
+                      title="删除会话"
+                    >
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        <div class="modal-action">
-          <button class="btn btn-primary" @click="saveSettings">{{ t('common.save', '保存') }}</button>
-          <button class="btn" @click="closeSettings">{{ t('common.cancel', '取消') }}</button>
         </div>
       </div>
     </div>
@@ -129,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -137,9 +167,10 @@ import AIChat from '@/components/AIChat.vue'
 
 const { t } = useI18n()
 
+// Persist selected agent locally
+const SELECTED_AGENT_KEY = 'ai:selectedAgentId'
+
 interface AiAssistantSettings {
-  default_architecture: string
-  max_concurrent_tasks: number
   auto_execute?: boolean
   notification_enabled?: boolean
 }
@@ -176,76 +207,102 @@ const currentExecution = ref(null)
 const availableAgents = ref<CustomAgent[]>([])
 const editingAgents = ref<CustomAgent[]>([])
 
+// --- 会话管理 from AIChat ---
+const aiChatRef = ref<any>(null)
+const showConversationsList = ref(false)
+const conversationList = computed(() => aiChatRef.value?.conversations?.value || [])
+const currentConversationId = computed(() => aiChatRef.value?.currentConversationId?.value || null)
+const isLoadingConversations = computed(() => aiChatRef.value?.isLoadingConversations?.value || false)
+const currentConversationTitle = computed(() => aiChatRef.value?.getCurrentConversationTitle?.() || '新会话')
+
+// 为抽屉显示准备一次性快照，避免 ref 访问时机问题
+const drawerConversations = ref<any[]>([])
+const snapshotConversations = () => {
+  const list: any = aiChatRef.value?.conversations?.value ?? []
+  try {
+    drawerConversations.value = Array.from(list as any)
+  } catch {
+    drawerConversations.value = []
+  }
+}
+const fetchConversationsSnapshot = async () => {
+  try {
+    const result = await invoke('get_ai_conversations')
+    drawerConversations.value = Array.isArray(result) ? (result as any[]) : []
+  } catch (e) {
+    console.error('Failed to fetch conversations snapshot:', e)
+    drawerConversations.value = []
+  }
+}
+
+const openConversationsDrawer = async () => {
+  await fetchConversationsSnapshot()
+  showConversationsList.value = true
+}
+
+const handleCreateConversation = async () => {
+  try {
+    await aiChatRef.value?.createNewConversation?.()
+    showConversationsList.value = false
+  } catch (e) {
+    console.error('Failed to create conversation:', e)
+  }
+}
+
+const handleLoadConversations = async () => {
+  await fetchConversationsSnapshot()
+}
+
+const handleSwitchConversation = async (id: string) => {
+  try {
+    await aiChatRef.value?.switchToConversation?.(id)
+    showConversationsList.value = false
+  } catch (e) {
+    console.error('Failed to switch conversation:', e)
+  }
+}
+
+const handleDeleteConversation = async (id: string) => {
+  try {
+    await aiChatRef.value?.deleteConversation?.(id)
+    await fetchConversationsSnapshot()
+  } catch (e) {
+    console.error('Failed to delete conversation:', e)
+  }
+}
+
+const handleClearConversation = () => {
+  try {
+    aiChatRef.value?.clearCurrentConversation?.()
+  } catch (e) {
+    console.error('Failed to clear conversation:', e)
+  }
+}
+
 
 
 const selectAgent = (agent) => {
   selectedAgent.value = agent
-  // 通知EnhancedAIChat组件Agent变更
-}
-
-const openSettings = () => {
-  showSettings.value = true
-  // 打开时带入可编辑副本
-  editingAgents.value = JSON.parse(JSON.stringify(availableAgents.value))
-}
-
-const closeSettings = () => {
-  showSettings.value = false
-}
-
-const saveSettings = async () => {
   try {
-    // 保存基础设置（保留并兼容后端，不再暴露架构UI）
-    await invoke('save_ai_assistant_settings', { settings: { default_architecture: 'auto', max_concurrent_tasks: maxConcurrentTasks.value, auto_execute: false, notification_enabled: true } })
-    // 保存场景Agent（逐个 upsert）
-    for (const a of editingAgents.value) {
-      const profile = {
-        id: a.id,
-        name: a.name,
-        description: a.description,
-        enabled: a.status === 'active',
-        version: '1.0.0',
-        engine: (a.type === 'rewoo' || a.type === 'llm-compiler' || a.type === 'plan-execute') ? a.type : 'auto',
-        llm: { default: { provider: 'auto', model: 'auto', temperature: null, max_tokens: null } },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
-      await invoke('save_scenario_agent', { profile })
+    localStorage.setItem(SELECTED_AGENT_KEY, agent?.id || '')
+  } catch (e) {
+    console.error('Failed to persist selected agent:', e)
+  }
+}
+
+const restoreSelectedAgent = () => {
+  try {
+    const savedId = localStorage.getItem(SELECTED_AGENT_KEY)
+    if (!savedId) return
+    const found = availableAgents.value.find(a => a.id === savedId)
+    if (found) {
+      selectedAgent.value = found as any
     }
-    closeSettings()
-  } catch (error) {
-    console.error('Failed to save settings:', error)
+  } catch (e) {
+    console.error('Failed to restore selected agent:', e)
   }
 }
 
-const getStatusBadgeClass = (status) => {
-  switch (status) {
-    case 'running': return 'badge-primary'
-    case 'completed': return 'badge-success'
-    case 'failed': return 'badge-error'
-    case 'paused': return 'badge-warning'
-    default: return 'badge-ghost'
-  }
-}
-
-// 架构徽章函数已移除
-
-// 架构开关已移除
-
-const addAgent = () => {
-  editingAgents.value.push({
-    id: `custom-${Date.now()}`,
-    name: '',
-    description: '',
-    type: 'General',
-    status: 'idle',
-    tasks_completed: 0
-  })
-}
-
-const removeAgent = (index: number) => {
-  editingAgents.value.splice(index, 1)
-}
 
 // 事件处理
 const handleExecutionStarted = (execution) => {
@@ -283,11 +340,8 @@ onMounted(async () => {
     // 加载设置
     const settings = await invoke<AiAssistantSettings>('get_ai_assistant_settings')
     if (settings) {
-      defaultArchitecture.value = settings.default_architecture || 'plan-execute'
-      maxConcurrentTasks.value = (settings.max_concurrent_tasks as number) || 5
-      // 暂时先设置，等加载架构后再修正
+
     }
-    // 架构加载与偏好已移除
     
     // 加载Agent状态
     const agentStats = await invoke<AgentStats>('get_agent_statistics')
@@ -306,6 +360,9 @@ onMounted(async () => {
       status: a.enabled ? 'active' : 'idle',
       tasks_completed: 0,
     })) : []
+
+    // 尝试还原已选择的Agent
+    restoreSelectedAgent()
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
   }

@@ -13,8 +13,9 @@ use crate::engines::llm_compiler::engine_adapter::LlmCompilerEngine;
 use crate::engines::llm_compiler::types::LlmCompilerConfig;
 use crate::engines::rewoo::rewoo_types::ReWOOConfig;
 use crate::engines::plan_and_execute::types::PlanAndExecuteConfig;
+// use crate::engines::plan_and_execute::executor::ExecutionMode; // not needed directly
 use crate::agents::traits::{ExecutionEngine, AgentTask, TaskPriority};
-use crate::engines::ExecutionContext;
+ 
 
 
 use tauri::{AppHandle, State, Emitter, Manager};
@@ -75,7 +76,7 @@ pub struct IntelligentQueryResponse {
     pub complexity: String,
     pub reasoning: String,
     pub confidence: f32,
-    pub estimated_duration: Option<u64>,
+    pub estimated_duration: Option<f64>,
     pub workflow_status: String,
     pub started_at: String,
 }
@@ -130,7 +131,7 @@ pub struct ExecutionHistoryItem {
     pub task_type: String,
     pub complexity: String,
     pub status: String,
-    pub execution_time: Option<u64>,
+    pub execution_time: Option<f64>,
     pub success_rate: Option<f32>,
     pub started_at: String,
     pub completed_at: Option<String>,
@@ -138,12 +139,12 @@ pub struct ExecutionHistoryItem {
 
 #[derive(Debug, Serialize)]
 pub struct DispatcherStatistics {
-    pub total_requests: u64,
-    pub successful_requests: u64,
-    pub failed_requests: u64,
+    pub total_requests: f64,
+    pub successful_requests: f64,
+    pub failed_requests: f64,
     pub average_execution_time: f64,
-    pub architecture_usage: HashMap<String, u64>,
-    pub uptime_seconds: u64,
+    pub architecture_usage: HashMap<String, f64>,
+    pub uptime_seconds: f64,
 }
 
 // ===== AI助手相关结构体 =====
@@ -188,8 +189,6 @@ pub struct ExecutionStepView {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AIAssistantSettings {
-    pub default_architecture: String,
-    pub max_concurrent_tasks: u32,
     #[serde(default)]
     pub auto_execute: bool,
     #[serde(default = "default_notification_enabled")]
@@ -212,6 +211,32 @@ pub struct LlmId { pub provider: String, pub model: String, pub temperature: Opt
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfigBundle { pub default: LlmId }
 
+// Optional extended configs for scenario agents
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerStageLlm { pub planner: Option<LlmId>, pub executor: Option<LlmId>, pub replanner: Option<LlmId>, pub evaluator: Option<LlmId> }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptBundle { pub system: Option<String>, pub planner: Option<String>, pub executor: Option<String>, pub replanner: Option<String>, pub evaluator: Option<String> }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolPolicy { pub allow: Vec<String>, pub deny: Option<Vec<String>> }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryPolicy { pub max_retries: u32, pub backoff: String, pub interval_ms: Option<f64> }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionPolicy { pub timeout_sec: Option<f64>, pub retry: Option<RetryPolicy>, pub concurrency: Option<u32>, pub strict_mode: Option<bool> }
+
+// Prompt template IDs bound to agent (from PromptManagement)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptIds {
+    pub system: Option<i64>,
+    pub planner: Option<i64>,
+    pub executor: Option<i64>,
+    pub replanner: Option<i64>,
+    pub evaluator: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioAgentProfile {
     pub id: String,
@@ -221,20 +246,120 @@ pub struct ScenarioAgentProfile {
     pub version: Option<String>,
     pub engine: AgentEngine,
     pub llm: LlmConfigBundle,
+    #[serde(default)]
+    pub prompts: Option<PromptBundle>,
+    #[serde(default)]
+    pub tools: Option<ToolPolicy>,
+    #[serde(default)]
+    pub execution: Option<ExecutionPolicy>,
+    #[serde(default)]
+    pub prompt_ids: Option<PromptIds>,
+    // Unified prompt system fields
+    #[serde(default)]
+    pub prompt_strategy: Option<String>,
+    #[serde(default)]
+    pub group_id: Option<i64>,
+    #[serde(default)]
+    pub pinned_versions: Option<std::collections::HashMap<i64, String>>,    
+    #[serde(default)]
+    pub pre_hooks: Option<Vec<String>>,
+    #[serde(default)]
+    pub post_hooks: Option<Vec<String>>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+}
+
+// Expose tools catalog for agent configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimpleToolInfo { 
+    pub name: String, 
+    pub title: Option<String>, 
+    pub category: Option<String>, 
+    pub description: Option<String>,
+    pub available: bool,
+    pub source: Option<String>,
+    pub group: Option<String>,
+}
+
+#[tauri::command]
+pub async fn list_unified_tools(
+    tool_system: State<'_, Arc<crate::tools::ToolSystem>>,
+) -> Result<Vec<SimpleToolInfo>, String> {
+    let tools = tool_system.list_tools().await;
+    let list = tools
+        .into_iter()
+        .map(|t| SimpleToolInfo {
+            name: t.name,
+            title: None, // ToolMetadata 没有通用 title 字段，这里为空
+            category: Some(t.category.to_string()),
+            description: if t.description.is_empty() { None } else { Some(t.description) },
+            available: t.available,
+            source: {
+                // 优先用metadata.tags判断mcp，否则fallback
+                let tag_has_mcp = t.metadata.tags.iter().any(|x| x == "mcp");
+                Some(if tag_has_mcp { "mcp".to_string() } else { "builtin".to_string() })
+            },
+            group: t.metadata.tags.iter()
+                .find_map(|tag| tag.strip_prefix("connection:").map(|s| s.to_string())),
+        })
+        .collect();
+    Ok(list)
+}
+
+// 分组返回：内置工具 + MCP按连接分组
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolGroup { pub connection: String, pub tools: Vec<SimpleToolInfo> }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupedToolsResponse { pub builtin: Vec<SimpleToolInfo>, pub mcp: Vec<McpToolGroup> }
+
+#[tauri::command]
+pub async fn list_unified_tools_grouped(
+    tool_system: State<'_, Arc<crate::tools::ToolSystem>>,
+) -> Result<GroupedToolsResponse, String> {
+    let tools = tool_system.list_tools().await;
+    let mut builtin: Vec<SimpleToolInfo> = Vec::new();
+    let mut groups: std::collections::HashMap<String, Vec<SimpleToolInfo>> = std::collections::HashMap::new();
+
+    for t in tools.into_iter() {
+        let is_mcp = t.metadata.tags.iter().any(|x| x == "mcp");
+        let group = t.metadata.tags.iter()
+            .find_map(|tag| tag.strip_prefix("connection:").map(|s| s.to_string()));
+        let item = SimpleToolInfo {
+            name: t.name,
+            title: None,
+            category: Some(t.category.to_string()),
+            description: if t.description.is_empty() { None } else { Some(t.description) },
+            available: t.available,
+            source: Some(if is_mcp { "mcp".to_string() } else { "builtin".to_string() }),
+            group: group.clone(),
+        };
+
+        if is_mcp {
+            let key = group.unwrap_or_else(|| "unknown".to_string());
+            groups.entry(key).or_default().push(item);
+        } else {
+            builtin.push(item);
+        }
+    }
+
+    let mut mcp: Vec<McpToolGroup> = groups.into_iter()
+        .map(|(k, v)| McpToolGroup { connection: k, tools: v })
+        .collect();
+    // 稳定排序连接名
+    mcp.sort_by(|a, b| a.connection.cmp(&b.connection));
+
+    Ok(GroupedToolsResponse { builtin, mcp })
 }
 
 #[tauri::command]
 pub async fn list_scenario_agents(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<ScenarioAgentProfile>, String> {
-    match db_service.get_config("ai_assistant", "scenario_agents").await {
-        Ok(Some(json_str)) => serde_json::from_str::<Vec<ScenarioAgentProfile>>(&json_str)
-            .map_err(|e| format!("Failed to parse scenario agents: {}", e)),
-        Ok(None) => Ok(vec![]),
-        Err(e) => Err(format!("Failed to load scenario agents: {}", e)),
-    }
+    db_service
+        .list_scenario_agents()
+        .await
+        .map_err(|e| format!("Failed to load scenario agents: {}", e))
 }
 
 #[tauri::command]
@@ -242,18 +367,10 @@ pub async fn save_scenario_agent(
     profile: ScenarioAgentProfile,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let mut list = list_scenario_agents(db_service.clone()).await?;
-    // upsert by id
-    if let Some(idx) = list.iter().position(|p| p.id == profile.id) {
-        list[idx] = profile;
-    } else {
-        list.push(profile);
-    }
-    let json = serde_json::to_string(&list).map_err(|e| format!("Serialize scenario agents failed: {}", e))?;
     db_service
-        .set_config("ai_assistant", "scenario_agents", &json, None)
+        .upsert_scenario_agent(&profile)
         .await
-        .map_err(|e| format!("Failed to save scenario agents: {}", e))
+        .map_err(|e| format!("Failed to save scenario agent: {}", e))
 }
 
 #[tauri::command]
@@ -261,13 +378,10 @@ pub async fn delete_scenario_agent(
     id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let mut list = list_scenario_agents(db_service.clone()).await?;
-    list.retain(|p| p.id != id);
-    let json = serde_json::to_string(&list).map_err(|e| format!("Serialize scenario agents failed: {}", e))?;
     db_service
-        .set_config("ai_assistant", "scenario_agents", &json, None)
+        .delete_scenario_agent(&id)
         .await
-        .map_err(|e| format!("Failed to save scenario agents: {}", e))
+        .map_err(|e| format!("Failed to delete scenario agent: {}", e))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,26 +413,290 @@ pub async fn dispatch_scenario_task(
         AgentEngine::Auto => "auto",
     }.to_string();
 
-    // 透传到已有调度逻辑（最小改动：重用 dispatch_intelligent_query）
-    let exec_id = format!("exec_{}_{}", request.agent_id, uuid::Uuid::new_v4().to_string());
     let mut options = request.options.unwrap_or_default();
     options.insert("agent_id".to_string(), serde_json::Value::String(request.agent_id.clone()));
+    
+    // 透传已绑定的提示词模板ID，供引擎或执行层使用
+    if let Some(pids) = &profile.prompt_ids {
+        options.insert("prompt_ids".to_string(), serde_json::json!({
+            "system": pids.system,
+            "planner": pids.planner,
+            "executor": pids.executor,
+            "replanner": pids.replanner,
+            "evaluator": pids.evaluator,
+        }));
+    }
+    // 透传统一提示词系统策略、分组、文本覆盖及版本固定
+    if let Some(strategy) = &profile.prompt_strategy {
+        options.insert("prompt_strategy".to_string(), serde_json::Value::String(strategy.clone()));
+    }
+    if let Some(gid) = profile.group_id {
+        options.insert("group_id".to_string(), serde_json::json!(gid));
+    }
+    if let Some(prompts) = &profile.prompts {
+        options.insert("prompts".to_string(), serde_json::json!({
+            "system": prompts.system,
+            "planner": prompts.planner,
+            "executor": prompts.executor,
+            "replanner": prompts.replanner,
+            "evaluator": prompts.evaluator,
+        }));
+    }
+    if let Some(pinned) = &profile.pinned_versions {
+        options.insert("pinned_versions".to_string(), serde_json::to_value(pinned).unwrap_or_else(|_| serde_json::json!({})));
+    }
 
+    // 工具白名单/黑名单策略（用于执行期过滤）
+    if let Some(tool_policy) = &profile.tools {
+        // 允许列表
+        options.insert(
+            "tools_allow".to_string(),
+            serde_json::json!(tool_policy.allow.clone())
+        );
+        // 禁止列表（可空）
+        if let Some(deny) = &tool_policy.deny {
+            options.insert("tools_deny".to_string(), serde_json::json!(deny.clone()));
+        }
+    }
+
+    // 执行策略（超时/重试/严格模式/并发）
+    if let Some(exec) = &profile.execution {
+        if let Some(timeout) = exec.timeout_sec {
+            options.insert("execution_timeout_sec".to_string(), serde_json::json!(timeout));
+        }
+        if let Some(retry) = &exec.retry {
+            options.insert("execution_retry_max".to_string(), serde_json::json!(retry.max_retries));
+            options.insert("execution_retry_backoff".to_string(), serde_json::json!(retry.backoff.clone()));
+            if let Some(iv) = retry.interval_ms { options.insert("execution_retry_interval_ms".to_string(), serde_json::json!(iv)); }
+        }
+        if let Some(conc) = exec.concurrency { options.insert("execution_concurrency".to_string(), serde_json::json!(conc)); }
+        if let Some(strict) = exec.strict_mode { options.insert("execution_strict_mode".to_string(), serde_json::json!(strict)); }
+    }
+
+    // LLM配置（用于覆盖阶段默认模型）
+    // 直接传递完整结构，便于后续解析
+    options.insert(
+        "llm".to_string(),
+        serde_json::json!({
+            "default": {
+                "provider": profile.llm.default.provider,
+                "model": profile.llm.default.model,
+                "temperature": profile.llm.default.temperature,
+                "max_tokens": profile.llm.default.max_tokens,
+            }
+        })
+    );
+
+    // 以下是原 dispatch_intelligent_query 的逻辑
+    // 提取任务模式标识和相关信息
+    let is_task_mode = options.get("task_mode")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    
+    let conversation_id = options.get("conversation_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    
+    let execution_id = options.get("execution_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    
+    // 提取会话ID（用于日志记录）
+    if !conversation_id.is_empty() {
+        info!("Processing request for conversation: {}", conversation_id);
+    }
+    
+    // 如果是任务模式且架构为"auto"，进行智能选择
+    let selected_architecture = if is_task_mode && architecture == "auto" {
+        let auto_selected = select_best_architecture(&request.query).await
+            .map_err(|e| format!("Failed to select architecture: {}", e))?;
+        
+        info!("Auto-selected architecture: {} for query: {}", auto_selected, request.query);
+        
+        auto_selected
+    } else {
+        architecture.clone()
+    };
+    
+    // 创建 DispatchQueryRequest
     let dispatch_req = DispatchQueryRequest {
         query: request.query,
-        architecture,
+        architecture: selected_architecture.clone(),
         agent_id: Some(profile.id),
         options: Some(options),
     };
+    
+    let app_clone = app_handle.clone();
+    // 根据选择的架构创建调度器
+    let result = match selected_architecture.as_str() {
+        "plan-execute" => {
+            dispatch_with_plan_execute(
+                execution_id.clone(),
+                dispatch_req,
+                (*ai_service_manager).clone(),
+                (*db_service).clone(),
+                (*execution_manager).clone(),
+                app_handle.clone(),
+            ).await
+        },
+        "rewoo" => {
+            dispatch_with_rewoo(
+                execution_id.clone(),
+                dispatch_req,
+                (*ai_service_manager).clone(),
+                (*db_service).clone(),
+                (*execution_manager).clone(),
+                app_clone.clone(),
+            ).await
+        },
+        "llm-compiler" => {
+            dispatch_with_llm_compiler(
+                execution_id.clone(),
+                dispatch_req,
+                (*ai_service_manager).clone(),
+                (*db_service).clone(),
+                (*execution_manager).clone(),
+                app_clone.clone(),
+            ).await
+        },
+        "auto" => {
+            dispatch_with_auto(
+                execution_id.clone(),
+                dispatch_req,
+                (*ai_service_manager).clone(),
+                (*db_service).clone(),
+                (*execution_manager).clone(),
+                app_clone.clone(),
+            ).await
+        }
+        _ => {
+            Err(format!("Unsupported architecture: {}", selected_architecture))
+        }
+    };
+    
+    // 如果调度成功，自动开始执行
+    if let Ok(ref dispatch_result) = result {
+        let execution_id_clone = dispatch_result.execution_id.clone();
+        let app_clone = app_handle.clone();
+        
+        // 异步开始执行，不阻塞调度响应
+        tokio::spawn(async move {
+            info!("Starting real engine execution: {}", execution_id_clone);
+            
+            // 从应用状态获取执行管理器
+            let execution_manager = app_clone.state::<Arc<crate::managers::ExecutionManager>>();
+            let execution_manager_clone = execution_manager.inner().clone();
+            let app_inner = app_clone.clone();
+            let execution_id_inner = execution_id_clone.clone();
+            
+            tokio::spawn(async move {
+                // 获取执行上下文
+                let context = match execution_manager_clone.get_execution_context(&execution_id_inner).await {
+                    Some(ctx) => ctx,
+                    None => {
+                        log::error!("Execution context not found: {}", execution_id_inner);
+                        return;
+                    }
+                };
 
-    // 直接复用内部函数（并保持 start_execution 的行为）
-    dispatch_intelligent_query(
-        dispatch_req,
-        ai_service_manager,
-        db_service,
-        execution_manager,
-        app_handle,
-    ).await
+                log::info!("Starting real execution for: {} with engine: {:?}", execution_id_inner, context.engine_type);
+
+                // 从任务参数中提取消息ID和会话ID
+                let message_id = context.task.parameters.get("message_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let conversation_id = context.task.parameters.get("conversation_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                
+        // 发送 PlanUpdate 事件给前端展示执行计划（预留）
+        let _plan_json = serde_json::json!({
+                    "id": context.plan.id,
+                    "name": context.plan.name,
+                    "estimated_duration": context.plan.estimated_duration,
+                    "resource_requirements": context.plan.resource_requirements,
+                    "steps": context
+                        .plan
+                        .steps
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| serde_json::json!({
+                            "index": i + 1,
+                            "id": s.id,
+                            "name": s.name,
+                            "description": s.description,
+                            "type": format!("{:?}", s.step_type),
+                            "dependencies": s.dependencies,
+                            "parameters": s.parameters
+                        }))
+                        .collect::<Vec<_>>()
+                });
+
+                // Emit a one-shot Meta message with execution configuration
+                let _meta_json = {
+                    let params = &context.task.parameters;
+                    serde_json::json!({
+                        "engine": format!("{:?}", context.engine_type),
+                        "agent_id": params.get("agent_id").and_then(|v| v.as_str()),
+                        "prompt_ids": params.get("prompt_ids"),
+                        "prompt_strategy": params.get("prompt_strategy").and_then(|v| v.as_str()),
+                        "group_id": params.get("group_id"),
+                        "pinned_versions": params.get("pinned_versions"),
+                    })
+                };
+
+                // 执行真实的引擎计划
+                match execution_manager_clone.execute_plan(&execution_id_inner).await {
+                    Ok(_result) => {
+                        log::info!("Execution completed successfully: {}", execution_id_inner);
+                        // 移除原始事件，只使用ai_stream_message
+                    }
+                    Err(e) => {
+                        log::error!("Execution failed: {}: {}", execution_id_inner, e);
+                        
+                        // 使用更友好的错误消息格式
+                        let error_message = format!(
+                            "任务执行失败: {}\n\n如需帮助，请检查执行配置或联系技术支持。",
+                            e.to_string()
+                        );
+                        
+                        // 使用有序消息块发送错误
+                        crate::utils::ordered_message::emit_message_chunk_arc(
+                            &Arc::new(app_inner.clone()),
+                            &execution_id_inner,
+                            message_id.as_deref().unwrap_or(&execution_id_inner),
+                            conversation_id.as_deref(),
+                            crate::utils::ordered_message::ChunkType::Error,
+                            &error_message,
+                            true, // 确保标记为最终消息
+                            None,
+                            None,
+                        );
+                        
+                        // 确保发送一个内容块来正式结束会话
+                        crate::utils::ordered_message::emit_message_chunk_arc(
+                            &Arc::new(app_inner.clone()),
+                            &execution_id_inner,
+                            message_id.as_deref().unwrap_or(&execution_id_inner),
+                            conversation_id.as_deref(),
+                            crate::utils::ordered_message::ChunkType::Content,
+                            "", // 空内容，仅用于结束流
+                            true, // 最终消息
+                            Some("error_termination"),
+                            None,
+                        );
+                    }
+                }
+
+                // 清理执行上下文
+                execution_manager_clone.cleanup_execution(&execution_id_inner).await;
+            });
+        });
+    }
+    
+    // 更新返回结果中的架构信息
+    result.map(|mut dispatch_result| {
+        dispatch_result.selected_architecture = selected_architecture;
+        dispatch_result
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -342,236 +720,6 @@ pub struct CustomAgent {
 }
 
 
-/// 智能查询调度 - 支持自动架构选择
-#[tauri::command]
-pub async fn dispatch_intelligent_query(
-    request: DispatchQueryRequest,
-    ai_service_manager: State<'_, Arc<AiServiceManager>>,
-    db_service: State<'_, Arc<DatabaseService>>,
-    execution_manager: State<'_, Arc<crate::managers::ExecutionManager>>,
-    app_handle: AppHandle,
-) -> Result<DispatchResult, String> {
-
-    // 提取任务模式标识和相关信息
-    let is_task_mode = request.options.as_ref()
-        .and_then(|opts| opts.get("task_mode"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    
-    let conversation_id = request.options.as_ref()
-        .and_then(|opts| opts.get("conversation_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    
-    let execution_id = request.options.as_ref()
-        .and_then(|opts| opts.get("execution_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    
-    // 提取会话ID（用于日志记录）
-    if !conversation_id.is_empty() {
-        info!("Processing request for conversation: {}", conversation_id);
-    }
-    
-    // 如果是任务模式且架构为"auto"，进行智能选择
-    let selected_architecture = if is_task_mode && request.architecture == "auto" {
-
-        let auto_selected = select_best_architecture(&request.query).await
-            .map_err(|e| format!("Failed to select architecture: {}", e))?;
-        
-        info!("Auto-selected architecture: {} for query: {}", auto_selected, request.query);
-        
-        auto_selected
-    } else {
-        request.architecture.clone()
-    };
-    
-    let app_clone = app_handle.clone();
-    // 根据选择的架构创建调度器
-    let result = match selected_architecture.as_str() {
-        "plan-execute" => {
-            dispatch_with_plan_execute(
-                execution_id.clone(),
-                request,
-                (*ai_service_manager).clone(),
-                (*db_service).clone(),
-                (*execution_manager).clone(),
-                app_handle.clone(),
-            ).await
-        },
-        "rewoo" => {
-            dispatch_with_rewoo(
-                execution_id.clone(),
-                request,
-                (*ai_service_manager).clone(),
-                (*db_service).clone(),
-                (*execution_manager).clone(),
-                app_clone,
-            ).await
-        },
-        "llm-compiler" => {
-            dispatch_with_llm_compiler(
-                execution_id.clone(),
-                request,
-                (*ai_service_manager).clone(),
-                (*db_service).clone(),
-                (*execution_manager).clone(),
-                app_clone,
-            ).await
-        },
-        "auto" => {
-            dispatch_with_auto(
-                execution_id.clone(),
-                request,
-                (*ai_service_manager).clone(),
-                (*db_service).clone(),
-                (*execution_manager).clone(),
-                app_clone,
-            ).await
-        }
-        _ => {
-            Err(format!("Unsupported architecture: {}", selected_architecture))
-        }
-    };
-    
-    // 如果调度成功，自动开始执行
-    if let Ok(ref dispatch_result) = result {
-        let execution_id_clone = dispatch_result.execution_id.clone();
-        let app_clone = app_handle.clone();
-        
-        
-        // 异步开始执行，不阻塞调度响应
-        tokio::spawn(async move {
-            if let Err(e) = start_execution(execution_id_clone, app_clone).await {
-                log::error!("Failed to start execution after dispatch: {}", e);
-            }
-        });
-    }
-    
-    // 更新返回结果中的架构信息
-    result.map(|mut dispatch_result| {
-        dispatch_result.selected_architecture = selected_architecture;
-        dispatch_result
-    })
-}
-
-/// 开始执行 - 使用真实引擎
-pub async fn start_execution(
-    execution_id: String,
-    app: AppHandle,
-) -> Result<(), String> {
-    info!("Starting real engine execution: {}", execution_id);
-    
-    // 从应用状态获取执行管理器
-    let execution_manager = app.state::<Arc<crate::managers::ExecutionManager>>();
-    let execution_manager_clone = execution_manager.inner().clone();
-    let app_clone = app.clone();
-    let execution_id_clone = execution_id.clone();
-    
-    tokio::spawn(async move {
-        // 获取执行上下文
-        let context = match execution_manager_clone.get_execution_context(&execution_id_clone).await {
-            Some(ctx) => ctx,
-            None => {
-                log::error!("Execution context not found: {}", execution_id_clone);
-                return;
-            }
-        };
-
-        log::info!("Starting real execution for: {} with engine: {:?}", execution_id_clone, context.engine_type);
-
-        
-        // 从任务参数中提取消息ID和会话ID
-        let message_id = context.task.parameters.get("message_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let conversation_id = context.task.parameters.get("conversation_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-        
-        // 发送步骤初始化事件 - 作为普通消息内容
-        let steps_text = context.plan.steps.iter()
-            .enumerate()
-            .map(|(i, step)| format!("* [ ] {}.**{}**: {}\n", i+1, step.name, step.description))
-            .collect::<Vec<_>>()
-            .join("\n");
-            
-        let plan_message = format!("## 执行计划\n\n{}\n\n共 {} 个步骤，准备开始执行...", 
-            steps_text, context.plan.steps.len());
-            
-
-        // 执行真实的引擎计划
-        match execution_manager_clone.execute_plan(&execution_id_clone).await {
-            Ok(result) => {
-                log::info!("Execution completed successfully: {}", execution_id_clone);
-                
-                let mut result_message = String::new();
-                // 发送执行完成事件
-                let status = if result.success { "success" } else { "failed" };
-        
-                // 如果有数据，添加数据部分
-                if let Some(data) = &result.data {
-                    if let Ok(data_str) = serde_json::to_string_pretty(data) {
-                        if !data_str.is_empty() && data_str != "null" {
-                            result_message.push_str("\n**详细数据**:\n```json\n");
-                            result_message.push_str(&data_str);
-                            result_message.push_str("\n```\n");
-                        }
-                    }
-                }
-                
-                // 发送消息流更新事件，将执行结果作为普通消息内容，并包含所有必要的执行结果信息
-                let _ = app_clone.emit("ai_stream_message", serde_json::json!({
-                    "conversation_id": context.task.parameters.get("conversation_id").and_then(|v| v.as_str()).unwrap_or(""),
-                    "message_id": context.task.parameters.get("message_id").and_then(|v| v.as_str()).unwrap_or(""),
-                    "content": result_message,
-                    "is_complete": true,
-                    "execution_id": execution_id_clone,
-                    "result": {
-                        "status": status,
-                        "data": result.data,
-                        "summary": format!("执行结果ID: {}", result.id),
-                        "duration": result.execution_time_ms,
-                        "architecture": format!("{:?}", context.engine_type),
-                    },
-                    "final_response": result_message,
-                    "artifacts": result.artifacts.len(),
-                }));
-                
-                // 移除原始事件，只使用ai_stream_message
-            }
-            Err(e) => {
-                log::error!("Execution failed: {}: {}", execution_id_clone, e);
-                
-                // 构建执行失败消息
-                let error_message = format!("## 执行失败\n\n**错误信息**: {}\n\n**架构**: {}\n\n请检查输入参数或尝试其他执行架构。", 
-                    e.to_string(), 
-                    format!("{:?}", context.engine_type));
-                
-                // 发送消息流更新事件，将执行失败信息作为普通消息内容，并包含所有必要的执行结果信息
-                let _ = app_clone.emit("ai_stream_message", serde_json::json!({
-                    "conversation_id": context.task.parameters.get("conversation_id").and_then(|v| v.as_str()).unwrap_or(""),
-                    "message_id": context.task.parameters.get("message_id").and_then(|v| v.as_str()).unwrap_or(""),
-                    "content": error_message,
-                    "is_complete": true,
-                    "execution_id": execution_id_clone,
-                    "error": true,
-                    "result": {
-                        "status": "failed",
-                        "error": e.to_string(),
-                        "architecture": format!("{:?}", context.engine_type)
-                    },
-                    "final_response": error_message
-                }));
-                
-                // 移除原始事件，只使用ai_stream_message
-            }
-        }
-
-        // 清理执行上下文
-        execution_manager_clone.cleanup_execution(&execution_id_clone).await;
-    });
-
-    Ok(())
-}
 
 /// 停止执行
 #[tauri::command]
@@ -580,13 +728,20 @@ pub async fn stop_execution(
     app: AppHandle,
 ) -> Result<(), String> {
     info!("Stopping execution: {}", execution_id);
-    
-    // 发送停止事件
+
+    // 调用执行管理器停止执行并清理上下文
+    let execution_manager = app.state::<Arc<crate::managers::ExecutionManager>>();
+    let manager = execution_manager.inner().clone();
+    if let Err(e) = manager.stop_execution(&execution_id).await {
+        log::warn!("Failed to stop execution {}: {}", execution_id, e);
+    }
+
+    // 发送停止事件（统一事件名称）
     app.emit("execution_stopped", serde_json::json!({
         "execution_id": execution_id,
-        "message": "执行已被用户停止"
+        "message": "Execution stopped by user"
     })).map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
@@ -598,15 +753,12 @@ pub async fn get_ai_assistant_settings(
     // 从数据库加载设置，使用专门的key存储AIAssistantSettings
     match db_service.get_config("ai_assistant", "assistant_settings").await {
         Ok(Some(json_str)) => {
-            info!("AI assistant settings: {}", json_str);
             serde_json::from_str::<AIAssistantSettings>(&json_str)
                 .map_err(|e| format!("Failed to parse AI assistant settings: {}", e))
         }
         Ok(None) => {
             // 返回默认设置
             let default_settings = AIAssistantSettings {
-                default_architecture: "plan-execute".to_string(),
-                max_concurrent_tasks: 5,
                 auto_execute: false,
                 notification_enabled: true,
             };
@@ -765,7 +917,7 @@ pub struct TaskSubmissionRequest {
     pub user_input: String,
     pub user_id: String,
     pub priority: Option<String>,
-    pub estimated_duration: Option<u64>,
+    pub estimated_duration: Option<f64>,
     pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -854,7 +1006,7 @@ async fn dispatch_with_plan_execute(
     let config = PlanAndExecuteConfig::default();
     
     // 创建Plan-and-Execute引擎
-    let engine = PlanAndExecuteEngine::new_with_dependencies(
+    let mut engine = PlanAndExecuteEngine::new_with_dependencies(
         ai_service_manager.clone(),
         config,
         db_service.clone(),
@@ -863,6 +1015,13 @@ async fn dispatch_with_plan_execute(
     
     // 创建Agent任务
     let mut parameters = request.options.unwrap_or_default();
+    // 统一使用 snake_case keys，兼容可能传入的 camelCase
+    if let Some(v) = parameters.remove("executionId") { parameters.insert("execution_id".to_string(), v); }
+    if let Some(v) = parameters.remove("messageId") { parameters.insert("message_id".to_string(), v); }
+    if let Some(v) = parameters.remove("conversationId") { parameters.insert("conversation_id".to_string(), v); }
+    if let Some(v) = parameters.remove("taskMode") { parameters.insert("task_mode".to_string(), v); }
+    // 统一提示词ID字段（兼容 camelCase -> snake_case）
+    if let Some(v) = parameters.remove("promptIds") { parameters.insert("prompt_ids".to_string(), v); }
     parameters.insert("execution_id".to_string(), serde_json::Value::String(execution_id.clone()));
 
     let task = AgentTask {
@@ -875,6 +1034,9 @@ async fn dispatch_with_plan_execute(
         timeout: Some(600), // 10 minute timeout
     };
     
+    // 将参数注入引擎，便于执行阶段访问（如 prompt_ids ）
+    engine.set_runtime_params(task.parameters.clone());
+
     // Create execution plan
     let plan = engine.create_plan(&task).await
         .map_err(|e| format!("Failed to create execution plan: {}", e))?;
@@ -926,11 +1088,14 @@ async fn dispatch_with_rewoo(
     let config = ReWOOConfig::default();
     
     // 创建ReWOO引擎
-    let engine = ReWooEngine::new_with_dependencies(
+    let mut engine = ReWooEngine::new_with_dependencies(
         ai_service_manager.clone(),
         config,
         db_service.clone(),
     ).await.map_err(|e| format!("Failed to create ReWOO engine: {}", e))?;
+    
+    // 设置app_handle用于错误消息发送
+    engine.set_app_handle(_app);
     
     // 创建Agent任务
     let task = AgentTask {
@@ -942,6 +1107,8 @@ async fn dispatch_with_rewoo(
         parameters: request.options.unwrap_or_default(),
         timeout: Some(300), // 5分钟超时
     };
+    // 注入运行期参数（prompt_ids等）
+    engine.set_runtime_params(task.parameters.clone());
     
     // 创建执行计划
     let plan = engine.create_plan(&task).await
@@ -994,7 +1161,7 @@ async fn dispatch_with_llm_compiler(
     let config = LlmCompilerConfig::default();
     
     // 创建LLMCompiler引擎
-    let engine = LlmCompilerEngine::new_with_dependencies(
+    let mut engine = LlmCompilerEngine::new_with_dependencies(
         ai_service_manager.clone(),
         config,
         db_service.clone(),
@@ -1010,6 +1177,8 @@ async fn dispatch_with_llm_compiler(
         parameters: request.options.unwrap_or_default(),
         timeout: Some(240), // 4分钟超时
     };
+    // 注入运行期参数
+    engine.set_runtime_params(task.parameters.clone());
     
     // 创建执行计划
     let plan = engine.create_plan(&task).await

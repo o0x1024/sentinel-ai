@@ -19,6 +19,29 @@ pub enum StageType {
     Replan,
 }
 
+/// Prompt category defines the scope and level of the template
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PromptCategory {
+    System,
+    LlmArchitecture,
+    Application,
+    UserDefined,
+}
+
+/// Template type defines the specific role within the architecture
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TemplateType {
+    SystemPrompt,
+    IntentClassifier,
+    Planner,
+    Executor,
+    Replanner,
+    Evaluator,
+    ReportGenerator,
+    Domain,
+    Custom,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptTemplate {
     pub id: Option<i64>,
@@ -31,6 +54,28 @@ pub struct PromptTemplate {
     pub is_active: bool,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    // Extended fields for unified prompt system
+    pub category: Option<PromptCategory>,
+    pub template_type: Option<TemplateType>,
+    pub target_architecture: Option<ArchitectureType>,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default = "default_priority")]
+    pub priority: i32,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub variables: Vec<String>,
+    #[serde(default = "default_version")]
+    pub version: String,
+}
+
+fn default_priority() -> i32 {
+    50
+}
+
+fn default_version() -> String {
+    "1.0.0".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -16,7 +16,7 @@ pub struct MemoryConfig {
     pub max_experiences: usize,
     pub max_templates: usize,
     pub similarity_threshold: f64,
-    pub cleanup_interval_hours: u64,
+    pub cleanup_interval_hours: f64,
     pub vector_dimensions: usize,
 }
 

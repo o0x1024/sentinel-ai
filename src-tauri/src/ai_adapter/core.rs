@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use futures::StreamExt;
 
 use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
@@ -175,8 +174,8 @@ impl BaseProvider {
         supports_streaming: bool,
         supports_tools: bool,
     ) -> Result<Self> {
-        let timeout = Duration::from_secs(300);
-        // let timeout = config.timeout.unwrap_or(Duration::from_secs(300));
+        let timeout = Duration::from_secs(600);
+        // let timeout = config.timeout.unwrap_or(Duration::from_secs(600));
         let http_client = HttpClient::new(timeout)?
             .with_headers(config.extra_headers.clone().unwrap_or_default());
         

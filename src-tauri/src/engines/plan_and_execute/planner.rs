@@ -5,9 +5,9 @@
 use crate::services::prompt_db::PromptRepository;
 use crate::services::mcp::McpService;
 use crate::services::ai::{AiServiceManager, SchedulerStage};
-use crate::models::prompt::{ArchitectureType, StageType};
 use crate::engines::plan_and_execute::types::*;
 use crate::tools::{ToolInfo};
+use crate::utils::ordered_message::ChunkType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::AppHandle;
@@ -198,7 +198,7 @@ impl Planner {
         prompt_repo: Option<PromptRepository>,
         mcp_service: Option<Arc<McpService>>,
         ai_service_manager: Arc<AiServiceManager>,
-        app_handle: Option<Arc<AppHandle>>,
+        _app_handle: Option<Arc<AppHandle>>,
     ) -> Result<Self, PlanAndExecuteError> {
         // 尝试获取Plan & Execute框架适配器
         let framework_adapter = match crate::tools::get_global_adapter_manager() {
@@ -273,11 +273,24 @@ impl Planner {
     pub async fn create_plan(&self, task: &TaskRequest) -> Result<PlanningResult, PlanAndExecuteError> {
         log::info!("开始为任务 '{}' 创建执行计划", task.name);
         
-        // 1. 构建通用规划 Prompt
-        let planning_prompt = self.build_generic_planning_prompt(task).await?;
-            
-        // 2. 调用 AI 进行规划
-        let planning_response = self.call_ai_for_planning(&planning_prompt).await?;
+        // 1. 构建规划所需的 system 与 user 提示词
+        let (system_prompt, user_prompt) = self.build_generic_planning_prompts(task).await?;
+        
+        // 2. 从任务参数中获取前端传入的会话/消息ID，并调用 AI 进行规划（区分 system 与 user）
+        let conversation_id = task
+            .parameters
+            .get("conversation_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let message_id = task
+            .parameters
+            .get("message_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let planning_response = self
+            .call_ai_for_planning(&system_prompt, &user_prompt, conversation_id, message_id, task)
+            .await?;
         
         // 3. 解析规划结果
         let plan = self.parse_planning_response(&planning_response)?;
@@ -299,113 +312,89 @@ impl Planner {
         Ok(result)
     }
 
-    /// 构建通用规划 Prompt
-    async fn build_generic_planning_prompt(&self, task: &TaskRequest) -> Result<String, PlanAndExecuteError> {
-        // 从数据库获取 Prompt 模板，或者使用默认模板
-        let prompt_template = if let Some(repo) = &self.prompt_repo {
-            repo.get_active_prompt(ArchitectureType::PlanExecute, StageType::Planning)
+    /// 构建通用规划的 system 与 user 提示词（使用统一提示词系统）
+    async fn build_generic_planning_prompts(&self, task: &TaskRequest) -> Result<(String, String), PlanAndExecuteError> {
+        use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
+        use crate::models::prompt::ArchitectureType;
+        use std::collections::HashMap;
+
+        // 获取可用工具信息（放入 system 提示），支持根据Agent工具策略过滤
+        let tools_block = self.build_tools_information(task).await;
+
+        // 解析并获取 system 模板（仅渲染通用变量，避免注入用户任务内容）
+        let system_template = if let Some(repo) = &self.prompt_repo {
+            let resolver = PromptResolver::new(repo.clone());
+            let agent_config = AgentPromptConfig::parse_agent_config(&task.parameters);
+            resolver
+                .resolve_prompt(
+                    &agent_config,
+                    ArchitectureType::PlanExecute,
+                    CanonicalStage::Planner,
+                    Some(&"".to_string()),
+                )
                 .await
-                .unwrap_or_else(|_| None)
-                .unwrap_or_else(|| self.get_default_planning_template())
+                .unwrap_or_else(|_| "".to_string())
         } else {
-            self.get_default_planning_template()
+           "".to_string()
         };
 
-        // 获取可用工具信息
-        let tools_block = self.build_tools_information().await;
-
-        // 构建具体的 Prompt
-        let target_info = if let Some(target) = &task.target {
-            format!("目标: {} ({})", target.identifier, format!("{:?}", target.target_type))
+        // 仅渲染通用上下文（如工具清单）到 system 提示
+        let mut system_ctx = HashMap::new();
+        system_ctx.insert("tools".to_string(), serde_json::Value::String(tools_block));
+        let system_prompt = if let Some(repo) = &self.prompt_repo {
+            let resolver = PromptResolver::new(repo.clone());
+            resolver
+                .render_variables(&system_template, &system_ctx)
+                .unwrap_or(system_template)
         } else {
-            "无特定目标".to_string()
+            system_template.replace("{tools}", system_ctx.get("tools").unwrap().as_str().unwrap())
         };
 
-        let parameters_str = if !task.parameters.is_empty() {
-            serde_json::to_string_pretty(&task.parameters)
-                .unwrap_or_else(|_| "无参数".to_string())
-        } else {
-            "无参数".to_string()
-        };
+        let user_prompt = format!(
+            "{}",
+            task.name
+        );
 
-        let prompt = prompt_template
-            .replace("{task_name}", &task.name)
-            .replace("{task_description}", &task.description)
-            .replace("{task_type}", &format!("{:?}", task.task_type))
-            .replace("{target_info}", &target_info)
-            .replace("{parameters}", &parameters_str)
-            .replace("{priority}", &format!("{:?}", task.priority))
-            .replace("{tools}", &tools_block);
-
-        Ok(prompt)
-    }
-
-    /// 获取默认规划模板
-    fn get_default_planning_template(&self) -> String {
-        r#"你是一个Plan-and-Execute规划器的战略层(Planner)。你的任务是将复杂问题分解为清晰的可执行步骤。
-
-Plan-and-Execute架构流程：
-1. Planner（战略层）：分析任务，生成初始计划
-2. Agent（执行层）：选择工具，执行具体步骤
-3. Tools（工具层）：调用具体工具，返回结果
-4. Replan（反思层）：评估结果，决定是否需要新计划
-
-任务信息：
-任务名称: {task_name}
-任务描述: {task_description}
-任务类型: {task_type}
-{target_info}
-优先级: {priority}
-参数: {parameters}
-
-可用工具（名称与参数签名）：
-{tools}
-
-**重要规划原则**：
-- 每个步骤应该是原子操作（一个步骤完成一个明确的子任务）
-- 步骤之间应该有逻辑依赖关系
-- 考虑可能的失败情况和重新规划需求
-- 优先使用ToolCall步骤来获取外部数据
-- 使用AiReasoning步骤来分析和综合信息
-
-严格按以下JSON格式返回计划：
-{
-  "steps": [
-    {
-      "name": "步骤名称",
-      "description": "清晰描述这一步要做什么，为什么需要这一步",
-      "step_type": "ToolCall|AiReasoning|DataProcessing|Conditional|Wait",
-      "tool": {
-        "name": "工具名称",
-        "args": { "参数名": "参数值" }
-      }
-    }
-  ]
-}
-
-步骤类型说明：
-- ToolCall: 调用外部工具获取数据，必须提供tool字段
-- AiReasoning: AI分析推理，用于处理获取的数据
-- DataProcessing: 数据处理和转换
-- Conditional: 条件判断
-- Wait: 等待一段时间
-
-注意：
-1. 每个ToolCall步骤必须指定具体的tool.name和tool.args
-2. 工具参数必须与工具签名匹配
-3. 步骤数量建议2-6个，保持合理
-4. 只返回JSON，不要其他文本
-5. 确保步骤逻辑顺序正确"#.to_string()
+        Ok((system_prompt, user_prompt))
     }
 
     /// 构建工具信息块
-    async fn build_tools_information(&self) -> String {
+    async fn build_tools_information(&self, task: &TaskRequest) -> String {
+        use std::collections::HashSet;
+        // 读取Agent传入的工具白名单/黑名单
+        let (allow, deny): (HashSet<String>, HashSet<String>) = {
+            let params = &task.parameters;
+            let allow = params
+                .get("tools_allow")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_else(HashSet::new);
+            let deny = params
+                .get("tools_deny")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_else(HashSet::new);
+            (allow, deny)
+        };
         let mut all_tools: Vec<ToolInfo> = Vec::new();
         
         // 从框架适配器获取工具
         if let Some(framework_adapter) = &self.framework_adapter {
             let available_tools = framework_adapter.list_available_tools().await;
             for tool_name in available_tools {
+                // 过滤白名单/黑名单
+                // 如果有白名单且工具不在白名单中，跳过
+                if !allow.is_empty() && !allow.contains(&tool_name) {
+                    continue;
+                }
+                // 如果没有白名单（空数组），则不允许任何工具
+                if allow.is_empty() {
+                    continue;
+                }
+                // 如果工具在黑名单中，跳过
+                if deny.contains(&tool_name) {
+                    continue;
+                }
                 if let Some(tool_info) = framework_adapter.get_tool_info(&tool_name).await {
                     all_tools.push(tool_info);
                 }
@@ -426,7 +415,7 @@ Plan-and-Execute架构流程：
         
         if tool_infos.is_empty() {
             log::warn!("没有找到任何可用工具");
-            "(no tools available)".to_string()
+            "没有找到任何可用工具".to_string()
         } else {
             log::info!("构建工具信息，共 {} 个工具", tool_infos.len());
             let mut tool_lines: Vec<String> = Vec::new();
@@ -462,17 +451,54 @@ Plan-and-Execute架构流程：
         }
     }
 
-    /// 调用 AI 进行规划
-    async fn call_ai_for_planning(&self, prompt: &str) -> Result<String, PlanAndExecuteError> {
-        // 尝试获取调度策略配置的规划模型
+    /// 调用 AI 进行规划（区分 system 与 user）
+    async fn call_ai_for_planning(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        conversation_id: Option<String>,
+        message_id: Option<String>,
+        task: &TaskRequest,
+    ) -> Result<String, PlanAndExecuteError> {
+        // 尝试获取模型配置配置的规划模型
         let ai_config = self.get_planning_ai_config().await?;
         
         let (provider_name, model_name) = if let Some(config) = ai_config {
-            log::info!("使用调度策略配置的规划模型: {} ({})", config.model, config.provider);
+            log::info!("使用模型配置配置的规划模型: {} ({})", config.model, config.provider);
             (config.provider, config.model)
         } else {
-            log::info!("使用默认规划模型: {} ({})", self.config.model_config.model_name, self.config.ai_provider);
-            (self.config.ai_provider.clone(), self.config.model_config.model_name.clone())
+            // 允许Agent传入覆盖（llm.default）
+            if let Some(params) = task.parameters.get("llm").and_then(|v| v.get("default")) {
+                let provider_str = params.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                let model_str = params.get("model").and_then(|v| v.as_str()).unwrap_or("");
+                
+                // 跳过 "auto" 配置，让调度器配置生效
+                if model_str != "auto" && !model_str.trim().is_empty() {
+                    let p = if provider_str != "auto" && !provider_str.trim().is_empty() {
+                        Some(provider_str.to_string())
+                    } else {
+                        None
+                    };
+                    log::info!("使用Agent覆盖规划模型: {} ({:?})", model_str, p);
+                    (p.unwrap_or_else(|| self.config.ai_provider.clone()), model_str.to_string())
+                } else {
+                    log::info!("Agent LLM config is 'auto' or empty, using scheduler/default config");
+                    if self.config.model_config.model_name.trim().is_empty() {
+                        return Err(PlanAndExecuteError::ConfigError(
+                            "无法找到可用的规划器模型配置。请在调度器设置中配置规划器模型，或在Agent配置中设置LLM覆盖。".to_string()
+                        ));
+                    }
+                    (self.config.ai_provider.clone(), self.config.model_config.model_name.clone())
+                }
+            } else {
+                log::info!("使用默认规划模型: {} ({})", self.config.model_config.model_name, self.config.ai_provider);
+                if self.config.model_config.model_name.trim().is_empty() {
+                    return Err(PlanAndExecuteError::ConfigError(
+                        "无法找到可用的规划器模型配置。请在调度器设置中配置规划器模型，或在Agent配置中设置LLM覆盖。".to_string()
+                    ));
+                }
+                (self.config.ai_provider.clone(), self.config.model_config.model_name.clone())
+            }
         };
         
         // 获取AI服务
@@ -496,14 +522,19 @@ Plan-and-Execute架构流程：
             ));
         };
         
-        // 使用流式消息API发送请求
-        let execution_id = uuid::Uuid::new_v4().to_string();
-        let result = ai_service.send_message_stream(
-            prompt, 
-            None, // 系统提示
-            Some(execution_id.clone()), // 会话ID
-            Some(execution_id.clone()), // 消息ID
-        ).await.map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
+        // 使用流式消息API发送请求（分别传递 system 与 user 提示），并显式传入前端提供的 IDs
+        let result = ai_service
+            .send_message_stream(
+                Some(user_prompt),       // 用户提示
+                Some(system_prompt),     // 系统提示
+                conversation_id,         // 前端会话ID
+                message_id,              // 前端消息ID
+                false,
+                false,
+                Some(ChunkType::PlanInfo),
+            )
+            .await
+            .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
         
         log::info!("AI响应内容: {}", result);
         Ok(result)

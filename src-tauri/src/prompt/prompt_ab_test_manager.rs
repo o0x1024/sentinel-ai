@@ -260,7 +260,7 @@ pub struct TestExecution {
     /// 错误信息
     pub error_message: Option<String>,
     /// 执行时长（毫秒）
-    pub duration_ms: u64,
+    pub duration_ms: f64,
 }
 
 /// 执行状态
@@ -783,7 +783,7 @@ impl PromptABTestManager {
         key.hash(&mut hasher);
         let hash_value = hasher.finish();
         
-        let normalized_hash = (hash_value as f64) / (u64::MAX as f64);
+        let normalized_hash = (hash_value as f64) / (f64::MAX as f64);
         
         let mut cumulative_weight = 0.0;
         for variant in variants {

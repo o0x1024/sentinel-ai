@@ -1,5 +1,57 @@
 <template>
-  <div class="proxy-test-panel">
+    <!-- 网络(代理)设置 -->
+    <div  class="card bg-base-100 shadow-md mb-6">
+        <div class="card-body gap-4">
+            <div class="flex items-center gap-3">
+                <input type="checkbox" class="toggle toggle-primary" v-model="network.proxy.enabled"
+                    @change="saveProxy" />
+                <span class="font-medium">{{ t('settings.network.enableGlobalProxy', '启用全局代理') }}</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="label"><span class="label-text">{{ t('settings.network.scheme', '协议')
+                            }}</span></label>
+                    <select v-model="network.proxy.scheme" class="select select-bordered w-full" @change="saveProxy">
+                        <option value="http">http</option>
+                        <option value="https">https</option>
+                        <option value="socks5">socks5</option>
+                        <option value="socks5h">socks5h</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">{{ t('settings.network.host', '主机') }}</span></label>
+                    <input v-model.trim="network.proxy.host" class="input input-bordered w-full" placeholder="127.0.0.1"
+                        @blur="saveProxy" />
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">{{ t('settings.network.port', '端口') }}</span></label>
+                    <input v-model.number="network.proxy.port" class="input input-bordered w-full" type="number"
+                        placeholder="7890" @blur="saveProxy" />
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">{{ t('settings.network.noProxy', '不走代理')
+                            }}</span></label>
+                    <input v-model.trim="network.proxy.no_proxy" class="input input-bordered w-full"
+                        placeholder="localhost,127.0.0.1" @blur="saveProxy" />
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">{{ t('settings.network.username', '用户名(可选)')
+                            }}</span></label>
+                    <input v-model.trim="network.proxy.username" class="input input-bordered w-full"
+                        @blur="saveProxy" />
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">{{ t('settings.network.password', '密码(可选)')
+                            }}</span></label>
+                    <input v-model.trim="network.proxy.password" class="input input-bordered w-full" type="password"
+                        @blur="saveProxy" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+     <div class="proxy-test-panel">
     <div class="card bg-base-100 shadow-md">
       <div class="card-body">
         <h2 class="card-title flex items-center gap-2">
@@ -152,9 +204,22 @@
   </div>
 </template>
 
+
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { dialog } from '@/composables/useDialog';
+import { invoke } from '@tauri-apps/api/core';
+import { onMounted, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n'
+
+
+const { t, locale } = useI18n()
+
+
+
+
+const network = reactive({ proxy: { enabled: false, scheme: 'http', host: '', port: 0, username: '', password: '', no_proxy: '' } })
+
+
 
 interface ProxyConfig {
   enabled: boolean
@@ -257,11 +322,54 @@ const clearResults = () => {
   testResults.value = []
 }
 
+
+// 网络代理
+const loadProxy = async () => {
+  try {
+    const cfg = await invoke('get_global_proxy_config') as any
+    network.proxy.enabled = !!cfg.enabled
+    network.proxy.scheme = cfg.scheme || 'http'
+    network.proxy.host = cfg.host || ''
+    network.proxy.port = cfg.port || 0
+    network.proxy.username = cfg.username || ''
+    network.proxy.password = cfg.password || ''
+    network.proxy.no_proxy = cfg.no_proxy || ''
+  } catch (e) {
+    console.warn('loadProxy failed', e)
+  }
+}
+
+
+
 // 生命周期
 onMounted(() => {
+    loadProxy()
   loadCurrentProxy()
 })
+
+const saveProxy = async () => {
+  try {
+    const cfg = {
+      enabled: network.proxy.enabled,
+      scheme: network.proxy.scheme,
+      host: network.proxy.host,
+      port: Number(network.proxy.port) || null,
+      username: network.proxy.username || null,
+      password: network.proxy.password || null,
+      no_proxy: network.proxy.no_proxy || null,
+    }
+    await invoke('set_global_proxy_config', { cfg })
+    dialog.toast.success('全局代理已保存并生效')
+  } catch (e) {
+    dialog.toast.error('保存全局代理失败')
+  }
+}
+
+
 </script>
+
+
+
 
 <style scoped>
 .proxy-test-panel {

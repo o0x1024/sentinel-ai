@@ -114,7 +114,7 @@ pub struct DispatchTaskResponse {
     pub task_id: String,
     pub status: String,
     pub message: String,
-    pub estimated_duration: Option<u64>,
+    pub estimated_duration: Option<f64>,
     pub created_at: String,
 }
 
@@ -174,7 +174,7 @@ pub struct TaskReportResponse {
 pub struct ReportAttachmentResponse {
     pub filename: String,
     pub content_type: String,
-    pub size_bytes: u64,
+    pub size_bytes: f64,
     pub data: Vec<u8>,
 }
 
@@ -315,13 +315,13 @@ pub struct TaskSummary {
 /// 引擎统计响应
 #[derive(Debug, Serialize)]
 pub struct EngineStatisticsResponse {
-    pub total_tasks: u64,
-    pub successful_tasks: u64,
-    pub failed_tasks: u64,
+    pub total_tasks: f64,
+    pub successful_tasks: f64,
+    pub failed_tasks: f64,
     pub average_execution_time: f64,
-    pub uptime_seconds: u64,
-    pub task_type_distribution: HashMap<String, u64>,
-    pub priority_distribution: HashMap<String, u64>,
+    pub uptime_seconds: f64,
+    pub task_type_distribution: HashMap<String, f64>,
+    pub priority_distribution: HashMap<String, f64>,
     pub hourly_task_count: Vec<u32>,
 }
 
@@ -772,7 +772,7 @@ pub struct FrontendExecuteRequest {
     pub goal: String,
     pub task_type: Option<String>,
     pub priority: Option<String>,
-    pub max_execution_time: Option<u64>,
+    pub max_execution_time: Option<f64>,
     pub context: Option<String>,
     pub config: Option<serde_json::Value>,
     pub metadata: Option<serde_json::Value>,

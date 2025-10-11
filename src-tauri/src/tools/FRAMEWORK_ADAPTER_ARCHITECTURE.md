@@ -111,8 +111,8 @@ pub struct AdapterConfig {
 ```rust
 pub struct RetryPolicy {
     pub max_retries: u32,
-    pub base_delay_ms: u64,
-    pub max_delay_ms: u64,
+    pub base_delay_ms: f64,
+    pub max_delay_ms: f64,
     pub backoff_multiplier: f64,
 }
 ```

@@ -10,6 +10,7 @@ pub mod deepseek;
 pub mod moonshot;
 pub mod openrouter;
 pub mod modelscope;
+pub mod lm_studio;
 // pub mod zhipu;
 // pub mod cohere;
 // pub mod groq;
@@ -28,6 +29,7 @@ pub use deepseek::DeepSeekProvider;
 pub use moonshot::MoonshotProvider;
 pub use openrouter::OpenRouterProvider;
 pub use modelscope::ModelScopeProvider;
+pub use lm_studio::LmStudioProvider;
 // pub use zhipu::ZhipuProvider;
 // pub use cohere::CohereProvider;
 
@@ -88,6 +90,10 @@ impl ProviderFactory {
                 let provider = ModelScopeProvider::new(config)?;
                 Ok(Arc::new(provider))
             },
+            "lm studio" | "lmstudio" | "lm_studio" => {
+                let provider = LmStudioProvider::new(config)?;
+                Ok(Arc::new(provider))
+            },
             _ => Err(AiAdapterError::ProviderNotSupportedError(
                 format!("Unsupported provider: {}", config.name)
             ))
@@ -105,6 +111,7 @@ impl ProviderFactory {
             "moonshot",
             "openrouter",
             "modelscope",
+            "lm studio",
             // "zhipu",
             // "cohere",
             "groq",

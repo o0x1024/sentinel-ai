@@ -119,5 +119,5 @@ pub struct TaskResult {
     pub success: bool,
     pub result: serde_json::Value,
     pub error: Option<String>,
-    pub execution_time_ms: u64,
+    pub execution_time_ms: f64,
 }

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::{Row};
 use sqlx::sqlite::{SqlitePool, SqliteRow};
-use crate::models::prompt::{PromptTemplate, UserPromptConfig, ArchitectureType, StageType, PromptGroup, PromptGroupItem};
+use crate::models::prompt::{PromptTemplate, UserPromptConfig, ArchitectureType, StageType, PromptGroup, PromptGroupItem, PromptCategory, TemplateType};
 
 #[derive(Clone, Debug)]
 pub struct PromptRepository {
@@ -15,7 +15,9 @@ impl PromptRepository {
 
     pub async fn list_templates(&self) -> Result<Vec<PromptTemplate>> {
         let rows = sqlx::query(
-            r#"SELECT id, name, description, architecture, stage, content, is_default, is_active, created_at, updated_at FROM prompt_templates ORDER BY created_at DESC"#
+            r#"SELECT id, name, description, architecture, stage, content, is_default, is_active, created_at, updated_at,
+               category, template_type, target_architecture, is_system, priority, tags, variables, version 
+               FROM prompt_templates ORDER BY created_at DESC"#
         ).fetch_all(&self.pool).await?;
 
         Ok(rows.into_iter().map(Self::row_to_template).collect())
@@ -23,7 +25,9 @@ impl PromptRepository {
 
     pub async fn get_template(&self, id: i64) -> Result<Option<PromptTemplate>> {
         let r = sqlx::query(
-            r#"SELECT id, name, description, architecture, stage, content, is_default, is_active, created_at, updated_at FROM prompt_templates WHERE id = ?"#
+            r#"SELECT id, name, description, architecture, stage, content, is_default, is_active, created_at, updated_at,
+               category, template_type, target_architecture, is_system, priority, tags, variables, version 
+               FROM prompt_templates WHERE id = ?"#
         ).bind(id).fetch_optional(&self.pool).await?;
         Ok(r.map(|row| Self::row_to_template(row)))
     }
@@ -32,9 +36,10 @@ impl PromptRepository {
         let arch_s = Self::arch_str(&arch);
         let stage_s = Self::stage_str(&stage);
         let r = sqlx::query(
-            r#"SELECT id, name, description, architecture, stage, content, is_default, is_active, created_at, updated_at
-                FROM prompt_templates WHERE architecture = ? AND stage = ? AND is_active = 1
-                ORDER BY is_default DESC, updated_at DESC LIMIT 1"#
+            r#"SELECT id, name, description, architecture, stage, content, is_default, is_active, created_at, updated_at,
+               category, template_type, target_architecture, is_system, priority, tags, variables, version
+               FROM prompt_templates WHERE architecture = ? AND stage = ? AND is_active = 1
+               ORDER BY is_default DESC, priority DESC, updated_at DESC LIMIT 1"#
         ).bind(arch_s).bind(stage_s).fetch_optional(&self.pool).await?;
         Ok(r.map(|row| Self::row_to_template(row)))
     }
@@ -42,8 +47,16 @@ impl PromptRepository {
     pub async fn create_template(&self, t: &PromptTemplate) -> Result<i64> {
         let arch_s = Self::arch_str(&t.architecture);
         let stage_s = Self::stage_str(&t.stage);
+        let category_s = t.category.as_ref().map(Self::category_str);
+        let template_type_s = t.template_type.as_ref().map(Self::template_type_str);
+        let target_arch_s = t.target_architecture.as_ref().map(Self::arch_str);
+        let tags_json = serde_json::to_string(&t.tags).unwrap_or_else(|_| "[]".to_string());
+        let variables_json = serde_json::to_string(&t.variables).unwrap_or_else(|_| "[]".to_string());
+        
         let res = sqlx::query(
-            r#"INSERT INTO prompt_templates (name, description, architecture, stage, content, is_default, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO prompt_templates (name, description, architecture, stage, content, is_default, is_active,
+               category, template_type, target_architecture, is_system, priority, tags, variables, version) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(&t.name)
         .bind(&t.description)
@@ -52,6 +65,14 @@ impl PromptRepository {
         .bind(&t.content)
         .bind(if t.is_default { 1 } else { 0 })
         .bind(if t.is_active { 1 } else { 0 })
+        .bind(category_s)
+        .bind(template_type_s)
+        .bind(target_arch_s)
+        .bind(if t.is_system { 1 } else { 0 })
+        .bind(t.priority)
+        .bind(tags_json)
+        .bind(variables_json)
+        .bind(&t.version)
         .execute(&self.pool).await?;
         Ok(res.last_insert_rowid())
     }
@@ -59,8 +80,17 @@ impl PromptRepository {
     pub async fn update_template(&self, id: i64, t: &PromptTemplate) -> Result<()> {
         let arch_s = Self::arch_str(&t.architecture);
         let stage_s = Self::stage_str(&t.stage);
+        let category_s = t.category.as_ref().map(Self::category_str);
+        let template_type_s = t.template_type.as_ref().map(Self::template_type_str);
+        let target_arch_s = t.target_architecture.as_ref().map(Self::arch_str);
+        let tags_json = serde_json::to_string(&t.tags).unwrap_or_else(|_| "[]".to_string());
+        let variables_json = serde_json::to_string(&t.variables).unwrap_or_else(|_| "[]".to_string());
+        
         sqlx::query(
-            r#"UPDATE prompt_templates SET name = ?, description = ?, architecture = ?, stage = ?, content = ?, is_default = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#
+            r#"UPDATE prompt_templates SET name = ?, description = ?, architecture = ?, stage = ?, content = ?, 
+               is_default = ?, is_active = ?, category = ?, template_type = ?, target_architecture = ?, 
+               is_system = ?, priority = ?, tags = ?, variables = ?, version = ?, updated_at = CURRENT_TIMESTAMP 
+               WHERE id = ?"#
         )
         .bind(&t.name)
         .bind(&t.description)
@@ -69,6 +99,14 @@ impl PromptRepository {
         .bind(&t.content)
         .bind(if t.is_default { 1 } else { 0 })
         .bind(if t.is_active { 1 } else { 0 })
+        .bind(category_s)
+        .bind(template_type_s)
+        .bind(target_arch_s)
+        .bind(if t.is_system { 1 } else { 0 })
+        .bind(t.priority)
+        .bind(tags_json)
+        .bind(variables_json)
+        .bind(&t.version)
         .bind(id)
         .execute(&self.pool).await?;
         Ok(())
@@ -225,6 +263,86 @@ impl PromptRepository {
         Ok(())
     }
 
+    /// List templates with filters
+    pub async fn list_templates_filtered(&self, 
+        category: Option<PromptCategory>, 
+        template_type: Option<TemplateType>,
+        architecture: Option<ArchitectureType>,
+        is_system: Option<bool>
+    ) -> Result<Vec<PromptTemplate>> {
+        let mut query = r#"SELECT id, name, description, architecture, stage, content, is_default, is_active, created_at, updated_at,
+           category, template_type, target_architecture, is_system, priority, tags, variables, version 
+           FROM prompt_templates WHERE 1=1"#.to_string();
+        
+        let mut conditions = Vec::new();
+        
+        if let Some(cat) = &category {
+            conditions.push(format!(" AND category = '{}'", Self::category_str(cat)));
+        }
+        
+        if let Some(tt) = &template_type {
+            conditions.push(format!(" AND template_type = '{}'", Self::template_type_str(tt)));
+        }
+        
+        if let Some(arch) = &architecture {
+            conditions.push(format!(" AND architecture = '{}'", Self::arch_str(arch)));
+        }
+        
+        if let Some(sys) = is_system {
+            conditions.push(format!(" AND is_system = {}", if sys { 1 } else { 0 }));
+        }
+        
+        for condition in conditions {
+            query.push_str(&condition);
+        }
+        
+        query.push_str(" ORDER BY priority DESC, updated_at DESC");
+        
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(Self::row_to_template).collect())
+    }
+
+    /// Duplicate a template
+    pub async fn duplicate_template(&self, id: i64, new_name: Option<String>) -> Result<i64> {
+        if let Some(template) = self.get_template(id).await? {
+            let mut new_template = template;
+            new_template.id = None;
+            new_template.name = new_name.unwrap_or_else(|| format!("{} (Copy)", new_template.name));
+            new_template.is_default = false;
+            new_template.created_at = None;
+            new_template.updated_at = None;
+            
+            self.create_template(&new_template).await
+        } else {
+            Err(anyhow::anyhow!("Template not found"))
+        }
+    }
+
+    /// Evaluate prompt with variables
+    pub async fn evaluate_prompt(&self, template_id: i64, context: serde_json::Value) -> Result<String> {
+        if let Some(template) = self.get_template(template_id).await? {
+            let mut content = template.content;
+            
+            // Simple variable replacement supporting {var} and {{VAR}} syntax
+            if let Some(context_obj) = context.as_object() {
+                for (key, value) in context_obj {
+                    let placeholder_curly = format!("{{{}}}", key);
+                    let placeholder_double = format!("{{{{{}}}}}", key.to_uppercase());
+                    let replacement = match value {
+                        serde_json::Value::String(s) => s.clone(),
+                        _ => value.to_string(),
+                    };
+                    content = content.replace(&placeholder_curly, &replacement);
+                    content = content.replace(&placeholder_double, &replacement);
+                }
+            }
+            
+            Ok(content)
+        } else {
+            Err(anyhow::anyhow!("Template not found"))
+        }
+    }
+
     fn row_to_template(row: SqliteRow) -> PromptTemplate {
         let id_opt: Option<i64> = row.try_get("id").ok();
         let name: String = row.get("name");
@@ -236,6 +354,19 @@ impl PromptRepository {
         let is_active_i: i64 = row.try_get("is_active").unwrap_or(1);
         let created_at: Option<String> = row.try_get("created_at").ok();
         let updated_at: Option<String> = row.try_get("updated_at").ok();
+        
+        // Extended fields
+        let category: Option<String> = row.try_get("category").ok();
+        let template_type: Option<String> = row.try_get("template_type").ok();
+        let target_architecture: Option<String> = row.try_get("target_architecture").ok();
+        let is_system_i: i64 = row.try_get("is_system").unwrap_or(0);
+        let priority: i32 = row.try_get("priority").unwrap_or(50);
+        let tags_json: String = row.try_get("tags").unwrap_or_else(|_| "[]".to_string());
+        let variables_json: String = row.try_get("variables").unwrap_or_else(|_| "[]".to_string());
+        let version: String = row.try_get("version").unwrap_or_else(|_| "1.0.0".to_string());
+        
+        let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        let variables: Vec<String> = serde_json::from_str(&variables_json).unwrap_or_default();
 
         PromptTemplate {
             id: id_opt,
@@ -248,6 +379,14 @@ impl PromptRepository {
             is_active: is_active_i != 0,
             created_at,
             updated_at,
+            category: category.and_then(|c| Self::parse_category(&c)),
+            template_type: template_type.and_then(|t| Self::parse_template_type(&t)),
+            target_architecture: target_architecture.and_then(|a| Some(Self::parse_arch(&a))),
+            is_system: is_system_i != 0,
+            priority,
+            tags,
+            variables,
+            version,
         }
     }
 
@@ -325,6 +464,54 @@ impl PromptRepository {
             "execution" => StageType::Execution,
             "replan" => StageType::Replan,
             _ => StageType::Replan, // Default to Replan for unknown stages
+        }
+    }
+    
+    fn category_str(c: &PromptCategory) -> &'static str {
+        match c {
+            PromptCategory::System => "System",
+            PromptCategory::LlmArchitecture => "LlmArchitecture",
+            PromptCategory::Application => "Application",
+            PromptCategory::UserDefined => "UserDefined",
+        }
+    }
+    
+    fn parse_category(s: &str) -> Option<PromptCategory> {
+        match s {
+            "System" => Some(PromptCategory::System),
+            "LlmArchitecture" => Some(PromptCategory::LlmArchitecture),
+            "Application" => Some(PromptCategory::Application),
+            "UserDefined" => Some(PromptCategory::UserDefined),
+            _ => None,
+        }
+    }
+    
+    fn template_type_str(t: &TemplateType) -> &'static str {
+        match t {
+            TemplateType::SystemPrompt => "SystemPrompt",
+            TemplateType::IntentClassifier => "IntentClassifier",
+            TemplateType::Planner => "Planner",
+            TemplateType::Executor => "Executor",
+            TemplateType::Replanner => "Replanner",
+            TemplateType::Evaluator => "Evaluator",
+            TemplateType::ReportGenerator => "ReportGenerator",
+            TemplateType::Domain => "Domain",
+            TemplateType::Custom => "Custom",
+        }
+    }
+    
+    fn parse_template_type(s: &str) -> Option<TemplateType> {
+        match s {
+            "SystemPrompt" => Some(TemplateType::SystemPrompt),
+            "IntentClassifier" => Some(TemplateType::IntentClassifier),
+            "Planner" => Some(TemplateType::Planner),
+            "Executor" => Some(TemplateType::Executor),
+            "Replanner" => Some(TemplateType::Replanner),
+            "Evaluator" => Some(TemplateType::Evaluator),
+            "ReportGenerator" => Some(TemplateType::ReportGenerator),
+            "Domain" => Some(TemplateType::Domain),
+            "Custom" => Some(TemplateType::Custom),
+            _ => None,
         }
     }
 }

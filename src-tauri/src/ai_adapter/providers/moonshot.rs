@@ -1,6 +1,3 @@
-//! Moonshot AI 提供商适配器
-//! 
-//! 支持 Moonshot AI 的聊天完成 API，包括多轮对话和流式响应
 
 use crate::ai_adapter::types::*;
 use crate::ai_adapter::error::{AiAdapterError, Result};
@@ -39,7 +36,6 @@ fn sanitize_function_name(original: &str) -> String {
     cleaned
 }
 
-/// Moonshot AI 提供商
 #[derive(Debug)]
 pub struct MoonshotProvider {
     base: BaseProvider,

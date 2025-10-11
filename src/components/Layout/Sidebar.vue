@@ -181,8 +181,8 @@ const mainMenuItems = computed(() => [
     badgeClass: ''
   },
   {
-    path: '/smart-agent',
-    name: t('sidebar.smartAgent', '智能Agent控制台'),
+    path: '/agent-manager',
+    name: t('sidebar.agentManager', 'Agent管理'),
     icon: 'fas fa-robot',
     badge: 'NEW',
     badgeClass: 'badge-accent'
@@ -194,6 +194,7 @@ const mainMenuItems = computed(() => [
     badge: null,
     badgeClass: ''
   },
+
   {
     path: '/workflow-monitor',
     name: t('sidebar.workflowMonitor', '工作流监控'),
@@ -226,6 +227,13 @@ const toolMenuItems = computed(() => [
   //   badge: 'NEW',
   //   badgeClass: 'badge-success'
   // },
+    {
+    path: '/rag-management',
+    name: t('sidebar.ragManagement', 'RAG管理'),
+    icon: 'fas fa-database',
+    badge: null,
+    badgeClass: ''
+  },
   {
     path: '/mcp-tools',
     name: t('sidebar.mcpTools', 'MCP工具'),

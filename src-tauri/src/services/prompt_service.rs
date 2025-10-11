@@ -95,7 +95,7 @@ pub struct ExecutionRecord {
     /// 构建结果
     pub build_result: Option<PromptBuildResult>,
     /// 执行时长（毫秒）
-    pub duration_ms: u64,
+    pub duration_ms: f64,
     /// 是否成功
     pub success: bool,
     /// 错误信息
@@ -183,7 +183,7 @@ pub struct ValidationSettings {
     /// 启用A/B测试验证
     pub enable_ab_test: bool,
     /// 测试持续时间（小时）
-    pub test_duration_hours: Option<u64>,
+    pub test_duration_hours: Option<f64>,
     /// 最小样本大小
     pub min_sample_size: Option<usize>,
     /// 置信水平
@@ -417,7 +417,7 @@ impl PromptService {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             build_result: Some(result.clone()),
-            duration_ms: duration.as_millis() as u64,
+            duration_ms: duration.as_millis() as f64,
             success: true,
             error_message: None,
         };
@@ -449,7 +449,7 @@ impl PromptService {
                 },
                 user_feedback: None,
                 system_metrics: SystemMetrics {
-                    response_time_ms: duration.as_millis() as u64,
+                    response_time_ms: duration.as_millis() as f64,
                     token_usage: TokenUsage {
                         input_tokens: 0,
                         output_tokens: 0,

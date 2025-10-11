@@ -456,9 +456,9 @@ impl DictionaryService {
         .fetch_all(&self.pool)
         .await?;
 
-        let by_type: HashMap<String, u64> = type_stats
+        let by_type: HashMap<String, f64> = type_stats
             .into_iter()
-            .map(|(dict_type, count)| (dict_type, count as u64))
+            .map(|(dict_type, count)| (dict_type, count as f64))
             .collect();
 
         // 按服务类型统计
@@ -468,21 +468,21 @@ impl DictionaryService {
         .fetch_all(&self.pool)
         .await?;
 
-        let by_service: HashMap<String, u64> = service_stats
+        let by_service: HashMap<String, f64> = service_stats
             .into_iter()
             .map(|(service_type, count)| {
                 let service = service_type.unwrap_or_else(|| "unknown".to_string());
-                (service, count as u64)
+                (service, count as f64)
             })
             .collect();
 
         Ok(DictionaryStats {
-            total_dictionaries: total_dictionaries as u64,
-            total_words: total_words as u64,
-            builtin_dictionaries: builtin_dictionaries as u64,
-            custom_dictionaries: custom_dictionaries as u64,
-            active_dictionaries: active_dictionaries as u64,
-            total_sets: total_sets as u64,
+            total_dictionaries: total_dictionaries as f64,
+            total_words: total_words as f64,
+            builtin_dictionaries: builtin_dictionaries as f64,
+            custom_dictionaries: custom_dictionaries as f64,
+            active_dictionaries: active_dictionaries as f64,
+            total_sets: total_sets as f64,
             by_type,
             by_service,
         })

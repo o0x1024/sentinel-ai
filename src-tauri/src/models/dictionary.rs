@@ -341,14 +341,14 @@ pub struct DictionaryFilter {
 /// 字典统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DictionaryStats {
-    pub total_dictionaries: u64,
-    pub total_words: u64,
-    pub builtin_dictionaries: u64,
-    pub custom_dictionaries: u64,
-    pub active_dictionaries: u64,
-    pub total_sets: u64,
-    pub by_type: std::collections::HashMap<String, u64>,
-    pub by_service: std::collections::HashMap<String, u64>,
+    pub total_dictionaries: f64,
+    pub total_words: f64,
+    pub builtin_dictionaries: f64,
+    pub custom_dictionaries: f64,
+    pub active_dictionaries: f64,
+    pub total_sets: f64,
+    pub by_type: std::collections::HashMap<String, f64>,
+    pub by_service: std::collections::HashMap<String, f64>,
 }
 
 /// 字典导入/导出格式

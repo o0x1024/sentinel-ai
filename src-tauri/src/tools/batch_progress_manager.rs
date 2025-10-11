@@ -50,7 +50,7 @@ pub struct BatchResponse {
     pub id: Uuid,
     pub responses: Vec<BatchResponseItem>,
     pub completed_at: chrono::DateTime<chrono::Utc>,
-    pub total_duration_ms: u64,
+    pub total_duration_ms: f64,
     pub success_count: usize,
     pub error_count: usize,
 }
@@ -61,12 +61,12 @@ pub enum BatchResponseItem {
     Success {
         id: Uuid,
         result: serde_json::Value,
-        duration_ms: u64,
+        duration_ms: f64,
     },
     Error {
         id: Uuid,
         error: String,
-        duration_ms: u64,
+        duration_ms: f64,
     },
 }
 
@@ -213,7 +213,7 @@ impl BatchProgressManager {
             self.execute_sequential(request.requests, batch_id).await?
         };
         
-        let total_duration = start_time.elapsed().as_millis() as u64;
+        let total_duration = start_time.elapsed().as_millis() as f64;
         
         // 统计结果
         let success_count = responses.iter().filter(|r| matches!(r, BatchResponseItem::Success { .. })).count();
@@ -266,7 +266,7 @@ impl BatchProgressManager {
                 ).await;
                 
                 let result = manager.execute_single_request(request).await;
-                let duration = start_time.elapsed().as_millis() as u64;
+                let duration = start_time.elapsed().as_millis() as f64;
                 
                 match result {
                     Ok(result) => BatchResponseItem::Success {
@@ -306,7 +306,7 @@ impl BatchProgressManager {
             ).await;
             
             let result = self.execute_single_request(request).await;
-            let duration = start_time.elapsed().as_millis() as u64;
+            let duration = start_time.elapsed().as_millis() as f64;
             
             let response = match result {
                 Ok(result) => BatchResponseItem::Success {
@@ -452,7 +452,7 @@ impl BatchProgressManager {
     }
     
     /// 清理已完成的批处理
-    pub async fn cleanup_completed_batches(&self, older_than_hours: u64) {
+    pub async fn cleanup_completed_batches(&self, older_than_hours: f64) {
         let cutoff = chrono::Utc::now() - chrono::Duration::hours(older_than_hours as i64);
         let mut to_remove = Vec::new();
         

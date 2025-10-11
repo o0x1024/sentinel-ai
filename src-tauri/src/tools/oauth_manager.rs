@@ -177,7 +177,8 @@ impl OAuth21Manager {
         }
         
         // 发送令牌请求
-        let client = reqwest::Client::new();
+        let client = crate::ai_adapter::http::create_default_client()
+            .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
         let response = client
             .post(&self.config.token_endpoint)
             .form(&params)
@@ -279,7 +280,8 @@ impl OAuth21Manager {
         }
         
         // 发送刷新请求
-        let client = reqwest::Client::new();
+        let client = crate::ai_adapter::http::create_default_client()
+            .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
         let response = client
             .post(&self.config.token_endpoint)
             .form(&params)

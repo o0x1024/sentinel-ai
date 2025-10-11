@@ -9,6 +9,8 @@ use crate::services::prompt_db::PromptRepository;
 use crate::services::ai::AiServiceManager;
 use crate::services::mcp::McpService;
 use crate::engines::plan_and_execute::executor::{ExecutionResult, StepResult, StepStatus};
+use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
+use crate::models::prompt::ArchitectureType;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use std::collections::HashMap;
@@ -86,8 +88,8 @@ pub enum ReplanTrigger {
     /// 资源不足
     ResourceConstraint {
         resource_type: String,
-        available: f64,
-        required: f64,
+        available: u64,
+        required: u64,
     },
     /// 外部条件变化
     ExternalConditionChange {
@@ -286,18 +288,20 @@ pub struct Replanner {
     planner: Planner,
     execution_history: Mutex<Vec<ExecutionResult>>,
     replan_history: Mutex<Vec<ReplanResult>>,
+    prompt_repo: Option<PromptRepository>,
 }
 
 impl Replanner {
     /// 创建新的重新规划器实例
     pub fn new(config: ReplannerConfig, planner_config: PlannerConfig, prompt_repo: Option<PromptRepository>) -> Result<Self, PlanAndExecuteError> {
-        let planner = Planner::new(planner_config, prompt_repo)?;
+        let planner = Planner::new(planner_config, prompt_repo.clone())?;
         
         Ok(Self {
             config,
             planner,
             execution_history: Mutex::new(Vec::new()),
             replan_history: Mutex::new(Vec::new()),
+            prompt_repo,
         })
     }
 
@@ -312,7 +316,7 @@ impl Replanner {
     ) -> Result<Self, PlanAndExecuteError> {
         let planner = Planner::with_ai_service_manager(
             planner_config, 
-            prompt_repo, 
+            prompt_repo.clone(), 
             mcp_service, 
             ai_service_manager,
             app_handle,
@@ -323,6 +327,7 @@ impl Replanner {
             planner,
             execution_history: Mutex::new(Vec::new()),
             replan_history: Mutex::new(Vec::new()),
+            prompt_repo,
         })
     }
 
@@ -740,7 +745,7 @@ impl Replanner {
             "无特定触发器".to_string()
         };
         
-        let prompt = format!(r#"你是Plan-and-Execute架构中的Replanner反思层。你的任务是分析当前执行结果和整体任务状态，判断是否需要重新规划。
+        let base_prompt = format!(r#"你是Plan-and-Execute架构中的Replanner反思层。你的任务是分析当前执行结果和整体任务状态，判断是否需要重新规划。
 
 ## 当前任务信息
 任务名称: {}
@@ -815,8 +820,24 @@ impl Replanner {
             trigger_info,
             conversation_history
         );
-        
-        Ok(prompt)
+
+        // 优先使用统一提示词系统解析 Replanner 阶段模板
+        if let Some(repo) = &self.prompt_repo {
+            let resolver = PromptResolver::new(repo.clone());
+            let agent_config = AgentPromptConfig::parse_agent_config(&task.parameters);
+            let template = resolver
+                .resolve_prompt(&agent_config, ArchitectureType::PlanExecute, CanonicalStage::Replanner, Some(&base_prompt))
+                .await
+                .unwrap_or(base_prompt);
+
+            // 渲染变量（如需后续扩展变量，可加入上下文字典）
+            let mut ctx = std::collections::HashMap::new();
+            ctx.insert("task_name".to_string(), serde_json::Value::String(task.name.clone()));
+            ctx.insert("task_description".to_string(), serde_json::Value::String(task.description.clone()));
+            Ok(resolver.render_variables(&template, &ctx).unwrap_or(template))
+        } else {
+            Ok(base_prompt)
+        }
     }
 
     /// 构建对话历史上下文
@@ -861,7 +882,7 @@ impl Replanner {
             model: model_name,
             messages: vec![
                 crate::ai_adapter::types::Message {
-                    role: crate::ai_adapter::types::MessageRole::User,
+                    role: crate::ai_adapter::types::MessageRole::System,
                     content: prompt.to_string(),
                     name: None,
                     tool_calls: None,

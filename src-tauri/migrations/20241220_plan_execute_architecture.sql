@@ -48,8 +48,7 @@ CREATE TABLE IF NOT EXISTS execution_sessions (
     started_at INTEGER,
     completed_at INTEGER,
     context TEXT, -- JSON格式的执行上下文
-    error_message TEXT,
-    created_at INTEGER NOT NULL,
+    error_message TEXT,     
     FOREIGN KEY (plan_id) REFERENCES execution_plans(id) ON DELETE CASCADE
 );
 

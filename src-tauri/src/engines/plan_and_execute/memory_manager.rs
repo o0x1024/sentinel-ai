@@ -537,7 +537,7 @@ impl MemoryManager {
             } else {
                 0.0
             },
-            duration_ms: duration.as_millis() as u64,
+            duration_ms: duration.as_millis() as f64,
         };
         
         log::info!("内存压缩完成: 从 {} 条目压缩到 {} 条目，压缩率: {:.2}%", 
@@ -630,7 +630,7 @@ impl MemoryManager {
         Ok(cleaned_count)
     }
 
-    async fn cleanup_low_priority(&self, target_count: usize) -> Result<u64, PlanAndExecuteError> {
+    async fn cleanup_low_priority(&self, target_count: usize) -> Result<f64, PlanAndExecuteError> {
         let cleaned_count;
         
         {
@@ -650,7 +650,7 @@ impl MemoryManager {
                 }
             }
             
-            cleaned_count = keys_to_remove.len() as u64;
+            cleaned_count = keys_to_remove.len() as f64;
             for key in keys_to_remove {
                 store.remove(&key);
                 self.remove_from_access_order(&key).await;
@@ -782,7 +782,7 @@ pub struct CompressionResult {
     pub expired_cleaned: u64,
     pub lru_cleaned: u64,
     pub compression_ratio: f64,
-    pub duration_ms: u64,
+    pub duration_ms: f64,
 }
 
 // 默认实现

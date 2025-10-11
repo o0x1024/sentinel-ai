@@ -180,9 +180,9 @@ pub enum ArchitectureType {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UsageStats {
     /// 总使用次数
-    pub total_uses: u64,
+    pub total_uses: f64,
     /// 使用次数
-    pub usage_count: u64,
+    pub usage_count: f64,
     /// 成功率
     pub success_rate: f32,
     /// 平均构建时间（毫秒）
@@ -194,7 +194,7 @@ pub struct UsageStats {
     /// 最后使用时间
     pub last_used: Option<chrono::DateTime<chrono::Utc>>,
     /// 错误次数
-    pub error_count: u64,
+    pub error_count: f64,
 }
 
 /// 模板元数据
@@ -217,7 +217,7 @@ pub struct TemplateMetadata {
     /// 更新时间
     pub updated_at: chrono::DateTime<chrono::Utc>,
     /// 使用次数
-    pub usage_count: u64,
+    pub usage_count: f64,
     /// 使用统计
     pub usage_stats: UsageStats,
     /// 性能指标
@@ -234,7 +234,7 @@ pub struct PerformanceMetrics {
     /// 成功率
     pub success_rate: f64,
     /// 错误次数
-    pub error_count: u64,
+    pub error_count: f64,
 }
 
 /// 验证规则
@@ -317,9 +317,9 @@ pub struct ConfigSelectionContext {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResourceConstraints {
     /// 最大执行时间
-    pub max_execution_time: Option<u64>,
+    pub max_execution_time: Option<f64>,
     /// 最大内存使用
-    pub max_memory_mb: Option<u64>,
+    pub max_memory_mb: Option<f64>,
     /// 最大并发数
     pub max_concurrency: Option<usize>,
 }

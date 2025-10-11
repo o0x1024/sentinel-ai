@@ -1,8 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use bincode;
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
+use tracing::info;
 use std::path::PathBuf;
 
 use crate::models::ai::AiRole;
@@ -990,6 +992,151 @@ impl DatabaseService {
         .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_mcp_server_configs_enabled ON mcp_server_configs(is_enabled)").execute(&mut *tx).await?;
 
+        // 创建RAG集合表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS rag_collections (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                document_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建RAG文档源表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS rag_document_sources (
+                id TEXT PRIMARY KEY,
+                collection_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                file_hash TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                chunk_count INTEGER DEFAULT 0,
+                ingestion_status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata TEXT,
+                FOREIGN KEY (collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建RAG文档块表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS rag_document_chunks (
+                id TEXT PRIMARY KEY,
+                collection_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                embedding BLOB,
+                metadata TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE,
+                FOREIGN KEY (source_id) REFERENCES rag_document_sources(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建RAG查询历史表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS rag_query_history (
+                id TEXT PRIMARY KEY,
+                collection_id TEXT,
+                query TEXT NOT NULL,
+                response TEXT NOT NULL,
+                processing_time_ms INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (collection_id) REFERENCES rag_collections(id) ON DELETE SET NULL
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建新的RAG表结构
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS rag_chunks (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                collection_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                token_count INTEGER,
+                char_count INTEGER NOT NULL,
+                start_position INTEGER,
+                end_position INTEGER,
+                page_number INTEGER,
+                section_title TEXT,
+                embedding_vector BLOB,
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER NOT NULL,
+                similarity_threshold REAL DEFAULT 0.7,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (document_id) REFERENCES rag_document_sources(id) ON DELETE CASCADE,
+                FOREIGN KEY (collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建RAG表索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_collections_name ON rag_collections(name)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_sources_collection_id ON rag_document_sources(collection_id)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_sources_file_hash ON rag_document_sources(file_hash)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_chunks_collection_id ON rag_document_chunks(collection_id)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_chunks_source_id ON rag_document_chunks(source_id)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_chunks_content_hash ON rag_document_chunks(content_hash)").execute(&mut *tx).await?;
+        
+        // 新RAG表的索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_document_id ON rag_chunks(document_id)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_collection_id ON rag_chunks(collection_id)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_content_hash ON rag_chunks(content_hash)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_chunk_index ON rag_chunks(chunk_index)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding_model ON rag_chunks(embedding_model)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_query_history_collection_id ON rag_query_history(collection_id)").execute(&mut *tx).await?;
+
+        // 创建scenario_agents表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS scenario_agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                enabled BOOLEAN DEFAULT 1,
+                profile_json TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // scenario_agents表的索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scenario_agents_name ON scenario_agents(name)")
+            .execute(&mut *tx)
+            .await?;
+
         // 提交事务
         tx.commit().await?;
 
@@ -1101,10 +1248,10 @@ impl DatabaseService {
             .unwrap_or(0);
 
         Ok(DatabaseStats {
-            scan_tasks_count: scan_tasks_count as u64,
-            vulnerabilities_count: vulnerabilities_count as u64,
-            assets_count: assets_count as u64,
-            conversations_count: conversations_count as u64,
+            scan_tasks_count: scan_tasks_count as f64,
+            vulnerabilities_count: vulnerabilities_count as f64,
+            assets_count: assets_count as f64,
+            conversations_count: conversations_count as f64,
             db_size_bytes: db_size,
             last_backup: None, // TODO: 实现备份跟踪
         })
@@ -1551,6 +1698,37 @@ impl DatabaseService {
         .await?;
 
         Ok(rows)
+    }
+
+    /// RAG配置管理方法
+    pub async fn get_rag_config(&self) -> Result<Option<crate::rag::config::RagConfig>> {
+        let config_json = self.get_config("rag", "config").await?;
+        
+        if let Some(json_str) = config_json {
+            match serde_json::from_str::<crate::rag::config::RagConfig>(&json_str) {
+                Ok(config) => Ok(Some(config)),
+                Err(e) => {
+                    log::warn!("Failed to parse RAG config from database: {}, using default", e);
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn save_rag_config(&self, config: &crate::rag::config::RagConfig) -> Result<()> {
+        let config_json = serde_json::to_string(config)
+            .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize RAG config: {}", e)))?;
+        
+        self.set_config(
+            "rag",
+            "config", 
+            &config_json,
+            Some("RAG系统配置")
+        ).await?;
+        
+        Ok(())
     }
 
     /// 子域名字典管理方法
@@ -2846,6 +3024,590 @@ impl Database for DatabaseService {
         .execute(pool)
         .await?;
         
+        Ok(())
+    }
+}
+
+impl DatabaseService {
+    // RAG-specific methods
+    pub async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> Result<String> {
+        let pool = self.get_pool()?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        
+        sqlx::query(
+            "INSERT INTO rag_collections (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(&id)
+        .bind(name)
+        .bind(description)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+        
+        Ok(id)
+    }
+
+    pub async fn get_rag_collections(&self) -> Result<Vec<crate::rag::models::CollectionInfo>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query(
+            "SELECT id, name, description, document_count, chunk_count, created_at, updated_at FROM rag_collections ORDER BY created_at DESC"
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let mut collections = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let name: String = row.get("name");
+            let description: Option<String> = row.get("description");
+            let document_count: i64 = row.get("document_count");
+            let chunk_count: i64 = row.get("chunk_count");
+            let created_at: String = row.get("created_at");
+            let updated_at: String = row.get("updated_at");
+
+            collections.push(crate::rag::models::CollectionInfo {
+                id,
+                name,
+                description,
+                embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
+                document_count: document_count as usize,
+                chunk_count: chunk_count as usize,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
+            });
+        }
+
+        Ok(collections)
+    }
+
+    pub async fn delete_rag_collection(&self, collection_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("DELETE FROM rag_collections WHERE id = ?")
+            .bind(collection_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
+        let pool = self.get_pool()?;
+        let row = sqlx::query(
+            "SELECT id, name, description, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE id = ?"
+        )
+        .bind(collection_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(row) = row {
+            let id: String = row.get("id");
+            let name: String = row.get("name");
+            let description: Option<String> = row.get("description");
+            let document_count: i64 = row.get("document_count");
+            let chunk_count: i64 = row.get("chunk_count");
+            let created_at: String = row.get("created_at");
+            let updated_at: String = row.get("updated_at");
+
+            Ok(Some(crate::rag::models::CollectionInfo {
+                id,
+                name,
+                description,
+                embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
+                document_count: document_count as usize,
+                chunk_count: chunk_count as usize,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn get_rag_collection_by_name(&self, collection_name: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
+        let pool = self.get_pool()?;
+        let row = sqlx::query(
+            "SELECT id, name, description, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE name = ?"
+        )
+        .bind(collection_name)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(row) = row {
+            let id: String = row.get("id");
+            let name: String = row.get("name");
+            let description: Option<String> = row.get("description");
+            let document_count: i64 = row.get("document_count");
+            let chunk_count: i64 = row.get("chunk_count");
+            let created_at: String = row.get("created_at");
+            let updated_at: String = row.get("updated_at");
+
+            Ok(Some(crate::rag::models::CollectionInfo {
+                id,
+                name,
+                description,
+                embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
+                document_count: document_count as usize,
+                chunk_count: chunk_count as usize,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+        let pool = self.get_pool()?;
+        
+        // For now, do a simple text search. In a real implementation, you'd use vector similarity
+        info!("搜索RAG文本块: collection_id={}, query={}, limit={}", collection_id, query, limit);
+        
+        let rows = sqlx::query(
+            r#"
+            SELECT id, document_id, content, content_hash, chunk_index, char_count, 
+                   embedding_vector, embedding_model, embedding_dimension, metadata, 
+                   created_at, updated_at
+            FROM rag_chunks
+            WHERE collection_id = ? AND content LIKE ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            "#
+        )
+        .bind(collection_id)
+        .bind(format!("%{}%", query))
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await?;
+
+        info!("找到 {} 个匹配的文本块", rows.len());
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let document_id: String = row.get("document_id");
+            let content: String = row.get("content");
+            let content_hash: String = row.get("content_hash");
+            let chunk_index: i32 = row.get("chunk_index");
+            let metadata_json: String = row.get("metadata");
+            let created_at: i64 = row.get("created_at");
+
+            // 解析metadata - 如果是空JSON，创建默认的ChunkMetadata
+            let metadata = if metadata_json.trim() == "{}" {
+                crate::rag::models::ChunkMetadata {
+                    file_path: "unknown".to_string(),
+                    file_name: "unknown".to_string(),
+                    file_type: "unknown".to_string(),
+                    file_size: 0,
+                    chunk_start_char: 0,
+                    chunk_end_char: content.chars().count(),
+                    page_number: None,
+                    section_title: None,
+                    custom_fields: std::collections::HashMap::new(),
+                }
+            } else {
+                match serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json) {
+                    Ok(meta) => meta,
+                    Err(_) => {
+                        // 尝试解析为HashMap，然后转换
+                        let meta_map: std::collections::HashMap<String, String> = 
+                            serde_json::from_str(&metadata_json).unwrap_or_default();
+                        crate::rag::models::ChunkMetadata {
+                            file_path: meta_map.get("file_path").unwrap_or(&"unknown".to_string()).clone(),
+                            file_name: meta_map.get("file_name").unwrap_or(&"unknown".to_string()).clone(),
+                            file_type: meta_map.get("file_type").unwrap_or(&"unknown".to_string()).clone(),
+                            file_size: meta_map.get("file_size").unwrap_or(&"0".to_string()).parse().unwrap_or(0),
+                            chunk_start_char: meta_map.get("chunk_start_char").unwrap_or(&"0".to_string()).parse().unwrap_or(0),
+                            chunk_end_char: meta_map.get("chunk_end_char").unwrap_or(&content.chars().count().to_string()).parse().unwrap_or(content.chars().count()),
+                            page_number: meta_map.get("page_number").and_then(|s| s.parse().ok()),
+                            section_title: meta_map.get("section_title").cloned(),
+                            custom_fields: meta_map,
+                        }
+                    }
+                }
+            };
+
+            let created_at_datetime = chrono::DateTime::from_timestamp(created_at, 0)
+                .unwrap_or_else(|| chrono::Utc::now());
+
+            chunks.push(crate::rag::models::DocumentChunk {
+                id,
+                source_id: document_id, // document_id acts as source_id
+                content,
+                content_hash,
+                chunk_index: chunk_index as usize,
+                metadata,
+                embedding: None, // TODO: 从数据库加载嵌入向量
+                created_at: created_at_datetime,
+            });
+        }
+
+        info!("返回 {} 个文本块", chunks.len());
+
+        Ok(chunks)
+    }
+
+    pub async fn search_rag_chunks(&self, collection_name: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+        let pool = self.get_pool()?;
+        
+        // For now, do a simple text search. In a real implementation, you'd use vector similarity
+        let rows = sqlx::query(
+            r#"
+            SELECT c.id, c.source_id, c.content, c.content_hash, c.chunk_index, c.metadata, c.created_at
+            FROM rag_document_chunks c
+            JOIN rag_collections col ON c.collection_id = col.id
+            WHERE col.name = ? AND c.content LIKE ?
+            ORDER BY c.chunk_index
+            LIMIT ?
+            "#
+        )
+        .bind(collection_name)
+        .bind(format!("%{}%", query))
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await?;
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let source_id: String = row.get("source_id");
+            let content: String = row.get("content");
+            let content_hash: String = row.get("content_hash");
+            let chunk_index: i64 = row.get("chunk_index");
+            let metadata_json: String = row.get("metadata");
+            let created_at: String = row.get("created_at");
+
+            let metadata: crate::rag::models::ChunkMetadata = serde_json::from_str(&metadata_json)?;
+
+            chunks.push(crate::rag::models::DocumentChunk {
+                id,
+                source_id,
+                content,
+                content_hash,
+                chunk_index: chunk_index as usize,
+                metadata,
+                embedding: None,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+            });
+        }
+
+        Ok(chunks)
+    }
+
+    pub async fn save_rag_query(&self, collection_name: Option<&str>, query: &str, response: &str, processing_time_ms: u64) -> Result<()> {
+        let pool = self.get_pool()?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Get collection_id if collection_name is provided
+        let collection_id = if let Some(name) = collection_name {
+            let row = sqlx::query("SELECT id FROM rag_collections WHERE name = ?")
+                .bind(name)
+                .fetch_optional(pool)
+                .await?;
+            row.map(|r| r.get::<String, _>("id"))
+        } else {
+            None
+        };
+
+        sqlx::query(
+            "INSERT INTO rag_query_history (id, collection_id, query, response, processing_time_ms, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&id)
+        .bind(collection_id)
+        .bind(query)
+        .bind(response)
+        .bind(processing_time_ms as i64)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_rag_chunks(&self, collection_name: &str) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+        let pool = self.get_pool()?;
+        
+        let rows = sqlx::query(
+            r#"
+            SELECT c.id, c.source_id, c.content, c.content_hash, c.chunk_index, c.metadata, c.created_at
+            FROM rag_document_chunks c
+            JOIN rag_collections col ON c.collection_id = col.id
+            WHERE col.name = ?
+            ORDER BY c.chunk_index
+            "#
+        )
+        .bind(collection_name)
+        .fetch_all(pool)
+        .await?;
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let source_id: String = row.get("source_id");
+            let content: String = row.get("content");
+            let content_hash: String = row.get("content_hash");
+            let chunk_index: i64 = row.get("chunk_index");
+            let metadata_json: String = row.get("metadata");
+            let created_at: String = row.get("created_at");
+
+            let metadata: crate::rag::models::ChunkMetadata = serde_json::from_str(&metadata_json)?;
+
+            chunks.push(crate::rag::models::DocumentChunk {
+                id,
+                source_id,
+                content,
+                content_hash,
+                chunk_index: chunk_index as usize,
+                metadata,
+                embedding: None,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+            });
+        }
+
+        Ok(chunks)
+    }
+
+    pub async fn get_rag_query_history(&self, _collection_name: Option<&str>, limit: Option<i32>) -> Result<Vec<crate::rag::models::QueryResult>> {
+        let _pool = self.get_pool()?;
+        let _limit = limit.unwrap_or(50);
+        
+        // For now, return empty results since we need to implement proper query result storage
+        // This is a placeholder implementation to fix compilation
+        Ok(Vec::new())
+    }
+
+    pub async fn delete_rag_document(&self, document_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
+        // Delete document chunks first (due to foreign key constraints)
+        sqlx::query("DELETE FROM rag_document_chunks WHERE source_id = ?")
+            .bind(document_id)
+            .execute(pool)
+            .await?;
+        
+        // Delete the document source
+        sqlx::query("DELETE FROM rag_document_sources WHERE id = ?")
+            .bind(document_id)
+            .execute(pool)
+            .await?;
+        
+        Ok(())
+    }
+
+    pub async fn get_rag_documents(&self, collection_name: &str) -> Result<Vec<crate::rag::models::DocumentSource>> {
+        let pool = self.get_pool()?;
+        
+        let rows = sqlx::query(
+            r#"
+            SELECT s.id, s.collection_id, s.file_path, s.file_name, s.file_type, s.file_size, s.content_hash, s.metadata, s.created_at, s.updated_at
+            FROM rag_document_sources s
+            JOIN rag_collections c ON s.collection_id = c.id
+            WHERE c.name = ?
+            ORDER BY s.created_at DESC
+            "#
+        )
+        .bind(collection_name)
+        .fetch_all(pool)
+        .await?;
+
+        let mut documents = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let _collection_id: String = row.get("collection_id");
+            let file_path: String = row.get("file_path");
+            let file_name: String = row.get("file_name");
+            let file_type: String = row.get("file_type");
+            let file_size: i64 = row.get("file_size");
+            let content_hash: String = row.get("content_hash");
+            let metadata_json: String = row.get("metadata");
+            let created_at: String = row.get("created_at");
+            let updated_at: String = row.get("updated_at");
+
+            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&metadata_json)?;
+
+            documents.push(crate::rag::models::DocumentSource {
+                id,
+                file_path,
+                file_name,
+                file_type,
+                file_size: file_size as u64,
+                file_hash: content_hash,
+                chunk_count: 0, // TODO: Calculate actual chunk count
+                ingestion_status: crate::rag::models::IngestionStatusEnum::Completed,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
+                metadata,
+            });
+        }
+
+        Ok(documents)
+    }
+
+    pub async fn create_rag_document(
+        &self,
+        collection_id: &str,
+        file_path: &str,
+        file_name: &str,
+        content: &str,
+        metadata: &str,
+    ) -> Result<String> {
+        let pool = self.get_pool()?;
+        let document_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        
+        // Calculate file hash and size
+        let file_hash = format!("{:x}", md5::compute(content.as_bytes()));
+        let file_size = content.len() as i64;
+        
+        sqlx::query(
+            "INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, file_hash, content_hash, metadata, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&document_id)
+        .bind(collection_id)
+        .bind(file_path)
+        .bind(file_name)
+        .bind("text") // Default file type
+        .bind(file_size)
+        .bind(&file_hash)
+        .bind(&file_hash) // content_hash 使用相同的哈希值
+        .bind(metadata)
+        .bind(now.to_rfc3339())
+        .bind(now.to_rfc3339())
+        .execute(pool)
+        .await?;
+
+        Ok(document_id)
+    }
+
+    pub async fn create_rag_chunk(
+        &self,
+        document_id: &str,
+        collection_id: &str,
+        content: &str,
+        chunk_index: i32,
+        embedding: Option<&[f32]>,
+        embedding_model: &str,
+        embedding_dimension: i32,
+    ) -> Result<String> {
+        let pool = self.get_pool()?;
+        let chunk_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        let now_timestamp = now.timestamp();
+        
+        // Convert embedding to bytes if provided
+        let embedding_bytes = if let Some(emb) = embedding {
+            Some(bincode::serialize(emb)?)
+        } else {
+            None
+        };
+        
+        // Generate content hash
+        let content_hash = format!("{:x}", md5::compute(content.as_bytes()));
+        let char_count = content.chars().count() as i32;
+        
+        sqlx::query(
+            "INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding_vector, embedding_model, embedding_dimension, metadata, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&chunk_id)
+        .bind(document_id)
+        .bind(collection_id)
+        .bind(content)
+        .bind(&content_hash)
+        .bind(chunk_index)
+        .bind(char_count)
+        .bind(embedding_bytes)
+        .bind(embedding_model)
+        .bind(embedding_dimension)
+        .bind("{}")  // metadata as empty JSON
+        .bind(now_timestamp)
+        .bind(now_timestamp)
+        .execute(pool)
+        .await?;
+
+        Ok(chunk_id)
+    }
+
+    /// 更新集合的文档和块统计
+    pub async fn update_collection_stats(&self, collection_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
+        // 计算文档数量
+        let document_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?"
+        )
+        .bind(collection_id)
+        .fetch_one(pool)
+        .await?;
+        
+        // 计算块数量 (从新的rag_chunks表)
+        let chunk_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?"
+        )
+        .bind(collection_id)
+        .fetch_one(pool)
+        .await?;
+        
+        // 更新集合统计
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE rag_collections SET document_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(document_count)
+        .bind(chunk_count)
+        .bind(&now)
+        .bind(collection_id)
+        .execute(pool)
+        .await?;
+        
+        log::info!("更新集合 {} 统计: {} 文档, {} 块", collection_id, document_count, chunk_count);
+        Ok(())
+    }
+
+    // Scenario agent methods
+    pub async fn list_scenario_agents(&self) -> Result<Vec<crate::commands::ai_commands::ScenarioAgentProfile>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query("SELECT * FROM scenario_agents ORDER BY name")
+            .fetch_all(pool)
+            .await?;
+
+        let mut agents = Vec::new();
+        for row in rows {
+            let profile_json: String = row.get("profile_json");
+            let profile: crate::commands::ai_commands::ScenarioAgentProfile = 
+                serde_json::from_str(&profile_json)?;
+            agents.push(profile);
+        }
+        Ok(agents)
+    }
+
+    pub async fn upsert_scenario_agent(&self, profile: &crate::commands::ai_commands::ScenarioAgentProfile) -> Result<()> {
+        let pool = self.get_pool()?;
+        let profile_json = serde_json::to_string(profile)?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "INSERT OR REPLACE INTO scenario_agents (id, name, profile_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(&profile.id)
+        .bind(&profile.name)
+        .bind(&profile_json)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn delete_scenario_agent(&self, id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("DELETE FROM scenario_agents WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
         Ok(())
     }
 }

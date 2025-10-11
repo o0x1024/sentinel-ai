@@ -17,6 +17,7 @@ use tracing::{info, warn};
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
 use crate::models::prompt::{ArchitectureType, StageType};
+use crate::utils::ordered_message::ChunkType;
 use super::types::*;
 use super::types::EfficiencyMetrics;
 
@@ -234,7 +235,15 @@ impl IntelligentJoiner {
         ).await?;
         
         // 调用AI分析目标完成度
-        match self.ai_service.send_message(&completion_prompt, None).await {
+        match self.ai_service.send_message_stream(
+            Some(&completion_prompt), 
+            None, 
+            None, 
+            None,
+            true, 
+            false,
+            Some(ChunkType::Content)
+        ).await {
             Ok(response) => {
                 // 解析AI响应中的完成度分数
                 self.parse_completion_score(&response)
@@ -329,7 +338,15 @@ impl IntelligentJoiner {
             round,
         ).await?;
         
-        match self.ai_service.send_message(&decision_prompt, None).await {
+        match self.ai_service.send_message_stream(
+            Some(&decision_prompt), 
+            None, 
+            None, 
+            None,
+            true, 
+            false,
+            Some(ChunkType::Content)
+        ).await {
             Ok(response) => {
                 self.parse_ai_decision(&response)
             }

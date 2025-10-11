@@ -12,8 +12,6 @@ dist
 dist-ssr
 *.local
 
-doc
-docs
 .trea
 # Editor directories and files
 .vscode/*

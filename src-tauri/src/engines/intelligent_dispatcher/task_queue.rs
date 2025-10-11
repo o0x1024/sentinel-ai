@@ -24,7 +24,7 @@ pub struct TaskItem {
     /// 任务优先级
     pub priority: TaskPriority,
     /// 预估执行时间（秒）
-    pub estimated_duration: Option<u64>,
+    pub estimated_duration: Option<f64>,
     /// 资源需求
     pub resource_requirements: ResourceRequirements,
     /// 创建时间
@@ -163,7 +163,7 @@ pub struct QueueConfig {
     /// 最大并发任务数
     pub max_concurrent_tasks: usize,
     /// 任务超时时间（秒）
-    pub default_timeout: u64,
+    pub default_timeout: f64,
     /// 优先级权重
     pub priority_weights: HashMap<TaskPriority, f32>,
     /// 启用负载均衡

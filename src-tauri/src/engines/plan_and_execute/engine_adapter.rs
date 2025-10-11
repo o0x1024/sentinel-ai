@@ -1,8 +1,8 @@
 //! Plan-and-Execute引擎适配器 - 实现统一的ExecutionEngine接口
 
 use crate::agents::traits::{
-    AgentSession, AgentTask, AgentExecutionResult, ExecutionArtifact, ArtifactType,
-    LogLevel, ExecutionEngine, EngineInfo, PerformanceCharacteristics,
+    AgentTask, AgentExecutionResult, ExecutionArtifact, ArtifactType,
+    ExecutionEngine, EngineInfo, PerformanceCharacteristics,
     ExecutionPlan as AgentExecutionPlan, ExecutionStep as AgentExecutionStep, 
     StepType as AgentStepType, ResourceRequirements, ExecutionProgress
 };
@@ -30,6 +30,8 @@ pub struct PlanAndExecuteEngine {
     executor: Option<Arc<Executor>>,
     replanner: Option<Arc<Replanner>>,
     memory_manager: Option<Arc<MemoryManager>>,
+    /// 执行期参数（来自 AgentTask.parameters），用于在执行阶段访问，如 prompt_ids 等
+    runtime_params: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl PlanAndExecuteEngine {
@@ -61,6 +63,7 @@ impl PlanAndExecuteEngine {
             executor: None,
             replanner: None,
             memory_manager: None,
+            runtime_params: None,
         })
     }
     
@@ -145,7 +148,13 @@ impl PlanAndExecuteEngine {
             executor,
             replanner,
             memory_manager,
+            runtime_params: None,
         })
+    }
+
+    /// 设置运行期参数（单次执行专用）
+    pub fn set_runtime_params(&mut self, params: HashMap<String, serde_json::Value>) {
+        self.runtime_params = Some(params);
     }
 }
 
@@ -218,7 +227,7 @@ impl ExecutionEngine for PlanAndExecuteEngine {
                         description: format!("执行Plan-and-Execute任务: {}", plan.name),
                         task_type: TaskType::Research,
                         target: None,
-                        parameters: HashMap::new(),
+                        parameters: self.runtime_params.clone().unwrap_or_default(),
                         priority: Priority::Medium,
                         constraints: HashMap::new(),
                         metadata: HashMap::new(),
@@ -264,7 +273,7 @@ impl ExecutionEngine for PlanAndExecuteEngine {
                 let progress_percentage = if total_steps > 0 {
                     ((completed_steps as f64 / total_steps as f64) * 100.0) as f32
                 } else {
-                    0.0
+                    0.
                 };
                 
                 let current_step = if !execution_state.current_steps.is_empty() {
@@ -299,6 +308,18 @@ impl ExecutionEngine for PlanAndExecuteEngine {
         
         // 无法获取进度信息
         Err(anyhow::anyhow!("无法获取执行进度：引擎未初始化或会话不存在"))
+    }
+
+    async fn cancel_execution(&self, _session_id: &str) -> Result<()> {
+        // 调用执行器取消当前执行（无会话映射时执行器内部会直接置位取消标记）
+        if let Some(executor) = &self.executor {
+            if let Err(e) = executor.cancel().await {
+                log::warn!("Plan-and-Execute cancel failed: {}", e);
+            }
+        } else {
+            log::warn!("Plan-and-Execute executor not initialized; cancel ignored");
+        }
+        Ok(())
     }
 }
 
@@ -423,6 +444,24 @@ impl PlanAndExecuteEngine {
             
             // 准备参数，包含工具配置信息
             let mut parameters = step.parameters.clone();
+            // 将执行期prompt模板ID注入到AI推理步骤参数中
+            if let AgentStepType::LlmCall = agent_step_type {
+                if let Some(rp) = &self.runtime_params {
+                    // 支持 camelCase 兼容：prompt_ids 或 promptIds
+                    let pid_obj = rp.get("prompt_ids").or_else(|| rp.get("promptIds"));
+                    if let Some(pid_obj) = pid_obj {
+                        if let Some(exec_id) = pid_obj.get("executor").and_then(|v| v.as_i64()) {
+                            log::info!("Injecting executor prompt template id: {} for step {}", exec_id, step.name);
+                            parameters.insert(
+                                "prompt_template_executor_id".to_string(),
+                                serde_json::Value::Number(serde_json::Number::from(exec_id)),
+                            );
+                        }
+                    } else {
+                        log::info!("No prompt_ids/promptIds provided in runtime params; using default executor prompt");
+                    }
+                }
+            }
             
             // 如果有工具配置，将其保存到parameters中
             if let Some(ref tool_config) = step.tool_config {
@@ -632,8 +671,8 @@ impl PlanAndExecuteEngine {
         } else if error.contains("resource") || error.contains("资源") {
             ReplanTrigger::ResourceConstraint {
                 resource_type: "Memory".to_string(),
-                available: 256.0,
-                required: 512.0,
+                available: 256,
+                required: 512,
             }
         } else {
             ReplanTrigger::StepFailure {

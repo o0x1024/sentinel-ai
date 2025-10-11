@@ -386,7 +386,7 @@ pub struct ReportAttachment {
     /// 附件类型
     pub content_type: String,
     /// 附件大小（字节）
-    pub size: u64,
+    pub size: f64,
     /// 附件路径或URL
     pub path: String,
 }
@@ -498,7 +498,7 @@ pub enum BackoffStrategy {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_retries: 3,
+            max_retries: 0,
             retry_interval: 5,
             backoff_strategy: BackoffStrategy::Exponential,
         }

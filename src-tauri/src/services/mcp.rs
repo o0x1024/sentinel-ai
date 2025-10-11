@@ -9,6 +9,14 @@ use crate::tools::{McpClientManager, McpServerManager, ConnectionStatus, McpSess
 use crate::tools::protocol::ToolDefinition;
 use crate::services::database::DatabaseService;
 
+/// 从MCP Content结构中提取文本内容
+fn extract_text_from_content(content: &rmcp::model::Content) -> String {
+    match &content.raw {
+        rmcp::model::RawContent::Text(text_content) => text_content.text.clone(),
+        _ => format!("[Non-text content: {:?}]", content.raw),
+    }
+}
+
 // 工具信息类型已移动到 types 模块
 
 /// MCP 连接信息
@@ -254,7 +262,7 @@ impl McpService {
                 .content
                 .unwrap_or_default()
                 .into_iter()
-                .map(|c: Content| format!("{:?}", c))
+                .map(|c: Content| extract_text_from_content(&c))
                 .collect::<Vec<_>>()
                 .join("\n");
             return Ok(serde_json::json!({ "success": result.is_error != Some(true), "output": text }));

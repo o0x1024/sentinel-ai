@@ -44,7 +44,7 @@ impl BaseProvider {
         Self::validate_config(&config)?;
         
         // 创建HTTP客户端
-        let timeout = config.timeout.unwrap_or(Duration::from_secs(60));
+        let timeout = config.timeout.unwrap_or(Duration::from_secs(600));
         let http_client = HttpClient::new(timeout)?;
         
         // 创建重试策略

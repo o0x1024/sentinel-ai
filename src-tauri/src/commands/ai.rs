@@ -1,6 +1,7 @@
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::{AiConfig, AiServiceManager, AiToolCall};
 use crate::services::database::{Database, DatabaseService};
+use crate::utils::ordered_message::ChunkType;
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,10 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use sqlx::Row;
+use crate::services::prompt_db::PromptRepository;
+use crate::utils::prompt_resolver::{PromptResolver, AgentPromptConfig, CanonicalStage};
+use crate::models::prompt::ArchitectureType;
 
 // DTO for Tauri command argument to avoid CommandArg bound issues
 #[derive(Debug, Clone, Deserialize)]
@@ -319,10 +324,34 @@ pub async fn send_ai_stream_message(
     let conversation_id = request.conversation_id.clone();
     let message = request.message.clone();
     let service_clone = service.clone();
-    let system_prompt = request.system_prompt.clone();
+    let mut system_prompt = request.system_prompt.clone();
     let message_id_clone = message_id.clone();
 
     tokio::spawn(async move {
+        // If no system prompt provided, resolve from unified prompt system (System stage)
+        if system_prompt.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
+                if let Ok(pool) = db.get_pool() {
+                    let repo = PromptRepository::new(pool.clone());
+                    let resolver = PromptResolver::new(repo);
+                    let cfg = AgentPromptConfig::default();
+                    match resolver
+                        .resolve_prompt(&cfg, ArchitectureType::PlanExecute, CanonicalStage::System, None)
+                        .await {
+                        Ok(content) if !content.trim().is_empty() => {
+                            system_prompt = Some(content);
+                        }
+                        _ => {
+                            if let Ok(Some(db_prompt)) = db.get_config("ai", "system_prompt").await {
+                                if !db_prompt.trim().is_empty() {
+                                    system_prompt = Some(db_prompt);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // 发送开始事件（为了与前端配合）
         if let Err(e) = app_handle.emit(
             "ai_stream_start",
@@ -337,10 +366,13 @@ pub async fn send_ai_stream_message(
         // 直接调用AI服务的流式方法，它内部已经处理所有的事件发送
         match service_clone
             .send_message_stream(
-                &message,
+                Some(&message),
                 system_prompt.as_deref(),
                 Some(conversation_id.clone()),
-                Some(message_id_clone.clone()), // 传递消息ID
+                Some(message_id_clone.clone()), // 传递消息ID作为后端的assistant_message_id
+                true,
+                false,
+                Some(ChunkType::Content),
             )
             .await
         {
@@ -357,6 +389,208 @@ pub async fn send_ai_stream_message(
         }
 
         // 清理取消令牌
+        remove_cancellation_token(&conversation_id);
+    });
+
+    Ok(message_id)
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SendStreamWithSearchRequest {
+    pub conversation_id: String,
+    pub message: String,
+    pub service_name: String,
+    pub max_results: Option<u32>,   // Tavily: 0..=20
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub message_id: Option<String>,
+}
+
+/// 发送消息前先根据用户输入执行联网搜索，并将搜索结果注入到提示中再进行流式总结
+#[tauri::command]
+pub async fn send_ai_stream_with_search(
+    request: SendStreamWithSearchRequest,
+    app_handle: AppHandle,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<String, String> {
+    use std::time::Duration;
+    let max_results = request.max_results.unwrap_or(5).min(20);
+
+    // 读取 Tavily API Key（优先环境变量，其次数据库配置 ai/tavily_api_key）
+    let tavily_api_key = std::env::var("TAVILY_API_KEY").ok()
+        .or_else(|| {
+            if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
+                futures::executor::block_on(db.get_config("ai", "tavily_api_key")).ok().flatten()
+            } else { None }
+        })
+        .ok_or_else(|| "TAVILY_API_KEY not configured".to_string())?;
+
+    // 使用全局代理构建客户端
+    let client = crate::ai_adapter::http::build_client_with_global_proxy(Duration::from_secs(30))
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+    let tavily_url = "https://api.tavily.com/search";
+    let payload = serde_json::json!({
+        "query": request.message,
+        "max_results": max_results,
+        "include_answer": false,
+        "include_raw_content": false,
+        "search_depth": "basic"
+    });
+    let tavily_resp = client
+        .post(tavily_url)
+        .bearer_auth(tavily_api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to call Tavily: {}", e))?;
+    if !tavily_resp.status().is_success() {
+        let err_txt = tavily_resp.text().await.unwrap_or_default();
+        return Err(format!("Tavily error: {}", err_txt));
+    }
+    let tavily_json: serde_json::Value = tavily_resp.json().await
+        .map_err(|e| format!("Failed to parse Tavily response: {}", e))?;
+
+    // 整理 Tavily 结果给 LLM
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(results) = tavily_json.get("results").and_then(|r| r.as_array()) {
+        for (idx, item) in results.iter().enumerate() {
+            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let line = format!("{}. {}\n{}\n{}", idx + 1, title, url, content);
+            lines.push(line);
+        }
+    }
+    let search_block = if lines.is_empty() { String::new() } else { format!(
+        "[Web Search]\nsource: Tavily\nresults:\n{}\n\n",
+        lines.join("\n\n")
+    )};
+
+    // 为LLM增加系统提示，并组装用户内容
+    let system_prompt = Some("你是一个AI总结助手，你擅长对信息进行总结，请对用户输入的信息进行总结".to_string());
+    let augmented_user_content = if search_block.is_empty() {
+        request.message.clone()
+    } else {
+        format!(
+            "{}\n请基于上面的最新搜索结果，对下述用户问题进行客观、结构化总结，最后附上 Sources 列表（列出最相关链接）。用户问题：{}",
+            search_block, request.message
+        )
+    };
+
+    // 复用 send_ai_stream_message 的服务创建逻辑
+    let service = if let (Some(provider), Some(model)) = (&request.provider, &request.model) {
+        if let Ok(Some(provider_config)) = ai_manager.get_provider_config(provider).await {
+            let mut dynamic_config = provider_config;
+            dynamic_config.model = model.clone();
+            if let Some(temp) = request.temperature { dynamic_config.temperature = Some(temp); }
+            if let Some(max_tokens) = request.max_tokens { dynamic_config.max_tokens = Some(max_tokens); }
+            let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
+            let mcp_service = ai_manager.get_mcp_service();
+            let mut temp_service = crate::services::ai::AiService::new(
+                dynamic_config,
+                db_service.inner().clone(),
+                Some(app_handle.clone()),
+                mcp_service,
+            );
+            temp_service.set_app_handle(app_handle.clone());
+            temp_service
+        } else {
+            let mut default_service = ai_manager
+                .get_service(&request.service_name)
+                .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
+            default_service.set_app_handle(app_handle.clone());
+            default_service
+        }
+    } else {
+        match ai_manager.get_default_chat_model().await {
+            Ok(Some((_provider, model_name))) => {
+                if let Ok(Some(service)) = ai_manager.find_service_by_model(&model_name).await {
+                    let mut service_with_handle = service;
+                    service_with_handle.set_app_handle(app_handle.clone());
+                    service_with_handle
+                } else {
+                    let mut default_service = ai_manager
+                        .get_service(&request.service_name)
+                        .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
+                    default_service.set_app_handle(app_handle.clone());
+                    default_service
+                }
+            }
+            _ => {
+                let mut service = ai_manager
+                    .get_service(&request.service_name)
+                    .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
+                service.set_app_handle(app_handle.clone());
+                service
+            }
+        }
+    };
+
+    // 消息ID与取消令牌
+    let message_id = request
+        .message_id
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let _cancellation_token = create_cancellation_token(&request.conversation_id);
+
+    // 后台流式
+    let conversation_id = request.conversation_id.clone();
+    let service_clone = service.clone();
+    let message_id_clone = message_id.clone();
+    let content_to_send = augmented_user_content.clone();
+    let mut resolved_system_prompt = system_prompt.clone();
+
+    tokio::spawn(async move {
+        // Resolve system prompt if empty via unified prompt system
+        if resolved_system_prompt.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
+                if let Ok(pool) = db.get_pool() {
+                    let repo = PromptRepository::new(pool.clone());
+                    let resolver = PromptResolver::new(repo);
+                    let cfg = AgentPromptConfig::default();
+                    match resolver
+                        .resolve_prompt(&cfg, ArchitectureType::PlanExecute, CanonicalStage::System, None)
+                        .await {
+                        Ok(content) if !content.trim().is_empty() => {
+                            resolved_system_prompt = Some(content);
+                        }
+                        _ => {
+                            if let Ok(Some(db_prompt)) = db.get_config("ai", "system_prompt").await {
+                                if !db_prompt.trim().is_empty() {
+                                    resolved_system_prompt = Some(db_prompt);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Err(e) = app_handle.emit(
+            "ai_stream_start",
+            &serde_json::json!({
+                "conversation_id": conversation_id,
+                "message_id": message_id_clone
+            }),
+        ) {
+            tracing::error!("Failed to emit stream start event: {}", e);
+        }
+
+        if let Err(e) = service_clone
+            .send_message_stream(
+                Some(&content_to_send),
+                resolved_system_prompt.as_deref(),
+                Some(conversation_id.clone()),
+                Some(message_id_clone.clone()),
+                true,
+                false,
+                Some(ChunkType::Content),
+            )
+            .await
+        {
+            tracing::error!("Stream chat with search failed: {}", e);
+        }
+
         remove_cancellation_token(&conversation_id);
     });
 
@@ -486,6 +720,58 @@ pub async fn print_ai_conversations(app: AppHandle) -> Result<String, String> {
     }
 
     Ok(output)
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProviderUsageStats {
+    pub input_tokens: f64,
+    pub output_tokens: f64,
+    pub total_tokens: f64,
+    pub cost: f64,
+}
+
+/// 聚合全局 AI 用量统计（按 provider 分组）
+#[tauri::command]
+pub async fn get_ai_usage_stats(
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<std::collections::HashMap<String, ProviderUsageStats>, String> {
+    let pool = db.get_pool().map_err(|e| e.to_string())?;
+    let rows = sqlx::query(
+        r#"
+        SELECT 
+            c.model_provider as provider,
+            SUM(COALESCE(m.token_count, 0)) as total_tokens,
+            SUM(CASE WHEN m.role = 'user' THEN COALESCE(m.token_count, 0) ELSE 0 END) as input_tokens,
+            SUM(CASE WHEN m.role = 'assistant' THEN COALESCE(m.token_count, 0) ELSE 0 END) as output_tokens,
+            SUM(COALESCE(CAST(m.cost AS REAL), 0.0)) as cost
+        FROM ai_messages m
+        JOIN ai_conversations c ON m.conversation_id = c.id
+        GROUP BY c.model_provider
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to query usage stats: {}", e))?;
+
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let provider: String = row.get::<String, _>("provider");
+        let total_tokens: i64 = row.get::<i64, _>("total_tokens");
+        let input_tokens: i64 = row.get::<i64, _>("input_tokens");
+        let output_tokens: i64 = row.get::<i64, _>("output_tokens");
+        let cost: f64 = row.get::<f64, _>("cost");
+        map.insert(
+            provider,
+            ProviderUsageStats {
+                input_tokens: input_tokens.max(0) as f64,
+                output_tokens: output_tokens.max(0) as f64,
+                total_tokens: total_tokens.max(0) as f64,
+                cost,
+            },
+        );
+    }
+
+    Ok(map)
 }
 
 // 添加AI服务
@@ -677,6 +963,7 @@ pub async fn get_provider_models(
         "ollama" => test_ollama_connection(request).await?,
         "openrouter" => test_openrouter_connection(request).await?,
         "modelscope" => test_modelscope_connection(request).await?,
+        "lm studio" | "lmstudio" | "lm_studio" => test_lm_studio_connection(request).await?,
         _ => return Err(format!("Unsupported AI provider: {}", provider)),
     };
 
@@ -702,6 +989,7 @@ pub async fn test_ai_connection(
         "ollama" => test_ollama_connection(request).await,
         "openrouter" => test_openrouter_connection(request).await,
         "modelscope" => test_modelscope_connection(request).await,
+        "lm studio" | "lmstudio" | "lm_studio" => test_lm_studio_connection(request).await,
         _ => Ok(TestConnectionResponse {
             success: false,
             message: format!("Unsupported AI provider: {}", request.provider),
@@ -722,7 +1010,8 @@ async fn test_modelscope_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api-inference.modelscope.cn/v1/models".to_string());
@@ -806,7 +1095,8 @@ pub async fn test_openrouter_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
@@ -890,7 +1180,8 @@ async fn test_openai_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
@@ -974,7 +1265,8 @@ async fn test_anthropic_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.anthropic.com".to_string());
@@ -1052,7 +1344,8 @@ async fn test_gemini_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_key = request.api_key.unwrap();
 
     // 使用Gemini API测试连接
@@ -1123,7 +1416,8 @@ async fn test_deepseek_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
@@ -1189,11 +1483,87 @@ async fn test_deepseek_connection(
     }
 }
 
+// 测试LM Studio连接(本地)
+async fn test_lm_studio_connection(
+    request: TestConnectionRequest,
+) -> Result<TestConnectionResponse, String> {
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "http://localhost:1234".to_string());
+
+    // 构建请求头
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("Content-Type", "application/json".parse().unwrap());
+    headers.insert("Accept", "application/json".parse().unwrap());
+    
+    // 如果提供了API密钥，添加Authorization头
+    if let Some(api_key) = &request.api_key {
+        if !api_key.is_empty() && api_key != "lm-studio" {
+            headers.insert(
+                "Authorization",
+                format!("Bearer {}", api_key).parse().unwrap(),
+            );
+        }
+    }
+
+    // 获取可用模型列表
+    let response = client
+        .get(format!("{}/v1/models", api_base))
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to LM Studio: {}", e))?;
+
+    if response.status().is_success() {
+        let models_response: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        // 提取模型列表
+        if let Some(models_array) = models_response.get("data").and_then(|m| m.as_array()) {
+            let models: Vec<String> = models_array
+                .iter()
+                .filter_map(|m| m.get("id").and_then(|n| n.as_str()).map(String::from))
+                .collect();
+
+            Ok(TestConnectionResponse {
+                success: true,
+                message: format!(
+                    "Successfully connected to LM Studio, found {} local models",
+                    models.len()
+                ),
+                models: Some(models),
+            })
+        } else {
+            // 如果无法解析模型列表，返回成功但没有模型
+            Ok(TestConnectionResponse {
+                success: true,
+                message: "Successfully connected to LM Studio, but no models found".to_string(),
+                models: Some(vec![]),
+            })
+        }
+    } else {
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        Ok(TestConnectionResponse {
+            success: false,
+            message: format!("Failed to connect to LM Studio: {}", error_text),
+            models: None,
+        })
+    }
+}
+
 // 测试Ollama连接(本地)
 async fn test_ollama_connection(
     request: TestConnectionRequest,
 ) -> Result<TestConnectionResponse, String> {
-    let client = reqwest::Client::new();
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "http://localhost:11434".to_string());
@@ -1259,7 +1629,8 @@ async fn test_moonshot_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::ai_adapter::http::create_default_client()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.moonshot.cn/v1".to_string());
@@ -1671,7 +2042,7 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "moonshot",
                 "provider": "moonshot",
-                "name": "Moonshot AI",
+                "name": "Moonshot",
                 "enabled": false,
                 "api_key": null,
                 "api_base": "https://api.moonshot.cn/v1",
@@ -1733,9 +2104,9 @@ fn default_providers_config() -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-// 调度策略相关命令
+// 模型配置相关命令
 
-// 获取调度策略配置
+// 获取模型配置配置
 #[tauri::command]
 pub async fn get_scheduler_config(
     ai_manager: State<'_, Arc<AiServiceManager>>,
@@ -1755,7 +2126,7 @@ pub async fn get_scheduler_config(
     }
 }
 
-// 保存调度策略配置
+// 保存模型配置配置
 #[tauri::command]
 pub async fn save_scheduler_config(
     config: crate::services::ai::SchedulerConfig,
@@ -1952,6 +2323,113 @@ pub struct HandleTaskExecutionStreamRequest {
     pub conversation_id: String,
     pub message_id: String,
     pub execution_id: String,
+}
+
+// LM Studio相关的命令
+
+/// 刷新LM Studio模型列表
+#[tauri::command]
+pub async fn refresh_lm_studio_models(
+    api_base: Option<String>,
+    api_key: Option<String>,
+) -> Result<Vec<String>, String> {
+    use crate::ai_adapter::types::ProviderConfig;
+    use crate::ai_adapter::providers::LmStudioProvider;
+    
+    // 创建配置
+    let config = ProviderConfig {
+        name: "LM Studio".to_string(),
+        api_key: api_key.unwrap_or_else(|| "lm-studio".to_string()),
+        api_base,
+        api_version: None,
+        timeout: Some(std::time::Duration::from_secs(30)),
+        max_retries: Some(3),
+        extra_headers: None,
+    };
+    
+    // 创建提供商实例
+    let provider = LmStudioProvider::new(config)
+        .map_err(|e| format!("Failed to create LM Studio provider: {}", e))?;
+    
+    // 刷新模型列表
+    provider.refresh_models().await
+        .map_err(|e| format!("Failed to refresh LM Studio models: {}", e))
+}
+
+/// 获取LM Studio服务器状态
+#[tauri::command]
+pub async fn get_lm_studio_status(
+    api_base: Option<String>,
+    api_key: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use crate::ai_adapter::types::ProviderConfig;
+    use crate::ai_adapter::providers::LmStudioProvider;
+    
+    // 创建配置
+    let config = ProviderConfig {
+        name: "LM Studio".to_string(),
+        api_key: api_key.unwrap_or_else(|| "lm-studio".to_string()),
+        api_base,
+        api_version: None,
+        timeout: Some(std::time::Duration::from_secs(10)),
+        max_retries: Some(1),
+        extra_headers: None,
+    };
+    
+    // 创建提供商实例
+    let provider = LmStudioProvider::new(config)
+        .map_err(|e| format!("Failed to create LM Studio provider: {}", e))?;
+    
+    // 获取服务器状态
+    provider.get_server_status().await
+        .map_err(|e| format!("Failed to get LM Studio server status: {}", e))
+}
+
+/// 测试LM Studio连接（使用新的AI适配器）
+#[tauri::command]
+pub async fn test_lm_studio_provider_connection(
+    api_base: Option<String>,
+    api_key: Option<String>,
+) -> Result<TestConnectionResponse, String> {
+    use crate::ai_adapter::types::{ProviderConfig, AiProvider};
+    use crate::ai_adapter::providers::LmStudioProvider;
+    
+    // 创建配置
+    let config = ProviderConfig {
+        name: "LM Studio".to_string(),
+        api_key: api_key.unwrap_or_else(|| "lm-studio".to_string()),
+        api_base,
+        api_version: None,
+        timeout: Some(std::time::Duration::from_secs(10)),
+        max_retries: Some(1),
+        extra_headers: None,
+    };
+    
+    // 创建提供商实例
+    let provider = LmStudioProvider::new(config)
+        .map_err(|e| format!("Failed to create LM Studio provider: {}", e))?;
+    
+    // 测试连接
+    match provider.test_connection().await {
+        Ok(true) => {
+            let models = provider.supported_models();
+            Ok(TestConnectionResponse {
+                success: true,
+                message: format!("Successfully connected to LM Studio, found {} models", models.len()),
+                models: Some(models),
+            })
+        }
+        Ok(false) => Ok(TestConnectionResponse {
+            success: false,
+            message: "Connection to LM Studio failed".to_string(),
+            models: None,
+        }),
+        Err(e) => Ok(TestConnectionResponse {
+            success: false,
+            message: format!("Error testing LM Studio connection: {}", e),
+            models: None,
+        }),
+    }
 }
 
 

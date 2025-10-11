@@ -60,6 +60,77 @@ pub struct PromptBuildContext {
     pub history: Vec<HistoryItem>,
     /// 自定义变量
     pub custom_variables: HashMap<String, serde_json::Value>,
+    /// RAG检索上下文
+    pub rag_context: Option<RagContext>,
+}
+
+/// RAG检索上下文
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagContext {
+    /// 是否启用RAG
+    pub enabled: bool,
+    /// 检索到的相关文档
+    pub retrieved_documents: Vec<RagDocument>,
+    /// 格式化的上下文文本
+    pub formatted_context: String,
+    /// 检索配置
+    pub retrieval_config: RagRetrievalConfig,
+    /// Token预算控制
+    pub token_budget: Option<TokenBudget>,
+}
+
+/// RAG文档
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagDocument {
+    /// 文档ID
+    pub id: String,
+    /// 文档内容
+    pub content: String,
+    /// 相似度分数
+    pub score: f32,
+    /// 文档元数据
+    pub metadata: HashMap<String, String>,
+    /// 来源信息
+    pub source: String,
+}
+
+/// RAG检索配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagRetrievalConfig {
+    /// 集合名称
+    pub collection_name: Option<String>,
+    /// 检索数量
+    pub top_k: usize,
+    /// 是否使用MMR
+    pub use_mmr: bool,
+    /// MMR Lambda参数
+    pub mmr_lambda: f32,
+    /// 相似度阈值
+    pub similarity_threshold: f32,
+}
+
+/// Token预算控制
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenBudget {
+    /// 最大Token数
+    pub max_tokens: usize,
+    /// 当前使用的Token数
+    pub used_tokens: usize,
+    /// 上下文优先级策略
+    pub priority_strategy: ContextPriorityStrategy,
+}
+
+/// 上下文优先级策略
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ContextPriorityStrategy {
+    /// 按相似度排序
+    BySimilarity,
+    /// 按时间排序
+    ByTime,
+    /// 按重要性排序
+    ByImportance,
+    /// 混合策略
+    Hybrid,
 }
 
 /// 目标信息
@@ -153,7 +224,7 @@ pub struct ToolInfo {
     /// 输出格式
     pub output_schema: serde_json::Value,
     /// 预估执行时间（秒）
-    pub estimated_duration: u64,
+    pub estimated_duration: f64,
     /// 资源需求
     pub resource_requirements: ResourceRequirements,
     /// 依赖关系
@@ -164,13 +235,13 @@ pub struct ToolInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceRequirements {
     /// 内存需求（MB）
-    pub memory_mb: u64,
+    pub memory_mb: f64,
     /// CPU需求（百分比）
     pub cpu_percent: f32,
     /// 网络带宽需求（KB/s）
-    pub network_kbps: u64,
+    pub network_kbps: f64,
     /// 磁盘空间需求（MB）
-    pub disk_mb: u64,
+    pub disk_mb: f64,
 }
 
 /// Prompt构建结果
@@ -244,6 +315,13 @@ impl PromptBuilder {
             variables.insert("history_context".to_string(), self.format_history(&context.history)?);
         }
 
+        // 添加RAG检索上下文
+        if let Some(rag_context) = &context.rag_context {
+            if rag_context.enabled && !rag_context.formatted_context.is_empty() {
+                variables.insert("rag_context".to_string(), self.format_rag_context(rag_context)?);
+            }
+        }
+
         // 构建prompt
         let prompt = self.variable_resolver.resolve_variables(
             &optimal_config.core_templates.planner_core,
@@ -301,6 +379,13 @@ impl PromptBuilder {
         };
         variables.insert("execution_context".to_string(), execution_context_str);
 
+        // 添加RAG检索上下文
+        if let Some(rag_context) = &context.rag_context {
+            if rag_context.enabled && !rag_context.formatted_context.is_empty() {
+                variables.insert("rag_context".to_string(), self.format_rag_context(rag_context)?);
+            }
+        }
+
         // 构建prompt
         let prompt = self.variable_resolver.resolve_variables(
             &optimal_config.core_templates.executor_core,
@@ -357,6 +442,13 @@ impl PromptBuilder {
         let triggers = optimal_config.domain_template.critical_triggers.join("\n- ");
         variables.insert("critical_triggers".to_string(), triggers);
 
+        // 添加RAG检索上下文
+        if let Some(rag_context) = &context.rag_context {
+            if rag_context.enabled && !rag_context.formatted_context.is_empty() {
+                variables.insert("rag_context".to_string(), self.format_rag_context(rag_context)?);
+            }
+        }
+
         // 构建prompt
         let prompt = self.variable_resolver.resolve_variables(
             &optimal_config.core_templates.replanner_core,
@@ -408,6 +500,13 @@ impl PromptBuilder {
         variables.insert("target_audience".to_string(), target_audience.to_string());
         variables.insert("report_domain_template".to_string(), 
             optimal_config.domain_template.domain_instructions);
+
+        // 添加RAG检索上下文
+        if let Some(rag_context) = &context.rag_context {
+            if rag_context.enabled && !rag_context.formatted_context.is_empty() {
+                variables.insert("rag_context".to_string(), self.format_rag_context(rag_context)?);
+            }
+        }
 
         // 构建prompt
         let prompt = self.variable_resolver.resolve_variables(
@@ -554,6 +653,41 @@ impl PromptBuilder {
                 item.content.chars().take(100).collect::<String>()
             ));
         }
+
+        Ok(formatted)
+    }
+
+    /// 格式化RAG检索上下文
+    pub fn format_rag_context(&self, rag_context: &RagContext) -> Result<String> {
+        if rag_context.retrieved_documents.is_empty() {
+            return Ok("无相关上下文".to_string());
+        }
+
+        let mut formatted = String::new();
+        formatted.push_str("**相关上下文：**\n");
+
+        for (i, doc) in rag_context.retrieved_documents.iter().enumerate() {
+            formatted.push_str(&format!("### 文档 {} (相似度: {:.3})\n", i + 1, doc.score));
+            formatted.push_str(&format!("**来源:** {}\n", doc.source));
+            
+            if !doc.metadata.is_empty() {
+                formatted.push_str("**元数据:** ");
+                for (key, value) in &doc.metadata {
+                    formatted.push_str(&format!("{}={}, ", key, value));
+                }
+                formatted.push_str("\n");
+            }
+            
+            formatted.push_str(&format!("**内容:**\n{}\n\n", doc.content));
+        }
+
+        // 添加检索配置信息
+        if let Some(collection) = &rag_context.retrieval_config.collection_name {
+            formatted.push_str(&format!("*检索集合: {}*\n", collection));
+        }
+        formatted.push_str(&format!("*Top-K: {}, 相似度阈值: {:.3}*\n", 
+            rag_context.retrieval_config.top_k, 
+            rag_context.retrieval_config.similarity_threshold));
 
         Ok(formatted)
     }
@@ -738,6 +872,7 @@ mod tests {
             execution_context: None,
             history: vec![],
             custom_variables: HashMap::new(),
+            rag_context: None,
         };
 
         let result = builder.build_planner_prompt(&context).await.unwrap();

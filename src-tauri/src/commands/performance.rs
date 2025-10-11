@@ -81,7 +81,7 @@ pub async fn reset_performance_stats() -> Result<(), String> {
 
 /// 记录操作性能
 #[tauri::command]
-pub async fn record_operation_timing(operation: String, duration_ms: f64) -> Result<(), String> {
+pub async fn record_operation_timing(operation: String, duration_ms: u64) -> Result<(), String> {
     let optimizer = get_or_init_optimizer();
     let duration = std::time::Duration::from_millis(duration_ms as u64);
     optimizer.monitor().record_timing(&operation, duration);

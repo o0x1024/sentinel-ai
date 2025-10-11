@@ -6,6 +6,7 @@ use crate::services::ai::{AiService, AiServiceManager};
 use crate::services::database::DatabaseService;
 use crate::services::prompt_db::PromptRepository;
 use crate::models::prompt::{ArchitectureType, StageType};
+use crate::utils::ordered_message::{ChunkType, emit_message_chunk};
 use super::types::*;
 use super::planner::LlmCompilerPlanner;
 use super::task_fetcher::TaskFetchingUnit;
@@ -29,6 +30,8 @@ pub struct LlmCompilerEngine {
     ai_service: Option<Arc<AiService>>,
     config: LlmCompilerConfig,
     prompt_repo: Option<PromptRepository>,
+    runtime_params: Option<std::collections::HashMap<String, serde_json::Value>>, // prompt_ids 等
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl LlmCompilerEngine {
@@ -64,6 +67,8 @@ impl LlmCompilerEngine {
             ai_service: None,
             config,
             prompt_repo: None,
+            runtime_params: None,
+            app_handle: None,
         })
     }
     
@@ -129,7 +134,52 @@ impl LlmCompilerEngine {
             ai_service: Some(ai_service),
             config,
             prompt_repo: Some(PromptRepository::new(pool.clone())),
+            runtime_params: None,
+            app_handle: None,
         })
+    }
+
+    pub fn set_runtime_params(&mut self, params: std::collections::HashMap<String, serde_json::Value>) {
+        self.runtime_params = Some(params.clone());
+        // 透传到各组件（planner/joiner/executor）
+        if let Some(_planner) = &self.planner {
+            // Planner目前是Arc且没有内部可变性接口，这里通过任务执行时读取engine的runtime_params
+            // 如果后续Planner增加set_runtime_params，则可在此处下发
+        }
+        if let Some(_joiner) = &self.joiner {
+            // Joiner内部会在分析时从引擎读取上下文；如需可扩展传入
+        }
+        // 将参数传递给执行器池
+        if let Some(executor_pool) = &self.executor_pool {
+            let exec_clone = executor_pool.clone();
+            let params_clone = params.clone();
+            tokio::spawn(async move {
+                exec_clone.set_runtime_params(params_clone).await;
+            });
+        }
+    }
+
+    /// 设置应用句柄用于发送消息
+    pub fn set_app_handle(&mut self, app_handle: tauri::AppHandle) {
+        self.app_handle = Some(app_handle);
+    }
+
+    /// 发送错误消息到前端
+    fn emit_error(&self, execution_id: &str, message_id: &str, conversation_id: Option<&str>, error_msg: &str) {
+        if let Some(ref app_handle) = self.app_handle {
+            let error_message = format!("LLMCompiler引擎执行失败: {}\n\n如需帮助，请检查执行配置或联系技术支持。", error_msg);
+            emit_message_chunk(
+                app_handle,
+                execution_id,
+                message_id,
+                conversation_id,
+                ChunkType::Error,
+                &error_message,
+                true,
+                Some("llm_compiler"),
+                None,
+            );
+        }
     }
     
     /// 从AI服务管理器获取默认AI服务
@@ -297,7 +347,7 @@ impl LlmCompilerEngine {
         
         // 从session中获取任务描述
         let user_query = "LLMCompiler workflow execution";
-        let context = HashMap::new();
+        let context = self.runtime_params.clone().unwrap_or_default();
         
         info!("开始执行LLMCompiler工作流: {}", user_query);
         
@@ -459,10 +509,14 @@ impl LlmCompilerEngine {
             // 标记任务为执行中并启动执行
             let mut handles = Vec::new();
             for task in ready_tasks {
+                let task_id = task.id.clone();
                 let executor = executor_pool.clone();
                 let handle = tokio::spawn(async move {
                     executor.execute_task(task).await
                 });
+                
+                // 标记任务开始执行
+                task_fetcher.mark_task_executing(task_id, handle.abort_handle()).await;
                 handles.push(handle);
             }
             
@@ -504,7 +558,22 @@ impl LlmCompilerEngine {
         
         // 构建响应生成提示
         let response_prompt = if let Some(repo) = &self.prompt_repo {
-            if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
+            // 优先按 prompt_ids.executor 覆盖
+            if let Some(rp) = &self.runtime_params {
+                if let Some(pid) = rp.get("prompt_ids").and_then(|v| v.get("executor")).and_then(|v| v.as_i64()) {
+                    if let Ok(Some(dynamic)) = repo.get_template(pid).await {
+                        dynamic.content
+                    } else if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
+                        dynamic
+                    } else {
+                        self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
+                    }
+                } else if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
+                    dynamic
+                } else {
+                    self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
+                }
+            } else if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
                 dynamic
             } else {
                 self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
@@ -518,7 +587,15 @@ impl LlmCompilerEngine {
             info!("开始调用AI生成最终响应，提示词长度: {} 字符", response_prompt.len());
             debug!("AI响应生成提示词: {}", response_prompt);
             
-            match ai_service.send_message_stream(&response_prompt, Some("你是一个AI任务处理助手"), None, None).await {
+            match ai_service.send_message_stream(
+                None, 
+                Some(&response_prompt), 
+                None, 
+                None,
+                true, 
+                false,
+                Some(ChunkType::Content)
+            ).await {
                 Ok(ai_response) => {
                     if ai_response.trim().is_empty() {
                         warn!("AI返回了空响应，使用默认响应");
@@ -926,12 +1003,50 @@ impl LlmCompilerEngine {
                     
                     match decision {
                         JoinerDecision::Complete { response, .. } => {
-                            info!("Joiner决定完成执行: {}", response);
+                            info!("Joiner decided to complete: {}", response);
                             break;
                         }
-                        JoinerDecision::Continue { feedback, .. } => {
-                            info!("Joiner决定继续执行: {}", feedback);
-                            // 继续下一轮
+                        JoinerDecision::Continue { feedback, suggested_tasks, .. } => {
+                            info!("Joiner decided to continue: {}", feedback);
+                            
+                            // 如果有建议的新任务，触发重规划
+                            if !suggested_tasks.is_empty() {
+                                info!("Adding {} suggested tasks from Joiner", suggested_tasks.len());
+                                for new_task in suggested_tasks {
+                                    // 通过事件系统添加新任务
+                                    if let Err(e) = task_fetcher.send_event(
+                                        crate::engines::llm_compiler::task_fetcher::SchedulingEvent::TaskAdded { 
+                                            task: new_task 
+                                        }
+                                    ) {
+                                        warn!("Failed to add suggested task: {}", e);
+                                    }
+                                }
+                                execution_summary.replanning_count += 1;
+                            } else {
+                                // 没有新任务但决定继续，触发重规划
+                                if self.config.enable_replanning && round < self.config.max_iterations {
+                                    info!("Triggering replanning due to Continue decision");
+                                    match self.trigger_replanning(
+                                        &execution_plan,
+                                        &round_results,
+                                        &feedback,
+                                        task_fetcher
+                                    ).await {
+                                        Ok(new_tasks_added) => {
+                                            if new_tasks_added > 0 {
+                                                execution_summary.replanning_count += 1;
+                                                info!("Replanning added {} new tasks", new_tasks_added);
+                                            } else {
+                                                info!("Replanning did not generate new tasks");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("Replanning failed: {}", e);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -974,6 +1089,49 @@ impl LlmCompilerEngine {
             error: None,
         })
     }
+
+    /// 触发重规划并添加新任务
+    async fn trigger_replanning(
+        &self,
+        original_plan: &DagExecutionPlan,
+        execution_results: &[TaskExecutionResult],
+        feedback: &str,
+        task_fetcher: &Arc<TaskFetchingUnit>,
+    ) -> Result<usize> {
+        info!("Starting replanning process");
+        
+        if let Some(planner) = &self.planner {
+            // 调用规划器进行重规划
+            let new_plan = planner.replan(original_plan, execution_results, feedback).await?;
+            
+            let new_tasks_count = new_plan.nodes.len();
+            info!("Replanning generated {} new tasks", new_tasks_count);
+            
+            // 将新任务添加到调度器
+            for new_task in new_plan.nodes {
+                task_fetcher.send_event(
+                    crate::engines::llm_compiler::task_fetcher::SchedulingEvent::TaskAdded { 
+                        task: new_task 
+                    }
+                )?;
+            }
+            
+            // 更新依赖图（如果有新的依赖关系）
+            if !new_plan.dependency_graph.is_empty() {
+                task_fetcher.merge_dependency_graph(&new_plan.dependency_graph).await?;
+            }
+            
+            // 更新变量映射
+            if !new_plan.variable_mappings.is_empty() {
+                task_fetcher.merge_variable_mappings(&new_plan.variable_mappings).await?;
+            }
+            
+            Ok(new_tasks_count)
+        } else {
+            Err(anyhow::anyhow!("Planner not available for replanning"))
+        }
+    }
+
 }
 
 /// 工作流执行结果

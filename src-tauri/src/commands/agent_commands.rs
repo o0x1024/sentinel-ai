@@ -259,7 +259,7 @@ pub struct WorkflowExecution {
     pub current_step: Option<String>,
     pub total_steps: u32,
     pub completed_steps: u32,
-    pub progress: f32,
+    pub progress: u32,
     pub error: Option<String>,
     pub result: Option<serde_json::Value>,
 }
@@ -303,7 +303,7 @@ pub async fn list_workflow_executions(
                     completed_steps: session.step_results.values()
                         .filter(|r| matches!(r.status, crate::engines::types::StepExecutionStatus::Completed))
                         .count() as u32,
-                    progress: session.progress,
+                    progress: session.progress as u32,
                     error: None, // 可以从metadata中提取错误信息
                     result: None,
                 };
@@ -337,9 +337,9 @@ pub async fn list_workflow_executions(
                             execution_record.get("step_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32
                         } else { 0 },
                         progress: if execution_record.get("success").and_then(|v| v.as_bool()).unwrap_or(false) { 
-                            100.0 
+                            100
                         } else { 
-                            50.0 
+                            50
                         },
                         error: execution_record.get("error").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         result: Some(execution_record.clone()),
@@ -413,7 +413,7 @@ pub async fn list_workflow_executions(
                 crate::agents::traits::AgentSessionStatus::Failed => 2,
                 crate::agents::traits::AgentSessionStatus::Cancelled => 1,
             },
-            progress,
+            progress: progress as u32,
             error: session_info.error.map(|e| e.to_string()),
             result: session_info.result,
         };

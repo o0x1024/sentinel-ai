@@ -216,6 +216,7 @@ impl Asset {
         self
     }
 
+
     pub fn with_confidence(mut self, confidence: f64) -> Self {
         self.confidence = confidence.clamp(0.0, 1.0);
         self
@@ -381,13 +382,13 @@ pub struct AssetFilter {
 /// 资产统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetStats {
-    pub total_assets: u64,
-    pub by_type: HashMap<String, u64>,
-    pub by_status: HashMap<String, u64>,
-    pub by_risk_level: HashMap<String, u64>,
-    pub by_source: HashMap<String, u64>,
-    pub recent_additions: u64, // 最近24小时新增
-    pub stale_assets: u64,     // 超过30天未更新
+    pub total_assets: f64,
+    pub by_type: HashMap<String, f64>,
+    pub by_status: HashMap<String, f64>,
+    pub by_risk_level: HashMap<String, f64>,
+    pub by_source: HashMap<String, f64>,
+    pub recent_additions: f64, // 最近24小时新增
+    pub stale_assets: f64,     // 超过30天未更新
 }
 
 /// 资产详情（包含关系信息）

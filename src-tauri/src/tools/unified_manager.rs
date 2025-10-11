@@ -360,7 +360,7 @@ impl UnifiedToolManager {
             }
         }
 
-        let total_execution_time_ms = start_time.elapsed().as_millis() as u64;
+        let total_execution_time_ms = start_time.elapsed().as_millis() as f64;
         
         Ok(BatchExecutionResult {
             batch_id,
@@ -396,7 +396,7 @@ impl UnifiedToolManager {
                 total_executions: 0,
                 successful_executions: 0,
                 failed_executions: 0,
-                average_execution_time_ms: 0.0,
+                average_execution_time_ms: 0,
                 total_execution_time_ms: 0,
             });
 
@@ -417,7 +417,7 @@ impl UnifiedToolManager {
         // 计算平均执行时间
         for stat in stats.values_mut() {
             if stat.total_executions > 0 {
-                stat.average_execution_time_ms = stat.total_execution_time_ms as f64 / stat.total_executions as f64;
+                stat.average_execution_time_ms = stat.total_execution_time_ms as u64 / stat.total_executions as u64;
             }
         }
 

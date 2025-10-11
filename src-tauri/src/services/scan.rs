@@ -227,9 +227,6 @@ Please return the analysis result in JSON format.",
         // 暂时简化AI规划，等AI服务完全稳定后再完善
         info!("AI扫描规划: {}", analysis_prompt);
 
-        // TODO: 实现真正的AI对话
-        // let conversation_id = ai_manager.create_conversation(...).await?;
-        // let _response = ai_manager.send_message(...).await?;
 
         // 解析AI响应并更新扫描步骤
         let steps = Self::parse_ai_scan_plan("")?;

@@ -46,7 +46,7 @@ impl<T> ApiResponse<T> {
 pub struct Pagination {
     pub page: u32,
     pub per_page: u32,
-    pub total: u64,
+    pub total: f64,
     pub total_pages: u32,
 }
 

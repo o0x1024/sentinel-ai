@@ -9,6 +9,56 @@ import DialogPlugin from './composables/useDialog'; // 导入对话框插件
 import ToastPlugin from './composables/useToast'; // 导入Toast插件
 import { invoke } from '@tauri-apps/api/core'; // 导入Tauri API
 
+// 启动时应用已保存的通用设置（主题/字体/语言）
+const applyStartupSettings = () => {
+  try {
+    const saved = localStorage.getItem('sentinel-settings')
+    if (!saved) return
+    const parsed = JSON.parse(saved)
+    const general = parsed?.general || {}
+
+    // 主题
+    if (general.theme) {
+      let finalTheme = general.theme
+      if (finalTheme === 'auto') {
+        finalTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      }
+      document.documentElement.setAttribute('data-theme', finalTheme)
+      localStorage.setItem('theme', finalTheme)
+    }
+
+    // 字体大小
+    if (typeof general.fontSize === 'number') {
+      document.documentElement.style.fontSize = `${general.fontSize}px`
+      document.documentElement.style.setProperty('--font-size-base', `${general.fontSize}px`)
+    }
+
+    // 语言
+    if (general.language) {
+      let finalLang = general.language as string
+      if (finalLang === 'auto') {
+        const browserLang = navigator.language.toLowerCase()
+        if (browserLang.startsWith('zh')) {
+          finalLang = browserLang.includes('tw') || browserLang.includes('hk') ? 'zh-TW' : 'zh-CN'
+        } else if (browserLang.startsWith('en')) {
+          finalLang = 'en-US'
+        } else {
+          finalLang = 'zh-CN'
+        }
+      }
+      const langCode = finalLang.split('-')[0]
+      // 使用 i18n 实例设置语言
+      try {
+        // i18n 在下方 app.use(i18n) 前，这里直接设置全局值可能无效；
+        // 但我们先把本地值存起来，i18n 初始化会读取。
+        localStorage.setItem('sentinel-language', langCode)
+      } catch {}
+    }
+  } catch (e) {
+    console.warn('applyStartupSettings failed', e)
+  }
+}
+
 // 懒加载页面组件 - 性能优化
 const Dashboard = () => import('./views/Dashboard.vue');
 const ScanTasks = () => import('./views/ScanTasks.vue');
@@ -18,7 +68,7 @@ const AssetManagement = () => import('./views/AssetManagement.vue');
 const McpTools = () => import('./views/McpTools.vue');
 const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 
-const SmartAgentConsole = () => import('./views/SmartAgentConsole.vue');
+const AgentManagerView = () => import('./views/AgentManager.vue');
 const WorkflowMonitor = () => import('./views/WorkflowMonitor.vue');
 // const IntelligentSecurityTest = () => import('./components/IntelligentSecurityTest.vue');
 // const PlanExecuteDemo = () => import('./components/PlanExecuteDemo.vue');
@@ -26,6 +76,7 @@ const WorkflowMonitor = () => import('./views/WorkflowMonitor.vue');
 // const LLMCompilerTest = () => import('./views/LLMCompilerTest.vue');
 const PromptManagement = () => import('./views/PromptManagement.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
+const RAGManagement = () => import('./views/RAGManagement.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
@@ -86,16 +137,22 @@ const routes = [
   },
 
   { 
-    path: '/smart-agent', 
-    name: 'SmartAgentConsole', 
-    component: SmartAgentConsole,
-    meta: { title: '智能Agent控制台' }
+    path: '/agent-manager', 
+    name: 'AgentManager', 
+    component: AgentManagerView,
+    meta: { title: 'Agent管理' }
   },
   { 
     path: '/ai-assistant', 
     name: 'AIAssistant', 
     component: AIAssistant,
     meta: { title: 'AI助手' }
+  },
+  { 
+    path: '/rag-management', 
+    name: 'RAGManagement', 
+    component: RAGManagement,
+    meta: { title: 'RAG管理' }
   },
   { 
     path: '/workflow-monitor', 
@@ -183,7 +240,6 @@ router.afterEach((to) => {
         activeTimers.delete(timerKey);
       }
     }
-    console.log('Performance Metrics:', performanceService.getMetrics());
   }
 });
 
@@ -204,11 +260,13 @@ const initializeCoreComponents = async () => {
   try {
     // 初始化Agent管理器
     await invoke('initialize_agent_manager');
-    console.log('Agent manager initialized successfully');
   } catch (error) {
     console.warn('Agent manager initialization warning:', error);
   }
 };
+
+// 在应用挂载前应用本地持久化的通用设置
+applyStartupSettings();
 
 // 在应用挂载后初始化核心组件
 app.mount("#app");

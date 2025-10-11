@@ -268,6 +268,32 @@ export default {
     providers: 'Providers',
     models: 'Models',
     advanced: 'Advanced Settings',
+    ragConfig: 'RAG Configuration',
+    ragTestConnection: 'Test RAG Connection',
+    ragResetConfig: 'Reset RAG Config',
+    ragSaveConfig: 'Save RAG Config',
+    testingConnection: 'Testing connection...',
+    connectionSuccess: 'Connection successful',
+    ragConnectionFailed: 'RAG connection failed',
+    configReset: 'Configuration reset',
+    configSaved: 'Configuration saved',
+    rag: {
+      ragModels: 'RAG Models',
+      embeddingModel: 'Embedding Model',
+      embeddingModelDesc: 'Model used to convert text to vectors',
+      batchSize: 'Batch Size',
+      maxConcurrent: 'Max Concurrent',
+      rerankingModel: 'Reranking Model',
+      rerankingModelDesc: 'Model used to rerank search results',
+      enableReranking: 'Enable Reranking',
+      retrievalSettings: 'Retrieval Settings',
+      topK: 'Top K Results',
+      topKDesc: 'Number of most relevant results to return during retrieval',
+      mmrLambda: 'MMR Lambda',
+      mmrLambdaDesc: 'Maximum Marginal Relevance parameter to balance relevance and diversity',
+      similarityThreshold: 'Similarity Threshold',
+      similarityThresholdDesc: 'Minimum similarity threshold for retrieval results'
+    },
     database: {
       title: 'Database Settings',
       backupNotImplemented: 'Database backup feature will be implemented after Tauri integration',
@@ -945,6 +971,7 @@ export default {
 
 
   sidebar: {
+    agentManager: 'Agent Manager',
     dashboard: 'Dashboard',
     scanTasks: 'Scan Tasks',
     vulnerabilities: 'Vulnerabilities',

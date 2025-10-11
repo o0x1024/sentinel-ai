@@ -1,6 +1,7 @@
 import { ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { ChatMessage, Conversation } from '../types/chat'
+import type { SimplifiedChatMessage } from '../types/ordered-chat'
 
 export const useConversation = () => {
   const conversations = ref<Conversation[]>([])
@@ -38,6 +39,7 @@ export const useConversation = () => {
     try {
       const result = await invoke('get_ai_conversations')
       conversations.value = result as Conversation[]
+      console.log('conversations', conversations.value)
     } catch (error) {
       console.error('Failed to load conversations:', error)
       conversations.value = []
@@ -56,13 +58,16 @@ export const useConversation = () => {
         service_name: "default"
       })
       
-      const historyMessages = (history as any[]).map((msg: any) => ({
-        id: msg.id,
-        role: msg.role,
-        content: msg.content,
-        timestamp: new Date(msg.timestamp),
-        isStreaming: false
-      }))
+      const historyMessages = (history as any[])
+        .map((msg: any) => ({
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(msg.timestamp),
+          isStreaming: false
+        }))
+        // Ensure messages are in ascending time order so newest appears at bottom
+        .sort((a, b) => (a.timestamp as any) - (b.timestamp as any))
       
       messages.value = historyMessages
       return historyMessages
@@ -92,13 +97,25 @@ export const useConversation = () => {
     }
   }
 
-  // Clear current conversation
-  const clearCurrentConversation = () => {
-    messages.value = []
+  // Clear current conversation (delete from DB and refresh)
+  const clearCurrentConversation = async () => {
+    if (!currentConversationId.value) return
+    try {
+      await invoke('delete_ai_conversation', {
+        conversationId: currentConversationId.value,
+        serviceName: 'default',
+      })
+      currentConversationId.value = null
+      messages.value = []
+      await loadConversations()
+    } catch (error) {
+      console.error('Failed to clear current conversation:', error)
+      throw error
+    }
   }
 
-  // Save messages to conversation
-  const saveMessagesToConversation = async (messagesToSave: ChatMessage[]) => {
+  // Save messages to conversation (支持新旧消息类型)
+  const saveMessagesToConversation = async (messagesToSave: ChatMessage[] | SimplifiedChatMessage[]) => {
     if (!currentConversationId.value) return
     
     try {

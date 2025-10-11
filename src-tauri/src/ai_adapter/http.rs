@@ -47,16 +47,28 @@ pub fn set_global_proxy(config: Option<ProxyConfig>) {
                 std::env::set_var("NO_PROXY", no_proxy);
             }
         } else {
-            std::env::remove_var("HTTP_PROXY");
-            std::env::remove_var("HTTPS_PROXY");
-            std::env::remove_var("ALL_PROXY");
-            std::env::remove_var("NO_PROXY");
+            // 清除代理环境变量 - 同时清理大小写版本
+            let proxy_vars = [
+                "HTTP_PROXY", "http_proxy",
+                "HTTPS_PROXY", "https_proxy", 
+                "ALL_PROXY", "all_proxy",
+                "NO_PROXY", "no_proxy"
+            ];
+            for var in &proxy_vars {
+                std::env::remove_var(var);
+            }
         }
     } else {
-        std::env::remove_var("HTTP_PROXY");
-        std::env::remove_var("HTTPS_PROXY");
-        std::env::remove_var("ALL_PROXY");
-        std::env::remove_var("NO_PROXY");
+        // 清除代理环境变量 - 同时清理大小写版本
+        let proxy_vars = [
+            "HTTP_PROXY", "http_proxy",
+            "HTTPS_PROXY", "https_proxy", 
+            "ALL_PROXY", "all_proxy",
+            "NO_PROXY", "no_proxy"
+        ];
+        for var in &proxy_vars {
+            std::env::remove_var(var);
+        }
     }
 }
 
@@ -91,6 +103,17 @@ pub fn build_client_with_global_proxy(timeout: Duration) -> Result<Client> {
     builder
         .build()
         .map_err(|e| AiAdapterError::ConfigurationError(e.to_string()))
+}
+
+/// 创建一个遵循全局代理配置的 reqwest::Client，用于替换直接的 Client::new() 调用
+/// 默认超时 30 秒，适用于大多数 API 测试场景
+pub fn create_default_client() -> Result<Client> {
+    build_client_with_global_proxy(Duration::from_secs(60))
+}
+
+/// 创建一个遵循全局代理配置的 reqwest::Client，自定义超时
+pub fn create_client_with_timeout(timeout: Duration) -> Result<Client> {
+    build_client_with_global_proxy(timeout)
 }
 
 /// HTTP客户端

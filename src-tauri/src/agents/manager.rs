@@ -339,14 +339,14 @@ impl AgentManager {
                     }
                 };
                 
-                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+                let execution_time_ms = start_time.elapsed().as_millis() as f64;
                 
                 // 更新任务完成状态
                 let status = if result.is_ok() { "Completed" } else { "Failed" };
                 if let Err(e) = manager.database.update_agent_task_status(&task_clone.id, status, None, None).await {
                     warn!("Failed to update task status to {}: {}", status, e);
                 }
-                if let Err(e) = manager.database.update_agent_task_timing(&task_clone.id, None, Some(chrono::Utc::now()), Some(execution_time_ms)).await {
+                if let Err(e) = manager.database.update_agent_task_timing(&task_clone.id, None, Some(chrono::Utc::now()), Some(execution_time_ms as u64)).await {
                     warn!("Failed to update task completion time: {}", e);
                 }
                 if let Err(e) = manager.database.update_agent_session_status(&session_id_clone, status).await {
@@ -792,7 +792,7 @@ impl Agent for DefaultAgent {
         }
         
         // 更新统计信息
-        let execution_time = start_time.elapsed().as_millis() as u64;
+        let execution_time = start_time.elapsed().as_millis() as f64;
         let success = execution_result.is_ok();
         self.update_statistics(success, execution_time).await;
         
@@ -862,7 +862,7 @@ impl DefaultAgent {
         Ok(())
     }
     
-    async fn update_statistics(&self, success: bool, execution_time_ms: u64) {
+    async fn update_statistics(&self, success: bool, execution_time_ms: f64) {
         let mut stats = self.statistics.write().await;
         
         stats.total_executions += 1;

@@ -69,7 +69,7 @@ pub struct WorkflowStep {
     /// 重试配置
     pub retry: Option<RetryConfig>,
     /// 超时设置（秒）
-    pub timeout: Option<u64>,
+    pub timeout: Option<f64>,
     /// 是否并行执行
     pub parallel: bool,
     /// 步骤配置
@@ -82,7 +82,7 @@ pub struct RetryConfig {
     /// 最大重试次数
     pub max_attempts: u32,
     /// 重试延迟（秒）
-    pub delay: u64,
+    pub delay: f64,
     /// 退避策略
     pub backoff: BackoffStrategy,
     /// 重试条件
@@ -97,7 +97,7 @@ pub enum BackoffStrategy {
     /// 指数退避
     Exponential { multiplier: f32 },
     /// 线性增长
-    Linear { increment: u64 },
+    Linear { increment: f64 },
 }
 
 /// 错误处理配置

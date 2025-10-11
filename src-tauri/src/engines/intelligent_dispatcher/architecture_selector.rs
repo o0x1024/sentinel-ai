@@ -71,7 +71,7 @@ pub struct OptimizationParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformancePrediction {
     /// 预计执行时间（秒）
-    pub estimated_execution_time: u64,
+    pub estimated_execution_time: f64,
     /// 预计成功率
     pub estimated_success_rate: f32,
     /// 预计并行效率
@@ -261,7 +261,7 @@ impl ArchitectureSelector {
 
     /// 性能预测
     fn predict_performance(&self, analysis: &QueryAnalysisResult, architecture: &str) -> PerformancePrediction {
-        let base_time = analysis.estimated_steps as u64 * match analysis.complexity_level.as_str() {
+        let base_time = analysis.estimated_steps as f64 * match analysis.complexity_level.as_str() {
             "simple" => 30,   // 30秒每步
             "medium" => 90,   // 1.5分钟每步
             "complex" => 180, // 3分钟每步
@@ -277,7 +277,7 @@ impl ArchitectureSelector {
             _ => 1.0,
         };
 
-        let estimated_execution_time = (base_time as f32 * efficiency_factor) as u64;
+        let estimated_execution_time = (base_time as f32 * efficiency_factor) as f64;
 
         let estimated_success_rate = match (architecture, analysis.complexity_level.as_str()) {
             ("LlmCompiler", "complex") => 0.85,

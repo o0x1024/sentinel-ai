@@ -134,10 +134,14 @@ pub enum StepType {
 pub enum StreamMessageType {
     /// AI生成的内容块
     Content,
+    /// LLM 思考内容（可选增量，默认前端折叠显示）
+    Reasoning,
     /// 工具执行状态更新
     ToolUpdate,
     /// 计划更新
     PlanUpdate,
+    /// 一次性元数据（模型、prompt 版本等）
+    Meta,
     /// 最终结果
     FinalResult,
     /// 错误信息
@@ -155,6 +159,12 @@ pub struct UnifiedStreamMessage {
     pub conversation_id: Option<String>,
     /// 消息类型
     pub message_type: StreamMessageType,
+    /// 同一 execution 内部的严格单调序号（缺省由后端自动补齐）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
+    /// 阶段标识（planner/executor/evaluator ...）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
     
     /// 内容块 (用于 Content 类型)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,6 +185,10 @@ pub struct UnifiedStreamMessage {
     /// 错误信息 (用于 Error 类型)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+
+    /// 元数据 (用于 Meta 类型)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
     
     /// 是否为流的最后一个消息
     pub is_complete: bool,
@@ -192,7 +206,7 @@ pub struct ToolConfig {
     /// 工具参数
     pub tool_args: HashMap<String, serde_json::Value>,
     /// 超时设置（秒）
-    pub timeout: Option<u64>,
+    pub timeout: Option<f64>,
     /// 环境变量
     pub env_vars: HashMap<String, String>,
 }
@@ -220,7 +234,7 @@ pub enum BackoffStrategy {
     /// 指数增长
     Exponential,
     /// 自定义
-    Custom(Vec<u64>),
+    Custom(Vec<f64>),
 }
 
 /// 重试条件
@@ -252,7 +266,7 @@ pub struct ExecutionSession {
     /// 当前执行步骤
     pub current_step: Option<i32>,
     /// 执行进度（0-100）
-    pub progress: f32,
+    pub progress: u32,
     /// 执行上下文
     pub context: ExecutionContext,
     /// 步骤执行结果
@@ -448,7 +462,7 @@ pub struct ExecutionMetrics {
     /// 磁盘IO（字节）
     pub disk_io_bytes: u64,
     /// 自定义指标
-    pub custom_metrics: HashMap<String, f64>,
+    pub custom_metrics: HashMap<String, u64>,
 }
 
 /// 会话元数据
@@ -847,7 +861,7 @@ impl ExecutionSession {
             started_at: SystemTime::now(),
             completed_at: None,
             current_step: None,
-            progress: 0.0,
+            progress: 0,
             context,
             step_results: HashMap::new(),
             metadata: SessionMetadata {
@@ -862,14 +876,14 @@ impl ExecutionSession {
     
     /// 更新执行进度
     pub fn update_progress(&mut self, progress: f32) {
-        self.progress = progress.clamp(0.0, 100.0);
+        self.progress = progress.clamp(0.0, 100.0) as u32;
     }
     
     /// 标记会话完成
     pub fn mark_completed(&mut self) {
         self.status = ExecutionStatus::Completed;
         self.completed_at = Some(SystemTime::now());
-        self.progress = 100.0;
+        self.progress = 100;
     }
     
     /// 标记会话失败

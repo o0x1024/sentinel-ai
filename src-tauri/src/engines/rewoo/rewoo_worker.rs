@@ -17,6 +17,8 @@ pub struct ReWOOWorker {
     framework_adapter: Arc<dyn crate::tools::FrameworkToolAdapter>,
     /// 配置
     config: WorkerConfig,
+    /// 运行时参数（包含工具权限等）
+    runtime_params: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl ReWOOWorker {
@@ -28,7 +30,13 @@ impl ReWOOWorker {
         Self {
             framework_adapter,
             config,
+            runtime_params: None,
         }
+    }
+    
+    /// 设置运行时参数
+    pub fn set_runtime_params(&mut self, params: HashMap<String, serde_json::Value>) {
+        self.runtime_params = Some(params);
     }
     
     /// 使用全局框架适配器创建Worker
@@ -39,6 +47,7 @@ impl ReWOOWorker {
         Ok(Self {
             framework_adapter,
             config,
+            runtime_params: None,
         })
     }
     
@@ -53,6 +62,39 @@ impl ReWOOWorker {
         info!("step: {:?}", step);
 
         info!("Executing tool '{}' with args: {}", step.tool, substituted_args);
+        
+        // 工具权限检查（从runtime_params读取）
+        if let Some(params) = &self.runtime_params {
+            let allow_list = params
+                .get("tools_allow")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let deny_list = params
+                .get("tools_deny")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            
+            // 如果没有白名单（空数组），则不允许任何工具
+            if allow_list.is_empty() {
+                return Err(ReWOOError::ToolExecutionError(format!(
+                    "工具 '{}' 不在允许列表中（未配置工具权限）", step.tool
+                )));
+            }
+            // 如果有白名单且工具不在白名单中，拒绝
+            if !allow_list.iter().any(|&n| n == step.tool) {
+                return Err(ReWOOError::ToolExecutionError(format!(
+                    "工具 '{}' 不在允许列表中", step.tool
+                )));
+            }
+            // 如果工具在黑名单中，拒绝
+            if deny_list.iter().any(|&n| n == step.tool) {
+                return Err(ReWOOError::ToolExecutionError(format!(
+                    "工具 '{}' 被禁止使用", step.tool
+                )));
+            }
+        }
         
         // 构建工具调用
         let tool_call = self.build_unified_tool_call(step, substituted_args).await?;
@@ -86,10 +128,11 @@ impl ReWOOWorker {
                 } else {
                     warn!("Tool '{}' execution failed: {:?}", step.tool, result.error);
                 }
-                // 转换UnifiedToolResult为ToolResult
+                // 转换UnifiedToolResult为ToolResult，保留结构化输出
                 ToolResult {
                     success: result.success,
-                    content: result.output.to_string(),
+                    content: result.output.to_string(), // 保持字符串兼容性
+                    json_content: Some(result.output), // 新增 JSON 字段
                     error: result.error,
                     execution_time_ms: result.execution_time_ms,
                 }
@@ -99,6 +142,7 @@ impl ReWOOWorker {
                 ToolResult {
                     success: false,
                     content: String::new(),
+                    json_content: None,
                     error: Some(e.to_string()),
                     execution_time_ms: start_time.elapsed().unwrap_or(Duration::from_secs(0)).as_millis() as u64,
                 }
@@ -144,8 +188,36 @@ impl ReWOOWorker {
         })
     }
     
-    /// 解析工具参数
+    /// 解析工具参数 - 升级为 schema 驱动版本
     async fn parse_tool_args_with_tool(&self, tool_name: &str, args_str: &str) -> Result<HashMap<String, Value>, ReWOOError> {
+        // 第一步：基础解析
+        let basic_args = self.parse_tool_args_basic(args_str).await?;
+        
+        // 第二步：schema 验证和规范化
+        let validation_result = self.validate_and_normalize_params(tool_name, basic_args).await?;
+        
+        if !validation_result.is_valid {
+            return Err(ReWOOError::ToolExecutionError(
+                format!("Parameter validation failed for tool '{}': {}", 
+                    tool_name, 
+                    validation_result.errors.join("; ")
+                )
+            ));
+        }
+        
+        // 记录警告和应用的默认值
+        if !validation_result.warnings.is_empty() {
+            log::warn!("Parameter warnings for tool '{}': {}", tool_name, validation_result.warnings.join("; "));
+        }
+        if !validation_result.applied_defaults.is_empty() {
+            log::info!("Applied default values for tool '{}': {}", tool_name, validation_result.applied_defaults.join(", "));
+        }
+        
+        Ok(validation_result.normalized_params)
+    }
+    
+    /// 基础参数解析（原有逻辑）
+    async fn parse_tool_args_basic(&self, args_str: &str) -> Result<HashMap<String, Value>, ReWOOError> {
         let mut args = HashMap::new();
         
         // 规范化辅助：去除首尾引号
@@ -173,7 +245,6 @@ impl ReWOOWorker {
         }
         
         // 尝试解析为 key=value 或 key: value 列表，逗号分隔
-        // 例如："domain=mgtv.com, use_database_wordlist=true" 或 "domain: mgtv.com"
         let mut parsed_any_kv = false;
         for part in args_str.split(',') {
             let token = part.trim();
@@ -188,7 +259,6 @@ impl ReWOOWorker {
                 let val = if let Ok(b) = val_str_norm.parse::<bool>() {
                     Value::Bool(b)
                 } else if let Ok(n) = val_str_norm.parse::<f64>() {
-                    // 统一用Number，整数/浮点都支持
                     serde_json::Number::from_f64(n)
                         .map(Value::Number)
                         .unwrap_or(Value::String(val_str_norm))
@@ -203,27 +273,173 @@ impl ReWOOWorker {
             return Ok(args);
         }
 
-        // 裸字符串：根据工具定义推断映射到唯一必填参数
-        if let Some(tool_info) = self.framework_adapter.get_tool_info(tool_name).await {
-            let params = &tool_info.parameters;
-            let required: Vec<_> = params.parameters.iter().filter(|p| p.required).collect();
-            if required.len() == 1 {
-                let key = &required[0].name;
-                args.insert(key.clone(), Value::String(normalize_str_token(args_str)));
-                return Ok(args);
-            }
-            // 如果没有必填但只有一个参数，也做映射
-            if required.is_empty() && params.parameters.len() == 1 {
-                let key = &params.parameters[0].name;
-                args.insert(key.clone(), Value::String(normalize_str_token(args_str)));
-                return Ok(args);
-            }
-        }
-
         // 最后回退到简单的字符串参数
         args.insert("input".to_string(), Value::String(normalize_str_token(args_str)));
         
         Ok(args)
+    }
+    
+    /// Schema 驱动的参数验证和规范化
+    async fn validate_and_normalize_params(
+        &self, 
+        tool_name: &str, 
+        raw_params: HashMap<String, Value>
+    ) -> Result<ParameterValidationResult, ReWOOError> {
+        let mut result = ParameterValidationResult::default();
+        
+        // 获取工具的参数定义
+        let tool_info = match self.framework_adapter.get_tool_info(tool_name).await {
+            Some(info) => info,
+            None => {
+                // 如果没有工具信息，直接返回原始参数
+                result.normalized_params = raw_params;
+                result.warnings.push(format!("No schema found for tool '{}'", tool_name));
+                return Ok(result);
+            }
+        };
+        
+        let param_definitions = &tool_info.parameters.parameters;
+        
+        // 验证必填参数
+        for param_def in param_definitions {
+            if param_def.required && !raw_params.contains_key(&param_def.name) {
+                // 尝试应用默认值
+                if let Some(default_value) = &param_def.default_value {
+                    result.normalized_params.insert(param_def.name.clone(), default_value.clone());
+                    result.applied_defaults.push(param_def.name.clone());
+                } else {
+                    result.errors.push(format!("Missing required parameter: {}", param_def.name));
+                    result.is_valid = false;
+                }
+            }
+        }
+        
+        // 验证和转换每个提供的参数
+        for (param_name, param_value) in raw_params {
+            if let Some(param_def) = param_definitions.iter().find(|p| p.name == param_name) {
+                // 类型验证和转换
+                match self.validate_and_convert_param_type(param_def, &param_value) {
+                    Ok(converted_value) => {
+                        result.normalized_params.insert(param_name.clone(), converted_value);
+                    }
+                    Err(error) => {
+                        result.errors.push(format!("Parameter '{}': {}", param_name, error));
+                        result.is_valid = false;
+                    }
+                }
+            } else {
+                // 未知参数，发出警告但保留
+                result.warnings.push(format!("Unknown parameter: {}", param_name));
+                result.normalized_params.insert(param_name, param_value);
+            }
+        }
+        
+        // 为缺失的可选参数应用默认值
+        for param_def in param_definitions {
+            if !param_def.required && 
+               !result.normalized_params.contains_key(&param_def.name) {
+                if let Some(default_value) = &param_def.default_value {
+                    result.normalized_params.insert(param_def.name.clone(), default_value.clone());
+                    result.applied_defaults.push(param_def.name.clone());
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+    
+    /// 验证和转换单个参数类型
+    fn validate_and_convert_param_type(
+        &self,
+        param_def: &crate::tools::ParameterDefinition,
+        value: &Value,
+    ) -> Result<Value, String> {
+        use crate::tools::ParameterType;
+        
+        match param_def.param_type {
+            ParameterType::String => {
+                match value {
+                    Value::String(_) => Ok(value.clone()),
+                    Value::Number(n) => Ok(Value::String(n.to_string())),
+                    Value::Bool(b) => Ok(Value::String(b.to_string())),
+                    _ => Ok(Value::String(value.to_string())),
+                }
+            }
+            ParameterType::Number => {
+                match value {
+                    Value::Number(_) => Ok(value.clone()),
+                    Value::String(s) => {
+                        if let Ok(n) = s.parse::<f64>() {
+                            Ok(serde_json::Number::from_f64(n)
+                                .map(Value::Number)
+                                .unwrap_or(value.clone()))
+                        } else {
+                            Err(format!("Cannot convert '{}' to number", s))
+                        }
+                    }
+                    _ => Err(format!("Cannot convert {:?} to number", value)),
+                }
+            }
+            ParameterType::Boolean => {
+                match value {
+                    Value::Bool(_) => Ok(value.clone()),
+                    Value::String(s) => {
+                        match s.to_lowercase().as_str() {
+                            "true" | "1" | "yes" | "on" => Ok(Value::Bool(true)),
+                            "false" | "0" | "no" | "off" => Ok(Value::Bool(false)),
+                            _ => Err(format!("Cannot convert '{}' to boolean", s)),
+                        }
+                    }
+                    Value::Number(n) => {
+                        if let Some(i) = n.as_i64() {
+                            Ok(Value::Bool(i != 0))
+                        } else {
+                            Err(format!("Cannot convert number to boolean"))
+                        }
+                    }
+                    _ => Err(format!("Cannot convert {:?} to boolean", value)),
+                }
+            }
+            ParameterType::Array => {
+                match value {
+                    Value::Array(_) => Ok(value.clone()),
+                    Value::String(s) => {
+                        // 尝试解析为JSON数组或逗号分隔的字符串
+                        if let Ok(arr) = serde_json::from_str::<Value>(s) {
+                            if arr.is_array() {
+                                Ok(arr)
+                            } else {
+                                Ok(Value::Array(vec![Value::String(s.clone())]))
+                            }
+                        } else {
+                            // 逗号分隔
+                            let items: Vec<Value> = s.split(',')
+                                .map(|item| Value::String(item.trim().to_string()))
+                                .collect();
+                            Ok(Value::Array(items))
+                        }
+                    }
+                    _ => Ok(Value::Array(vec![value.clone()])),
+                }
+            }
+            ParameterType::Object => {
+                match value {
+                    Value::Object(_) => Ok(value.clone()),
+                    Value::String(s) => {
+                        if let Ok(obj) = serde_json::from_str::<Value>(s) {
+                            if obj.is_object() {
+                                Ok(obj)
+                            } else {
+                                Err(format!("String '{}' is not a valid JSON object", s))
+                            }
+                        } else {
+                            Err(format!("Cannot parse '{}' as JSON object", s))
+                        }
+                    }
+                    _ => Err(format!("Cannot convert {:?} to object", value)),
+                }
+            }
+        }
     }
     
     /// 验证工具是否可用
@@ -283,48 +499,260 @@ impl ReWOOWorker {
         results
     }
     
-    /// 重试执行工具
+    /// 智能重试执行工具 - 支持错误分级策略
     pub async fn execute_tool_with_retry(
         &self,
         step: &PlanStep,
         substituted_args: &str,
         max_retries: u32,
     ) -> Result<ToolResult, ReWOOError> {
-        let mut last_error = None;
+        let mut last_error: Option<String>;
+        let mut retry_count = 0;
         
-        for attempt in 0..=max_retries {
+        loop {
             match self.execute_tool(step, substituted_args).await {
                 Ok(result) => {
                     if result.success {
                         return Ok(result);
                     } else {
                         last_error = result.error.clone();
-                        if attempt < max_retries {
-                            // 等待一段时间后重试
-                            tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1) as u64)).await;
+                        
+                        // 分析错误并决定重试策略
+                        if let Some(error_msg) = &result.error {
+                            let error_analysis = self.analyze_error(error_msg);
+                            
+                            if !error_analysis.should_retry || retry_count >= max_retries {
+                                break;
+                            }
+                            
+                            // 应用智能重试策略
+                            let delay = self.calculate_retry_delay(&error_analysis.retry_strategy, retry_count);
+                            log::info!("Retrying tool '{}' after {}ms due to {} error (attempt {}/{})", 
+                                step.tool, delay, error_analysis.analysis, retry_count + 1, max_retries);
+                            
+                            tokio::time::sleep(Duration::from_millis(delay)).await;
+                            retry_count += 1;
+                        } else {
+                            break;
                         }
                     }
                 },
                 Err(e) => {
                     last_error = Some(e.to_string());
-                    if attempt < max_retries {
-                        // 等待一段时间后重试
-                        tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1) as u64)).await;
+                    
+                    // 分析错误并决定重试策略
+                    let error_analysis = self.analyze_error(&e.to_string());
+                    
+                    if !error_analysis.should_retry || retry_count >= max_retries {
+                        break;
                     }
+                    
+                    // 应用智能重试策略
+                    let delay = self.calculate_retry_delay(&error_analysis.retry_strategy, retry_count);
+                    log::info!("Retrying tool '{}' after {}ms due to {} error (attempt {}/{})", 
+                        step.tool, delay, error_analysis.analysis, retry_count + 1, max_retries);
+                    
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    retry_count += 1;
                 }
             }
         }
         
         Err(ReWOOError::ToolExecutionError(
             format!("Tool execution failed after {} retries. Last error: {}", 
-                max_retries, 
+                retry_count, 
                 last_error.unwrap_or_else(|| "Unknown error".to_string())
             )
         ))
     }
     
+    /// 分析错误类型并返回重试策略
+    fn analyze_error(&self, error_message: &str) -> ErrorAnalysis {
+        let error_lower = error_message.to_lowercase();
+        
+        // 网络相关错误
+        if error_lower.contains("connection") || error_lower.contains("network") || 
+           error_lower.contains("dns") || error_lower.contains("resolve") {
+            return ErrorAnalysis {
+                category: ErrorCategory::Network,
+                should_retry: true,
+                retry_strategy: RetryStrategy {
+                    error_category: ErrorCategory::Network,
+                    max_retries: 5,
+                    base_delay_ms: 2000,
+                    exponential_backoff: true,
+                    backoff_multiplier: 1.5,
+                    max_delay_ms: 15000,
+                    jitter: true,
+                },
+                analysis: "Network connectivity issue".to_string(),
+                suggestions: vec![
+                    "Check network connectivity".to_string(),
+                    "Verify DNS resolution".to_string(),
+                ],
+            };
+        }
+        
+        // 超时错误
+        if error_lower.contains("timeout") || error_lower.contains("timed out") {
+            return ErrorAnalysis {
+                category: ErrorCategory::Timeout,
+                should_retry: true,
+                retry_strategy: RetryStrategy {
+                    error_category: ErrorCategory::Timeout,
+                    max_retries: 3,
+                    base_delay_ms: 5000,
+                    exponential_backoff: true,
+                    backoff_multiplier: 2.0,
+                    max_delay_ms: 30000,
+                    jitter: false,
+                },
+                analysis: "Request timeout".to_string(),
+                suggestions: vec![
+                    "Increase timeout duration".to_string(),
+                    "Check target service responsiveness".to_string(),
+                ],
+            };
+        }
+        
+        // 参数错误
+        if error_lower.contains("parameter") || error_lower.contains("argument") || 
+           error_lower.contains("invalid") || error_lower.contains("malformed") {
+            return ErrorAnalysis {
+                category: ErrorCategory::Parameter,
+                should_retry: false,
+                retry_strategy: RetryStrategy::default(),
+                analysis: "Parameter validation failed".to_string(),
+                suggestions: vec![
+                    "Check parameter format and values".to_string(),
+                    "Refer to tool documentation".to_string(),
+                ],
+            };
+        }
+        
+        // 工具不可用
+        if error_lower.contains("not found") || error_lower.contains("unavailable") || 
+           error_lower.contains("not available") || error_lower.contains("command not found") {
+            return ErrorAnalysis {
+                category: ErrorCategory::ToolUnavailable,
+                should_retry: false,
+                retry_strategy: RetryStrategy::default(),
+                analysis: "Tool not available".to_string(),
+                suggestions: vec![
+                    "Check if tool is installed".to_string(),
+                    "Try alternative tool".to_string(),
+                ],
+            };
+        }
+        
+        // 资源不足
+        if error_lower.contains("rate limit") || error_lower.contains("quota") || 
+           error_lower.contains("too many") || error_lower.contains("resource") {
+            return ErrorAnalysis {
+                category: ErrorCategory::ResourceExhaustion,
+                should_retry: true,
+                retry_strategy: RetryStrategy {
+                    error_category: ErrorCategory::ResourceExhaustion,
+                    max_retries: 3,
+                    base_delay_ms: 10000,
+                    exponential_backoff: true,
+                    backoff_multiplier: 3.0,
+                    max_delay_ms: 300000, // 5 minutes
+                    jitter: true,
+                },
+                analysis: "Resource exhaustion or rate limiting".to_string(),
+                suggestions: vec![
+                    "Reduce request frequency".to_string(),
+                    "Wait for quota reset".to_string(),
+                ],
+            };
+        }
+        
+        // 权限错误
+        if error_lower.contains("permission") || error_lower.contains("forbidden") || 
+           error_lower.contains("unauthorized") || error_lower.contains("access denied") {
+            return ErrorAnalysis {
+                category: ErrorCategory::Permission,
+                should_retry: false,
+                retry_strategy: RetryStrategy::default(),
+                analysis: "Permission or authorization issue".to_string(),
+                suggestions: vec![
+                    "Check API credentials".to_string(),
+                    "Verify access permissions".to_string(),
+                ],
+            };
+        }
+        
+        // 服务器错误
+        if error_lower.contains("500") || error_lower.contains("502") || 
+           error_lower.contains("503") || error_lower.contains("server error") {
+            return ErrorAnalysis {
+                category: ErrorCategory::ServerError,
+                should_retry: true,
+                retry_strategy: RetryStrategy {
+                    error_category: ErrorCategory::ServerError,
+                    max_retries: 4,
+                    base_delay_ms: 3000,
+                    exponential_backoff: true,
+                    backoff_multiplier: 2.0,
+                    max_delay_ms: 60000,
+                    jitter: true,
+                },
+                analysis: "Server-side error".to_string(),
+                suggestions: vec![
+                    "Wait for service recovery".to_string(),
+                    "Check service status".to_string(),
+                ],
+            };
+        }
+        
+        // 默认：未知错误，谨慎重试
+        ErrorAnalysis {
+            category: ErrorCategory::Unknown,
+            should_retry: true,
+            retry_strategy: RetryStrategy {
+                error_category: ErrorCategory::Unknown,
+                max_retries: 2,
+                base_delay_ms: 1000,
+                exponential_backoff: true,
+                backoff_multiplier: 2.0,
+                max_delay_ms: 10000,
+                jitter: true,
+            },
+            analysis: "Unknown error type".to_string(),
+            suggestions: vec![
+                "Check error details".to_string(),
+                "Review tool configuration".to_string(),
+            ],
+        }
+    }
+    
+    /// 计算重试延迟
+    fn calculate_retry_delay(&self, strategy: &RetryStrategy, attempt: u32) -> u64 {
+        let mut delay = strategy.base_delay_ms;
+        
+        if strategy.exponential_backoff {
+            delay = (delay as f32 * strategy.backoff_multiplier.powi(attempt as i32)) as u64;
+        } else {
+            delay = delay * (attempt + 1) as u64;
+        }
+        
+        // 应用最大延迟限制
+        delay = delay.min(strategy.max_delay_ms);
+        
+        // 添加随机抖动以避免雷群效应
+        if strategy.jitter {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+            let jitter_factor = rng.gen_range(0.8..1.2);
+            delay = (delay as f32 * jitter_factor) as u64;
+        }
+        
+        delay
+    }
+    
     /// 获取工具执行统计
-    pub fn get_execution_stats(&self) -> HashMap<String, u64> {
+    pub fn get_execution_stats(&self) -> HashMap<String, f64> {
         // 这里可以实现工具执行统计
         // 目前返回空的统计信息
         HashMap::new()
@@ -337,6 +765,7 @@ impl Clone for ReWOOWorker {
         Self {
             framework_adapter: Arc::clone(&self.framework_adapter),
             config: self.config.clone(),
+            runtime_params: self.runtime_params.clone(),
         }
     }
 }

@@ -32,6 +32,8 @@ pub struct ParallelExecutorPool {
     config: LlmCompilerConfig,
     /// 执行统计
     execution_metrics: Arc<tokio::sync::RwLock<ExecutionMetrics>>,
+    /// 运行时参数（包含工具权限等）
+    runtime_params: Arc<tokio::sync::RwLock<Option<HashMap<String, serde_json::Value>>>>,
 }
 
 /// 执行指标
@@ -46,7 +48,7 @@ struct ExecutionMetrics {
     /// 总执行时间（毫秒）
     total_execution_time_ms: u64,
     /// 平均执行时间（毫秒）
-    average_execution_time_ms: f64,
+    average_execution_time_ms: u64,
     /// 当前并发数
     current_concurrency: usize,
     /// 最大并发数
@@ -60,7 +62,14 @@ impl ParallelExecutorPool {
             tool_adapter,
             config,
             execution_metrics: Arc::new(tokio::sync::RwLock::new(ExecutionMetrics::default())),
+            runtime_params: Arc::new(tokio::sync::RwLock::new(None)),
         }
+    }
+    
+    /// 设置运行时参数
+    pub async fn set_runtime_params(&self, params: HashMap<String, serde_json::Value>) {
+        let mut runtime_params = self.runtime_params.write().await;
+        *runtime_params = Some(params);
     }
     
     /// 使用全局工具适配器创建执行器池
@@ -163,6 +172,40 @@ impl ParallelExecutorPool {
     /// 调用工具
     async fn call_tool(&self, task: &DagTaskNode) -> Result<HashMap<String, Value>> {
         info!("调用工具: {} with inputs: {:?}", task.tool_name, task.inputs);
+        
+        // 工具权限检查（从runtime_params读取）
+        let runtime_params = self.runtime_params.read().await;
+        if let Some(params) = runtime_params.as_ref() {
+            let allow_list = params
+                .get("tools_allow")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let deny_list = params
+                .get("tools_deny")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            
+            // 如果没有白名单（空数组），则不允许任何工具
+            if allow_list.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "工具 '{}' 不在允许列表中（未配置工具权限）", task.tool_name
+                ));
+            }
+            // 如果有白名单且工具不在白名单中，拒绝
+            if !allow_list.iter().any(|&n| n == task.tool_name) {
+                return Err(anyhow::anyhow!(
+                    "工具 '{}' 不在允许列表中", task.tool_name
+                ));
+            }
+            // 如果工具在黑名单中，拒绝
+            if deny_list.iter().any(|&n| n == task.tool_name) {
+                return Err(anyhow::anyhow!(
+                    "工具 '{}' 被禁止使用", task.tool_name
+                ));
+            }
+        }
         
         // 准备工具执行参数
         let tool_call = UnifiedToolCall {
@@ -321,7 +364,7 @@ impl ParallelExecutorPool {
         
         metrics.total_execution_time_ms += duration_ms;
         metrics.average_execution_time_ms = 
-            metrics.total_execution_time_ms as f64 / metrics.total_executions as f64;
+            metrics.total_execution_time_ms as u64 / metrics.total_executions as u64;
     }
 
     /// 更新并发统计
@@ -377,6 +420,7 @@ impl Clone for ParallelExecutorPool {
             tool_adapter: self.tool_adapter.clone(),
             config: self.config.clone(),
             execution_metrics: self.execution_metrics.clone(),
+            runtime_params: self.runtime_params.clone(),
         }
     }
 }

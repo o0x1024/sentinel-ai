@@ -6,6 +6,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
+use std::str::FromStr;
+
+/// 失败传播策略
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum FailurePropagationStrategy {
+    /// 快速失败：依赖失败的任务立即取消
+    FailFast,
+    /// 尽力而为：跳过失败的输入，尝试用其他输入执行
+    BestEffort,
+    /// 回退策略：尝试使用替代工具或默认值
+    Fallback,
+    /// 继续执行：忽略失败，继续执行其他任务
+    Continue,
+}
 
 /// LLMCompiler配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +40,8 @@ pub struct LlmCompilerConfig {
     pub max_task_retries: u32,
     /// 最大执行轮次
     pub max_iterations: usize,
+    /// 失败传播策略
+    pub failure_strategy: FailurePropagationStrategy,
 }
 
 impl Default for LlmCompilerConfig {
@@ -39,6 +55,7 @@ impl Default for LlmCompilerConfig {
             max_replanning_iterations: 5,
             max_task_retries: 3,
             max_iterations: 10,
+            failure_strategy: FailurePropagationStrategy::FailFast,
         }
     }
 }
@@ -463,6 +480,312 @@ pub enum TaskExecutionEvent {
     },
 }
 
+/// 工具参数 Schema 定义
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolParameterSchema {
+    /// 参数名
+    pub name: String,
+    /// 参数类型
+    pub param_type: ParameterType,
+    /// 是否必需
+    pub required: bool,
+    /// 参数描述
+    pub description: Option<String>,
+    /// 默认值
+    pub default_value: Option<Value>,
+    /// 值约束
+    pub constraints: Option<ParameterConstraints>,
+}
+
+/// 参数类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ParameterType {
+    String,
+    Integer,
+    Float,
+    Boolean,
+    Array(Box<ParameterType>),
+    Object(HashMap<String, ToolParameterSchema>),
+    Enum(Vec<String>),
+}
+
+/// 参数约束
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ParameterConstraints {
+    /// 最小值（数字类型）
+    pub min_value: Option<f64>,
+    /// 最大值（数字类型）
+    pub max_value: Option<f64>,
+    /// 最小长度（字符串/数组类型）
+    pub min_length: Option<usize>,
+    /// 最大长度（字符串/数组类型）
+    pub max_length: Option<usize>,
+    /// 正则表达式模式（字符串类型）
+    pub pattern: Option<String>,
+    /// 枚举值（枚举类型）
+    pub enum_values: Option<Vec<String>>,
+}
+
+/// 工具 Schema 定义
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolSchema {
+    /// 工具名
+    pub name: String,
+    /// 工具描述
+    pub description: String,
+    /// 参数定义
+    pub parameters: Vec<ToolParameterSchema>,
+    /// 输出 Schema
+    pub output_schema: Option<Value>,
+}
+
+/// Schema 验证结果
+#[derive(Debug, Clone)]
+pub struct ValidationResult {
+    /// 是否有效
+    pub is_valid: bool,
+    /// 验证错误
+    pub errors: Vec<String>,
+    /// 修正后的参数（如果可以自动修正）
+    pub corrected_params: Option<HashMap<String, Value>>,
+}
+
+/// 缓存键（用于工具调用去重）
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CacheKey {
+    /// 工具名
+    pub tool_name: String,
+    /// 标准化的参数（按键排序）
+    pub normalized_params: String,
+}
+
+/// 缓存条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheEntry {
+    /// 缓存键
+    pub key: CacheKey,
+    /// 缓存的执行结果
+    pub result: TaskExecutionResult,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 最后访问时间
+    pub last_accessed: DateTime<Utc>,
+    /// 访问次数
+    pub access_count: u32,
+    /// 生存时间（秒）
+    pub ttl_seconds: Option<u64>,
+}
+
+/// 工具调用缓存管理器
+#[derive(Debug, Clone)]
+pub struct ToolCallCache {
+    /// 缓存条目
+    cache: HashMap<CacheKey, CacheEntry>,
+    /// 最大缓存大小
+    max_size: usize,
+    /// 默认TTL（秒）
+    default_ttl: u64,
+    /// 缓存统计
+    stats: CacheStats,
+}
+
+/// 缓存统计
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CacheStats {
+    /// 命中次数
+    pub hits: u64,
+    /// 未命中次数
+    pub misses: u64,
+    /// 驱逐次数
+    pub evictions: u64,
+    /// 过期清理次数
+    pub expirations: u64,
+}
+
+impl ToolCallCache {
+    /// 创建新的缓存管理器
+    pub fn new(max_size: usize, default_ttl: u64) -> Self {
+        Self {
+            cache: HashMap::new(),
+            max_size,
+            default_ttl,
+            stats: CacheStats::default(),
+        }
+    }
+
+    /// 生成缓存键
+    pub fn generate_cache_key(&self, tool_name: &str, params: &HashMap<String, Value>) -> CacheKey {
+        // 标准化参数：按键排序并序列化
+        let mut sorted_params: Vec<_> = params.iter().collect();
+        sorted_params.sort_by_key(|(k, _)| *k);
+        
+        let normalized_params = serde_json::to_string(&sorted_params)
+            .unwrap_or_else(|_| "{}".to_string());
+
+        CacheKey {
+            tool_name: tool_name.to_string(),
+            normalized_params,
+        }
+    }
+
+    /// 检查缓存
+    pub fn get(&mut self, key: &CacheKey) -> Option<TaskExecutionResult> {
+        // 先检查是否存在和是否过期
+        let should_remove = if let Some(entry) = self.cache.get(key) {
+            self.is_expired(entry)
+        } else {
+            false
+        };
+
+        if should_remove {
+            self.cache.remove(key);
+            self.stats.expirations += 1;
+            self.stats.misses += 1;
+            return None;
+        }
+
+        if let Some(entry) = self.cache.get_mut(key) {
+            // 更新访问信息
+            entry.last_accessed = Utc::now();
+            entry.access_count += 1;
+            self.stats.hits += 1;
+            
+            Some(entry.result.clone())
+        } else {
+            self.stats.misses += 1;
+            None
+        }
+    }
+
+    /// 添加到缓存
+    pub fn put(&mut self, key: CacheKey, result: TaskExecutionResult, ttl: Option<u64>) {
+        // 如果缓存已满，执行LRU驱逐
+        if self.cache.len() >= self.max_size {
+            self.evict_lru();
+        }
+
+        let entry = CacheEntry {
+            key: key.clone(),
+            result,
+            created_at: Utc::now(),
+            last_accessed: Utc::now(),
+            access_count: 1,
+            ttl_seconds: ttl.or(Some(self.default_ttl)),
+        };
+
+        self.cache.insert(key, entry);
+    }
+
+    /// 检查缓存条目是否过期
+    fn is_expired(&self, entry: &CacheEntry) -> bool {
+        if let Some(ttl) = entry.ttl_seconds {
+            let elapsed = Utc::now().signed_duration_since(entry.created_at);
+            elapsed.num_seconds() > ttl as i64
+        } else {
+            false // 无TTL，永不过期
+        }
+    }
+
+    /// LRU驱逐策略
+    fn evict_lru(&mut self) {
+        if self.cache.is_empty() {
+            return;
+        }
+
+        // 找到最久未访问的条目
+        let mut oldest_key = None;
+        let mut oldest_time = Utc::now();
+
+        for (key, entry) in &self.cache {
+            if entry.last_accessed < oldest_time {
+                oldest_time = entry.last_accessed;
+                oldest_key = Some(key.clone());
+            }
+        }
+
+        if let Some(key) = oldest_key {
+            self.cache.remove(&key);
+            self.stats.evictions += 1;
+        }
+    }
+
+    /// 清理过期条目
+    pub fn cleanup_expired(&mut self) {
+        let expired_keys: Vec<_> = self.cache
+            .iter()
+            .filter(|(_, entry)| self.is_expired(entry))
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in expired_keys {
+            self.cache.remove(&key);
+            self.stats.expirations += 1;
+        }
+    }
+
+    /// 获取缓存统计
+    pub fn get_stats(&self) -> &CacheStats {
+        &self.stats
+    }
+
+    /// 获取缓存命中率
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.stats.hits + self.stats.misses;
+        if total > 0 {
+            self.stats.hits as f64 / total as f64
+        } else {
+            0.0
+        }
+    }
+
+    /// 清空缓存
+    pub fn clear(&mut self) {
+        self.cache.clear();
+        self.stats = CacheStats::default();
+    }
+
+    /// 获取缓存大小
+    pub fn size(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// 检查是否值得缓存（基于工具类型和参数）
+    pub fn should_cache(&self, tool_name: &str, _params: &HashMap<String, Value>) -> bool {
+        // 某些工具的结果更适合缓存
+        match tool_name {
+            // 网络扫描类工具，结果相对稳定
+            "dns_scanner" | "port_scanner" | "port_scan" => true,
+            // 子域名枚举，结果可能变化但短期内稳定
+            "rsubdomain" => true,
+            // 一般工具也可以缓存，但TTL较短
+            _ => true,
+        }
+    }
+
+    /// 获取工具特定的TTL
+    pub fn get_tool_ttl(&self, tool_name: &str) -> u64 {
+        match tool_name {
+            // 网络基础信息相对稳定，较长TTL
+            "dns_scanner" => 3600, // 1小时
+            // 端口扫描结果相对稳定
+            "port_scanner" | "port_scan" => 1800, // 30分钟
+            // 子域名可能变化
+            "rsubdomain" => 900, // 15分钟
+            // 默认TTL
+            _ => self.default_ttl,
+        }
+    }
+}
+
+/// 路径部分（用于变量解析）
+#[derive(Debug, Clone)]
+struct PathPart {
+    /// 字段名
+    name: String,
+    /// 数组索引（如果有）
+    index: Option<usize>,
+}
+
 /// 变量解析上下文
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VariableResolutionContext {
@@ -490,39 +813,435 @@ impl VariableResolutionContext {
     }
 
     /// 解析变量引用
+    /// 支持多种格式：
+    /// - $1, $2 等简单引用
+    /// - task_id.outputs.field 等点分路径
+    /// - /task_id/outputs/field 等 JSON Pointer 风格
+    /// - task_id.outputs[0].field 等数组索引
     pub fn resolve_variable(&self, var_ref: &str) -> Option<Value> {
         // 首先检查全局变量
         if let Some(value) = self.global_variables.get(var_ref) {
             return Some(value.clone());
         }
 
-        // 然后检查变量映射
+        // 检查变量映射
         if let Some(mapping) = self.variable_mappings.get(var_ref) {
             return self.resolve_mapping_path(mapping);
         }
 
-        None
+        // 直接解析路径（支持多种格式）
+        self.resolve_path_directly(var_ref)
     }
 
-    /// 解析映射路径（如 "task_1.outputs.ip_address"）
+    /// 解析映射路径（支持多种格式）
     fn resolve_mapping_path(&self, path: &str) -> Option<Value> {
-        let parts: Vec<&str> = path.split('.').collect();
-        if parts.len() < 3 {
+        self.resolve_path_directly(path)
+    }
+
+    /// 直接解析路径，支持多种格式
+    fn resolve_path_directly(&self, path: &str) -> Option<Value> {
+        // 处理 JSON Pointer 格式 (/task_id/outputs/field)
+        if path.starts_with('/') {
+            return self.resolve_json_pointer(path);
+        }
+
+        // 处理点分路径格式 (task_id.outputs.field 或 task_id.outputs[0].field)
+        self.resolve_dot_notation(path)
+    }
+
+    /// 解析 JSON Pointer 格式路径
+    fn resolve_json_pointer(&self, pointer: &str) -> Option<Value> {
+        let parts: Vec<&str> = pointer.trim_start_matches('/').split('/').collect();
+        if parts.is_empty() {
             return None;
         }
 
         let task_id = parts[0];
-        let section = parts[1]; // 通常是 "outputs"
-        let key = parts[2];
-
         if let Some(result) = self.completed_results.get(task_id) {
-            match section {
-                "outputs" => result.outputs.get(key).cloned(),
-                "metadata" => result.metadata.get(key).cloned(),
-                _ => None,
+            let mut current_value = serde_json::to_value(result).ok()?;
+            
+            // 遍历剩余路径部分
+            for part in &parts[1..] {
+                current_value = self.navigate_value(current_value, part)?;
             }
+            
+            Some(current_value)
         } else {
             None
+        }
+    }
+
+    /// 解析点分路径格式
+    fn resolve_dot_notation(&self, path: &str) -> Option<Value> {
+        // 分割路径，但保留数组索引
+        let path_parts = self.parse_dot_notation(path);
+        if path_parts.is_empty() {
+            return None;
+        }
+
+        let task_id = &path_parts[0].name;
+        if let Some(result) = self.completed_results.get(task_id) {
+            let mut current_value = serde_json::to_value(result).ok()?;
+            
+            // 遍历路径部分
+            for part in &path_parts[1..] {
+                current_value = self.navigate_value_with_index(current_value, &part.name, part.index)?;
+            }
+            
+            Some(current_value)
+        } else {
+            None
+        }
+    }
+
+    /// 解析点分路径为结构化部分
+    fn parse_dot_notation(&self, path: &str) -> Vec<PathPart> {
+        let mut parts = Vec::new();
+        let segments: Vec<&str> = path.split('.').collect();
+        
+        for segment in segments {
+            if let Some(bracket_start) = segment.find('[') {
+                if let Some(bracket_end) = segment.find(']') {
+                    // 包含数组索引: field[0]
+                    let field_name = &segment[..bracket_start];
+                    let index_str = &segment[bracket_start + 1..bracket_end];
+                    
+                    if let Ok(index) = usize::from_str(index_str) {
+                        parts.push(PathPart {
+                            name: field_name.to_string(),
+                            index: Some(index),
+                        });
+                    } else {
+                        // 索引解析失败，作为普通字段处理
+                        parts.push(PathPart {
+                            name: segment.to_string(),
+                            index: None,
+                        });
+                    }
+                } else {
+                    // 括号不匹配，作为普通字段处理
+                    parts.push(PathPart {
+                        name: segment.to_string(),
+                        index: None,
+                    });
+                }
+            } else {
+                // 普通字段
+                parts.push(PathPart {
+                    name: segment.to_string(),
+                    index: None,
+                });
+            }
+        }
+        
+        parts
+    }
+
+    /// 在值中导航（简单字段）
+    fn navigate_value(&self, value: Value, field: &str) -> Option<Value> {
+        match value {
+            Value::Object(obj) => obj.get(field).cloned(),
+            Value::Array(arr) => {
+                if let Ok(index) = usize::from_str(field) {
+                    arr.get(index).cloned()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// 在值中导航（支持数组索引）
+    fn navigate_value_with_index(&self, value: Value, field: &str, index: Option<usize>) -> Option<Value> {
+        match value {
+            Value::Object(obj) => {
+                let field_value = obj.get(field).cloned()?;
+                if let Some(idx) = index {
+                    // 需要进一步索引
+                    match field_value {
+                        Value::Array(arr) => arr.get(idx).cloned(),
+                        _ => None,
+                    }
+                } else {
+                    Some(field_value)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// 验证变量路径格式是否有效
+    pub fn validate_variable_path(&self, path: &str) -> bool {
+        if path.is_empty() {
+            return false;
+        }
+
+        // JSON Pointer 格式验证
+        if path.starts_with('/') {
+            let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+            return !parts.is_empty() && !parts[0].is_empty();
+        }
+
+        // 点分路径格式验证
+        let path_parts = self.parse_dot_notation(path);
+        !path_parts.is_empty() && !path_parts[0].name.is_empty()
+    }
+
+    /// 获取路径中引用的所有任务ID
+    pub fn extract_task_ids_from_path(&self, path: &str) -> Vec<String> {
+        let mut task_ids = Vec::new();
+
+        if path.starts_with('/') {
+            // JSON Pointer 格式
+            let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+            if !parts.is_empty() && !parts[0].is_empty() {
+                task_ids.push(parts[0].to_string());
+            }
+        } else {
+            // 点分路径格式
+            let path_parts = self.parse_dot_notation(path);
+            if !path_parts.is_empty() && !path_parts[0].name.is_empty() {
+                task_ids.push(path_parts[0].name.clone());
+            }
+        }
+
+        task_ids
+    }
+
+    /// 检查路径是否可以解析（所需的任务结果是否可用）
+    pub fn can_resolve_path(&self, path: &str) -> bool {
+        let task_ids = self.extract_task_ids_from_path(path);
+        for task_id in task_ids {
+            if !self.completed_results.contains_key(&task_id) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 添加变量映射的便捷方法
+    pub fn add_variable_mapping(&mut self, var_ref: String, path: String) {
+        if self.validate_variable_path(&path) {
+            self.variable_mappings.insert(var_ref, path);
+        }
+    }
+
+    /// 批量添加变量映射
+    pub fn add_variable_mappings(&mut self, mappings: HashMap<String, String>) {
+        for (var_ref, path) in mappings {
+            self.add_variable_mapping(var_ref, path);
+        }
+    }
+
+    /// 验证工具参数是否符合 Schema
+    pub fn validate_tool_parameters(
+        &self,
+        tool_schema: &ToolSchema,
+        parameters: &HashMap<String, Value>,
+    ) -> ValidationResult {
+        let mut errors = Vec::new();
+        let mut corrected_params = HashMap::new();
+
+        // 检查必需参数
+        for param_schema in &tool_schema.parameters {
+            if param_schema.required && !parameters.contains_key(&param_schema.name) {
+                // 尝试使用默认值
+                if let Some(default_value) = &param_schema.default_value {
+                    corrected_params.insert(param_schema.name.clone(), default_value.clone());
+                } else {
+                    errors.push(format!("Missing required parameter: {}", param_schema.name));
+                }
+            }
+        }
+
+        // 验证每个提供的参数
+        for (param_name, param_value) in parameters {
+            if let Some(param_schema) = tool_schema.parameters.iter().find(|p| p.name == *param_name) {
+                // 验证参数类型和约束
+                match self.validate_parameter_value(param_schema, param_value) {
+                    Ok(corrected_value) => {
+                        corrected_params.insert(param_name.clone(), corrected_value);
+                    }
+                    Err(error) => {
+                        errors.push(format!("Parameter '{}': {}", param_name, error));
+                    }
+                }
+            } else {
+                // 未知参数 - 可以选择忽略或报错
+                errors.push(format!("Unknown parameter: {}", param_name));
+            }
+        }
+
+        ValidationResult {
+            is_valid: errors.is_empty(),
+            errors,
+            corrected_params: if corrected_params.is_empty() { None } else { Some(corrected_params) },
+        }
+    }
+
+    /// 验证单个参数值
+    fn validate_parameter_value(
+        &self,
+        param_schema: &ToolParameterSchema,
+        value: &Value,
+    ) -> Result<Value, String> {
+        // 类型验证
+        let validated_value = self.validate_parameter_type(&param_schema.param_type, value)?;
+
+        // 约束验证
+        if let Some(constraints) = &param_schema.constraints {
+            self.validate_parameter_constraints(constraints, &validated_value, &param_schema.param_type)?;
+        }
+
+        Ok(validated_value)
+    }
+
+    /// 验证参数类型
+    fn validate_parameter_type(&self, param_type: &ParameterType, value: &Value) -> Result<Value, String> {
+        match (param_type, value) {
+            (ParameterType::String, Value::String(_)) => Ok(value.clone()),
+            (ParameterType::String, v) => {
+                // 尝试转换为字符串
+                match v {
+                    Value::Number(n) => Ok(Value::String(n.to_string())),
+                    Value::Bool(b) => Ok(Value::String(b.to_string())),
+                    _ => Err("Cannot convert to string".to_string()),
+                }
+            }
+            (ParameterType::Integer, Value::Number(n)) => {
+                if n.is_i64() {
+                    Ok(value.clone())
+                } else {
+                    Err("Not a valid integer".to_string())
+                }
+            }
+            (ParameterType::Integer, Value::String(s)) => {
+                match s.parse::<i64>() {
+                    Ok(i) => Ok(Value::Number(serde_json::Number::from(i))),
+                    Err(_) => Err("Cannot parse as integer".to_string()),
+                }
+            }
+            (ParameterType::Float, Value::Number(_)) => Ok(value.clone()),
+            (ParameterType::Float, Value::String(s)) => {
+                match s.parse::<f64>() {
+                    Ok(f) => Ok(Value::Number(serde_json::Number::from_f64(f)
+                        .ok_or("Invalid float value")?)),
+                    Err(_) => Err("Cannot parse as float".to_string()),
+                }
+            }
+            (ParameterType::Boolean, Value::Bool(_)) => Ok(value.clone()),
+            (ParameterType::Boolean, Value::String(s)) => {
+                match s.to_lowercase().as_str() {
+                    "true" | "1" | "yes" => Ok(Value::Bool(true)),
+                    "false" | "0" | "no" => Ok(Value::Bool(false)),
+                    _ => Err("Cannot parse as boolean".to_string()),
+                }
+            }
+            (ParameterType::Array(inner_type), Value::Array(arr)) => {
+                let mut validated_array = Vec::new();
+                for (i, item) in arr.iter().enumerate() {
+                    match self.validate_parameter_type(inner_type, item) {
+                        Ok(validated_item) => validated_array.push(validated_item),
+                        Err(e) => return Err(format!("Array item [{}]: {}", i, e)),
+                    }
+                }
+                Ok(Value::Array(validated_array))
+            }
+            (ParameterType::Enum(allowed_values), Value::String(s)) => {
+                if allowed_values.contains(s) {
+                    Ok(value.clone())
+                } else {
+                    Err(format!("Value '{}' not in allowed enum values: {:?}", s, allowed_values))
+                }
+            }
+            _ => Err(format!("Type mismatch: expected {:?}", param_type)),
+        }
+    }
+
+    /// 验证参数约束
+    fn validate_parameter_constraints(
+        &self,
+        constraints: &ParameterConstraints,
+        value: &Value,
+        param_type: &ParameterType,
+    ) -> Result<(), String> {
+        match param_type {
+            ParameterType::String => {
+                if let Value::String(s) = value {
+                    if let Some(min_len) = constraints.min_length {
+                        if s.len() < min_len {
+                            return Err(format!("String too short (min: {})", min_len));
+                        }
+                    }
+                    if let Some(max_len) = constraints.max_length {
+                        if s.len() > max_len {
+                            return Err(format!("String too long (max: {})", max_len));
+                        }
+                    }
+                    if let Some(pattern) = &constraints.pattern {
+                        if !self.matches_pattern(s, pattern) {
+                            return Err(format!("String does not match pattern: {}", pattern));
+                        }
+                    }
+                }
+            }
+            ParameterType::Integer | ParameterType::Float => {
+                if let Value::Number(n) = value {
+                    if let Some(n_f64) = n.as_f64() {
+                        if let Some(min_val) = constraints.min_value {
+                            if n_f64 < min_val {
+                                return Err(format!("Value too small (min: {})", min_val));
+                            }
+                        }
+                        if let Some(max_val) = constraints.max_value {
+                            if n_f64 > max_val {
+                                return Err(format!("Value too large (max: {})", max_val));
+                            }
+                        }
+                    }
+                }
+            }
+            ParameterType::Array(_) => {
+                if let Value::Array(arr) = value {
+                    if let Some(min_len) = constraints.min_length {
+                        if arr.len() < min_len {
+                            return Err(format!("Array too short (min: {})", min_len));
+                        }
+                    }
+                    if let Some(max_len) = constraints.max_length {
+                        if arr.len() > max_len {
+                            return Err(format!("Array too long (max: {})", max_len));
+                        }
+                    }
+                }
+            }
+            _ => {} // 其他类型暂不处理约束
+        }
+
+        Ok(())
+    }
+
+    /// 简单的模式匹配（不使用正则表达式库）
+    fn matches_pattern(&self, text: &str, pattern: &str) -> bool {
+        // 简化的模式匹配，支持基本的通配符
+        if pattern == "*" {
+            return true;
+        }
+        
+        // 更复杂的正则表达式匹配需要外部库
+        // 这里只做简单的前缀、后缀和包含匹配
+        if pattern.starts_with('*') && pattern.ends_with('*') {
+            let middle = &pattern[1..pattern.len()-1];
+            text.contains(middle)
+        } else if pattern.starts_with('*') {
+            let suffix = &pattern[1..];
+            text.ends_with(suffix)
+        } else if pattern.ends_with('*') {
+            let prefix = &pattern[..pattern.len()-1];
+            text.starts_with(prefix)
+        } else {
+            text == pattern
         }
     }
 }

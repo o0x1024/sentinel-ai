@@ -30,6 +30,8 @@
       </div>
     </div>
 
+    
+
     <!-- 界面设置 -->
     <div class="card bg-base-100 shadow-sm mb-6">
       <div class="card-body">
@@ -465,7 +467,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -497,9 +499,18 @@ const settings = computed({
     if (!props.settings.general) {
       return { ...props.settings, general: {} }
     }
-    return props.settings
+    // 默认化 Tavily 字段
+    const s: any = props.settings
+    if (s.general && typeof s.general === 'object') {
+      if (typeof s.general.tavilyApiKey === 'undefined') s.general.tavilyApiKey = ''
+      if (typeof s.general.tavilyMaxResults === 'undefined') s.general.tavilyMaxResults = 5
+    }
+    return s
   },
-  set: (value: any) => emit('update:settings', value)
+  set: (value: any) => {
+    console.log('GeneralSettings: Emitting settings update:', value)
+    emit('update:settings', value)
+  }
 })
 
 // Methods
@@ -555,6 +566,56 @@ const getCurrentThemeName = () => {
 
 const saveGeneralConfig = () => {
   emit('saveGeneralConfig')
+}
+
+// 实时预览设置变化
+watch(() => props.settings?.general?.theme, (newTheme) => {
+  if (newTheme) {
+    applyThemePreview(newTheme)
+  }
+})
+
+watch(() => props.settings?.general?.fontSize, (newSize) => {
+  if (newSize) {
+    applyFontSizePreview(newSize)
+  }
+})
+
+watch(() => props.settings?.general?.language, (newLang) => {
+  if (newLang) {
+    applyLanguagePreview(newLang)
+  }
+})
+
+const applyThemePreview = (theme: string) => {
+  let finalTheme = theme
+  if (theme === 'auto') {
+    finalTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  document.documentElement.setAttribute('data-theme', finalTheme)
+}
+
+const applyFontSizePreview = (fontSize: number) => {
+  document.documentElement.style.fontSize = `${fontSize}px`
+  document.documentElement.style.setProperty('--font-size-base', `${fontSize}px`)
+}
+
+const applyLanguagePreview = (language: string) => {
+  let finalLang = language
+  if (language === 'auto') {
+    const browserLang = navigator.language.toLowerCase()
+    if (browserLang.startsWith('zh')) {
+      finalLang = browserLang.includes('tw') || browserLang.includes('hk') ? 'zh-TW' : 'zh-CN'
+    } else if (browserLang.startsWith('en')) {
+      finalLang = 'en-US'
+    } else {
+      finalLang = 'zh-CN'
+    }
+  }
+  
+  const { locale } = useI18n()
+  const langCode = finalLang.split('-')[0]
+  locale.value = langCode
 }
 </script>
 

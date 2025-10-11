@@ -25,7 +25,7 @@ pub struct AgentFlowTestResult {
     /// 执行详情
     pub details: Option<serde_json::Value>,
     /// 执行时间（毫秒）
-    pub execution_time_ms: u64,
+    pub execution_time_ms: f64,
 }
 
 /// 端到端Agent流程测试
@@ -47,7 +47,7 @@ pub async fn test_complete_agent_flow(
                 stage: "initialization".to_string(),
                 message: "Agent manager not initialized".to_string(),
                 details: None,
-                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                execution_time_ms: start_time.elapsed().as_millis() as f64,
             });
         }
         manager_guard.as_ref().unwrap().clone()
@@ -61,7 +61,7 @@ pub async fn test_complete_agent_flow(
             stage: "engine_registration".to_string(),
             message: "No engines registered".to_string(),
             details: Some(serde_json::json!({"engines": engines})),
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
+            execution_time_ms: start_time.elapsed().as_millis() as f64,
         });
     }
     
@@ -75,7 +75,7 @@ pub async fn test_complete_agent_flow(
             stage: "agent_registration".to_string(),
             message: "No agents registered".to_string(),
             details: Some(serde_json::json!({"agents": agents, "engines": engines})),
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
+            execution_time_ms: start_time.elapsed().as_millis() as f64,
         });
     }
     
@@ -106,7 +106,7 @@ pub async fn test_complete_agent_flow(
             let active_sessions = manager.active_sessions.read().await;
             let session_exists = active_sessions.contains_key(&session_id);
             
-            let execution_time = start_time.elapsed().as_millis() as u64;
+            let execution_time = start_time.elapsed().as_millis() as f64;
             
             Ok(AgentFlowTestResult {
                 success: true,
@@ -134,7 +134,7 @@ pub async fn test_complete_agent_flow(
                     "agents": agents,
                     "available_tools": available_tools.len()
                 })),
-                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                execution_time_ms: start_time.elapsed().as_millis() as f64,
             })
         }
     }
@@ -155,7 +155,7 @@ pub async fn test_tool_system_availability(
         .filter(|tool| tool.available)
         .collect();
     
-    let execution_time = start_time.elapsed().as_millis() as u64;
+    let execution_time = start_time.elapsed().as_millis() as f64;
     
     Ok(serde_json::json!({
         "total_tools": tools.len(),
@@ -198,7 +198,7 @@ pub async fn test_tool_execution(
     
     match tool_system.execute_tool(&tool_name, execution_params).await {
         Ok(result) => {
-            let execution_time = start_time.elapsed().as_millis() as u64;
+            let execution_time = start_time.elapsed().as_millis() as f64;
             
             Ok(serde_json::json!({
                 "success": true,
@@ -216,7 +216,7 @@ pub async fn test_tool_execution(
             }))
         }
         Err(e) => {
-            let execution_time = start_time.elapsed().as_millis() as u64;
+            let execution_time = start_time.elapsed().as_millis() as f64;
             
             Ok(serde_json::json!({
                 "success": false,

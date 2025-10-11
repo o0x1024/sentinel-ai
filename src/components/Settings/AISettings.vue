@@ -336,6 +336,39 @@
       </div>
     </div>
 
+    <!-- Tavily Search 设置 -->
+    <div class="card bg-base-100 shadow-sm mt-6">
+      <div class="card-body p-4">
+        <div class="flex items-center gap-3 mb-2">
+          <i class="fas fa-search text-primary text-lg"></i>
+          <h3 class="font-semibold">Tavily Search</h3>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">Tavily API Key</span>
+            </label>
+            <input v-model="tavilyApiKeyLocal" type="password" class="input input-bordered" placeholder="tvly-..." />
+            <label class="label">
+              <span class="label-text-alt">后端将从数据库读取用于联网搜索</span>
+            </label>
+          </div>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">默认最大结果数</span>
+            </label>
+            <input v-model.number="tavilyMaxResultsLocal" type="number" min="1" max="20" class="input input-bordered w-40" />
+          </div>
+        </div>
+        <div class="flex justify-end mt-3">
+          <button class="btn btn-primary btn-sm" @click="saveAiConfig">
+            <i class="fas fa-save mr-1"></i>
+            保存设置
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 可用模型列表 - 重构为卡片布局 -->
     <div class="mt-6">
       <h3 class="text-lg font-semibold border-b pb-2 mb-4">
@@ -473,14 +506,205 @@
         </div>
       </div>
     </div>
+
+    <!-- RAG 配置 -->
+    <div class="card bg-base-100 shadow-sm mt-6">
+      <div class="card-body">
+        <h3 class="card-title mb-4">
+          <i class="fas fa-database"></i>
+          RAG 配置
+        </h3>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- 左侧：嵌入配置 -->
+          <div class="space-y-4">
+            <h4 class="text-lg font-semibold border-b pb-2">嵌入配置</h4>
+            
+            <!-- 嵌入提供商选择 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">嵌入提供商</span>
+              </label>
+              <select class="select select-bordered" v-model="ragConfig.embedding_provider" @change="saveRagConfig">
+                <option value="ollama">Ollama</option>
+                <option value="openai">OpenAI</option>
+                <option value="azure">Azure OpenAI</option>
+                <option value="huggingface">Hugging Face</option>
+                <option value="cohere">Cohere</option>
+              </select>
+            </div>
+
+            <!-- 嵌入模型选择 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">嵌入模型</span>
+              </label>
+              <select class="select select-bordered" v-model="ragConfig.embedding_model" @change="saveRagConfig">
+                <option v-for="model in getEmbeddingModels(ragConfig.embedding_provider)" 
+                        :key="model.id" :value="model.id">
+                  {{ model.name }}
+                </option>
+              </select>
+            </div>
+
+            <!-- 嵌入维度 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">嵌入维度</span>
+              </label>
+              <input type="number" class="input input-bordered" 
+                     v-model.number="ragConfig.embedding_dimensions"
+                     @blur="saveRagConfig"
+                     placeholder="自动检测">
+            </div>
+
+            <!-- API配置 (仅非Ollama提供商) -->
+            <div v-if="ragConfig.embedding_provider !== 'ollama'" class="space-y-3">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">API Key</span>
+                </label>
+                <input type="password" class="input input-bordered" 
+                       v-model="ragConfig.embedding_api_key"
+                       @blur="saveRagConfig"
+                       placeholder="输入API密钥">
+              </div>
+              
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">Base URL</span>
+                </label>
+                <input type="url" class="input input-bordered" 
+                       v-model="ragConfig.embedding_base_url"
+                       @blur="saveRagConfig"
+                       placeholder="API基础URL">
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧：分块配置 -->
+          <div class="space-y-4">
+            <h4 class="text-lg font-semibold border-b pb-2">分块配置</h4>
+            
+            <!-- 分块大小 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">分块大小 (字符)</span>
+              </label>
+              <div class="flex items-center gap-4">
+                <input type="range" class="range range-primary flex-1"
+                       v-model.number="ragConfig.chunk_size_chars"
+                       min="200" max="2000" step="100"
+                       @change="saveRagConfig">
+                <span class="text-sm min-w-[80px]">{{ ragConfig.chunk_size_chars }}</span>
+              </div>
+              <label class="label">
+                <span class="label-text-alt">推荐范围: 500-1500字符</span>
+              </label>
+            </div>
+
+            <!-- 重叠大小 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">重叠大小 (字符)</span>
+              </label>
+              <div class="flex items-center gap-4">
+                <input type="range" class="range range-secondary flex-1"
+                       v-model.number="ragConfig.chunk_overlap_chars"
+                       min="0" :max="Math.floor(ragConfig.chunk_size_chars * 0.5)" step="50"
+                       @change="saveRagConfig">
+                <span class="text-sm min-w-[80px]">{{ ragConfig.chunk_overlap_chars }}</span>
+              </div>
+              <label class="label">
+                <span class="label-text-alt">重叠有助于保持上下文连续性</span>
+              </label>
+            </div>
+
+            <!-- 检索参数 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">检索数量 (Top-K)</span>
+              </label>
+              <input type="number" class="input input-bordered" 
+                     v-model.number="ragConfig.top_k"
+                     @blur="saveRagConfig"
+                     min="1" max="20"
+                     placeholder="5">
+            </div>
+
+            <!-- MMR Lambda -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">多样性参数 (MMR Lambda)</span>
+              </label>
+              <div class="flex items-center gap-4">
+                <input type="range" class="range range-accent flex-1"
+                       v-model.number="ragConfig.mmr_lambda"
+                       min="0" max="1" step="0.1"
+                       @change="saveRagConfig">
+                <span class="text-sm min-w-[60px]">{{ ragConfig.mmr_lambda }}</span>
+              </div>
+              <label class="label">
+                <span class="label-text-alt">0=多样性优先, 1=相似性优先</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 性能配置 -->
+        <div class="mt-6 pt-4 border-t">
+          <h4 class="text-lg font-semibold mb-4">性能配置</h4>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">批处理大小</span>
+              </label>
+              <input type="number" class="input input-bordered" 
+                     v-model.number="ragConfig.batch_size"
+                     @blur="saveRagConfig"
+                     min="1" max="100"
+                     placeholder="10">
+            </div>
+            
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">最大并发数</span>
+              </label>
+              <input type="number" class="input input-bordered" 
+                     v-model.number="ragConfig.max_concurrent"
+                     @blur="saveRagConfig"
+                     min="1" max="16"
+                     placeholder="4">
+            </div>
+          </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="card-actions justify-end mt-6">
+          <button class="btn btn-outline" @click="testEmbeddingConnection">
+            <i class="fas fa-vial"></i>
+            测试嵌入连接
+          </button>
+          <button class="btn btn-outline" @click="resetRagConfig">
+            <i class="fas fa-undo"></i>
+            重置为默认
+          </button>
+          <button class="btn btn-primary" @click="saveRagConfig">
+            <i class="fas fa-save"></i>
+            保存RAG配置
+          </button>
+        </div>
+      </div>
+    </div>
     </div>
 
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
 
 const { t } = useI18n()
 
@@ -499,6 +723,7 @@ interface Props {
   customProvider: any
   aiUsageStats: any
   saving: boolean
+  ragConfig?: any
 }
 
 const props = defineProps<Props>()
@@ -509,6 +734,7 @@ interface Emits {
   'update:settings': [value: any]
   'update:customProvider': [value: any]
   'update:aiConfig': [value: any]
+  'update:ragConfig': [value: any]
   'testConnection': [provider: string]
   'testCustomProvider': []
   'addCustomProvider': []
@@ -517,6 +743,9 @@ interface Emits {
   'applyManualConfig': [config: any]
   'setDefaultProvider': [provider: string]
   'setDefaultChatModel': [model: string]
+  'saveRagConfig': []
+  'testEmbeddingConnection': []
+  'resetRagConfig': []
 }
 
 const emit = defineEmits<Emits>()
@@ -638,7 +867,7 @@ const getProviderName = (provider: string) => {
     'Gemini': 'Gemini',
     'Ollama': 'Ollama',
     'DeepSeek': 'DeepSeek',
-    'Moonshot': 'Moonshot AI',
+    'Moonshot': 'Moonshot',
     'OpenRouter': 'OpenRouter',
     'ModelScope': 'ModelScope'
   }
@@ -665,9 +894,42 @@ const addCustomProvider = () => {
   emit('addCustomProvider')
 }
 
-const saveAiConfig = () => {
+const saveAiConfig = async () => {
+  await saveTavilyConfig()
   emit('saveAiConfig')
 }
+
+// --- Tavily Search Settings ---
+const tavilyApiKeyLocal = ref('')
+const tavilyMaxResultsLocal = ref<number>(5)
+
+const loadTavilyConfig = async () => {
+  try {
+    const items = await invoke('get_config', { request: { category: 'ai', key: null } }) as Array<{ key: string, value: string }>
+    const map = new Map(items.map(i => [i.key, i.value]))
+    tavilyApiKeyLocal.value = String(map.get('tavily_api_key') || '')
+    const mr = Number(map.get('tavily_max_results') || 5)
+    tavilyMaxResultsLocal.value = isNaN(mr) ? 5 : Math.min(Math.max(mr, 1), 20)
+  } catch (e) {
+    console.warn('Failed to load Tavily config', e)
+  }
+}
+
+const saveTavilyConfig = async () => {
+  try {
+    const configs = [
+      { category: 'ai', key: 'tavily_api_key', value: tavilyApiKeyLocal.value || '', description: 'Tavily API key for web search', is_encrypted: true },
+      { category: 'ai', key: 'tavily_max_results', value: String(tavilyMaxResultsLocal.value || 5), description: 'Default max results for Tavily', is_encrypted: false },
+    ]
+    await invoke('save_config_batch', { configs })
+  } catch (e) {
+    console.error('Failed to save Tavily config', e)
+  }
+}
+
+onMounted(() => {
+  loadTavilyConfig()
+})
 
 // 手动编辑相关方法
 const onManualConfigChange = () => {
@@ -822,6 +1084,51 @@ watch(useGuiMode, (isGuiMode) => {
     validateConfigText()
   }
 })
+
+// RAG配置相关方法
+const saveRagConfig = () => {
+  emit('saveRagConfig')
+}
+
+const testEmbeddingConnection = () => {
+  emit('testEmbeddingConnection')
+}
+
+const resetRagConfig = () => {
+  emit('resetRagConfig')
+}
+
+// 获取嵌入模型列表
+const getEmbeddingModels = (provider: string) => {
+  const embeddingModels: Record<string, Array<{id: string, name: string}>> = {
+    ollama: [
+      { id: 'nomic-embed-text', name: 'Nomic Embed Text' },
+      { id: 'mxbai-embed-large', name: 'MxBai Embed Large' },
+      { id: 'all-minilm', name: 'All MiniLM' }
+    ],
+    openai: [
+      { id: 'text-embedding-3-small', name: 'Text Embedding 3 Small' },
+      { id: 'text-embedding-3-large', name: 'Text Embedding 3 Large' },
+      { id: 'text-embedding-ada-002', name: 'Text Embedding Ada 002' }
+    ],
+    azure: [
+      { id: 'text-embedding-3-small', name: 'Text Embedding 3 Small' },
+      { id: 'text-embedding-3-large', name: 'Text Embedding 3 Large' },
+      { id: 'text-embedding-ada-002', name: 'Text Embedding Ada 002' }
+    ],
+    huggingface: [
+      { id: 'sentence-transformers/all-MiniLM-L6-v2', name: 'All MiniLM L6 v2' },
+      { id: 'sentence-transformers/all-mpnet-base-v2', name: 'All MPNet Base v2' },
+      { id: 'BAAI/bge-small-en-v1.5', name: 'BGE Small EN v1.5' }
+    ],
+    cohere: [
+      { id: 'embed-english-v3.0', name: 'Embed English v3.0' },
+      { id: 'embed-multilingual-v3.0', name: 'Embed Multilingual v3.0' }
+    ]
+  }
+  
+  return embeddingModels[provider] || []
+}
 </script>
 
 <style scoped>

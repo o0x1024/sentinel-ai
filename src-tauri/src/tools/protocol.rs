@@ -645,8 +645,8 @@ impl ToolCallContext {
         }
     }
 
-    pub fn elapsed_ms(&self) -> u64 {
-        self.start_time.elapsed().as_millis() as u64
+    pub fn elapsed_ms(&self) -> f64 {
+        self.start_time.elapsed().as_millis() as f64
     }
 }
 
