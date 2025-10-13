@@ -8,6 +8,7 @@ use crate::models::dictionary::{
 };
 use crate::services::DatabaseService;
 use crate::services::DictionaryService;
+use std::collections::HashMap;
 
 /// 获取字典列表
 #[tauri::command(rename_all = "snake_case")]
@@ -137,6 +138,34 @@ pub async fn get_dictionary_words(
 
     dictionary_service
         .get_dictionary_words(&dictionary_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 分页获取字典词条（可选搜索）
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_dictionary_words_paged(
+    db_service: State<'_, Arc<DatabaseService>>,
+    dictionary_id: String,
+    offset: Option<u32>,
+    limit: Option<u32>,
+    pattern: Option<String>,
+) -> Result<Vec<DictionaryWord>, String> {
+    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let dictionary_service = DictionaryService::new(pool.clone());
+
+    let off = offset.unwrap_or(0);
+    let lim = limit.unwrap_or(500);
+
+    // 如果带 pattern，则使用带 OFFSET 的搜索分页
+    if let Some(p) = pattern {
+        return dictionary_service
+            .search_words_paged(&dictionary_id, &p, off, lim)
+            .await
+            .map_err(|e| e.to_string());
+    }
+    dictionary_service
+        .get_dictionary_words_paged(&dictionary_id, off, lim)
         .await
         .map_err(|e| e.to_string())
 }
@@ -602,4 +631,73 @@ pub async fn export_subdomain_dictionary(
     } else {
         Ok(String::new())
     }
+}
+
+// --- 默认字典（DB存储） ---
+
+/// 获取某类目的默认字典ID
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_default_dictionary_id(
+    db_service: State<'_, Arc<DatabaseService>>,
+    dict_type: String,
+) -> Result<Option<String>, String> {
+    let value = db_service
+        .get_config("dictionary_default", &dict_type)
+        .await
+        .map_err(|e| e.to_string())?;
+    let v = value.filter(|s| !s.is_empty());
+    Ok(v)
+}
+
+/// 设置某类目的默认字典ID
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_default_dictionary(
+    db_service: State<'_, Arc<DatabaseService>>,
+    dict_type: String,
+    dictionary_id: String,
+) -> Result<(), String> {
+    db_service
+        .set_config(
+            "dictionary_default",
+            &dict_type,
+            &dictionary_id,
+            Some("默认字典设置"),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 清除某类目的默认字典
+#[tauri::command(rename_all = "snake_case")]
+pub async fn clear_default_dictionary(
+    db_service: State<'_, Arc<DatabaseService>>,
+    dict_type: String,
+) -> Result<(), String> {
+    // 设为空字符串代表清除
+    db_service
+        .set_config("dictionary_default", &dict_type, "", Some("默认字典设置"))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 获取所有类目的默认字典映射
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_default_dictionary_map(
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<HashMap<String, String>, String> {
+    let configs = db_service
+        .get_configs_by_category("dictionary_default")
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut map = HashMap::new();
+    for c in configs {
+        if let Some(val) = c.value.clone() {
+            if !val.is_empty() {
+                map.insert(c.key.clone(), val);
+            }
+        }
+    }
+    Ok(map)
 }

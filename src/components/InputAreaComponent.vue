@@ -65,13 +65,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
+import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
 import { sendMessageWithSearch } from '../services/search'
 
 const props = defineProps<{
   inputMessage: string
   isLoading: boolean
   showDebugInfo: boolean
+  ragEnabled?: boolean
 }>()
 
 const emit = defineEmits([
@@ -91,6 +92,31 @@ const emit = defineEmits([
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 
+// --- Persistence helpers ---
+const STORAGE_KEYS = {
+  search: 'sentinel:input:searchEnabled',
+  rag: 'sentinel:input:ragEnabled',
+  task: 'sentinel:input:taskModeEnabled',
+} as const
+
+const getBool = (key: string, fallback = false) => {
+  try {
+    const v = localStorage.getItem(key)
+    if (v === null) return fallback
+    return v === '1' || v === 'true'
+  } catch {
+    return fallback
+  }
+}
+
+const setBool = (key: string, value: boolean) => {
+  try {
+    localStorage.setItem(key, value ? '1' : '0')
+  } catch {
+    // ignore
+  }
+}
+
 // search state
 const showSearch = ref(false)
 const searchEnabled = ref(false)
@@ -98,8 +124,11 @@ const searchEnabled = ref(false)
 // task mode state
 const taskModeEnabled = ref(false)
 
-// RAG state
-const ragEnabled = ref(false)
+// RAG state (controlled by parent via prop, with persistence)
+const ragEnabled = ref<boolean>(!!props.ragEnabled)
+
+// init guard
+const initialized = ref(false)
 
 // popover positioning (fixed)
 const popoverStyle = ref<Record<string, string>>({})
@@ -176,16 +205,19 @@ const clearConversation = () => {
 
 const toggleWebSearch = () => {
   searchEnabled.value = !searchEnabled.value
+  setBool(STORAGE_KEYS.search, searchEnabled.value)
 }
 
 const toggleRAG = () => {
   ragEnabled.value = !ragEnabled.value
+  setBool(STORAGE_KEYS.rag, ragEnabled.value)
   // 通知父组件RAG状态变化
   emit('toggle-rag', ragEnabled.value)
 }
 
 const toggleTaskMode = () => {
   taskModeEnabled.value = !taskModeEnabled.value
+  setBool(STORAGE_KEYS.task, taskModeEnabled.value)
   emit('toggle-task-mode', taskModeEnabled.value)
 }
 
@@ -195,6 +227,28 @@ const handleClickOutside = (_e: MouseEvent) => {}
 
 onMounted(() => {
   autoResize()
+  // 同步父组件传入的初始值
+  // Initialize persistent states (persisted values take precedence)
+  try {
+    // search (local only)
+    searchEnabled.value = getBool(STORAGE_KEYS.search, searchEnabled.value)
+
+    // task mode (notify parent)
+    const savedTask = getBool(STORAGE_KEYS.task, taskModeEnabled.value)
+    taskModeEnabled.value = savedTask
+    emit('toggle-task-mode', savedTask)
+
+    // RAG: prefer persisted value if exists, otherwise use prop
+    const hasPersistedRag = localStorage.getItem(STORAGE_KEYS.rag) !== null
+    const savedRag = hasPersistedRag ? getBool(STORAGE_KEYS.rag) : !!props.ragEnabled
+    ragEnabled.value = savedRag
+    setBool(STORAGE_KEYS.rag, savedRag)
+    emit('toggle-rag', savedRag)
+  } catch {
+    // fallback to prop on any error
+    ragEnabled.value = !!props.ragEnabled
+  }
+  initialized.value = true
   window.addEventListener('resize', updatePopoverPosition)
   window.addEventListener('scroll', updatePopoverPosition, true)
   window.addEventListener('click', handleClickOutside, true)
@@ -205,6 +259,17 @@ onUnmounted(() => {
   window.removeEventListener('scroll', updatePopoverPosition, true)
   window.removeEventListener('click', handleClickOutside, true)
 })
+
+// 监听父组件状态变化，保持本地按钮状态一致（并持久化）
+watch(
+  () => props.ragEnabled,
+  (val) => {
+    if (typeof val === 'boolean') {
+      ragEnabled.value = val
+      setBool(STORAGE_KEYS.rag, val)
+    }
+  }
+)
 
 // End script
 </script>

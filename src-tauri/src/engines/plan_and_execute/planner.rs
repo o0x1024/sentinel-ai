@@ -456,7 +456,7 @@ impl Planner {
         &self,
         system_prompt: &str,
         user_prompt: &str,
-        conversation_id: Option<String>,
+        conversation_id: Option<String>, 
         message_id: Option<String>,
         task: &TaskRequest,
     ) -> Result<String, PlanAndExecuteError> {
@@ -464,7 +464,7 @@ impl Planner {
         let ai_config = self.get_planning_ai_config().await?;
         
         let (provider_name, model_name) = if let Some(config) = ai_config {
-            log::info!("使用模型配置配置的规划模型: {} ({})", config.model, config.provider);
+            log::info!("使用模型配置配置的规划模型: {} ( {})", config.model, config.provider);
             (config.provider, config.model)
         } else {
             // 允许Agent传入覆盖（llm.default）
@@ -641,13 +641,40 @@ impl Planner {
             return Err(PlanAndExecuteError::PlanningFailed("No steps parsed from JSON plan".to_string()));
         }
 
+        // 如果计划的最后一步不是 AiReasoning，则追加一个 AiReasoning 步骤
+        if let Some(last) = built_steps.last() {
+            if !matches!(last.step_type, StepType::AiReasoning) {
+                let next_idx = built_steps.len() + 1;
+                log::info!(
+                    "最后一步不是AiReasoning，自动追加总结步骤: step_{}",
+                    next_idx
+                );
+                built_steps.push(ExecutionStep {
+                    id: format!("step_{}", next_idx),
+                    name: "Final AI Reasoning".to_string(),
+                    description: "Perform final reasoning, summarize outcomes, and propose next actions.".to_string(),
+                    step_type: StepType::AiReasoning,
+                    tool_config: None,
+                    parameters: HashMap::new(),
+                    estimated_duration: 60,
+                    retry_config: RetryConfig::default(),
+                    preconditions: Vec::new(),
+                    postconditions: Vec::new(),
+                });
+            }
+        }
+
         let plan = ExecutionPlan {
             id: Uuid::new_v4().to_string(),
             task_id: Uuid::new_v4().to_string(),
             name: json.get("name").and_then(|v| v.as_str()).unwrap_or("Generated Plan").to_string(),
             description: json.get("description").and_then(|v| v.as_str()).unwrap_or("AI generated execution plan").to_string(),
-            steps: built_steps,
-            estimated_duration: json.get("estimated_duration").and_then(|v| v.as_u64()).unwrap_or(60 *  (json.get("steps").and_then(|s| s.as_array()).map(|a| a.len()).unwrap_or(1) as u64)),
+            steps: built_steps.clone(),
+            // 若JSON未提供estimated_duration，则按最终步骤数量估算（包含可能追加的最终AiReasoning步骤）
+            estimated_duration: json
+                .get("estimated_duration")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(60 * (built_steps.len() as u64)),
             created_at: SystemTime::now(),
             dependencies: HashMap::new(),
             metadata: HashMap::new(),

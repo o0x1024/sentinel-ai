@@ -19,6 +19,9 @@ pub struct RagConfig {
     pub reranking_model: Option<String>,
     pub reranking_enabled: bool,
     pub similarity_threshold: f32,
+    /// 是否启用聊天与任务的知识库增强（全局开关）
+    #[serde(default)]
+    pub augmentation_enabled: bool,
 }
 
 impl Default for RagConfig {
@@ -40,6 +43,7 @@ impl Default for RagConfig {
             reranking_model: None,
             reranking_enabled: false,
             similarity_threshold: 0.7,
+            augmentation_enabled: false,
         }
     }
 }

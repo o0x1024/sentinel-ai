@@ -13,6 +13,7 @@ pub mod utils;
 pub mod rag;
 
 
+use crate::commands::{get_active_rag_collections, set_rag_collection_active};
 // 导入依赖
 use crate::tools::{McpClientManager, McpServerManager};
 use crate::services::mcp::McpService;
@@ -414,6 +415,9 @@ pub fn run() {
             ai::save_scheduler_config,
             ai::get_service_for_stage,
 
+            set_rag_collection_active,
+            get_active_rag_collections,
+
             // 数据库相关命令
             db_commands::execute_query,
             db_commands::get_query_history,
@@ -564,6 +568,7 @@ pub fn run() {
             dictionary::update_dictionary,
             dictionary::delete_dictionary,
             dictionary::get_dictionary_words,
+            dictionary::get_dictionary_words_paged,
             dictionary::add_dictionary_words,
             dictionary::remove_dictionary_words,
             dictionary::search_dictionary_words,
@@ -585,6 +590,11 @@ pub fn run() {
             dictionary::reset_subdomain_dictionary,
             dictionary::import_subdomain_dictionary,
             dictionary::export_subdomain_dictionary,
+            // 默认字典设置（DB存储）
+            dictionary::get_default_dictionary_id,
+            dictionary::set_default_dictionary,
+            dictionary::clear_default_dictionary,
+            dictionary::get_default_dictionary_map,
             // 测试MCP相关命令
             commands::test_mcp::test_mcp_tools_registration,
             commands::test_mcp::test_ai_service_tools,

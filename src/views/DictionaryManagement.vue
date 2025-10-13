@@ -53,6 +53,8 @@
                 <li><a @click="editDictionary(dictionary)"><i class="fas fa-edit mr-2"></i>{{ t('common.edit', '编辑') }}</a></li>
                 <li><a @click="exportDictionary(dictionary)"><i class="fas fa-download mr-2"></i>{{ t('common.export', '导出') }}</a></li>
                 <li><a @click="duplicateDictionary(dictionary)"><i class="fas fa-copy mr-2"></i>{{ t('common.duplicate', '复制') }}</a></li>
+                <li><a @click="markAsDefault(dictionary)"><i class="fas fa-star mr-2"></i>{{ t('dictionary.setDefault', '设为默认') }}</a></li>
+                <li v-if="defaultMap[dictionary.dict_type] === dictionary.id"><a @click="clearDefault(dictionary)"><i class="fas fa-ban mr-2"></i>{{ t('dictionary.clearDefault', '取消默认') }}</a></li>
                 <li v-if="!dictionary.is_builtin"><a @click="deleteDictionary(dictionary)" class="text-error"><i class="fas fa-trash mr-2"></i>{{ t('common.delete', '删除') }}</a></li>
               </ul>
             </div>
@@ -64,6 +66,7 @@
             <div class="badge badge-primary">{{ getDictionaryTypeLabel(dictionary.dict_type) }}</div>
             <div v-if="dictionary.service_type" class="badge badge-secondary">{{ getServiceTypeLabel(dictionary.service_type) }}</div>
             <div v-if="dictionary.is_builtin" class="badge badge-accent">{{ t('dictionary.builtin', '内置') }}</div>
+            <div v-if="defaultMap[dictionary.dict_type] === dictionary.id" class="badge badge-success">{{ t('dictionary.default', '默认') }}</div>
           </div>
           
           <div class="stats stats-horizontal bg-base-100 rounded-lg">
@@ -207,47 +210,62 @@
             :placeholder="t('dictionary.searchWords', '搜索词条...')"
           >
         </div>
-        
-        <div class="overflow-y-auto max-h-96 border rounded-lg">
-          <table class="table table-compact w-full">
-            <thead class="sticky top-0 bg-base-200">
-              <tr>
-                <th class="w-12">
+
+        <!-- 虚拟滚动词条列表（提升大数据量下的渲染性能） -->
+        <div class="border rounded-lg">
+          <!-- 表头 -->
+          <div class="sticky top-0 bg-base-200 px-4 py-2 dict-grid items-center text-sm font-medium border-b">
+            <div>
+              <input 
+                type="checkbox" 
+                class="checkbox" 
+                :checked="selectedWords.length === listItems.length && listItems.length > 0"
+                @change="toggleSelectAll"
+              >
+            </div>
+            <div>{{ t('dictionary.word', '词条') }}</div>
+            <div>{{ t('dictionary.addedAt', '添加时间') }}</div>
+            <div class="text-right pr-2">{{ t('common.actions', '操作') }}</div>
+          </div>
+
+          <!-- 列表主体：虚拟列表 -->
+          <VirtualList
+            ref="virtualListRef"
+            :items="listItems"
+            :itemHeight="ROW_HEIGHT"
+            :height="LIST_HEIGHT"
+            class="virtual-list-host"
+            keyField="id"
+            @scroll="handleInfiniteScroll"
+          >
+            <template #default="{ item }">
+              <div class="px-4 dict-grid items-center text-sm h-full w-full">
+                <div class="py-2">
                   <input 
                     type="checkbox" 
                     class="checkbox" 
-                    :checked="selectedWords.length === filteredWords.length && filteredWords.length > 0"
-                    @change="toggleSelectAll"
-                  >
-                </th>
-                <th>{{ t('dictionary.word', '词条') }}</th>
-                <th>{{ t('dictionary.addedAt', '添加时间') }}</th>
-                <th class="w-20">{{ t('common.actions', '操作') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="word in filteredWords" :key="word.id">
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox" 
-                    :value="word.id"
+                    :value="item.id"
                     v-model="selectedWords"
                   >
-                </td>
-                <td>{{ word.word }}</td>
-                <td>{{ formatDate(word.created_at) }}</td>
-                <td>
+                </div>
+                <div class="truncate whitespace-nowrap min-w-0 py-2" :title="item.word">{{ item.word }}</div>
+                <div class="py-2 whitespace-nowrap text-base-content/80">{{ formatDate(item.created_at) }}</div>
+                <div class="py-2 text-right pr-2 whitespace-nowrap">
                   <button 
                     class="btn btn-ghost btn-xs text-error" 
-                    @click="removeWord(word.id)"
+                    @click="removeWord(item.id)"
                   >
                     <i class="fas fa-trash"></i>
                   </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                </div>
+              </div>
+            </template>
+          </VirtualList>
+          <!-- 底部加载状态 -->
+          <div class="px-4 py-2 text-center text-sm opacity-70">
+            <span v-if="isLoadingMore">{{ t('common.loading', '加载中...') }}</span>
+            <span v-else-if="!hasMore">{{ t('common.noMore', '没有更多了') }}</span>
+          </div>
         </div>
         
         <div class="flex justify-between items-center mt-4">
@@ -273,6 +291,7 @@
             <button class="btn" @click="closeDictionaryWordsModal">{{ t('common.close', '关闭') }}</button>
           </div>
         </div>
+        
       </div>
     </div>
 
@@ -344,12 +363,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { writeTextFile }  from '@tauri-apps/plugin-fs';
 import { dialog } from '@/composables/useDialog'
+import VirtualList from '@/components/VirtualList.vue'
+import { getDefaultMap as getDefaultMapApi, setDefaultId, clearDefaultForType } from '@/services/dictionary'
 
 const { t } = useI18n()
 
@@ -395,12 +416,20 @@ const initializing = ref(false)
 const importing = ref(false)
 const newWord = ref('')
 const searchQuery = ref('')
+const debouncedSearch = ref('')
+const virtualListRef = ref<InstanceType<typeof VirtualList> | null>(null)
 const selectedWords = ref<string[]>([])
 const importText = ref('')
 const importMethod = ref('text')
 const selectedFile = ref<File | null>(null)
 const mergeMode = ref('append')
 const dictionaryWords = ref<DictionaryWord[]>([])
+// 无限滚动状态
+const batchSize = ref(500) // 每次追加加载数量
+const isLoadingMore = ref(false)
+const hasMore = ref(true)
+// 默认字典映射：{ [dict_type]: dictionary_id }
+const defaultMap = ref<Record<string, string>>({})
 
 // 表单数据
 const dictionaryForm = ref({
@@ -442,14 +471,12 @@ const filteredDictionaries = computed(() => {
   return dictionaries.value.filter(dict => dict.dict_type === selectedType.value)
 })
 
-const filteredWords = computed(() => {
-  if (!searchQuery.value.trim()) {
-    return dictionaryWords.value
-  }
-  return dictionaryWords.value.filter(word => 
-    word.word.toLowerCase().includes(searchQuery.value.toLowerCase())
-  )
-})
+// 列表展示数据（服务端已过滤，这里不再二次过滤，避免大数据下的前端压力）
+const listItems = computed(() => dictionaryWords.value)
+
+// 常量：虚拟列表行高与容器高度（和样式保持一致）
+const ROW_HEIGHT = 40
+const LIST_HEIGHT = 384 // 与 max-h-96 相当（24rem）
 
 // 方法
 const loadDictionaries = async () => {
@@ -465,6 +492,16 @@ const loadDictionaries = async () => {
     dictionaries.value = result || []
   } catch (error) {
     console.error('Failed to load dictionaries:', error)
+  }
+}
+
+const loadDefaultMap = async () => {
+  try {
+    const map = await getDefaultMapApi()
+    defaultMap.value = map || {}
+  } catch (error) {
+    console.error('Failed to load default dictionary map:', error)
+    defaultMap.value = {}
   }
 }
 
@@ -525,6 +562,11 @@ const deleteDictionary = async (dictionary: Dictionary) => {
   if (confirmed) {
     try {
       await invoke('delete_dictionary', { id: dictionary.id })
+      // 删除默认字典时，清除该类型默认设置
+      if (defaultMap.value[dictionary.dict_type] === dictionary.id) {
+        await clearDefaultForType(dictionary.dict_type)
+        await loadDefaultMap()
+      }
       await loadDictionaries()
     } catch (error) {
       console.error('Failed to delete dictionary:', error)
@@ -565,24 +607,74 @@ const exportDictionary = async (dictionary: Dictionary) => {
   }
 }
 
+// 默认字典：设置/取消（DB 持久化）
+const markAsDefault = async (dictionary: Dictionary) => {
+  try {
+    await setDefaultId(dictionary.dict_type, dictionary.id)
+    await loadDefaultMap()
+  } catch (error) {
+    console.error('Failed to set default dictionary:', error)
+  }
+}
+
+const clearDefault = async (dictionary: Dictionary) => {
+  try {
+    await clearDefaultForType(dictionary.dict_type)
+    await loadDefaultMap()
+  } catch (error) {
+    console.error('Failed to clear default dictionary:', error)
+  }
+}
+
 const manageDictionaryWords = async (dictionary: Dictionary) => {
   managingDictionary.value = dictionary
-  await loadDictionaryWords(dictionary.id)
+  await resetAndLoadFirstPage()
 }
 
 const viewDictionaryWords = async (dictionary: Dictionary) => {
   managingDictionary.value = dictionary
-  await loadDictionaryWords(dictionary.id)
+  await resetAndLoadFirstPage()
 }
 
-const loadDictionaryWords = async (dictionaryId: string) => {
+const resetAndLoadFirstPage = async () => {
+  if (!managingDictionary.value) return
+  dictionaryWords.value = []
+  selectedWords.value = []
+  hasMore.value = true
+  await loadMore()
+}
+
+const loadMore = async () => {
+  if (!managingDictionary.value || isLoadingMore.value || !hasMore.value) return
   try {
-    const result = await invoke('get_dictionary_words', {
-      dictionary_id: dictionaryId
+    isLoadingMore.value = true
+    const offset = dictionaryWords.value.length
+    const limit = batchSize.value
+    const pattern = debouncedSearch.value.trim() || null
+    const result = await invoke('get_dictionary_words_paged', {
+      dictionary_id: managingDictionary.value.id,
+      offset,
+      limit,
+      pattern
     }) as DictionaryWord[]
-    dictionaryWords.value = result || []
+
+    const chunk = result || []
+    if (chunk.length > 0) {
+      dictionaryWords.value = dictionaryWords.value.concat(chunk)
+    }
+    // 是否还有更多
+    hasMore.value = chunk.length === limit
   } catch (error) {
-    console.error('Failed to load dictionary words:', error)
+    console.error('Failed to load more dictionary words:', error)
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+const handleInfiniteScroll = ({ scrollTop, clientHeight, scrollHeight }: { scrollTop: number; clientHeight: number; scrollHeight: number }) => {
+  const threshold = 2 * ROW_HEIGHT // 距底部一个小阈值触发
+  if (scrollTop + clientHeight >= scrollHeight - threshold) {
+    loadMore()
   }
 }
 
@@ -595,7 +687,7 @@ const addWord = async () => {
       words: [newWord.value.trim()]
     })
     newWord.value = ''
-    await loadDictionaryWords(managingDictionary.value.id)
+  await resetAndLoadFirstPage()
     await loadDictionaries()
   } catch (error) {
     console.error('Failed to add word:', error)
@@ -611,7 +703,7 @@ const removeWord = async (wordId: string) => {
         dictionary_id: managingDictionary.value.id,
         words: [wordToRemove.word]
       })
-      await loadDictionaryWords(managingDictionary.value.id)
+  await resetAndLoadFirstPage()
       await loadDictionaries()
     }
   } catch (error) {
@@ -634,7 +726,7 @@ const removeSelectedWords = async () => {
         words: wordsToRemove
       })
       selectedWords.value = []
-      await loadDictionaryWords(managingDictionary.value.id)
+  await resetAndLoadFirstPage()
       await loadDictionaries()
     }
   } catch (error) {
@@ -648,7 +740,7 @@ const clearDictionary = async () => {
   
   try {
     await invoke('clear_dictionary', { dictionary_id: managingDictionary.value.id })
-    await loadDictionaryWords(managingDictionary.value.id)
+  await resetAndLoadFirstPage()
     await loadDictionaries()
   } catch (error) {
     console.error('Failed to clear dictionary:', error)
@@ -687,7 +779,7 @@ const importWords = async () => {
       importText.value = ''
       selectedFile.value = null
       showImportModal.value = false
-      await loadDictionaryWords(managingDictionary.value.id)
+  await resetAndLoadFirstPage()
       await loadDictionaries()
     }
   } catch (error) {
@@ -703,10 +795,10 @@ const handleFileSelect = (event: Event) => {
 }
 
 const toggleSelectAll = () => {
-  if (selectedWords.value.length === filteredWords.value.length) {
+  if (selectedWords.value.length === listItems.value.length) {
     selectedWords.value = []
   } else {
-    selectedWords.value = filteredWords.value.map(word => word.id)
+    selectedWords.value = listItems.value.map(word => word.id)
   }
 }
 
@@ -727,6 +819,8 @@ const closeDictionaryWordsModal = () => {
   dictionaryWords.value = []
   selectedWords.value = []
   searchQuery.value = ''
+  debouncedSearch.value = ''
+  hasMore.value = true
 }
 
 const getDictionaryTypeLabel = (type: string) => {
@@ -745,8 +839,26 @@ const formatDate = (dateString: string) => {
 }
 
 // 生命周期
-onMounted(() => {
-  loadDictionaries()
+onMounted(async () => {
+  await Promise.all([loadDictionaries(), loadDefaultMap()])
+})
+
+// 搜索防抖：减少大数据量下频繁过滤导致的卡顿
+let searchDebounceTimer: number | null = null
+watch(searchQuery, (val) => {
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer)
+  }
+  searchDebounceTimer = window.setTimeout(() => {
+    debouncedSearch.value = val
+    // 搜索变化后重置滚动到顶部
+    virtualListRef.value?.scrollToTop?.()
+    // 搜索触发服务端重新加载第一页
+    if (managingDictionary.value) {
+      hasMore.value = true
+      resetAndLoadFirstPage()
+    }
+  }, 200)
 })
 </script>
 
@@ -772,5 +884,28 @@ onMounted(() => {
 .sticky {
   position: sticky;
   z-index: 10;
+}
+
+/* 虚拟列表宿主：对齐样式 */
+.virtual-list-host :deep(.virtual-list-item) {
+  /* 让每行看起来像表格的分隔线 */
+  border-bottom: 1px solid var(--fallback-b3, oklch(var(--b3)));
+}
+
+/* 统一表头与行的列布局，避免重复写法导致错位 */
+.dict-grid {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr) 12rem 5rem;
+  column-gap: 1rem; /* 等价于 gap-x-4 */
+}
+
+/* 始终为滚动条预留间隙，防止出现/消失导致表头与内容错位（macOS overlay 亦保持稳定） */
+.virtual-list-host :deep(.virtual-list-container) {
+  scrollbar-gutter: stable both-edges;
+}
+
+/* 确保虚拟行占满可用宽度，避免内容宽度小于表头 */
+.virtual-list-host :deep(.virtual-list-item) {
+  width: 100%;
 }
 </style>

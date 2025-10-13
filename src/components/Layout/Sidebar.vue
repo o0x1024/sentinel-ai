@@ -170,7 +170,7 @@ const mainMenuItems = computed(() => [
     path: '/vulnerabilities',
     name: t('sidebar.vulnerabilities', '漏洞管理'),
     icon: 'fas fa-bug',
-    badge: '12',
+    badge: null,
     badgeClass: 'badge-error'
   },
   {
@@ -184,7 +184,7 @@ const mainMenuItems = computed(() => [
     path: '/agent-manager',
     name: t('sidebar.agentManager', 'Agent管理'),
     icon: 'fas fa-robot',
-    badge: 'NEW',
+    badge: null,
     badgeClass: 'badge-accent'
   },
   {
@@ -229,7 +229,7 @@ const toolMenuItems = computed(() => [
   // },
     {
     path: '/rag-management',
-    name: t('sidebar.ragManagement', 'RAG管理'),
+    name: t('sidebar.ragManagement', '知识库管理'),
     icon: 'fas fa-database',
     badge: null,
     badgeClass: ''

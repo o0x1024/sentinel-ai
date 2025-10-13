@@ -197,6 +197,7 @@
       v-model:input-message="inputMessage"
       :is-loading="isLoading"
       :show-debug-info="showDebugInfo"
+      :rag-enabled="ragEnabled"
       @send-message="sendMessage"
       @stop-execution="stopExecution"
       @toggle-debug="showDebugInfo = !showDebugInfo"
@@ -214,6 +215,7 @@ import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
+import { getRagConfig, saveRagConfig } from '../services/rag_config'
 
 // Composables
 import { useConversation } from '../composables/useConversation'
@@ -435,48 +437,85 @@ const sendMessage = async () => {
             console.warn('确保默认集合失败:', collectionError)
             // 继续执行，让RAG服务自己处理
           }
-          
-          const ragResponse = await invoke('assistant_rag_answer', {
-            request: {
-              query: userInput,
-              collection_id: null, // 使用默认集合
-              conversation_history: messages.value
-                .filter(m => m.role === 'user' || m.role === 'assistant')
-                .slice(-6) // 最近3轮对话
-                .map(m => m.content),
-              top_k: 5,
-              use_mmr: true,
-              mmr_lambda: 0.7,
-              similarity_threshold: 0.7,
-              reranking_enabled: false, // 暂时关闭重排序
-              model_provider: 'moonshot',
-              model_name: 'moonshot-v1-8k',
-              max_tokens: 2000,
-              temperature: 0.3,
+          // 加载已激活集合（若无则回退到默认集合）
+          let activeIds: string[] = []
+          try {
+            activeIds = await invoke('get_active_rag_collections') as string[]
+          } catch {
+            activeIds = []
+          }
+
+          // 构造通用请求体
+          const baseReq = {
+            query: userInput,
+            conversation_history: messages.value
+              .filter(m => m.role === 'user' || m.role === 'assistant')
+              .slice(-6)
+              .map(m => m.content),
+            top_k: 5,
+            use_mmr: true,
+            mmr_lambda: 0.7,
+            similarity_threshold: 0.7,
+            reranking_enabled: false,
+            model_provider: 'moonshot',
+            model_name: 'moonshot-v1-8k',
+            max_tokens: 2000,
+            temperature: 0.3,
+          }
+
+          let combinedAnswer = ''
+          let combinedCitations: any[] = []
+          let fallbackReason: string | undefined
+
+          if (activeIds.length > 0) {
+            // 针对每个激活集合检索并合并
+            for (const cid of activeIds) {
+              try {
+                const resp = await invoke('assistant_rag_answer', {
+                  request: { ...baseReq, collection_id: cid }
+                }) as any
+                if (resp?.answer) {
+                  combinedAnswer += (combinedAnswer ? '\n\n' : '') + resp.answer
+                }
+                if (Array.isArray(resp?.citations)) {
+                  combinedCitations.push(...resp.citations)
+                }
+              } catch (e) {
+                console.warn('集合检索失败', cid, e)
+                fallbackReason = '部分集合检索失败'
+              }
             }
-          }) as any
+          } else {
+            // 无激活集合：使用默认集合
+            const resp = await invoke('assistant_rag_answer', {
+              request: { ...baseReq, collection_id: null }
+            }) as any
+            combinedAnswer = resp?.answer || ''
+            combinedCitations = resp?.citations || []
+            fallbackReason = resp?.fallback_reason
+          }
 
           // 更新助手消息内容和引用
-          assistantMessage.content = ragResponse.answer || '抱歉，无法生成回答。'
-          assistantMessage.citations = ragResponse.citations || []
+          assistantMessage.content = combinedAnswer || '抱歉，无法生成回答。'
+          assistantMessage.citations = combinedCitations
           assistantMessage.isStreaming = false
           
           // 优雅的错误处理和降级提示
-          if (ragResponse.fallback_reason) {
-            console.warn('RAG降级原因:', ragResponse.fallback_reason)
-            if (ragResponse.fallback_reason.includes('未找到相关上下文')) {
+          if (fallbackReason) {
+            console.warn('RAG降级原因:', fallbackReason)
+            if (fallbackReason.includes('未找到相关上下文')) {
               assistantMessage.content += '\n\n💡 **提示**: 您可以尝试：\n• 重新表述问题\n• 添加更多相关文档到知识库\n• 关闭RAG模式使用普通聊天'
-            } else if (ragResponse.fallback_reason.includes('RAG检索失败')) {
+            } else if (fallbackReason.includes('RAG检索失败')) {
               assistantMessage.content += '\n\n⚠️ **系统提示**: 知识检索服务暂时不可用，已切换到普通聊天模式'
             }
           }
           
-          assistantMessage.hasError = !ragResponse.answer
+          assistantMessage.hasError = !combinedAnswer
           
           console.log('RAG回答完成:', {
-            citations: ragResponse.citations?.length || 0,
-            tokens: ragResponse.total_tokens_used || 0,
-            processingTime: ragResponse.processing_time_ms || 0
+            citations: combinedCitations?.length || 0,
+            tokens: undefined,
+            processingTime: undefined
           })
           
           // RAG模式下重置loading状态
@@ -484,6 +523,13 @@ const sendMessage = async () => {
           isLoading.value = false
           streamStartTime.value = null
           streamCharCount.value = 0
+
+          // 非流式路径下手动持久化当前消息，避免会话历史丢失
+          try {
+            await saveMessagesToConversation(messages.value as any)
+          } catch (persistErr) {
+            console.warn('保存会话消息失败（RAG模式）:', persistErr)
+          }
         } else {
           // 传统模式：流式聊天或网页搜索
           const useSearch = webSearchEnabled.value
@@ -692,6 +738,10 @@ const handleToggleTaskMode = (enabled: boolean) => {
 const handleToggleRAG = (enabled: boolean) => {
   ragEnabled.value = enabled
   console.log('RAG模式:', enabled ? '开启' : '关闭')
+  // 持久化到后端全局配置（仅更新该字段）
+  saveRagConfig({ augmentation_enabled: enabled }).catch(err => {
+    console.error('保存RAG配置失败:', err)
+  })
 }
 
 
@@ -702,6 +752,15 @@ onMounted(async () => {
     await switchToConversation(conversations.value[0].id)
   }
   await orderedMessages.setupEventListeners()
+
+  // 初始化：从后端读取配置，设置本地 RAG 开关
+  try {
+    const cfg = await getRagConfig()
+    ragEnabled.value = !!cfg.augmentation_enabled
+  } catch (e) {
+    console.warn('获取RAG配置失败，使用默认关闭:', e)
+    ragEnabled.value = false
+  }
 
   // Listen to search state updates from InputAreaComponent
   window.addEventListener('sentinel-websearch-updated', (e: any) => {

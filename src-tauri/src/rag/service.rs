@@ -603,6 +603,7 @@ mod tests {
     async fn test_rag_service_creation() {
         let _temp_dir = tempdir().unwrap();
         let config = RagConfig {
+            augmentation_enabled:false,
             database_path: Some(_temp_dir.path().to_path_buf()),
             chunk_size_chars: 512,
             chunk_overlap_chars: 50,
@@ -635,6 +636,7 @@ mod tests {
     async fn test_get_status() {
         let _temp_dir = tempdir().unwrap();
         let config = RagConfig {
+            augmentation_enabled:false,
             database_path: Some(_temp_dir.path().to_path_buf()),
             chunk_size_chars: 512,
             chunk_overlap_chars: 50,

@@ -146,6 +146,78 @@
   .page-content {
     @apply bg-base-100 rounded-lg shadow p-6;
   }
+
+  /* details 折叠样式（类比 daisyUI Collapse）*/
+  /* 说明：
+     - 全局为 <details> 提供友好的折叠外观，适配明暗主题
+     - 如需按需应用，可为元素添加 .details-collapse 或 .collapse 类
+  */
+  details,
+  details.details-collapse,
+  details.collapse {
+    @apply w-full border border-base-300 rounded-box bg-base-100 text-base-content my-2 overflow-hidden;
+  }
+
+  /* 标题区域（summary） */
+  details > summary,
+  details.details-collapse > summary,
+  details.collapse > summary {
+    @apply cursor-pointer select-none font-medium p-4 outline-none bg-base-100 hover:bg-base-200 transition-colors;
+    list-style: none; /* 隐藏默认 marker（Firefox）*/
+    position: relative;
+    padding-right: 2.25rem; /* 给箭头留空间 */
+  }
+
+  /* 隐藏默认 WebKit marker（三角图标）*/
+  details > summary::-webkit-details-marker,
+  details.details-collapse > summary::-webkit-details-marker,
+  details.collapse > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  /* 自定义箭头（右侧小尖角），闭合时向右，展开时向下 */
+  details > summary::after,
+  details.details-collapse > summary::after,
+  details.collapse > summary::after {
+    content: '';
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    width: 0.5rem;
+    height: 0.5rem;
+    border: 2px solid currentColor;
+    border-top: 0;
+    border-left: 0;
+    transform: translateY(-50%) rotate(-45deg); /* ▶ */
+    transition: transform 0.2s ease;
+    opacity: 0.8;
+  }
+
+  details[open] > summary,
+  details.details-collapse[open] > summary,
+  details.collapse[open] > summary {
+    @apply border-b border-base-300 bg-base-100;
+  }
+
+  details[open] > summary::after,
+  details.details-collapse[open] > summary::after,
+  details.collapse[open] > summary::after {
+    transform: translateY(-50%) rotate(45deg); /* ▼ */
+  }
+
+  /* 内容区域（除 summary 的其他直接子元素）*/
+  details > *:not(summary),
+  details.details-collapse > *:not(summary),
+  details.collapse > *:not(summary) {
+    @apply p-4 bg-base-100;
+  }
+
+  /* 嵌套 details 的边距微调，避免层叠过密 */
+  details > details,
+  details.details-collapse > details,
+  details.collapse > details {
+    @apply my-2;
+  }
 }
 
 @layer utilities {

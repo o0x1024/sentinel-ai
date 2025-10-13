@@ -352,6 +352,82 @@ pub async fn send_ai_stream_message(
                 }
             }
         }
+
+        // Conditionally augment with RAG evidence blocks when enabled
+        if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
+            // Read RAG config to check augmentation toggle
+            let mut rag_enabled = false;
+            if let Ok(Some(cfg)) = db.get_rag_config().await { rag_enabled = cfg.augmentation_enabled; }
+
+            if rag_enabled {
+                // Determine an active collection (fallback to default if none active)
+                let active_collection_id: Option<String> = match db.get_rag_collections().await {
+                    Ok(cols) => cols.into_iter().find(|c| c.is_active).map(|c| c.id),
+                    Err(_) => None,
+                };
+
+                // Try to get global RAG service
+                if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+                    use tokio::time::{timeout, Duration};
+
+                    // Build brief conversation history for query context (last 3 user/assistant messages)
+                    let mut history_snippets: Vec<String> = Vec::new();
+                    if let Ok(msgs) = db.get_ai_messages_by_conversation(&conversation_id).await {
+                        for msg in msgs.iter().rev().take(6) { // last ~3 rounds
+                            let prefix = match msg.role.as_str() { "user" => "U:", "assistant" => "A:", _ => "" };
+                            let snippet: String = msg.content.chars().take(200).collect();
+                            history_snippets.push(format!("{} {}", prefix, snippet));
+                        }
+                    }
+
+                    let rag_req = crate::rag::models::AssistantRagRequest {
+                        query: message.clone(),
+                        collection_id: active_collection_id.clone(),
+                        conversation_history: if history_snippets.is_empty() { None } else { Some(history_snippets) },
+                        top_k: Some(5),
+                        use_mmr: Some(true),
+                        mmr_lambda: Some(0.7),
+                        similarity_threshold: Some(0.65),
+                        reranking_enabled: Some(false),
+                        model_provider: None,
+                        model_name: None,
+                        max_tokens: None,
+                        temperature: None,
+                    };
+
+                    // Short timeout to avoid delaying stream start
+                    if let Ok(Ok((context, _citations))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&rag_req)).await {
+                        if !context.trim().is_empty() {
+                            let base = system_prompt.unwrap_or_else(|| "".to_string());
+                            let policy = "You must ground answers strictly in the EVIDENCE BLOCKS. Cite sources inline as [SOURCE n]. If evidence is insufficient, say so and avoid fabrication.";
+                            // Evidence blocks are already formatted with === SOURCE n ... ===
+                            let augmented = if base.trim().is_empty() {
+                                format!(
+                                    "[Knowledge Grounding Policy]\n{}\n\n[EVIDENCE BLOCKS]\n{}",
+                                    policy, context
+                                )
+                            } else {
+                                format!(
+                                    "{}\n\n[Knowledge Grounding Policy]\n{}\n\n[EVIDENCE BLOCKS]\n{}",
+                                    base, policy, context
+                                )
+                            };
+                            system_prompt = Some(augmented);
+
+                            // Optionally notify frontend RAG was applied
+                            let _ = app_handle.emit(
+                                "ai_meta_info",
+                                &serde_json::json!({
+                                    "conversation_id": conversation_id,
+                                    "message_id": message_id_clone,
+                                    "rag_applied": true
+                                })
+                            );
+                        }
+                    }
+                }
+            }
+        }
         // 发送开始事件（为了与前端配合）
         if let Err(e) = app_handle.emit(
             "ai_stream_start",
@@ -371,7 +447,7 @@ pub async fn send_ai_stream_message(
                 Some(conversation_id.clone()),
                 Some(message_id_clone.clone()), // 传递消息ID作为后端的assistant_message_id
                 true,
-                false,
+                true,
                 Some(ChunkType::Content),
             )
             .await

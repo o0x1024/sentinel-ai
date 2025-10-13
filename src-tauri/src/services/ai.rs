@@ -2193,7 +2193,7 @@ impl AiService {
                         Some(conversation_id),
                         Some(ChunkType::Error),
                         &e.to_string(),
-                        false,
+                        true, // 标记为最终块，防止前端卡在流式状态
                         None,
                     );
 
@@ -2216,17 +2216,17 @@ impl AiService {
         }
 
         // 对于流式调用，流结束后统一发送一次终结块
-        // if stream_flg {
-        //     self.emit_message_chunk(
-        //         &execution_id,
-        //         &message_id,
-        //         Some(conversation_id),
-        //         Some(ChunkType::Meta),
-        //         "",
-        //         true,
-        //         None,
-        //     );
-        // }
+        if is_final {
+            self.emit_message_chunk(
+                &execution_id,
+                &message_id,
+                Some(conversation_id),
+                Some(ChunkType::Meta),
+                "",
+                true,
+                None,
+            );
+        }
 
         // Handle empty content with valid finish reason
         if content.is_empty() && finish_reason.is_some() {

@@ -999,6 +999,7 @@ impl DatabaseService {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 description TEXT,
+                is_active INTEGER NOT NULL DEFAULT 0,
                 document_count INTEGER DEFAULT 0,
                 chunk_count INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -1008,6 +1009,23 @@ impl DatabaseService {
         )
         .execute(&mut *tx)
         .await?;
+
+        // 迁移：为旧表添加 is_active 列
+        // SQLite 不支持 IF NOT EXISTS 列级检查，这里通过 PRAGMA table_info 检查
+        let pragma_rows = sqlx::query("PRAGMA table_info(rag_collections)")
+            .fetch_all(&mut *tx)
+            .await?;
+        let has_is_active = pragma_rows
+            .iter()
+            .any(|row| {
+                let name: String = row.get("name");
+                name == "is_active"
+            });
+        if !has_is_active {
+            let _ = sqlx::query("ALTER TABLE rag_collections ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0")
+                .execute(&mut *tx)
+                .await;
+        }
 
         // 创建RAG文档源表
         sqlx::query(
@@ -1735,24 +1753,54 @@ impl DatabaseService {
     pub async fn get_subdomain_dictionary(&self) -> Result<Vec<String>> {
         let pool = self.get_pool()?;
 
-        // 尝试从数据库获取字典
-        let dictionary_json: Option<String> = sqlx::query_scalar(
-            "SELECT value FROM configurations WHERE category = 'subdomain_scanner' AND key = 'dictionary'"
+        // 1) 优先使用“默认字典”配置：category='dictionary_default', key='subdomain'
+        if let Some(default_dict_id) = self
+            .get_config("dictionary_default", "subdomain")
+            .await?
+            .filter(|s| !s.is_empty())
+        {
+            let words: Vec<String> = sqlx::query_scalar(
+                r#"SELECT word FROM dictionary_words 
+                   WHERE dictionary_id = ? 
+                   ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
+            )
+            .bind(&default_dict_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
+            if !words.is_empty() {
+                return Ok(words);
+            }
+        }
+
+        // 2) 若未设置默认，或默认字典无词条，则选择一个可用的子域名字典（优先内置且启用的，按更新时间倒序）
+        if let Some(candidate_id) = sqlx::query_scalar::<_, String>(
+            r#"SELECT id FROM dictionaries 
+               WHERE dict_type = 'subdomain' AND is_active = 1 
+               ORDER BY is_builtin DESC, updated_at DESC 
+               LIMIT 1"#,
         )
         .fetch_optional(pool)
-        .await?;
+        .await?
+        {
+            let words: Vec<String> = sqlx::query_scalar(
+                r#"SELECT word FROM dictionary_words 
+                   WHERE dictionary_id = ? 
+                   ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
+            )
+            .bind(&candidate_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
-        if let Some(json_str) = dictionary_json {
-            // 解析JSON字符串为字符串数组
-            let dictionary: Vec<String> = serde_json::from_str(&json_str)
-                .unwrap_or_else(|_| self.get_default_subdomain_dictionary());
-            Ok(dictionary)
-        } else {
-            // 如果数据库中没有，使用默认字典并保存到数据库
-            let default_dict = self.get_default_subdomain_dictionary();
-            self.set_subdomain_dictionary(&default_dict).await?;
-            Ok(default_dict)
+            if !words.is_empty() {
+                return Ok(words);
+            }
         }
+
+        // 3) 仍无可用词条时，退回内置静态默认列表
+        Ok(self.get_default_subdomain_dictionary())
     }
 
     pub async fn set_subdomain_dictionary(&self, dictionary: &[String]) -> Result<()> {
@@ -3036,7 +3084,7 @@ impl DatabaseService {
         let now = chrono::Utc::now().to_rfc3339();
         
         sqlx::query(
-            "INSERT INTO rag_collections (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO rag_collections (id, name, description, is_active, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)"
         )
         .bind(&id)
         .bind(name)
@@ -3052,7 +3100,7 @@ impl DatabaseService {
     pub async fn get_rag_collections(&self) -> Result<Vec<crate::rag::models::CollectionInfo>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query(
-            "SELECT id, name, description, document_count, chunk_count, created_at, updated_at FROM rag_collections ORDER BY created_at DESC"
+            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections ORDER BY created_at DESC"
         )
         .fetch_all(pool)
         .await?;
@@ -3062,6 +3110,7 @@ impl DatabaseService {
             let id: String = row.get("id");
             let name: String = row.get("name");
             let description: Option<String> = row.get("description");
+            let is_active: i64 = row.get("is_active");
             let document_count: i64 = row.get("document_count");
             let chunk_count: i64 = row.get("chunk_count");
             let created_at: String = row.get("created_at");
@@ -3071,6 +3120,7 @@ impl DatabaseService {
                 id,
                 name,
                 description,
+                is_active: is_active != 0,
                 embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
                 document_count: document_count as usize,
                 chunk_count: chunk_count as usize,
@@ -3094,7 +3144,7 @@ impl DatabaseService {
     pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
-            "SELECT id, name, description, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE id = ?"
+            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE id = ?"
         )
         .bind(collection_id)
         .fetch_optional(pool)
@@ -3104,6 +3154,7 @@ impl DatabaseService {
             let id: String = row.get("id");
             let name: String = row.get("name");
             let description: Option<String> = row.get("description");
+            let is_active: i64 = row.get("is_active");
             let document_count: i64 = row.get("document_count");
             let chunk_count: i64 = row.get("chunk_count");
             let created_at: String = row.get("created_at");
@@ -3113,6 +3164,7 @@ impl DatabaseService {
                 id,
                 name,
                 description,
+                is_active: is_active != 0,
                 embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
                 document_count: document_count as usize,
                 chunk_count: chunk_count as usize,
@@ -3127,7 +3179,7 @@ impl DatabaseService {
     pub async fn get_rag_collection_by_name(&self, collection_name: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
-            "SELECT id, name, description, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE name = ?"
+            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE name = ?"
         )
         .bind(collection_name)
         .fetch_optional(pool)
@@ -3137,6 +3189,7 @@ impl DatabaseService {
             let id: String = row.get("id");
             let name: String = row.get("name");
             let description: Option<String> = row.get("description");
+            let is_active: i64 = row.get("is_active");
             let document_count: i64 = row.get("document_count");
             let chunk_count: i64 = row.get("chunk_count");
             let created_at: String = row.get("created_at");
@@ -3146,6 +3199,7 @@ impl DatabaseService {
                 id,
                 name,
                 description,
+                is_active: is_active != 0,
                 embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
                 document_count: document_count as usize,
                 chunk_count: chunk_count as usize,
@@ -3155,6 +3209,17 @@ impl DatabaseService {
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn set_rag_collection_active(&self, collection_id: &str, active: bool) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?")
+            .bind(if active { 1 } else { 0 })
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(collection_id)
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {

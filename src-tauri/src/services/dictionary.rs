@@ -259,6 +259,25 @@ impl DictionaryService {
         Ok(words)
     }
 
+    /// 分页获取字典词条
+    pub async fn get_dictionary_words_paged(
+        &self,
+        dictionary_id: &str,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<DictionaryWord>> {
+        let words = sqlx::query_as::<_, DictionaryWord>(
+            "SELECT * FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ? OFFSET ?",
+        )
+        .bind(dictionary_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(words)
+    }
+
     /// 搜索词条
     pub async fn search_words(
         &self,
@@ -276,6 +295,29 @@ impl DictionaryService {
         let words = sqlx::query_as::<_, DictionaryWord>(&query)
             .bind(dictionary_id)
             .bind(search_pattern)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(words)
+    }
+
+    /// 搜索词条（分页版，支持 OFFSET）
+    pub async fn search_words_paged(
+        &self,
+        dictionary_id: &str,
+        pattern: &str,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<DictionaryWord>> {
+        let query =
+            "SELECT * FROM dictionary_words WHERE dictionary_id = ? AND word LIKE ? ORDER BY weight DESC, word ASC LIMIT ? OFFSET ?";
+
+        let search_pattern = format!("%{}%", pattern);
+        let words = sqlx::query_as::<_, DictionaryWord>(query)
+            .bind(dictionary_id)
+            .bind(search_pattern)
+            .bind(limit as i64)
+            .bind(offset as i64)
             .fetch_all(&self.pool)
             .await?;
 

@@ -75,9 +75,18 @@ const visibleItems = computed(() => {
 const offsetY = computed(() => startIndex.value * props.itemHeight);
 
 // 方法
+const emit = defineEmits<{
+  (e: 'scroll', payload: { scrollTop: number; clientHeight: number; scrollHeight: number }): void
+}>()
+
 const handleScroll = (event: Event) => {
   const target = event.target as HTMLElement;
   scrollTop.value = target.scrollTop;
+  emit('scroll', {
+    scrollTop: target.scrollTop,
+    clientHeight: target.clientHeight,
+    scrollHeight: target.scrollHeight,
+  })
 };
 
 const getItemKey = (item: any, index: number) => {
@@ -137,7 +146,7 @@ defineExpose({
 }
 
 .virtual-list-item {
-  display: flex;
+  display: block;
   align-items: center;
   border-bottom: 1px solid theme('colors.base-300');
 }

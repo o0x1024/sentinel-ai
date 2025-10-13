@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
-use tauri::State;
+use tauri::{State, AppHandle, Emitter};
 
 // ============================================================================
 // 全局RAG服务管理器
@@ -259,12 +259,17 @@ pub async fn get_rag_config(
 pub async fn save_rag_config(
     config: RagConfig,
     database: State<'_, Arc<DatabaseService>>,
+    app: AppHandle,
 ) -> Result<bool, String> {
     info!("保存RAG配置: {:?}", config);
     
     match database.save_rag_config(&config).await {
         Ok(_) => {
             info!("RAG配置已成功保存到数据库");
+            // 向前端广播配置变更事件
+            if let Err(e) = app.emit("rag_config_updated", &config) {
+                log::warn!("Failed to emit rag_config_updated: {}", e);
+            }
             Ok(true)
         }
         Err(e) => {
@@ -346,6 +351,49 @@ pub async fn assistant_rag_answer(
     
     let start_time = std::time::Instant::now();
     info!("AI助手RAG查询: {}", request.query);
+
+    // 全局开关：若未启用增强，则直接返回提示并不进行检索
+    match database.get_rag_config().await {
+        Ok(Some(cfg)) if !cfg.augmentation_enabled => {
+            return Ok(AssistantRagResponse {
+                answer: "知识检索增强已关闭。本次未使用知识库。".to_string(),
+                citations: vec![],
+                context_used: String::new(),
+                total_tokens_used: 0,
+                rag_tokens: 0,
+                llm_tokens: 0,
+                processing_time_ms: start_time.elapsed().as_millis() as u64,
+                fallback_reason: Some("RAG disabled".to_string()),
+            });
+        }
+        Ok(None) => {
+            // 无配置等同未启用
+            return Ok(AssistantRagResponse {
+                answer: "知识检索增强未启用。本次未使用知识库。".to_string(),
+                citations: vec![],
+                context_used: String::new(),
+                total_tokens_used: 0,
+                rag_tokens: 0,
+                llm_tokens: 0,
+                processing_time_ms: start_time.elapsed().as_millis() as u64,
+                fallback_reason: Some("RAG disabled (no config)".to_string()),
+            });
+        }
+        Err(e) => {
+            log::warn!("读取RAG配置失败({}), 视为未启用", e);
+            return Ok(AssistantRagResponse {
+                answer: "知识检索增强状态未知，已按未启用处理。".to_string(),
+                citations: vec![],
+                context_used: String::new(),
+                total_tokens_used: 0,
+                rag_tokens: 0,
+                llm_tokens: 0,
+                processing_time_ms: start_time.elapsed().as_millis() as u64,
+                fallback_reason: Some("RAG disabled (config error)".to_string()),
+            });
+        }
+        _ => {}
+    }
     
     // 获取RAG服务实例
     let rag_service = get_global_rag_service().await
@@ -481,4 +529,30 @@ pub async fn reload_rag_service(
             Err(error_msg)
         }
     }
+}
+
+/// 设置集合激活状态
+#[tauri::command]
+pub async fn set_rag_collection_active(
+    collection_id: String,
+    active: bool,
+    database: State<'_, Arc<DatabaseService>>,
+) -> Result<bool, String> {
+    database
+        .set_rag_collection_active(&collection_id, active)
+        .await
+        .map_err(|e| format!("设置集合激活状态失败: {}", e))?;
+    Ok(true)
+}
+
+/// 获取所有已激活集合ID列表
+#[tauri::command]
+pub async fn get_active_rag_collections(
+    database: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<String>, String> {
+    let cols = database
+        .get_rag_collections()
+        .await
+        .map_err(|e| format!("获取集合失败: {}", e))?;
+    Ok(cols.into_iter().filter(|c| c.is_active).map(|c| c.id).collect())
 }

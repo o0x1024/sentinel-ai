@@ -1980,42 +1980,55 @@ impl Executor {
             }
         }
         
-        // RAG知识检索 - 根据步骤描述检索相关知识
+        // RAG知识检索（受全局开关控制） - 根据步骤描述检索相关知识
         let mut rag_context = String::new();
-        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
-            log::info!("尝试为AI推理步骤检索RAG知识: {}", step.name);
-            
-            // 构建RAG查询请求
-            let rag_request = crate::rag::models::AssistantRagRequest {
-                query: format!("{} {}", step.name, step.description),
-                collection_id: None, // 使用默认集合
-                conversation_history: None,
-                top_k: Some(3), // 只检索最相关的3个文档块
-                use_mmr: Some(true),
-                mmr_lambda: Some(0.7),
-                similarity_threshold: Some(0.6), // 较低的阈值，允许更多相关内容
-                reranking_enabled: Some(false), // 任务模式下暂时不启用重排序
-                model_provider: None,
-                model_name: None,
-                max_tokens: None,
-                temperature: None,
-            };
-            
-            match rag_service.query_for_assistant(&rag_request).await {
-                Ok((knowledge_context, citations)) => {
-                    if !knowledge_context.is_empty() {
-                        rag_context = format!("\n\n=== 相关知识背景 ({} 个来源) ===\n{}", citations.len(), knowledge_context);
-                        log::info!("为步骤 '{}' 检索到 {} 个知识来源", step.name, citations.len());
-                    } else {
-                        log::debug!("步骤 '{}' 未找到相关RAG知识", step.name);
+        let mut rag_enabled = false;
+        if let Ok(cfg_opt) = self.db_service.get_rag_config().await { rag_enabled = cfg_opt.map(|c| c.augmentation_enabled).unwrap_or(false); }
+        if rag_enabled {
+            if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+                log::info!("尝试为AI推理步骤检索RAG知识: {}", step.name);
+                // 构建RAG查询请求
+                let rag_request = crate::rag::models::AssistantRagRequest {
+                    query: format!("{} {}", step.name, step.description),
+                    collection_id: None, // 使用默认集合
+                    conversation_history: None,
+                    top_k: Some(5),
+                    use_mmr: Some(true),
+                    mmr_lambda: Some(0.7),
+                    similarity_threshold: Some(0.65),
+                    reranking_enabled: Some(false),
+                    model_provider: None,
+                    model_name: None,
+                    max_tokens: None,
+                    temperature: None,
+                };
+                // 短超时避免阻塞执行
+                use tokio::time::{timeout, Duration};
+                match timeout(Duration::from_millis(1500), rag_service.query_for_assistant(&rag_request)).await {
+                    Ok(Ok((knowledge_context, _citations))) => {
+                        if !knowledge_context.trim().is_empty() {
+                            let policy = "You must ground answers strictly in the EVIDENCE BLOCKS. Cite sources inline as [SOURCE n]. If evidence is insufficient, say so and avoid fabrication.";
+                            rag_context = format!(
+                                "\n\n[Knowledge Grounding Policy]\n{}\n\n[EVIDENCE BLOCKS]\n{}",
+                                policy, knowledge_context
+                            );
+                            log::info!("为步骤 '{}' 注入基于证据的知识块", step.name);
+                        } else {
+                            log::debug!("步骤 '{}' 未找到相关RAG知识", step.name);
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("RAG知识检索失败: {}, 继续执行AI推理", e);
+                    }
+                    Err(_) => {
+                        log::debug!("RAG检索超时，跳过本次增强");
                     }
                 }
-                Err(e) => {
-                    log::warn!("RAG知识检索失败: {}, 继续执行AI推理", e);
-                }
+            } else {
+                log::debug!("RAG服务未初始化，跳过知识检索");
             }
         } else {
-            log::debug!("RAG服务未初始化，跳过知识检索");
+            log::debug!("RAG增强未开启，跳过知识检索");
         }
         
         // 统一提示词解析：优先显式模板ID，其次统一解析器

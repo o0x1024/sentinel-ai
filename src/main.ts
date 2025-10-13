@@ -152,7 +152,7 @@ const routes = [
     path: '/rag-management', 
     name: 'RAGManagement', 
     component: RAGManagement,
-    meta: { title: 'RAG管理' }
+    meta: { title: '知识库管理' }
   },
   { 
     path: '/workflow-monitor', 

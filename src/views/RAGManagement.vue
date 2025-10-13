@@ -59,7 +59,10 @@
     <!-- 集合列表 -->
     <div class="card bg-base-100 shadow-xl">
       <div class="card-body">
-        <h2 class="card-title mb-4">知识库集合</h2>
+        <h2 class="card-title mb-2">知识库集合</h2>
+        <p class="text-sm text-base-content/70 mb-4">
+          已激活的集合会在 AI 助手的 RAG 模式下被联合检索。
+        </p>
         
         <!-- 搜索和过滤 -->
         <div class="flex gap-4 mb-4">
@@ -73,8 +76,8 @@
           </div>
           <select v-model="statusFilter" class="select select-bordered">
             <option value="">全部状态</option>
-            <option value="active">活跃</option>
-            <option value="inactive">非活跃</option>
+            <option value="active">已激活</option>
+            <option value="inactive">未激活</option>
           </select>
         </div>
 
@@ -88,6 +91,7 @@
                 <th>嵌入模型</th>
                 <th>文档数</th>
                 <th>创建时间</th>
+                <th class="text-center">激活</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -112,6 +116,15 @@
                 </td>
                 <td>{{ collection.document_count }}</td>
                 <td>{{ formatDate(collection.created_at) }}</td>
+                <td class="text-center">
+                  <input 
+                    type="checkbox" 
+                    class="toggle toggle-primary"
+                    :checked="!!collection.is_active"
+                    @change="onActiveToggle(collection, $event)"
+                    :aria-label="collection.is_active ? '已激活' : '未激活'"
+                  />
+                </td>
                 <td>
                   <div class="flex gap-2">
                     <button 
@@ -421,6 +434,21 @@ const ingesting = ref(false)
 const querying = ref(false)
 const loadingDetails = ref(false)
 
+// 激活集合管理（后端持久化）
+const onActiveToggle = async (collection: any, ev: Event) => {
+  const checked = (ev.target as HTMLInputElement)?.checked ?? false
+  try {
+    await invoke('set_rag_collection_active', { collectionId: collection.id, active: checked })
+    collection.is_active = checked
+    showToast(checked ? '已激活该集合，AI助手将联合检索' : '已取消激活该集合', 'info')
+  } catch (e) {
+    console.error('更新激活状态失败:', e)
+    // revert UI
+    collection.is_active = !checked
+    showToast('更新激活状态失败', 'error')
+  }
+}
+
 // 新集合表单
 const newCollection = ref({
   name: '',
@@ -476,17 +504,20 @@ const toast = ref({
 
 // 计算属性
 const filteredCollections = computed(() => {
-  let filtered = collections.value
+  let filtered = collections.value as any[]
 
   if (searchQuery.value) {
-    filtered = filtered.filter(collection => 
-      collection.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-      (collection.description && collection.description.toLowerCase().includes(searchQuery.value.toLowerCase()))
+    const q = searchQuery.value.toLowerCase()
+    filtered = filtered.filter(c => 
+      (c.name || '').toLowerCase().includes(q) ||
+      ((c.description || '').toLowerCase().includes(q))
     )
   }
 
-  if (statusFilter.value) {
-    filtered = filtered.filter(collection => collection.status === statusFilter.value)
+  if (statusFilter.value === 'active') {
+    filtered = filtered.filter(c => !!c.is_active)
+  } else if (statusFilter.value === 'inactive') {
+    filtered = filtered.filter(c => !c.is_active)
   }
 
   return filtered
