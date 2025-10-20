@@ -85,7 +85,9 @@
                   </div>
                 </td>
                 <td>
-                  <div class="badge" :class="getStatusBadgeClass(execution.status)">{{ getStatusText(execution.status) }}</div>
+                  <div class="flex items-center gap-2">
+                    <div class="status-dot" :class="getStatusDotClass(execution.status)"></div>
+                  </div>
                 </td>
                 <td>
                   <div class="flex items-center gap-2">
@@ -114,19 +116,44 @@
                   </div>
                 </td>
                 <td>
-                  <div class="flex gap-2">
-                    <button class="btn btn-sm btn-outline" @click="viewExecution(execution.execution_id)">
-                      查看
+                  <div class="flex gap-1">
+                    <button 
+                      class="btn btn-sm btn-ghost btn-square" 
+                      @click="viewExecution(execution.execution_id)"
+                      title="查看详情"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
                     </button>
-                    <button class="btn btn-sm btn-info" @click="viewExecutionFlowchart(execution.execution_id)">
-                      流程图
+                    <button 
+                      class="btn btn-sm btn-ghost btn-square" 
+                      @click="viewExecutionFlowchart(execution.execution_id)"
+                      title="查看流程图"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
                     </button>
                     <button 
                       v-if="execution.status === 'Running'" 
-                      class="btn btn-sm btn-error" 
+                      class="btn btn-sm btn-ghost btn-square text-error hover:bg-error hover:text-white" 
                       @click="cancelExecution(execution.execution_id)"
+                      title="取消执行"
                     >
-                      取消
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                    <button 
+                      class="btn btn-sm btn-ghost btn-square text-error hover:bg-error hover:text-white" 
+                      @click="deleteExecution(execution.execution_id)"
+                      title="删除记录"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1-1H8a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
                     </button>
                   </div>
                 </td>
@@ -771,6 +798,22 @@ const cancelExecution = async (executionId: string) => {
   }
 }
 
+// 删除执行记录
+const deleteExecution = async (executionId: string) => {
+  
+  try {
+    // 确保Agent管理器已初始化
+    await ensureAgentManagerInitialized()
+    
+    await invoke('delete_workflow_execution', { executionId })
+    await refreshExecutions()
+    await refreshStatistics()
+  } catch (error) {
+    console.error('删除执行记录失败:', error)
+    alert('删除失败: ' + error)
+  }
+}
+
 // 关闭模态框
 const closeModal = () => {
   executionModal.value?.close()
@@ -790,7 +833,20 @@ const closeStepDetailsModal = () => {
   toolResultTab.value = 'formatted'
 }
 
-// 获取状态徽章样式
+// 获取状态圆点样式
+const getStatusDotClass = (status: string) => {
+  const statusMap: Record<string, string> = {
+    'Pending': 'status-dot-pending',
+    'Running': 'status-dot-running',
+    'Completed': 'status-dot-completed',
+    'Failed': 'status-dot-failed',
+    'Cancelled': 'status-dot-cancelled',
+    'Paused': 'status-dot-paused'
+  }
+  return statusMap[status] || 'status-dot-pending'
+}
+
+// 获取状态徽章样式（保留用于其他地方）
 const getStatusBadgeClass = (status: string) => {
   const statusMap: Record<string, string> = {
     'Pending': 'badge-ghost',
@@ -1856,5 +1912,47 @@ onMounted(() => {
 
 .stats-label {
   @apply text-xs text-gray-600 font-medium mt-1;
+}
+
+/* 状态圆点样式 */
+.status-dot {
+  @apply w-3 h-3 rounded-full flex-shrink-0;
+  position: relative;
+}
+
+.status-dot-pending {
+  @apply bg-gray-400;
+}
+
+.status-dot-running {
+  @apply bg-blue-500;
+  animation: pulse-dot 2s infinite;
+}
+
+.status-dot-completed {
+  @apply bg-green-500;
+}
+
+.status-dot-failed {
+  @apply bg-red-500;
+}
+
+.status-dot-cancelled {
+  @apply bg-yellow-500;
+}
+
+.status-dot-paused {
+  @apply bg-indigo-500;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.2);
+  }
 }
 </style>

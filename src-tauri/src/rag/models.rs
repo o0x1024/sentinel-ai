@@ -125,6 +125,10 @@ pub struct RagQueryRequest {
     pub use_mmr: Option<bool>,
     pub mmr_lambda: Option<f32>,
     pub filters: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub use_embedding: Option<bool>,
+    #[serde(default)]
+    pub reranking_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

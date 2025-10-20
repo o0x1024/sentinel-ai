@@ -13,7 +13,10 @@ use crate::engines::plan_and_execute::{
     memory_manager::MemoryManager,
     types::{TaskRequest, TaskStatus, ExecutionPlan, ExecutionStep, StepType, Priority, TaskType, TargetInfo, TargetType, RetryConfig, PlanAndExecuteConfig, PlanAndExecuteError},
 };
+use crate::engines::StepExecutionStatus;
 use crate::services::{AiServiceManager, database::DatabaseService};
+use crate::services::database::Database; // bring trait into scope for method calls
+use crate::commands::agent_commands::WorkflowStepDetail;
 
 use async_trait::async_trait;
 use anyhow::Result;
@@ -32,6 +35,8 @@ pub struct PlanAndExecuteEngine {
     memory_manager: Option<Arc<MemoryManager>>,
     /// 执行期参数（来自 AgentTask.parameters），用于在执行阶段访问，如 prompt_ids 等
     runtime_params: Option<HashMap<String, serde_json::Value>>,
+    /// 数据库服务（用于保存步骤详情）
+    db_service: Option<Arc<DatabaseService>>,
 }
 
 impl PlanAndExecuteEngine {
@@ -64,6 +69,7 @@ impl PlanAndExecuteEngine {
             replanner: None,
             memory_manager: None,
             runtime_params: None,
+            db_service: None,
         })
     }
     
@@ -149,6 +155,7 @@ impl PlanAndExecuteEngine {
             replanner,
             memory_manager,
             runtime_params: None,
+            db_service: Some(db_service),
         })
     }
 
@@ -239,6 +246,42 @@ impl ExecutionEngine for PlanAndExecuteEngine {
                     // 使用executor执行计划（包含完整的Planner->Agent->Tools->Replan流程）
                     match executor.execute_plan(&execution_plan, &task_request).await {
                         Ok(execution_result) => {
+                            // 持久化步骤详情到数据库（agent_execution_steps）
+                            if let (Some(db), Some(params)) = (&self.db_service, &self.runtime_params) {
+                                if let Some(session_id) = params.get("execution_id").and_then(|v| v.as_str()) {
+                                    for (_k, v) in execution_result.step_results.iter() {
+                                        let (step_index, step_name) = if let Some(pos) = execution_plan.steps.iter().position(|s| s.id == v.step_id) {
+                                            (pos + 1, execution_plan.steps[pos].name.clone())
+                                        } else {
+                                            (0, v.step_id.clone())
+                                        };
+                                        let started = Some(v.started_at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string());
+                                        let completed = v.completed_at.map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string());
+                                        let status_str = match v.status {
+                                            crate::engines::types::StepExecutionStatus::Pending => "Pending",
+                                            crate::engines::types::StepExecutionStatus::Running => "Running",
+                                            crate::engines::types::StepExecutionStatus::Completed => "Completed",
+                                            crate::engines::types::StepExecutionStatus::Failed => "Failed",
+                                            crate::engines::types::StepExecutionStatus::Skipped => "Skipped",
+                                            crate::engines::types::StepExecutionStatus::Retrying => "Retrying",
+                                            crate::engines::types::StepExecutionStatus::Cancelled => "Cancelled",
+                                        }.to_string();
+                                        let _ = db.save_agent_execution_step(&session_id, &WorkflowStepDetail {
+                                            step_id: format!("step_{}", step_index),
+                                            step_name,
+                                            status: status_str,
+                                            started_at: started,
+                                            completed_at: completed,
+                                            duration_ms: v.duration_ms,
+                                            result_data: v.result_data.clone(),
+                                            error: v.error.clone(),
+                                            retry_count: v.retry_count,
+                                            dependencies: Vec::new(),
+                                            tool_result: v.tool_result.as_ref().map(|tr| serde_json::to_value(tr).unwrap_or(serde_json::Value::Null)),
+                                        }).await;
+                                    }
+                                }
+                            }
                             // session.add_log(LogLevel::Info, format!("Plan-and-Execute执行完成: {:?}", execution_result.status)).await?;
                             return self.convert_execution_result_to_agent_result(execution_result, start_time).await;
                         }

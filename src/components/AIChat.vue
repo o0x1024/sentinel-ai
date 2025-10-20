@@ -32,7 +32,7 @@
       <div
         v-for="message in messages"
         :key="message.id"
-        :class="['chat', message.role === 'user' ? 'chat-end' : 'chat-start', 'mb-4']"
+        :class="['chat', message.role === 'user' ? 'chat-end' : 'chat-start', 'mb-4', 'group']"
       >
         <div class="chat-image">
           <div
@@ -189,6 +189,29 @@
             </button>
           </div>
         </div>
+
+        <!-- User Message Actions - Outside the bubble -->
+        <div
+          v-if="message.role === 'user'"
+          class="flex gap-2 justify-end mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+        >
+          <button 
+            @click="copyMessage(message.content)" 
+            class="btn btn-xs btn-ghost gap-1 text-base-content/60 hover:text-base-content"
+            title="复制消息"
+          >
+            <i class="fas fa-copy text-xs"></i>
+            <span class="text-xs">复制</span>
+          </button>
+          <button 
+            @click="resendMessage(message.content)" 
+            class="btn btn-xs btn-ghost gap-1 text-base-content/60 hover:text-base-content"
+            title="重新发送"
+          >
+            <i class="fas fa-redo text-xs"></i>
+            <span class="text-xs">重发</span>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -272,22 +295,66 @@ const messages = ref<ChatMessage[]>([])
 
 const { formatTime, renderMarkdown } = useMessageUtils()
 
-// Local state
-const inputMessage = ref('B站今天有什么热门视频')
-const ragEnabled = ref(false)
+// 持久化状态的key
+const AI_CHAT_STATE_KEY = 'ai-chat-state'
+
+// 从localStorage恢复状态的辅助函数
+const restoreState = () => {
+  try {
+    const saved = localStorage.getItem(AI_CHAT_STATE_KEY)
+    if (saved) {
+      return JSON.parse(saved)
+    }
+  } catch (error) {
+    console.warn('Failed to restore AI chat state:', error)
+  }
+  return {}
+}
+
+// 防抖保存状态到localStorage的辅助函数
+let saveStateTimer: number | null = null
+const saveState = () => {
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer)
+  }
+  
+  saveStateTimer = window.setTimeout(() => {
+    try {
+      const state = {
+        inputMessage: inputMessage.value,
+        ragEnabled: ragEnabled.value,
+        showDebugInfo: showDebugInfo.value,
+        isTaskMode: isTaskMode.value,
+        webSearchEnabled: webSearchEnabled.value,
+        webSearchEngine: webSearchEngine.value,
+      }
+      localStorage.setItem(AI_CHAT_STATE_KEY, JSON.stringify(state))
+    } catch (error) {
+      console.warn('Failed to save AI chat state:', error)
+    }
+    saveStateTimer = null
+  }, 300) // 300ms防抖
+}
+
+// 恢复保存的状态
+const savedState = restoreState()
+
+// Local state - 从保存的状态恢复或使用默认值
+const inputMessage = ref(savedState.inputMessage || '')
+const ragEnabled = ref(savedState.ragEnabled ?? false)
 const isLoading = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
 const currentExecutionId = ref<string | null>(null)
 const streamStartTime = ref<number | null>(null)
 const streamCharCount = ref(0)
-const showDebugInfo = ref(false)
+const showDebugInfo = ref(savedState.showDebugInfo ?? false)
 const loadingTimeoutId = ref<number | null>(null)
 // Task mode state (controlled by toolbar button)
-const isTaskMode = ref(false)
+const isTaskMode = ref(savedState.isTaskMode ?? false)
 
 // Web search global toggle & engine selection (controlled by InputArea popover)
-const webSearchEnabled = ref(false)
-const webSearchEngine = ref<'auto'|'google'|'bing'|'baidu'>('auto')
+const webSearchEnabled = ref(savedState.webSearchEnabled ?? false)
+const webSearchEngine = ref<'auto'|'google'|'bing'|'baidu'>(savedState.webSearchEngine || 'auto')
 
 // Timeout mechanism to reset loading state
 const resetLoadingWithTimeout = (timeoutMs = 300000) => {
@@ -331,6 +398,7 @@ const scrollToBottom = () => {
 }
 
 // 使用简化的有序消息处理
+// 仅由有序消息处理完成时触发一次保存（避免与其它路径重复）
 const orderedMessages = useOrderedMessages(messages, async (msgs) => {
   try {
     await saveMessagesToConversation(msgs as any)
@@ -524,12 +592,7 @@ const sendMessage = async () => {
           streamStartTime.value = null
           streamCharCount.value = 0
 
-          // 非流式路径下手动持久化当前消息，避免会话历史丢失
-          try {
-            await saveMessagesToConversation(messages.value as any)
-          } catch (persistErr) {
-            console.warn('保存会话消息失败（RAG模式）:', persistErr)
-          }
+          // 非流式路径下：保持由上层统一保存，避免与 useOrderedMessages 重复
         } else {
           // 传统模式：流式聊天或网页搜索
           const useSearch = webSearchEnabled.value
@@ -641,6 +704,32 @@ const showCitationDetail = (citation: Citation) => {
   router.push(`/rag-management?file=${citation.source_id}`)
 }
 
+const copyMessage = async (content: string) => {
+  try {
+    await navigator.clipboard.writeText(content)
+    console.log('Message copied to clipboard')
+    // TODO: 可以添加一个toast提示
+  } catch (error) {
+    console.error('Failed to copy message:', error)
+    // 降级方案：使用传统的复制方法
+    const textArea = document.createElement('textarea')
+    textArea.value = content
+    document.body.appendChild(textArea)
+    textArea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textArea)
+  }
+}
+
+const resendMessage = (content: string) => {
+  if (isLoading.value) {
+    console.warn('Cannot resend message while loading')
+    return
+  }
+  inputMessage.value = content
+  sendMessage()
+}
+
 const getStreamSpeed = () => {
   if (!streamStartTime.value || streamCharCount.value === 0) return 0
   const elapsed = (Date.now() - streamStartTime.value) / 1000
@@ -733,6 +822,8 @@ const handleClearConversation = async () => {
 const handleToggleTaskMode = (enabled: boolean) => {
   isTaskMode.value = enabled
   console.log(`Task mode ${enabled ? 'enabled' : 'disabled'}`)
+  // 保存状态到本地存储
+  saveState()
 }
 
 const handleToggleRAG = (enabled: boolean) => {
@@ -742,6 +833,8 @@ const handleToggleRAG = (enabled: boolean) => {
   saveRagConfig({ augmentation_enabled: enabled }).catch(err => {
     console.error('保存RAG配置失败:', err)
   })
+  // 同时保存到本地状态
+  saveState()
 }
 
 
@@ -753,13 +846,15 @@ onMounted(async () => {
   }
   await orderedMessages.setupEventListeners()
 
-  // 初始化：从后端读取配置，设置本地 RAG 开关
+  // 初始化：从后端读取配置，设置本地 RAG 开关（优先级高于localStorage）
   try {
     const cfg = await getRagConfig()
     ragEnabled.value = !!cfg.augmentation_enabled
+    // 同步更新本地状态
+    saveState()
   } catch (e) {
-    console.warn('获取RAG配置失败，使用默认关闭:', e)
-    ragEnabled.value = false
+    console.warn('获取RAG配置失败，使用本地保存的状态或默认关闭:', e)
+    // 如果后端配置获取失败，保持从localStorage恢复的状态
   }
 
   // Listen to search state updates from InputAreaComponent
@@ -780,7 +875,7 @@ watch(
   ({ msgs }) => {
     if (Array.isArray(msgs)) {
       messages.value = msgs as ChatMessage[]
-      nextTick(() => scrollToBottom())
+      // nextTick(() => scrollToBottom())
     }
   },
   { deep: true, immediate: true }
@@ -802,9 +897,39 @@ watch(
   { immediate: true }
 )
 
+// 监听状态变化并自动保存
+watch(
+  [inputMessage, showDebugInfo, webSearchEnabled, webSearchEngine],
+  () => {
+    saveState()
+  },
+  { deep: true }
+)
+
 onUnmounted(() => {
   clearLoadingTimeout()
   orderedMessages.cleanup()
+  
+  // 清理保存状态的定时器并立即保存
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer)
+    saveStateTimer = null
+  }
+  
+  // 确保在组件卸载时立即保存状态
+  try {
+    const state = {
+      inputMessage: inputMessage.value,
+      ragEnabled: ragEnabled.value,
+      showDebugInfo: showDebugInfo.value,
+      isTaskMode: isTaskMode.value,
+      webSearchEnabled: webSearchEnabled.value,
+      webSearchEngine: webSearchEngine.value,
+    }
+    localStorage.setItem(AI_CHAT_STATE_KEY, JSON.stringify(state))
+  } catch (error) {
+    console.warn('Failed to save AI chat state on unmount:', error)
+  }
 })
 
 // Expose conversation controls/state for parent (AIAssistant)

@@ -15,6 +15,82 @@ use crate::engines::rewoo::rewoo_types::ReWOOConfig;
 use crate::engines::plan_and_execute::types::PlanAndExecuteConfig;
 // use crate::engines::plan_and_execute::executor::ExecutionMode; // not needed directly
 use crate::agents::traits::{ExecutionEngine, AgentTask, TaskPriority};
+
+/// 创建AI助手会话记录
+async fn create_ai_assistant_session(
+    db_service: &Arc<DatabaseService>,
+    execution_id: &str,
+    agent_name: &str,
+    task_description: &str,
+) -> Result<(), String> {
+    use crate::services::database::Database;
+    
+    // 创建task_id
+    let task_id = format!("{}_task", execution_id);
+    
+    // 先创建agent_task记录（因为agent_sessions表有外键约束）
+    let agent_task = crate::agents::traits::AgentTask {
+        id: task_id.clone(),
+        user_id: "ai_assistant".to_string(),
+        description: task_description.to_string(),
+        priority: crate::agents::traits::TaskPriority::Normal,
+        target: None,
+        parameters: std::collections::HashMap::new(),
+        timeout: Some(300),
+    };
+    
+    db_service.create_agent_task(&agent_task).await
+        .map_err(|e| format!("Failed to create agent task: {}", e))?;
+    
+    // 然后创建agent_session记录
+    db_service.create_agent_session(execution_id, &task_id, agent_name).await
+        .map_err(|e| format!("Failed to create agent session: {}", e))?;
+    
+    Ok(())
+}
+
+/// 保存AI助手执行记录到数据库
+async fn save_ai_assistant_execution(
+    db_service: &Arc<DatabaseService>,
+    execution_id: &str,
+    _task_name: &str,
+    architecture: &str,
+    success: bool,
+    error: Option<&str>,
+    result: Option<&str>,
+    started_at: u64,
+    completed_at: u64,
+    duration_ms: u64,
+) -> Result<(), String> {
+    use crate::services::database::Database;
+    use crate::commands::agent_commands::WorkflowStepDetail;
+    
+    // 保存执行步骤到 agent_execution_steps 表
+    let step_detail = WorkflowStepDetail {
+        step_id: "step_1".to_string(),
+        step_name: format!("AI Assistant Task ({})", architecture),
+        status: if success { "Completed".to_string() } else { "Failed".to_string() },
+        started_at: Some(started_at.to_string()),
+        completed_at: Some(completed_at.to_string()),
+        duration_ms,
+        result_data: result.map(|r| serde_json::json!(r)),
+        error: error.map(|e| e.to_string()),
+        retry_count: 0,
+        dependencies: vec![],
+        tool_result: None,
+    };
+    
+    db_service.save_agent_execution_step(execution_id, &step_detail).await
+        .map_err(|e| format!("Failed to save execution step: {}", e))?;
+    
+    // 更新session状态
+    let status_str = if success { "Completed" } else { "Failed" };
+    if let Err(e) = db_service.update_agent_session_status(execution_id, status_str).await {
+        log::warn!("Failed to update agent session status: {}", e);
+    }
+    
+    Ok(())
+}
  
 
 
@@ -503,6 +579,16 @@ pub async fn dispatch_scenario_task(
         .map(|s| s.to_string())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     
+    // 创建agent_session记录用于统一的工作流监控
+    if let Err(e) = create_ai_assistant_session(
+        &db_service,
+        &execution_id,
+        &profile.name,
+        &request.query,
+    ).await {
+        log::warn!("Failed to create AI assistant session: {}", e);
+    }
+    
     // 提取会话ID（用于日志记录）
     if !conversation_id.is_empty() {
         info!("Processing request for conversation: {}", conversation_id);
@@ -590,6 +676,7 @@ pub async fn dispatch_scenario_task(
             let execution_manager_clone = execution_manager.inner().clone();
             let app_inner = app_clone.clone();
             let execution_id_inner = execution_id_clone.clone();
+            let db_service_clone = app_clone.state::<Arc<DatabaseService>>().inner().clone();
             
             tokio::spawn(async move {
                 // 获取执行上下文
@@ -643,8 +730,53 @@ pub async fn dispatch_scenario_task(
                     })
                 };
 
+                // 记录执行开始时间
+                let execution_start_time = std::time::SystemTime::now();
+                
                 // 执行真实的引擎计划
-                match execution_manager_clone.execute_plan(&execution_id_inner).await {
+                let exec_result = execution_manager_clone.execute_plan(&execution_id_inner).await;
+                
+                // 记录执行完成时间
+                let execution_end_time = std::time::SystemTime::now();
+                
+                // 保存执行结果到数据库
+                let task_name = context.task.description.clone();
+                let architecture = format!("{:?}", context.engine_type);
+                let started_at = execution_start_time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                let completed_at = execution_end_time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                let duration_ms = execution_end_time.duration_since(execution_start_time).unwrap_or_default().as_millis() as u64;
+                
+                let success = exec_result.is_ok();
+                let error = if let Err(ref e) = exec_result { Some(e.to_string()) } else { None };
+                let result = if success { Some("Task completed successfully".to_string()) } else { None };
+                
+                // 只有非Plan-and-Execute架构才保存通用的AI助手执行步骤
+                // Plan-and-Execute引擎会自己保存详细的步骤信息
+                if !architecture.contains("PlanExecute") {
+                    if let Err(e) = save_ai_assistant_execution(
+                        &db_service_clone,
+                        &execution_id_inner,
+                        &task_name,
+                        &architecture,
+                        success,
+                        error.as_deref(),
+                        result.as_deref(),
+                        started_at,
+                        completed_at,
+                        duration_ms,
+                    ).await {
+                        log::warn!("Failed to save AI assistant execution: {}", e);
+                    }
+                } else {
+                    // 对于Plan-and-Execute架构，只更新session状态
+                    use crate::services::database::Database;
+                    let status_str = if success { "Completed" } else { "Failed" };
+                    if let Err(e) = db_service_clone.update_agent_session_status(&execution_id_inner, status_str).await {
+                        log::warn!("Failed to update agent session status: {}", e);
+                    }
+                }
+                
+                match exec_result {
                     Ok(_result) => {
                         log::info!("Execution completed successfully: {}", execution_id_inner);
                         // 移除原始事件，只使用ai_stream_message

@@ -8,6 +8,7 @@ pub mod http;
 pub mod core;
 pub mod providers;
 pub mod provider_adapter;
+pub mod request_logger;
 
 // 重新导出核心类型
 pub use types::*;
@@ -18,6 +19,9 @@ pub use http::HttpClient;
 // 重新导出工具模块
 pub mod utils;
 pub use utils::*;
+
+// 重新导出日志记录器
+pub use request_logger::{init_global_logger, set_global_logger_enabled, log_http_request, cleanup_old_logs, is_global_logger_enabled};
 
 // 重新导出提供商
 pub use providers::*;

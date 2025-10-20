@@ -273,7 +273,7 @@ impl Default for ToolManagerConfig {
     fn default() -> Self {
         Self {
             max_concurrent_executions: 10,
-            default_timeout: Duration::from_secs(300),
+            default_timeout: Duration::from_secs(60),
             log_executions: true,
         }
     }

@@ -585,6 +585,9 @@ impl AiProvider for LmStudioProvider {
         let body = self.build_chat_request_body(request)?;
         
         let operation = || async {
+            // 设置模型名称用于日志记录
+            self.http_client.set_model_name(Some(request.model.clone()));
+            
             // 转换headers格式
             let mut header_map = std::collections::HashMap::new();
             for (name, value) in headers.iter() {
@@ -615,6 +618,9 @@ impl AiProvider for LmStudioProvider {
             });
         }
         let body = self.build_chat_request_body(&stream_request)?;
+        
+        // 设置模型名称用于日志记录
+        self.http_client.set_model_name(Some(request.model.clone()));
         
         // 转换headers格式
         let mut header_map = std::collections::HashMap::new();

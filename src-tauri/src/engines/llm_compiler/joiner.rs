@@ -331,12 +331,65 @@ impl IntelligentJoiner {
         execution_results: &[TaskExecutionResult],
         round: usize,
     ) -> Result<JoinerDecision> {
-        let decision_prompt = self.build_ai_decision_prompt(
+        let mut decision_prompt = self.build_ai_decision_prompt(
             original_query,
             execution_plan,
             execution_results,
             round,
         ).await?;
+        // RAG augmentation for joiner decision
+        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+            if rag_service.get_config().augmentation_enabled {
+                use tokio::time::{timeout, Duration};
+                let (primary, fallback) = crate::rag::query_utils::build_rag_query_pair(original_query);
+                let rag_request = crate::rag::models::AssistantRagRequest {
+                    query: primary.clone(),
+                    collection_id: None,
+                    conversation_history: None,
+                    top_k: Some(5),
+                    use_mmr: Some(true),
+                    mmr_lambda: Some(0.7),
+                    similarity_threshold: Some(0.65),
+                    reranking_enabled: Some(false),
+                    model_provider: None,
+                    model_name: None,
+                    max_tokens: None,
+                    temperature: None,
+                };
+                if let Ok(Ok((knowledge_context, _))) = timeout(
+                    Duration::from_millis(1200),
+                    rag_service.query_for_assistant(&rag_request),
+                )
+                .await
+                {
+                    if !knowledge_context.trim().is_empty() {
+                        decision_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                        decision_prompt.push_str(&knowledge_context);
+                    } else {
+                        let fallback_req = crate::rag::models::AssistantRagRequest {
+                            query: fallback,
+                            collection_id: None,
+                            conversation_history: None,
+                            top_k: Some(7),
+                            use_mmr: Some(true),
+                            mmr_lambda: Some(0.7),
+                            similarity_threshold: Some(0.55),
+                            reranking_enabled: Some(false),
+                            model_provider: None,
+                            model_name: None,
+                            max_tokens: None,
+                            temperature: None,
+                        };
+                        if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
+                            if !kb2.trim().is_empty() {
+                                decision_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                                decision_prompt.push_str(&kb2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         match self.ai_service.send_message_stream(
             Some(&decision_prompt), 

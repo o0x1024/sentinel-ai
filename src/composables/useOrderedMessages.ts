@@ -177,28 +177,52 @@ ${resultContent}
 
   private formatPlanInfo(chunk: OrderedMessageChunk): string {
     try {
-      let contentStr = chunk.content.toString().trim()
+      // 优先参考后端提示的“有效计划信息”提取顺序：```json 块 > 任意 ``` 块 > 最外层花括号
+      const raw = chunk.content?.toString() ?? ''
+      let contentStr = raw.trim()
 
-      //如果content中以```json   ```包裹了内容需要删除掉
-      contentStr = contentStr.replace('```json', '')
-      contentStr = contentStr.replace('```', '')
+      // 1) 提取 ```json ... ```
+      const jsonFenceStart = contentStr.indexOf('```json')
+      let fenced: string | null = null
+      if (jsonFenceStart >= 0) {
+        const rest = contentStr.slice(jsonFenceStart + 7)
+        const end = rest.indexOf('```')
+        if (end >= 0) fenced = rest.slice(0, end).trim()
+      }
 
-      // 可能是流式多段JSON或混入元信息/空白，逐行拆解尝试解析
-      const candidates = contentStr
-        .split(/\n+/)
-        .map(s => s.trim())
-        .filter(s => s.startsWith('{') && s.endsWith('}'))
+      // 2) 若无，则尝试任意 ``` ... ```
+      if (!fenced) {
+        const anyFenceStart = contentStr.indexOf('```')
+        if (anyFenceStart >= 0) {
+          const rest = contentStr.slice(anyFenceStart + 3)
+          const end = rest.indexOf('```')
+          if (end >= 0) {
+            const block = rest.slice(0, end).trim()
+            if (block.startsWith('{')) fenced = block
+          }
+        }
+      }
 
+      // 3) 若仍无，则截取首个 { 到最后一个 }
+      if (!fenced) {
+        const s = contentStr.indexOf('{')
+        const e = contentStr.lastIndexOf('}')
+        if (s >= 0 && e > s) fenced = contentStr.slice(s, e + 1)
+      }
+
+      // 解析对象，且仅当包含关键字段 steps 才认为是“有效计划”
       let parsed: any = null
-      if (candidates.length > 0) {
-        // 取最后一个完整JSON作为当前有效计划（全量）
-        const last = candidates[candidates.length - 1]
-        try { parsed = JSON.parse(last) } catch { parsed = null }
-      } else if (contentStr.startsWith('{') && contentStr.endsWith('}')) {
-        try { parsed = JSON.parse(contentStr) } catch { parsed = null }
+      if (fenced) {
+        try { parsed = JSON.parse(fenced) } catch { parsed = null }
       }
 
       if (parsed && typeof parsed === 'object') {
+        // 必须包含 steps 数组才视为有效
+        if (!Array.isArray(parsed.steps)) {
+          // 如果后端未给出完整结构，回退到原文展示
+          return `📋 **执行计划**\n${chunk.content}\n\n\n\n`
+        }
+
         // 生成Markdown TodoList
         const planTitle = parsed.name || '执行计划'
         let todoListMd = `## ${planTitle}\n\n`
@@ -210,17 +234,21 @@ ${resultContent}
             const stepType = step.type || step.step_type || ''
 
             // 根据步骤类型添加不同的图标
-            let icon = '☐'
+            let icon = ''
             if (stepType === 'ToolCall') icon = '🔧'
             else if (stepType === 'AiReasoning') icon = '🤔'
             else if (stepType === 'DataProcessing') icon = '📊'
             else if (stepType === 'Conditional') icon = '🔀'
             else if (stepType === 'Parallel') icon = '⚡'
 
-            todoListMd += `- [ ] ${icon} **${stepName}**`
+            // 使用DaisyUI的tooltip组件来显示描述信息
             if (stepDesc) {
-              todoListMd += `\n  > ${stepDesc}`
+              const safeDesc = this.sanitizePlanText(stepDesc)
+              todoListMd += `- [ ] ${icon} <span class="tooltip tooltip-right cursor-help" data-tip="${safeDesc.replace(/"/g, '&quot;')}">${stepName}</span>`
+            } else {
+              todoListMd += `- [ ] ${icon} **${stepName}**`
             }
+            
             if (step.dependencies && step.dependencies.length > 0) {
               todoListMd += `\n  > 依赖: ${step.dependencies.join(', ')}`
             }
@@ -243,7 +271,21 @@ ${resultContent}
       console.error('格式化计划信息失败:', err)
     }
 
-    return `📋 **执行计划**\n${chunk.content}\n\n\n\n`
+    return `**执行计划**\n${chunk.content}\n\n\n\n`
+  }
+
+  // 将主机:端口等易被 Markdown/排版折行的片段包裹为行内代码，避免误换行或格式化
+  private sanitizePlanText(text: string): string {
+    try {
+      let out = text
+      // 匹配 IPv4:port
+      out = out.replace(/\b(?:\d{1,3}\.){3}\d{1,3}:(\d{1,5})\b/g, (m) => `\`${m}\``)
+      // 匹配 http(s)://host:port 形式
+      out = out.replace(/\bhttps?:\/\/[^\s]+/gi, (m) => `\`${m}\``)
+      return out
+    } catch {
+      return text
+    }
   }
 
   isComplete(messageId: string): boolean {
@@ -358,9 +400,9 @@ export const useOrderedMessages = (
     if (!message.isStreaming) {
       processor.cleanup(canonicalId)
 
-      // 保存到数据库
-      if (saveMessagesToConversation) {
-        saveMessagesToConversation(messages.value).catch(err => {
+      // 仅在助手消息完成时持久化该条消息，避免重复保存用户消息
+      if (saveMessagesToConversation && message.role === 'assistant') {
+        saveMessagesToConversation([message]).catch(err => {
           console.error('保存消息失败:', err)
         })
       }
@@ -368,13 +410,17 @@ export const useOrderedMessages = (
   }
 
   const setupEventListeners = async () => {
+    // 如果已经设置了监听器，先清理
+    if (unlistenCallbacks.length > 0) {
+      cleanup()
+    }
+    
     try {
       // 只监听一个事件类型：message_chunk
       const unlistenChunk = await listen('message_chunk', (event) => {
         const chunk = event.payload as OrderedMessageChunk
         handleMessageChunk(chunk)
       })
-
 
       unlistenCallbacks.push(
         unlistenChunk,

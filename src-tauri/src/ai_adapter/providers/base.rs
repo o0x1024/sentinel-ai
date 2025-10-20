@@ -45,7 +45,7 @@ impl BaseProvider {
         
         // 创建HTTP客户端
         let timeout = config.timeout.unwrap_or(Duration::from_secs(600));
-        let http_client = HttpClient::new(timeout)?;
+        let http_client = HttpClient::new(timeout)?.with_provider_name(name.clone());
         
         // 创建重试策略
         let retry_strategy: Box<dyn RetryStrategy> = Box::new(DefaultRetryStrategy::default());

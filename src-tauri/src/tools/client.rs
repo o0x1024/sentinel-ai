@@ -20,7 +20,6 @@ use rmcp::{
 
 // 移除未使用的导入
 use serde::{Deserialize, Serialize};
-use serde_json::de;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -29,6 +28,19 @@ use uuid::Uuid;
 
 use super::unified_types::ConnectionStatus;
 use super::error_classifier::{ErrorClassifier, ErrorContext, ErrorCategory, RecoveryExecutor};
+// 临时在这里定义FrontendMcpConnection，避免循环依赖
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FrontendMcpConnection {
+    pub db_id: String,
+    pub id: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub transport_type: String,
+    pub endpoint: String,
+    pub status: String,
+    pub command: String,
+    pub args: Vec<String>,
+}
 
 // Debug 实现将在文件末尾添加
 
@@ -241,6 +253,14 @@ impl McpSessionImpl {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true); // 确保父进程退出时清理子进程
+            // 强制禁用彩色输出/交互提示，并将日志从 stdout 隔离
+            child_cmd_builder.env("NO_COLOR", "1");
+            child_cmd_builder.env("FORCE_COLOR", "0");
+            child_cmd_builder.env("CLICOLOR", "0");
+            child_cmd_builder.env("CLICOLOR_FORCE", "0");
+            // 常见日志库开关（若MCP端遵循）
+            child_cmd_builder.env("LOG_TO_STDERR", "1");
+            child_cmd_builder.env("RUST_LOG_STYLE", "never");
                 
             // 在Unix系统上设置进程组
             unsafe {
@@ -260,6 +280,12 @@ impl McpSessionImpl {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
+            child_cmd_builder.env("NO_COLOR", "1");
+            child_cmd_builder.env("FORCE_COLOR", "0");
+            child_cmd_builder.env("CLICOLOR", "0");
+            child_cmd_builder.env("CLICOLOR_FORCE", "0");
+            child_cmd_builder.env("LOG_TO_STDERR", "1");
+            child_cmd_builder.env("RUST_LOG_STYLE", "never");
         }
 
         // 直接创建传输层，TokioChildProcess::new是同步函数
@@ -325,6 +351,12 @@ impl McpSessionImpl {
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                child_cmd.env("NO_COLOR", "1");
+                child_cmd.env("FORCE_COLOR", "0");
+                child_cmd.env("CLICOLOR", "0");
+                child_cmd.env("CLICOLOR_FORCE", "0");
+                child_cmd.env("LOG_TO_STDERR", "1");
+                child_cmd.env("RUST_LOG_STYLE", "never");
                     
                 unsafe {
                     child_cmd.pre_exec(|| {
@@ -341,6 +373,12 @@ impl McpSessionImpl {
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                child_cmd.env("NO_COLOR", "1");
+                child_cmd.env("FORCE_COLOR", "0");
+                child_cmd.env("CLICOLOR", "0");
+                child_cmd.env("CLICOLOR_FORCE", "0");
+                child_cmd.env("LOG_TO_STDERR", "1");
+                child_cmd.env("RUST_LOG_STYLE", "never");
             }
         }))?;
         let client = ().serve(transport).await?;
@@ -780,7 +818,23 @@ impl McpSession for McpSessionImpl {
                             Some(Ok(result))
                         }
                         Err(e) => {
-                            warn!("Failed to call tool via MCP server (type 1): {}", e);
+                            warn!(
+                                "Failed to call tool via MCP server (type 1): {} | tool={} conn={} transport={:?} status={:?}",
+                                e,
+                                params.name,
+                                self.config.name,
+                                self.config.transport_type,
+                                self.connection_status.read().await.clone()
+                            );
+                            // 额外提示：是否为serde解析错误/输出为空
+                            let err_str = e.to_string();
+                            if err_str.contains("serde error") || err_str.contains("expected value at line 1 column 1") {
+                                error!(
+                                    "Suspected invalid or empty JSON from MCP server. Ensure stdout is pure JSON and logs go to stderr. tool={} conn={}",
+                                    params.name,
+                                    self.config.name
+                                );
+                            }
                             
                             // 使用智能错误分类器进行错误分析
                             let error_context = ErrorContext {
@@ -816,7 +870,12 @@ impl McpSession for McpSessionImpl {
                                 
                                 match self.reconnect().await {
                                     Ok(()) => {
-                                        info!("Reconnection successful, retrying tool call for: {}", params.name);
+                                        info!(
+                                            "Reconnection successful, retrying tool call. tool={} conn={} transport={:?}",
+                                            params.name,
+                                            self.config.name,
+                                            self.config.transport_type
+                                        );
                                         
                                         // 再次等待确保连接稳定
                                         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -830,7 +889,13 @@ impl McpSession for McpSessionImpl {
                                                     Some(Ok(result))
                                                 }
                                                 Err(retry_e) => {
-                                                    error!("Tool call failed even after reconnection: {}", retry_e);
+                                                    error!(
+                                                        "Tool call failed after reconnection: {} | tool={} conn={} transport={:?}",
+                                                        retry_e,
+                                                        params.name,
+                                                        self.config.name,
+                                                        self.config.transport_type
+                                                    );
                                                     // 如果重连后仍然失败，可能是子进程本身的问题
                                                     if retry_e.to_string().contains("serde error") {
                                                         error!("Child process may be outputting invalid JSON. Check MCP server implementation.");
@@ -839,17 +904,32 @@ impl McpSession for McpSessionImpl {
                                                 }
                                             }
                                         } else {
-                                            error!("Service not available after reconnection");
+                                            error!(
+                                                "Service not available after reconnection. conn={} transport={:?}",
+                                                self.config.name,
+                                                self.config.transport_type
+                                            );
                                             None
                                         }
                                     }
                                     Err(reconnect_err) => {
-                                        error!("Reconnection failed for {}: {}", self.config.name, reconnect_err);
+                                        error!(
+                                            "Reconnection failed. conn={} transport={:?} error={}",
+                                            self.config.name,
+                                            self.config.transport_type,
+                                            reconnect_err
+                                        );
                                         None
                                     }
                                 }
                             } else {
-                                error!("Non-recoverable error for tool {}: {}", params.name, e);
+                                error!(
+                                    "Non-recoverable error. tool={} conn={} transport={:?} error={}",
+                                    params.name,
+                                    self.config.name,
+                                    self.config.transport_type,
+                                    e
+                                );
                                 None
                             }
                         }
@@ -1678,7 +1758,102 @@ impl McpClientManager {
     /// 更新服务器配置
     pub async fn update_server_config(&self, payload: serde_json::Value) -> Result<()> {
         info!("Updating server config: {:?}", payload);
-        // 简化实现，实际应该解析payload并更新配置
+        
+        // 解析前端传来的FrontendMcpConnection数据
+        let frontend_config: FrontendMcpConnection = serde_json::from_value(payload)
+            .map_err(|e| anyhow!("Failed to parse frontend config: {}", e))?;
+        
+        let server_name = frontend_config.name.clone();
+        info!("Updating MCP server config for: {}", server_name);
+        
+        // 1. 断开现有连接（如果存在）
+        if let Some(_session) = self.get_session(&server_name).await {
+            info!("Disconnecting existing session for: {}", server_name);
+            if let Err(e) = self.disconnect_from_server(&server_name).await {
+                warn!("Failed to disconnect existing session: {}", e);
+            }
+        }
+        
+        // 2. 解析传输类型
+        let transport_type = match frontend_config.transport_type.as_str() {
+            "stdio" => TransportType::Stdio,
+            "child_process" => TransportType::ChildProcess,
+            "sse_client" | "websocket" => TransportType::SseClient,
+            "http_streaming" | "http" => TransportType::HttpStreaming,
+            _ => {
+                warn!("Unknown transport type: {}, defaulting to stdio", frontend_config.transport_type);
+                TransportType::Stdio
+            }
+        };
+        
+        // 3. 创建新的配置
+        let new_config = McpClientConfig {
+            name: frontend_config.name.clone(),
+            transport_type,
+            endpoint: frontend_config.endpoint.clone(),
+            command: if frontend_config.command.is_empty() {
+                None
+            } else {
+                Some(frontend_config.command.clone())
+            },
+            args: frontend_config.args.clone(),
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            enable_oauth: false,
+            oauth_config: None,
+            enable_progress_notifications: false,
+            session_recovery_enabled: true,
+            enable_tool_annotations: true,
+        };
+        
+        // 4. 更新内存中的配置
+        {
+            let mut configs = self.configs.write().await;
+            configs.insert(server_name.clone(), new_config);
+            info!("Updated in-memory config for: {}", server_name);
+        }
+        
+        // 5. 更新数据库中的配置
+        if let Some(db_service) = &self.db_service {
+            let result = db_service
+                .update_mcp_server_config(
+                    &frontend_config.db_id,
+                    &frontend_config.name,
+                    frontend_config.description.as_deref(),
+                    &frontend_config.command,
+                    &frontend_config.args,
+                    true, // enabled
+                )
+                .await;
+                
+            match result {
+                Ok(_) => {
+                    info!("Successfully updated database config for: {}", server_name);
+                }
+                Err(e) => {
+                    warn!("Failed to update database config for {}: {}", server_name, e);
+                    // 不返回错误，因为内存配置已更新
+                }
+            }
+        } else {
+            warn!("No database service available, skipping database update");
+        }
+        
+        // 6. 尝试重新连接（如果配置有效）
+        if !frontend_config.command.is_empty() || !frontend_config.endpoint.is_empty() {
+            info!("Attempting to reconnect to: {}", server_name);
+            match self.connect_to_server(&server_name).await {
+                Ok(_) => {
+                    info!("Successfully reconnected to: {}", server_name);
+                }
+                Err(e) => {
+                    warn!("Failed to reconnect to {}: {}", server_name, e);
+                    // 不返回错误，配置更新已成功
+                }
+            }
+        }
+        
+        info!("MCP server config update completed for: {}", server_name);
         Ok(())
     }
 

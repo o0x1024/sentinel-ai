@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::ai_adapter::error::{AiAdapterError, Result};
 use crate::ai_adapter::types::{HttpRequest, HttpResponse};
+use crate::ai_adapter::request_logger;
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProxyConfig {
@@ -125,6 +126,10 @@ pub struct HttpClient {
     last_response: Arc<Mutex<Option<HttpResponse>>>,
     timeout: Duration,
     last_proxy_hash: Arc<Mutex<Option<u64>>>,
+    /// 提供商名称（用于日志记录）
+    provider_name: Option<String>,
+    /// 模型名称（用于日志记录）
+    model_name: Arc<Mutex<Option<String>>>,
 }
 
 impl HttpClient {
@@ -143,6 +148,8 @@ impl HttpClient {
             last_response: Arc::new(Mutex::new(None)),
             timeout,
             last_proxy_hash: Arc::new(Mutex::new(None)),
+            provider_name: None,
+            model_name: Arc::new(Mutex::new(None)),
         })
     }
     
@@ -190,6 +197,29 @@ impl HttpClient {
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
         self.default_headers.extend(headers);
         self
+    }
+    
+    /// 设置提供商名称（用于日志记录）
+    pub fn with_provider_name(mut self, provider_name: String) -> Self {
+        self.provider_name = Some(provider_name);
+        self
+    }
+    
+    /// 设置模型名称（用于日志记录）
+    pub fn set_model_name(&self, model_name: Option<String>) {
+        if let Ok(mut model) = self.model_name.lock() {
+            *model = model_name;
+        }
+    }
+    
+    /// 获取提供商名称
+    pub fn provider_name(&self) -> Option<String> {
+        self.provider_name.clone()
+    }
+    
+    /// 获取模型名称
+    pub fn model_name(&self) -> Option<String> {
+        self.model_name.lock().ok()?.clone()
     }
     
     /// 发送GET请求
@@ -254,7 +284,24 @@ impl HttpClient {
         };
         
         if let Ok(mut last_resp) = self.last_response.lock() {
-            *last_resp = Some(response_info);
+            *last_resp = Some(response_info.clone());
+        }
+        
+        // 记录HTTP请求日志
+        if let (Some(provider), Some(last_req)) = (self.provider_name.as_ref(), self.last_request().as_ref()) {
+            let model = self.model_name();
+            let error_msg = if status >= 400 { Some(response_body.as_str()) } else { None };
+            
+            if let Err(e) = request_logger::log_http_request(
+                provider,
+                model.as_deref(),
+                "get",
+                last_req,
+                Some(&response_info),
+                error_msg,
+            ).await {
+                tracing::warn!("Failed to log HTTP request: {}", e);
+            }
         }
         
         // 检查状态码
@@ -336,7 +383,24 @@ impl HttpClient {
         };
         
         if let Ok(mut last_resp) = self.last_response.lock() {
-            *last_resp = Some(response_info);
+            *last_resp = Some(response_info.clone());
+        }
+        
+        // 记录HTTP请求日志
+        if let (Some(provider), Some(last_req)) = (self.provider_name.as_ref(), self.last_request().as_ref()) {
+            let model = self.model_name();
+            let error_msg = if status >= 400 { Some(response_body.as_str()) } else { None };
+            
+            if let Err(e) = request_logger::log_http_request(
+                provider,
+                model.as_deref(),
+                "post",
+                last_req,
+                Some(&response_info),
+                error_msg,
+            ).await {
+                tracing::warn!("Failed to log HTTP request: {}", e);
+            }
         }
         
         // 检查状态码
@@ -394,14 +458,70 @@ impl HttpClient {
         request = request.body(body_str);
         
         // 发送请求
+        let start_time = SystemTime::now();
         let response = request.send().await?;
+        let duration = start_time.elapsed().unwrap_or_default();
         let status = response.status().as_u16();
+        
+        // 记录响应头信息
+        let response_headers: HashMap<String, String> = response
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
         
         // 检查状态码
         if status >= 400 {
             let error_body = response.text().await.unwrap_or_default();
+            
+            // 记录错误的HTTP请求日志
+            if let (Some(provider), Some(last_req)) = (self.provider_name.as_ref(), self.last_request().as_ref()) {
+                let model = self.model_name();
+                let response_info = HttpResponse {
+                    status,
+                    headers: response_headers,
+                    body: Some(error_body.clone()),
+                    timestamp: SystemTime::now(),
+                    duration,
+                };
+                
+                if let Err(e) = request_logger::log_http_request(
+                    provider,
+                    model.as_deref(),
+                    "post_stream",
+                    last_req,
+                    Some(&response_info),
+                    Some(&error_body),
+                ).await {
+                    tracing::warn!("Failed to log HTTP request: {}", e);
+                }
+            }
+            
             return Err(self.handle_error_response(status, &error_body));
         }
+        
+        // 记录成功的流式请求日志（不包含响应体，因为是流式的）
+        // if let (Some(provider), Some(last_req)) = (self.provider_name.as_ref(), self.last_request().as_ref()) {
+        //     let model = self.model_name();
+        //     let response_info = HttpResponse {
+        //         status,
+        //         headers: response_headers.clone(),
+        //         body: Some("[STREAMING RESPONSE]".to_string()),
+        //         timestamp: SystemTime::now(),
+        //         duration,
+        //     };
+            
+        //     if let Err(e) = request_logger::log_http_request(
+        //         provider,
+        //         model.as_deref(),
+        //         "post_stream",
+        //         last_req,
+        //         Some(&response_info),
+        //         None,
+        //     ).await {
+        //         tracing::warn!("Failed to log HTTP request: {}", e);
+        //     }
+        // }
         
         // 返回字节流
         use futures::StreamExt;

@@ -11,6 +11,8 @@ use crate::ai_adapter::AiProvider;
 use crate::services::ai::AiServiceManager;
 use crate::services::prompt_db::PromptRepository;
 use crate::services::database::DatabaseService;
+use crate::services::database::Database; // trait for DB methods
+use crate::commands::agent_commands::WorkflowStepDetail;
 use async_trait::async_trait;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -30,6 +32,7 @@ pub struct ReWooEngine {
     ai_service_manager: Option<Arc<AiServiceManager>>,
     runtime_params: Option<std::collections::HashMap<String, serde_json::Value>>,
     app_handle: Option<tauri::AppHandle>,
+    db_service: Option<Arc<DatabaseService>>,
 }
 
 impl ReWooEngine {
@@ -84,6 +87,7 @@ impl ReWooEngine {
             ai_service_manager: None,
             runtime_params: None,
             app_handle: None,
+            db_service: None,
         })
     }
     
@@ -161,6 +165,7 @@ impl ReWooEngine {
             ai_service_manager: Some(ai_service_manager),
             runtime_params: None,
             app_handle: None,
+            db_service: Some(db_service),
         })
     }
 
@@ -450,6 +455,7 @@ impl ReWooEngine {
         worker: &ReWOOWorker,
         planner: &ReWOOPlanner,
     ) -> Result<(), ReWOOError> {
+        let mut seq: usize = 0;
         // 如果启用并行执行，使用批次模式
         if self.config.worker.enable_parallel {
             return self.execute_rewoo_working_phase_batched(rewoo_session, worker, planner).await;
@@ -519,7 +525,46 @@ impl ReWooEngine {
                     result_value,
                 );
                 rewoo_session.metrics.successful_tool_calls += 1;
+
+                // 保存步骤完成记录
+                if let (Some(db), Some(params)) = (&self.db_service, &self.runtime_params) {
+                    if let Some(session_id) = params.get("execution_id").and_then(|v| v.as_str()) {
+                        seq += 1;
+                        let _ = db.save_agent_execution_step(session_id, &WorkflowStepDetail {
+                            step_id: format!("step_{}", seq),
+                            step_name: parsed_step.variable.clone(),
+                            status: "Completed".to_string(),
+                            started_at: None,
+                            completed_at: None,
+                            duration_ms: 0,
+                            result_data: rewoo_session.state.results.get(&parsed_step.variable).cloned(),
+                            error: None,
+                            retry_count: 0,
+                            dependencies: vec![],
+                            tool_result: None,
+                        }).await;
+                    }
+                }
             } else {
+                // 记录失败步骤
+                if let (Some(db), Some(params)) = (&self.db_service, &self.runtime_params) {
+                    if let Some(session_id) = params.get("execution_id").and_then(|v| v.as_str()) {
+                        seq += 1;
+                        let _ = db.save_agent_execution_step(session_id, &WorkflowStepDetail {
+                            step_id: format!("step_{}", seq),
+                            step_name: parsed_step.variable.clone(),
+                            status: "Failed".to_string(),
+                            started_at: None,
+                            completed_at: None,
+                            duration_ms: 0,
+                            result_data: None,
+                            error: tool_result.error.clone(),
+                            retry_count: 0,
+                            dependencies: vec![],
+                            tool_result: None,
+                        }).await;
+                    }
+                }
                 return Err(ReWOOError::ToolExecutionError(
                     format!("Step {} failed: {}", 
                         parsed_step.variable,
@@ -539,6 +584,7 @@ impl ReWooEngine {
         worker: &ReWOOWorker,
         planner: &ReWOOPlanner,
     ) -> Result<(), ReWOOError> {
+        let mut seq: usize = 0;
         // 创建执行批次
         let batches = planner.create_execution_batches(&rewoo_session.state);
         
@@ -623,7 +669,46 @@ impl ReWooEngine {
                                 result_value,
                             );
                             rewoo_session.metrics.successful_tool_calls += 1;
+
+                            // 保存步骤完成记录
+                            if let (Some(db), Some(params)) = (&self.db_service, &self.runtime_params) {
+                                if let Some(session_id) = params.get("execution_id").and_then(|v| v.as_str()) {
+                                    seq += 1;
+                                    let _ = db.save_agent_execution_step(session_id, &WorkflowStepDetail {
+                                        step_id: format!("step_{}", seq),
+                                        step_name: step_variable.clone(),
+                                        status: "Completed".to_string(),
+                                        started_at: None,
+                                        completed_at: None,
+                                        duration_ms: 0,
+                                        result_data: rewoo_session.state.results.get(step_variable).cloned(),
+                                        error: None,
+                                        retry_count: 0,
+                                        dependencies: vec![],
+                                        tool_result: None,
+                                    }).await;
+                                }
+                            }
                         } else {
+                            // 保存失败步骤
+                            if let (Some(db), Some(params)) = (&self.db_service, &self.runtime_params) {
+                                if let Some(session_id) = params.get("execution_id").and_then(|v| v.as_str()) {
+                                    seq += 1;
+                                    let _ = db.save_agent_execution_step(session_id, &WorkflowStepDetail {
+                                        step_id: format!("step_{}", seq),
+                                        step_name: step_variable.clone(),
+                                        status: "Failed".to_string(),
+                                        started_at: None,
+                                        completed_at: None,
+                                        duration_ms: 0,
+                                        result_data: None,
+                                        error: tool_result.error.clone(),
+                                        retry_count: 0,
+                                        dependencies: vec![],
+                                        tool_result: None,
+                                    }).await;
+                                }
+                            }
                             return Err(ReWOOError::ToolExecutionError(
                                 format!("Step {} failed: {}", 
                                     step_variable,
@@ -633,6 +718,24 @@ impl ReWooEngine {
                         }
                     }
                     Err(e) => {
+                        if let (Some(db), Some(params)) = (&self.db_service, &self.runtime_params) {
+                            if let Some(session_id) = params.get("execution_id").and_then(|v| v.as_str()) {
+                                seq += 1;
+                                let _ = db.save_agent_execution_step(session_id, &WorkflowStepDetail {
+                                    step_id: format!("step_{}", seq),
+                                    step_name: step_variable.clone(),
+                                    status: "Failed".to_string(),
+                                    started_at: None,
+                                    completed_at: None,
+                                    duration_ms: 0,
+                                    result_data: None,
+                                    error: Some(e.to_string()),
+                                    retry_count: 0,
+                                    dependencies: vec![],
+                                    tool_result: None,
+                                }).await;
+                            }
+                        }
                         return Err(e);
                     }
                 }

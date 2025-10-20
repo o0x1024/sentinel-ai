@@ -115,16 +115,9 @@ pub async fn rag_query(
 ) -> Result<RagQueryResponse, String> {
     info!("RAG查询: {}", query);
     
-    let request = RagQueryRequest {
-        query: query.clone(),
-        collection_id,
-        top_k,
-        use_mmr,
-        mmr_lambda,
-        filters,
-    };
+    let request = RagQueryRequest {query:query.clone(),collection_id,top_k,use_mmr,mmr_lambda,filters, use_embedding: Some(true), reranking_enabled: Some(true) };
     
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_global_rag_service().await?;  
     rag_service.query(request).await.map_err(|e| e.to_string())
 }
 
@@ -166,6 +159,58 @@ pub async fn rag_shutdown_service() -> Result<bool, String> {
     info!("关闭RAG服务");
     
     shutdown_global_rag_service().await?;
+    Ok(true)
+}
+
+// ============================================================================
+// 文档级别操作命令（列出文档、查看文档内容、删除文档）
+// ============================================================================
+
+/// 列出集合中的文档（通过集合ID）
+#[tauri::command]
+pub async fn list_rag_documents(
+    collection_id: String,
+    database: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<crate::rag::models::DocumentSource>, String> {
+    database
+        .get_rag_documents_by_collection_id(&collection_id)
+        .await
+        .map_err(|e| format!("获取文档列表失败: {}", e))
+}
+
+/// 获取指定文档的所有文本块
+#[tauri::command]
+pub async fn get_rag_document_chunks(
+    document_id: String,
+    database: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<crate::rag::models::DocumentChunk>, String> {
+    database
+        .get_rag_chunks_by_document_id(&document_id)
+        .await
+        .map_err(|e| format!("获取文档内容失败: {}", e))
+}
+
+/// 删除指定文档（并更新集合统计）
+#[tauri::command]
+pub async fn delete_rag_document(
+    document_id: String,
+    database: State<'_, Arc<DatabaseService>>,
+) -> Result<bool, String> {
+    // 获取集合ID用于删除后更新统计
+    let collection_id = database
+        .get_collection_id_by_document_id(&document_id)
+        .await
+        .map_err(|e| format!("查询集合ID失败: {}", e))?;
+
+    database
+        .delete_rag_document(&document_id)
+        .await
+        .map_err(|e| format!("删除文档失败: {}", e))?;
+
+    if let Some(cid) = collection_id.as_deref() {
+        let _ = database.update_collection_stats(cid).await;
+    }
+
     Ok(true)
 }
 

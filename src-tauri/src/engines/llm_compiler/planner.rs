@@ -115,7 +115,7 @@ impl LlmCompilerPlanner {
         context: &HashMap<String, Value>,
         available_tools: &str,
     ) -> Result<String> {
-        let base = format!(
+        let mut base = format!(
             r#"你是一个专业的LLMCompiler规划器，专门设计并行执行的DAG任务计划。
 
 **用户输入**: {}
@@ -182,6 +182,60 @@ impl LlmCompilerPlanner {
             serde_json::to_string_pretty(context).unwrap_or_default(),
             available_tools
         );
+        // RAG augmentation for LLMCompiler planning (global toggle)
+        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+            if rag_service.get_config().augmentation_enabled {
+                use tokio::time::{timeout, Duration};
+                let (primary, fallback) = crate::rag::query_utils::build_rag_query_pair(&format!("{} {}", user_input, serde_json::to_string_pretty(context).unwrap_or_default()));
+                let rag_request = crate::rag::models::AssistantRagRequest {
+                    query: primary.clone(),
+                    collection_id: None,
+                    conversation_history: None,
+                    top_k: Some(5),
+                    use_mmr: Some(true),
+                    mmr_lambda: Some(0.7),
+                    similarity_threshold: Some(0.65),
+                    reranking_enabled: Some(false),
+                    model_provider: None,
+                    model_name: None,
+                    max_tokens: None,
+                    temperature: None,
+                };
+                if let Ok(Ok((knowledge_context, _))) = timeout(
+                    Duration::from_millis(1200),
+                    rag_service.query_for_assistant(&rag_request),
+                )
+                .await
+                {
+                    if !knowledge_context.trim().is_empty() {
+                        base.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                        base.push_str(&knowledge_context);
+                    } else {
+                        let fallback_req = crate::rag::models::AssistantRagRequest {
+                            query: fallback,
+                            collection_id: None,
+                            conversation_history: None,
+                            top_k: Some(7),
+                            use_mmr: Some(true),
+                            mmr_lambda: Some(0.7),
+                            similarity_threshold: Some(0.55),
+                            reranking_enabled: Some(false),
+                            model_provider: None,
+                            model_name: None,
+                            max_tokens: None,
+                            temperature: None,
+                        };
+                        if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
+                            if !kb2.trim().is_empty() {
+                                base.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                                base.push_str(&kb2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(repo) = &self.prompt_repo {
             // 使用统一提示词解析器，尽量从 context 解析 agent-level 配置
             let resolver = PromptResolver::new(repo.clone());

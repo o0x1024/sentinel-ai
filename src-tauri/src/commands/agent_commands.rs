@@ -315,44 +315,50 @@ pub async fn list_workflow_executions(
         }
     }
     
-    // 从数据库获取AI助手执行记录
-    // 注意：这里使用一个简化的方法来获取AI助手执行记录
-    // 实际实现可能需要创建专门的表来存储AI助手执行记录
-    match db_service.get_config("ai_assistant", "recent_executions").await {
-        Ok(Some(execution_data)) => {
-            if let Ok(ai_executions) = serde_json::from_str::<Vec<serde_json::Value>>(&execution_data) {
-                for execution_record in ai_executions {
-                    let execution = WorkflowExecution {
-                        execution_id: execution_record.get("execution_id")
-                            .and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                        workflow_id: format!("ai-assistant-{}", 
-                            execution_record.get("task_name").and_then(|v| v.as_str()).unwrap_or("unknown")),
-                        status: execution_record.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                        started_at: execution_record.get("started_at").and_then(|v| v.as_u64()).unwrap_or(0).to_string(),
-                        completed_at: execution_record.get("completed_at").and_then(|v| v.as_u64()).map(|t| t.to_string()),
-                        current_step: Some(format!("AI Assistant - {}", 
-                            execution_record.get("architecture").and_then(|v| v.as_str()).unwrap_or("Unknown"))),
-                        total_steps: execution_record.get("step_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                        completed_steps: if execution_record.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-                            execution_record.get("step_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32
-                        } else { 0 },
-                        progress: if execution_record.get("success").and_then(|v| v.as_bool()).unwrap_or(false) { 
-                            100
-                        } else { 
-                            50
-                        },
-                        error: execution_record.get("error").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                        result: Some(execution_record.clone()),
-                    };
-                    executions.push(execution);
+    // 从数据库获取agent_sessions执行记录
+    match db_service.list_agent_sessions().await {
+        Ok(sessions) => {
+            for session in sessions {
+                // 检查是否已经存在（避免重复）
+                if executions.iter().any(|e| e.execution_id == session.session_id) {
+                    continue;
                 }
+                
+                let status = match session.status.as_str() {
+                    "Created" => "Pending",
+                    "Planning" => "Running", 
+                    "Executing" => "Running",
+                    "Completed" => "Completed",
+                    "Failed" => "Failed",
+                    "Cancelled" => "Cancelled",
+                    _ => "Unknown",
+                }.to_string();
+                
+                let progress = match session.status.as_str() {
+                    "Completed" => 100,
+                    "Failed" => 0,
+                    "Executing" => 50,
+                    _ => 0,
+                };
+                
+                let execution = WorkflowExecution {
+                    execution_id: session.session_id.clone(),
+                    workflow_id: format!("agent-session-{}", session.agent_name),
+                    status,
+                    started_at: session.created_at.timestamp().to_string(),
+                    completed_at: None, // AgentSessionData doesn't have completed_at field
+                    current_step: Some(format!("Agent Task - {}", session.agent_name)),
+                    total_steps: 1,
+                    completed_steps: if session.status == "Completed" { 1 } else { 0 },
+                    progress,
+                    error: None, // AgentSessionData doesn't have error field
+                    result: None, // AgentSessionData doesn't have result field
+                };
+                executions.push(execution);
             }
         },
-        Ok(None) => {
-            // 没有AI助手执行记录
-        },
         Err(e) => {
-            log::warn!("Failed to get AI assistant executions: {}", e);
+            log::warn!("Failed to get agent sessions: {}", e);
         }
     }
     
@@ -365,7 +371,7 @@ pub async fn list_workflow_executions(
     
     // 获取所有活跃会话并转换为WorkflowExecution格式
     let sessions = agent_manager.get_all_sessions().await;
-    let mut executions = Vec::new();
+    // 继续向前面已收集的 executions 追加活跃会话，避免覆盖之前的结果
     
     for (session_id, session_info) in sessions {
         let status = match session_info.status {
@@ -401,8 +407,9 @@ pub async fn list_workflow_executions(
             execution_id: session_id.clone(),
             workflow_id: session_info.task.description.clone(),
             status,
-            started_at: session_info.created_at.to_rfc3339(),
-            completed_at: session_info.completed_at.map(|t| t.to_rfc3339()),
+            // 统一为秒级时间戳字符串，前端用 parseInt * 1000 解析
+            started_at: session_info.created_at.timestamp().to_string(),
+            completed_at: session_info.completed_at.map(|t| t.timestamp().to_string()),
             current_step,
             total_steps: 4, // 默认4个步骤
             completed_steps: match session_info.status {
@@ -502,6 +509,50 @@ pub async fn cancel_workflow_execution(
     manager: State<'_, GlobalAgentManager>,
 ) -> Result<String, String> {
     cancel_agent_task(execution_id, manager).await
+}
+
+/// 删除工作流执行记录
+#[command]
+pub async fn delete_workflow_execution(
+    execution_id: String,
+    manager: State<'_, GlobalAgentManager>,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<String, String> {
+    // 1) 删除数据库中的会话记录（Plan-and-Execute）
+    if let Ok(pool) = db_service.get_pool() {
+        let repository = PlanExecuteRepository::new(pool.clone());
+        if let Err(e) = repository.delete_execution_session(&execution_id).await {
+            log::warn!("Failed to delete execution session from DB: {}", e);
+        }
+    } else {
+        log::warn!("Database pool not available when deleting execution session");
+    }
+
+    // 2) 删除agent_session记录
+    use crate::services::database::Database;
+    if let Err(e) = db_service.delete_agent_session(&execution_id).await {
+        log::warn!("Failed to delete agent session: {}", e);
+    }
+    
+    // 删除agent_execution_steps记录
+    if let Err(e) = db_service.delete_agent_execution_steps(&execution_id).await {
+        log::warn!("Failed to delete agent execution steps: {}", e);
+    }
+
+    // 3) 从内存中移除（活跃与已完成会话）
+    let manager_guard = manager.read().await;
+    if let Some(agent_manager) = manager_guard.as_ref() {
+        {
+            let mut active = agent_manager.active_sessions.write().await;
+            active.remove(&execution_id);
+        }
+        {
+            let mut completed = agent_manager.completed_sessions.write().await;
+            completed.remove(&execution_id);
+        }
+    }
+
+    Ok("Execution deleted successfully".to_string())
 }
 
 /// 工作流步骤详情

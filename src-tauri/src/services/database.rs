@@ -60,6 +60,9 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn create_agent_session(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()>;
     async fn update_agent_session_status(&self, session_id: &str, status: &str) -> Result<()>;
     async fn get_agent_session(&self, session_id: &str) -> Result<Option<crate::agents::session::AgentSessionData>>;
+    async fn list_agent_sessions(&self) -> Result<Vec<crate::agents::session::AgentSessionData>>;
+    async fn delete_agent_session(&self, session_id: &str) -> Result<()>;
+    async fn delete_agent_execution_steps(&self, session_id: &str) -> Result<()>;
     
     // Agent执行日志相关方法
     async fn add_agent_session_log(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()>;
@@ -2871,6 +2874,48 @@ impl Database for DatabaseService {
         }
     }
     
+    async fn list_agent_sessions(&self) -> Result<Vec<crate::agents::session::AgentSessionData>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query("SELECT id, task_id, status, agent_name, created_at, updated_at FROM agent_sessions ORDER BY created_at DESC")
+            .fetch_all(pool)
+            .await?;
+        
+        let mut sessions = Vec::new();
+        for row in rows {
+            let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
+            let updated_at: chrono::DateTime<chrono::Utc> = row.get("updated_at");
+            
+            sessions.push(crate::agents::session::AgentSessionData {
+                session_id: row.get("id"),
+                task_id: row.get("task_id"),
+                status: row.get("status"),
+                agent_name: row.get("agent_name"),
+                created_at,
+                updated_at,
+            });
+        }
+        
+        Ok(sessions)
+    }
+    
+    async fn delete_agent_session(&self, session_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
+            .bind(session_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+    
+    async fn delete_agent_execution_steps(&self, session_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("DELETE FROM agent_execution_steps WHERE session_id = ?")
+            .bind(session_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+    
     // Agent执行日志相关方法实现
     async fn add_agent_session_log(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()> {
         let pool = self.get_pool()?;
@@ -3222,28 +3267,164 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    /// 向量相似度搜索RAG文档块
+    pub async fn search_rag_chunks_by_vector(
+        &self,
+        collection_id: &str,
+        query_embedding: &[f32],
+        embedding_model: &str,
+        limit: usize,
+        similarity_threshold: f32,
+    ) -> Result<Vec<(f32, crate::rag::models::DocumentChunk)>> {
         let pool = self.get_pool()?;
         
-        // For now, do a simple text search. In a real implementation, you'd use vector similarity
-        info!("搜索RAG文本块: collection_id={}, query={}, limit={}", collection_id, query, limit);
-        
+        info!("向量搜索RAG文档块: collection_id={}, embedding_dim={}, limit={}, threshold={}", 
+              collection_id, query_embedding.len(), limit, similarity_threshold);
+
+        // 获取所有有嵌入向量的文档块
         let rows = sqlx::query(
             r#"
-            SELECT id, document_id, content, content_hash, chunk_index, char_count, 
-                   embedding_vector, embedding_model, embedding_dimension, metadata, 
-                   created_at, updated_at
-            FROM rag_chunks
-            WHERE collection_id = ? AND content LIKE ?
+            SELECT id, document_id, content, content_hash, chunk_index, char_count,
+                   embedding_vector, embedding_model, embedding_dimension, metadata,
+                   created_at
+            FROM rag_chunks 
+            WHERE collection_id = ? AND embedding_vector IS NOT NULL AND embedding_model = ?
             ORDER BY created_at DESC
-            LIMIT ?
             "#
         )
         .bind(collection_id)
-        .bind(format!("%{}%", query))
-        .bind(limit as i64)
+        .bind(embedding_model)
         .fetch_all(pool)
         .await?;
+
+        let mut scored_chunks = Vec::new();
+        
+        for row in rows {
+            let embedding_bytes: Option<Vec<u8>> = row.get("embedding_vector");
+            
+            if let Some(bytes) = embedding_bytes {
+                // 将字节转换为f32向量
+                if bytes.len() % 4 == 0 {
+                    let embedding: Vec<f32> = bytes
+                        .chunks_exact(4)
+                        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                        .collect();
+                    
+                    // 计算余弦相似度
+                    let similarity = self.cosine_similarity(query_embedding, &embedding);
+                    
+                    // 只保留超过阈值的结果
+                    if similarity >= similarity_threshold {
+                        let chunk = crate::rag::models::DocumentChunk {
+                            id: row.get("id"),
+                            source_id: row.get("document_id"),
+                            content: row.get("content"),
+                            content_hash: row.get("content_hash"),
+                            chunk_index: row.get::<i64, _>("chunk_index") as usize,
+                            embedding: Some(embedding),
+                            metadata: {
+                                let metadata_json: String = row.get("metadata");
+                                if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
+                                    crate::rag::models::ChunkMetadata {
+                                        file_path: "unknown".to_string(),
+                                        file_name: "unknown".to_string(),
+                                        file_type: "unknown".to_string(),
+                                        file_size: 0,
+                                        chunk_start_char: 0,
+                                        chunk_end_char: row.get::<i64, _>("char_count") as usize,
+                                        page_number: None,
+                                        section_title: None,
+                                        custom_fields: std::collections::HashMap::new(),
+                                    }
+                                } else {
+                                    serde_json::from_str(&metadata_json).unwrap_or_else(|_| {
+                                        crate::rag::models::ChunkMetadata {
+                                            file_path: "unknown".to_string(),
+                                            file_name: "unknown".to_string(),
+                                            file_type: "unknown".to_string(),
+                                            file_size: 0,
+                                            chunk_start_char: 0,
+                                            chunk_end_char: row.get::<i64, _>("char_count") as usize,
+                                            page_number: None,
+                                            section_title: None,
+                                            custom_fields: std::collections::HashMap::new(),
+                                        }
+                                    })
+                                }
+                            },
+                            created_at: {
+                                let timestamp: i64 = row.get("created_at");
+                                chrono::DateTime::from_timestamp(timestamp, 0)
+                                    .unwrap_or_else(|| chrono::Utc::now())
+                            },
+                        };
+                        
+                        scored_chunks.push((similarity, chunk));
+                    }
+                }
+            }
+        }
+
+        // 按相似度降序排序并限制结果数量
+        scored_chunks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored_chunks.truncate(limit);
+        
+        info!("向量搜索完成，找到 {} 个相关文档块", scored_chunks.len());
+        Ok(scored_chunks)
+    }
+
+    /// 余弦相似度计算
+    fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        
+        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
+        
+        dot_product / (norm_a * norm_b)
+    }
+
+    pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+        let pool = self.get_pool()?;
+
+        // 朴素文本检索：将查询拆为多个词项（英文/数字/点 与 中文分别为词），以 AND 串联
+        use regex::Regex;
+        let token_re = Regex::new(r"([A-Za-z0-9\.]+|[\u4e00-\u9fff]+)").unwrap();
+        let mut tokens: Vec<String> = Vec::new();
+        for cap in token_re.captures_iter(query) {
+            if let Some(m) = cap.get(0) {
+                let t = m.as_str().trim();
+                if !t.is_empty() { tokens.push(t.to_string()); }
+            }
+        }
+
+        // 若拆不出词，回退使用原查询
+        if tokens.is_empty() {
+            tokens.push(query.trim().to_string());
+        }
+
+        info!("搜索RAG文本块: collection_id={}, tokens={:?}, limit={}", collection_id, tokens, limit);
+
+        // 动态拼装 AND 条件：content LIKE ? AND content LIKE ? ...
+        let mut sql = String::from(
+            "SELECT id, document_id, content, content_hash, chunk_index, char_count, \
+             embedding_vector, embedding_model, embedding_dimension, metadata, \
+             created_at, updated_at FROM rag_chunks WHERE collection_id = ?"
+        );
+        for _ in &tokens { sql.push_str(" AND content LIKE ?"); }
+        sql.push_str(" ORDER BY created_at DESC LIMIT ?");
+
+        let mut q = sqlx::query(&sql).bind(collection_id.to_string());
+        for t in &tokens { q = q.bind(format!("%{}%", t)); }
+        q = q.bind(limit as i64);
+
+        let rows = q.fetch_all(pool).await?;
 
         info!("找到 {} 个匹配的文本块", rows.len());
 
@@ -3308,6 +3489,91 @@ impl DatabaseService {
         }
 
         info!("返回 {} 个文本块", chunks.len());
+
+        Ok(chunks)
+    }
+
+    /// 读取包含嵌入向量的chunks（用于内存向量搜索）
+    pub async fn fetch_chunks_with_embeddings(
+        &self,
+        collection_id: &str,
+        embedding_model: &str,
+        embedding_dimension: i32,
+        limit: usize,
+    ) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+        let pool = self.get_pool()?;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, document_id, content, content_hash, chunk_index, metadata, created_at, embedding_vector
+            FROM rag_chunks
+            WHERE collection_id = ? AND embedding_vector IS NOT NULL AND embedding_model = ? AND embedding_dimension = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            "#
+        )
+        .bind(collection_id)
+        .bind(embedding_model)
+        .bind(embedding_dimension)
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await?;
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let document_id: String = row.get("document_id");
+            let content: String = row.get("content");
+            let content_hash: String = row.get("content_hash");
+            let chunk_index: i64 = row.get("chunk_index");
+            let metadata_json: String = row.get("metadata");
+            let created_at: i64 = row.get("created_at");
+            let embedding_bytes: Option<Vec<u8>> = row.get("embedding_vector");
+
+            let metadata = if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
+                crate::rag::models::ChunkMetadata {
+                    file_path: "unknown".to_string(),
+                    file_name: "unknown".to_string(),
+                    file_type: "unknown".to_string(),
+                    file_size: 0,
+                    chunk_start_char: 0,
+                    chunk_end_char: content.chars().count(),
+                    page_number: None,
+                    section_title: None,
+                    custom_fields: std::collections::HashMap::new(),
+                }
+            } else {
+                serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json)
+                    .unwrap_or_else(|_| crate::rag::models::ChunkMetadata {
+                        file_path: "unknown".to_string(),
+                        file_name: "unknown".to_string(),
+                        file_type: "unknown".to_string(),
+                        file_size: 0,
+                        chunk_start_char: 0,
+                        chunk_end_char: content.chars().count(),
+                        page_number: None,
+                        section_title: None,
+                        custom_fields: std::collections::HashMap::new(),
+                    })
+            };
+
+            let created_at_datetime = chrono::DateTime::from_timestamp(created_at, 0).unwrap_or_else(|| chrono::Utc::now());
+
+            let embedding: Option<Vec<f32>> = if let Some(bytes) = embedding_bytes {
+                bincode::deserialize::<Vec<f32>>(&bytes).ok()
+            } else { None };
+
+            chunks.push(crate::rag::models::DocumentChunk {
+                id,
+                source_id: document_id,
+                content,
+                content_hash,
+                chunk_index: chunk_index as usize,
+                metadata,
+                embedding,
+                created_at: created_at_datetime,
+            });
+        }
 
         Ok(chunks)
     }
@@ -3444,19 +3710,39 @@ impl DatabaseService {
 
     pub async fn delete_rag_document(&self, document_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        
-        // Delete document chunks first (due to foreign key constraints)
-        sqlx::query("DELETE FROM rag_document_chunks WHERE source_id = ?")
+
+        // 获取所属集合ID以便更新统计
+        let collection_id: Option<String> = sqlx::query_scalar(
+            "SELECT collection_id FROM rag_document_sources WHERE id = ?"
+        )
+        .bind(document_id)
+        .fetch_optional(pool)
+        .await?;
+
+        // 先删除新表 rag_chunks 中的数据
+        sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?")
             .bind(document_id)
             .execute(pool)
             .await?;
-        
-        // Delete the document source
+
+        // 同时清理旧表（若存在历史数据）
+        sqlx::query("DELETE FROM rag_document_chunks WHERE source_id = ?")
+            .bind(document_id)
+            .execute(pool)
+            .await
+            .ok();
+
+        // 删除文档源记录
         sqlx::query("DELETE FROM rag_document_sources WHERE id = ?")
             .bind(document_id)
             .execute(pool)
             .await?;
-        
+
+        // 更新集合统计
+        if let Some(cid) = collection_id.as_deref() {
+            let _ = self.update_collection_stats(cid).await;
+        }
+
         Ok(())
     }
 
@@ -3509,6 +3795,136 @@ impl DatabaseService {
         Ok(documents)
     }
 
+    /// 根据集合ID获取文档列表
+    pub async fn get_rag_documents_by_collection_id(&self, collection_id: &str) -> Result<Vec<crate::rag::models::DocumentSource>> {
+        let pool = self.get_pool()?;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, collection_id, file_path, file_name, file_type, file_size, content_hash, metadata, created_at, updated_at
+            FROM rag_document_sources
+            WHERE collection_id = ?
+            ORDER BY created_at DESC
+            "#
+        )
+        .bind(collection_id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut documents = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let file_path: String = row.get("file_path");
+            let file_name: String = row.get("file_name");
+            let file_type: String = row.get("file_type");
+            let file_size: i64 = row.get("file_size");
+            let content_hash: String = row.get("content_hash");
+            let metadata_json: String = row.get("metadata");
+            let created_at: String = row.get("created_at");
+            let updated_at: String = row.get("updated_at");
+
+            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&metadata_json)?;
+
+            documents.push(crate::rag::models::DocumentSource {
+                id,
+                file_path,
+                file_name,
+                file_type,
+                file_size: file_size as u64,
+                file_hash: content_hash,
+                chunk_count: 0,
+                ingestion_status: crate::rag::models::IngestionStatusEnum::Completed,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
+                metadata,
+            });
+        }
+
+        Ok(documents)
+    }
+
+    /// 根据文档ID获取其所有文本块（来自新表 rag_chunks）
+    pub async fn get_rag_chunks_by_document_id(&self, document_id: &str) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+        let pool = self.get_pool()?;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, document_id, content, content_hash, chunk_index, metadata, created_at
+            FROM rag_chunks
+            WHERE document_id = ?
+            ORDER BY chunk_index ASC
+            "#
+        )
+        .bind(document_id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let document_id_val: String = row.get("document_id");
+            let content: String = row.get("content");
+            let content_hash: String = row.get("content_hash");
+            let chunk_index: i64 = row.get("chunk_index");
+            let metadata_json: String = row.get("metadata");
+            let created_at_ts: i64 = row.get("created_at");
+
+            // 解析metadata，容错空/无效JSON
+            let metadata = if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
+                crate::rag::models::ChunkMetadata {
+                    file_path: "unknown".to_string(),
+                    file_name: "unknown".to_string(),
+                    file_type: "unknown".to_string(),
+                    file_size: 0,
+                    chunk_start_char: 0,
+                    chunk_end_char: content.chars().count(),
+                    page_number: None,
+                    section_title: None,
+                    custom_fields: std::collections::HashMap::new(),
+                }
+            } else {
+                serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json)
+                    .unwrap_or_else(|_| crate::rag::models::ChunkMetadata {
+                        file_path: "unknown".to_string(),
+                        file_name: "unknown".to_string(),
+                        file_type: "unknown".to_string(),
+                        file_size: 0,
+                        chunk_start_char: 0,
+                        chunk_end_char: content.chars().count(),
+                        page_number: None,
+                        section_title: None,
+                        custom_fields: std::collections::HashMap::new(),
+                    })
+            };
+
+            let created_at = chrono::DateTime::from_timestamp(created_at_ts, 0)
+                .unwrap_or_else(|| chrono::Utc::now());
+
+            chunks.push(crate::rag::models::DocumentChunk {
+                id,
+                source_id: document_id_val,
+                content,
+                content_hash,
+                chunk_index: chunk_index as usize,
+                metadata,
+                embedding: None,
+                created_at,
+            });
+        }
+
+        Ok(chunks)
+    }
+
+    /// 通过文档ID获取其所属集合ID
+    pub async fn get_collection_id_by_document_id(&self, document_id: &str) -> Result<Option<String>> {
+        let pool = self.get_pool()?;
+        let cid = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = ?")
+            .bind(document_id)
+            .fetch_optional(pool)
+            .await?;
+        Ok(cid)
+    }
+
     pub async fn create_rag_document(
         &self,
         collection_id: &str,
@@ -3521,9 +3937,23 @@ impl DatabaseService {
         let document_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
         
-        // Calculate file hash and size
-        let file_hash = format!("{:x}", md5::compute(content.as_bytes()));
-        let file_size = content.len() as i64;
+        // Calculate file hash and size based on content string
+        // 若content为空（部分旧流程未填充），退化为根据文件路径读取实际大小与内容hash
+        let (file_hash, file_size) = if content.is_empty() {
+            // Try to read file for accurate metadata; ignore errors and fallback
+            match std::fs::metadata(file_path) {
+                Ok(meta) => {
+                    let size = meta.len() as i64;
+                    let hash = std::fs::read(file_path)
+                        .map(|bytes| format!("{:x}", md5::compute(&bytes)))
+                        .unwrap_or_else(|_| format!("{:x}", md5::compute(file_path.as_bytes())));
+                    (hash, size)
+                }
+                Err(_) => (format!("{:x}", md5::compute(file_path.as_bytes())), 0),
+            }
+        } else {
+            (format!("{:x}", md5::compute(content.as_bytes())), content.len() as i64)
+        };
         
         sqlx::query(
             "INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, file_hash, content_hash, metadata, created_at, updated_at)
@@ -3555,6 +3985,7 @@ impl DatabaseService {
         embedding: Option<&[f32]>,
         embedding_model: &str,
         embedding_dimension: i32,
+        metadata_json: &str,
     ) -> Result<String> {
         let pool = self.get_pool()?;
         let chunk_id = uuid::Uuid::new_v4().to_string();
@@ -3586,7 +4017,7 @@ impl DatabaseService {
         .bind(embedding_bytes)
         .bind(embedding_model)
         .bind(embedding_dimension)
-        .bind("{}")  // metadata as empty JSON
+        .bind(metadata_json)
         .bind(now_timestamp)
         .bind(now_timestamp)
         .execute(pool)

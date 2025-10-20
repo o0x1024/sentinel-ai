@@ -501,14 +501,11 @@ impl AiProvider for ModelScopeProvider {
             }
         }
 
-        let http_client = HttpClient::new(
-            self.base
-                .config
-                .timeout
-                .unwrap_or(std::time::Duration::from_secs(30)),
-        )?;
-
-        let response = http_client
+        // 复用带有 provider_name 的客户端，并设置当前模型名称以启用HTTP请求日志
+        self.base.http_client.set_model_name(Some(request.model.clone()));
+        let response = self
+            .base
+            .http_client
             .post_json(&url, &request_body, Some(headers))
             .await?;
 

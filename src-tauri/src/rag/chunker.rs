@@ -45,15 +45,14 @@ impl DocumentChunker {
             .map(|metadata| metadata.len())
             .unwrap_or(0);
         
-        let file_hash = format!("{:x}", md5::compute(file_path.as_bytes()));
-        
+        // 先占位，稍后基于实际内容计算hash
         let mut source = DocumentSource {
             id: Uuid::new_v4().to_string(),
             file_path: file_path.to_string(),
             file_name,
             file_type: file_type.clone(),
             file_size,
-            file_hash,
+            file_hash: String::new(),
             chunk_count: 0, // 将在分块后更新
             ingestion_status: crate::rag::models::IngestionStatusEnum::Processing,
             created_at: chrono::Utc::now(),
@@ -69,6 +68,8 @@ impl DocumentChunker {
         
         // 清洗文本
         let cleaned_content = self.text_cleaner.clean_text(&content);
+        // 基于原始提取内容计算hash（避免空内容导致0大小与空hash）
+        source.file_hash = format!("{:x}", md5::compute(content.as_bytes()));
         
         // 分块处理
         let chunks = self.chunk_text(&cleaned_content, file_path, &source)?;
@@ -139,9 +140,11 @@ impl DocumentChunker {
                 Event::Start(Tag::CodeBlock(_)) => in_code_block = true,
                 Event::End(TagEnd::CodeBlock) => in_code_block = false,
                 Event::Text(text) => {
-                    if !in_code_block {
-                        text_content.push_str(&text);
-                        text_content.push(' ');
+                    text_content.push_str(&text);
+                    if in_code_block {
+                        text_content.push('\n'); // 代码块内容保持换行
+                    } else {
+                        text_content.push(' '); // 普通文本用空格分隔
                     }
                 }
                 Event::SoftBreak | Event::HardBreak => {
@@ -168,7 +171,7 @@ impl DocumentChunker {
         Ok(format!("Word文档内容占位符: {}", file_path))
     }
 
-    /// 文本分块
+    /// 文本分块（语义分块：优先按句子边界聚合，无法命中时回退硬切分，保证始终前进）
     fn chunk_text(
         &self,
         content: &str,
@@ -176,42 +179,118 @@ impl DocumentChunker {
         source: &DocumentSource,
     ) -> Result<Vec<DocumentChunk>> {
         let mut chunks = Vec::new();
-        let chunk_size = self.config.chunk_size_chars;
-        let overlap = self.config.chunk_overlap_chars;
-        
-        // 将字符串转换为字符向量，以便安全地按字符数切片
+        let max_chunk_chars = self.config.chunk_size_chars;
+        let overlap_chars_cfg = self.config.chunk_overlap_chars;
+
+        // 限制有效重叠，避免步长为0
+        let effective_overlap = if max_chunk_chars > 0 {
+            std::cmp::min(overlap_chars_cfg, max_chunk_chars.saturating_sub(1))
+        } else { 0 };
+
+        // 将字符串转换为字符向量，基于字符安全地计算偏移
         let chars: Vec<char> = content.chars().collect();
-        
-        if chars.len() <= chunk_size {
-            // 内容较短，直接作为一个分块
-            let chunk = self.create_chunk(content, 0, file_path, source)?;
+        let total_len = chars.len();
+
+        if total_len == 0 || max_chunk_chars == 0 {
+            return Ok(chunks);
+        }
+
+        // 预分句：返回基于字符索引的 [start, end) 区间
+        let sentences = Self::split_into_sentences(&chars);
+
+        // 若文档极短，直接返回一个分块
+        if total_len <= max_chunk_chars {
+            let chunk_content: String = chars[0..total_len].iter().collect();
+            let chunk = self.create_chunk(&chunk_content, 0, 0, total_len, file_path, source)?;
             chunks.push(chunk);
             return Ok(chunks);
         }
 
-        let mut start = 0;
-        let mut chunk_index = 0;
+        // 游标式推进，优先选句子结尾，找不到则硬切分
+        let mut chunk_index = 0usize;
+        let mut cursor = 0usize;
 
-        while start < chars.len() {
-            let end = std::cmp::min(start + chunk_size, chars.len());
-            
-            // 从字符向量中提取子切片并转换回字符串
-            let chunk_chars: String = chars[start..end].iter().collect();
-            let chunk_content = chunk_chars.as_str();
-            
-            let chunk = self.create_chunk(chunk_content, chunk_index, file_path, source)?;
-            chunks.push(chunk);
-            
-            chunk_index += 1;
-            
-            // 计算下一个分块的起始位置（考虑重叠）
-            if end >= chars.len() {
-                break;
+        while cursor < total_len {
+            let target_end = std::cmp::min(cursor + max_chunk_chars, total_len);
+
+            // 寻找不超过 target_end 的最近句子结束
+            let mut end_char = cursor;
+            for &(_, s_end) in &sentences {
+                if s_end > cursor && s_end <= target_end {
+                    end_char = s_end; // 取最后一个满足条件的句末
+                }
+                if s_end > target_end { break; }
             }
-            start = end - overlap;
+
+            if end_char <= cursor {
+                // 未找到合适的句子边界，回退为硬切分
+                end_char = target_end;
+            }
+
+            // 再次兜底，确保有进展
+            if end_char <= cursor {
+                end_char = std::cmp::min(cursor + max_chunk_chars, total_len);
+                if end_char <= cursor { break; }
+            }
+
+            // 构建分块
+            let chunk_str: String = chars[cursor..end_char].iter().collect();
+            let chunk = self.create_chunk(&chunk_str, chunk_index, cursor, end_char, file_path, source)?;
+            chunks.push(chunk);
+            chunk_index += 1;
+
+            if end_char >= total_len { break; }
+
+            // 计算下一游标，按重叠回退，但必须保证前进
+            let mut next_cursor = end_char.saturating_sub(effective_overlap);
+            if next_cursor <= cursor {
+                let step = max_chunk_chars.saturating_sub(effective_overlap).max(1);
+                next_cursor = std::cmp::min(cursor + step, total_len);
+            }
+            if next_cursor <= cursor { break; }
+            cursor = next_cursor;
         }
 
         Ok(chunks)
+    }
+
+    /// 将字符数组按句子边界切分，返回 (start_char, end_char) 半开区间
+    fn split_into_sentences(chars: &[char]) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        let mut start = 0usize;
+        let mut i = 0usize;
+        while i < chars.len() {
+            let c = chars[i];
+            let is_end_punct = matches!(
+                c,
+                '.' | '!' | '?' | '。' | '！' | '？'
+            );
+            if is_end_punct {
+                let mut j = i + 1;
+                // 吞并尾随的引号或右括号等
+                while j < chars.len() {
+                    let c2 = chars[j];
+                    if matches!(c2, '"' | '\'' | '”' | '’' | ')' | '）' | ']' | '】') {
+                        i = j;
+                        j += 1;
+                    } else if c2 == ' ' { // 跳过紧随的空格
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let end = i + 1;
+                if end > start {
+                    out.push((start, end));
+                }
+                start = end;
+            }
+            i += 1;
+        }
+        if start < chars.len() {
+            out.push((start, chars.len()));
+        }
+        out
     }
 
     /// 创建文档分块
@@ -219,6 +298,8 @@ impl DocumentChunker {
         &self,
         content: &str,
         chunk_index: usize,
+        start_char: usize,
+        end_char: usize,
         file_path: &str,
         source: &DocumentSource,
     ) -> Result<DocumentChunk> {
@@ -245,8 +326,9 @@ impl DocumentChunker {
             file_name,
             file_type,
             file_size,
-            chunk_start_char: chunk_index * self.config.chunk_size_chars,
-            chunk_end_char: chunk_index * self.config.chunk_size_chars + content.len(),
+            // 记录真实起止偏移（基于字符）
+            chunk_start_char: start_char,
+            chunk_end_char: end_char,
             page_number: None,
             section_title: None,
             custom_fields: HashMap::new(),
@@ -275,7 +357,7 @@ impl TextCleaner {
     pub fn new() -> Self {
         Self {
             whitespace_regex: Regex::new(r"\s+").unwrap(),
-            special_chars_regex: Regex::new(r"[^\w\s\u4e00-\u9fff.,!?;:()\x22\x27\-]").unwrap(),
+            special_chars_regex: Regex::new(r"[^\w\s\u4e00-\u9fff.,;:()\x22\x27\-/=&%+#@\[\]{}!?！？。，；：（）【】《》\u201c\u201d\u2018\u2019—…]").unwrap(),
         }
     }
 
@@ -302,12 +384,57 @@ impl TextCleaner {
 mod tests {
     use super::*;
     use crate::rag::config::RagConfig;
+    use crate::rag::models::IngestionStatusEnum;
 
     #[test]
+    fn test_chunk_text_no_punctuation_long_text() {
+        let mut config = RagConfig::default();
+        config.chunk_size_chars = 50;
+        config.chunk_overlap_chars = 10;
+        let chunker = DocumentChunker::new(config);
+
+        // 构造无标点长文本（超过两个chunk长度）
+        let base = "abcdefghijklmnopqrstuvwxyz"; // 26 chars
+        let content = format!("{}{}{}{}{}", base, base, base, base, base); // 130 chars
+
+        let source = DocumentSource {
+            id: uuid::Uuid::new_v4().to_string(),
+            file_path: "memory".to_string(),
+            file_name: "mem.txt".to_string(),
+            file_type: "txt".to_string(),
+            file_size: content.len() as u64,
+            file_hash: String::new(),
+            chunk_count: 0,
+            ingestion_status: IngestionStatusEnum::Processing,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+
+        let chunks = chunker.chunk_text(&content, "memory", &source).unwrap();
+        assert!(!chunks.is_empty());
+        // 校验单调递增且有前进
+        let mut last_end = 0;
+        for c in &chunks {
+            assert!(c.metadata.chunk_end_char > c.metadata.chunk_start_char);
+            assert!(c.metadata.chunk_end_char > last_end);
+            last_end = c.metadata.chunk_end_char;
+        }
+        assert_eq!(last_end, content.chars().count());
+    }
     fn test_text_cleaner() {
         let cleaner = TextCleaner::new();
         let input = "  这是一个   测试文本！！！   包含多余空格和特殊字符@#$%  ";
-        let expected = "这是一个 测试文本！！！ 包含多余空格和特殊字符";
+        let expected = "这是一个 测试文本！！！ 包含多余空格和特殊字符@#%";
+        let result = cleaner.clean_text(input);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_text_cleaner_with_urls() {
+        let cleaner = TextCleaner::new();
+        let input = "访问 https://example.com/path?param=value&other=123 获取更多信息";
+        let expected = "访问 https://example.com/path?param=value&other=123 获取更多信息";
         let result = cleaner.clean_text(input);
         assert_eq!(result, expected);
     }

@@ -381,6 +381,8 @@ pub enum StepExecutionStatus {
     Skipped,
     /// 重试中
     Retrying,
+    /// 已取消
+    Cancelled,
 }
 
 /// 执行错误

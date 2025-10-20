@@ -212,6 +212,9 @@ impl RagService {
                 }
             };
 
+            // 元数据JSON（包含真实字符偏移等）
+            let metadata_json = serde_json::to_string(&chunk.metadata).unwrap_or("{}".to_string());
+
             // 创建chunk记录
             match self.database.create_rag_chunk(
                 &document_id,
@@ -221,6 +224,7 @@ impl RagService {
                 embedding.as_deref(),
                 &self._config.embedding_model,
                 self._config.embedding_dimensions.unwrap_or(768) as i32,
+                &metadata_json,
             ).await {
                 Ok(_) => {
                     chunks_created += 1;
@@ -264,15 +268,19 @@ impl RagService {
         info!("执行RAG查询: {}", request.query);
         
         let start_time = std::time::Instant::now();
+        let use_embedding = request.use_embedding.unwrap_or(false);
+        let reranking_enabled = request.reranking_enabled.unwrap_or(false);
         
-        // 生成查询嵌入向量
-        let _query_embedding = match self.embedding_manager.read().await.embed_texts(&[request.query.clone()]).await {
-            Ok(embeddings) => embeddings.into_iter().next().unwrap_or_default(),
-            Err(e) => {
-                error!("生成查询嵌入向量失败: {}", e);
-                return Err(anyhow!("生成查询嵌入向量失败: {}", e));
+        // 可选：生成查询嵌入向量
+        let query_embedding: Vec<f32> = if use_embedding {
+            match self.embedding_manager.read().await.embed_texts(&[request.query.clone()]).await {
+                Ok(embeddings) => embeddings.into_iter().next().unwrap_or_default(),
+                Err(e) => {
+                    warn!("生成查询嵌入向量失败，降级到文本检索: {}", e);
+                    Vec::new()
+                }
             }
-        };
+        } else { Vec::new() };
 
         // 搜索相似chunks  
         let collection_id = if let Some(cid) = request.collection_id {
@@ -298,24 +306,99 @@ impl RagService {
         };
         let top_k = request.top_k.unwrap_or(5);
         
-        let chunks = match self.database.search_rag_chunks_by_id(
-            &collection_id,
-            &request.query,
-            top_k,
-        ).await {
-            Ok(chunks) => chunks,
-            Err(e) => {
-                error!("搜索chunks失败: {}", e);
-                return Err(anyhow!("搜索chunks失败: {}", e));
+        // 获取候选块：向量 or 文本（携带分数）
+        let scored_chunks: Vec<(f32, crate::rag::models::DocumentChunk)> = if use_embedding && !query_embedding.is_empty() {
+            // 取较大的候选集，再做内存向量相似度排序
+            let candidate_limit = std::cmp::max(top_k * 20, 200);
+            let emb_dim = query_embedding.len() as i32;
+            let candidates = self.database.fetch_chunks_with_embeddings(&collection_id, &self._config.embedding_model, emb_dim, candidate_limit).await?;
+            if candidates.is_empty() {
+                info!("无嵌入候选，降级文本检索");
+                self.database
+                    .search_rag_chunks_by_id(&collection_id, &request.query, top_k)
+                    .await?
+                    .into_iter()
+                    .map(|c| (0.0_f32, c))
+                    .collect()
+            } else {
+                // 计算余弦相似度并排序，仅使用维度匹配的向量
+                let mut scored: Vec<(f32, crate::rag::models::DocumentChunk)> = Vec::new();
+                for c in candidates.into_iter() {
+                    if let Some(ref emb) = c.embedding {
+                        if emb.len() == query_embedding.len() {
+                            let sim = Self::cosine_similarity_local(&query_embedding, emb);
+                            scored.push((sim as f32, c));
+                        }
+                    }
+                }
+                if scored.is_empty() {
+                    info!("嵌入维度不匹配或无有效向量，降级文本检索");
+                    self.database
+                        .search_rag_chunks_by_id(&collection_id, &request.query, top_k)
+                        .await?
+                        .into_iter()
+                        .map(|c| (1.0_f32, c))
+                        .collect()
+                } else {
+                    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                    let mut out: Vec<(f32, crate::rag::models::DocumentChunk)> =
+                        scored.into_iter().take(top_k).collect();
+                    // 若不足top_k，用文本检索补齐
+                    if out.len() < top_k {
+                        let fill = self
+                            .database
+                            .search_rag_chunks_by_id(&collection_id, &request.query, top_k - out.len())
+                            .await?
+                            .into_iter()
+                            .map(|c| (1.0_f32, c));
+                        out.extend(fill);
+                    }
+                    out
+                }
             }
+        } else {
+            // 文本检索（分词 AND LIKE）
+            self.database
+                .search_rag_chunks_by_id(&collection_id, &request.query, top_k)
+                .await?
+                .into_iter()
+                .map(|c| (0.0_f32, c))
+                .collect()
         };
 
         // 构建结果
         let mut results = Vec::new();
         let mut context_parts = Vec::new();
         
-        for (rank, chunk) in chunks.into_iter().enumerate() {
-            let score = 0.8_f32; // 临时分数，实际应该从数据库返回
+        // 可选重排：对候选内容再次排序
+        let final_chunks = if reranking_enabled {
+            let documents: Vec<String> = scored_chunks.iter().map(|(_, c)| c.content.clone()).collect();
+            match self.reranking_manager.read().await.rerank(&request.query, &documents, Some(top_k)).await {
+                Ok(reranked) => {
+                    // 将重排分数与原相似度进行融合，避免重排把弱相关文本顶到前面
+                    // 融合: fused = 0.7 * original_sim + 0.3 * rerank_score
+                    let mut fused: Vec<(f32, usize)> = Vec::new();
+                    for r in reranked {
+                        if r.index < scored_chunks.len() {
+                            let orig = scored_chunks[r.index].0;
+                            let score = 0.7_f32 * orig + 0.3_f32 * (r.score as f32);
+                            fused.push((score, r.index));
+                        }
+                    }
+                    fused.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                    fused.into_iter().take(top_k).map(|(_, idx)| (scored_chunks[idx].0, scored_chunks[idx].1.clone())).collect()
+                }
+                Err(e) => {
+                    warn!("重排失败，使用原相似度排序: {}", e);
+                    scored_chunks
+                }
+            }
+        } else {
+            scored_chunks
+        };
+
+        for (rank, (s, chunk)) in final_chunks.into_iter().enumerate() {
+            let score = s;
             
             results.push(QueryResult {
                 chunk: chunk.clone(),
@@ -348,6 +431,18 @@ impl RagService {
         })
     }
 
+    /// 本地余弦相似度实现，避免外部模块依赖
+    fn cosine_similarity_local(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if na == 0.0 || nb == 0.0 { return 0.0; }
+        dot / (na * nb)
+    }
+
     /// 获取文档列表
     pub async fn get_documents(&self, collection_id: &str) -> Result<Vec<DocumentSource>> {
         info!("获取文档列表: {}", collection_id);
@@ -372,22 +467,25 @@ impl RagService {
         
         let start_time = std::time::Instant::now();
         
-        // 构建查询上下文
-        let mut query_context = request.query.clone();
-        if let Some(history) = &request.conversation_history {
+        // 构建查询上下文（仅用于提示展示或后续重排，不参与向量生成）
+        let _query_context = if let Some(history) = &request.conversation_history {
             if !history.is_empty() {
                 let context_summary = history.iter()
                     .rev()
-                    .take(3) // 最近3轮对话
+                    .take(3)
                     .map(|msg| msg.chars().take(100).collect::<String>())
                     .collect::<Vec<_>>()
                     .join("\\n");
-                query_context = format!("Context: {}\\n\\nQuery: {}", context_summary, request.query);
+                format!("Context: {}\\n\\nQuery: {}", context_summary, request.query)
+            } else {
+                request.query.clone()
             }
-        }
+        } else {
+            request.query.clone()
+        };
         
-        // 生成查询嵌入
-        let query_embedding = match self.embedding_manager.read().await.embed_texts(&[query_context.clone()]).await {
+        // 生成查询嵌入（仅使用原始query，提高召回稳定性）
+        let query_embedding = match self.embedding_manager.read().await.embed_texts(&[request.query.clone()]).await {
             Ok(embeddings) => embeddings.into_iter().next().unwrap_or_default(),
             Err(e) => {
                 warn!("生成查询嵌入失败: {}, 降级到文本搜索", e);
@@ -419,15 +517,48 @@ impl RagService {
         };
 
         let top_k = request.top_k.unwrap_or(5);
-        let similarity_threshold = request.similarity_threshold.unwrap_or(0.7);
+        let sim_threshold = request.similarity_threshold.unwrap_or(self._config.similarity_threshold);
         
         // 搜索相关文档块
         let chunks = if !query_embedding.is_empty() {
-            // TODO: 实现向量相似度搜索
-            // 目前降级到文本搜索
-            warn!("向量搜索暂未实现，使用文本搜索");
-            self.database.search_rag_chunks_by_id(&collection_id, &request.query, top_k).await?
+            info!("使用向量相似度搜索，嵌入维度: {}", query_embedding.len());
+            
+            // 使用向量相似度搜索
+            let scored_results = self.database.search_rag_chunks_by_vector(
+                &collection_id,
+                &query_embedding,
+                &self._config.embedding_model,
+                top_k,
+                sim_threshold,
+            ).await?;
+            
+            // 提取文档块（已按相似度排序）
+            let vector_chunks: Vec<_> = scored_results.into_iter().map(|(score, chunk)| {
+                info!("向量搜索结果: 相似度={:.4}, 内容预览={}", score, 
+                      chunk.content.chars().take(100).collect::<String>());
+                chunk
+            }).collect();
+            
+            // 如果向量搜索结果不足，补充文本搜索结果
+            if vector_chunks.len() < top_k {
+                let remaining = top_k - vector_chunks.len();
+                info!("向量搜索结果不足({}/{}), 补充文本搜索结果", vector_chunks.len(), top_k);
+                
+                let mut text_chunks = self.database.search_rag_chunks_by_id(&collection_id, &request.query, remaining).await?;
+                
+                // 去重：移除已在向量搜索结果中的文档块
+                let vector_ids: std::collections::HashSet<_> = vector_chunks.iter().map(|c| &c.id).collect();
+                text_chunks.retain(|c| !vector_ids.contains(&c.id));
+                
+                // 合并结果
+                let mut combined_chunks = vector_chunks;
+                combined_chunks.extend(text_chunks.into_iter().take(remaining));
+                combined_chunks
+            } else {
+                vector_chunks
+            }
         } else {
+            info!("查询嵌入为空，使用文本搜索");
             self.database.search_rag_chunks_by_id(&collection_id, &request.query, top_k).await?
         };
 
@@ -462,11 +593,14 @@ impl RagService {
             chunks
         };
 
+        // 扩展上下文：为每个检索到的块获取相邻块
+        let expanded_chunks = self.expand_context_window(&final_chunks, &collection_id).await?;
+        
         // 构建Evidence Blocks格式的上下文
         let mut evidence_blocks = Vec::new();
         let mut citations = Vec::new();
         
-        for (idx, chunk) in final_chunks.iter().enumerate() {
+        for (idx, chunk) in expanded_chunks.iter().enumerate() {
             let source_num = idx + 1;
             let file_name = chunk.metadata.file_name.clone();
             let content_preview = chunk.content.chars().take(200).collect::<String>();
@@ -577,6 +711,50 @@ impl RagService {
         }
     }
 
+    /// 扩展上下文窗口：为检索到的块获取相邻块
+    async fn expand_context_window(&self, chunks: &[DocumentChunk], _collection_id: &str) -> Result<Vec<DocumentChunk>> {
+        let mut expanded_chunks = Vec::new();
+        let mut processed_chunks = std::collections::HashSet::new();
+        
+        for chunk in chunks {
+            // 按文档分组，获取同一文档的相邻块
+            let document_chunks = self.database.get_rag_chunks(&chunk.source_id).await?;
+            
+            // 找到当前块在文档中的位置
+            if let Some(current_pos) = document_chunks.iter().position(|c| c.id == chunk.id) {
+                // 获取前后各N个块（可配置）
+                let context_window = self._config.context_window_size;
+                let start_idx = current_pos.saturating_sub(context_window);
+                let end_idx = std::cmp::min(current_pos + context_window + 1, document_chunks.len());
+                
+                // 添加上下文窗口内的所有块
+                for i in start_idx..end_idx {
+                    if let Some(context_chunk) = document_chunks.get(i) {
+                        if !processed_chunks.contains(&context_chunk.id) {
+                            expanded_chunks.push(context_chunk.clone());
+                            processed_chunks.insert(context_chunk.id.clone());
+                        }
+                    }
+                }
+            } else {
+                // 如果找不到位置，至少添加原始块
+                if !processed_chunks.contains(&chunk.id) {
+                    expanded_chunks.push(chunk.clone());
+                    processed_chunks.insert(chunk.id.clone());
+                }
+            }
+        }
+        
+        // 按文档和块索引排序，保持逻辑顺序
+        expanded_chunks.sort_by(|a, b| {
+            a.source_id.cmp(&b.source_id)
+                .then_with(|| a.chunk_index.cmp(&b.chunk_index))
+        });
+        
+        info!("上下文扩展: {} -> {} 块", chunks.len(), expanded_chunks.len());
+        Ok(expanded_chunks)
+    }
+
     /// 获取RAG状态
     pub async fn get_status(&self) -> Result<RagStatus> {
         info!("获取RAG状态");
@@ -611,8 +789,8 @@ mod tests {
             mmr_lambda: 0.7,
             batch_size: 10,
             max_concurrent: 4,
-            embedding_provider: "ollama".to_string(),
-            embedding_model: "nomic-embed-text".to_string(),
+            embedding_provider: "lm-studio".to_string(),
+            embedding_model: "text-embedding-qwen3-embedding-0.6b".to_string(),
             embedding_dimensions: None,
             embedding_api_key: None,
             embedding_base_url: Some("http://localhost:11434".to_string()),
@@ -620,6 +798,7 @@ mod tests {
             reranking_model: None,
             reranking_enabled: false,
             similarity_threshold: 0.7,
+            context_window_size: 1,
         };
 
         // 创建临时数据库
@@ -653,6 +832,7 @@ mod tests {
             reranking_model: None,
             reranking_enabled: false,
             similarity_threshold: 0.7,
+            context_window_size: 1,
         };
 
         // 创建临时数据库

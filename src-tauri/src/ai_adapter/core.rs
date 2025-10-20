@@ -177,7 +177,8 @@ impl BaseProvider {
         let timeout = Duration::from_secs(600);
         // let timeout = config.timeout.unwrap_or(Duration::from_secs(600));
         let http_client = HttpClient::new(timeout)?
-            .with_headers(config.extra_headers.clone().unwrap_or_default());
+            .with_headers(config.extra_headers.clone().unwrap_or_default())
+            .with_provider_name(name.clone());
         
         Ok(Self {
             name,

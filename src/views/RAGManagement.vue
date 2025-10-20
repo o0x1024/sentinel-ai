@@ -331,9 +331,117 @@
           </button>
         </div>
 
+        <!-- 文档列表 -->
+        <div class="mb-2 flex items-center justify-between gap-2">
+          <h4 class="font-semibold">文档列表</h4>
+          <div class="flex items-center gap-2">
+            <input
+              v-model="documentSearch"
+              type="text"
+              placeholder="按文件名搜索..."
+              class="input input-bordered input-sm"
+            >
+            <select v-model.number="docPageSize" class="select select-bordered select-sm">
+              <option :value="10">10/页</option>
+              <option :value="20">20/页</option>
+              <option :value="50">50/页</option>
+            </select>
+            <button class="btn btn-ghost btn-xs" @click="reloadDocuments" :disabled="loadingDocuments">
+              <span v-if="loadingDocuments" class="loading loading-spinner loading-xs"></span>
+              刷新
+            </button>
+          </div>
+        </div>
+        <div class="overflow-x-auto border rounded-lg">
+          <table class="table table-zebra w-full">
+            <thead>
+              <tr>
+                <th>文件名</th>
+                <th>大小</th>
+                <th>创建时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loadingDocuments">
+                <td colspan="4">
+                  <div class="flex items-center gap-2">
+                    <span class="loading loading-spinner loading-sm"></span>
+                    正在加载文档...
+                  </div>
+                </td>
+              </tr>
+              <tr v-else-if="documents.length === 0">
+                <td colspan="4" class="text-base-content/60">暂无文档</td>
+              </tr>
+              <tr v-else v-for="doc in paginatedDocuments" :key="doc.id">
+                <td>
+                  <div class="font-medium">{{ doc.file_name }}</div>
+                  <div class="text-xs opacity-60">{{ doc.file_path }}</div>
+                </td>
+                <td>{{ formatBytes(doc.file_size) }}</td>
+                <td>{{ formatDate(doc.created_at) }}</td>
+                <td>
+                  <div class="flex gap-2">
+                    <button class="btn btn-ghost btn-xs" title="预览" @click="viewDocument(doc)">
+                      <i class="fas fa-eye"></i>
+                    </button>
+                    <button class="btn btn-ghost btn-xs text-error" title="删除" @click="deleteDocument(doc)">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 分页器 -->
+        <div class="flex items-center justify-end gap-2 mt-3">
+          <button class="btn btn-xs" :disabled="docCurrentPage <= 1" @click="docCurrentPage = docCurrentPage - 1">上一页</button>
+          <div class="text-sm">第 {{ docCurrentPage }} / {{ totalDocPages }} 页（共 {{ filteredDocuments.length }} 条）</div>
+          <button class="btn btn-xs" :disabled="docCurrentPage >= totalDocPages" @click="docCurrentPage = docCurrentPage + 1">下一页</button>
+        </div>
+
         <!-- 加载状态 -->
         <div v-if="loadingDetails" class="flex justify-center">
           <span class="loading loading-spinner loading-lg"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 文档预览模态框 -->
+    <div v-if="showDocumentModal" class="modal modal-open">
+      <div class="modal-box max-w-5xl">
+        <h3 class="font-bold text-lg mb-2">文档预览: {{ selectedDocument?.file_name }}</h3>
+        <div class="text-xs text-base-content/60 mb-4 break-all">{{ selectedDocument?.file_path }}</div>
+
+        <div class="mb-3 flex items-center justify-between">
+          <div class="text-sm">文本块: {{ documentChunks.length }}</div>
+          <button class="btn btn-ghost btn-xs" @click="reloadDocumentChunks" :disabled="loadingChunks">
+            <span v-if="loadingChunks" class="loading loading-spinner loading-xs"></span>
+            刷新
+          </button>
+        </div>
+
+        <div v-if="loadingChunks" class="flex items-center gap-2">
+          <span class="loading loading-spinner loading-sm"></span>
+          正在加载内容...
+        </div>
+        <div v-else class="space-y-3 max-h-[60vh] overflow-y-auto">
+          <div v-for="(chunk, idx) in documentChunks" :key="chunk.id" class="card bg-base-200">
+            <div class="card-body p-4">
+              <div class="flex items-center justify-between mb-2">
+                <div class="badge badge-outline">#{{ idx + 1 }}</div>
+                <div class="text-xs text-base-content/60">{{ formatDate(chunk.created_at) }}</div>
+              </div>
+              <pre class="text-sm whitespace-pre-wrap break-words">{{ chunk.content }}</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn" @click="showDocumentModal = false">关闭</button>
         </div>
       </div>
     </div>
@@ -367,6 +475,18 @@
               min="1" 
               max="20"
             >
+          </div>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">使用嵌入检索</span>
+            </label>
+            <input type="checkbox" class="toggle" v-model="queryUseEmbedding" />
+          </div>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">启用重排</span>
+            </label>
+            <input type="checkbox" class="toggle" v-model="queryReranking" />
           </div>
         </div>
         
@@ -417,7 +537,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import Toast from '@/components/Toast.vue'
 
@@ -433,6 +553,8 @@ const creating = ref(false)
 const ingesting = ref(false)
 const querying = ref(false)
 const loadingDetails = ref(false)
+const loadingDocuments = ref(false)
+const loadingChunks = ref(false)
 
 // 激活集合管理（后端持久化）
 const onActiveToggle = async (collection: any, ev: Event) => {
@@ -471,6 +593,8 @@ const batchProgress = ref({
 const queryText = ref('')
 const queryTopK = ref(5)
 const queryResults = ref([])
+const queryUseEmbedding = ref(true)
+const queryReranking = ref(true)
 
 // 集合详情相关
 interface CollectionStats {
@@ -494,6 +618,15 @@ const collectionDetails = ref<CollectionDetails>({
     embeddingModel: 'default'
   }
 })
+
+// 文档浏览
+const documents = ref<any[]>([])
+const selectedDocument = ref<any | null>(null)
+const showDocumentModal = ref(false)
+const documentChunks = ref<any[]>([])
+const documentSearch = ref('')
+const docPageSize = ref(10)
+const docCurrentPage = ref(1)
 
 // Toast 通知
 const toast = ref({
@@ -547,6 +680,18 @@ const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString('zh-CN')
 }
 
+const formatBytes = (bytes: number) => {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  let val = bytes
+  while (val >= 1024 && i < units.length - 1) {
+    val = val / 1024
+    i++
+  }
+  return `${val.toFixed(1)} ${units[i]}`
+}
+
 const refreshCollections = async () => {
   try {
     const status = await invoke('get_rag_status') as any
@@ -586,6 +731,9 @@ const viewCollection = (collection: any) => {
   selectedCollection.value = collection
   showCollectionDetailsModal.value = true
   loadCollectionDetails(collection.id)
+  reloadDocuments()
+  docCurrentPage.value = 1
+  documentSearch.value = ''
 }
 
 const loadCollectionDetails = async (collectionId: string) => {
@@ -607,6 +755,79 @@ const loadCollectionDetails = async (collectionId: string) => {
     showToast('加载集合详情失败: ' + error, 'error')
   } finally {
     loadingDetails.value = false
+  }
+}
+
+const reloadDocuments = async () => {
+  if (!selectedCollection.value) return
+  loadingDocuments.value = true
+  try {
+    const list = await invoke('list_rag_documents', { collectionId: selectedCollection.value.id }) as any[]
+    documents.value = list || []
+  } catch (e) {
+    console.error('获取文档列表失败:', e)
+    showToast('获取文档列表失败', 'error')
+  } finally {
+    loadingDocuments.value = false
+  }
+}
+
+const filteredDocuments = computed(() => {
+  const list = documents.value || []
+  const q = (documentSearch.value || '').trim().toLowerCase()
+  if (!q) return list
+  return list.filter((d: any) => (d.file_name || '').toLowerCase().includes(q))
+})
+
+const totalDocPages = computed(() => {
+  const total = filteredDocuments.value.length
+  const size = Math.max(1, Number(docPageSize.value) || 10)
+  return Math.max(1, Math.ceil(total / size))
+})
+
+const paginatedDocuments = computed(() => {
+  const size = Math.max(1, Number(docPageSize.value) || 10)
+  const page = Math.min(Math.max(1, docCurrentPage.value), totalDocPages.value)
+  const start = (page - 1) * size
+  return filteredDocuments.value.slice(start, start + size)
+})
+
+watch([filteredDocuments, docPageSize], () => {
+  // 当过滤或页大小变化时，重置/矫正页码
+  if (docCurrentPage.value > totalDocPages.value) {
+    docCurrentPage.value = 1
+  }
+})
+
+const viewDocument = async (doc: any) => {
+  selectedDocument.value = doc
+  showDocumentModal.value = true
+  await reloadDocumentChunks()
+}
+
+const reloadDocumentChunks = async () => {
+  if (!selectedDocument.value) return
+  loadingChunks.value = true
+  try {
+    const chunks = await invoke('get_rag_document_chunks', { documentId: selectedDocument.value.id }) as any[]
+    documentChunks.value = chunks || []
+  } catch (e) {
+    console.error('获取文档内容失败:', e)
+    showToast('获取文档内容失败', 'error')
+  } finally {
+    loadingChunks.value = false
+  }
+}
+
+const deleteDocument = async (doc: any) => {
+  try {
+    await invoke('delete_rag_document', { documentId: doc.id })
+    showToast('文档删除成功', 'success')
+    await reloadDocuments()
+    await refreshCollections()
+  } catch (e) {
+    console.error('删除文档失败:', e)
+    showToast('删除文档失败: ' + e, 'error')
   }
 }
 
@@ -792,7 +1013,9 @@ const executeQuery = async () => {
       request: {
         collectionId: selectedCollection.value.id,
         query: queryText.value,
-        top_k: queryTopK.value
+        top_k: queryTopK.value,
+        use_embedding: queryUseEmbedding.value,
+        reranking_enabled: queryReranking.value
       }
     }) as any
     
@@ -807,9 +1030,6 @@ const executeQuery = async () => {
 }
 
 const deleteCollection = async (collection: any) => {
-  if (!confirm(`确定要删除集合 "${collection.name}" 吗？此操作不可恢复。`)) {
-    return
-  }
 
   try {
     await invoke('delete_rag_collection', { collectionId: collection.id })

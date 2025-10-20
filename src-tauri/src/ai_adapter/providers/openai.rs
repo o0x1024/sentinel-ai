@@ -490,6 +490,9 @@ impl AiProvider for OpenAiProvider {
         let headers = self.base.build_auth_headers();
         let body = self.build_api_request(&request)?;
         
+        // 设置模型名称用于日志记录
+        self.base.http_client.set_model_name(Some(request.model.clone()));
+        
         let response = self.base.execute_with_retry(|| {
             let url = url.clone();
             let headers = headers.clone();
@@ -507,6 +510,9 @@ impl AiProvider for OpenAiProvider {
         let headers = self.base.build_auth_headers();
         let mut body = self.build_api_request(&request)?;
         body["stream"] = json!(true);
+        
+        // 设置模型名称用于日志记录
+        self.base.http_client.set_model_name(Some(request.model.clone()));
         
         let stream = self.base.execute_with_retry(|| {
             let url = url.clone();

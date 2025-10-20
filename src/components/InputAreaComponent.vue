@@ -23,7 +23,6 @@
         <div class="flex items-center justify-between gap-2">
           <!-- Leading action icons -->
           <div class="flex items-center gap-2 text-base-content/60 shrink-0">
-            <button class="icon-btn" title="新建会话" @click="createNewConversation"><i class="fas fa-plus"></i></button>
             <button class="icon-btn" title="附件"><i class="fas fa-paperclip"></i></button>
             <button class="icon-btn" :class="{ active: searchEnabled }" title="联网搜索" @click="toggleWebSearch"><i class="fas fa-globe"></i></button>
             <button class="icon-btn" :class="{ active: ragEnabled }" title="知识检索增强" @click="toggleRAG"><i class="fas fa-brain"></i></button>

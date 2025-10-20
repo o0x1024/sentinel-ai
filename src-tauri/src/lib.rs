@@ -282,6 +282,14 @@ pub fn run() {
                     tracing::debug!("Global proxy configuration initialized successfully");
                 }
 
+                // Initialize HTTP request logger
+                let logs_path = std::path::PathBuf::from(logs_dir);
+                if let Err(e) = crate::ai_adapter::init_global_logger(logs_path) {
+                    tracing::warn!("Failed to initialize HTTP request logger: {}", e);
+                } else {
+                    tracing::debug!("HTTP request logger initialized successfully");
+                }
+
                 let mut ai_manager = AiServiceManager::new(db_service.clone());
                 ai_manager.set_mcp_service(Arc::new(mcp_service.clone()));
                 ai_manager.set_app_handle(handle.clone());
@@ -687,6 +695,7 @@ pub fn run() {
             agent_commands::get_workflow_execution,
             agent_commands::get_workflow_execution_details,
             agent_commands::cancel_workflow_execution,
+            agent_commands::delete_workflow_execution,
             agent_commands::get_agent_task_logs,
             agent_commands::add_test_session_data,
             
@@ -740,6 +749,10 @@ pub fn run() {
             rag_commands::reload_rag_service,
             // 文件夹操作命令
             rag_commands::get_folder_files,
+            // 文档级别操作命令
+            rag_commands::list_rag_documents,
+            rag_commands::get_rag_document_chunks,
+            rag_commands::delete_rag_document,
             // AI助手RAG集成命令
             rag_commands::assistant_rag_answer,
             rag_commands::ensure_default_rag_collection,

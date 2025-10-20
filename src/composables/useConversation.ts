@@ -9,6 +9,9 @@ export const useConversation = () => {
   const isLoadingConversations = ref(false)
   const messages = ref<ChatMessage[]>([])
 
+  // 记录已持久化的消息ID，按会话维度去重，避免重复保存
+  const savedMessageIdsByConversation = new Map<string, Set<string>>()
+
   // Create new conversation
   const createNewConversation = async () => {
     isLoadingConversations.value = true
@@ -70,6 +73,10 @@ export const useConversation = () => {
         .sort((a, b) => (a.timestamp as any) - (b.timestamp as any))
       
       messages.value = historyMessages
+      
+      // 清除已保存的消息ID缓存，因为切换了会话
+      savedMessageIdsByConversation.delete(conversationId)
+      
       return historyMessages
     } catch (error) {
       console.error('Failed to switch conversation:', error)
@@ -119,14 +126,28 @@ export const useConversation = () => {
     if (!currentConversationId.value) return
     
     try {
+      const convId = currentConversationId.value
+      const savedSet = savedMessageIdsByConversation.get(convId) || new Set<string>()
+
       for (const message of messagesToSave) {
+        const id = (message as any)?.id as string | undefined
+        const role = (message as any)?.role
+        const content = (message as any)?.content
+        if (!id || savedSet.has(id)) continue
+
         await invoke('save_ai_message', {
           request: {
-            conversation_id: currentConversationId.value,
-            role: message.role,
-            content: message.content
+            conversation_id: convId,
+            role,
+            content
           }
         })
+
+        savedSet.add(id)
+      }
+
+      if (!savedMessageIdsByConversation.has(convId)) {
+        savedMessageIdsByConversation.set(convId, savedSet)
       }
     } catch (error) {
       console.error('Failed to save messages to conversation:', error)

@@ -22,6 +22,9 @@ pub struct RagConfig {
     /// 是否启用聊天与任务的知识库增强（全局开关）
     #[serde(default)]
     pub augmentation_enabled: bool,
+    /// 上下文窗口大小：检索到相关块后，前后各扩展多少个块
+    #[serde(default = "default_context_window")]
+    pub context_window_size: usize,
 }
 
 impl Default for RagConfig {
@@ -44,6 +47,7 @@ impl Default for RagConfig {
             reranking_enabled: false,
             similarity_threshold: 0.7,
             augmentation_enabled: false,
+            context_window_size: 1,
         }
     }
 }
@@ -87,4 +91,8 @@ impl SupportedFileType {
             _ => None,
         }
     }
+}
+
+fn default_context_window() -> usize {
+    1
 }

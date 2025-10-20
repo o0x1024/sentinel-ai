@@ -4,6 +4,8 @@ use crate::agents::traits::*;
 use crate::tools::ToolExecutionParams;
 use crate::services::ai::{AiService, AiServiceManager};
 use crate::services::database::DatabaseService;
+use crate::services::database::Database; // trait for DB methods
+use crate::commands::agent_commands::WorkflowStepDetail;
 use crate::services::prompt_db::PromptRepository;
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::utils::ordered_message::{ChunkType, emit_message_chunk};
@@ -32,6 +34,7 @@ pub struct LlmCompilerEngine {
     prompt_repo: Option<PromptRepository>,
     runtime_params: Option<std::collections::HashMap<String, serde_json::Value>>, // prompt_ids 等
     app_handle: Option<tauri::AppHandle>,
+    db_service: Option<Arc<DatabaseService>>,
 }
 
 impl LlmCompilerEngine {
@@ -69,6 +72,7 @@ impl LlmCompilerEngine {
             prompt_repo: None,
             runtime_params: None,
             app_handle: None,
+            db_service: None,
         })
     }
     
@@ -136,6 +140,7 @@ impl LlmCompilerEngine {
             prompt_repo: Some(PromptRepository::new(pool.clone())),
             runtime_params: None,
             app_handle: None,
+            db_service: Some(db_service),
         })
     }
 
@@ -526,6 +531,26 @@ impl LlmCompilerEngine {
                     Ok(result) => {
                         // 更新任务状态
                         task_fetcher.complete_task(result.clone()).await?;
+                        // 落库单个任务作为步骤
+                        if let (Some(db), Some(params)) = (&self.db_service, &self.runtime_params) {
+                            if let Some(session_id) = params.get("execution_id").and_then(|v| v.as_str()) {
+                                let step_name = result.task_id.clone();
+                                let status = match result.status { TaskStatus::Completed => "Completed", TaskStatus::Failed => "Failed", _ => "Running" };
+                                let _ = db.save_agent_execution_step(session_id, &WorkflowStepDetail {
+                                    step_id: format!("step_{}", results.len() + 1),
+                                    step_name,
+                                    status: status.to_string(),
+                                    started_at: None,
+                                    completed_at: None,
+                                    duration_ms: result.duration_ms,
+                                    result_data: Some(serde_json::json!(result.outputs)),
+                                    error: result.error.clone(),
+                                    retry_count: 0,
+                                    dependencies: vec![],
+                                    tool_result: None,
+                                }).await;
+                            }
+                        }
                         results.push(result);
                     }
                     Err(e) => {
@@ -557,7 +582,7 @@ impl LlmCompilerEngine {
         }
         
         // 构建响应生成提示
-        let response_prompt = if let Some(repo) = &self.prompt_repo {
+        let mut response_prompt = if let Some(repo) = &self.prompt_repo {
             // 优先按 prompt_ids.executor 覆盖
             if let Some(rp) = &self.runtime_params {
                 if let Some(pid) = rp.get("prompt_ids").and_then(|v| v.get("executor")).and_then(|v| v.as_i64()) {
@@ -581,6 +606,60 @@ impl LlmCompilerEngine {
         } else {
             self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
         };
+
+        // RAG augmentation for final response prompt
+        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+            if rag_service.get_config().augmentation_enabled {
+                use tokio::time::{timeout, Duration};
+                let (primary, fallback) = crate::rag::query_utils::build_rag_query_pair(user_query);
+                let rag_request = crate::rag::models::AssistantRagRequest {
+                    query: primary.clone(),
+                    collection_id: None,
+                    conversation_history: None,
+                    top_k: Some(5),
+                    use_mmr: Some(true),
+                    mmr_lambda: Some(0.7),
+                    similarity_threshold: Some(0.65),
+                    reranking_enabled: Some(false),
+                    model_provider: None,
+                    model_name: None,
+                    max_tokens: None,
+                    temperature: None,
+                };
+                if let Ok(Ok((knowledge_context, _))) = timeout(
+                    Duration::from_millis(1200),
+                    rag_service.query_for_assistant(&rag_request),
+                )
+                .await
+                {
+                    if !knowledge_context.trim().is_empty() {
+                        response_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                        response_prompt.push_str(&knowledge_context);
+                    } else {
+                        let fallback_req = crate::rag::models::AssistantRagRequest {
+                            query: fallback,
+                            collection_id: None,
+                            conversation_history: None,
+                            top_k: Some(7),
+                            use_mmr: Some(true),
+                            mmr_lambda: Some(0.7),
+                            similarity_threshold: Some(0.55),
+                            reranking_enabled: Some(false),
+                            model_provider: None,
+                            model_name: None,
+                            max_tokens: None,
+                            temperature: None,
+                        };
+                        if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
+                            if !kb2.trim().is_empty() {
+                                response_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                                response_prompt.push_str(&kb2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         // 调用AI生成最终响应
         if let Some(ai_service) = &self.ai_service {

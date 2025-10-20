@@ -131,6 +131,7 @@ pub struct Planner {
     framework_adapter: Option<Arc<dyn crate::tools::FrameworkToolAdapter>>,
     mcp_service: Option<Arc<McpService>>,
     ai_service_manager: Option<Arc<AiServiceManager>>,
+    app_handle: Option<Arc<AppHandle>>, // 用于向前端发送计划阶段消息
 }
 
 impl Planner {
@@ -158,6 +159,7 @@ impl Planner {
             framework_adapter,
             mcp_service: None,
             ai_service_manager: None,
+            app_handle: None,
         })
     }
 
@@ -189,6 +191,7 @@ impl Planner {
             framework_adapter,
             mcp_service,
             ai_service_manager: None,
+            app_handle: None,
         })
     }
 
@@ -198,7 +201,7 @@ impl Planner {
         prompt_repo: Option<PromptRepository>,
         mcp_service: Option<Arc<McpService>>,
         ai_service_manager: Arc<AiServiceManager>,
-        _app_handle: Option<Arc<AppHandle>>,
+        app_handle: Option<Arc<AppHandle>>,
     ) -> Result<Self, PlanAndExecuteError> {
         // 尝试获取Plan & Execute框架适配器
         let framework_adapter = match crate::tools::get_global_adapter_manager() {
@@ -228,6 +231,7 @@ impl Planner {
             framework_adapter,
             mcp_service,
             ai_service_manager: Some(ai_service_manager),
+            app_handle,
         })
     }
 
@@ -272,11 +276,11 @@ impl Planner {
     /// 创建执行计划 - 基于通用 Prompt 模板
     pub async fn create_plan(&self, task: &TaskRequest) -> Result<PlanningResult, PlanAndExecuteError> {
         log::info!("开始为任务 '{}' 创建执行计划", task.name);
-        
+
         // 1. 构建规划所需的 system 与 user 提示词
         let (system_prompt, user_prompt) = self.build_generic_planning_prompts(task).await?;
-        
-        // 2. 从任务参数中获取前端传入的会话/消息ID，并调用 AI 进行规划（区分 system 与 user）
+
+        // 2. 从任务参数中获取前端传入的会话/消息ID/执行ID
         let conversation_id = task
             .parameters
             .get("conversation_id")
@@ -287,29 +291,105 @@ impl Planner {
             .get("message_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let execution_id = task
+            .parameters
+            .get("execution_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| message_id.clone());
 
-        let planning_response = self
-            .call_ai_for_planning(&system_prompt, &user_prompt, conversation_id, message_id, task)
-            .await?;
-        
-        // 3. 解析规划结果
-        let plan = self.parse_planning_response(&planning_response)?;
-        
-        // 4. 计算基本指标
-        let confidence = self.calculate_basic_confidence(&plan).await?;
-        let risk_assessment = self.assess_generic_risks(&plan).await?;
-        let resource_requirements = self.calculate_basic_resources(&plan).await?;
-        tracing::info!("plan:{:?}", plan);
+        // 3. 调用AI生成计划，失败时最多重试2次（合计3次尝试）
+        let mut last_err: Option<PlanAndExecuteError> = None;
+        for attempt in 1..=3 {
+            match self
+                .call_ai_for_planning(&system_prompt, &user_prompt, conversation_id.clone(), message_id.clone(), task)
+                .await
+            {
+                Ok(planning_response) => {
+                    match self.parse_planning_response(&planning_response) {
+                        Ok(plan) => {
+                            // 计算基本指标
+                            let confidence = self.calculate_basic_confidence(&plan).await?;
+                            let risk_assessment = self.assess_generic_risks(&plan).await?;
+                            let resource_requirements = self.calculate_basic_resources(&plan).await?;
+                            tracing::info!("plan:{:?}", plan);
 
-        let result = PlanningResult {
-            plan,
-            confidence,
-            reasoning: planning_response.clone(),
-            risk_assessment,
-            resource_requirements,
-        };
-        log::info!("任务 '{}' 的执行计划创建完成，置信度: {:.2}", task.name, confidence);
-        Ok(result)
+                            let result = PlanningResult {
+                                plan,
+                                confidence,
+                                reasoning: planning_response.clone(),
+                                risk_assessment,
+                                resource_requirements,
+                            };
+                            log::info!("任务 '{}' 的执行计划创建完成，置信度: {:.2}", task.name, confidence);
+                            return Ok(result);
+                        }
+                        Err(e) => {
+                            log::warn!("规划结果解析失败(尝试 {}/3): {}", attempt, e);
+                            last_err = Some(e);
+                            self.emit_planning_error(&execution_id, &message_id, conversation_id.as_deref(), &format!(
+                                "计划生成解析失败(第{}次): {}",
+                                attempt, last_err.as_ref().unwrap()
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("调用AI生成计划失败(尝试 {}/3): {}", attempt, e);
+                    last_err = Some(e);
+                    self.emit_planning_error(&execution_id, &message_id, conversation_id.as_deref(), &format!(
+                        "计划生成失败(第{}次): {}",
+                        attempt, last_err.as_ref().unwrap()
+                    ));
+                }
+            }
+
+            if attempt < 3 {
+                // 简单固定退避：500ms * attempt
+                tokio::time::sleep(std::time::Duration::from_millis(500 * attempt)).await;
+            }
+        }
+
+        // 最终失败：向前端输出最终错误块
+        if let Some(err) = &last_err {
+            self.emit_planning_error_final(&execution_id, &message_id, conversation_id.as_deref(), &format!(
+                "计划生成最终失败: {}",
+                err
+            ));
+        }
+        Err(last_err.unwrap_or(PlanAndExecuteError::PlanningFailed("未知规划失败".to_string())))
+    }
+
+    fn emit_planning_error(&self, execution_id: &Option<String>, message_id: &Option<String>, conversation_id: Option<&str>, msg: &str) {
+        if let (Some(app), Some(exec_id), Some(msg_id)) = (&self.app_handle, execution_id.as_ref(), message_id.as_ref()) {
+            crate::utils::ordered_message::emit_message_chunk_arc(
+                app,
+                exec_id,
+                msg_id,
+                conversation_id,
+                crate::utils::ordered_message::ChunkType::Error,
+                msg,
+                false,
+                Some("planner"),
+                None,
+            );
+        }
+    }
+
+    fn emit_planning_error_final(&self, execution_id: &Option<String>, message_id: &Option<String>, conversation_id: Option<&str>, msg: &str) {
+        if let (Some(app), Some(exec_id), Some(msg_id)) = (&self.app_handle, execution_id.as_ref(), message_id.as_ref()) {
+            crate::utils::ordered_message::emit_message_chunk_arc(
+                app,
+                exec_id,
+                msg_id,
+                conversation_id,
+                crate::utils::ordered_message::ChunkType::Error,
+                msg,
+                false,
+                Some("planner"),
+                None,
+            );
+        }
     }
 
     /// 构建通用规划的 system 与 user 提示词（使用统一提示词系统）
@@ -341,7 +421,7 @@ impl Planner {
         // 仅渲染通用上下文（如工具清单）到 system 提示
         let mut system_ctx = HashMap::new();
         system_ctx.insert("tools".to_string(), serde_json::Value::String(tools_block));
-        let system_prompt = if let Some(repo) = &self.prompt_repo {
+        let mut system_prompt = if let Some(repo) = &self.prompt_repo {
             let resolver = PromptResolver::new(repo.clone());
             resolver
                 .render_variables(&system_template, &system_ctx)
@@ -354,6 +434,64 @@ impl Planner {
             "{}",
             task.name
         );
+
+        // RAG augmentation for planning stage (global toggle)
+        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+            if rag_service.get_config().augmentation_enabled {
+                use tokio::time::{timeout, Duration};
+                // Build short queries (primary + fallback)
+                let (primary, fallback) = crate::rag::query_utils::build_rag_query_pair(&format!("{} {}", task.name, task.description));
+                let rag_request = crate::rag::models::AssistantRagRequest {
+                    query: primary.clone(),
+                    collection_id: None,
+                    conversation_history: None,
+                    top_k: Some(5),
+                    use_mmr: Some(true),
+                    mmr_lambda: Some(0.7),
+                    similarity_threshold: Some(0.65),
+                    reranking_enabled: Some(false),
+                    model_provider: None,
+                    model_name: None,
+                    max_tokens: None,
+                    temperature: None,
+                };
+                if let Ok(Ok((knowledge_context, _))) = timeout(
+                    Duration::from_millis(1200),
+                    rag_service.query_for_assistant(&rag_request),
+                )
+                .await
+                {
+                    if !knowledge_context.trim().is_empty() {
+                        log::info!("Augmenting planner system prompt with RAG context");
+                        system_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                        system_prompt.push_str(&knowledge_context);
+                    } else {
+                        // Fallback query with relaxed similarity threshold and higher top_k
+                        let fallback_req = crate::rag::models::AssistantRagRequest {
+                            query: fallback,
+                            collection_id: None,
+                            conversation_history: None,
+                            top_k: Some(7),
+                            use_mmr: Some(true),
+                            mmr_lambda: Some(0.7),
+                            similarity_threshold: Some(0.55),
+                            reranking_enabled: Some(false),
+                            model_provider: None,
+                            model_name: None,
+                            max_tokens: None,
+                            temperature: None,
+                        };
+                        if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
+                            if !kb2.trim().is_empty() {
+                                log::info!("Augmenting planner system prompt with fallback RAG context");
+                                system_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                                system_prompt.push_str(&kb2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok((system_prompt, user_prompt))
     }

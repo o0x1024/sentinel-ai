@@ -498,8 +498,8 @@ pub enum BackoffStrategy {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_retries: 0,
-            retry_interval: 5,
+            max_retries: 3,
+            retry_interval: 2,
             backoff_strategy: BackoffStrategy::Exponential,
         }
     }

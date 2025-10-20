@@ -7,7 +7,7 @@ use crate::services::prompt_db::PromptRepository;
 use crate::engines::plan_and_execute::replanner::Replanner;
 use crate::engines::plan_and_execute::memory_manager::MemoryManager;
 use crate::tools::{UnifiedToolManager, ToolExecutionParams, ToolExecutionResult, get_global_tool_system, ExecutionStatus};
-use crate::engines::ExecutionError;
+use crate::engines::{ExecutionError, StepExecutionStatus};
 use crate::services::database::DatabaseService;
 use crate::services::ai::{AiServiceManager, SchedulerStage};
 use crate::utils::ordered_message::{ChunkType, emit_message_chunk_arc};
@@ -116,7 +116,7 @@ pub struct StepResult {
     /// 步骤ID
     pub step_id: String,
     /// 执行状态
-    pub status: StepStatus,
+    pub status: StepExecutionStatus,
     /// 开始时间
     pub started_at: SystemTime,
     /// 结束时间
@@ -133,24 +133,6 @@ pub struct StepResult {
     pub tool_result: Option<ToolExecutionResult>,
 }
 
-/// 步骤状态
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum StepStatus {
-    /// 待执行
-    Pending,
-    /// 执行中
-    Running,
-    /// 已完成
-    Completed,
-    /// 已失败
-    Failed,
-    /// 已跳过
-    Skipped,
-    /// 重试中
-    Retrying,
-    /// 已取消
-    Cancelled,
-}
 
 /// 执行指标
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,7 +174,7 @@ pub struct ExecutionContext {
 #[derive(Debug, Clone)]
 pub struct ExecutionState {
     /// 当前执行的步骤
-    pub current_steps: HashMap<String, StepStatus>,
+    pub current_steps: HashMap<String, StepExecutionStatus>,
     /// 已完成的步骤
     pub completed_steps: Vec<String>,
     /// 失败的步骤
@@ -520,15 +502,15 @@ impl Executor {
 
         // 构造标准JSON
         let status_str = match result.status {
-            StepStatus::Completed => "Completed",
-            StepStatus::Running => "Running",
-            StepStatus::Failed => "Failed",
-            StepStatus::Pending => "Pending",
-            StepStatus::Skipped => "Skipped",
-            StepStatus::Retrying => "Retrying",
-            StepStatus::Cancelled => "Cancelled",
+            StepExecutionStatus::Completed => "Completed",
+            StepExecutionStatus::Running => "Running",
+            StepExecutionStatus::Failed => "Failed",
+            StepExecutionStatus::Pending => "Pending",
+            StepExecutionStatus::Skipped => "Skipped",
+            StepExecutionStatus::Retrying => "Retrying",
+            StepExecutionStatus::Cancelled => "Cancelled",
         };
-        let success = matches!(result.status, StepStatus::Completed);
+        let success = matches!(result.status, StepExecutionStatus::Completed);
         let output = result.result_data.clone().unwrap_or(serde_json::json!(null));
         let json = serde_json::json!({
             "step_name": step_name,
@@ -897,28 +879,28 @@ impl Executor {
                 TaskStatus::Pending
             },
             completed_steps: overall_step_results.iter()
-                .filter(|(_, result)| result.status == StepStatus::Completed)
+                .filter(|(_, result)| result.status == StepExecutionStatus::Completed)
                 .map(|(id, _)| id.clone())
                 .collect(),
             failed_steps: overall_step_results.iter()
-                .filter(|(_, result)| result.status == StepStatus::Failed)
+                .filter(|(_, result)| result.status == StepExecutionStatus::Failed)
                 .map(|(id, _)| id.clone())
                 .collect(),
             skipped_steps: overall_step_results.iter()
-                .filter(|(_, result)| result.status == StepStatus::Skipped)
+                .filter(|(_, result)| result.status == StepExecutionStatus::Skipped)
                 .map(|(id, _)| id.clone())
                 .collect(),
             step_results: overall_step_results.clone(),
             metrics: ExecutionMetrics {
                 total_duration_ms: total_execution_time,
                 successful_steps: overall_step_results.values()
-                    .filter(|r| r.status == StepStatus::Completed)
+                    .filter(|r| r.status == StepExecutionStatus::Completed)
                     .count() as u32,
                 failed_steps: overall_step_results.values()
-                    .filter(|r| r.status == StepStatus::Failed)
+                    .filter(|r| r.status == StepExecutionStatus::Failed)
                     .count() as u32,
                 skipped_steps: overall_step_results.values()
-                    .filter(|r| r.status == StepStatus::Skipped)
+                    .filter(|r| r.status == StepExecutionStatus::Skipped)
                     .count() as u32,
                 total_retries: overall_step_results.values()
                     .map(|r| r.retry_count)
@@ -972,6 +954,27 @@ impl Executor {
                 },
             },
             };
+            
+            // 无论最终状态如何，发送一次最终块，通知前端结束等待
+            if let Some(ctx) = self.context.lock().await.as_ref() {
+                let execution_id = self.resolve_execution_id(ctx).await;
+                let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(ctx).await;
+                let (chunk_type, content) = match final_result.status {
+                    TaskStatus::Completed => (ChunkType::Meta, "任务执行完成"),
+                    TaskStatus::Failed => (ChunkType::Meta, "任务执行失败"),
+                    _ => (ChunkType::Meta, "任务执行结束"),
+                };
+                self.emit_message_chunk(
+                    &execution_id,
+                    &message_id,
+                    conversation_id.as_deref(),
+                    chunk_type,
+                    content,
+                    true,
+                    Some("executor"),
+                    None,
+                );
+            }
             
             log::info!("=== Plan-and-Execute执行完成 ===");
         log::info!("最终状态: {:?}, 完成步骤: {}, 失败步骤: {}, 总耗时: {}ms", 
@@ -1326,7 +1329,7 @@ impl Executor {
                 
                 match self.execute_step(step, context).await {
                     Ok(result) => {
-                        if result.status == StepStatus::Completed {
+                        if result.status == StepExecutionStatus::Completed {
                             completed_steps.push(step.id.clone());
                         } else {
                             failed_steps.push(step.id.clone());
@@ -1360,7 +1363,7 @@ impl Executor {
                     let _tool_name = step.tool_config.as_ref().map(|c| c.tool_name.as_str());
                     // self.emit_tool_result(context, &step.name, &result, tool_name).await;
 
-                    if result.status == StepStatus::Completed {
+                    if result.status == StepExecutionStatus::Completed {
                         log::info!("✓ 步骤执行成功: {}", step.name);
                         completed_steps.push(step.id.clone());
                     } else {
@@ -1446,7 +1449,7 @@ impl Executor {
             let result = self.execute_step(step, context).await?;
             
             // 检查步骤是否失败，如果失败且有replanner，尝试实时重新规划
-            if result.status == StepStatus::Failed {
+            if result.status == StepExecutionStatus::Failed {
                 if let Some(ref replanner) = self.replanner {
                     log::warn!("步骤 '{}' 执行失败，尝试实时重新规划", step.name);
                     
@@ -1576,13 +1579,13 @@ impl Executor {
                     shared_data.insert(format!("step_result_{}", step.name), result.clone());
                     
                     // 验证后置条件
-                    let mut step_status = StepStatus::Completed;
+                    let mut step_status = StepExecutionStatus::Completed;
                     let mut step_error = None;
                     
                     for postcondition in &step.postconditions {
                         if !self.evaluate_condition(postcondition, &shared_data).await {
                             log::warn!("步骤 '{}' 的后置条件 '{}' 验证失败", step.name, postcondition);
-                            step_status = StepStatus::Failed;
+                            step_status = StepExecutionStatus::Failed;
                             step_error = Some(format!("后置条件验证失败: {}", postcondition));
                             break;
                         }
@@ -1641,7 +1644,7 @@ impl Executor {
                         log::error!("步骤执行失败，已达到最大重试次数: {}", error);
                         return Ok(StepResult {
                             step_id: step.id.clone(),
-                            status: StepStatus::Failed,
+                            status: StepExecutionStatus::Failed,
                             started_at: start_time,
                             completed_at: Some(SystemTime::now()),
                             duration_ms: start_time.elapsed().unwrap_or_default().as_millis() as u64,
@@ -2433,15 +2436,15 @@ impl Executor {
             total_retries += result.retry_count;
             
             match result.status {
-                StepStatus::Completed => {
+                StepExecutionStatus::Completed => {
                     completed_steps.push(step_id.clone());
                     successful_count += 1;
                 },
-                StepStatus::Failed => {
+                StepExecutionStatus::Failed => {
                     failed_steps.push(step_id.clone());
                     failed_count += 1;
                 },
-                StepStatus::Skipped => {
+                StepExecutionStatus::Skipped => {
                     skipped_steps.push(step_id.clone());
                     skipped_count += 1;
                 },
@@ -2576,7 +2579,7 @@ impl Executor {
         let mut factors = Vec::new();
 
         let successful_steps: Vec<_> = step_results.values()
-            .filter(|r| r.status == StepStatus::Completed)
+            .filter(|r| r.status == StepExecutionStatus::Completed)
             .collect();
 
         if !successful_steps.is_empty() {
@@ -2606,7 +2609,7 @@ impl Executor {
         let mut factors = Vec::new();
 
         let failed_steps: Vec<_> = step_results.values()
-            .filter(|r| r.status == StepStatus::Failed)
+            .filter(|r| r.status == StepExecutionStatus::Failed)
             .collect();
 
         if !failed_steps.is_empty() {
@@ -2750,7 +2753,7 @@ impl Executor {
         let mut suggestions = Vec::new();
 
         let failed_count = step_results.values()
-            .filter(|r| r.status == StepStatus::Failed)
+            .filter(|r| r.status == StepExecutionStatus::Failed)
             .count();
 
         if failed_count > 0 {
@@ -2786,7 +2789,7 @@ impl Executor {
 
         // 执行风险
         let failure_rate = step_results.values()
-            .filter(|r| r.status == StepStatus::Failed)
+            .filter(|r| r.status == StepExecutionStatus::Failed)
             .count() as f64 / step_results.len() as f64;
 
         if failure_rate > 0.3 {
@@ -2997,13 +3000,13 @@ impl Executor {
                 (k.clone(), crate::engines::types::StepExecutionResult {
                     step_id: v.step_id.clone(),
                     status: match v.status {
-                        StepStatus::Pending => crate::engines::types::StepExecutionStatus::Pending,
-                        StepStatus::Running => crate::engines::types::StepExecutionStatus::Running,
-                        StepStatus::Completed => crate::engines::types::StepExecutionStatus::Completed,
-                        StepStatus::Failed => crate::engines::types::StepExecutionStatus::Failed,
-                        StepStatus::Skipped => crate::engines::types::StepExecutionStatus::Skipped,
-                        StepStatus::Retrying => crate::engines::types::StepExecutionStatus::Retrying,
-                        StepStatus::Cancelled => crate::engines::types::StepExecutionStatus::Failed,
+                        StepExecutionStatus::Pending => crate::engines::types::StepExecutionStatus::Pending,
+                        StepExecutionStatus::Running => crate::engines::types::StepExecutionStatus::Running,
+                        StepExecutionStatus::Completed => crate::engines::types::StepExecutionStatus::Completed,
+                        StepExecutionStatus::Failed => crate::engines::types::StepExecutionStatus::Failed,
+                        StepExecutionStatus::Skipped => crate::engines::types::StepExecutionStatus::Skipped,
+                        StepExecutionStatus::Retrying => crate::engines::types::StepExecutionStatus::Retrying,
+                        StepExecutionStatus::Cancelled => crate::engines::types::StepExecutionStatus::Failed,
                     },
                     started_at: v.started_at,
                     completed_at: v.completed_at,
