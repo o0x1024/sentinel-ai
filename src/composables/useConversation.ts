@@ -67,7 +67,16 @@ export const useConversation = () => {
           role: msg.role,
           content: msg.content,
           timestamp: new Date(msg.timestamp),
-          isStreaming: false
+          isStreaming: false,
+          citations: (() => {
+            try {
+              if (msg.metadata) {
+                const meta = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata
+                if (meta && Array.isArray(meta.citations)) return meta.citations
+              }
+            } catch (e) { /* ignore parse errors */ }
+            return undefined
+          })()
         }))
         // Ensure messages are in ascending time order so newest appears at bottom
         .sort((a, b) => (a.timestamp as any) - (b.timestamp as any))
@@ -135,11 +144,14 @@ export const useConversation = () => {
         const content = (message as any)?.content
         if (!id || savedSet.has(id)) continue
 
+        // 将 citations（若存在）嵌入 metadata 保存
+        const metadata = (message as any)?.citations ? { citations: (message as any).citations } : undefined
         await invoke('save_ai_message', {
           request: {
             conversation_id: convId,
             role,
-            content
+            content,
+            metadata
           }
         })
 

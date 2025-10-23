@@ -9,11 +9,11 @@ use crate::tools::{McpClientManager, McpServerManager, ConnectionStatus, McpSess
 use crate::tools::protocol::ToolDefinition;
 use crate::services::database::DatabaseService;
 
-/// 从MCP Content结构中提取文本内容
-fn extract_text_from_content(content: &rmcp::model::Content) -> String {
-    match &content.raw {
+/// 从MCP RawContent结构中提取文本内容
+fn extract_text_from_content(content: &rmcp::model::RawContent) -> String {
+    match content {
         rmcp::model::RawContent::Text(text_content) => text_content.text.clone(),
-        _ => format!("[Non-text content: {:?}]", content.raw),
+        _ => format!("[Non-text content: {:?}]", content),
     }
 }
 
@@ -242,7 +242,7 @@ impl McpService {
 
     /// 执行客户端连接的MCP工具（按连接名定向调用）
     pub async fn execute_client_tool(&self, connection_name: &str, tool_name: &str, parameters: Value) -> Result<Value> {
-        use rmcp::model::{CallToolRequestParam, Content};
+        use rmcp::model::CallToolRequestParam;
         tracing::info!("[MCP] Executing client tool '{}' on connection '{}' with params: {:?}", tool_name, connection_name, parameters);
 
         // 获取会话
@@ -260,9 +260,8 @@ impl McpService {
             }
             let text = result
                 .content
-                .unwrap_or_default()
                 .into_iter()
-                .map(|c: Content| extract_text_from_content(&c))
+                .map(|c| extract_text_from_content(&c.raw))
                 .collect::<Vec<_>>()
                 .join("\n");
             return Ok(serde_json::json!({ "success": result.is_error != Some(true), "output": text }));

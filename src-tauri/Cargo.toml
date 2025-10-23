@@ -42,7 +42,7 @@ rsubdomain = "1.2.6"
 rustscan = "2.4.1"
 
 # MCP协议支持 - 使用官方Rust SDK，启用所有新特性
-rmcp = { version = "0.5.0", features = [
+rmcp = { version = "0.8.3", features = [
     "client", 
     "server", 
     "macros", 
@@ -59,7 +59,7 @@ rmcp = { version = "0.5.0", features = [
 ] }
 
 # RAG and Vector Database
-lancedb = "0.15.0"  # 最新版本，支持Rust SDK
+lancedb = "0.21.3"
 
 # Document parsing
 docx-rs = "0.4.17"
@@ -165,12 +165,18 @@ fastrand = "2.3.0"
 # 信号处理
 signal-hook = "0.3"
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
+rig-core = { version = "0.22.0", features = ["derive"] }
+rig = { package = "rig-core", version = "0.22.0", features = ["derive"] }
+rig-lancedb = "0.2.24"
+arrow-array = "55.2.0"
+arrow-schema = "55.2.0"
+
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [profile.dev]
-# 开发环境优化
+# 开发环境优化 
 opt-level = 1          # 基本优化，提升编译速度
 debug = true           # 保留调试信息
 split-debuginfo = "unpacked"  # 调试信息优化
@@ -182,9 +188,6 @@ lto = true            # 启用链接时优化
 opt-level = "s"       # 优化代码大小
 strip = true          # 从二进制文件中剥离符号信息
 
-[profile.dev-release]
-inherits = "release"
-debug = true          # 生产环境但保留调试信息
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

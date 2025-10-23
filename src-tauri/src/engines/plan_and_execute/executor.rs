@@ -9,7 +9,7 @@ use crate::engines::plan_and_execute::memory_manager::MemoryManager;
 use crate::tools::{UnifiedToolManager, ToolExecutionParams, ToolExecutionResult, get_global_tool_system, ExecutionStatus};
 use crate::engines::{ExecutionError, StepExecutionStatus};
 use crate::services::database::DatabaseService;
-use crate::services::ai::{AiServiceManager, SchedulerStage};
+use crate::services::ai::{AiService, AiServiceManager, SchedulerStage};
 use crate::utils::ordered_message::{ChunkType, emit_message_chunk_arc};
 use crate::database::plan_execute_repository::PlanExecuteRepository;
 use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
@@ -804,7 +804,9 @@ impl Executor {
                 if should_replan {
                     log::info!("反思层决定：需要重新规划");
                     
-                    match replanner.analyze_and_replan(&current_plan, &execution_result, task, None).await {
+                    // DISABLED: Replanner needs Rig refactor
+                    let replan_result: Result<crate::engines::plan_and_execute::replanner::ReplanResult, anyhow::Error> = Err(anyhow::anyhow!("Replanner disabled"));
+                    match replan_result {
                         Ok(replan_result) => {
                             if replan_result.should_replan {
                                 if let Some(new_plan) = replan_result.new_plan {
@@ -1453,7 +1455,9 @@ impl Executor {
                 if let Some(ref replanner) = self.replanner {
                     log::warn!("步骤 '{}' 执行失败，尝试实时重新规划", step.name);
                     
-                    match replanner.handle_runtime_exception(plan, &result, task).await {
+                    // DISABLED: Replanner needs Rig refactor
+                    let replan_result: Result<crate::engines::plan_and_execute::replanner::ReplanResult, anyhow::Error> = Err(anyhow::anyhow!("Replanner disabled"));
+                    match replan_result {
                         Ok(replan_result) => {
                             if replan_result.should_replan {
                                 if let Some(_new_plan) = replan_result.new_plan {
@@ -1990,10 +1994,16 @@ impl Executor {
         if rag_enabled {
             if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
                 log::info!("尝试为AI推理步骤检索RAG知识: {}", step.name);
+                // 获取激活的集合ID，与AI助手模式保持一致
+                let active_collection_id: Option<String> = match self.db_service.get_rag_collections().await {
+                    Ok(cols) => cols.into_iter().find(|c| c.is_active).map(|c| c.id),
+                    Err(_) => None,
+                };
+                
                 // 构建RAG查询请求
                 let rag_request = crate::rag::models::AssistantRagRequest {
                     query: format!("{} {}", step.name, step.description),
-                    collection_id: None, // 使用默认集合
+                    collection_id: active_collection_id, // 使用激活集合
                     conversation_history: None,
                     top_k: Some(5),
                     use_mmr: Some(true),
@@ -2008,7 +2018,7 @@ impl Executor {
                 // 短超时避免阻塞执行
                 use tokio::time::{timeout, Duration};
                 match timeout(Duration::from_millis(1500), rag_service.query_for_assistant(&rag_request)).await {
-                    Ok(Ok((knowledge_context, _citations))) => {
+                    Ok(Ok((knowledge_context, citations))) => {
                         if !knowledge_context.trim().is_empty() {
                             let policy = "You must ground answers strictly in the EVIDENCE BLOCKS. Cite sources inline as [SOURCE n]. If evidence is insufficient, say so and avoid fabrication.";
                             rag_context = format!(
@@ -2016,6 +2026,28 @@ impl Executor {
                                 policy, knowledge_context
                             );
                             log::info!("为步骤 '{}' 注入基于证据的知识块", step.name);
+
+                            // 发送包含引用信息的Meta块到前端，供底部展示
+                            if let Some(app_handle) = &self.app_handle {
+                                let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+                                let execution_id = self.resolve_execution_id(context).await;
+                                let meta = serde_json::json!({
+                                    "type": "rag_citations",
+                                    "citations": citations,
+                                });
+                                let meta_str = serde_json::to_string(&meta).unwrap_or_else(|_| "{}".to_string());
+                                emit_message_chunk_arc(
+                                    app_handle,
+                                    &execution_id,
+                                    &message_id,
+                                    conversation_id.as_deref(),
+                                    ChunkType::Meta,
+                                    &meta_str,
+                                    false,
+                                    Some("executor"),
+                                    None,
+                                );
+                            }
                         } else {
                             log::debug!("步骤 '{}' 未找到相关RAG知识", step.name);
                         }
@@ -2199,23 +2231,23 @@ impl Executor {
                 return Err(PlanAndExecuteError::ConfigError("Executor model is empty; please configure scheduler or executor.model_config.model_name".to_string()));
             }
 
-            // 优先按模型查找服务
-            match ai_service_manager.find_service_by_model(&model_name).await {
-                Ok(Some(service)) => service,
-                _ => {
-                    match ai_service_manager.find_service_by_provider_and_model(&provider_name, &model_name).await {
-                        Ok(Some(service)) => service,
-                        Ok(None) => {
-                            return Err(PlanAndExecuteError::AiAdapterError(format!(
-                                "无法找到提供商 '{}' 的模型 '{}'", provider_name, model_name
-                            )));
-                        },
-                        Err(e) => {
-                            return Err(PlanAndExecuteError::AiAdapterError(format!(
-                                "查找AI服务失败: {}", e
-                            )));
-                        }
-                    }
+            // 直接基于配置构建一次性服务（使用 Rig），不再通过查找
+            match ai_service_manager.get_provider_config(&provider_name).await {
+                Ok(Some(cfg)) => {
+                    let mut dc = cfg;
+                    dc.model = model_name.clone();
+                    let app_handle = self.app_handle.as_ref().map(|a| a.as_ref().clone());
+                    AiService::new(dc, self.db_service.clone(), app_handle, None)
+                }
+                Ok(None) => {
+                    return Err(PlanAndExecuteError::AiAdapterError(format!(
+                        "找不到提供商配置: {}", provider_name
+                    )))
+                }
+                Err(e) => {
+                    return Err(PlanAndExecuteError::AiAdapterError(format!(
+                        "读取提供商配置失败: {}", e
+                    )))
                 }
             }
         } else {

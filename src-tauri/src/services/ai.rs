@@ -1,7 +1,5 @@
-use crate::ai_adapter::core::AiAdapterManager;
 use crate::commands::ai::{ModelConfig, ModelInfo};
 // Removed: use crate::engines::types::{StreamMessageType, UnifiedStreamMessage};
-use crate::ai_adapter::types::ToolCall;
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::database::Database;
 use crate::services::mcp::McpService;
@@ -9,7 +7,12 @@ use crate::utils::ordered_message::ChunkType;
 use anyhow::Result;
 use chrono::Utc;
 
-use crate::ai_adapter::types::*;
+
+use futures::StreamExt;
+use rig::client::builder::DynClientBuilder;
+use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
+use rig::agent::MultiTurnStreamItem;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -175,7 +178,7 @@ pub struct AiServiceManager {
 }
 
 #[derive(Debug, Deserialize)]
-struct ProviderConfig {
+pub struct ProviderConfig {
     #[allow(unused)]
     id: String,
     provider: String,
@@ -208,6 +211,10 @@ impl AiServiceManager {
             app_handle: Arc::new(std::sync::RwLock::new(None)),
             mcp_service: None,
         }
+    }
+
+    pub fn get_db_arc(&self) -> Arc<dyn Database + Send + Sync> {
+        self.db.clone()
     }
 
     /// 从数据库获取AI提供商配置
@@ -334,47 +341,6 @@ impl AiServiceManager {
 
     // 添加AI服务
     pub async fn add_service(&self, name: String, config: AiConfig) -> Result<()> {
-        use crate::ai_adapter::types::ProviderConfig;
-
-        // 创建提供商配置
-        let provider_config = ProviderConfig {
-            name: config.provider.clone(),
-            api_key: config.api_key.clone().unwrap_or_default(),
-            api_base: config.api_base.clone(),
-            api_version: None,
-            timeout: None,
-            max_retries: None,
-            extra_headers: None,
-        };
-
-        // 向全局 AI 客户端注册提供商（使用小写名称确保一致性）
-        let provider_name = config.provider.to_lowercase();
-
-        // 使用ProviderFactory创建提供商实例
-        use crate::ai_adapter::providers::ProviderFactory;
-        match ProviderFactory::create(provider_config) {
-            Ok(provider) => {
-                // 注册到全局AI适配器管理器
-                let adapter_manager = AiAdapterManager::global();
-                if let Err(e) = adapter_manager.register_provider(provider.clone()) {
-                    tracing::warn!(
-                        "Failed to register provider {} to AiAdapterManager: {}",
-                        provider_name,
-                        e
-                    );
-                } else {
-                    tracing::debug!(
-                        "Successfully registered provider {} to AiAdapterManager: {}",
-                        provider_name,
-                        provider.name()
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to create provider {}: {}", provider_name, e);
-            }
-        }
-
         let service = AiService {
             config,
             db: self.db.clone(),
@@ -489,22 +455,6 @@ impl AiServiceManager {
             if self.get_service(&provider_key).is_some() {
                 if let Err(e) = self.set_default_alias_to(&provider_key).await {
                     tracing::warn!("Failed to set default alias to '{}': {}", provider_key, e);
-                }
-                // 同步设置到全局AI适配器管理器
-                if let Ok(adapter_manager) =
-                    crate::ai_adapter::core::AiAdapterManager::global().get_client()
-                {
-                    if let Ok(mut client) = adapter_manager.write() {
-                        if let Err(e) = client.set_default_provider(&provider_key) {
-                            tracing::warn!(
-                                "Failed to set global default provider to '{}': {}",
-                                provider_key,
-                                e
-                            );
-                        } else {
-                            tracing::info!("Global default provider set to '{}'", provider_key);
-                        }
-                    }
                 }
             } else {
                 tracing::warn!(
@@ -770,7 +720,7 @@ impl AiServiceManager {
         Ok(config)
     }
 
-    /// 根据模型配置阶段获取对应的AI模型服务
+    /// 根据阶段直接使用配置中的 provider/model 构建一次性服务（使用 Rig）
     pub async fn get_service_for_stage(
         &self,
         stage: SchedulerStage,
@@ -788,458 +738,33 @@ impl AiServiceManager {
             SchedulerStage::Evaluation => (config.evaluator_model, config.evaluator_provider),
         };
 
-        // 根据提供商和模型ID找到对应的服务
-        let service = self
-            .find_service_by_provider_and_model(&provider_name, &model_id)
-            .await?;
-        Ok(service)
-    }
+        println!("model_id: {}, provider_name: {}", model_id, provider_name);
 
-    // 根据提供商和模型ID查找对应的AI服务
-    pub async fn find_service_by_provider_and_model(
-        &self,
-        provider_name: &str,
-        model_id: &str,
-    ) -> anyhow::Result<Option<AiService>> {
-        if model_id.is_empty() {
+        if provider_name.trim().is_empty() || model_id.trim().is_empty() {
             return Ok(None);
         }
 
-        // 如果指定了提供商，优先根据提供商查找
-        if !provider_name.is_empty() {
-            // 先收集匹配的服务，然后释放锁
-            let matching_services = {
-                let services = self.services.read().unwrap();
-                services
-                    .iter()
-                    .filter_map(|(_service_name, service)| {
-                        let config = service.get_config();
-                        if config.provider.to_lowercase() == provider_name.to_lowercase() {
-                            Some((service.clone(), config.provider.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            };
-
-            // 现在可以安全地进行async操作
-            for (service, provider) in matching_services {
-                if self
-                    .is_model_supported_by_service(model_id, &provider)
-                    .await
-                {
-                    tracing::info!(
-                        "Found service for provider '{}' and model '{}': {}",
-                        provider_name,
-                        model_id,
-                        provider
-                    );
-                    return Ok(Some(service));
-                }
-            }
-
-            tracing::warn!(
-                "No service found for provider '{}' with model '{}'",
-                provider_name,
-                model_id
-            );
-        }
-
-        // 如果没有指定提供商或没找到匹配的服务，回退到按模型查找
-        self.find_service_by_model(model_id).await
-    }
-
-    // 根据模型ID查找对应的AI服务
-    pub async fn find_service_by_model(&self, model_id: &str) -> anyhow::Result<Option<AiService>> {
-        // 首先检查是否有服务直接支持该模型
-        let direct_match = {
-            let services = self.services.read().unwrap();
-
-            for (_service_name, service) in services.iter() {
-                let config = service.get_config();
-
-                // 检查服务的默认模型是否匹配
-                if config.model == model_id {
-                    return Ok(Some(service.clone()));
-                }
-            }
-            None::<AiService>
+        let provider_cfg = match self.get_provider_config(&provider_name).await? {
+            Some(cfg) => cfg,
+            None => return Ok(None),
         };
 
-        if direct_match.is_some() {
-            return Ok(direct_match);
-        }
+        let mut dynamic_cfg = provider_cfg;
+        dynamic_cfg.model = model_id.clone();
 
-        // 检查服务是否支持该模型（通过提供商推断）
-        let supported_service = {
-            let services = self.services.read().unwrap();
-            let mut result: Option<AiService> = None;
-
-            for (_service_name, service) in services.iter() {
-                let config = service.get_config();
-
-                // 需要在这里检查支持，但不能使用async方法
-                // 我们只检查硬编码规则
-                let hardcoded_support = match config.provider.to_lowercase().as_str() {
-                    "openai" => model_id.starts_with("gpt-") || model_id.starts_with("o1-"),
-                    "anthropic" => model_id.starts_with("claude-"),
-                    "deepseek" => model_id.starts_with("deepseek-"),
-                    "groq" => {
-                        model_id.starts_with("llama")
-                            || model_id.starts_with("mixtral")
-                            || model_id.starts_with("gemma")
-                    }
-                    "ollama" => true, // Ollama支持各种模型
-                    "gemini" => model_id.starts_with("gemini-"),
-                    "zhipu" => model_id.starts_with("glm-"),
-                    "cohere" => model_id.starts_with("command-") || model_id.starts_with("c4ai-"),
-                    "xai" => model_id.starts_with("grok-"),
-                    "moonshot" => {
-                        model_id.starts_with("moonshot-") || model_id.starts_with("kimi-")
-                    }
-                    "modelscope" => {
-                        model_id.starts_with("qwen")
-                            || model_id.starts_with("baichuan")
-                            || model_id.starts_with("chatglm")
-                            || model_id.starts_with("internlm")
-                            || model_id.starts_with("yi-")
-                            || model_id.starts_with("deepseek-")
-                    }
-                    _ => false,
-                };
-
-                if hardcoded_support {
-                    // 创建一个使用指定模型的服务副本
-                    let mut new_config = config.clone();
-                    new_config.model = model_id.to_string();
-
-                    let new_service = AiService {
-                        config: new_config,
-                        db: self.db.clone(),
-                        app_handle: self.app_handle.read().unwrap().clone(),
-                        mcp_service: self.mcp_service.clone(),
-                        max_retries: 3,
-                    };
-
-                    info!("为模型 {} 找到匹配的提供商 {}", model_id, config.provider);
-                    result = Some(new_service);
-                    break;
-                }
-            }
-            result
-        };
-
-        if supported_service.is_some() {
-            return Ok(supported_service);
-        }
-
-        // 检查数据库中的providers_config是否支持该模型
-        if self.is_model_supported_by_any_provider(model_id).await {
-            // 如果数据库支持，尝试推断提供商
-            if let Some(provider_name) = self.infer_provider_from_model(model_id).await {
-                // 查找该提供商的服务
-                let services = self.services.read().unwrap();
-                for (_service_name, service) in services.iter() {
-                    let config = service.get_config();
-                    if config.provider.to_lowercase() == provider_name.to_lowercase() {
-                        // 创建使用指定模型的服务副本
-                        let mut new_config = config.clone();
-                        new_config.model = model_id.to_string();
-
-                        let new_service = AiService {
-                            config: new_config,
-                            db: self.db.clone(),
-                            app_handle: self.app_handle.read().unwrap().clone(),
-                            mcp_service: self.mcp_service.clone(),
-                            max_retries: 3,
-                        };
-
-                        info!(
-                            "通过数据库配置为模型 {} 找到提供商 {}",
-                            model_id, provider_name
-                        );
-                        return Ok(Some(new_service));
-                    }
-                }
-            }
-        }
-
-        // 如果找不到支持该模型的服务，尝试根据模型名推断提供商
-        let inferred_provider = self.infer_provider_from_model(model_id).await;
-        if let Some(provider_name) = inferred_provider {
-            // 查找该提供商的服务
-            let services = self.services.read().unwrap();
-            for (_service_name, service) in services.iter() {
-                let config = service.get_config();
-                if config.provider.to_lowercase() == provider_name.to_lowercase() {
-                    // 创建使用指定模型的服务副本
-                    let mut new_config = config.clone();
-                    new_config.model = model_id.to_string();
-
-                    let new_service = AiService {
-                        config: new_config,
-                        db: self.db.clone(),
-                        app_handle: self.app_handle.read().unwrap().clone(),
-                        mcp_service: self.mcp_service.clone(),
-                        max_retries: 3,
-                    };
-
-                    info!("通过推断为模型 {} 找到提供商 {}", model_id, provider_name);
-                    return Ok(Some(new_service));
-                }
-            }
-        }
-
-        warn!("找不到支持模型 {} 的服务", model_id);
-        Ok(None)
-    }
-
-    /// 根据模型名推断提供商
-    async fn infer_provider_from_model(&self, model_id: &str) -> Option<String> {
-        let model_lower = model_id.to_lowercase();
-        tracing::debug!("开始为模型 {} 推断提供商", model_id);
-
-        // 首先检查硬编码的模型前缀
-        if model_lower.starts_with("gpt-") || model_lower.starts_with("o1-") {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: openai", model_id);
-            return Some("openai".to_string());
-        } else if model_lower.starts_with("claude-") {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: anthropic", model_id);
-            return Some("anthropic".to_string());
-        } else if model_lower.starts_with("deepseek-") {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: deepseek", model_id);
-            return Some("deepseek".to_string());
-        } else if model_lower.starts_with("gemini-") {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: google", model_id);
-            return Some("google".to_string());
-        } else if model_lower.starts_with("glm-") {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: zhipu", model_id);
-            return Some("zhipu".to_string());
-        } else if model_lower.starts_with("moonshot-") || model_lower.starts_with("kimi-") {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: moonshot", model_id);
-            return Some("moonshot".to_string());
-        } else if model_lower.starts_with("command-") || model_lower.starts_with("c4ai-") {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: cohere", model_id);
-            return Some("cohere".to_string());
-        } else if model_lower.starts_with("grok-") {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: xai", model_id);
-            return Some("xai".to_string());
-        } else if model_lower.starts_with("llama")
-            || model_lower.starts_with("mixtral")
-            || model_lower.starts_with("gemma")
-        {
-            tracing::debug!("通过硬编码前缀为模型 {} 推断提供商: groq", model_id);
-            return Some("groq".to_string());
-        }
-
-        tracing::debug!(
-            "硬编码前缀未匹配，尝试从数据库providers_config查找模型 {}",
-            model_id
+        let app_handle = { self.app_handle.read().unwrap().clone() };
+        let service = AiService::new(
+            dynamic_cfg,
+            self.db.clone(),
+            app_handle,
+            self.mcp_service.clone(),
         );
-
-        // 如果硬编码前缀没找到，尝试从数据库中的providers_config查找
-        if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
-            if let Ok(providers) = serde_json::from_str::<
-                std::collections::HashMap<String, serde_json::Value>,
-            >(&providers_json)
-            {
-                for (_key, provider_data) in providers {
-                    if let Some(provider_obj) = provider_data.as_object() {
-                        // 检查提供商是否启用
-                        if !provider_obj
-                            .get("enabled")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
-                        {
-                            continue;
-                        }
-
-                        let provider_name = provider_obj.get("provider").and_then(|v| v.as_str());
-
-                        // 检查该提供商的模型列表中是否包含该模型
-                        if let Some(models_val) = provider_obj.get("models") {
-                            if let Some(models_arr) = models_val.as_array() {
-                                for model_val in models_arr {
-                                    if let Some(model_obj) = model_val.as_object() {
-                                        if let Some(model_name) =
-                                            model_obj.get("id").and_then(|v| v.as_str())
-                                        {
-                                            // 支持精确匹配和部分匹配
-                                            if model_name == model_id
-                                                || model_name.to_lowercase() == model_lower
-                                                || model_id.contains(model_name)
-                                                || model_name.contains(model_id)
-                                            {
-                                                if let Some(provider) = provider_name {
-                                                    tracing::info!("通过数据库providers_config为模型 {} 找到提供商 {}", model_id, provider);
-                                                    return Some(provider.to_string());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 如果模型列表为空，检查默认模型
-                        if let Some(default_model) =
-                            provider_obj.get("default_model").and_then(|v| v.as_str())
-                        {
-                            if default_model == model_id
-                                || default_model.to_lowercase() == model_lower
-                            {
-                                if let Some(provider) = provider_name {
-                                    tracing::info!("通过数据库providers_config的默认模型为模型 {} 找到提供商 {}", model_id, provider);
-                                    return Some(provider.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        tracing::debug!("无法为模型 {} 推断出提供商", model_id);
-        None
+        Ok(Some(service))
     }
 
-    /// 检查模型是否被指定提供商支持
-    async fn is_model_supported_by_service(&self, model_id: &str, provider: &str) -> bool {
-        // 首先检查硬编码的支持规则
-        let hardcoded_support = match provider.to_lowercase().as_str() {
-            "openai" => model_id.starts_with("gpt-") || model_id.starts_with("o1-"),
-            "anthropic" => model_id.starts_with("claude-"),
-            "deepseek" => model_id.starts_with("deepseek-"),
-            "groq" => {
-                model_id.starts_with("llama")
-                    || model_id.starts_with("mixtral")
-                    || model_id.starts_with("gemma")
-            }
-            "ollama" => true, // Ollama支持各种模型
-            "gemini" => model_id.starts_with("gemini-"),
-            "zhipu" => model_id.starts_with("glm-"),
-            "cohere" => model_id.starts_with("command-") || model_id.starts_with("c4ai-"),
-            "xai" => model_id.starts_with("grok-"),
-            "moonshot" => model_id.starts_with("moonshot-") || model_id.starts_with("kimi-"),
-            "modelscope" => {
-                // ModelScope 只支持特定的模型前缀，不支持所有模型
-                model_id.starts_with("qwen")
-                    || model_id.starts_with("baichuan")
-                    || model_id.starts_with("chatglm")
-                    || model_id.starts_with("internlm")
-                    || model_id.starts_with("yi-")
-                    || model_id.starts_with("deepseek-") // ModelScope 也提供 DeepSeek 模型
-            }
-            _ => false,
-        };
 
-        if hardcoded_support {
-            return true;
-        }
 
-        // 如果硬编码规则不支持，检查数据库中的providers_config
-        if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
-            if let Ok(providers) = serde_json::from_str::<
-                std::collections::HashMap<String, serde_json::Value>,
-            >(&providers_json)
-            {
-                for (_key, provider_data) in providers {
-                    if let Some(provider_obj) = provider_data.as_object() {
-                        let provider_name = provider_obj.get("provider").and_then(|v| v.as_str());
 
-                        // 检查是否为目标提供商
-                        if let Some(p_name) = provider_name {
-                            if p_name.to_lowercase() == provider.to_lowercase() {
-                                // 检查该提供商的模型列表
-                                if let Some(models_val) = provider_obj.get("models") {
-                                    if let Some(models_arr) = models_val.as_array() {
-                                        for model_val in models_arr {
-                                            if let Some(model_obj) = model_val.as_object() {
-                                                if let Some(model_name) =
-                                                    model_obj.get("id").and_then(|v| v.as_str())
-                                                {
-                                                    if model_name == model_id
-                                                        || model_name.to_lowercase()
-                                                            == model_id.to_lowercase()
-                                                        || model_id.contains(model_name)
-                                                        || model_name.contains(model_id)
-                                                    {
-                                                        return true;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // 检查默认模型
-                                if let Some(default_model) =
-                                    provider_obj.get("default_model").and_then(|v| v.as_str())
-                                {
-                                    if default_model == model_id
-                                        || default_model.to_lowercase() == model_id.to_lowercase()
-                                    {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// 检查数据库中是否有任何提供商支持该模型
-    async fn is_model_supported_by_any_provider(&self, model_id: &str) -> bool {
-        if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
-            if let Ok(providers) = serde_json::from_str::<
-                std::collections::HashMap<String, serde_json::Value>,
-            >(&providers_json)
-            {
-                for (_key, provider_data) in providers {
-                    if let Some(provider_obj) = provider_data.as_object() {
-                        // 检查该提供商的模型列表
-                        if let Some(models_val) = provider_obj.get("models") {
-                            if let Some(models_arr) = models_val.as_array() {
-                                for model_val in models_arr {
-                                    if let Some(model_obj) = model_val.as_object() {
-                                        if let Some(model_name) =
-                                            model_obj.get("id").and_then(|v| v.as_str())
-                                        {
-                                            if model_name == model_id
-                                                || model_name.to_lowercase()
-                                                    == model_id.to_lowercase()
-                                                || model_id.contains(model_name)
-                                                || model_name.contains(model_id)
-                                            {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 检查默认模型
-                        if let Some(default_model) =
-                            provider_obj.get("default_model").and_then(|v| v.as_str())
-                        {
-                            if default_model == model_id
-                                || default_model.to_lowercase() == model_id.to_lowercase()
-                            {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
 
     /// 获取指定阶段的AI配置，用于框架动态切换模型
     pub async fn get_ai_config_for_stage(
@@ -1275,22 +800,10 @@ impl AiServiceManager {
             return Ok(None);
         }
 
-        // 查找支持该模型的提供商配置
-        if let Some(service) = self
-            .find_service_by_provider_and_model(provider_name, model_id)
-            .await?
-        {
-            let config = service.get_config();
-            let ai_config = AiConfig {
-                provider: config.provider.clone(),
-                model: model_id.clone(),
-                api_key: config.api_key.clone(),
-                api_base: config.api_base.clone(),
-                organization: config.organization.clone(),
-                temperature: config.temperature,
-                max_tokens: config.max_tokens,
-            };
-            Ok(Some(ai_config))
+        // 直接基于配置构建 AI 配置
+        if let Some(mut config) = self.get_provider_config(provider_name).await? {
+            config.model = model_id.clone();
+            Ok(Some(config))
         } else {
             Ok(None)
         }
@@ -1738,21 +1251,131 @@ impl AiService {
                 }
 
                 // 调用底层的聊天流式方法
-                let model_name_owned = self.config.model.clone();
+                    let _model_name_owned = self.config.model.clone();
 
-                self.send_chat_stream(
-                    &model_name_owned,
-                    messages,
-                    conv_id,
-                    self.config.temperature,
-                    self.config.max_tokens,
-                    message_id.clone(),         // 传递消息ID
-                    Some(execution_id.clone()), // 明确传递execution_id
-                    stream,
-                    is_final,
-                    chunk_type
-                )
-                .await
+                // 内联原 send_chat_stream 逻辑：Rig 动态客户端真流式
+                {
+                    use futures::StreamExt;
+                    use rig::client::builder::DynClientBuilder;
+                    use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
+                    use rig::agent::MultiTurnStreamItem;
+
+                    // 生成或获取 message_id / execution_id
+                    let message_id = message_id
+                        .clone()
+                        .or_else(|| messages.last().map(|m| m.id.clone()))
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let exec_id = execution_id.clone();
+
+                    // 校验配置
+                    if self.config.provider == "unconfigured" || self.config.provider == "mock" {
+                        let error_msg = "AI provider not configured. Please go to Settings > AI Configuration";
+                        error!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+                    if self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
+                        let error_msg = format!(
+                            "API key not configured for provider '{}'. Please check your AI configuration settings.",
+                            self.config.provider
+                        );
+                        error!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+
+                    // 构造上下文
+                    if messages.is_empty() {
+                        let error_msg = "No messages provided for chat completion";
+                        error!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+                    let mut history_buf = String::new();
+                    let take = messages.len().min(12);
+                    for m in messages.iter().rev().take(take).rev() {
+                        let role = m.role.as_str();
+                        history_buf.push_str(&format!("{}: {}\n", role, m.content));
+                    }
+                    let user_input = history_buf.trim();
+                    if user_input.is_empty() {
+                        let error_msg = "Message content is empty after processing";
+                        error!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+
+                    // Rig DynClient 真流式
+                    let provider = self.config.provider.to_lowercase();
+                    let model = self.config.model.clone();
+                    info!(
+                        "Starting Rig dyn client streaming: provider={}, model={}, input_len={}",
+                        provider,
+                        model,
+                        user_input.len()
+                    );
+                    let agent = {
+                        let client = DynClientBuilder::new();
+                        client
+                            .agent(&provider, &model)?
+                            .preamble(system_prompt.unwrap_or("You are a helpful AI assistant."))
+                            .build()
+                    };
+
+                    let mut content = String::new();
+                    let mut stream_iter = agent.stream_prompt(user_input).await;
+                    while let Some(item) = stream_iter.next().await {
+                        match item {
+                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::Text(t))) => {
+                                let piece = t.text;
+                                if piece.is_empty() { continue; }
+                                content.push_str(&piece);
+                                if stream {
+                                    self.emit_message_chunk(
+                                        &exec_id,
+                                        &message_id,
+                                        Some(conv_id),
+                                        chunk_type.clone(),
+                                        &piece,
+                                        false,
+                                        None,
+                                    );
+                                }
+                            }
+                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::Reasoning(r))) => {
+                                let piece = r.reasoning.join("");
+                                if !piece.is_empty() && stream {
+                                    self.emit_message_chunk(
+                                        &exec_id,
+                                        &message_id,
+                                        Some(conv_id),
+                                        Some(ChunkType::Thinking),
+                                        &piece,
+                                        false,
+                                        None,
+                                    );
+                                }
+                            }
+                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::ToolCall(_))) => {}
+                            Ok(MultiTurnStreamItem::FinalResponse(_)) => { break; }
+                            Ok(_) => { /* ignore other stream items */ }
+                            Err(e) => {
+                                error!("Dyn client stream error: {}", e);
+                                return Err(anyhow::anyhow!(format!("Stream error: {}", e)));
+                            }
+                        }
+                    }
+
+                    if is_final {
+                        self.emit_message_chunk(
+                            &exec_id,
+                            &message_id,
+                            Some(conv_id),
+                            Some(ChunkType::Meta),
+                            "",
+                            true,
+                            None,
+                        );
+                    }
+
+                    return Ok(content);
+                }
             }
             None => {
                 // 无会话：仅进行内部流式调用，不向前端发块、不写入DB
@@ -1797,495 +1420,108 @@ impl AiService {
                 }
 
                 // 不保存到DB，不向前端发块（通过 should_save_to_db=false 抑制发块）
-                let model_name_owned = self.config.model.clone();
-                self.send_chat_stream(
-                    &model_name_owned,
-                    messages,
-                    conv_id,
-                    self.config.temperature,
-                    self.config.max_tokens,
-                    message_id.clone(),        // 保持 message_id 透传
-                    Some(execution_id.clone()),
-                    stream,
-                    is_final,
-                    chunk_type
-                    
-                )
-                .await
+                let _model_name_owned = self.config.model.clone();
+                // 内联原 send_chat_stream 逻辑（无会话）：Rig 动态客户端真流式
+                {
+
+
+                    let conv_id = conv_id; // same binding name
+                    let message_id = message_id
+                        .clone()
+                        .or_else(|| messages.last().map(|m| m.id.clone()))
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let exec_id = execution_id.clone();
+
+                    if messages.is_empty() {
+                        let error_msg = "No messages provided for chat completion";
+                        error!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+                    let mut history_buf = String::new();
+                    let take = messages.len().min(12);
+                    for m in messages.iter().rev().take(take).rev() {
+                        let role = m.role.as_str();
+                        history_buf.push_str(&format!("{}: {}\n", role, m.content));
+                    }
+                    let user_input = history_buf.trim();
+                    if user_input.is_empty() {
+                        let error_msg = "Message content is empty after processing";
+                        error!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+
+                    let provider = self.config.provider.to_lowercase();
+                    let model = self.config.model.clone();
+                    let agent = {
+                        let client = DynClientBuilder::new();
+                        client
+                            .agent(&provider, &model)?
+                            .preamble(system_prompt.unwrap_or("You are a helpful AI assistant."))
+                            .build()
+                    };
+
+                    let mut content = String::new();
+                    let mut stream_iter = agent.stream_prompt(user_input).await;
+                    while let Some(item) = stream_iter.next().await {
+                        match item {
+                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::Text(t))) => {
+                                let piece = t.text;
+                                if piece.is_empty() { continue; }
+                                content.push_str(&piece);
+                                if stream {
+                                    self.emit_message_chunk(
+                                        &exec_id,
+                                        &message_id,
+                                        Some(conv_id),
+                                        chunk_type.clone(),
+                                        &piece,
+                                        false,
+                                        None,
+                                    );
+                                }
+                            }
+                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::Reasoning(r))) => {
+                                let piece = r.reasoning.join("");
+                                if !piece.is_empty() && stream {
+                                    self.emit_message_chunk(
+                                        &exec_id,
+                                        &message_id,
+                                        Some(conv_id),
+                                        Some(ChunkType::Thinking),
+                                        &piece,
+                                        false,
+                                        None,
+                                    );
+                                }
+                            }
+                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::ToolCall(_))) => {}
+                            Ok(MultiTurnStreamItem::FinalResponse(_)) => { break; }
+                            Ok(_) => { /* ignore other stream items */ }
+                            Err(e) => return Err(anyhow::anyhow!(format!("Stream error: {}", e))),
+                        }
+                    }
+
+                    if is_final {
+                        self.emit_message_chunk(
+                            &exec_id,
+                            &message_id,
+                            Some(conv_id),
+                            Some(ChunkType::Meta),
+                            "",
+                            true,
+                            None,
+                        );
+                    }
+
+                    return Ok(content);
+                }
             }
         }
     }
 
-    // 发送聊天请求（处理工具调用） - 流式版本
-    async fn send_chat_stream(
-        &self,
-        model_name: &str,
-        messages: Vec<AiMessage>,
-        conversation_id: &str,
-        temperature: Option<f32>,
-        max_tokens: Option<u32>,
-        assistant_message_id: Option<String>, // 新增助手消息ID参数
-        execution_id: Option<String>,         // 新增执行ID参数
-        stream_flg: bool,
-        is_final: bool,
-        chunk_type: Option<ChunkType>,
-    ) -> Result<String> {
-        info!(
-            "Sending chat request to {} model with provider {}",
-            model_name, self.config.provider
-        );
+    // 已移除 send_chat_stream，逻辑合并入 send_message_stream
 
-        // Get or generate message ID
-        let message_id = assistant_message_id
-            .or_else(|| messages.last().map(|m| m.id.clone()))
-            .unwrap_or_else(|| "unknown".to_string());
-
-        // Get or generate execution ID - 优先使用传入的execution_id，其次使用conversation_id
-        let execution_id = execution_id.unwrap_or_else(|| conversation_id.to_string());
-
-        // Validate provider configuration
-        if self.config.provider == "unconfigured" || self.config.provider == "mock" {
-            let error_msg = "AI provider not configured. Please go to Settings > AI Configuration to set up an AI provider (OpenAI, Anthropic, DeepSeek, etc.)";
-            error!("{}", error_msg);
-            return Err(anyhow::anyhow!(error_msg));
-        }
-
-        // Validate API key
-        if self.config.api_key.is_none()
-            || self.config.api_key.as_ref().map_or(true, |k| k.is_empty())
-        {
-            let error_msg = format!("API key not configured for provider '{}'. Please check your AI configuration settings.", self.config.provider);
-            error!("{}", error_msg);
-            return Err(anyhow::anyhow!(error_msg));
-        }
-
-        // 转换消息格式为新的类型系统
-        let mut chat_messages = Vec::new();
-        for msg in &messages {
-            // 过滤掉内容为空的消息，避免发送到AI提供商
-            if msg.content.trim().is_empty() {
-                debug!(
-                    "Skipping message with empty content: id={}, role={}",
-                    msg.id, msg.role
-                );
-                continue;
-            }
-
-            let role = match msg.role.as_str() {
-                "system" => MessageRole::System,
-                "user" => MessageRole::User,
-                "assistant" => MessageRole::Assistant,
-                "tool" => MessageRole::Tool,
-                _ => MessageRole::User,
-            };
-            let message = crate::ai_adapter::types::Message {
-                role,
-                content: msg.content.clone(),
-                name: None,
-                tool_calls: if let Some(tc_json) = &msg.tool_calls {
-                    if let Ok(tool_calls) = serde_json::from_str::<Vec<ToolCall>>(tc_json) {
-                        Some(tool_calls)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                },
-                tool_call_id: if let Some(metadata_str) = &msg.metadata {
-                    if let Ok(metadata) = serde_json::from_str::<Value>(metadata_str) {
-                        metadata
-                            .get("tool_call_id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                },
-            };
-            chat_messages.push(message);
-        }
-
-        // 准备工具（占位，如未来接入工具调用可填充）
-        let tools_vec: Vec<crate::ai_adapter::types::Tool> = Vec::new();
-
-        // 设置选项
-        let mut options = crate::ai_adapter::types::ChatOptions::default();
-        if let Some(temp) = temperature {
-            options.temperature = Some(temp);
-        }
-        if let Some(tokens) = max_tokens {
-            options.max_tokens = Some(tokens);
-        }
-
-        // 构建请求消息，并在必要时限制总大小，避免提供商的消息大小上限错误
-        let mut request_messages: Vec<Message> = chat_messages
-            .iter()
-            .map(|msg| Message {
-                role: msg.role.clone(),
-                content: msg.content.clone(),
-                name: msg.name.clone(),
-                tool_calls: None,
-                tool_call_id: msg.tool_call_id.clone(),
-            })
-            .collect();
-
-        // 根据 providers_config 中当前模型的 context_length 动态裁剪上下文
-        // 若未配置，则根据已知提供商采取安全回退（如 moonshot ~4MB）
-        if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
-            if let Ok(root) = serde_json::from_str::<serde_json::Value>(&providers_json) {
-                let provider_lc = self.config.provider.to_lowercase();
-                // providers_config 是 map: { id: { provider, name, models: [...] } }
-                if let Some(obj) = root.as_object() {
-                    for (_key, prov_val) in obj {
-                        if let Some(pobj) = prov_val.as_object() {
-                            let prov_name = pobj
-                                .get("provider")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_lowercase();
-                            let svc_name = pobj
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_lowercase();
-                            if prov_name == provider_lc || svc_name == provider_lc {
-                                if let Some(models) = pobj.get("models").and_then(|v| v.as_array())
-                                {
-                                    // 匹配当前模型
-                                    let mut found_tokens: Option<usize> = None;
-                                    for m in models {
-                                        if let Some(mo) = m.as_object() {
-                                            let mid =
-                                                mo.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                                            let mname = mo
-                                                .get("name")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("");
-                                            if mid == model_name || mname == model_name {
-                                                if let Some(cfg) =
-                                                    mo.get("config").and_then(|v| v.as_object())
-                                                {
-                                                    if let Some(cl) = cfg
-                                                        .get("context_length")
-                                                        .and_then(|v| v.as_u64())
-                                                    {
-                                                        found_tokens = Some(cl as usize);
-                                                    }
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if let Some(tokens) = found_tokens
-                                        .or_else(|| self.config.max_tokens.map(|t| t as usize))
-                                    {
-                                        // 估算最大字节：保守按 4 字节/Token，并预留 10% 裁剪空间
-                                        let mut max_bytes = tokens.saturating_mul(4);
-                                        max_bytes = max_bytes.saturating_mul(9) / 10; // 预留 10%
-                                        if max_bytes > 0 {
-                                            limit_total_message_bytes(
-                                                &mut request_messages,
-                                                max_bytes,
-                                            );
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 转换为ChatRequest
-        let chat_request = ChatRequest {
-            model: model_name.to_string(),
-            messages: request_messages,
-            tools: if tools_vec.is_empty() {
-                None
-            } else {
-                Some(tools_vec)
-            },
-            tool_choice: None,
-            user: None,
-            extra_params: None,
-            options: Some(options),
-        };
-
-        // 发送请求 - 使用AiAdapterManager来获取提供商
-        let adapter_manager = AiAdapterManager::global();
-        let provider = adapter_manager
-            .get_provider_or_default(&self.config.provider)
-            .map_err(|e| {
-                error!("Failed to get provider '{}': {}", self.config.provider, e);
-                anyhow::anyhow!("Web call failed for model '{}'. Cause: {}", model_name, e)
-            })?;
-
-        // Use streaming response and emit events in real-time
-        use futures::StreamExt;
-        let mut stream = provider
-            .send_chat_stream(&chat_request)
-            .await
-            .map_err(|e| {
-                error!(
-                    "Stream request failed for model '{}' on provider '{}': {}",
-                    model_name,
-                    provider.name(),
-                    e
-                );
-                anyhow::anyhow!("Web call failed for model '{}'. Cause: {}", model_name, e)
-            })?;
-
-        // Process streaming response
-        let mut content = String::new();
-        let mut response_id = String::new();
-        let mut response_model = String::new();
-        let mut finish_reason: Option<String> = None;
-        let mut usage = None;
-        let mut chunk_count = 0;
-        let stream_start_time = std::time::Instant::now();
-        let mut last_chunk_time = stream_start_time;
-
-        while let Some(chunk_result) = stream.stream.next().await {
-            chunk_count += 1;
-            let chunk_receive_time = std::time::Instant::now();
-            let _chunk_interval = chunk_receive_time
-                .duration_since(last_chunk_time)
-                .as_millis();
-            last_chunk_time = chunk_receive_time;
-
-            match chunk_result {
-                Ok(raw_chunk) => {
-                    let mut parsed_delta: Option<String> = None;
-                    let mut parsed_finish_reason: Option<String> = None;
-
-                    if raw_chunk.content.trim_start().starts_with('{') {
-                        if let Ok(json) =
-                            serde_json::from_str::<serde_json::Value>(&raw_chunk.content)
-                        {
-                            if let Some(choice) = json
-                                .get("choices")
-                                .and_then(|c| c.as_array())
-                                .and_then(|arr| arr.first())
-                            {
-                                // content delta
-                                if let Some(delta_obj) = choice.get("delta") {
-                                    if let Some(delta_str) =
-                                        delta_obj.get("content").and_then(|c| c.as_str())
-                                    {
-                                        if !delta_str.is_empty() {
-                                            parsed_delta = Some(delta_str.to_string());
-                                        }
-                                    }
-                                    // optional reasoning stream
-                                    if let Some(reasoning_str) =
-                                        delta_obj.get("reasoning").and_then(|c| c.as_str())
-                                    {
-                                        if !reasoning_str.is_empty() {
-                                            if stream_flg {
-                                                self.emit_message_chunk(
-                                                    &execution_id,
-                                                    &message_id,
-                                                    Some(conversation_id),
-                                                    Some(ChunkType::Thinking),
-                                                    reasoning_str,
-                                                    is_final,
-                                                    None,
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // finish reason if present
-                                parsed_finish_reason = choice
-                                    .get("finish_reason")
-                                    .and_then(|f| f.as_str())
-                                    .map(|s| s.to_string());
-                            }
-
-                            // Fallback: some providers may send a cumulative message object
-                            // Convert cumulative content into an incremental delta by diffing with the already accumulated `content`
-                            if parsed_delta.is_none() {
-                                if let Some(message_obj) = json.get("message") {
-                                    if let Some(content_str) =
-                                        message_obj.get("content").and_then(|c| c.as_str())
-                                    {
-                                        if !content_str.is_empty() {
-                                            let full = content_str;
-                                            let current = content.as_str();
-                                            let incremental = if full.starts_with(current) {
-                                                &full[current.len()..]
-                                            } else {
-                                                // Compute longest common prefix by chars to be UTF-8 safe
-                                                let mut lcp_len = 0usize;
-                                                for (a, b) in current.chars().zip(full.chars()) {
-                                                    if a == b { lcp_len += a.len_utf8(); } else { break; }
-                                                }
-                                                &full[lcp_len..]
-                                            };
-                                            if !incremental.is_empty() {
-                                                parsed_delta = Some(incremental.to_string());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Use parsed delta when available; otherwise treat content as plain text
-                    if let Some(delta) = parsed_delta {
-                        content.push_str(&delta);
-                        if stream_flg {
-                            self.emit_message_chunk(
-                                &execution_id,
-                                &message_id,
-                                Some(conversation_id),
-                                chunk_type.clone(),
-                                &delta,
-                                false,
-                                None,
-                            );
-                        }
-                    } else if !raw_chunk.content.is_empty() {
-                        // Only forward non-JSON plain text directly
-                        if !raw_chunk.content.trim_start().starts_with('{') {
-                            content.push_str(&raw_chunk.content);
-                            if stream_flg {
-                                self.emit_message_chunk(
-                                    &execution_id,
-                                    &message_id,
-                                    Some(conversation_id),
-                                    chunk_type.clone(),
-                                    &raw_chunk.content,
-                                    false,
-                                    None,
-                                );
-                            }
-                        } else {
-                            // JSON with no delta/content: ignore (e.g., role notifications)
-                        }
-                    }
-
-                    if let Some(reason) = parsed_finish_reason.or(raw_chunk.finish_reason) {
-                        finish_reason = Some(reason);
-                    }
-                    if !raw_chunk.id.is_empty() {
-                        response_id = raw_chunk.id;
-                    }
-                    if !raw_chunk.model.is_empty() {
-                        response_model = raw_chunk.model
-                    }
-                    if let Some(chunk_usage) = raw_chunk.usage {
-                        usage = Some(chunk_usage);
-                    }
-                }
-                Err(e) => {
-                    error!("Stream chunk error after {} chunks: {}", chunk_count, e);
-
-                    self.emit_message_chunk(
-                        &execution_id,
-                        &message_id,
-                        Some(conversation_id),
-                        Some(ChunkType::Error),
-                        &e.to_string(),
-                        true, // 标记为最终块，防止前端卡在流式状态
-                        None,
-                    );
-
-                    return Err(anyhow::anyhow!("Stream error: {}", e));
-                }
-            }
-        }
-
-        info!("chunk_type: {:?} content: {:?}", chunk_type, content);
-        if !stream_flg {
-            self.emit_message_chunk(
-                &execution_id,
-                &message_id,
-                Some(conversation_id),
-                chunk_type,
-                &content,
-                false,
-                None,
-            );
-        }
-
-        // 对于流式调用，流结束后统一发送一次终结块
-        if is_final {
-            self.emit_message_chunk(
-                &execution_id,
-                &message_id,
-                Some(conversation_id),
-                Some(ChunkType::Meta),
-                "",
-                true,
-                None,
-            );
-        }
-
-        // Handle empty content with valid finish reason
-        if content.is_empty() && finish_reason.is_some() {
-            info!(
-                "Stream completed with {} chunks and empty content but valid finish_reason: {:?}",
-                chunk_count, finish_reason
-            );
-        } else {
-            info!(
-                "Stream completed successfully after {} chunks, total content length: {}",
-                chunk_count,
-                content.len()
-            );
-        }
-
-        // 创建响应对象
-        let response = crate::ai_adapter::types::ChatResponse {
-            id: response_id,
-            model: response_model,
-            message: crate::ai_adapter::types::Message::assistant(&content),
-            choices: vec![crate::ai_adapter::types::Choice {
-                index: 0,
-                message: crate::ai_adapter::types::Message::assistant(&content),
-                finish_reason: finish_reason.clone(),
-            }],
-            usage,
-            finish_reason,
-            created_at: std::time::SystemTime::now(),
-        };
-
-        // 如果没有工具调用，保存助手响应并返回
-        let mut answer = match &response.message.content {
-            text => text.clone(),
-        };
-
-        // 如果助手响应为空，提供有用的错误信息
-        if answer.trim().is_empty() {
-            warn!(
-                "Assistant response is empty for model '{}' on provider '{}'",
-                model_name,
-                provider.name()
-            );
-            answer = format!("抱歉，AI模型 {} 在 {} 提供商上没有返回任何响应。这可能是由于：\n\n1. API配置问题（请检查API密钥和基础URL）\n2. 模型暂时不可用\n3. 请求被限流\n\n请尝试重新发送消息或切换到其他模型。", model_name, provider.name());
-        }
-        let _assistant_msg = AiMessage {
-            id: Uuid::new_v4().to_string(),
-            conversation_id: conversation_id.to_string(),
-            role: "assistant".to_string(),
-            content: answer.to_string(),
-            metadata: None,
-            token_count: Some(answer.len() as i32),
-            cost: Some(0.0),
-            tool_calls: None,
-            attachments: None,
-            timestamp: Utc::now(),
-        };
-
-        Ok(answer.to_string())
-    }
+    // rig_complete 已合并进 send_message_stream，无需保留
 
     // 创建新对话
     pub async fn create_conversation(&self, title: Option<String>) -> Result<String> {
@@ -2411,39 +1647,3 @@ impl AiService {
     }
 }
 
-/// Cap total UTF-8 bytes of messages to avoid provider request size limits.
-fn limit_total_message_bytes(
-    messages: &mut Vec<crate::ai_adapter::types::Message>,
-    max_bytes: usize,
-) {
-    let mut total: usize = messages.iter().map(|m| m.content.as_bytes().len()).sum();
-    if total <= max_bytes {
-        return;
-    }
-
-    // Prefer dropping oldest non-system/non-tool messages first
-    let mut i = 0;
-    while total > max_bytes && i < messages.len() {
-        let role = &messages[i].role;
-        let is_system_or_tool = matches!(
-            role,
-            crate::models::ai::MessageRole::System | crate::models::ai::MessageRole::Tool
-        );
-        if !is_system_or_tool {
-            if let Some(msg) = messages.get(i) {
-                total = total.saturating_sub(msg.content.as_bytes().len());
-            }
-            messages.remove(i);
-            continue;
-        }
-        i += 1;
-    }
-
-    // If still too large, remove from start regardless of role
-    while total > max_bytes && !messages.is_empty() {
-        if let Some(msg) = messages.first() {
-            total = total.saturating_sub(msg.content.as_bytes().len());
-        }
-        messages.remove(0);
-    }
-}

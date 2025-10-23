@@ -37,7 +37,7 @@ pub struct PlanAndExecute {
 impl PlanAndExecute {
     /// 创建新的 Plan-and-Execute 实例
     pub async fn new(
-        _ai_adapter_manager: Arc<crate::ai_adapter::core::AiAdapterManager>,
+        // DISABLED: _ai_adapter_manager: Arc<crate::ai_adapter::core::AiAdapterManager>,
         _ai_service_manager: Arc<crate::services::AiServiceManager>,
         _db_service: Arc<DatabaseService>,
     ) -> Result<Self, types::PlanAndExecuteError> {
@@ -60,7 +60,7 @@ impl PlanAndExecute {
 mod tests {
     use super::*;
     use crate::services::AiServiceManager;
-    use crate::{ai_adapter::core::AiAdapterManager, services::DatabaseService};
+    use crate::services::DatabaseService;
 
 
 
@@ -74,11 +74,10 @@ mod tests {
             .expect("Failed to initialize database");
         let db_service = Arc::new(db_service);
 
-        let ai_adapter_manager = Arc::new(AiAdapterManager::new());
         let ai_service_manager = Arc::new(AiServiceManager::new(db_service.clone()));
 
         let plan_execute =
-            PlanAndExecute::new(ai_adapter_manager, ai_service_manager, db_service)
+            PlanAndExecute::new(ai_service_manager, db_service)
                 .await
                 .unwrap();
 

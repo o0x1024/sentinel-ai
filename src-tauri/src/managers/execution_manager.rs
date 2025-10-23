@@ -41,7 +41,7 @@ impl EngineInstance {
     ) -> Result<AgentExecutionResult> {
         match self {
             EngineInstance::PlanExecute(engine) => engine.execute_plan(plan).await,
-            EngineInstance::ReWOO(engine) => engine.execute_plan(plan).await,
+            EngineInstance::ReWOO(_engine) => Err(anyhow::anyhow!("ReWOO engine disabled - needs Rig refactor")),
             EngineInstance::LLMCompiler(engine) => engine.execute_plan(plan).await,
         }
     }
@@ -50,7 +50,7 @@ impl EngineInstance {
     pub async fn get_progress(&self, session_id: &str) -> Result<ExecutionProgress> {
         match self {
             EngineInstance::PlanExecute(engine) => engine.get_progress(session_id).await,
-            EngineInstance::ReWOO(engine) => engine.get_progress(session_id).await,
+            EngineInstance::ReWOO(_engine) => Err(anyhow::anyhow!("ReWOO engine disabled - needs Rig refactor")),
             EngineInstance::LLMCompiler(engine) => engine.get_progress(session_id).await,
         }
     }
@@ -59,7 +59,7 @@ impl EngineInstance {
     pub async fn stop_execution(&self, session_id: &str) -> Result<()> {
         match self {
             EngineInstance::PlanExecute(engine) => engine.cancel_execution(session_id).await,
-            EngineInstance::ReWOO(engine) => engine.cancel_execution(session_id).await,
+            EngineInstance::ReWOO(_engine) => Err(anyhow::anyhow!("ReWOO engine disabled - needs Rig refactor")),
             EngineInstance::LLMCompiler(engine) => engine.cancel_execution(session_id).await,
         }
     }

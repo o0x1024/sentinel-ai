@@ -501,7 +501,10 @@ impl MessageParser {
             ToolContent::Text {
                 text,
                 content_type: _,
-            } => rmcp::model::RawContent::Text(rmcp::model::RawTextContent { text: text.clone() }),
+            } => rmcp::model::RawContent::Text(rmcp::model::RawTextContent { 
+                text: text.clone(),
+                meta: None,
+            }),
             ToolContent::Image { data, mime_type } => {
                 rmcp::model::RawContent::image(data.clone(), mime_type.clone())
             }
@@ -509,6 +512,7 @@ impl MessageParser {
                 let resource_text = text.clone().unwrap_or_else(|| uri.clone());
                 rmcp::model::RawContent::Text(rmcp::model::RawTextContent {
                     text: resource_text,
+                    meta: None,
                 })
             }
         };
@@ -562,6 +566,9 @@ pub fn create_default_server_info(name: &str, version: &str) -> rmcp::model::Ser
         server_info: rmcp::model::Implementation {
             name: name.to_string(),
             version: version.to_string(),
+            icons: None,
+            title: None,
+            website_url: None,
         },
         instructions: Some(format!("{} MCP服务器 v{}", name, version)),
     }
@@ -660,6 +667,9 @@ mod tests {
             client_info: Implementation {
                 name: "test-client".to_string(),
                 version: "1.0.0".to_string(),
+                title: None,
+                icons: None,
+                website_url: None,
             },
         };
 

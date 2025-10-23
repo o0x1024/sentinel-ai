@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
 
-use crate::rag::config::{RagConfig, SupportedFileType};
+use crate::rag::config::{RagConfig, SupportedFileType, ChunkingStrategy};
 use crate::rag::models::{DocumentChunk, ChunkMetadata, DocumentSource};
 
 /// 文档分块器
@@ -171,8 +171,23 @@ impl DocumentChunker {
         Ok(format!("Word文档内容占位符: {}", file_path))
     }
 
-    /// 文本分块（语义分块：优先按句子边界聚合，无法命中时回退硬切分，保证始终前进）
+    /// 文本分块（根据配置的策略进行分块）
     fn chunk_text(
+        &self,
+        content: &str,
+        file_path: &str,
+        source: &DocumentSource,
+    ) -> Result<Vec<DocumentChunk>> {
+        match self.config.chunking_strategy {
+            ChunkingStrategy::FixedSize => self.chunk_text_fixed_size(content, file_path, source),
+            ChunkingStrategy::RecursiveCharacter => self.chunk_text_recursive(content, file_path, source),
+            ChunkingStrategy::Semantic => self.chunk_text_semantic(content, file_path, source),
+            ChunkingStrategy::StructureAware => self.chunk_text_structure_aware(content, file_path, source),
+        }
+    }
+
+    /// 固定大小分块（原有实现）
+    fn chunk_text_fixed_size(
         &self,
         content: &str,
         file_path: &str,
@@ -251,6 +266,289 @@ impl DocumentChunker {
             cursor = next_cursor;
         }
 
+        Ok(chunks)
+    }
+
+    /// 递归字符分割（推荐的分块策略）
+    fn chunk_text_recursive(
+        &self,
+        content: &str,
+        file_path: &str,
+        source: &DocumentSource,
+    ) -> Result<Vec<DocumentChunk>> {
+        // 分隔符优先级：段落 -> 句子 -> 行 -> 词 -> 字符
+        const SEPARATORS: &[&str] = &[
+            "\n\n",    // 段落分隔
+            "\n",      // 行分隔
+            ". ",      // 英文句子
+            "。",      // 中文句子
+            "! ",      // 英文感叹句
+            "！",      // 中文感叹句
+            "? ",      // 英文疑问句
+            "？",      // 中文疑问句
+            " ",       // 词分隔
+            "",        // 字符分隔（最后回退）
+        ];
+
+        let chunks = self.recursive_split(
+            content, 
+            SEPARATORS, 
+            0, 
+            self.config.chunk_size_chars,
+            self.config.chunk_overlap_chars,
+            file_path,
+            source
+        )?;
+
+        Ok(chunks)
+    }
+
+    /// 递归分割实现
+    fn recursive_split(
+        &self,
+        text: &str,
+        separators: &[&str],
+        chunk_index_offset: usize,
+        chunk_size: usize,
+        overlap: usize,
+        file_path: &str,
+        source: &DocumentSource,
+    ) -> Result<Vec<DocumentChunk>> {
+        let mut chunks = Vec::new();
+        
+        if text.chars().count() <= chunk_size {
+            // 文本足够小，直接创建分块
+            if !text.trim().is_empty() {
+                let chunk = self.create_chunk(
+                    text, 
+                    chunk_index_offset, 
+                    0, 
+                    text.chars().count(), 
+                    file_path, 
+                    source
+                )?;
+                chunks.push(chunk);
+            }
+            return Ok(chunks);
+        }
+
+        // 尝试使用当前分隔符分割
+        if let Some((&separator, remaining_separators)) = separators.split_first() {
+            if !separator.is_empty() && text.contains(separator) {
+                let parts: Vec<&str> = text.split(separator).collect();
+                let mut current_chunk = String::new();
+                let mut chunk_index = chunk_index_offset;
+                
+                for (i, part) in parts.iter().enumerate() {
+                    let part_with_sep = if i < parts.len() - 1 {
+                        format!("{}{}", part, separator)
+                    } else {
+                        part.to_string()
+                    };
+                    
+                    if current_chunk.chars().count() + part_with_sep.chars().count() <= chunk_size {
+                        current_chunk.push_str(&part_with_sep);
+                    } else {
+                        // 当前块已满，保存并开始新块
+                        if !current_chunk.trim().is_empty() {
+                            let chunk = self.create_chunk(
+                                &current_chunk,
+                                chunk_index,
+                                0,
+                                current_chunk.chars().count(),
+                                file_path,
+                                source,
+                            )?;
+                            chunks.push(chunk);
+                            chunk_index += 1;
+                        }
+                        
+                        // 如果单个部分太大，递归分割
+                        if part_with_sep.chars().count() > chunk_size {
+                            let mut sub_chunks = self.recursive_split(
+                                &part_with_sep,
+                                remaining_separators,
+                                chunk_index,
+                                chunk_size,
+                                overlap,
+                                file_path,
+                                source,
+                            )?;
+                            chunk_index += sub_chunks.len();
+                            chunks.append(&mut sub_chunks);
+                            current_chunk.clear();
+                        } else {
+                            current_chunk = part_with_sep;
+                        }
+                    }
+                }
+                
+                // 保存最后一个块
+                if !current_chunk.trim().is_empty() {
+                    let chunk = self.create_chunk(
+                        &current_chunk,
+                        chunk_index,
+                        0,
+                        current_chunk.chars().count(),
+                        file_path,
+                        source,
+                    )?;
+                    chunks.push(chunk);
+                }
+                
+                return Ok(chunks);
+            }
+        }
+
+        // 如果没有合适的分隔符，按字符硬切分
+        let chars: Vec<char> = text.chars().collect();
+        let mut start = 0;
+        let mut chunk_index = chunk_index_offset;
+        
+        while start < chars.len() {
+            let end = std::cmp::min(start + chunk_size, chars.len());
+            let chunk_text: String = chars[start..end].iter().collect();
+            
+            if !chunk_text.trim().is_empty() {
+                let chunk = self.create_chunk(
+                    &chunk_text,
+                    chunk_index,
+                    start,
+                    end,
+                    file_path,
+                    source,
+                )?;
+                chunks.push(chunk);
+                chunk_index += 1;
+            }
+            
+            start = if end >= chars.len() {
+                break;
+            } else {
+                end.saturating_sub(overlap)
+            };
+            
+            if start >= end { break; }
+        }
+
+        Ok(chunks)
+    }
+
+    /// 语义分块（暂时使用固定大小实现，后续可集成语义模型）
+    fn chunk_text_semantic(
+        &self,
+        content: &str,
+        file_path: &str,
+        source: &DocumentSource,
+    ) -> Result<Vec<DocumentChunk>> {
+        warn!("Semantic chunking not fully implemented, falling back to recursive chunking");
+        self.chunk_text_recursive(content, file_path, source)
+    }
+
+    /// 结构感知分块（根据文档类型进行结构化分块）
+    fn chunk_text_structure_aware(
+        &self,
+        content: &str,
+        file_path: &str,
+        source: &DocumentSource,
+    ) -> Result<Vec<DocumentChunk>> {
+        let file_type = self.detect_file_type(file_path)?;
+        
+        match file_type {
+            SupportedFileType::Md => self.chunk_markdown_structure(content, file_path, source),
+            _ => {
+                debug!("Structure-aware chunking not implemented for file type: {:?}, falling back to recursive", file_type);
+                self.chunk_text_recursive(content, file_path, source)
+            }
+        }
+    }
+
+    /// Markdown结构化分块
+    fn chunk_markdown_structure(
+        &self,
+        content: &str,
+        file_path: &str,
+        source: &DocumentSource,
+    ) -> Result<Vec<DocumentChunk>> {
+        let mut chunks = Vec::new();
+        let lines: Vec<&str> = content.lines().collect();
+        let mut current_section = String::new();
+        let mut chunk_index = 0;
+        let mut current_header = String::new();
+        
+        for line in lines {
+            // 检测标题行
+            if line.starts_with('#') {
+                // 保存当前段落
+                if !current_section.trim().is_empty() {
+                    let chunk_content = if !current_header.is_empty() {
+                        format!("{}\n\n{}", current_header, current_section)
+                    } else {
+                        current_section.clone()
+                    };
+                    
+                    if chunk_content.chars().count() >= self.config.min_chunk_size_chars {
+                        let chunk = self.create_chunk(
+                            &chunk_content,
+                            chunk_index,
+                            0,
+                            chunk_content.chars().count(),
+                            file_path,
+                            source,
+                        )?;
+                        chunks.push(chunk);
+                        chunk_index += 1;
+                    }
+                }
+                
+                // 开始新段落
+                current_header = line.to_string();
+                current_section.clear();
+            } else {
+                current_section.push_str(line);
+                current_section.push('\n');
+                
+                // 如果当前段落太大，分割它
+                if current_section.chars().count() > self.config.max_chunk_size_chars {
+                    let chunk_content = if !current_header.is_empty() {
+                        format!("{}\n\n{}", current_header, current_section)
+                    } else {
+                        current_section.clone()
+                    };
+                    
+                    // 使用递归分割处理大段落
+                    let mut sub_chunks = self.chunk_text_recursive(&chunk_content, file_path, source)?;
+                    for chunk in &mut sub_chunks {
+                        chunk.chunk_index = chunk_index;
+                        chunk_index += 1;
+                    }
+                    chunks.append(&mut sub_chunks);
+                    current_section.clear();
+                }
+            }
+        }
+        
+        // 保存最后一个段落
+        if !current_section.trim().is_empty() {
+            let chunk_content = if !current_header.is_empty() {
+                format!("{}\n\n{}", current_header, current_section)
+            } else {
+                current_section
+            };
+            
+            if chunk_content.chars().count() >= self.config.min_chunk_size_chars {
+                let chunk = self.create_chunk(
+                    &chunk_content,
+                    chunk_index,
+                    0,
+                    chunk_content.chars().count(),
+                    file_path,
+                    source,
+                )?;
+                chunks.push(chunk);
+            }
+        }
+        
         Ok(chunks)
     }
 
@@ -450,4 +748,90 @@ mod tests {
         assert!(matches!(chunker.detect_file_type("test.docx"), Ok(SupportedFileType::Docx)));
         assert!(chunker.detect_file_type("test.unknown").is_err());
     }
+
+
+    use rig::prelude::*;
+    use rig::providers::ollama::Client as OllamaClient;
+    use rig::providers::moonshot::Client as MoonshotClient;
+    use rig::{
+        Embed, completion::Prompt, embeddings::EmbeddingsBuilder,
+        vector_store::in_memory_store::InMemoryVectorStore,
+        
+    };
+    use serde::Serialize;
+    use std::vec;
+
+    // Data to be RAGged.
+    // A vector search needs to be performed on the `definitions` field, so we derive the `Embed` trait for `WordDefinition`
+    // and tag that field with `#[embed]`.
+    #[derive(Embed, Serialize, Clone, Debug, Eq, PartialEq, Default)]
+    struct WordDefinition {
+        id: String,
+        word: String,
+        #[embed]
+        definitions: Vec<String>,
+    }
+
+
+    #[tokio::test]
+    async fn test_rag() -> Result<(), anyhow::Error> {
+
+
+    println!("test_rag");
+    let ollama_client = OllamaClient::new();
+    let api_key = "sk-CJCWoSoUFqJgVadOzDahRekmXsSKqaBUcBCNkJ8FGHVIBG45".to_string();
+    let moonshot_client = MoonshotClient::builder(&api_key).build();
+    let embedding_model = ollama_client.embedding_model("dengcao/Qwen3-Embedding-0.6B:Q8_0");
+
+    // Generate embeddings for the definitions of all the documents using the specified embedding model.
+    let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
+        .documents(vec![
+            WordDefinition {
+                id: "doc0".to_string(),
+                word: "flurbo".to_string(),
+                definitions: vec![
+                    "1. *flurbo* (name): A flurbo is a green alien that lives on cold planets.".to_string(),
+                    "2. *flurbo* (name): A fictional digital currency that originated in the animated series Rick and Morty.".to_string()
+                ]
+            },
+            WordDefinition {
+                id: "doc1".to_string(),
+                word: "glarb-glarb".to_string(),
+                definitions: vec![
+                    "1. *glarb-glarb* (noun): A glarb-glarb is a ancient tool used by the ancestors of the inhabitants of planet Jiro to farm the land.".to_string(),
+                    "2. *glarb-glarb* (noun): A fictional creature found in the distant, swampy marshlands of the planet Glibbo in the Andromeda galaxy.".to_string()
+                ]
+            },
+            WordDefinition {
+                id: "doc2".to_string(),
+                word: "linglingdong".to_string(),
+                definitions: vec![
+                    "1. *linglingdong* (noun): A term used by inhabitants of the far side of the moon to describe humans.".to_string(),
+                    "2. *linglingdong* (noun): A rare, mystical instrument crafted by the ancient monks of the Nebulon Mountain Ranges on the planet Quarm.".to_string()
+                ]
+            },
+        ])?
+        .build()
+        .await?;
+
+    // Create vector store with the embeddings
+    let vector_store = InMemoryVectorStore::from_documents(embeddings);
+
+    // Create vector store index
+    let index = vector_store.index(embedding_model);
+    let rag_agent = moonshot_client.agent("moonshot-v1-8k")
+        .preamble("
+            You are a dictionary assistant here to assist the user in understanding the meaning of words.
+            You will find additional non-standard word definitions that could be useful below.
+        ")
+        .dynamic_context(1, index)
+        .build();
+
+    // Prompt the agent and print the response
+    let response = rag_agent.prompt("What does \"glarb-glarb\" mean?").await?;
+
+    println!("---------------\n{}\n------------",response);
+
+    Ok(())
+}
 }

@@ -134,20 +134,20 @@
             <div class="flex flex-wrap gap-2">
               <div
                 v-for="(citation, index) in message.citations"
-                :key="citation.id"
+                :key="citation.id || citation.source_id || (citation.file_name + index)"
                 class="group relative"
               >
                 <button
-                  @click="showCitationDetail(citation)"
+                  @click="openCitationModal(citation)"
                   class="btn btn-xs btn-outline gap-1 hover:btn-accent transition-all duration-200"
                   :title="citation.file_name"
                 >
                   <i class="fas fa-file-alt text-xs"></i>
-                  <span class="text-xs">[{{ index + 1 }}] {{ citation.file_name.split('/').pop() }}</span>
+                  <span class="text-xs">[{{ index + 1 }}] {{ (citation.file_name || '').split('/').pop() }}</span>
                 </button>
                 
                 <!-- 悬浮预览 -->
-                <div class="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50 w-80 max-w-sm">
+                <!-- <div class="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50 w-80 max-w-sm">
                   <div class="bg-base-100 border border-base-300 rounded-lg shadow-lg p-3 text-xs">
                     <div class="font-medium mb-1">{{ citation.file_name }}</div>
                     <div class="text-base-content/70 mb-2">
@@ -161,7 +161,7 @@
                       相似度: {{ (citation.score * 100).toFixed(1) }}%
                     </div>
                   </div>
-                </div>
+                </div> -->
               </div>
             </div>
           </div>
@@ -223,13 +223,39 @@
       :rag-enabled="ragEnabled"
       @send-message="sendMessage"
       @stop-execution="stopExecution"
-      @toggle-debug="showDebugInfo = !showDebugInfo"
+      @toggle-debug="showDebugInfo = !showDebugInfo"水1111
       @create-new-conversation="handleCreateNewConversation"
       @clear-conversation="handleClearConversation"
       @toggle-task-mode="handleToggleTaskMode"
       @toggle-rag="handleToggleRAG"
     />
 
+    <!-- Citation Detail Modal -->
+    <div v-if="citationModalOpen" class="modal modal-open">
+      <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-2">参考来源详情</h3>
+        <div v-if="citationDetail" class="space-y-2 text-sm">
+          <div class="font-semibold">{{ citationDetail.file_name }}</div>
+          <div class="text-base-content/70">
+            源ID: {{ citationDetail.source_id }}
+          </div>
+          <div class="text-base-content/70">
+            位置: {{ citationDetail.page_number ? `第${citationDetail.page_number}页` : '未知页' }}
+            <span v-if="citationDetail.section_title"> · {{ citationDetail.section_title }}</span>
+            <span> · {{ citationDetail.start_char }} - {{ citationDetail.end_char }}</span>
+          </div>
+          <div class="mt-2 p-3 bg-base-200/50 rounded border border-base-300/50 whitespace-pre-wrap break-words">
+            {{ citationDetail.content_preview }}
+          </div>
+          <div class="text-xs text-base-content/60">相似度: {{ (citationDetail.score * 100).toFixed(1) }}%</div>
+          <div class="mt-3 flex gap-2">
+            <button class="btn btn-sm" @click="jumpToRagSource(citationDetail)">在知识库中查看</button>
+            <button class="btn btn-sm btn-ghost" @click="citationModalOpen = false">关闭</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-backdrop" @click="citationModalOpen = false"></div>
+    </div>
   </div>
 </template>
 
@@ -592,7 +618,12 @@ const sendMessage = async () => {
           streamStartTime.value = null
           streamCharCount.value = 0
 
-          // 非流式路径下：保持由上层统一保存，避免与 useOrderedMessages 重复
+          // 非流式路径下：主动保存会话消息（流式由 orderedMessages 统一保存）
+          try {
+            await saveMessagesToConversation(messages.value as any)
+          } catch (e) {
+            console.error('保存消息失败:', e)
+          }
         } else {
           // 传统模式：流式聊天或网页搜索
           const useSearch = webSearchEnabled.value
@@ -697,11 +728,18 @@ const openAiSettings = () => {
   router.push('/settings?tab=ai')
 }
 
-const showCitationDetail = (citation: Citation) => {
-  console.log('查看引用详情:', citation)
-  // TODO: 可以打开一个模态框显示详细内容
-  // 或者跳转到RAG管理页面查看原文档
-  router.push(`/rag-management?file=${citation.source_id}`)
+const citationModalOpen = ref(false)
+const citationDetail = ref<Citation | null>(null)
+const openCitationModal = (citation: Citation) => {
+  citationDetail.value = citation
+  citationModalOpen.value = true
+}
+
+const jumpToRagSource = (citation: Citation) => {
+  const file = encodeURIComponent((citation.source_id || citation.file_name || '').toString())
+  const start = citation.start_char
+  const end = citation.end_char
+  router.push(`/rag-management?file=${file}&start=${start}&end=${end}`)
 }
 
 const copyMessage = async (content: string) => {

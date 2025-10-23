@@ -319,6 +319,7 @@ export default {
     providerRequired: 'Provider selection is required',
     categories: {
       ai: 'AI Services',
+      rag: 'Knowledge Base',
       scheduler: 'Scheduler Strategy',
       database: 'Database',
       system: 'System Settings',

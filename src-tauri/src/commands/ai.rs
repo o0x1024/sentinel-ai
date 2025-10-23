@@ -96,6 +96,7 @@ pub struct SaveMessageRequest {
     pub conversation_id: String,
     pub role: String,
     pub content: String,
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -218,99 +219,41 @@ pub async fn send_ai_stream_message(
         request.conversation_id
     );
 
-    // 获取AI服务，如果指定了provider和model，则动态创建服务配置
-    let service = if let (Some(provider), Some(model)) = (&request.provider, &request.model) {
-        tracing::info!(
-            "Creating dynamic AI service with provider: {}, model: {}",
-            provider,
-            model
-        );
-
-        // 从AI管理器获取提供商配置
-        if let Ok(Some(provider_config)) = ai_manager.get_provider_config(provider).await {
-            // 创建临时服务配置，使用指定的模型
-            let mut dynamic_config = provider_config;
-            dynamic_config.model = model.clone();
-
-            if let Some(temp) = request.temperature {
-                dynamic_config.temperature = Some(temp);
-            }
-            if let Some(max_tokens) = request.max_tokens {
-                dynamic_config.max_tokens = Some(max_tokens);
-            }
-
-            // 创建临时AI服务
-            let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
-            let mcp_service = ai_manager.get_mcp_service();
-
-            let mut temp_service = crate::services::ai::AiService::new(
-                dynamic_config,
-                db_service.inner().clone(),
-                Some(app_handle.clone()),
-                mcp_service,
-            );
-            temp_service.set_app_handle(app_handle.clone());
-            temp_service
-        } else {
-            tracing::warn!(
-                "Provider {} not found, falling back to default service",
-                provider
-            );
-            let mut default_service = ai_manager
-                .get_service(&request.service_name)
-                .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
-            default_service.set_app_handle(app_handle.clone());
-            default_service
+    // 普通聊天模式：强制使用默认 Provider/Model，不接受前端覆盖，也不做任何回退
+    let (provider, model_name) = match ai_manager.get_default_chat_model().await {
+        Ok(Some((p, m))) => {
+            tracing::info!("Using default chat model: {}/{}", p, m);
+            (p, m)
         }
-    } else {
-        // 当没有指定provider和model时，尝试使用默认Chat模型配置
-        match ai_manager.get_default_chat_model().await {
-            Ok(Some((provider, model_name))) => {
-                tracing::info!(
-                    "Using default chat model for stream: {}/{}",
-                    provider,
-                    model_name
-                );
-
-                // 根据model_name找到对应的服务
-                if let Ok(Some(service)) = ai_manager.find_service_by_model(&model_name).await {
-                    tracing::info!("Found service for default chat model: {}", model_name);
-                    let mut service_with_handle = service;
-                    service_with_handle.set_app_handle(app_handle.clone());
-                    service_with_handle
-                } else {
-                    tracing::warn!(
-                        "No service found for default chat model {}, using default service",
-                        model_name
-                    );
-                    let mut default_service = ai_manager
-                        .get_service(&request.service_name)
-                        .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
-                    default_service.set_app_handle(app_handle.clone());
-                    default_service
-                }
-            }
-            Ok(None) => {
-                tracing::info!("No default chat model configured, using default service");
-                let mut service = ai_manager
-                    .get_service(&request.service_name)
-                    .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
-                service.set_app_handle(app_handle.clone());
-                service
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to get default chat model: {}, using default service",
-                    e
-                );
-                let mut service = ai_manager
-                    .get_service(&request.service_name)
-                    .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
-                service.set_app_handle(app_handle.clone());
-                service
-            }
+        Ok(None) => {
+            return Err("Default chat model is not configured. Please set it in Settings > AI.".to_string())
+        }
+        Err(e) => {
+            return Err(format!("Failed to read default chat model: {}", e))
         }
     };
+
+    // 读取 provider 配置并构建一次性服务实例（内部用 Rig 直连）
+    let provider_config = ai_manager
+        .get_provider_config(&provider)
+        .await
+        .map_err(|e| format!("Failed to load provider config '{}': {}", provider, e))?
+        .ok_or_else(|| format!("Provider '{}' configuration not found", provider))?;
+
+    let mut dynamic_config = provider_config;
+    dynamic_config.model = model_name.clone();
+    if let Some(temp) = request.temperature { dynamic_config.temperature = Some(temp); }
+    if let Some(max_tokens) = request.max_tokens { dynamic_config.max_tokens = Some(max_tokens); }
+
+    let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
+    let mcp_service = ai_manager.get_mcp_service();
+    let mut service = crate::services::ai::AiService::new(
+        dynamic_config,
+        db_service.inner().clone(),
+        Some(app_handle.clone()),
+        mcp_service,
+    );
+    service.set_app_handle(app_handle.clone());
 
     // 使用前端传递的消息ID，如果没有则生成新的
     let message_id = request
@@ -504,7 +447,9 @@ pub async fn send_ai_stream_with_search(
         .ok_or_else(|| "TAVILY_API_KEY not configured".to_string())?;
 
     // 使用全局代理构建客户端
-    let client = crate::ai_adapter::http::build_client_with_global_proxy(Duration::from_secs(30))
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
     let tavily_url = "https://api.tavily.com/search";
     let payload = serde_json::json!({
@@ -581,11 +526,21 @@ pub async fn send_ai_stream_with_search(
         }
     } else {
         match ai_manager.get_default_chat_model().await {
-            Ok(Some((_provider, model_name))) => {
-                if let Ok(Some(service)) = ai_manager.find_service_by_model(&model_name).await {
-                    let mut service_with_handle = service;
-                    service_with_handle.set_app_handle(app_handle.clone());
-                    service_with_handle
+            Ok(Some((provider, model_name))) => {
+                // 直接基于默认配置构建服务
+                if let Ok(Some(provider_config)) = ai_manager.get_provider_config(&provider).await {
+                    let mut dynamic_config = provider_config;
+                    dynamic_config.model = model_name;
+                    let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
+                    let mcp_service = ai_manager.get_mcp_service();
+                    let mut temp_service = crate::services::ai::AiService::new(
+                        dynamic_config,
+                        db_service.inner().clone(),
+                        Some(app_handle.clone()),
+                        mcp_service,
+                    );
+                    temp_service.set_app_handle(app_handle.clone());
+                    temp_service
                 } else {
                     let mut default_service = ai_manager
                         .get_service(&request.service_name)
@@ -910,7 +865,10 @@ pub async fn save_ai_message(
         conversation_id: request.conversation_id,
         role: request.role,
         content: request.content,
-        metadata: None,
+        metadata: request
+            .metadata
+            .as_ref()
+            .and_then(|v| serde_json::to_string(v).ok()),
         token_count: None,
         cost: None,
         tool_calls: None,
@@ -1086,8 +1044,7 @@ async fn test_modelscope_connection(
         });
     }
 
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = reqwest::Client::new();
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api-inference.modelscope.cn/v1/models".to_string());
@@ -1171,8 +1128,7 @@ pub async fn test_openrouter_connection(
         });
     }
 
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = reqwest::Client::new();
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
@@ -1256,8 +1212,7 @@ async fn test_openai_connection(
         });
     }
 
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = reqwest::Client::new();
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
@@ -1341,8 +1296,7 @@ async fn test_anthropic_connection(
         });
     }
 
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = reqwest::Client::new();
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.anthropic.com".to_string());
@@ -1420,8 +1374,7 @@ async fn test_gemini_connection(
         });
     }
 
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = reqwest::Client::new();
     let api_key = request.api_key.unwrap();
 
     // 使用Gemini API测试连接
@@ -1492,8 +1445,7 @@ async fn test_deepseek_connection(
         });
     }
 
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = reqwest::Client::new();
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
@@ -1563,8 +1515,7 @@ async fn test_deepseek_connection(
 async fn test_lm_studio_connection(
     request: TestConnectionRequest,
 ) -> Result<TestConnectionResponse, String> {
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = reqwest::Client::new();
     let api_base = request
         .api_base
         .unwrap_or_else(|| "http://localhost:1234".to_string());
@@ -1634,17 +1585,16 @@ async fn test_lm_studio_connection(
     }
 }
 
-// 测试Ollama连接(本地)
+// 测试Ollama连接(本地) - 使用rig crate增强
 async fn test_ollama_connection(
     request: TestConnectionRequest,
 ) -> Result<TestConnectionResponse, String> {
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "http://localhost:11434".to_string());
 
-    // 获取可用模型列表
+    // 首先使用原始HTTP方式获取模型列表（更可靠）
+    let client = reqwest::Client::new();
     let response = client
         .get(format!("{}/api/tags", api_base))
         .send()
@@ -1664,11 +1614,28 @@ async fn test_ollama_connection(
                 .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from))
                 .collect();
 
+            // 使用rig crate进行额外的连接验证（如果有可用模型）
+            let mut rig_test_result = None;
+            if !models.is_empty() {
+                // 选择第一个可用模型进行rig连接测试
+                let test_model = &models[0];
+                match test_ollama_with_rig(test_model).await {
+                    Ok(rig_msg) => {
+                        rig_test_result = Some(format!(" (Rig test: {})", rig_msg));
+                    }
+                    Err(e) => {
+                        log::warn!("Rig connection test failed: {}", e);
+                        rig_test_result = Some(format!(" (Rig test failed: {})", e));
+                    }
+                }
+            }
+
             Ok(TestConnectionResponse {
                 success: true,
                 message: format!(
-                    "Successfully connected to Ollama, found {} local models",
-                    models.len()
+                    "Successfully connected to Ollama, found {} local models{}",
+                    models.len(),
+                    rig_test_result.unwrap_or_default()
                 ),
                 models: Some(models),
             })
@@ -1693,6 +1660,31 @@ async fn test_ollama_connection(
     }
 }
 
+// 使用rig crate测试Ollama连接
+async fn test_ollama_with_rig(model: &str) -> Result<String, String> {
+    use rig::completion::Prompt;
+    use rig::client::builder::DynClientBuilder;
+
+    // 通过动态客户端创建Agent（提供稳定的 prompt 接口）
+    let agent = DynClientBuilder::new()
+        .agent("ollama", model)
+        .map_err(|e| format!("Rig agent build failed: {}", e))?
+        .build();
+
+    // 发送简单的测试消息
+    match agent.prompt("Hello").await {
+        Ok(response) => {
+            let response_text = response.trim();
+            if response_text.is_empty() {
+                Ok("Connected but got empty response".to_string())
+            } else {
+                Ok(format!("Connected and got response ({} chars)", response_text.len()))
+            }
+        }
+        Err(e) => Err(format!("Rig connection failed: {}", e))
+    }
+}
+
 // 测试Moonshot连接
 async fn test_moonshot_connection(
     request: TestConnectionRequest,
@@ -1705,8 +1697,7 @@ async fn test_moonshot_connection(
         });
     }
 
-    let client = crate::ai_adapter::http::create_default_client()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = reqwest::Client::new();
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.moonshot.cn/v1".to_string());
@@ -1883,13 +1874,14 @@ pub async fn set_default_provider(
         }
     }
 
-    if let Ok(adapter_manager) = crate::ai_adapter::core::AiAdapterManager::global().get_client() {
-        if let Ok(mut client) = adapter_manager.write() {
-            if let Err(e) = client.set_default_provider(&provider) {
-                tracing::warn!("Failed to set global default provider in adapter: {}", e);
-            }
-        }
-    }
+    // DISABLED: ai_adapter removed
+    // if let Ok(adapter_manager) = crate::ai_adapter::core::AiAdapterManager::global().get_client() {
+    //     if let Ok(mut client) = adapter_manager.write() {
+    //         if let Err(e) = client.set_default_provider(&provider) {
+    //             tracing::warn!("Failed to set global default provider in adapter: {}", e);
+    //         }
+    //     }
+    // }
 
     // 通知前端
     if let Err(e) = app.emit("ai_default_provider_updated", &provider) {
@@ -1956,7 +1948,7 @@ pub async fn get_ai_config(
             }
         }
         Ok(None) => {
-            tracing::info!("No AI providers configuration found, using defaults from @ai_adapter");
+            tracing::info!("No AI providers configuration found, using Rig defaults");
             // 返回默认提供商配置（未启用，便于前端展示并填写）
             ai_config["providers"] = default_providers_config();
         }
@@ -2404,109 +2396,29 @@ pub struct HandleTaskExecutionStreamRequest {
 // LM Studio相关的命令
 
 /// 刷新LM Studio模型列表
+/// DISABLED (ai_adapter removed)
 #[tauri::command]
 pub async fn refresh_lm_studio_models(
-    api_base: Option<String>,
-    api_key: Option<String>,
+    _api_base: Option<String>,
+    _api_key: Option<String>,
 ) -> Result<Vec<String>, String> {
-    use crate::ai_adapter::types::ProviderConfig;
-    use crate::ai_adapter::providers::LmStudioProvider;
-    
-    // 创建配置
-    let config = ProviderConfig {
-        name: "LM Studio".to_string(),
-        api_key: api_key.unwrap_or_else(|| "lm-studio".to_string()),
-        api_base,
-        api_version: None,
-        timeout: Some(std::time::Duration::from_secs(30)),
-        max_retries: Some(3),
-        extra_headers: None,
-    };
-    
-    // 创建提供商实例
-    let provider = LmStudioProvider::new(config)
-        .map_err(|e| format!("Failed to create LM Studio provider: {}", e))?;
-    
-    // 刷新模型列表
-    provider.refresh_models().await
-        .map_err(|e| format!("Failed to refresh LM Studio models: {}", e))
+    Err("LM Studio model refresh disabled - ai_adapter removed, use Rig instead".to_string())
 }
 
-/// 获取LM Studio服务器状态
+/// 获取LM Studio服务器状态 - DISABLED (ai_adapter removed)
 #[tauri::command]
 pub async fn get_lm_studio_status(
-    api_base: Option<String>,
-    api_key: Option<String>,
+    _api_base: Option<String>,
+    _api_key: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    use crate::ai_adapter::types::ProviderConfig;
-    use crate::ai_adapter::providers::LmStudioProvider;
-    
-    // 创建配置
-    let config = ProviderConfig {
-        name: "LM Studio".to_string(),
-        api_key: api_key.unwrap_or_else(|| "lm-studio".to_string()),
-        api_base,
-        api_version: None,
-        timeout: Some(std::time::Duration::from_secs(10)),
-        max_retries: Some(1),
-        extra_headers: None,
-    };
-    
-    // 创建提供商实例
-    let provider = LmStudioProvider::new(config)
-        .map_err(|e| format!("Failed to create LM Studio provider: {}", e))?;
-    
-    // 获取服务器状态
-    provider.get_server_status().await
-        .map_err(|e| format!("Failed to get LM Studio server status: {}", e))
+    Err("LM Studio status check disabled - ai_adapter removed, use Rig instead".to_string())
 }
 
-/// 测试LM Studio连接（使用新的AI适配器）
+/// 测试LM Studio提供商连接 - DISABLED (ai_adapter removed)
 #[tauri::command]
 pub async fn test_lm_studio_provider_connection(
-    api_base: Option<String>,
-    api_key: Option<String>,
+    _api_base: Option<String>,
+    _api_key: Option<String>,
 ) -> Result<TestConnectionResponse, String> {
-    use crate::ai_adapter::types::{ProviderConfig, AiProvider};
-    use crate::ai_adapter::providers::LmStudioProvider;
-    
-    // 创建配置
-    let config = ProviderConfig {
-        name: "LM Studio".to_string(),
-        api_key: api_key.unwrap_or_else(|| "lm-studio".to_string()),
-        api_base,
-        api_version: None,
-        timeout: Some(std::time::Duration::from_secs(10)),
-        max_retries: Some(1),
-        extra_headers: None,
-    };
-    
-    // 创建提供商实例
-    let provider = LmStudioProvider::new(config)
-        .map_err(|e| format!("Failed to create LM Studio provider: {}", e))?;
-    
-    // 测试连接
-    match provider.test_connection().await {
-        Ok(true) => {
-            let models = provider.supported_models();
-            Ok(TestConnectionResponse {
-                success: true,
-                message: format!("Successfully connected to LM Studio, found {} models", models.len()),
-                models: Some(models),
-            })
-        }
-        Ok(false) => Ok(TestConnectionResponse {
-            success: false,
-            message: "Connection to LM Studio failed".to_string(),
-            models: None,
-        }),
-        Err(e) => Ok(TestConnectionResponse {
-            success: false,
-            message: format!("Error testing LM Studio connection: {}", e),
-            models: None,
-        }),
-    }
+    Err("LM Studio provider test disabled - ai_adapter removed, use Rig instead".to_string())
 }
-
-
-

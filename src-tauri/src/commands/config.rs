@@ -70,22 +70,11 @@ pub async fn set_global_proxy_config(
     let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
     db.set_config("network", "global_proxy", &json, Some("Global HTTP proxy settings")).await.map_err(|e| e.to_string())?;
     
-    // 生效到运行时 - 只有当enabled为true时才设置代理
+    // 生效到运行时 - ai_adapter removed, proxy functionality disabled
     if cfg.enabled {
-        let to_runtime = crate::ai_adapter::http::ProxyConfig {
-            enabled: cfg.enabled,
-            scheme: cfg.scheme,
-            host: cfg.host,
-            port: cfg.port,
-            username: cfg.username,
-            password: cfg.password,
-            no_proxy: cfg.no_proxy,
-        };
-        crate::ai_adapter::http::set_global_proxy(Some(to_runtime));
-        tracing::info!("Global proxy configuration enabled and applied successfully");
+        tracing::info!("Global proxy configuration saved but not applied (ai_adapter removed)");
     } else {
-        crate::ai_adapter::http::set_global_proxy(None);
-        tracing::info!("Global proxy configuration disabled successfully");
+        tracing::info!("Global proxy configuration disabled");
     }
     Ok(())
 }

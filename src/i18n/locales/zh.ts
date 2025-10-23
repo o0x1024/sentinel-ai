@@ -265,6 +265,7 @@ export default {
     saving: '保存中...',
     categories: {
       ai: 'AI服务',
+      rag: '知识库配置',
       scheduler: '模型配置',
       database: '数据库',
       system: '系统设置',

@@ -287,207 +287,7 @@
       </div>
     </div>
 
-    <!-- RAG 模型配置 -->
-    <div class="card bg-base-100 shadow-sm mb-6">
-      <div class="card-body">
-        <h3 class="card-title mb-4">
-          <i class="fas fa-database"></i>
-          {{ t('settings.rag.ragModels') }}
-        </h3>
-        
-        <div class="space-y-6">
-          <!-- RAG 嵌入模型 -->
-          <div class="border rounded-lg p-4">
-            <div class="flex items-center justify-between mb-3">
-              <div class="flex items-center gap-3">
-                <i class="fas fa-vector-square text-info"></i>
-                <div>
-                  <h4 class="font-semibold">{{ t('settings.rag.embeddingModel') }}</h4>
-                  <p class="text-sm text-base-content/70">{{ t('settings.rag.embeddingModelDesc') }}</p>
-                </div>
-              </div>
-              <div class="badge badge-info">{{ t('settings.scheduler.required') }}</div>
-            </div>
-            
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text-alt">{{ t('settings.scheduler.provider') }}</span>
-                </label>
-                <select class="select select-bordered" 
-                        v-model="ragConfig.embedding_provider" 
-                        @change="onProviderChange('rag_embedding', $event)">
-                  <option value="">{{ t('settings.scheduler.selectProvider') }}</option>
-                  <option v-for="provider in availableProviders" :key="provider" :value="provider">
-                    {{ provider }}
-                  </option>
-                </select>
-              </div>
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text-alt">{{ t('settings.scheduler.model') }}</span>
-                </label>
-                <select class="select select-bordered" 
-                        v-model="ragConfig.embedding_model" 
-                        @change="saveRagConfig"
-                        :disabled="!ragConfig.embedding_provider">
-                  <option value="">{{ t('settings.scheduler.selectModel') }}</option>
-                  <option v-for="model in getEmbeddingModels(ragConfig.embedding_provider)" 
-                          :key="model.id" :value="model.id">
-                    {{ model.name }}
-                  </option>
-                </select>
-              </div>
-            </div>
-            
-            <!-- 嵌入模型参数 -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text-alt">{{ t('settings.rag.batchSize') }}</span>
-                </label>
-                <input type="number" class="input input-bordered input-sm" 
-                       v-model.number="ragConfig.batch_size" 
-                       min="1" max="128"
-                       @blur="saveRagConfig">
-              </div>
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text-alt">{{ t('settings.rag.maxConcurrent') }}</span>
-                </label>
-                <input type="number" class="input input-bordered input-sm" 
-                       v-model.number="ragConfig.max_concurrent" 
-                       min="1" max="10"
-                       @blur="saveRagConfig">
-              </div>
-            </div>
-          </div>
-          
-          <!-- RAG 重排模型 -->
-          <div class="border rounded-lg p-4">
-            <div class="flex items-center justify-between mb-3">
-              <div class="flex items-center gap-3">
-                <i class="fas fa-sort-amount-down text-warning"></i>
-                <div>
-                  <h4 class="font-semibold">{{ t('settings.rag.rerankingModel') }}</h4>
-                  <p class="text-sm text-base-content/70">{{ t('settings.rag.rerankingModelDesc') }}</p>
-                </div>
-              </div>
-              <div class="badge badge-warning">{{ t('settings.scheduler.optional') }}</div>
-            </div>
-            
-            <div class="form-control mb-3">
-              <label class="label cursor-pointer">
-                <span class="label-text">{{ t('settings.rag.enableReranking') }}</span>
-                <input type="checkbox" class="toggle toggle-warning" 
-                       v-model="ragConfig.reranking_enabled"
-                       @change="saveRagConfig">
-              </label>
-            </div>
-            
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3" 
-                 :class="{ 'opacity-50': !ragConfig.reranking_enabled }">
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text-alt">{{ t('settings.scheduler.provider') }}</span>
-                </label>
-                <select class="select select-bordered" 
-                        v-model="ragConfig.reranking_provider" 
-                        @change="onProviderChange('rag_reranking', $event)"
-                        :disabled="!ragConfig.reranking_enabled">
-                  <option value="">{{ t('settings.scheduler.selectProvider') }}</option>
-                  <option v-for="provider in availableProviders" :key="provider" :value="provider">
-                    {{ provider }}
-                  </option>
-                </select>
-              </div>
-              <div class="form-control">
-                <label class="label">
-                  <span class="label-text-alt">{{ t('settings.scheduler.model') }}</span>
-                </label>
-                <select class="select select-bordered" 
-                        v-model="ragConfig.reranking_model" 
-                        @change="saveRagConfig"
-                        :disabled="!ragConfig.reranking_provider || !ragConfig.reranking_enabled">
-                  <option value="">{{ t('settings.scheduler.selectModel') }}</option>
-                  <option v-for="model in getRerankingModels(ragConfig.reranking_provider)" 
-                          :key="model.id" :value="model.id">
-                    {{ model.name }}
-                  </option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- RAG 检索参数配置 -->
-    <div class="card bg-base-100 shadow-sm mb-6">
-      <div class="card-body">
-        <h3 class="card-title mb-4">
-          <i class="fas fa-search"></i>
-          {{ t('settings.rag.retrievalSettings') }}
-        </h3>
-        
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('settings.rag.topK') }}</span>
-            </label>
-            <input type="number" class="input input-bordered" 
-                   v-model.number="ragConfig.top_k" 
-                   min="1" max="50"
-                   @blur="saveRagConfig">
-            <label class="label">
-              <span class="label-text-alt">{{ t('settings.rag.topKDesc') }}</span>
-            </label>
-          </div>
-          
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('settings.rag.mmrLambda') }}</span>
-            </label>
-            <input type="number" class="input input-bordered" 
-                   v-model.number="ragConfig.mmr_lambda" 
-                   min="0" max="1" step="0.1"
-                   @blur="saveRagConfig">
-            <label class="label">
-              <span class="label-text-alt">{{ t('settings.rag.mmrLambdaDesc') }}</span>
-            </label>
-          </div>
-          
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('settings.rag.similarityThreshold') }}</span>
-            </label>
-            <input type="number" class="input input-bordered" 
-                   v-model.number="ragConfig.similarity_threshold" 
-                   min="0" max="1" step="0.1"
-                   @blur="saveRagConfig">
-            <label class="label">
-              <span class="label-text-alt">{{ t('settings.rag.similarityThresholdDesc') }}</span>
-            </label>
-          </div>
-        </div>
-        
-        <!-- RAG配置操作按钮 -->
-        <div class="card-actions justify-end mt-4">
-          <button class="btn btn-outline" @click="emit('testEmbeddingConnection')" :disabled="saving">
-            <i class="fas fa-plug mr-2"></i>
-            {{ t('settings.ragTestConnection') }}
-          </button>
-          <button class="btn btn-outline" @click="emit('resetRagConfig')" :disabled="saving">
-            <i class="fas fa-undo mr-2"></i>
-            {{ t('settings.ragResetConfig') }}
-          </button>
-          <button class="btn btn-primary" @click="emit('saveRagConfig')" :disabled="saving">
-            <i class="fas fa-save mr-2"></i>
-            {{ t('settings.ragSaveConfig') }}
-          </button>
-        </div>
-      </div>
-    </div>
 
     <!-- 重新规划策略 -->
     <div class="card bg-base-100 shadow-sm mb-6">
@@ -649,7 +449,6 @@ const { t } = useI18n()
 // Props
 interface Props {
   schedulerConfig: any
-  ragConfig?: any
   availableModels: any[]
   saving: boolean
 }
@@ -659,14 +458,10 @@ const props = defineProps<Props>()
 // Emits
 interface Emits {
   'update:schedulerConfig': [value: any]
-  'update:ragConfig': [value: any]
   'applyHighPerformancePreset': []
   'applyBalancedPreset': []
   'applyEconomicPreset': []
   'saveSchedulerConfig': []
-  'saveRagConfig': []
-  'testEmbeddingConnection': []
-  'resetRagConfig': []
 }
 
 const emit = defineEmits<Emits>()
@@ -754,24 +549,6 @@ const normalizeConfig = (cfg: any) => {
 
 const schedulerConfig = ref<any>(normalizeConfig(props.schedulerConfig))
 
-// 独立的RAG配置
-const ragConfig = ref({
-  embedding_provider: 'ollama',
-  embedding_model: 'nomic-embed-text',
-  embedding_dimensions: null,
-  embedding_api_key: '',
-  embedding_base_url: 'http://localhost:11434',
-  chunk_size_chars: 1000,
-  chunk_overlap_chars: 200,
-  top_k: 5,
-  mmr_lambda: 0.7,
-  batch_size: 10,
-  max_concurrent: 4,
-  reranking_provider: '',
-  reranking_model: '',
-  reranking_enabled: false,
-  similarity_threshold: 0.7
-})
 
 watch(() => props.schedulerConfig, (v) => {
   schedulerConfig.value = normalizeConfig(v)
@@ -781,17 +558,6 @@ watch(schedulerConfig, (v) => {
   emit('update:schedulerConfig', v)
 }, { deep: true })
 
-// 监听父组件传入的RAG配置变化
-watch(() => props.ragConfig, (newRagConfig) => {
-  if (newRagConfig) {
-    ragConfig.value = { ...ragConfig.value, ...newRagConfig }
-  }
-}, { deep: true, immediate: true })
-
-// 监听RAG配置变化并发射给父组件
-watch(ragConfig, (v) => {
-  emit('update:ragConfig', v)
-}, { deep: true })
 
 // Computed properties for providers
 const availableProviders = computed(() => {
@@ -829,33 +595,6 @@ const getProviderModels = (provider: string) => {
   return result
 }
 
-// 获取嵌入模型
-const getEmbeddingModels = (provider: string) => {
-  const models = getProviderModels(provider)
-  // 如果模型有type字段，过滤embedding类型；否则返回所有模型（默认可用于embedding）
-  if (models.length > 0 && models[0].type !== undefined) {
-    return models.filter(model => !model.type || model.type === 'embedding')
-  }
-  // 排除明显的reranking模型（通过名称识别）
-  return models.filter(model => 
-    !model.name?.toLowerCase().includes('rerank') && 
-    !model.id?.toLowerCase().includes('rerank')
-  )
-}
-
-// 获取重排序模型
-const getRerankingModels = (provider: string) => {
-  const models = getProviderModels(provider)
-  // 如果模型有type字段，过滤reranking类型；否则通过名称识别reranking模型
-  if (models.length > 0 && models[0].type !== undefined) {
-    return models.filter(model => model.type === 'reranking')
-  }
-  // 通过名称识别reranking模型
-  return models.filter(model => 
-    model.name?.toLowerCase().includes('rerank') || 
-    model.id?.toLowerCase().includes('rerank')
-  )
-}
 
 const onProviderChange = (stage: string, evt: Event) => {
   // 兼容从模板传入的原生事件，安全读取值
@@ -903,24 +642,10 @@ const initializeProviders = () => {
   ensureProvider('replanner', 'replanner_provider')
   ensureProvider('executor', 'executor_provider')
   ensureProvider('evaluator', 'evaluator_provider')
-  ensureRagProvider('embedding_model', 'embedding_provider')
-  ensureRagProvider('reranking_model', 'reranking_provider')
   
   console.log('SchedulerSettings: final config after initialization:', config.models)
 }
 
-// RAG配置的provider初始化方法
-const ensureRagProvider = (modelField: string, providerField: string) => {
-  if (ragConfig.value[modelField] && !ragConfig.value[providerField]) {
-    for (const model of props.availableModels) {
-      if (model.id === ragConfig.value[modelField]) {
-        ragConfig.value[providerField] = model.provider
-        console.log(`RAG: Auto-set ${providerField} to ${model.provider} for model ${ragConfig.value[modelField]}`)
-        break
-      }
-    }
-  }
-}
 
 const getCurrentStrategyName = () => {
   const strategies: Record<string, string> = {
@@ -991,24 +716,6 @@ const saveSchedulerConfig = () => {
   emit('saveSchedulerConfig')
 }
 
-// RAG配置保存方法
-const saveRagConfig = async () => {
-  try {
-    // 直接使用独立的ragConfig
-    await invoke('save_rag_config', { config: ragConfig.value })
-    console.log('RAG configuration saved successfully')
-    
-    // 重载RAG服务以应用新配置
-    try {
-      await invoke('reload_rag_service')
-      console.log('RAG service reloaded successfully')
-    } catch (reloadError) {
-      console.warn('Failed to reload RAG service:', reloadError)
-    }
-  } catch (error) {
-    console.error('Failed to save RAG config:', error)
-  }
-}
 
 // 监听变化，当模型列表可用时初始化提供商
 watch(() => [props.availableModels, schedulerConfig.value], () => {
@@ -1019,28 +726,6 @@ watch(() => [props.availableModels, schedulerConfig.value], () => {
   }
 }, { deep: true, immediate: true })
 
-// 监听RAG配置变化，初始化RAG提供商
-watch(() => [props.availableModels, ragConfig.value], () => {
-  console.log('RAG: availableModels changed:', props.availableModels)
-  console.log('RAG: ragConfig changed:', ragConfig.value)
-  if (props.availableModels.length > 0 && ragConfig.value) {
-    ensureRagProvider('embedding_model', 'embedding_provider')
-    ensureRagProvider('reranking_model', 'reranking_provider')
-  }
-}, { deep: true, immediate: true })
-
-// 加载RAG配置
-const loadRagConfig = async () => {
-  try {
-    const config = await invoke('get_rag_config')
-    if (config && typeof config === 'object') {
-      ragConfig.value = { ...ragConfig.value, ...(config as Record<string, any>) }
-      console.log('RAG配置已从后端加载:', ragConfig.value)
-    }
-  } catch (error) {
-    console.warn('Failed to load RAG config from backend:', error)
-  }
-}
 
 // 组件挂载时初始化提供商
 onMounted(() => {
@@ -1049,8 +734,6 @@ onMounted(() => {
   if (props.availableModels.length > 0 && schedulerConfig.value) {
     initializeProviders()
   }
-  // 加载RAG配置
-  loadRagConfig()
 })
 </script>
 

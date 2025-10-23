@@ -1,6 +1,5 @@
 // 模块声明
 pub mod agents;
-pub mod ai_adapter;
 pub mod commands;
 pub mod database;
 pub mod engines;
@@ -42,7 +41,25 @@ use commands::{
     window, prompt_commands, rewoo_commands, unified_tools,
 };
 
-use crate::ai_adapter::http::{set_global_proxy, ProxyConfig};
+// Simple proxy configuration structure
+#[derive(Debug, Clone)]
+struct ProxyConfig {
+    enabled: bool,
+    scheme: Option<String>,
+    host: Option<String>,
+    port: Option<u16>,
+    username: Option<String>,
+    password: Option<String>,
+    no_proxy: Option<String>,
+}
+
+// Placeholder for proxy functions - removed ai_adapter dependency
+fn set_global_proxy(_config: Option<ProxyConfig>) {
+    // Proxy functionality removed with ai_adapter
+    tracing::debug!("Proxy configuration ignored - ai_adapter removed");
+}
+
+
 
 #[cfg(unix)]
 use signal_hook::consts::signal::*;
@@ -282,13 +299,6 @@ pub fn run() {
                     tracing::debug!("Global proxy configuration initialized successfully");
                 }
 
-                // Initialize HTTP request logger
-                let logs_path = std::path::PathBuf::from(logs_dir);
-                if let Err(e) = crate::ai_adapter::init_global_logger(logs_path) {
-                    tracing::warn!("Failed to initialize HTTP request logger: {}", e);
-                } else {
-                    tracing::debug!("HTTP request logger initialized successfully");
-                }
 
                 let mut ai_manager = AiServiceManager::new(db_service.clone());
                 ai_manager.set_mcp_service(Arc::new(mcp_service.clone()));
@@ -302,8 +312,7 @@ pub fn run() {
 
                 let ai_manager = Arc::new(ai_manager);
 
-                // 初始化并管理 AI 适配器管理器（供 dispatch_intelligent_query 使用）
-                let ai_adapter_manager = Arc::new(crate::ai_adapter::core::AiAdapterManager::new());
+                // AI adapter manager removed - using Rig directly
 
                 // 初始化扫描会话服务
                 let scan_session_service = Arc::new(ScanSessionService::new(db_service.clone()));
@@ -336,7 +345,7 @@ pub fn run() {
                     tracing::error!("Global tool system not available to manage in Tauri state");
                 }
                 handle.manage(ai_manager);
-                handle.manage(ai_adapter_manager);
+                // AI adapter manager removed - using Rig directly
                 handle.manage(scan_session_service);
                 handle.manage(scan_service);
                 handle.manage(asset_service);
@@ -372,9 +381,9 @@ pub fn run() {
                 Arc::new(tokio::sync::RwLock::new(None));
             handle.manage(prompt_service_state);
 
-            // 初始化ReWOO测试状态
+            // DISABLED: ReWOO测试状态 (引擎已禁用)
             let rewoo_test_state = Arc::new(std::sync::Mutex::new(
-                commands::rewoo_commands::ReWOOTestState::default()
+                std::collections::HashMap::<String, String>::new()
             ));
             handle.manage(rewoo_test_state);
 
@@ -653,17 +662,11 @@ pub fn run() {
             commands::prompt_api::duplicate_prompt_template_api,
             commands::prompt_api::evaluate_prompt_api,
 
-            // ReWOO测试相关命令
-            rewoo_commands::init_rewoo_engine,
-            rewoo_commands::get_rewoo_engine_status,
-            rewoo_commands::execute_rewoo_test,
-            rewoo_commands::get_test_result,
-            rewoo_commands::get_all_test_results,
-            rewoo_commands::clear_test_results,
-            rewoo_commands::get_predefined_test_configs,
-            rewoo_commands::validate_rewoo_config,
-            rewoo_commands::get_available_tools,
-            rewoo_commands::simulate_tool_execution,
+            // ReWOO测试相关命令 - DISABLED
+            rewoo_commands::test_rewoo_engine,
+            rewoo_commands::get_rewoo_test_result,
+            rewoo_commands::stop_rewoo_test,
+            rewoo_commands::cleanup_rewoo_test_state,
 
             ai_commands::dispatch_scenario_task,
             ai_commands::stop_execution,
@@ -717,10 +720,8 @@ pub fn run() {
             plan_execute_commands::get_plan_execute_active_tasks,
             plan_execute_commands::get_plan_execute_task_history,
             plan_execute_commands::execute_generic_prompt_task,
-            // 代理测试命令
+            // 代理测试命令 - DISABLED (ai_adapter removed)
             commands::test_proxy::test_proxy_dynamic_update,
-            commands::test_proxy::test_proxy_persistence,
-            commands::test_proxy::test_http_client_proxy_update,
             
             // Agent流程测试命令
             commands::test_agent_flow::test_complete_agent_flow,
@@ -756,6 +757,8 @@ pub fn run() {
             // AI助手RAG集成命令
             rag_commands::assistant_rag_answer,
             rag_commands::ensure_default_rag_collection,
+            // 嵌入连接测试命令
+            rag_commands::test_embedding_connection,
         ])
         .run(context)
         .expect("Failed to start Tauri application");

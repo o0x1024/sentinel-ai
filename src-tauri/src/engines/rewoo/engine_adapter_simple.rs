@@ -85,4 +85,47 @@ impl ReWooEngine {
     }
 }
 
-// DISABLED: All trait implementations removed
+#[async_trait]
+impl ExecutionEngine for ReWooEngine {
+    async fn execute(&mut self, _task: TaskRequest) -> Result<TaskResult, ExecutionError> {
+        Err(ExecutionError::EngineError("ReWOO engine disabled - needs Rig refactor".to_string()))
+    }
+
+    async fn cancel(&mut self, _task_id: &str) -> Result<(), ExecutionError> {
+        Err(ExecutionError::EngineError("ReWOO engine disabled - needs Rig refactor".to_string()))
+    }
+
+    async fn get_status(&self, _task_id: &str) -> Result<TaskStatus, ExecutionError> {
+        Err(ExecutionError::EngineError("ReWOO engine disabled - needs Rig refactor".to_string()))
+    }
+
+    fn get_engine_info(&self) -> &EngineInfo {
+        &self.engine_info
+    }
+
+    async fn health_check(&self) -> Result<HealthStatus, ExecutionError> {
+        Ok(HealthStatus {
+            status: "disabled".to_string(),
+            message: Some("ReWOO engine disabled - needs Rig refactor".to_string()),
+            details: HashMap::new(),
+        })
+    }
+
+    async fn get_metrics(&self) -> Result<EngineMetrics, ExecutionError> {
+        Ok(EngineMetrics {
+            total_tasks: 0,
+            completed_tasks: 0,
+            failed_tasks: 0,
+            average_execution_time: 0.0,
+            resource_usage: ResourceUsage {
+                cpu_percent: 0.0,
+                memory_mb: 0,
+                disk_io_mb: 0.0,
+            },
+        })
+    }
+
+    async fn configure(&mut self, _config: serde_json::Value) -> Result<(), ExecutionError> {
+        Err(ExecutionError::EngineError("ReWOO engine disabled - needs Rig refactor".to_string()))
+    }
+}

@@ -694,8 +694,8 @@ pub async fn dispatch_scenario_task(
                 let message_id = context.task.parameters.get("message_id").and_then(|v| v.as_str()).map(|s| s.to_string());
                 let conversation_id = context.task.parameters.get("conversation_id").and_then(|v| v.as_str()).map(|s| s.to_string());
                 
-        // 发送 PlanUpdate 事件给前端展示执行计划（预留）
-        let _plan_json = serde_json::json!({
+                // 发送 PlanUpdate 事件给前端展示执行计划（预留）
+                let _plan_json = serde_json::json!({
                     "id": context.plan.id,
                     "name": context.plan.name,
                     "estimated_duration": context.plan.estimated_duration,
@@ -716,6 +716,21 @@ pub async fn dispatch_scenario_task(
                         }))
                         .collect::<Vec<_>>()
                 });
+
+                // Emit plan as a PlanInfo message chunk to frontend
+                if let Ok(plan_str) = serde_json::to_string(&_plan_json) {
+                    crate::utils::ordered_message::emit_message_chunk_arc(
+                        &Arc::new(app_inner.clone()),
+                        &execution_id_inner,
+                        message_id.as_deref().unwrap_or(&execution_id_inner),
+                        conversation_id.as_deref(),
+                        crate::utils::ordered_message::ChunkType::PlanInfo,
+                        &plan_str,
+                        false,
+                        Some("planner"),
+                        None,
+                    );
+                }
 
                 // Emit a one-shot Meta message with execution configuration
                 let _meta_json = {
@@ -1207,76 +1222,15 @@ async fn dispatch_with_plan_execute(
 }
 
 async fn dispatch_with_rewoo(
-    execution_id: String,
-    request: DispatchQueryRequest,
-    ai_service_manager: Arc<AiServiceManager>,
-    db_service: Arc<DatabaseService>,
-    execution_manager: Arc<crate::managers::ExecutionManager>,
+    _execution_id: String,
+    _request: DispatchQueryRequest,
+    _ai_service_manager: Arc<AiServiceManager>,
+    _db_service: Arc<DatabaseService>,
+    _execution_manager: Arc<crate::managers::ExecutionManager>,
     _app: AppHandle,
 ) -> Result<DispatchResult, String> {
-    info!("Creating ReWOO dispatch for: {}", request.query);
-    
-    // 创建ReWOO引擎配置
-    let config = ReWOOConfig::default();
-    
-    // 创建ReWOO引擎
-    let mut engine = ReWooEngine::new_with_dependencies(
-        ai_service_manager.clone(),
-        config,
-        db_service.clone(),
-    ).await.map_err(|e| format!("Failed to create ReWOO engine: {}", e))?;
-    
-    // 设置app_handle用于错误消息发送
-    engine.set_app_handle(_app);
-    
-    // 创建Agent任务
-    let task = AgentTask {
-        id: execution_id.clone(),
-        user_id: "system".to_string(),
-        description: request.query.clone(),
-        priority: TaskPriority::Normal,
-        target: None,
-        parameters: request.options.unwrap_or_default(),
-        timeout: Some(300), // 5分钟超时
-    };
-    // 注入运行期参数（prompt_ids等）
-    engine.set_runtime_params(task.parameters.clone());
-    
-    // 创建执行计划
-    let plan = engine.create_plan(&task).await
-        .map_err(|e| format!("Failed to create ReWOO plan: {}", e))?;
-    
-    // 注册执行上下文和引擎实例到执行管理器
-    let engine_instance = crate::managers::EngineInstance::ReWOO(engine);
-    execution_manager.register_execution(
-        execution_id.clone(),
-        crate::managers::EngineType::ReWOO,
-        plan.clone(),
-        task,
-        engine_instance,
-    ).await.map_err(|e| format!("Failed to register execution: {}", e))?;
-    
-    let execution_plan = ExecutionPlanView {
-        id: plan.id.clone(),
-        name: plan.name.clone(),
-        description: format!("ReWOO推理任务: {}", request.query),
-        steps: plan.steps.iter().map(|step| ExecutionStepView {
-            id: step.id.clone(),
-            name: step.name.clone(),
-            description: step.description.clone(),
-            status: "pending".to_string(),
-            estimated_duration: 60,
-        }).collect(),
-        estimated_duration: plan.estimated_duration,
-    };
-    
-    Ok(DispatchResult {
-        execution_id,
-        initial_response: "已启动ReWOO推理工作流，引擎实例已注册，准备真实执行...".to_string(),
-        execution_plan: Some(execution_plan),
-        estimated_duration: plan.estimated_duration,
-        selected_architecture: "ReWOO".to_string(),
-    })
+    // DISABLED: ReWOO engine needs Rig refactor
+    Err("ReWOO engine disabled - needs Rig refactor".to_string())
 }
 
 async fn dispatch_with_llm_compiler(

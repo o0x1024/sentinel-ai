@@ -2,12 +2,13 @@ use crate::rag::config::RagConfig;
 use crate::rag::models::{IngestRequest, IngestResponse, RagQueryRequest, RagQueryResponse, RagStatus};
 use crate::rag::service::RagService;
 use crate::services::database::DatabaseService;
+use crate::services::ai::AiServiceManager;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
-use tauri::{State, AppHandle, Emitter};
+use tauri::{State, AppHandle, Emitter, Manager};
 
 // ============================================================================
 // 全局RAG服务管理器
@@ -34,16 +35,24 @@ pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Re
             RagConfig::default()
         }
     };
-    
+
     let rag_service = RagService::new(config, database).await
         .map_err(|e| format!("Failed to create RAG service: {}", e))?;
-    
-    let service_wrapper = Arc::new(RwLock::new(Some(Arc::new(rag_service))));
-    GLOBAL_RAG_SERVICE.set(service_wrapper)
-        .map_err(|_| "Failed to set global RAG service")?;
-    
-    info!("Global RAG service initialized successfully");
-    Ok(())
+
+    // 如果全局实例已存在，则直接替换内部的服务引用；否则初始化一次
+    if let Some(existing_wrapper) = GLOBAL_RAG_SERVICE.get() {
+        let mut guard = existing_wrapper.write().await;
+        *guard = Some(Arc::new(rag_service));
+        info!("Global RAG service reloaded successfully");
+        Ok(())
+    } else {
+        let service_wrapper = Arc::new(RwLock::new(Some(Arc::new(rag_service))));
+        GLOBAL_RAG_SERVICE
+            .set(service_wrapper)
+            .map_err(|_| "Failed to set global RAG service")?;
+        info!("Global RAG service initialized successfully");
+        Ok(())
+    }
 }
 
 /// 获取全局RAG服务实例
@@ -311,6 +320,10 @@ pub async fn save_rag_config(
     match database.save_rag_config(&config).await {
         Ok(_) => {
             info!("RAG配置已成功保存到数据库");
+            // 立即重载RAG服务以应用最新配置（嵌入模型与分块策略生效）
+            if let Err(e) = initialize_global_rag_service(database.inner().clone()).await {
+                warn!("重载RAG服务失败: {}", e);
+            }
             // 向前端广播配置变更事件
             if let Err(e) = app.emit("rag_config_updated", &config) {
                 log::warn!("Failed to emit rag_config_updated: {}", e);
@@ -391,6 +404,8 @@ pub async fn get_folder_files(
 pub async fn assistant_rag_answer(
     request: crate::rag::models::AssistantRagRequest,
     database: State<'_, Arc<DatabaseService>>,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+    app: AppHandle,
 ) -> Result<crate::rag::models::AssistantRagResponse, String> {
     use crate::rag::models::AssistantRagResponse;
     
@@ -462,52 +477,100 @@ pub async fn assistant_rag_answer(
         }
     };
     
-    // 如果没有找到相关上下文，返回提示
-    if context.is_empty() {
-        return Ok(AssistantRagResponse {
-            answer: "没有找到相关的知识来回答您的问题。请尝试重新表述问题或检查知识库内容。".to_string(),
-            citations: vec![],
-            context_used: String::new(),
-            total_tokens_used: 0,
-            rag_tokens: context.len(),
-            llm_tokens: 0,
-            processing_time_ms: start_time.elapsed().as_millis() as u64,
-            fallback_reason: Some("未找到相关上下文".to_string()),
-        });
+    // 记录是否找到了相关上下文，但不提前返回，继续调用LLM
+    let has_context = !context.is_empty();
+    if !has_context {
+        info!("未找到相关上下文，但将继续调用LLM处理用户查询");
     }
     
-    // 构建AI提示词
-    let _system_prompt = format!(
-        "你是一个智能助手，必须基于提供的上下文回答问题。\n\
-        规则：\n\
-        1. 只能基于提供的上下文回答，不能编造信息\n\
-        2. 如果上下文不足以回答问题，请明确说明\n\
-        3. 在回答中使用 [SOURCE n] 格式引用来源\n\
-        4. 保持回答准确、简洁、有用\n\n\
-        上下文：\n{}", 
-        context
-    );
-    
-    let _user_prompt = request.query.clone();
-    
-    // 调用AI模型生成回答
-    // 这里需要集成现有的AI服务
-    // 暂时返回一个模拟回答
-    let answer = format!(
-        "基于提供的上下文，我找到了 {} 个相关来源来回答您的问题。\n\n\
-        [模拟回答] 根据检索到的文档内容...\n\n\
-        参考来源: {}", 
-        citations.len(),
-        citations.iter()
-            .enumerate()
-            .map(|(i, c)| format!("[SOURCE {}] {}", i + 1, c.file_name))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    // 构建系统提示词（根据是否有上下文调整策略）
+    let system_prompt = {
+        let history = request
+            .conversation_history
+            .as_ref()
+            .map(|h| if h.is_empty() { String::new() } else { format!("\n[CONVERSATION HISTORY]\n{}\n", h.join("\n")) })
+            .unwrap_or_default();
+        
+        if has_context {
+            let policy = "You must ground answers strictly in the EVIDENCE BLOCKS. Cite sources inline as [SOURCE n]. If evidence is insufficient, say so and avoid fabrication.";
+            format!(
+                "[Knowledge Grounding Policy]\n{}\n\n[EVIDENCE BLOCKS]\n{}{}",
+                policy, context, history
+            )
+        } else {
+            format!(
+                "You are a helpful AI assistant. No specific knowledge base context was found for this query, so please provide a general helpful response based on your training data.{}",
+                history
+            )
+        }
+    };
+
+    // 选择模型：优先请求体中的 provider/model，其次默认聊天模型
+    let (provider, model) = if let (Some(p), Some(m)) = (request.model_provider.clone(), request.model_name.clone()) {
+        (p, m)
+    } else {
+        match ai_manager.get_default_chat_model().await.map_err(|e| e.to_string())? {
+            Some((p, m)) => (p, m),
+            None => {
+                let msg = "No default chat model configured".to_string();
+                log::error!("{}", msg);
+                return Err(msg);
+            }
+        }
+    };
+
+    // 直接基于配置构建AI服务
+    let mut service = if let Ok(Some(provider_config)) = ai_manager.get_provider_config(&provider).await {
+        let mut dynamic_config = provider_config;
+        dynamic_config.model = model.clone();
+        let db_service = app.state::<Arc<crate::services::database::DatabaseService>>();
+        let mcp_service = ai_manager.get_mcp_service();
+        crate::services::ai::AiService::new(
+            dynamic_config,
+            db_service.inner().clone(),
+            Some(app.clone()),
+            mcp_service,
+        )
+    } else {
+        let msg = format!("Provider config not found for: {}", provider);
+        log::error!("{}", msg);
+        return Err(msg);
+    };
+    // 绑定 AppHandle（尽管本次非流式，不强制要求）
+    service.set_app_handle(app);
+
+    // 实际调用模型（非流式，不发事件）
+    let answer = match service
+        .send_message_stream(
+            Some(&request.query),
+            Some(&system_prompt),
+            None,
+            None,
+            false, // stream
+            false, // is_final
+            None,
+        )
+        .await
+    {
+        Ok(content) => content,
+        Err(e) => {
+            warn!("LLM请求失败: {}", e);
+            return Ok(AssistantRagResponse {
+                answer: "抱歉，生成回答失败。请检查AI服务配置或稍后再试。".to_string(),
+                citations,
+                context_used: context,
+                total_tokens_used: 0,
+                rag_tokens: 0,
+                llm_tokens: 0,
+                processing_time_ms: start_time.elapsed().as_millis() as u64,
+                fallback_reason: Some(format!("LLM request failed: {}", e)),
+            });
+        }
+    };
     
     let processing_time = start_time.elapsed().as_millis() as u64;
     
-    // TODO: 实际的token计算
+    // 简单 token 估算（长度近似）
     let rag_tokens = context.len();
     let llm_tokens = answer.len();
     let total_tokens = rag_tokens + llm_tokens;
@@ -522,7 +585,7 @@ pub async fn assistant_rag_answer(
         rag_tokens,
         llm_tokens,
         processing_time_ms: processing_time,
-        fallback_reason: None,
+        fallback_reason: if !has_context { Some("No relevant context found, using general AI knowledge".to_string()) } else { None },
     })
 }
 
@@ -600,4 +663,65 @@ pub async fn get_active_rag_collections(
         .await
         .map_err(|e| format!("获取集合失败: {}", e))?;
     Ok(cols.into_iter().filter(|c| c.is_active).map(|c| c.id).collect())
+}
+
+/// 测试嵌入连接
+#[tauri::command]
+pub async fn test_embedding_connection(
+    config: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    use crate::rag::config::EmbeddingConfig;
+    use crate::rag::embeddings::create_embedding_provider;
+    
+    info!("测试嵌入连接");
+    
+    // 解析配置
+    let embedding_config: EmbeddingConfig = serde_json::from_value(config)
+        .map_err(|e| format!("解析嵌入配置失败: {}", e))?;
+    
+    // 创建嵌入提供商
+    let provider = create_embedding_provider(&embedding_config)
+        .map_err(|e| format!("创建嵌入提供商失败: {}", e))?;
+    
+    // 测试嵌入生成
+    let test_texts = vec!["Hello world".to_string(), "Test embedding".to_string()];
+    
+    match provider.embed_texts(&test_texts).await {
+        Ok(embeddings) => {
+            let dimension = provider.get_embedding_dimension().await.unwrap_or(0);
+            info!(
+                "嵌入连接测试成功: 提供商={}, 模型={}, 维度={}, 测试向量数={}",
+                provider.provider_name(),
+                provider.model_name(),
+                dimension,
+                embeddings.len()
+            );
+            
+            Ok(serde_json::json!({
+                "success": true,
+                "message": format!(
+                    "Successfully connected to {} ({}), dimension: {}, generated {} test embeddings",
+                    provider.provider_name(),
+                    provider.model_name(),
+                    dimension,
+                    embeddings.len()
+                ),
+                "provider": provider.provider_name(),
+                "model": provider.model_name(),
+                "dimension": dimension,
+                "test_embeddings_count": embeddings.len()
+            }))
+        }
+        Err(e) => {
+            let error_msg = format!("嵌入连接测试失败: {}", e);
+            warn!("{}", error_msg);
+            
+            Ok(serde_json::json!({
+                "success": false,
+                "message": error_msg,
+                "provider": provider.provider_name(),
+                "model": provider.model_name()
+            }))
+        }
+    }
 }

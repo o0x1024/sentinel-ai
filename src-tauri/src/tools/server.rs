@@ -78,6 +78,9 @@ impl ServerHandler for SentinelServerHandler {
                 server_info: rmcp::model::Implementation {
                     name: config.name.clone(),
                     version: config.version.clone(),
+                    icons: None,
+                    title: None,
+                    website_url: None,
                 },
                 capabilities: rmcp::model::ServerCapabilities {
                     tools: Some(rmcp::model::ToolsCapability {
@@ -111,6 +114,8 @@ impl ServerHandler for SentinelServerHandler {
                     tools.push(Tool {
                         name: tool_def.name.clone().into(),
                         description: Some(tool_def.description.clone().into()),
+                        icons: None,
+                        title: None,
                         input_schema: Arc::new(
                             tool_def.parameters.schema.as_object()
                                 .cloned()
@@ -169,9 +174,10 @@ impl ServerHandler for SentinelServerHandler {
 
             let content = rmcp::model::Content::text(format!("{:?}", result));
             Ok(rmcp::model::CallToolResult {
-                content: Some(vec![content]),
+                content: vec![content.into()],
                 structured_content: None,
                 is_error: Some(false),
+                meta: None,
             })
         }
     }
@@ -313,6 +319,9 @@ impl ServerHandler for SentinelMcpServer {
                 server_info: rmcp::model::Implementation {
                     name: "sentinel-ai".to_string(),
                     version: "1.0.0".to_string(),
+                    icons: None,
+                    title: None,
+                    website_url: None,
                 },
                 instructions: None,
             })
@@ -354,9 +363,10 @@ impl ServerHandler for SentinelMcpServer {
 
             let content = rmcp::model::Content::text(result.to_string());
             Ok(rmcp::model::CallToolResult {
-                content: Some(vec![content]),
+                content: vec![content.into()],
                 structured_content: None,
                 is_error: Some(false),
+                meta: None,
             })
         }
     }
@@ -505,6 +515,8 @@ impl SentinelMcpServer {
             let rmcp_tool = rmcp::model::Tool {
                 name: tool_info.name.clone().into(),
                 description: Some(tool_info.description.clone().into()),
+                icons: None,
+                title: None,
                 input_schema: std::sync::Arc::new(serde_json::Map::new()),
                 output_schema: None,
                 annotations: None,
@@ -790,7 +802,9 @@ impl McpServerManager {
             cmd.arg(arg);
         }
         let transport = rmcp::transport::TokioChildProcess::new(cmd)?;
-        let service = server_clone.serve(transport);
+        // 使用新的传输层API，需要将transport转换为适当的类型
+        let (reader, writer) = transport.split();
+        let service = server_clone.serve((reader, writer));
         service.await?;
         Ok(())
     }

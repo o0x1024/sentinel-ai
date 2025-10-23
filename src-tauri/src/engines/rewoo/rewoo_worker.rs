@@ -12,6 +12,7 @@ use tracing::{info, warn, error};
 use serde_json::Value;
 
 /// ReWOO Worker - 负责执行工具调用
+#[derive(Debug)]
 pub struct ReWOOWorker {
     /// 框架适配器
     framework_adapter: Arc<dyn crate::tools::FrameworkToolAdapter>,

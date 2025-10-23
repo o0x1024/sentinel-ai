@@ -43,7 +43,6 @@
                 :settings="settings"
                 :custom-provider="customProvider"
                 :ai-usage-stats="aiUsageStats"
-                :rag-config="ragConfig"
                 :saving="saving"
                 @test-connection="testConnection"
                 @save-ai-config="saveAiConfig"
@@ -52,24 +51,27 @@
                 @refresh-models="refreshModels"
                 @apply-manual-config="applyManualConfig"
                 @set-default-provider="setDefaultProvider"
-                @set-default-chat-model="setDefaultChatModel"
-                @save-rag-config="saveRagConfig"
-                @test-embedding-connection="testEmbeddingConnection"
-                @reset-rag-config="resetRagConfig" />
+                @set-default-chat-model="setDefaultChatModel" />
+
+    <!-- 知识库配置 -->
+    <RAGSettings v-if="activeCategory === 'rag'"
+                 v-model:rag-config="ragConfig"
+                 :available-providers="availableProviders"
+                 :available-models="availableModels"
+                 :saving="saving"
+                 @save-rag-config="saveRagConfig"
+                 @test-embedding-connection="testEmbeddingConnection"
+                 @reset-rag-config="resetRagConfig" />
 
     <!-- 模型配置设置 -->
     <ModelSettings v-if="activeCategory === 'scheduler'" 
                        v-model:scheduler-config="settings.scheduler"
-                       v-model:rag-config="ragConfig"
                        :available-models="availableModels"
                        :saving="saving"
                        @save-scheduler-config="saveSchedulerConfig"
                        @apply-high-performance-preset="applyHighPerformanceConfig"
                        @apply-balanced-preset="applyBalancedConfig"
-                       @apply-economic-preset="applyEconomicConfig"
-                       @save-rag-config="saveRagConfig"
-                       @test-embedding-connection="testEmbeddingConnection"
-                       @reset-rag-config="resetRagConfig" />
+                       @apply-economic-preset="applyEconomicConfig" />
 
     <!-- 数据库设置 -->
     <DatabaseSettings v-if="activeCategory === 'database'" 
@@ -120,6 +122,7 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import AISettings from '@/components/Settings/AISettings.vue'
+import RAGSettings from '@/components/Settings/RAGSettings.vue'
 import ModelSettings from '@/components/Settings/ModelSettings.vue'
 import DatabaseSettings from '@/components/Settings/DatabaseSettings.vue'
 import GeneralSettings from '@/components/Settings/GeneralSettings.vue'
@@ -135,8 +138,9 @@ const saving = ref(false)
 // 设置分类
 const categories = [
   { id: 'ai', icon: 'fas fa-robot' },
+  { id: 'rag', icon: 'fas fa-database' },
   { id: 'scheduler', icon: 'fas fa-cogs' },
-  { id: 'database', icon: 'fas fa-database' },
+  { id: 'database', icon: 'fas fa-server' },
   { id: 'system', icon: 'fas fa-cog' },
   { id: 'security', icon: 'fas fa-shield-alt' },
   { id: 'network', icon: 'fas fa-network-wired' },
@@ -330,6 +334,22 @@ const availableModels = computed(() => {
   
   console.log('Available models for scheduler:', models)
   return models
+})
+
+const availableProviders = computed(() => {
+  const providers: string[] = []
+  
+  Object.values(aiConfig.value.providers || {}).forEach((provider: any) => {
+    if (provider.enabled) {
+      const providerName = provider.provider || provider.name || 'Unknown'
+      if (!providers.includes(providerName)) {
+        providers.push(providerName)
+      }
+    }
+  })
+  
+  console.log('Available providers:', providers)
+  return providers
 })
 
 // 方法

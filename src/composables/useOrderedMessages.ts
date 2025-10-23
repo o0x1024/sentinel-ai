@@ -257,12 +257,12 @@ ${resultContent}
         }
 
         // 添加估计时间等元信息
-        if (parsed.estimated_duration) {
-          todoListMd += `\n> 📅 预计耗时: ${parsed.estimated_duration}\n`
-        }
-        if (parsed.resource_requirements) {
-          todoListMd += `> 💾 资源需求: ${JSON.stringify(parsed.resource_requirements)}\n`
-        }
+        // if (parsed.estimated_duration) {
+        //   todoListMd += `\n> 📅 预计耗时: ${parsed.estimated_duration}\n`
+        // }
+        // if (parsed.resource_requirements) {
+        //   todoListMd += `> 💾 资源需求: ${JSON.stringify(parsed.resource_requirements)}\n`
+        // }
 
         // 确保TodoList格式正确，保留换行
         return todoListMd.trim()
@@ -377,6 +377,19 @@ export const useOrderedMessages = (
     if (!message) {
       console.warn('找不到目标消息，丢弃chunk:', chunk)
       return
+    }
+
+    // 如果是携带RAG引用的Meta块，解析其中的citations并直接绑定到当前消息
+    if (chunk.chunk_type === 'Meta') {
+      try {
+        const obj = JSON.parse(chunk.content?.toString() || '{}')
+        if (obj && obj.type === 'rag_citations' && Array.isArray(obj.citations)) {
+          // 直接更新消息的引用数组
+          ;(message as any).citations = obj.citations
+        }
+      } catch (e) {
+        console.warn('解析Meta块失败:', e)
+      }
     }
 
     // 所有类型的 chunk 都通过 processor 统一处理，确保按 sequence 顺序显示

@@ -4,7 +4,12 @@ use log::{debug, info, warn, error};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::ai_adapter::types::{AiProvider, ChatRequest, Message, MessageRole};
+// Rig embeddings (aliased to `rig` in Cargo.toml)
+// rig prelude can be used later when we switch to EmbeddingsBuilder end-to-end
+// use rig::prelude::*;
+// use rig::providers::ollama::Client as RigOllamaClient;
+// use rig::embeddings::EmbeddingsBuilder;
+
 use crate::rag::config::EmbeddingConfig;
 
 /// 嵌入服务特征
@@ -168,6 +173,10 @@ pub struct LmStudioEmbeddingProvider {
     api_key: Option<String>,
     dimensions: usize,
 }
+
+// NOTE: Rig-based embedding provider intentionally deferred to avoid
+// derive macro dependencies at runtime. We currently map "rig" to
+// the existing OllamaEmbeddingProvider below to keep behavior stable.
 
 impl LmStudioEmbeddingProvider {
     pub fn new(config: &EmbeddingConfig) -> Result<Self> {
@@ -577,6 +586,11 @@ pub fn create_embedding_provider(config: &EmbeddingConfig) -> Result<Box<dyn Emb
         }
         "ollama" => {
             info!("创建Ollama嵌入提供商: {}", config.model);
+            Ok(Box::new(OllamaEmbeddingProvider::new(config)?))
+        }
+        // 使用 Rig 别名时，当前映射到现有 Ollama 嵌入提供商（后续可替换为 EmbeddingsBuilder）
+        "rig" | "rig-ollama" | "rig_ollama" | "rig/ollama" => {
+            info!("创建 Ollama 嵌入提供商(经由 rig 别名): {}", config.model);
             Ok(Box::new(OllamaEmbeddingProvider::new(config)?))
         }
         _ => {

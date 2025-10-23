@@ -25,14 +25,41 @@ pub struct RagConfig {
     /// 上下文窗口大小：检索到相关块后，前后各扩展多少个块
     #[serde(default = "default_context_window")]
     pub context_window_size: usize,
+    /// 分块策略
+    #[serde(default)]
+    pub chunking_strategy: ChunkingStrategy,
+    /// 最小分块大小
+    #[serde(default = "default_min_chunk_size")]
+    pub min_chunk_size_chars: usize,
+    /// 最大分块大小
+    #[serde(default = "default_max_chunk_size")]
+    pub max_chunk_size_chars: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ChunkingStrategy {
+    /// 固定大小分块（当前实现）
+    FixedSize,
+    /// 递归字符分割
+    RecursiveCharacter,
+    /// 语义分块
+    Semantic,
+    /// 文档结构感知分块
+    StructureAware,
+}
+
+impl Default for ChunkingStrategy {
+    fn default() -> Self {
+        Self::RecursiveCharacter
+    }
 }
 
 impl Default for RagConfig {
     fn default() -> Self {
         Self {
             database_path: Some(PathBuf::from("AppData/lancedb")),
-            chunk_size_chars: 1000,
-            chunk_overlap_chars: 200,
+            chunk_size_chars: 1500,  // 增加到1500字符，更好的语义完整性
+            chunk_overlap_chars: 150, // 减少重叠到10%，降低冗余
             top_k: 5,
             mmr_lambda: 0.7,
             batch_size: 10,
@@ -48,6 +75,9 @@ impl Default for RagConfig {
             similarity_threshold: 0.7,
             augmentation_enabled: false,
             context_window_size: 1,
+            chunking_strategy: ChunkingStrategy::RecursiveCharacter,
+            min_chunk_size_chars: 100,
+            max_chunk_size_chars: 3000,
         }
     }
 }
@@ -95,4 +125,12 @@ impl SupportedFileType {
 
 fn default_context_window() -> usize {
     1
+}
+
+fn default_min_chunk_size() -> usize {
+    100
+}
+
+fn default_max_chunk_size() -> usize {
+    3000
 }

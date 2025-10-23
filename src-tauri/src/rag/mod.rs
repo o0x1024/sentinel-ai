@@ -6,6 +6,9 @@ pub mod service;
 pub mod models;
 pub mod query_utils;
 
+#[cfg(test)]
+mod test_rig_rag;
+
 
 
 pub use config::*;

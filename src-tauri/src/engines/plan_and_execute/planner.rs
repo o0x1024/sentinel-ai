@@ -4,13 +4,13 @@
 
 use crate::services::prompt_db::PromptRepository;
 use crate::services::mcp::McpService;
-use crate::services::ai::{AiServiceManager, SchedulerStage};
+use crate::services::ai::{AiService, AiServiceManager, SchedulerStage};
 use crate::engines::plan_and_execute::types::*;
 use crate::tools::{ToolInfo};
 use crate::utils::ordered_message::ChunkType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use std::collections::HashMap;
 use std::time::SystemTime;
 use std::sync::Arc;
@@ -432,18 +432,28 @@ impl Planner {
 
         let user_prompt = format!(
             "{}",
-            task.name
+            task.name.clone()
         );
 
         // RAG augmentation for planning stage (global toggle)
         if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
             if rag_service.get_config().augmentation_enabled {
                 use tokio::time::{timeout, Duration};
-                // Build short queries (primary + fallback)
-                let (primary, fallback) = crate::rag::query_utils::build_rag_query_pair(&format!("{} {}", task.name, task.description));
+                
+                // 获取激活的集合ID，与AI助手模式保持一致（通过 AppHandle 获取 DatabaseService）
+                let active_collection_id: Option<String> = if let Some(ref app_handle) = self.app_handle {
+                    let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
+                    match db_service.get_rag_collections().await {
+                        Ok(cols) => cols.into_iter().find(|c| c.is_active).map(|c| c.id),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+                
                 let rag_request = crate::rag::models::AssistantRagRequest {
-                    query: primary.clone(),
-                    collection_id: None,
+                    query: task.name.clone(),
+                    collection_id: active_collection_id,
                     conversation_history: None,
                     top_k: Some(5),
                     use_mmr: Some(true),
@@ -462,37 +472,17 @@ impl Planner {
                 .await
                 {
                     if !knowledge_context.trim().is_empty() {
-                        log::info!("Augmenting planner system prompt with RAG context");
+                        log::info!("Augmenting planner system prompt with RAG context from active collection");
                         system_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
                         system_prompt.push_str(&knowledge_context);
                     } else {
-                        // Fallback query with relaxed similarity threshold and higher top_k
-                        let fallback_req = crate::rag::models::AssistantRagRequest {
-                            query: fallback,
-                            collection_id: None,
-                            conversation_history: None,
-                            top_k: Some(7),
-                            use_mmr: Some(true),
-                            mmr_lambda: Some(0.7),
-                            similarity_threshold: Some(0.55),
-                            reranking_enabled: Some(false),
-                            model_provider: None,
-                            model_name: None,
-                            max_tokens: None,
-                            temperature: None,
-                        };
-                        if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
-                            if !kb2.trim().is_empty() {
-                                log::info!("Augmenting planner system prompt with fallback RAG context");
-                                system_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
-                                system_prompt.push_str(&kb2);
-                            }
-                        }
+                        log::info!("No relevant knowledge found in active collection for planning");
                     }
                 }
             }
         }
 
+        println!("system_prompt: {:?}", system_prompt);
         Ok((system_prompt, user_prompt))
     }
 
@@ -639,18 +629,28 @@ impl Planner {
             }
         };
         
-        // 获取AI服务
+        // 获取AI服务：直接按配置构建一次性服务（使用 Rig）
         let ai_service = if let Some(ref ai_service_manager) = self.ai_service_manager {
-            match ai_service_manager.find_service_by_provider_and_model(&provider_name, &model_name).await {
-                Ok(Some(service)) => service,
+            match ai_service_manager.get_provider_config(&provider_name).await {
+                Ok(Some(cfg)) => {
+                    let mut dc = cfg;
+                    dc.model = model_name.clone();
+                    let app_handle = self.app_handle.as_ref().map(|a| a.as_ref().clone());
+                    // 构建时使用 AI Service Manager 的底层 DB
+                    if let Some(ref mgr) = self.ai_service_manager {
+                        AiService::new(dc, mgr.get_db_arc(), app_handle, self.mcp_service.clone())
+                    } else {
+                        return Err(PlanAndExecuteError::AiAdapterError("AI服务管理器未初始化".to_string()));
+                    }
+                }
                 Ok(None) => {
                     return Err(PlanAndExecuteError::AiAdapterError(format!(
-                        "无法找到提供商 '{}' 的模型 '{}'", provider_name, model_name
+                        "找不到提供商配置: {}", provider_name
                     )));
-                },
+                }
                 Err(e) => {
                     return Err(PlanAndExecuteError::AiAdapterError(format!(
-                        "查找AI服务失败: {}", e
+                        "读取提供商配置失败: {}", e
                     )));
                 }
             }
