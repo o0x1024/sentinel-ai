@@ -1,0 +1,20 @@
+[package]
+name = "sentinel-database"
+version = "0.1.0"
+edition = "2021"
+description = "Database layer for Sentinel AI"
+
+[dependencies]
+sentinel-core = { path = "../sentinel-core" }
+sentinel-models = { path = "../sentinel-models" }
+sentinel-engines = { path = "../sentinel-engines" }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

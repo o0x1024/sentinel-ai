@@ -22,6 +22,47 @@
       </div>
       <div class="navbar-end">
         <div class="flex items-center gap-2">
+          <!-- 角色选择器 -->
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-sm btn-outline gap-2">
+              <i class="fas fa-user-tie"></i>
+              {{ selectedRole ? selectedRole.title : t('aiAssistant.selectRole', '选择角色') }}
+              <i class="fas fa-chevron-down text-xs"></i>
+            </div>
+            <ul tabindex="0" class="dropdown-content z-[1000] menu p-2 shadow bg-base-100 rounded-box w-72 md:w-80">
+              <li><span class="menu-title">{{ t('aiAssistant.availableRoles', '可用角色') }}</span></li>
+              <li @click="handleSelectRole(null)">
+                <a class="flex items-center justify-between gap-3" :class="{ 'active': !selectedRole }">
+                  <div class="flex items-center gap-2">
+                    <div class="badge badge-xs badge-ghost">默认</div>
+                    <span>{{ t('aiAssistant.defaultRole', '默认助手') }}</span>
+                  </div>
+                </a>
+              </li>
+              <div class="divider my-1"></div>
+              <li v-for="role in roles" :key="role.id" @click="handleSelectRole(role)">
+                <a class="flex items-center justify-between gap-3" :class="{ 'active': selectedRole?.id === role.id }">
+                  <div class="flex items-center gap-2">
+                    <div class="badge badge-xs badge-primary">角色</div>
+                    <span class="truncate">{{ role.title }}</span>
+                  </div>
+                  <div class="text-xs text-base-content/60 truncate max-w-20" :title="role.description">
+                    {{ role.description }}
+                  </div>
+                </a>
+              </li>
+              <div class="divider my-1"></div>
+              <li @click="showRoleManagement = true">
+                <a class="flex items-center gap-2 text-primary">
+                  <i class="fas fa-cog"></i>
+                  <span>{{ t('aiAssistant.manageRoles', '管理角色') }}</span>
+                </a>
+              </li>
+              <li v-if="roles.length === 0 && !isLoadingRoles">
+                <span class="text-base-content/50 text-sm">{{ t('aiAssistant.noRoles', '暂无自定义角色') }}</span>
+              </li>
+            </ul>
+          </div>
           <!-- Agent选择器 -->
           <div class="dropdown dropdown-end">
             <div tabindex="0" role="button" class="btn btn-sm btn-outline gap-2">
@@ -73,6 +114,7 @@
         <AIChat 
           ref="aiChatRef"
           :selected-agent="selectedAgent"
+          :selected-role="selectedRole"
           @execution-started="handleExecutionStarted"
           @execution-progress="handleExecutionProgress"
           @execution-completed="handleExecutionCompleted"
@@ -155,6 +197,9 @@
         </div>
       </div>
     </div>
+
+    <!-- 角色管理弹窗 -->
+    <RoleManagement v-if="showRoleManagement" @close="showRoleManagement = false" />
   </div>
 </template>
 
@@ -164,8 +209,22 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import AIChat from '@/components/AIChat.vue'
+import RoleManagement from '@/components/RoleManagement.vue'
+import { useRoleManagement } from '@/composables/useRoleManagement'
 
 const { t } = useI18n()
+
+// 角色管理
+const {
+  roles,
+  selectedRole,
+  isLoading: isLoadingRoles,
+  loadRoles,
+  createRole,
+  updateRole,
+  deleteRole,
+  selectRole,
+} = useRoleManagement()
 
 // Persist selected agent locally
 const SELECTED_AGENT_KEY = 'ai:selectedAgentId'
@@ -206,6 +265,9 @@ const currentExecution = ref(null)
 // 可用Agent（从后端加载/自定义）
 const availableAgents = ref<CustomAgent[]>([])
 const editingAgents = ref<CustomAgent[]>([])
+
+// 角色管理状态
+const showRoleManagement = ref(false)
 
 // --- 会话管理 from AIChat ---
 const aiChatRef = ref<any>(null)
@@ -290,6 +352,15 @@ const selectAgent = (agent) => {
   }
 }
 
+const handleSelectRole = async (role) => {
+  try {
+    await selectRole(role)
+  } catch (error) {
+    console.error('Failed to select role:', error)
+    // TODO: 显示错误提示
+  }
+}
+
 const restoreSelectedAgent = () => {
   try {
     const savedId = localStorage.getItem(SELECTED_AGENT_KEY)
@@ -363,6 +434,9 @@ onMounted(async () => {
 
     // 尝试还原已选择的Agent
     restoreSelectedAgent()
+
+    // 加载角色列表
+    await loadRoles()
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
   }

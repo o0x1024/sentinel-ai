@@ -1,47 +1,76 @@
-[package]
-name = "sentinel-ai"
-version = "0.1.0"
-description = "AI+MCP漏洞挖掘应用"
-authors = ["you"]
-edition = "2021"
-default-run = "sentinel-ai"
+[workspace]
+members = [
+    "crates/sentinel-core",
+    "crates/sentinel-database", 
+    "crates/sentinel-models",
+    "crates/sentinel-services",
+    "crates/sentinel-engines",
+    "crates/sentinel-tools",
+    "crates/sentinel-rag",
+    "crates/sentinel-agents",
+    "crates/sentinel-prompt",
+    "crates/sentinel-commands",
+    "crates/sentinel-app",
+]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+resolver = "2"
 
-[lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "sentinel_ai_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-
-[build-dependencies]
-tauri-build = { version = "2", features = [] }
-
-[dependencies]
-
-html2text = "0.15.5"
-urlencoding = "2.1.3"
-
-
-
+[workspace.dependencies]
 # Tauri 核心依赖
 tauri = { version = "2.7.0", features = ["devtools", "protocol-asset", "tray-icon"] }
 tauri-plugin-opener = "2.4.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-http = "2.5.1"
 tauri-plugin-shell = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-single-instance = "2"
 
-
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
 futures-util = "0.3"
-# 子域名扫描工具
-rsubdomain = "1.2.6"
+async-trait = "0.1"
 
+# 序列化/反序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+bincode = "1.3"
 
-rustscan = "2.4.1"
+# 数据库支持
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 
-# MCP协议支持 - 使用官方Rust SDK，启用所有新特性
+# HTTP客户端
+reqwest = { version = "0.12.0", features = ["json", "stream"] }
+http = "1"
+
+# 日志
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# 错误处理
+anyhow = "1.0"
+thiserror = "1.0"
+
+# UUID生成
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# 时间处理
+chrono = { version = "0.4", features = ["serde"] }
+
+# 其他常用依赖
+once_cell = "1.19"
+rand = "0.8"
+regex = "1"
+toml = "0.8"
+dirs = "5.0"
+base64 = "0.22"
+url = "2.4"
+derive_more = { version = "2.0.1", features = ["full"] }
+
+# MCP协议支持
 rmcp = { version = "0.8.3", features = [
     "client", 
     "server", 
@@ -60,6 +89,10 @@ rmcp = { version = "0.8.3", features = [
 
 # RAG and Vector Database
 lancedb = "0.21.3"
+rig-core = { version = "0.22.0", features = ["derive"] }
+rig-lancedb = "0.2.24"
+arrow-array = "55.2.0"
+arrow-schema = "55.2.0"
 
 # Document parsing
 docx-rs = "0.4.17"
@@ -67,133 +100,44 @@ pdf-extract = "0.7.9"
 pulldown-cmark = "0.12.0"
 walkdir = "2.5.0"
 
-# 数据库支持
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
-
-# HTTP客户端
-reqwest = { version = "0.12.0", features = ["json", "stream"] }
-http = "1"
-
-# SSE客户端支持
-eventsource-client = "0.12"
-
-# 序列化/反序列化
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_yaml = "0.9"
-bincode = "1.3"
-
-# 日志
-log = "0.4"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
-
-# 目录路径
-dirs = "5.0"
-
-# 异步trait支持
-async-trait = "0.1"
-
-# 异步运行时
-tokio = { version = "1", features = ["full"] }
-
-# UUID生成
-uuid = { version = "1", features = ["v4", "serde"] }
-
-# 任何错误处理
-anyhow = "1.0"
-
-# TOML配置文件解析
-toml = "0.8"
-thiserror = "1.0"
-
-# 随机数生成
-rand = "0.8"
-
-# 正则表达式
-regex = "1"
-
-# once_cell 用于全局单例
-once_cell = "1.19"
-
-# 异步操作
-futures = "0.3"
-
-# 时间处理
-chrono = { version = "0.4", features = ["serde"] }
-
-# 额外的 AI 相关依赖
-base64 = "0.22"
-url = "2.4"
-derive_more = { version = "2.0.1", features = ["full"] }
-md5 = "0.7"
-sha2 = "0.10"
-
 # 网络扫描工具依赖
-# 子域名扫描相关
+rsubdomain = "1.2.6"
+rustscan = "2.4.1"
 trust-dns-resolver = "0.23"
 hickory-resolver = "0.25.2"
-
-# 端口扫描相关
 tokio-util = { version = "0.7", features = ["net"] }
 net2 = "0.2"
 socket2 = "0.5"
-
-# 网络工具
 ping = "0.5"
 cidr = "0.2"
 ipnet = "2.9"
-
-# 并发控制
 semaphore = "0.4.0"
 tokio-stream = "0.1"
 
-# 命令行工具集成
+# 其他工具
 which = "8.0.0"
 tempfile = "3.8"
-
-# HTTP 探测
 headers = "0.4"
 mime = "0.3"
-tauri-plugin-fs = "2"
-
-# 文件系统监控
 notify = "6.1"
 fastrand = "2.3.0"
-
-# 信号处理
 signal-hook = "0.3"
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
-rig-core = { version = "0.22.0", features = ["derive"] }
-rig = { package = "rig-core", version = "0.22.0", features = ["derive"] }
-rig-lancedb = "0.2.24"
-arrow-array = "55.2.0"
-arrow-schema = "55.2.0"
-
-
-[target.'cfg(unix)'.dependencies]
+html2text = "0.15.5"
+urlencoding = "2.1.3"
+eventsource-client = "0.12"
+md5 = "0.7"
+sha2 = "0.10"
 libc = "0.2"
 
 [profile.dev]
-# 开发环境优化 
-opt-level = 1          # 基本优化，提升编译速度
-debug = true           # 保留调试信息
-split-debuginfo = "unpacked"  # 调试信息优化
+opt-level = 0
+debug = false
+split-debuginfo = "off"
 
 [profile.release]
-panic = "abort"       # 在发布版本中遇到panic时中止
-codegen-units = 1     # 生成更优化的代码
-lto = true            # 启用链接时优化
-opt-level = "s"       # 优化代码大小
-strip = true          # 从二进制文件中剥离符号信息
-
-
-[features]
-# this feature is used for production builds or when `devPath` points to the filesystem
-# DO NOT REMOVE!!
-custom-protocol = ["tauri/custom-protocol"]
-
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-single-instance = "2"
-
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

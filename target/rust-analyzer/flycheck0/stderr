@@ -1,0 +1,504 @@
+   0.490854791s  INFO prepare_target{force=false package_id=sentinel-agents v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents) target="sentinel_agents"}: cargo::core::compiler::fingerprint: dependency on `sentinel_core` is newer than we are 1761642345.275796938s > 1761642323.198008650s "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-models"
+   0.507668500s  INFO prepare_target{force=false package_id=sentinel-agents v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents) target="sentinel_agents"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-agents v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_agents", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents/src/lib.rs", Edition2021) }
+   0.507695000s  INFO prepare_target{force=false package_id=sentinel-agents v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents) target="sentinel_agents"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-agents-d8d087829ccc6656/lib-sentinel_agents`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.516496500s  INFO prepare_target{force=false package_id=sentinel-database v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database) target="sentinel_database"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-database v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_database", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database/src/lib.rs", Edition2021) }
+   0.516508541s  INFO prepare_target{force=false package_id=sentinel-database v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database) target="sentinel_database"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-database-ce69c60c5028e5e3/lib-sentinel_database`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.517082166s  INFO prepare_target{force=false package_id=sentinel-engines v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines) target="sentinel_engines"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-engines v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_engines", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines/src/lib.rs", Edition2021) }
+   0.517087625s  INFO prepare_target{force=false package_id=sentinel-engines v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines) target="sentinel_engines"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-engines-97d672053c503a4d/lib-sentinel_engines`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.517952833s  INFO prepare_target{force=false package_id=sentinel-models v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-models) target="sentinel_models"}: cargo::core::compiler::fingerprint: fingerprint dirty for sentinel-models v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-models)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_models", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-models/src/lib.rs", Edition2021) }
+   0.517957833s  INFO prepare_target{force=false package_id=sentinel-models v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-models) target="sentinel_models"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "sentinel_core", dep_mtime: FileTime { seconds: 1761642345, nanos: 275796938 }, max_mtime: FileTime { seconds: 1761642323, nanos: 198008650 } })
+   0.529476750s  INFO prepare_target{force=false package_id=sentinel-services v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-services) target="sentinel_services"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-services v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-services)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_services", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-services/src/lib.rs", Edition2021) }
+   0.529488333s  INFO prepare_target{force=false package_id=sentinel-services v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-services) target="sentinel_services"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-services-71ea75e882315459/lib-sentinel_services`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.534596208s  INFO prepare_target{force=false package_id=sentinel-tools v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-tools) target="sentinel_tools"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-tools v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-tools)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_tools", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-tools/src/lib.rs", Edition2021) }
+   0.534605291s  INFO prepare_target{force=false package_id=sentinel-tools v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-tools) target="sentinel_tools"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-tools-cf1708d98b8b060b/lib-sentinel_tools`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.542763666s  INFO prepare_target{force=false package_id=sentinel-agents v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents) target="sentinel_agents"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-agents v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("sentinel_agents", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents/src/lib.rs", Edition2021) }
+   0.542771833s  INFO prepare_target{force=false package_id=sentinel-agents v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-agents) target="sentinel_agents"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-agents-61d9e4d7b1d09a6e/test-lib-sentinel_agents`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.551923333s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel_ai_lib"}: cargo::core::compiler::fingerprint: stale: missing "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app/capabilities"
+   0.573158791s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel_ai_lib"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app)/Check { test: false }/TargetInner { ..: lib_target("sentinel_ai_lib", ["staticlib", "cdylib", "rlib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app/src/lib.rs", Edition2021) }
+   0.573172791s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel_ai_lib"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-ai-ca02f18653f18538/lib-sentinel_ai_lib`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.577318916s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="build-script-build"}: cargo::core::compiler::fingerprint: fingerprint dirty for sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app)/RunCustomBuild/TargetInner { ..: custom_build_target("build-script-build", "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app/build.rs", Edition2021) }
+   0.577328916s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(MissingFile("/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app/capabilities")))
+   0.584889500s  INFO prepare_target{force=false package_id=sentinel-commands v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-commands) target="sentinel_commands"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-commands v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-commands)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_commands", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-commands/src/lib.rs", Edition2021) }
+   0.584901458s  INFO prepare_target{force=false package_id=sentinel-commands v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-commands) target="sentinel_commands"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-commands-07356a27df7f454e/lib-sentinel_commands`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   0.586761458s  INFO prepare_target{force=false package_id=sentinel-prompt v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-prompt) target="sentinel_prompt"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-prompt v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-prompt)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_prompt", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-prompt/src/lib.rs", Edition2021) }
+   0.586769125s  INFO prepare_target{force=false package_id=sentinel-prompt v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-prompt) target="sentinel_prompt"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-prompt-30d32aa413352d2c/lib-sentinel_prompt`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.587247083s  INFO prepare_target{force=false package_id=sentinel-rag v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-rag) target="sentinel_rag"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-rag v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-rag)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("sentinel_rag", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-rag/src/lib.rs", Edition2021) }
+   0.587251916s  INFO prepare_target{force=false package_id=sentinel-rag v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-rag) target="sentinel_rag"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-rag-e55dc282149c8f60/lib-sentinel_rag`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: cargo::core::compiler::compile
+   7: cargo::core::compiler::compile
+   8: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   9: cargo::ops::cargo_compile::compile_ws
+  10: cargo::ops::cargo_compile::compile_with_exec
+  11: cargo::ops::cargo_compile::compile
+  12: cargo::commands::check::exec
+  13: <cargo::cli::Exec>::exec
+  14: cargo::main
+  15: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  16: std::rt::lang_start::<()>::{closure#0}
+  17: std::rt::lang_start_internal
+  18: _main
+   0.610638958s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel_ai_lib"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app)/Check { test: true }/TargetInner { ..: lib_target("sentinel_ai_lib", ["staticlib", "cdylib", "rlib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app/src/lib.rs", Edition2021) }
+   0.610652875s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel_ai_lib"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-ai-15d513f0f0e681cb/test-lib-sentinel_ai_lib`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.613392500s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel-ai"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app)/Check { test: false }/TargetInner { name: "sentinel-ai", doc: true, ..: with_path("/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app/src/main.rs", Edition2021) }
+   0.613400875s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel-ai"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-ai-256d905a38bae226/bin-sentinel-ai`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.615206500s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel-ai"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app)/Check { test: true }/TargetInner { name: "sentinel-ai", doc: true, ..: with_path("/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app/src/main.rs", Edition2021) }
+   0.615212166s  INFO prepare_target{force=false package_id=sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app) target="sentinel-ai"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-ai-5d26489fb6236a63/test-bin-sentinel-ai`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.617096166s  INFO prepare_target{force=false package_id=sentinel-commands v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-commands) target="sentinel_commands"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-commands v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-commands)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("sentinel_commands", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-commands/src/lib.rs", Edition2021) }
+   0.617102833s  INFO prepare_target{force=false package_id=sentinel-commands v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-commands) target="sentinel_commands"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-commands-0e7ea173482d8eb5/test-lib-sentinel_commands`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.618880000s  INFO prepare_target{force=false package_id=sentinel-database v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database) target="sentinel_database"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-database v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("sentinel_database", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database/src/lib.rs", Edition2021) }
+   0.618886166s  INFO prepare_target{force=false package_id=sentinel-database v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database) target="sentinel_database"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-database-81eb888360fa5fc7/test-lib-sentinel_database`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.619427208s  INFO prepare_target{force=false package_id=sentinel-engines v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines) target="sentinel_engines"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-engines v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("sentinel_engines", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines/src/lib.rs", Edition2021) }
+   0.619431583s  INFO prepare_target{force=false package_id=sentinel-engines v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines) target="sentinel_engines"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-engines-eb3344d743b9b105/test-lib-sentinel_engines`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.620123583s  INFO prepare_target{force=false package_id=sentinel-prompt v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-prompt) target="sentinel_prompt"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-prompt v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-prompt)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("sentinel_prompt", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-prompt/src/lib.rs", Edition2021) }
+   0.620127875s  INFO prepare_target{force=false package_id=sentinel-prompt v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-prompt) target="sentinel_prompt"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-prompt-e0226029e25ac1e8/test-lib-sentinel_prompt`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.620615208s  INFO prepare_target{force=false package_id=sentinel-rag v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-rag) target="sentinel_rag"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-rag v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-rag)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("sentinel_rag", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-rag/src/lib.rs", Edition2021) }
+   0.620618625s  INFO prepare_target{force=false package_id=sentinel-rag v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-rag) target="sentinel_rag"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-rag-1913b4cbaee57881/test-lib-sentinel_rag`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.621996791s  INFO prepare_target{force=false package_id=sentinel-services v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-services) target="sentinel_services"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-services v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-services)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("sentinel_services", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-services/src/lib.rs", Edition2021) }
+   0.622000125s  INFO prepare_target{force=false package_id=sentinel-services v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-services) target="sentinel_services"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-services-bc1ad1bb67e57232/test-lib-sentinel_services`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.622814958s  INFO prepare_target{force=false package_id=sentinel-tools v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-tools) target="sentinel_tools"}: cargo::core::compiler::fingerprint: fingerprint error for sentinel-tools v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-tools)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("sentinel_tools", ["lib"], "/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-tools/src/lib.rs", Edition2021) }
+   0.622817916s  INFO prepare_target{force=false package_id=sentinel-tools v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-tools) target="sentinel_tools"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/a1024/code/ai/sentinel-ai/src-tauri/target/debug/.fingerprint/sentinel-tools-97b1ba597e87df68/test-lib-sentinel_tools`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+    Checking sentinel-models v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-models)
+   Compiling sentinel-ai v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-app)
+    Checking sentinel-engines v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-engines)
+    Checking sentinel-database v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/crates/sentinel-database)
+error: could not compile `sentinel-database` (lib) due to 25 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `sentinel-database` (lib test) due to 25 previous errors

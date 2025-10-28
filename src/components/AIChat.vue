@@ -61,13 +61,35 @@
           </div>
         </div>
 
-        <div class="chat-header mb-2">
-          <span class="font-medium text-sm text-base-content/80">
-            {{ message.role === 'user' ? t('common.you', '您') : t('common.assistant', 'AI助手') }}
-          </span>
-          <time class="text-xs text-base-content/60 ml-2 px-2 py-0.5 bg-base-200 rounded-full">
-            {{ formatTime(message.timestamp) }}
-          </time>
+        <div class="chat-header mb-2 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="font-medium text-sm text-base-content/80">
+              {{ message.role === 'user' ? t('common.you', '您') : t('common.assistant', 'AI助手') }}
+            </span>
+            <time class="text-xs text-base-content/60 px-2 py-0.5 bg-base-200 rounded-full">
+              {{ formatTime(message.timestamp) }}
+            </time>
+          </div>
+          
+          <!-- 视图切换按钮 - 仅在助手消息中显示 -->
+          <div v-if="message.role === 'assistant' && hasStepsInMessage(message.id)" class="flex items-center gap-1">
+            <div class="btn-group btn-group-xs">
+              <button 
+                @click="setMessageViewMode(message.id, 'steps')"
+                :class="['btn btn-xs', getMessageViewMode(message.id) === 'steps' ? 'btn-primary' : 'btn-ghost']"
+                title="步骤视图"
+              >
+                📋
+              </button>
+              <button 
+                @click="setMessageViewMode(message.id, 'timeline')"
+                :class="['btn btn-xs', getMessageViewMode(message.id) === 'timeline' ? 'btn-primary' : 'btn-ghost']"
+                title="时间线视图"
+              >
+                ⏱️
+              </button>
+            </div>
+          </div>
         </div>
 
         <div
@@ -82,18 +104,24 @@
           <div 
             :class="[
               'prose prose-sm max-w-none leading-relaxed',
-              message.role === 'user' ? 'prose-invert' : 'prose-neutral'
+              message.role === 'user' ? 'prose-invert whitespace-pre-wrap' : 'prose-neutral'
             ]"
             v-html="renderMarkdown(message.content)"
           />
 
-          <!-- 计划 Markdown TodoList 展示 -->
-          <div v-if="message.executionPlan && Array.isArray(message.executionPlan.steps) && message.executionPlan.steps.length" class="mt-3">
-            <div
-              class="prose prose-sm max-w-none leading-relaxed"
-              v-html="renderMarkdown(planToMarkdown(message.executionPlan))"
-            />
+
+          <!-- <div v-if="message.role === 'user'" class="whitespace-pre-wrap break-words leading-relaxed">
+            {{ message.content }}
           </div>
+          <div 
+            v-else
+            :class="[
+              'prose prose-sm max-w-none leading-relaxed prose-neutral'
+            ]"
+            v-html="renderMarkdown(message.content)"
+          /> -->
+
+          
 
           <!-- 流式指示器 -->
           <div v-if="message.isStreaming" class="flex items-center gap-2 mt-2 text-base-content/70">
@@ -101,26 +129,7 @@
             <span class="text-sm">{{ t('aiAssistant.generating', 'AI正在思考...') }}</span>
           </div>
 
-          <!-- 工具执行折叠面板 -->
-          <div v-if="message.toolExecutions && message.toolExecutions.length" class="mt-3 space-y-2">
-            <div
-              v-for="exec in message.toolExecutions"
-              :key="exec.id || exec.stepName"
-              class="collapse collapse-arrow border border-base-300 bg-base-100 rounded-box"
-            >
-              <input type="checkbox" />
-              <div class="collapse-title text-sm font-medium flex items-center justify-between gap-3">
-                <span class="truncate">{{ exec.stepName || t('aiAssistant.tool.unnamed', '未命名任务') }}</span>
-                <span :class="statusBadgeClass(exec.status)">{{ statusText(exec.status) }}</span>
-              </div>
-              <div class="collapse-content">
-                <div class="text-sm text-base-content/80">
-                  <span class="font-semibold mr-2">{{ t('aiAssistant.tool.validInfo', '有效信息') }}:</span>
-                  <span class="font-mono">{{ exec.extracted || exec.content || '-' }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          
 
           <!-- Citations (引用来源) -->
           <div
@@ -136,6 +145,7 @@
                 v-for="(citation, index) in message.citations"
                 :key="citation.id || citation.source_id || (citation.file_name + index)"
                 class="group relative"
+                :id="`source-${index + 1}`"
               >
                 <button
                   @click="openCitationModal(citation)"
@@ -223,7 +233,7 @@
       :rag-enabled="ragEnabled"
       @send-message="sendMessage"
       @stop-execution="stopExecution"
-      @toggle-debug="showDebugInfo = !showDebugInfo"水1111
+        @toggle-debug="showDebugInfo = !showDebugInfo"
       @create-new-conversation="handleCreateNewConversation"
       @clear-conversation="handleClearConversation"
       @toggle-task-mode="handleToggleTaskMode"
@@ -290,6 +300,7 @@ interface DispatchResult {
 // Props and Emits
 const props = defineProps<{
   selectedAgent?: any
+  selectedRole?: any
 }>()
 
 const emit = defineEmits([
@@ -300,6 +311,8 @@ const emit = defineEmits([
 
 const { t } = useI18n()
 const router = useRouter()
+
+// 注意：角色管理现在在后端处理，不需要前端传递system_prompt
 
 // Use composables
 const {
@@ -320,6 +333,9 @@ const {
 const messages = ref<ChatMessage[]>([])
 
 const { formatTime, renderMarkdown } = useMessageUtils()
+
+// 消息视图模式管理
+const messageViewModes = ref<Map<string, 'timeline' | 'steps'>>(new Map())
 
 // 持久化状态的key
 const AI_CHAT_STATE_KEY = 'ai-chat-state'
@@ -377,6 +393,8 @@ const showDebugInfo = ref(savedState.showDebugInfo ?? false)
 const loadingTimeoutId = ref<number | null>(null)
 // Task mode state (controlled by toolbar button)
 const isTaskMode = ref(savedState.isTaskMode ?? false)
+// RAG reranking toggle from backend config
+const rerankingEnabled = ref(false)
 
 // Web search global toggle & engine selection (controlled by InputArea popover)
 const webSearchEnabled = ref(savedState.webSearchEnabled ?? false)
@@ -433,6 +451,26 @@ const orderedMessages = useOrderedMessages(messages, async (msgs) => {
   }
 })
 
+// 视图模式管理函数
+const hasStepsInMessage = (messageId: string): boolean => {
+  return orderedMessages.hasChunkType(messageId, 'Meta')
+}
+
+const getMessageViewMode = (messageId: string): 'timeline' | 'steps' => {
+  return messageViewModes.value.get(messageId) || 'steps'
+}
+
+const setMessageViewMode = (messageId: string, mode: 'timeline' | 'steps') => {
+  messageViewModes.value.set(messageId, mode)
+  orderedMessages.processor.setViewMode(mode)
+  
+  // 重新构建消息内容以应用新的视图模式
+  const message = messages.value.find(m => m.id === messageId)
+  if (message && message.role === 'assistant') {
+    message.content = orderedMessages.processor.buildContent(messageId)
+  }
+}
+
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || isLoading.value) return
 
@@ -481,6 +519,7 @@ const sendMessage = async () => {
 
       try {
         const agentId = props.selectedAgent?.id
+        
         await invoke('dispatch_scenario_task', {
           request: {
             agent_id: agentId,
@@ -550,7 +589,7 @@ const sendMessage = async () => {
             use_mmr: true,
             mmr_lambda: 0.7,
             similarity_threshold: 0.7,
-            reranking_enabled: false,
+            reranking_enabled: rerankingEnabled.value,
             model_provider: 'moonshot',
             model_name: 'moonshot-v1-8k',
             max_tokens: 2000,
@@ -627,6 +666,7 @@ const sendMessage = async () => {
         } else {
           // 传统模式：流式聊天或网页搜索
           const useSearch = webSearchEnabled.value
+          
           const returnedMessageId = await invoke(useSearch ? 'send_ai_stream_with_search' : 'send_ai_stream_message', {
             request: useSearch ? {
               conversation_id: currentConversationId.value,
@@ -788,47 +828,7 @@ const isConfigError = (content: string) => {
   )
 }
 
-// 工具执行状态样式与文案
-const statusBadgeClass = (status: string) => {
-  switch (status) {
-    case 'Completed':
-      return 'badge badge-success'
-    case 'Running':
-      return 'badge badge-warning'
-    case 'Failed':
-      return 'badge badge-error'
-    default:
-      return 'badge'
-  }
-}
-
-const statusText = (status: string) => {
-  switch (status) {
-    case 'Completed':
-      return '已完成'
-    case 'Running':
-      return '执行中'
-    case 'Failed':
-      return '失败'
-    default:
-      return status || '未知'
-  }
-}
-
-// 将执行计划转换为 Markdown TodoList
-const planToMarkdown = (plan: any): string => {
-  if (!plan || !Array.isArray(plan.steps)) return ''
-  const lines: string[] = []
-  lines.push('### 执行计划')
-  plan.steps.forEach((s: any) => {
-    const checked = s.status === 'Completed' ? 'x' : ' '
-    const name = s?.name || '未命名步骤'
-    const desc = s?.description ? ` - ${s.description}` : ''
-    const tool = s?.tool?.name ? ` (tool: ${s.tool.name})` : ''
-    lines.push(`- [${checked}] ${name}${tool}${desc}`)
-  })
-  return lines.join('\n')
-}
+ 
 
 
 
@@ -888,6 +888,7 @@ onMounted(async () => {
   try {
     const cfg = await getRagConfig()
     ragEnabled.value = !!cfg.augmentation_enabled
+    rerankingEnabled.value = !!cfg.reranking_enabled
     // 同步更新本地状态
     saveState()
   } catch (e) {

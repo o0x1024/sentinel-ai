@@ -1,0 +1,15 @@
+[package]
+name = "sentinel-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core types and traits for Sentinel AI"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }

@@ -8,17 +8,24 @@ import remarkFrontmatter from 'remark-frontmatter';
 export const useMessageUtils = () => {
   // Render markdown content
   const renderMarkdown = (content: string) => {
-    // 预处理：将单独的换行符转换为双换行符，以便Markdown正确处理
-    const preprocessed = content
-      .replace(/\n{2,}/g, '\n\n') // 多个连续换行符合并为双换行符
+    // 预处理：
+    // 1) 将多重换行规范化
+    // 2) 将 [SOURCE n] 转换为可点击锚点的上标链接
+    let preprocessed = content.replace(/\n{2,}/g, '\n\n')
 
-    
+    // 将 [SOURCE n] 替换为 <sup><a href="#source-n">[n]</a></sup>
+    preprocessed = preprocessed.replace(/\[SOURCE\s+(\d+)\]/g, (_m, n: string) => {
+      const num = String(n)
+      return `<sup><a href="#source-${num}" class="source-anchor">[${num}]<\/a><\/sup>`
+    })
+
     return remark()
-    .use(remarkGfm)
-    .use(remarkDirective)
-    .use(remarkFrontmatter)
-    .use(remarkHtml, { sanitize: false, allowDangerousHtml: true })
-    .processSync(preprocessed).toString();
+      .use(remarkGfm)
+      .use(remarkDirective)
+      .use(remarkFrontmatter)
+      .use(remarkHtml, { sanitize: false, allowDangerousHtml: true })
+      .processSync(preprocessed)
+      .toString()
   };
 
   // Format time display

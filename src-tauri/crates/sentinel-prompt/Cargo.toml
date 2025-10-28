@@ -1,0 +1,22 @@
+[package]
+name = "sentinel-prompt"
+version = "0.1.0"
+edition = "2021"
+description = "Prompt management system for Sentinel AI"
+
+[dependencies]
+sentinel-core = { path = "../sentinel-core" }
+sentinel-database = { path = "../sentinel-database" }
+sentinel-models = { path = "../sentinel-models" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+regex = { workspace = true }
+toml = { workspace = true }

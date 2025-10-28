@@ -544,6 +544,8 @@ pub fn run() {
             commands::role::create_ai_role,
             commands::role::update_ai_role,
             commands::role::delete_ai_role,
+            commands::role::set_current_ai_role,
+            commands::role::get_current_ai_role,
             // 扫描工具相关命令
             scan_commands::list_scan_tools,
             scan_commands::get_available_scan_tools,
