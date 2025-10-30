@@ -1,0 +1,21 @@
+[package]
+name = "sentinel-services"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sentinel_services"
+path = "src/lib.rs"
+
+[dependencies]
+sentinel-core = { path = "../sentinel-core" }
+sentinel-db = { path = "../sentinel-db" }
+sentinel-tools = { path = "../sentinel-tools" }
+sentinel-rag = { path = "../sentinel-rag" }
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+

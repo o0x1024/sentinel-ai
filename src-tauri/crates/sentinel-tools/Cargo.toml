@@ -1,0 +1,41 @@
+[package]
+name = "sentinel-tools"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sentinel_tools"
+path = "src/lib.rs"
+
+[dependencies]
+sentinel-core = { path = "../sentinel-core" }
+sentinel-db = { path = "../sentinel-db" }
+anyhow = "1.0"
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+rmcp = { version = "0.8.3", features = ["client", "server", "macros", "transport-async-rw", "transport-child-process", "transport-sse-client", "transport-sse-server", "transport-streamable-http-client", "transport-streamable-http-server", "reqwest", "auth", "uuid", "base64"] }
+reqwest = { version = "0.12.0", features = ["json"] }
+futures = "0.3"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["net"] }
+regex = "1"
+once_cell = "1.19"
+thiserror = "1.0"
+derive_more = { version = "2.0.1", features = ["full"] }
+hickory-resolver = "0.25.2"
+rsubdomain = "1.2.6"
+rustscan = "2.4.1"
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
+url = "2.4"
+dirs = "5.0"
+toml = "0.8"
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+
+

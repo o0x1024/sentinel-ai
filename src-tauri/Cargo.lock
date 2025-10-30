@@ -8597,6 +8597,8 @@ dependencies = [
  "rsubdomain",
  "rustscan",
  "semaphore",
+ "sentinel-core",
+ "sentinel-db",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -8628,6 +8630,135 @@ dependencies = [
  "uuid",
  "walkdir",
  "which",
+]
+
+[[package]]
+name = "sentinel-commands"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sentinel-core",
+ "sentinel-db",
+ "sentinel-rag",
+ "sentinel-services",
+ "sentinel-tools",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sentinel-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sentinel-db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "dirs 5.0.1",
+ "md5",
+ "sentinel-core",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sentinel-rag"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow-array",
+ "arrow-schema",
+ "base64 0.22.1",
+ "chrono",
+ "docx-rs",
+ "html2text",
+ "lancedb",
+ "pdf-extract",
+ "pulldown-cmark",
+ "regex",
+ "reqwest 0.12.22",
+ "rig-core",
+ "rig-lancedb",
+ "sentinel-core",
+ "sentinel-db",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "sentinel-services"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sentinel-core",
+ "sentinel-db",
+ "sentinel-rag",
+ "sentinel-tools",
+ "serde",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sentinel-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "derive_more 2.0.1",
+ "dirs 5.0.1",
+ "futures",
+ "futures-util",
+ "hickory-resolver 0.25.2",
+ "once_cell",
+ "rand 0.8.5",
+ "regex",
+ "reqwest 0.12.22",
+ "rmcp",
+ "rsubdomain",
+ "rustscan",
+ "sentinel-core",
+ "sentinel-db",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.23",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]
