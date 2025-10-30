@@ -85,6 +85,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
 pub struct DatabaseService {
     pool: Option<SqlitePool>,
     db_path: PathBuf,
+    db_client: Option<sentinel_db::DatabaseClient>,
 }
 
 impl DatabaseService {
@@ -97,6 +98,7 @@ impl DatabaseService {
         Self {
             pool: None,
             db_path,
+            db_client: None,
         }
     }
 
@@ -155,6 +157,10 @@ impl DatabaseService {
         } 
 
         self.pool = Some(pool);
+        // 初始化数据库客户端
+        if let Some(p) = &self.pool {
+            self.db_client = Some(sentinel_db::DatabaseClient::new(p.clone()));
+        }
 
         Ok(())
     }
@@ -1166,31 +1172,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    async fn insert_default_prompts(&self, pool: &SqlitePool) -> Result<()> {
-        let defaults: &[(&str, &str, &str, &str)] = &[
-            // arch, stage, name, content
-            ("rewoo", "planner", "ReWOO Planner", "你是一个智能任务规划器。请根据用户的问题，制定一个详细的执行计划。\n\n用户问题：{user_question}\n\n请按照以下格式输出计划：\nPlan: 步骤描述\n#E1 = 工具名称[参数]\n#E2 = 工具名称[参数, #E1]"),
-            ("rewoo", "worker", "ReWOO Worker", "你是一个工具执行器。请根据计划中的步骤，调用相应的工具并返回结果。\n当前步骤：{current_step}\n可用工具：{available_tools}"),
-            ("rewoo", "solver", "ReWOO Solver", "你是一个结果整合器。请根据执行结果，为用户提供最终答案。\n原始问题：{original_question}\n执行计划：{plan}\n执行结果：{results}"),
-            ("llmcompiler", "planning", "LLMC Planning", "你是一个并行任务规划器。请将复杂任务分解为可并行执行的子任务。\n用户任务：{user_task}"),
-            ("llmcompiler", "execution", "LLMC Execution", "你是一个任务执行器。请执行指定的子任务。\n当前任务：{current_task}\n依赖结果：{dependencies}"),
-            ("llmcompiler", "replan", "LLMC Replan", "你是一个重新规划器。当执行出现问题时，请调整执行计划。\n原始计划：{original_plan}\n执行状态：{execution_status}\n错误信息：{error_info}"),
-            ("planexecute", "planning", "P&E Planning", "你是一个策略规划师。请为用户的目标制定详细的执行计划。\n用户目标：{user_goal}"),
-            ("planexecute", "execution", "P&E Execution", "你是一个执行专家。请执行计划中的当前步骤。\n执行计划：{plan}\n当前步骤：{current_step}\n前置结果：{previous_results}"),
-            ("planexecute", "replan", "P&E Replan", "你是一个重新规划师。请评估执行结果并在必要时调整计划。\n执行计划：{plan}\n执行结果：{results}\n目标达成情况：{goal_achievement}"),
-        ];
-
-        for (arch, stage, name, content) in defaults {
-            sqlx::query(r#"INSERT INTO prompt_templates (name, description, architecture, stage, content, is_default, is_active) VALUES (?, ?, ?, ?, ?, 1, 1)"#)
-                .bind(*name)
-                .bind(Option::<&str>::None)
-                .bind(*arch)
-                .bind(*stage)
-                .bind(*content)
-                .execute(pool)
-                .await?;
-        }
-        Ok(())
+    async fn insert_default_prompts(&self, _pool: &SqlitePool) -> Result<()> {
+        // Use centralized DB client
+        let db = self.get_db()?;
+        db.insert_default_templates().await
     }
 
     /// 获取数据库连接池
@@ -1198,6 +1183,13 @@ impl DatabaseService {
         self.pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))
+    }
+
+    /// 获取数据库客户端
+    pub fn get_db(&self) -> Result<&sentinel_db::DatabaseClient> {
+        self.db_client
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库客户端未初始化"))
     }
 
     /// 执行自定义查询
@@ -1339,12 +1331,12 @@ impl DatabaseService {
             created_at: task.created_at,
             updated_at: task.updated_at,
         };
-        sentinel_db::database::scan_task_dao::create_scan_task(pool, &t).await
+        self.get_db()?.create_scan_task(&t).await
     }
 
     pub async fn get_scan_tasks(&self, project_id: Option<&str>) -> Result<Vec<ScanTask>> {
         let pool = self.get_pool()?;
-        let rows = sentinel_db::database::scan_task_dao::get_scan_tasks(pool, project_id).await?;
+        let rows = self.get_db()?.get_scan_tasks(project_id).await?;
         let mapped = rows
             .into_iter()
             .map(|t| crate::models::database::ScanTask {
@@ -1375,7 +1367,7 @@ impl DatabaseService {
 
     pub async fn get_scan_task(&self, id: &str) -> Result<Option<ScanTask>> {
         let pool = self.get_pool()?;
-        let row = sentinel_db::database::scan_task_dao::get_scan_task(pool, id).await?;
+        let row = self.get_db()?.get_scan_task(id).await?;
         Ok(row.map(|t| crate::models::database::ScanTask {
             id: t.id,
             project_id: t.project_id,
@@ -1407,7 +1399,7 @@ impl DatabaseService {
         progress: Option<f64>,
     ) -> Result<()> {
         let pool = self.get_pool()?;
-        sentinel_db::database::scan_task_dao::update_scan_task_status(pool, id, status, progress).await
+        self.get_db()?.update_scan_task_status(id, status, progress).await
     }
 
     /// 漏洞相关操作
@@ -1439,7 +1431,7 @@ impl DatabaseService {
             created_at: vuln.created_at,
             updated_at: vuln.updated_at,
         };
-        sentinel_db::database::vulnerability_dao::create_vulnerability(pool, &v).await
+        self.get_db()?.create_vulnerability(&v).await
     }
 
     pub async fn get_vulnerabilities(
@@ -1447,7 +1439,7 @@ impl DatabaseService {
         project_id: Option<&str>,
     ) -> Result<Vec<Vulnerability>> {
         let pool = self.get_pool()?;
-        let rows = sentinel_db::database::vulnerability_dao::get_vulnerabilities(pool, project_id).await?;
+        let rows = self.get_db()?.get_vulnerabilities(project_id).await?;
         let mapped = rows
             .into_iter()
             .map(|v| crate::models::database::Vulnerability {
@@ -1482,7 +1474,7 @@ impl DatabaseService {
 
     pub async fn get_vulnerability(&self, id: &str) -> Result<Option<Vulnerability>> {
         let pool = self.get_pool()?;
-        let row = sentinel_db::database::vulnerability_dao::get_vulnerability(pool, id).await?;
+        let row = self.get_db()?.get_vulnerability(id).await?;
         Ok(row.map(|v| crate::models::database::Vulnerability {
             id: v.id,
             project_id: v.project_id,
@@ -1513,7 +1505,7 @@ impl DatabaseService {
 
     pub async fn update_vulnerability_status(&self, id: &str, status: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sentinel_db::database::vulnerability_dao::update_vulnerability_status(pool, id, status).await
+        self.get_db()?.update_vulnerability_status(id, status).await
     }
 
     /// AI对话相关操作
@@ -1539,12 +1531,12 @@ impl DatabaseService {
             created_at: conversation.created_at,
             updated_at: conversation.updated_at,
         };
-        sentinel_db::database::ai_conversation_dao::create_ai_conversation(pool, &c).await
+        self.get_db()?.create_ai_conversation(&c).await
     }
 
     pub async fn get_conversations(&self) -> Result<Vec<AiConversation>> {
         let pool = self.get_pool()?;
-        let rows = sentinel_db::database::ai_conversation_dao::get_ai_conversations(pool).await?;
+        let rows = self.get_db()?.get_ai_conversations().await?;
         let mapped = rows
             .into_iter()
             .map(|c| crate::models::database::AiConversation {
@@ -1573,7 +1565,7 @@ impl DatabaseService {
 
     pub async fn get_conversation(&self, id: &str) -> Result<Option<AiConversation>> {
         let pool = self.get_pool()?;
-        let row = sentinel_db::database::ai_conversation_dao::get_ai_conversation(pool, id).await?;
+        let row = self.get_db()?.get_ai_conversation(id).await?;
         Ok(row.map(|c| crate::models::database::AiConversation {
             id: c.id,
             title: c.title,
@@ -1618,18 +1610,18 @@ impl DatabaseService {
             created_at: conversation.created_at,
             updated_at: Utc::now(),
         };
-        sentinel_db::database::ai_conversation_dao::update_ai_conversation(pool, &c).await
+        self.get_db()?.update_ai_conversation(&c).await
     }
 
     pub async fn delete_conversation(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sentinel_db::database::ai_conversation_dao::delete_ai_conversation(pool, id).await
+        self.get_db()?.delete_ai_conversation(id).await
     }
 
     /// 更新对话标题
     pub async fn update_conversation_title(&self, id: &str, title: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sentinel_db::database::ai_conversation_dao::update_conversation_title(pool, id, title).await
+        self.get_db()?.update_conversation_title(id, title).await
     }
 
     /// 创建AI消息
@@ -1647,13 +1639,13 @@ impl DatabaseService {
             attachments: message.attachments.clone(),
             timestamp: message.timestamp,
         };
-        sentinel_db::database::ai_conversation_dao::create_ai_message(pool, &m).await
+        self.get_db()?.create_ai_message(&m).await
     }
 
     /// 获取对话的消息列表
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {
         let pool = self.get_pool()?;
-        let rows = sentinel_db::database::ai_conversation_dao::get_ai_messages_by_conversation(pool, conversation_id).await?;
+        let rows = self.get_db()?.get_ai_messages_by_conversation(conversation_id).await?;
         let mapped = rows
             .into_iter()
             .map(|m| crate::models::database::AiMessage {
@@ -1675,24 +1667,26 @@ impl DatabaseService {
     /// 配置相关操作
     pub async fn get_configs_by_category(&self, category: &str) -> Result<Vec<Configuration>> {
         let pool = self.get_pool()?;
-        let rows = sqlx::query_as::<_, Configuration>(
-            "SELECT * FROM configurations WHERE category = ? ORDER BY key",
-        )
-        .bind(category)
-        .fetch_all(pool)
-        .await?;
-        Ok(rows)
+        let rows = self.get_db()?.get_configs_by_category(category).await?;
+        let mapped = rows
+            .into_iter()
+            .map(|c| crate::models::database::Configuration {
+                id: c.id,
+                category: c.category,
+                key: c.key,
+                value: c.value,
+                description: c.description,
+                is_encrypted: c.is_encrypted,
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+            })
+            .collect();
+        Ok(mapped)
     }
 
     pub async fn get_config(&self, category: &str, key: &str) -> Result<Option<String>> {
         let pool = self.get_pool()?;
-        let value: Option<String> =
-            sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
-                .bind(category)
-                .bind(key)
-                .fetch_optional(pool)
-                .await?;
-        Ok(value)
+        self.get_db()?.get_config(category, key).await
     }
 
     pub async fn set_config(
@@ -1703,16 +1697,7 @@ impl DatabaseService {
         description: Option<&str>,
     ) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query(
-            "INSERT INTO configurations (category, key, value, description) VALUES (?, ?, ?, ?)\n             ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description",
-        )
-        .bind(category)
-        .bind(key)
-        .bind(value)
-        .bind(description)
-        .execute(pool)
-        .await?;
-        Ok(())
+        self.get_db()?.set_config(category, key, value, description).await
     }
 
     /// RAG配置管理方法
@@ -1962,60 +1947,39 @@ impl DatabaseService {
         command: &str,
         args: &[String],
     ) -> Result<String> {
-        let args_json = serde_json::to_string(args)?;
         let pool = self.get_pool()?;
-        let mut conn = pool.acquire().await?;
-        let id = uuid::Uuid::new_v4().to_string();
-
-        // 根据命令生成默认URL
-        let url = format!("http://localhost:8080");
-        let connection_type = "stdio";
-
-        sqlx::query(
-            r#"
-            INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&id)
-        .bind(name)
-        .bind(description)
-        .bind(&url)
-        .bind(connection_type)
-        .bind(command)
-        .bind(args_json)
-        .execute(&mut *conn)
-        .await?;
-        Ok(id)
+        self.get_db()?.create_mcp_server_config(name, description, command, args).await
     }
 
     pub async fn get_all_mcp_server_configs(&self) -> Result<Vec<McpServerConfig>> {
         let pool = self.get_pool()?;
-        let configs = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, created_at, updated_at FROM mcp_server_configs"
-        )
-        .fetch_all(pool)
-        .await?;
-        Ok(configs)
+        let rows = self.get_db()?.get_all_mcp_server_configs().await?;
+        let mapped = rows
+            .into_iter()
+            .map(|m| McpServerConfig {
+                id: m.id,
+                name: m.name,
+                description: m.description,
+                url: m.url,
+                connection_type: m.connection_type,
+                command: m.command,
+                args: m.args,
+                enabled: m.enabled,
+                created_at: m.created_at,
+                updated_at: m.updated_at,
+            })
+            .collect();
+        Ok(mapped)
     }
 
     pub async fn update_mcp_server_config_enabled(&self, id: &str, enabled: bool) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE mcp_server_configs SET is_enabled = ? WHERE id = ?")
-            .bind(enabled)
-            .bind(id)
-            .execute(pool)
-            .await?;
-        Ok(())
+        self.get_db()?.update_mcp_server_config_enabled(id, enabled).await
     }
 
     pub async fn delete_mcp_server_config(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM mcp_server_configs WHERE id = ?")
-            .bind(id)
-            .execute(pool)
-            .await?;
-        Ok(())
+        self.get_db()?.delete_mcp_server_config(id).await
     }
 
     pub async fn get_mcp_server_config_by_name(
@@ -2023,13 +1987,19 @@ impl DatabaseService {
         name: &str,
     ) -> Result<Option<McpServerConfig>> {
         let pool = self.get_pool()?;
-        let config = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
-        )
-        .bind(name)
-        .fetch_optional(pool)
-        .await?;
-        Ok(config)
+        let row = self.get_db()?.get_mcp_server_config_by_name(name).await?;
+        Ok(row.map(|m| McpServerConfig {
+            id: m.id,
+            name: m.name,
+            description: m.description,
+            url: m.url,
+            connection_type: m.connection_type,
+            command: m.command,
+            args: m.args,
+            enabled: m.enabled,
+            created_at: m.created_at,
+            updated_at: m.updated_at,
+        }))
     }
 
     pub async fn update_mcp_server_config(
@@ -2042,35 +2012,7 @@ impl DatabaseService {
         enabled: bool,
     ) -> Result<()> {
         let pool = self.get_pool()?;
-        let args_json = serde_json::to_string(args)?;
-
-        // 获取现有配置以保留url和connection_type
-        let existing = self.get_mcp_server_config_by_name(name).await?;
-
-        // 如果找不到现有配置，使用默认值
-        let url = existing
-            .as_ref()
-            .map(|c| c.url.clone())
-            .unwrap_or_else(|| "http://localhost:8080".to_string());
-        let connection_type = existing
-            .as_ref()
-            .map(|c| c.connection_type.clone())
-            .unwrap_or_else(|| "stdio".to_string());
-
-        sqlx::query(
-            "UPDATE mcp_server_configs SET name = ?, description = ?, url = ?, connection_type = ?, command = ?, args = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        )
-        .bind(name)
-        .bind(description)
-        .bind(&url)
-        .bind(&connection_type)
-        .bind(command)
-        .bind(&args_json)
-        .bind(enabled)
-        .bind(id)
-        .execute(pool)
-        .await?;
-        Ok(())
+        self.get_db()?.update_mcp_server_config(id, name, description, command, args, enabled).await
     }
 
     #[allow(unused)]
@@ -2536,13 +2478,21 @@ impl Database for DatabaseService {
 
     async fn get_configs_by_category(&self, category: &str) -> Result<Vec<Configuration>> {
         let pool = self.get_pool()?;
-        let rows = sqlx::query_as::<_, Configuration>(
-            "SELECT * FROM configurations WHERE category = ? ORDER BY key",
-        )
-        .bind(category)
-        .fetch_all(pool)
-        .await?;
-        Ok(rows)
+        let rows = self.get_db()?.get_configs_by_category(category).await?;
+        let mapped = rows
+            .into_iter()
+            .map(|c| crate::models::database::Configuration {
+                id: c.id,
+                category: c.category,
+                key: c.key,
+                value: c.value,
+                description: c.description,
+                is_encrypted: c.is_encrypted,
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+            })
+            .collect();
+        Ok(mapped)
     }
 
     async fn get_config(&self, category: &str, key: &str) -> Result<Option<String>> {
@@ -2726,12 +2676,12 @@ impl Database for DatabaseService {
             created_at: task.created_at,
             updated_at: task.updated_at,
         };
-        sentinel_db::database::scan_task_dao::create_scan_task(pool, &t).await
+        self.get_db()?.create_scan_task(&t).await
     }
 
     async fn get_scan_tasks(&self, project_id: Option<&str>) -> Result<Vec<ScanTask>> {
         let pool = self.get_pool()?;
-        let rows = sentinel_db::database::scan_task_dao::get_scan_tasks(pool, project_id).await?;
+        let rows = self.get_db()?.get_scan_tasks(project_id).await?;
         let mapped = rows
             .into_iter()
             .map(|t| crate::models::database::ScanTask {
@@ -2762,7 +2712,7 @@ impl Database for DatabaseService {
 
     async fn get_scan_task(&self, id: &str) -> Result<Option<ScanTask>> {
         let pool = self.get_pool()?;
-        let row = sentinel_db::database::scan_task_dao::get_scan_task(pool, id).await?;
+        let row = self.get_db()?.get_scan_task(id).await?;
         Ok(row.map(|t| crate::models::database::ScanTask {
             id: t.id,
             project_id: t.project_id,
@@ -2801,7 +2751,7 @@ impl Database for DatabaseService {
 
     async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()> {
         let pool = self.get_pool()?;
-        sentinel_db::database::scan_task_dao::update_scan_task_status(pool, id, status, progress).await
+        self.get_db()?.update_scan_task_status(id, status, progress).await
     }
     
     // Agent任务相关方法实现
@@ -3251,146 +3201,93 @@ impl DatabaseService {
     // RAG-specific methods
     pub async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> Result<String> {
         let pool = self.get_pool()?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-        
-        sqlx::query(
-            "INSERT INTO rag_collections (id, name, description, is_active, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)"
-        )
-        .bind(&id)
-        .bind(name)
-        .bind(description)
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
-        
-        Ok(id)
+        self.get_db()?.create_rag_collection(name, description).await
     }
 
     pub async fn get_rag_collections(&self) -> Result<Vec<crate::rag::models::CollectionInfo>> {
         let pool = self.get_pool()?;
-        let rows = sqlx::query(
-            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections ORDER BY created_at DESC"
-        )
-        .fetch_all(pool)
-        .await?;
-
-        let mut collections = Vec::new();
-        for row in rows {
-            let id: String = row.get("id");
-            let name: String = row.get("name");
-            let description: Option<String> = row.get("description");
-            let is_active: i64 = row.get("is_active");
-            let document_count: i64 = row.get("document_count");
-            let chunk_count: i64 = row.get("chunk_count");
-            let created_at: String = row.get("created_at");
-            let updated_at: String = row.get("updated_at");
-
-            collections.push(crate::rag::models::CollectionInfo {
-                id,
-                name,
-                description,
-                is_active: is_active != 0,
-                embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
-                document_count: document_count as usize,
-                chunk_count: chunk_count as usize,
-                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
-            });
-        }
-
-        Ok(collections)
+        let rows = self.get_db()?.get_rag_collections().await?;
+        let mapped = rows
+            .into_iter()
+            .map(|r| {
+                let created_at = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now());
+                let updated_at = chrono::DateTime::parse_from_rfc3339(&r.updated_at)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now());
+                crate::rag::models::CollectionInfo {
+                    id: r.id,
+                    name: r.name,
+                    description: r.description,
+                    is_active: r.is_active != 0,
+                    embedding_model: "default".to_string(),
+                    document_count: r.document_count as usize,
+                    chunk_count: r.chunk_count as usize,
+                    created_at,
+                    updated_at,
+                }
+            })
+            .collect();
+        Ok(mapped)
     }
 
     pub async fn delete_rag_collection(&self, collection_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM rag_collections WHERE id = ?")
-            .bind(collection_id)
-            .execute(pool)
-            .await?;
-        Ok(())
+        self.get_db()?.delete_rag_collection(collection_id).await
     }
 
     pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query(
-            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE id = ?"
-        )
-        .bind(collection_id)
-        .fetch_optional(pool)
-        .await?;
-
-        if let Some(row) = row {
-            let id: String = row.get("id");
-            let name: String = row.get("name");
-            let description: Option<String> = row.get("description");
-            let is_active: i64 = row.get("is_active");
-            let document_count: i64 = row.get("document_count");
-            let chunk_count: i64 = row.get("chunk_count");
-            let created_at: String = row.get("created_at");
-            let updated_at: String = row.get("updated_at");
-
-            Ok(Some(crate::rag::models::CollectionInfo {
-                id,
-                name,
-                description,
-                is_active: is_active != 0,
-                embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
-                document_count: document_count as usize,
-                chunk_count: chunk_count as usize,
-                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
-            }))
-        } else {
-            Ok(None)
-        }
+        let row = self.get_db()?.get_rag_collection_by_id(collection_id).await?;
+        Ok(row.map(|r| {
+            let created_at = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&r.updated_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            crate::rag::models::CollectionInfo {
+                id: r.id,
+                name: r.name,
+                description: r.description,
+                is_active: r.is_active != 0,
+                embedding_model: "default".to_string(),
+                document_count: r.document_count as usize,
+                chunk_count: r.chunk_count as usize,
+                created_at,
+                updated_at,
+            }
+        }))
     }
 
     pub async fn get_rag_collection_by_name(&self, collection_name: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query(
-            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE name = ?"
-        )
-        .bind(collection_name)
-        .fetch_optional(pool)
-        .await?;
-
-        if let Some(row) = row {
-            let id: String = row.get("id");
-            let name: String = row.get("name");
-            let description: Option<String> = row.get("description");
-            let is_active: i64 = row.get("is_active");
-            let document_count: i64 = row.get("document_count");
-            let chunk_count: i64 = row.get("chunk_count");
-            let created_at: String = row.get("created_at");
-            let updated_at: String = row.get("updated_at");
-
-            Ok(Some(crate::rag::models::CollectionInfo {
-                id,
-                name,
-                description,
-                is_active: is_active != 0,
-                embedding_model: "default".to_string(), // TODO: 从配置或数据库中获取
-                document_count: document_count as usize,
-                chunk_count: chunk_count as usize,
-                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
-            }))
-        } else {
-            Ok(None)
-        }
+        let row = self.get_db()?.get_rag_collection_by_name(collection_name).await?;
+        Ok(row.map(|r| {
+            let created_at = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&r.updated_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            crate::rag::models::CollectionInfo {
+                id: r.id,
+                name: r.name,
+                description: r.description,
+                is_active: r.is_active != 0,
+                embedding_model: "default".to_string(),
+                document_count: r.document_count as usize,
+                chunk_count: r.chunk_count as usize,
+                created_at,
+                updated_at,
+            }
+        }))
     }
 
     pub async fn set_rag_collection_active(&self, collection_id: &str, active: bool) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?")
-            .bind(if active { 1 } else { 0 })
-            .bind(chrono::Utc::now().to_rfc3339())
-            .bind(collection_id)
-            .execute(pool)
-            .await?;
-        Ok(())
+        self.get_db()?.set_rag_collection_active(collection_id, active).await
     }
 
     /// 向量相似度搜索RAG文档块
@@ -3836,136 +3733,58 @@ impl DatabaseService {
 
     pub async fn delete_rag_document(&self, document_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-
-        // 获取所属集合ID以便更新统计
-        let collection_id: Option<String> = sqlx::query_scalar(
-            "SELECT collection_id FROM rag_document_sources WHERE id = ?"
-        )
-        .bind(document_id)
-        .fetch_optional(pool)
-        .await?;
-
-        // 先删除新表 rag_chunks 中的数据
-        sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?")
-            .bind(document_id)
-            .execute(pool)
-            .await?;
-
-        // 同时清理旧表（若存在历史数据）
-        sqlx::query("DELETE FROM rag_document_chunks WHERE source_id = ?")
-            .bind(document_id)
-            .execute(pool)
-            .await
-            .ok();
-
-        // 删除文档源记录
-        sqlx::query("DELETE FROM rag_document_sources WHERE id = ?")
-            .bind(document_id)
-            .execute(pool)
-            .await?;
-
-        // 更新集合统计
+        let collection_id = self.get_db()?.get_collection_id_by_document_id(document_id).await?;
+        self.get_db()?.delete_document_cascade(document_id).await?;
         if let Some(cid) = collection_id.as_deref() {
             let _ = self.update_collection_stats(cid).await;
         }
-
         Ok(())
     }
 
     pub async fn get_rag_documents(&self, collection_name: &str) -> Result<Vec<crate::rag::models::DocumentSource>> {
         let pool = self.get_pool()?;
-        
-        let rows = sqlx::query(
-            r#"
-            SELECT s.id, s.collection_id, s.file_path, s.file_name, s.file_type, s.file_size, s.content_hash, s.metadata, s.created_at, s.updated_at
-            FROM rag_document_sources s
-            JOIN rag_collections c ON s.collection_id = c.id
-            WHERE c.name = ?
-            ORDER BY s.created_at DESC
-            "#
-        )
-        .bind(collection_name)
-        .fetch_all(pool)
-        .await?;
-
+        let rows = self.get_db()?.get_documents_by_collection_name(collection_name).await?;
         let mut documents = Vec::new();
-        for row in rows {
-            let id: String = row.get("id");
-            let _collection_id: String = row.get("collection_id");
-            let file_path: String = row.get("file_path");
-            let file_name: String = row.get("file_name");
-            let file_type: String = row.get("file_type");
-            let file_size: i64 = row.get("file_size");
-            let content_hash: String = row.get("content_hash");
-            let metadata_json: String = row.get("metadata");
-            let created_at: String = row.get("created_at");
-            let updated_at: String = row.get("updated_at");
-
-            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&metadata_json)?;
-
+        for r in rows {
+            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&r.metadata)?;
             documents.push(crate::rag::models::DocumentSource {
-                id,
-                file_path,
-                file_name,
-                file_type,
-                file_size: file_size as u64,
-                file_hash: content_hash,
-                chunk_count: 0, // TODO: Calculate actual chunk count
+                id: r.id,
+                file_path: r.file_path,
+                file_name: r.file_name,
+                file_type: r.file_type,
+                file_size: r.file_size as u64,
+                file_hash: r.content_hash,
+                chunk_count: 0,
                 ingestion_status: crate::rag::models::IngestionStatusEnum::Completed,
-                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)?.with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)?.with_timezone(&chrono::Utc),
                 metadata,
             });
         }
-
         Ok(documents)
     }
 
     /// 根据集合ID获取文档列表
     pub async fn get_rag_documents_by_collection_id(&self, collection_id: &str) -> Result<Vec<crate::rag::models::DocumentSource>> {
         let pool = self.get_pool()?;
-
-        let rows = sqlx::query(
-            r#"
-            SELECT id, collection_id, file_path, file_name, file_type, file_size, content_hash, metadata, created_at, updated_at
-            FROM rag_document_sources
-            WHERE collection_id = ?
-            ORDER BY created_at DESC
-            "#
-        )
-        .bind(collection_id)
-        .fetch_all(pool)
-        .await?;
-
+        let rows = self.get_db()?.get_documents_by_collection_id(collection_id).await?;
         let mut documents = Vec::new();
-        for row in rows {
-            let id: String = row.get("id");
-            let file_path: String = row.get("file_path");
-            let file_name: String = row.get("file_name");
-            let file_type: String = row.get("file_type");
-            let file_size: i64 = row.get("file_size");
-            let content_hash: String = row.get("content_hash");
-            let metadata_json: String = row.get("metadata");
-            let created_at: String = row.get("created_at");
-            let updated_at: String = row.get("updated_at");
-
-            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&metadata_json)?;
-
+        for r in rows {
+            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&r.metadata)?;
             documents.push(crate::rag::models::DocumentSource {
-                id,
-                file_path,
-                file_name,
-                file_type,
-                file_size: file_size as u64,
-                file_hash: content_hash,
+                id: r.id,
+                file_path: r.file_path,
+                file_name: r.file_name,
+                file_type: r.file_type,
+                file_size: r.file_size as u64,
+                file_hash: r.content_hash,
                 chunk_count: 0,
                 ingestion_status: crate::rag::models::IngestionStatusEnum::Completed,
-                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)?.with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)?.with_timezone(&chrono::Utc),
                 metadata,
             });
         }
-
         Ok(documents)
     }
 
@@ -4044,11 +3863,7 @@ impl DatabaseService {
     /// 通过文档ID获取其所属集合ID
     pub async fn get_collection_id_by_document_id(&self, document_id: &str) -> Result<Option<String>> {
         let pool = self.get_pool()?;
-        let cid = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = ?")
-            .bind(document_id)
-            .fetch_optional(pool)
-            .await?;
-        Ok(cid)
+        self.get_db()?.get_collection_id_by_document_id(document_id).await
     }
 
     pub async fn create_rag_document(
@@ -4081,22 +3896,20 @@ impl DatabaseService {
             (format!("{:x}", md5::compute(content.as_bytes())), content.len() as i64)
         };
         
-        sqlx::query(
-            "INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, file_hash, content_hash, metadata, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        // DAO insert
+        self.get_db()?.insert_document_source(
+            &document_id,
+            collection_id,
+            file_path,
+            file_name,
+            "text",
+            file_size,
+            &file_hash,
+            &file_hash,
+            metadata,
+            &now.to_rfc3339(),
+            &now.to_rfc3339(),
         )
-        .bind(&document_id)
-        .bind(collection_id)
-        .bind(file_path)
-        .bind(file_name)
-        .bind("text") // Default file type
-        .bind(file_size)
-        .bind(&file_hash)
-        .bind(&file_hash) // content_hash 使用相同的哈希值
-        .bind(metadata)
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
-        .execute(pool)
         .await?;
 
         Ok(document_id)
@@ -4129,24 +3942,22 @@ impl DatabaseService {
         let content_hash = format!("{:x}", md5::compute(content.as_bytes()));
         let char_count = content.chars().count() as i32;
         
-        sqlx::query(
-            "INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding_vector, embedding_model, embedding_dimension, metadata, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        // DAO insert
+        self.get_db()?.insert_chunk(
+            &chunk_id,
+            document_id,
+            collection_id,
+            content,
+            &content_hash,
+            chunk_index,
+            char_count,
+            embedding_bytes,
+            embedding_model,
+            embedding_dimension,
+            metadata_json,
+            now_timestamp,
+            now_timestamp,
         )
-        .bind(&chunk_id)
-        .bind(document_id)
-        .bind(collection_id)
-        .bind(content)
-        .bind(&content_hash)
-        .bind(chunk_index)
-        .bind(char_count)
-        .bind(embedding_bytes)
-        .bind(embedding_model)
-        .bind(embedding_dimension)
-        .bind(metadata_json)
-        .bind(now_timestamp)
-        .bind(now_timestamp)
-        .execute(pool)
         .await?;
 
         Ok(chunk_id)
@@ -4155,37 +3966,7 @@ impl DatabaseService {
     /// 更新集合的文档和块统计
     pub async fn update_collection_stats(&self, collection_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        
-        // 计算文档数量
-        let document_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?"
-        )
-        .bind(collection_id)
-        .fetch_one(pool)
-        .await?;
-        
-        // 计算块数量 (从新的rag_chunks表)
-        let chunk_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?"
-        )
-        .bind(collection_id)
-        .fetch_one(pool)
-        .await?;
-        
-        // 更新集合统计
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query(
-            "UPDATE rag_collections SET document_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?"
-        )
-        .bind(document_count)
-        .bind(chunk_count)
-        .bind(&now)
-        .bind(collection_id)
-        .execute(pool)
-        .await?;
-        
-        log::info!("更新集合 {} 统计: {} 文档, {} 块", collection_id, document_count, chunk_count);
-        Ok(())
+        self.get_db()?.update_collection_stats(collection_id).await
     }
 
     // Scenario agent methods
