@@ -1,4 +1,4 @@
-use crate::database::AssetDao;
+use sentinel_db::database::AssetDao;
 use crate::models::asset::*;
 use sqlx::SqlitePool;
 use std::collections::HashMap;

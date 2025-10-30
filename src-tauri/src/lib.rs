@@ -1,13 +1,11 @@
 // 模块声明
 pub mod agents;
 pub mod commands;
-pub mod database;
 pub mod engines;
 pub mod managers;
 pub mod models;
 pub mod services;
 pub mod tools;  // 包含原 MCP 功能
-pub mod prompt;
 pub mod utils;
 
 use crate::commands::{get_active_rag_collections, set_rag_collection_active};

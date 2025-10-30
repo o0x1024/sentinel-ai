@@ -4,14 +4,12 @@
 
 pub mod port_scan;
 pub mod subdomain_scan;
-pub mod http_request;
-pub mod local_time;
+// 使用 sentinel-tools 中的实现
+pub use sentinel_tools::builtin::{HttpRequestTool, HttpRequestConfig, HttpResponse, HttpRequestResult, LocalTimeTool};
 
 // 重新导出主要的工具结构体
 pub use port_scan::{PortScanTool, PortResult, PortScanResults, PortStatus, ScanConfig};
 pub use subdomain_scan::{RSubdomainTool, SubdomainResult, SubdomainScanResults};
-pub use http_request::{HttpRequestTool, HttpRequestConfig, HttpResponse, HttpRequestResult};
-pub use local_time::LocalTimeTool;
 
 use super::*;
 use crate::services::database::DatabaseService;

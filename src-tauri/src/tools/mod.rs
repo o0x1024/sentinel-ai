@@ -9,7 +9,7 @@
 
 // 核心模块
 pub mod builtin;
-pub mod mapping;
+pub mod mapping { pub use sentinel_tools::mapping::*; }
 
 pub mod protocol;
 pub mod server; // 重新启用
@@ -19,13 +19,15 @@ pub mod mcp_provider; // MCP工具提供者
 pub mod client;
 pub mod client_impl;
 pub mod oauth_manager;
-pub mod batch_progress_manager;
+pub mod batch_progress_manager { pub use sentinel_tools::batch_progress_manager::*; }
 
-// 统一工具系统
-pub mod unified_types;
+// 统一工具系统（迁移至 sentinel-tools）
+pub use sentinel_tools::unified_types::*;
+pub mod unified_types { pub use sentinel_tools::unified_types::*; }
+pub use sentinel_tools::UnifiedToolManager;
+pub mod error_classifier { pub use sentinel_tools::error_classifier::*; }
+pub mod error_config_loader { pub use sentinel_tools::error_config_loader::*; }
 pub mod unified_manager;
-pub mod error_classifier;
-pub mod error_config_loader;
 
 // 框架适配器系统
 pub mod framework_adapters;
@@ -56,7 +58,6 @@ pub use batch_progress_manager::{
 // pub use server::{McpServerManager, SentinelMcpServer};
 
 // 重新导出统一工具系统
-pub use unified_types::*;
 pub use unified_manager::*;
 pub use error_classifier::*;
 pub use error_config_loader::*;

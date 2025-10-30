@@ -23,7 +23,9 @@ tauri-build = { version = "2", features = [] }
 # Workspace members
 sentinel-core = { path = "sentinel-core" }
 sentinel-db = { path = "sentinel-db" }
+sentinel-prompt = { path = "sentinel-prompt" }
 sentinel-rag = { path = "sentinel-rag" }
+sentinel-tools = { path = "sentinel-tools" }
 
 html2text = "0.15.5"
 urlencoding = "2.1.3"
@@ -203,8 +205,13 @@ tauri-plugin-single-instance = "2"
 [workspace]
 members = [
     "sentinel-core",
-    "sentinel-db",
+    "sentinel-db", "sentinel-prompt",
     "sentinel-rag",
+    "sentinel-tools",
 ]
 resolver = "2"
 
+
+
+[workspace.dependencies]
+tempfile = "3.8"

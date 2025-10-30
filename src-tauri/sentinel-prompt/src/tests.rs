@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod rag_prompt_tests {
     use super::super::prompt_builder::*;
-    use crate::prompt::prompt_config::PromptConfigManager;
+    use super::super::prompt_config::PromptConfigManager;
     use std::collections::HashMap;
 
     #[tokio::test]

@@ -1,3 +1,14 @@
-pub use sentinel_core as core;
+pub mod unified_types;
+pub mod builtin;
+pub mod manager;
+pub mod error_classifier;
+pub mod error_config_loader;
+pub mod batch_progress_manager;
+pub mod mapping;
 
-// Tools module will be migrated after defining DatabaseService and McpService traits
+pub use unified_types::*;
+pub use manager::UnifiedToolManager;
+pub use error_classifier::*;
+pub use error_config_loader::*;
+pub use batch_progress_manager::*;
+pub use mapping::*;

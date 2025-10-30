@@ -54,7 +54,7 @@ impl PlanExecuteRepository {
     /// 运行数据库迁移
     pub async fn run_migrations(&self) -> Result<(), RepositoryError> {
         // 读取并执行迁移SQL
-        let migration_sql = include_str!("../../migrations/20241220_plan_execute_architecture.sql");
+        let migration_sql = include_str!("../../../migrations/20241220_plan_execute_architecture.sql");
         
         // 将SQL按语句分割并逐个执行
         let statements: Vec<&str> = migration_sql

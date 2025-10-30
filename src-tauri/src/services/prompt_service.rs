@@ -7,12 +7,12 @@
 //! - 自动优化
 //! - 性能监控
 
-use crate::prompt::prompt_template_manager::ValidationRules;
-use crate::prompt::{
+use sentinel_prompt::prompt_template_manager::ValidationRules;
+use sentinel_prompt::{
     CreateTestRequest, OptimizationResult, OptimizationSuggestion, OptimizerConfig, PerformanceRecord, PromptBuildContext, PromptBuildResult, PromptBuilder, PromptConfig, PromptConfigManager, PromptOptimizer, PromptTemplateManager, SystemMetrics, TemplateManagerConfig, TokenUsage
 };
-use crate::prompt::prompt_ab_test_manager::{PromptABTestManager, ABTest, ABTestResults};
-use crate::prompt::prompt_optimizer::{BatchTestResult, ConfigReport, ExecutionContext, PerformanceAnalysis, ReportType, TestScenario};
+use sentinel_prompt::prompt_ab_test_manager::{PromptABTestManager, ABTest, ABTestResults, ABTestConfig, UserContext};
+use sentinel_prompt::prompt_optimizer::{BatchTestResult, ConfigReport, ExecutionContext, PerformanceAnalysis, ReportType, TestScenario, RiskLevel};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
@@ -285,7 +285,7 @@ impl PromptService {
         
         let ab_test_manager = Arc::new(PromptABTestManager::new(
             config.data_path.join("ab_tests"),
-            crate::prompt::prompt_ab_test_manager::ABTestConfig::default(),
+            ABTestConfig::default(),
         ));
         
         let optimizer = Arc::new(PromptOptimizer::new(
@@ -616,7 +616,7 @@ impl PromptService {
             // 简化匹配逻辑，假设所有测试都适用于当前配置
             if !test.variants.is_empty() {
                 let _user_key = user_id.as_deref().unwrap_or("anonymous");
-                let user_context = crate::prompt::prompt_ab_test_manager::UserContext {
+                let user_context = UserContext {
                     user_id: user_id.clone(),
                     session_id: "default".to_string(),
                     attributes: std::collections::HashMap::new(),
@@ -641,7 +641,7 @@ impl PromptService {
         
         // 检查应用的建议是否都是低风险的
         for suggestion in &result.applied_suggestions {
-            if matches!(suggestion.risk_assessment.risk_level, crate::prompt::prompt_optimizer::RiskLevel::High | crate::prompt::prompt_optimizer::RiskLevel::Critical) {
+            if matches!(suggestion.risk_assessment.risk_level, RiskLevel::High | RiskLevel::Critical) {
                 return false;
             }
         }

@@ -8599,7 +8599,9 @@ dependencies = [
  "semaphore",
  "sentinel-core",
  "sentinel-db",
+ "sentinel-prompt",
  "sentinel-rag",
+ "sentinel-tools",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -8667,6 +8669,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sentinel-prompt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "notify",
+ "once_cell",
+ "rand 0.8.5",
+ "regex",
+ "sentinel-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "sentinel-rag"
 version = "0.1.0"
 dependencies = [
@@ -8692,6 +8715,41 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sentinel-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "derive_more 2.0.1",
+ "dirs 5.0.1",
+ "futures",
+ "futures-util",
+ "hickory-resolver 0.25.2",
+ "once_cell",
+ "rand 0.8.5",
+ "regex",
+ "reqwest 0.12.22",
+ "rmcp",
+ "rsubdomain",
+ "rustscan",
+ "sentinel-core",
+ "sentinel-db",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.23",
+ "tracing",
+ "url",
  "uuid",
 ]
 

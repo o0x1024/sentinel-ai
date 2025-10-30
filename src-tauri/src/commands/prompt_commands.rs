@@ -8,9 +8,9 @@ use tauri::State;
 use tokio::sync::RwLock;
 use anyhow::Result;
 
-use crate::prompt::{ABTest, CustomTemplate, TemplateType, TestScenario, UsageStats};
+use sentinel_prompt::{ABTest, CustomTemplate, TemplateType, TestScenario, UsageStats};
 use crate::services::{PromptBuildRequest, PromptService};
-use crate::prompt::{
+use sentinel_prompt::{
     CreateTestRequest, OptimizationResult, OptimizationSuggestion,
     PerformanceRecord, 
     PromptConfig, ReportType

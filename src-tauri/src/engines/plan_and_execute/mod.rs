@@ -13,6 +13,7 @@ pub mod memory_manager;
 pub mod planner;
 pub mod replanner;
 pub mod engine_adapter;
+pub mod repository;
 
 pub mod types;
 
@@ -22,6 +23,7 @@ pub use executor::{Executor, ExecutorConfig};
 pub use memory_manager::{MemoryManager, MemoryManagerConfig};
 pub use planner::{Planner, PlannerConfig};
 pub use replanner::{Replanner, ReplannerConfig};
+pub use repository::PlanExecuteRepository;
 
 pub use types::*;
 

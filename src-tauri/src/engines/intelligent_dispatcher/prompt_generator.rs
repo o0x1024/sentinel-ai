@@ -11,7 +11,7 @@ use log::info;
 use std::collections::HashMap;
 
 // 导入现有的Prompt系统模块
-use crate::prompt::{
+use sentinel_prompt::{
     PromptBuilder, PromptOptimizer, PromptTemplateManager
 };
 

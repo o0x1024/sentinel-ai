@@ -6,6 +6,7 @@
 //! - 智能配置选择
 //! - A/B测试框架
 use super::*;
+use sentinel_core::models::prompt::ArchitectureType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -168,13 +169,7 @@ pub enum PromptCategory {
     UserDefined,
 }
 
-/// 架构类型
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ArchitectureType {
-    ReWOO,
-    LLMCompiler,
-    PlanExecute,
-}
+// ArchitectureType 从 sentinel-core 导入
 
 /// 使用统计
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
