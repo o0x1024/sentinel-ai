@@ -1317,63 +1317,87 @@ impl DatabaseService {
     /// 扫描任务相关操作
     pub async fn create_scan_task(&self, task: &ScanTask) -> Result<()> {
         let pool = self.get_pool()?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO scan_tasks (
-                id, project_id, name, description, target_type, targets,
-                scan_type, tools_config, status, progress, priority,
-                scheduled_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        )
-        .bind(&task.id)
-        .bind(&task.project_id)
-        .bind(&task.name)
-        .bind(&task.description)
-        .bind(&task.target_type)
-        .bind(&task.targets)
-        .bind(&task.scan_type)
-        .bind(&task.tools_config)
-        .bind(&task.status)
-        .bind(task.progress)
-        .bind(task.priority)
-        .bind(&task.scheduled_at)
-        .bind(&task.created_by)
-        .execute(pool)
-        .await?;
-
-        Ok(())
+        let t = sentinel_core::models::database::ScanTask {
+            id: task.id.clone(),
+            project_id: task.project_id.clone(),
+            name: task.name.clone(),
+            description: task.description.clone(),
+            target_type: task.target_type.clone(),
+            targets: task.targets.clone(),
+            scan_type: task.scan_type.clone(),
+            tools_config: task.tools_config.clone(),
+            status: task.status.clone(),
+            progress: task.progress,
+            priority: task.priority,
+            scheduled_at: task.scheduled_at,
+            started_at: task.started_at,
+            completed_at: task.completed_at,
+            execution_time: task.execution_time,
+            results_summary: task.results_summary.clone(),
+            error_message: task.error_message.clone(),
+            created_by: task.created_by.clone(),
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+        };
+        sentinel_db::database::scan_task_dao::create_scan_task(pool, &t).await
     }
 
     pub async fn get_scan_tasks(&self, project_id: Option<&str>) -> Result<Vec<ScanTask>> {
         let pool = self.get_pool()?;
-
-        let rows = if let Some(project_id) = project_id {
-            sqlx::query_as::<_, ScanTask>(
-                "SELECT * FROM scan_tasks WHERE project_id = ? ORDER BY created_at DESC",
-            )
-            .bind(project_id)
-            .fetch_all(pool)
-            .await?
-        } else {
-            sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks ORDER BY created_at DESC")
-                .fetch_all(pool)
-                .await?
-        };
-
-        Ok(rows)
+        let rows = sentinel_db::database::scan_task_dao::get_scan_tasks(pool, project_id).await?;
+        let mapped = rows
+            .into_iter()
+            .map(|t| crate::models::database::ScanTask {
+                id: t.id,
+                project_id: t.project_id,
+                name: t.name,
+                description: t.description,
+                target_type: t.target_type,
+                targets: t.targets,
+                scan_type: t.scan_type,
+                tools_config: t.tools_config,
+                status: t.status,
+                progress: t.progress,
+                priority: t.priority,
+                scheduled_at: t.scheduled_at,
+                started_at: t.started_at,
+                completed_at: t.completed_at,
+                execution_time: t.execution_time,
+                results_summary: t.results_summary,
+                error_message: t.error_message,
+                created_by: t.created_by,
+                created_at: t.created_at,
+                updated_at: t.updated_at,
+            })
+            .collect();
+        Ok(mapped)
     }
 
     pub async fn get_scan_task(&self, id: &str) -> Result<Option<ScanTask>> {
         let pool = self.get_pool()?;
-
-        let row = sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
-
-        Ok(row)
+        let row = sentinel_db::database::scan_task_dao::get_scan_task(pool, id).await?;
+        Ok(row.map(|t| crate::models::database::ScanTask {
+            id: t.id,
+            project_id: t.project_id,
+            name: t.name,
+            description: t.description,
+            target_type: t.target_type,
+            targets: t.targets,
+            scan_type: t.scan_type,
+            tools_config: t.tools_config,
+            status: t.status,
+            progress: t.progress,
+            priority: t.priority,
+            scheduled_at: t.scheduled_at,
+            started_at: t.started_at,
+            completed_at: t.completed_at,
+            execution_time: t.execution_time,
+            results_summary: t.results_summary,
+            error_message: t.error_message,
+            created_by: t.created_by,
+            created_at: t.created_at,
+            updated_at: t.updated_at,
+        }))
     }
 
     pub async fn update_scan_task_status(
@@ -1383,75 +1407,39 @@ impl DatabaseService {
         progress: Option<f64>,
     ) -> Result<()> {
         let pool = self.get_pool()?;
-
-        let mut query =
-            "UPDATE scan_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP".to_string();
-        let mut _bind_count = 1;
-
-        if progress.is_some() {
-            query.push_str(", progress = ?");
-            _bind_count += 1;
-        }
-
-        if status == "running" {
-            query.push_str(", started_at = CURRENT_TIMESTAMP");
-        } else if status == "completed" || status == "failed" || status == "cancelled" {
-            query.push_str(", completed_at = CURRENT_TIMESTAMP");
-        }
-
-        query.push_str(" WHERE id = ?");
-
-        let mut q = sqlx::query(&query).bind(status);
-
-        if let Some(p) = progress {
-            q = q.bind(p);
-        }
-
-        q.bind(id).execute(pool).await?;
-
-        Ok(())
+        sentinel_db::database::scan_task_dao::update_scan_task_status(pool, id, status, progress).await
     }
 
     /// 漏洞相关操作
     pub async fn create_vulnerability(&self, vuln: &Vulnerability) -> Result<()> {
         let pool = self.get_pool()?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO vulnerabilities (
-                id, project_id, asset_id, scan_task_id, title, description,
-                vulnerability_type, severity, cvss_score, cvss_vector, cwe_id,
-                owasp_category, proof_of_concept, impact, remediation, references,
-                status, verification_status, tags, attachments, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        )
-        .bind(&vuln.id)
-        .bind(&vuln.project_id)
-        .bind(&vuln.asset_id)
-        .bind(&vuln.scan_task_id)
-        .bind(&vuln.title)
-        .bind(&vuln.description)
-        .bind(&vuln.vulnerability_type)
-        .bind(&vuln.severity)
-        .bind(vuln.cvss_score)
-        .bind(&vuln.cvss_vector)
-        .bind(&vuln.cwe_id)
-        .bind(&vuln.owasp_category)
-        .bind(&vuln.proof_of_concept)
-        .bind(&vuln.impact)
-        .bind(&vuln.remediation)
-        .bind(&vuln.references)
-        .bind(&vuln.status)
-        .bind(&vuln.verification_status)
-
-        .bind(&vuln.tags)
-        .bind(&vuln.attachments)
-        .bind(&vuln.notes)
-        .execute(pool)
-        .await?;
-
-        Ok(())
+        let v = sentinel_core::models::database::Vulnerability {
+            id: vuln.id.clone(),
+            project_id: vuln.project_id.clone(),
+            asset_id: vuln.asset_id.clone(),
+            scan_task_id: vuln.scan_task_id.clone(),
+            title: vuln.title.clone(),
+            description: vuln.description.clone(),
+            vulnerability_type: vuln.vulnerability_type.clone(),
+            severity: vuln.severity.clone(),
+            cvss_score: vuln.cvss_score,
+            cvss_vector: vuln.cvss_vector.clone(),
+            cwe_id: vuln.cwe_id.clone(),
+            owasp_category: vuln.owasp_category.clone(),
+            proof_of_concept: vuln.proof_of_concept.clone(),
+            impact: vuln.impact.clone(),
+            remediation: vuln.remediation.clone(),
+            references: vuln.references.clone(),
+            status: vuln.status.clone(),
+            verification_status: vuln.verification_status.clone(),
+            resolution_date: vuln.resolution_date,
+            tags: vuln.tags.clone(),
+            attachments: vuln.attachments.clone(),
+            notes: vuln.notes.clone(),
+            created_at: vuln.created_at,
+            updated_at: vuln.updated_at,
+        };
+        sentinel_db::database::vulnerability_dao::create_vulnerability(pool, &v).await
     }
 
     pub async fn get_vulnerabilities(
@@ -1459,233 +1447,251 @@ impl DatabaseService {
         project_id: Option<&str>,
     ) -> Result<Vec<Vulnerability>> {
         let pool = self.get_pool()?;
-
-        let rows = if let Some(project_id) = project_id {
-            sqlx::query_as::<_, Vulnerability>(
-                "SELECT * FROM vulnerabilities WHERE project_id = ? ORDER BY created_at DESC",
-            )
-            .bind(project_id)
-            .fetch_all(pool)
-            .await?
-        } else {
-            sqlx::query_as::<_, Vulnerability>(
-                "SELECT * FROM vulnerabilities ORDER BY created_at DESC",
-            )
-            .fetch_all(pool)
-            .await?
-        };
-
-        Ok(rows)
+        let rows = sentinel_db::database::vulnerability_dao::get_vulnerabilities(pool, project_id).await?;
+        let mapped = rows
+            .into_iter()
+            .map(|v| crate::models::database::Vulnerability {
+                id: v.id,
+                project_id: v.project_id,
+                asset_id: v.asset_id,
+                scan_task_id: v.scan_task_id,
+                title: v.title,
+                description: v.description,
+                vulnerability_type: v.vulnerability_type,
+                severity: v.severity,
+                cvss_score: v.cvss_score,
+                cvss_vector: v.cvss_vector,
+                cwe_id: v.cwe_id,
+                owasp_category: v.owasp_category,
+                proof_of_concept: v.proof_of_concept,
+                impact: v.impact,
+                remediation: v.remediation,
+                references: v.references,
+                status: v.status,
+                verification_status: v.verification_status,
+                resolution_date: v.resolution_date,
+                tags: v.tags,
+                attachments: v.attachments,
+                notes: v.notes,
+                created_at: v.created_at,
+                updated_at: v.updated_at,
+            })
+            .collect();
+        Ok(mapped)
     }
 
     pub async fn get_vulnerability(&self, id: &str) -> Result<Option<Vulnerability>> {
         let pool = self.get_pool()?;
-
-        let row = sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
-
-        Ok(row)
+        let row = sentinel_db::database::vulnerability_dao::get_vulnerability(pool, id).await?;
+        Ok(row.map(|v| crate::models::database::Vulnerability {
+            id: v.id,
+            project_id: v.project_id,
+            asset_id: v.asset_id,
+            scan_task_id: v.scan_task_id,
+            title: v.title,
+            description: v.description,
+            vulnerability_type: v.vulnerability_type,
+            severity: v.severity,
+            cvss_score: v.cvss_score,
+            cvss_vector: v.cvss_vector,
+            cwe_id: v.cwe_id,
+            owasp_category: v.owasp_category,
+            proof_of_concept: v.proof_of_concept,
+            impact: v.impact,
+            remediation: v.remediation,
+            references: v.references,
+            status: v.status,
+            verification_status: v.verification_status,
+            resolution_date: v.resolution_date,
+            tags: v.tags,
+            attachments: v.attachments,
+            notes: v.notes,
+            created_at: v.created_at,
+            updated_at: v.updated_at,
+        }))
     }
 
     pub async fn update_vulnerability_status(&self, id: &str, status: &str) -> Result<()> {
         let pool = self.get_pool()?;
-
-        sqlx::query(
-            "UPDATE vulnerabilities SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        )
-        .bind(status)
-        .bind(id)
-        .execute(pool)
-        .await?;
-
-        Ok(())
+        sentinel_db::database::vulnerability_dao::update_vulnerability_status(pool, id, status).await
     }
 
     /// AI对话相关操作
     pub async fn create_conversation(&self, conversation: &AiConversation) -> Result<()> {
         let pool = self.get_pool()?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO ai_conversations (id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, tags, is_archived, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&conversation.id)
-        .bind(&conversation.title)
-        .bind(&conversation.service_name)
-        .bind(&conversation.model_name)
-        .bind(&conversation.model_provider)
-        .bind(&conversation.context_type)
-        .bind(&conversation.project_id)
-        .bind(&conversation.vulnerability_id)
-        .bind(&conversation.scan_task_id)
-        .bind(&conversation.conversation_data)
-        .bind(&conversation.summary)
-        .bind(conversation.total_messages)
-        .bind(conversation.total_tokens)
-        .bind(conversation.cost)
-        .bind(serde_json::to_string(&conversation.tags).unwrap_or_default())
-        .bind(conversation.is_archived)
-        .bind(conversation.created_at)
-        .bind(conversation.updated_at)
-        .execute(pool)
-        .await?;
-
-        Ok(())
+        let c = sentinel_core::models::database::AiConversation {
+            id: conversation.id.clone(),
+            title: conversation.title.clone(),
+            service_name: conversation.service_name.clone(),
+            model_name: conversation.model_name.clone(),
+            model_provider: conversation.model_provider.clone(),
+            context_type: conversation.context_type.clone(),
+            project_id: conversation.project_id.clone(),
+            vulnerability_id: conversation.vulnerability_id.clone(),
+            scan_task_id: conversation.scan_task_id.clone(),
+            conversation_data: conversation.conversation_data.clone(),
+            summary: conversation.summary.clone(),
+            total_messages: conversation.total_messages,
+            total_tokens: conversation.total_tokens,
+            cost: conversation.cost,
+            tags: conversation.tags.clone(),
+            is_archived: conversation.is_archived,
+            created_at: conversation.created_at,
+            updated_at: conversation.updated_at,
+        };
+        sentinel_db::database::ai_conversation_dao::create_ai_conversation(pool, &c).await
     }
 
     pub async fn get_conversations(&self) -> Result<Vec<AiConversation>> {
         let pool = self.get_pool()?;
-
-        let rows = sqlx::query_as::<_, AiConversation>(
-            "SELECT * FROM ai_conversations WHERE is_archived = 0 ORDER BY updated_at DESC",
-        )
-        .fetch_all(pool)
-        .await?;
-
-        Ok(rows)
+        let rows = sentinel_db::database::ai_conversation_dao::get_ai_conversations(pool).await?;
+        let mapped = rows
+            .into_iter()
+            .map(|c| crate::models::database::AiConversation {
+                id: c.id,
+                title: c.title,
+                service_name: c.service_name,
+                model_name: c.model_name,
+                model_provider: c.model_provider,
+                context_type: c.context_type,
+                project_id: c.project_id,
+                vulnerability_id: c.vulnerability_id,
+                scan_task_id: c.scan_task_id,
+                conversation_data: c.conversation_data,
+                summary: c.summary,
+                total_messages: c.total_messages,
+                total_tokens: c.total_tokens,
+                cost: c.cost,
+                tags: c.tags,
+                is_archived: c.is_archived,
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+            })
+            .collect();
+        Ok(mapped)
     }
 
     pub async fn get_conversation(&self, id: &str) -> Result<Option<AiConversation>> {
         let pool = self.get_pool()?;
-
-        let row =
-            sqlx::query_as::<_, AiConversation>("SELECT * FROM ai_conversations WHERE id = ?")
-                .bind(id)
-                .fetch_optional(pool)
-                .await?;
-
-        Ok(row)
+        let row = sentinel_db::database::ai_conversation_dao::get_ai_conversation(pool, id).await?;
+        Ok(row.map(|c| crate::models::database::AiConversation {
+            id: c.id,
+            title: c.title,
+            service_name: c.service_name,
+            model_name: c.model_name,
+            model_provider: c.model_provider,
+            context_type: c.context_type,
+            project_id: c.project_id,
+            vulnerability_id: c.vulnerability_id,
+            scan_task_id: c.scan_task_id,
+            conversation_data: c.conversation_data,
+            summary: c.summary,
+            total_messages: c.total_messages,
+            total_tokens: c.total_tokens,
+            cost: c.cost,
+            tags: c.tags,
+            is_archived: c.is_archived,
+            created_at: c.created_at,
+            updated_at: c.updated_at,
+        }))
     }
 
     pub async fn update_conversation(&self, conversation: &AiConversation) -> Result<()> {
         let pool = self.get_pool()?;
-
-        sqlx::query(
-            r#"
-            UPDATE ai_conversations
-            SET title = ?, service_name = ?, model_name = ?, model_provider = ?, context_type = ?, project_id = ?, vulnerability_id = ?, scan_task_id = ?, conversation_data = ?, summary = ?, total_messages = ?, total_tokens = ?, cost = ?, tags = ?, is_archived = ?, updated_at = ?
-            WHERE id = ?
-            "#,
-        )
-        .bind(&conversation.title)
-        .bind(&conversation.service_name)
-        .bind(&conversation.model_name)
-        .bind(&conversation.model_provider)
-        .bind(&conversation.context_type)
-        .bind(&conversation.project_id)
-        .bind(&conversation.vulnerability_id)
-        .bind(&conversation.scan_task_id)
-        .bind(&conversation.conversation_data)
-        .bind(&conversation.summary)
-        .bind(conversation.total_messages)
-        .bind(conversation.total_tokens)
-        .bind(conversation.cost)
-        .bind(serde_json::to_string(&conversation.tags).unwrap_or_default())
-        .bind(conversation.is_archived)
-        .bind(Utc::now())
-        .bind(&conversation.id)
-        .execute(pool)
-        .await?;
-
-        Ok(())
+        let c = sentinel_core::models::database::AiConversation {
+            id: conversation.id.clone(),
+            title: conversation.title.clone(),
+            service_name: conversation.service_name.clone(),
+            model_name: conversation.model_name.clone(),
+            model_provider: conversation.model_provider.clone(),
+            context_type: conversation.context_type.clone(),
+            project_id: conversation.project_id.clone(),
+            vulnerability_id: conversation.vulnerability_id.clone(),
+            scan_task_id: conversation.scan_task_id.clone(),
+            conversation_data: conversation.conversation_data.clone(),
+            summary: conversation.summary.clone(),
+            total_messages: conversation.total_messages,
+            total_tokens: conversation.total_tokens,
+            cost: conversation.cost,
+            tags: conversation.tags.clone(),
+            is_archived: conversation.is_archived,
+            created_at: conversation.created_at,
+            updated_at: Utc::now(),
+        };
+        sentinel_db::database::ai_conversation_dao::update_ai_conversation(pool, &c).await
     }
 
     pub async fn delete_conversation(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-
-        // 先删除相关的消息
-        sqlx::query("DELETE FROM ai_messages WHERE conversation_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await?;
-
-        // 再删除对话
-        sqlx::query("DELETE FROM ai_conversations WHERE id = ?")
-            .bind(id)
-            .execute(pool)
-            .await?;
-
-        Ok(())
+        sentinel_db::database::ai_conversation_dao::delete_ai_conversation(pool, id).await
     }
 
     /// 更新对话标题
     pub async fn update_conversation_title(&self, id: &str, title: &str) -> Result<()> {
         let pool = self.get_pool()?;
-
-        sqlx::query("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?")
-            .bind(title)
-            .bind(Utc::now())
-            .bind(id)
-            .execute(pool)
-            .await?;
-
-        Ok(())
+        sentinel_db::database::ai_conversation_dao::update_conversation_title(pool, id, title).await
     }
 
     /// 创建AI消息
     pub async fn create_message(&self, message: &AiMessage) -> Result<()> {
         let pool = self.get_pool()?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO ai_messages (
-                id, conversation_id, role, content, metadata,
-                token_count, cost, tool_calls, attachments, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        )
-        .bind(&message.id)
-        .bind(&message.conversation_id)
-        .bind(&message.role)
-        .bind(&message.content)
-        .bind(&message.metadata)
-        .bind(message.token_count)
-        .bind(message.cost)
-        .bind(&message.tool_calls)
-        .bind(&message.attachments)
-        .bind(message.timestamp)
-        .execute(pool)
-        .await?;
-
-        // 更新对话的updated_at和消息计数
-        sqlx::query("UPDATE ai_conversations SET updated_at = ?, total_messages = total_messages + 1 WHERE id = ?")
-            .bind(Utc::now())
-            .bind(&message.conversation_id)
-            .execute(pool)
-            .await?;
-
-        Ok(())
+        let m = sentinel_core::models::database::AiMessage {
+            id: message.id.clone(),
+            conversation_id: message.conversation_id.clone(),
+            role: message.role.clone(),
+            content: message.content.clone(),
+            metadata: message.metadata.clone(),
+            token_count: message.token_count,
+            cost: message.cost,
+            tool_calls: message.tool_calls.clone(),
+            attachments: message.attachments.clone(),
+            timestamp: message.timestamp,
+        };
+        sentinel_db::database::ai_conversation_dao::create_ai_message(pool, &m).await
     }
 
     /// 获取对话的消息列表
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {
         let pool = self.get_pool()?;
-
-        let rows = sqlx::query_as::<_, AiMessage>(
-            "SELECT * FROM ai_messages WHERE conversation_id = ? ORDER BY timestamp ASC",
-        )
-        .bind(conversation_id)
-        .fetch_all(pool)
-        .await?;
-
-        Ok(rows)
+        let rows = sentinel_db::database::ai_conversation_dao::get_ai_messages_by_conversation(pool, conversation_id).await?;
+        let mapped = rows
+            .into_iter()
+            .map(|m| crate::models::database::AiMessage {
+                id: m.id,
+                conversation_id: m.conversation_id,
+                role: m.role,
+                content: m.content,
+                metadata: m.metadata,
+                token_count: m.token_count,
+                cost: m.cost,
+                tool_calls: m.tool_calls,
+                attachments: m.attachments,
+                timestamp: m.timestamp,
+            })
+            .collect();
+        Ok(mapped)
     }
 
     /// 配置相关操作
+    pub async fn get_configs_by_category(&self, category: &str) -> Result<Vec<Configuration>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query_as::<_, Configuration>(
+            "SELECT * FROM configurations WHERE category = ? ORDER BY key",
+        )
+        .bind(category)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn get_config(&self, category: &str, key: &str) -> Result<Option<String>> {
         let pool = self.get_pool()?;
-
         let value: Option<String> =
             sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
                 .bind(category)
                 .bind(key)
                 .fetch_optional(pool)
                 .await?;
-
         Ok(value)
     }
 
@@ -1698,8 +1704,7 @@ impl DatabaseService {
     ) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO configurations (category, key, value, description) VALUES (?, ?, ?, ?)
-             ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description"
+            "INSERT INTO configurations (category, key, value, description) VALUES (?, ?, ?, ?)\n             ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description",
         )
         .bind(category)
         .bind(key)
@@ -1708,19 +1713,6 @@ impl DatabaseService {
         .execute(pool)
         .await?;
         Ok(())
-    }
-
-    pub async fn get_configs_by_category(&self, category: &str) -> Result<Vec<Configuration>> {
-        let pool = self.get_pool()?;
-
-        let rows = sqlx::query_as::<_, Configuration>(
-            "SELECT * FROM configurations WHERE category = ? ORDER BY key",
-        )
-        .bind(category)
-        .fetch_all(pool)
-        .await?;
-
-        Ok(rows)
     }
 
     /// RAG配置管理方法
@@ -1758,7 +1750,7 @@ impl DatabaseService {
     pub async fn get_subdomain_dictionary(&self) -> Result<Vec<String>> {
         let pool = self.get_pool()?;
 
-        // 1) 优先使用“默认字典”配置：category='dictionary_default', key='subdomain'
+        // 1) 优先使用"默认字典"配置：category='dictionary_default', key='subdomain'
         if let Some(default_dict_id) = self
             .get_config("dictionary_default", "subdomain")
             .await?
@@ -2544,24 +2536,24 @@ impl Database for DatabaseService {
 
     async fn get_configs_by_category(&self, category: &str) -> Result<Vec<Configuration>> {
         let pool = self.get_pool()?;
-        let configs =
-            sqlx::query_as::<_, Configuration>("SELECT * FROM configurations WHERE category = ?")
-                .bind(category)
-                .fetch_all(pool)
-                .await?;
-        Ok(configs)
+        let rows = sqlx::query_as::<_, Configuration>(
+            "SELECT * FROM configurations WHERE category = ? ORDER BY key",
+        )
+        .bind(category)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
     }
 
     async fn get_config(&self, category: &str, key: &str) -> Result<Option<String>> {
         let pool = self.get_pool()?;
-        let result: Option<(String,)> = sqlx::query_as::<_, (String,)>(
-            "SELECT value FROM configurations WHERE category = ? AND key = ?",
-        )
-        .bind(category)
-        .bind(key)
-        .fetch_optional(pool)
-        .await?;
-        Ok(result.map(|(value,)| value))
+        let value: Option<String> =
+            sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
+                .bind(category)
+                .bind(key)
+                .fetch_optional(pool)
+                .await?;
+        Ok(value)
     }
 
     async fn set_config(
@@ -2573,8 +2565,7 @@ impl Database for DatabaseService {
     ) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO configurations (category, key, value, description) VALUES (?, ?, ?, ?)
-             ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description"
+            "INSERT INTO configurations (category, key, value, description) VALUES (?, ?, ?, ?)\n             ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description",
         )
         .bind(category)
         .bind(key)
@@ -2712,23 +2703,105 @@ impl Database for DatabaseService {
     }
 
     async fn create_scan_task(&self, task: &ScanTask) -> Result<()> {
-        self.create_scan_task(task).await
+        let pool = self.get_pool()?;
+        let t = sentinel_core::models::database::ScanTask {
+            id: task.id.clone(),
+            project_id: task.project_id.clone(),
+            name: task.name.clone(),
+            description: task.description.clone(),
+            target_type: task.target_type.clone(),
+            targets: task.targets.clone(),
+            scan_type: task.scan_type.clone(),
+            tools_config: task.tools_config.clone(),
+            status: task.status.clone(),
+            progress: task.progress,
+            priority: task.priority,
+            scheduled_at: task.scheduled_at,
+            started_at: task.started_at,
+            completed_at: task.completed_at,
+            execution_time: task.execution_time,
+            results_summary: task.results_summary.clone(),
+            error_message: task.error_message.clone(),
+            created_by: task.created_by.clone(),
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+        };
+        sentinel_db::database::scan_task_dao::create_scan_task(pool, &t).await
     }
 
     async fn get_scan_tasks(&self, project_id: Option<&str>) -> Result<Vec<ScanTask>> {
-        self.get_scan_tasks(project_id).await
+        let pool = self.get_pool()?;
+        let rows = sentinel_db::database::scan_task_dao::get_scan_tasks(pool, project_id).await?;
+        let mapped = rows
+            .into_iter()
+            .map(|t| crate::models::database::ScanTask {
+                id: t.id,
+                project_id: t.project_id,
+                name: t.name,
+                description: t.description,
+                target_type: t.target_type,
+                targets: t.targets,
+                scan_type: t.scan_type,
+                tools_config: t.tools_config,
+                status: t.status,
+                progress: t.progress,
+                priority: t.priority,
+                scheduled_at: t.scheduled_at,
+                started_at: t.started_at,
+                completed_at: t.completed_at,
+                execution_time: t.execution_time,
+                results_summary: t.results_summary,
+                error_message: t.error_message,
+                created_by: t.created_by,
+                created_at: t.created_at,
+                updated_at: t.updated_at,
+            })
+            .collect();
+        Ok(mapped)
     }
 
     async fn get_scan_task(&self, id: &str) -> Result<Option<ScanTask>> {
-        self.get_scan_task(id).await
+        let pool = self.get_pool()?;
+        let row = sentinel_db::database::scan_task_dao::get_scan_task(pool, id).await?;
+        Ok(row.map(|t| crate::models::database::ScanTask {
+            id: t.id,
+            project_id: t.project_id,
+            name: t.name,
+            description: t.description,
+            target_type: t.target_type,
+            targets: t.targets,
+            scan_type: t.scan_type,
+            tools_config: t.tools_config,
+            status: t.status,
+            progress: t.progress,
+            priority: t.priority,
+            scheduled_at: t.scheduled_at,
+            started_at: t.started_at,
+            completed_at: t.completed_at,
+            execution_time: t.execution_time,
+            results_summary: t.results_summary,
+            error_message: t.error_message,
+            created_by: t.created_by,
+            created_at: t.created_at,
+            updated_at: t.updated_at,
+        }))
     }
 
     async fn get_scan_tasks_by_target(&self, target: &str) -> Result<Vec<ScanTask>> {
-        self.get_scan_tasks_by_target(target).await
+        // 仍在本地实现（与 LIKE 拼接强相关），后续可迁移为参数化 DAO
+        let pool = self.get_pool()?;
+        let rows = sqlx::query_as::<_, ScanTask>(
+            "SELECT * FROM scan_tasks WHERE targets LIKE ? ORDER BY created_at DESC",
+        )
+        .bind(format!("%{}%", target))
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
     }
 
     async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()> {
-        self.update_scan_task_status(id, status, progress).await
+        let pool = self.get_pool()?;
+        sentinel_db::database::scan_task_dao::update_scan_task_status(pool, id, status, progress).await
     }
     
     // Agent任务相关方法实现

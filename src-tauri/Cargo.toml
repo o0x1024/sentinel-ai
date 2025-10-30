@@ -203,10 +203,6 @@ tauri-plugin-single-instance = "2"
 members = [
     "crates/sentinel-core",
     "crates/sentinel-db",
-    "crates/sentinel-tools",
-    "crates/sentinel-rag",
-    "crates/sentinel-services",
-    "crates/sentinel-commands",
 ]
 resolver = "2"
 
