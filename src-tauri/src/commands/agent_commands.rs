@@ -58,12 +58,12 @@ pub async fn initialize_agent_manager(
         return Ok("Agent manager already initialized".to_string());
     }
     
-    let agent_manager = AgentManager::new(db_service.inner().clone());
+    let agent_manager = AgentManager::new((*db_service).clone());
     
     // 尝试使用完整依赖初始化
     match agent_manager.initialize_with_dependencies(
-        ai_service_manager.inner().clone(),
-        db_service.inner().clone(),
+        (*ai_service_manager).clone(),
+        (*db_service).clone(),
     ).await {
         Ok(_) => {
             *manager_guard = Some(agent_manager);
@@ -606,16 +606,31 @@ pub async fn get_workflow_execution_details(
                 .map_err(|e| format!("Failed to get session data: {}", e))?;
             
             if let Some(session) = session_data {
-                let completed_steps = db_steps.iter().filter(|s| s.status == "Completed").count() as u32;
-                let failed_steps = db_steps.iter().filter(|s| s.status == "Failed").count() as u32;
-                let skipped_steps = db_steps.iter().filter(|s| s.status == "Skipped").count() as u32;
+                let completed_steps: u32 = db_steps
+                    .iter()
+                    .filter(|s| s.status == "Completed")
+                    .count()
+                    .try_into()
+                    .unwrap_or(0);
+                let failed_steps: u32 = db_steps
+                    .iter()
+                    .filter(|s| s.status == "Failed")
+                    .count()
+                    .try_into()
+                    .unwrap_or(0);
+                let skipped_steps: u32 = db_steps
+                    .iter()
+                    .filter(|s| s.status == "Skipped")
+                    .count()
+                    .try_into()
+                    .unwrap_or(0);
                 
                 let execution_plan = WorkflowExecutionPlan {
                     plan_id: execution_id.clone(),
                     name: format!("Agent Execution - {}", session.agent_name),
                     description: Some(format!("Task ID: {} | Status: {}", session.task_id, session.status)),
                     steps: db_steps.clone(),
-                    total_steps: db_steps.len() as u32,
+                    total_steps: db_steps.len().try_into().unwrap_or(u32::MAX),
                     completed_steps,
                     failed_steps,
                     skipped_steps,

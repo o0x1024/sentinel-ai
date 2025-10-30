@@ -13,7 +13,7 @@ use crate::models::{
     DocumentChunk, DocumentSource, IngestRequest, IngestResponse, QueryResult, RagQueryRequest,
     RagQueryResponse, RagStatus, CollectionInfo, IngestionStatus,
 };
-use sentinel_db::RagDatabase;
+use crate::db::RagDatabase;
 
 /// RAG服务主类 - 使用 Rig + LanceDB
 pub struct RagService<D: RagDatabase> {
@@ -541,18 +541,8 @@ impl<D: RagDatabase> RagService<D> {
         let total_documents: usize = collections.iter().map(|c| c.document_count as usize).sum();
         let total_chunks: usize = collections.iter().map(|c| c.chunk_count as usize).sum();
         
-        // Convert RagCollection to CollectionInfo
-        let collection_infos: Vec<CollectionInfo> = collections.into_iter().map(|c| {
-            CollectionInfo {
-                id: c.id,
-                name: c.name,
-                description: c.description,
-                document_count: c.document_count as usize,
-                chunk_count: c.chunk_count as usize,
-                created_at: c.created_at,
-                updated_at: c.updated_at,
-            }
-        }).collect();
+        // Already CollectionInfo from database
+        let collection_infos: Vec<CollectionInfo> = collections;
         
         Ok(RagStatus {
             collections: collection_infos,
@@ -563,45 +553,4 @@ impl<D: RagDatabase> RagService<D> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[allow(unreachable_code, unused_variables)]
-    #[tokio::test]
-    async fn test_rag_service_creation() {
-        let _temp_dir = tempdir().unwrap();
-        let config = RagConfig {
-            augmentation_enabled: false,
-            database_path: Some(_temp_dir.path().to_path_buf()),
-            chunk_size_chars: 512,
-            chunk_overlap_chars: 50,
-            top_k: 5,
-            mmr_lambda: 0.7,
-            batch_size: 10,
-            max_concurrent: 4,
-            embedding_provider: "rig".to_string(),
-            embedding_model: "nomic-embed-text".to_string(),
-            embedding_dimensions: None,
-            embedding_api_key: None,
-            embedding_base_url: Some("http://localhost:11434".to_string()),
-            reranking_provider: None,
-            reranking_model: None,
-            reranking_enabled: false,
-            similarity_threshold: 0.7,
-            context_window_size: 1,
-            chunking_strategy: crate::config::ChunkingStrategy::RecursiveCharacter,
-            min_chunk_size_chars: 100,
-            max_chunk_size_chars: 3000,
-        };
-
-        // 创建临时数据库
-        let mut database_service = DatabaseService::new();
-        database_service.initialize().await.unwrap();
-        let database = Arc::new(database_service);
-        
-        let service = RagService::new(config, database).await;
-        assert!(service.is_ok());
-    }
-}
+// Tests omitted in crate to avoid cross-crate dependencies

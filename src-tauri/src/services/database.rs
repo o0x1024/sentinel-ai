@@ -2499,10 +2499,10 @@ impl Database for DatabaseService {
         let pool = self.get_pool()?;
         let value: Option<String> =
             sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
-                .bind(category)
-                .bind(key)
-                .fetch_optional(pool)
-                .await?;
+        .bind(category)
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
         Ok(value)
     }
 

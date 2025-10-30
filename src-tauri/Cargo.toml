@@ -23,6 +23,7 @@ tauri-build = { version = "2", features = [] }
 # Workspace members
 sentinel-core = { path = "crates/sentinel-core" }
 sentinel-db = { path = "crates/sentinel-db" }
+sentinel-rag = { path = "crates/sentinel-rag" }
 
 html2text = "0.15.5"
 urlencoding = "2.1.3"
@@ -203,6 +204,7 @@ tauri-plugin-single-instance = "2"
 members = [
     "crates/sentinel-core",
     "crates/sentinel-db",
+    "crates/sentinel-rag",
 ]
 resolver = "2"
 

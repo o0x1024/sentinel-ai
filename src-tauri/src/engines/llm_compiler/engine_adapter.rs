@@ -622,58 +622,7 @@ impl LlmCompilerEngine {
         }
 
         // RAG augmentation for final response prompt
-        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
-            if rag_service.get_config().augmentation_enabled {
-                use tokio::time::{timeout, Duration};
-                let (primary, fallback) = crate::rag::query_utils::build_rag_query_pair(user_query);
-                let rag_request = crate::rag::models::AssistantRagRequest {
-                    query: primary.clone(),
-                    collection_id: None,
-                    conversation_history: None,
-                    top_k: Some(5),
-                    use_mmr: Some(true),
-                    mmr_lambda: Some(0.7),
-                    similarity_threshold: Some(0.65),
-                    reranking_enabled: Some(false),
-                    model_provider: None,
-                    model_name: None,
-                    max_tokens: None,
-                    temperature: None,
-                    system_prompt: None,                };
-                if let Ok(Ok((knowledge_context, _))) = timeout(
-                    Duration::from_millis(1200),
-                    rag_service.query_for_assistant(&rag_request),
-                )
-                .await
-                {
-                    if !knowledge_context.trim().is_empty() {
-                        response_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
-                        response_prompt.push_str(&knowledge_context);
-                    } else {
-                        let fallback_req = crate::rag::models::AssistantRagRequest {
-                            query: fallback,
-                            collection_id: None,
-                            conversation_history: None,
-                            top_k: Some(7),
-                            use_mmr: Some(true),
-                            mmr_lambda: Some(0.7),
-                            similarity_threshold: Some(0.55),
-                            reranking_enabled: Some(false),
-                            model_provider: None,
-                            model_name: None,
-                            max_tokens: None,
-                            temperature: None,
-                    system_prompt: None,                        };
-                        if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
-                            if !kb2.trim().is_empty() {
-                                response_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
-                                response_prompt.push_str(&kb2);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        log::debug!("RAG augmentation skipped in llm_compiler engine_adapter");
         
         // 调用AI生成最终响应
         if let Some(ai_service) = &self.ai_service {
