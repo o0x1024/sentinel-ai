@@ -344,7 +344,7 @@ pub async fn send_ai_stream_message(
                         }
                     }
 
-                    let rag_req = crate::rag::models::AssistantRagRequest {
+                    let rag_req = sentinel_rag::models::AssistantRagRequest {
                         query: message.clone(),
                         collection_id: active_collection_id.clone(),
                         conversation_history: if history_snippets.is_empty() { None } else { Some(history_snippets) },

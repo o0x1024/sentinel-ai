@@ -14,6 +14,8 @@ use tauri::{AppHandle, Manager};
 use std::collections::HashMap;
 use std::time::SystemTime;
 use std::sync::Arc;
+use sentinel_rag::models::AssistantRagRequest;
+
 
 use uuid::Uuid;
 
@@ -507,7 +509,7 @@ impl Planner {
                     None
                 };
                 
-                let rag_request = crate::rag::models::AssistantRagRequest {
+                let rag_request = AssistantRagRequest {
                     query: task.name.clone(),
                     collection_id: active_collection_id,
                     conversation_history: None,

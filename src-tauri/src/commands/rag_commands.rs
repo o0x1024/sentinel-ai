@@ -1,6 +1,3 @@
-use crate::rag::config::RagConfig;
-use crate::rag::models::{IngestRequest, IngestResponse, RagQueryRequest, RagQueryResponse, RagStatus};
-use crate::rag::service::RagService;
 use crate::services::database::{Database, DatabaseService};
 use crate::services::ai::AiServiceManager;
 use log::{info, warn};
@@ -9,6 +6,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 use tauri::{State, AppHandle, Emitter, Manager};
+use sentinel_rag::models::{AssistantRagRequest,AssistantRagResponse,IngestRequest, IngestResponse, RagQueryRequest, RagQueryResponse, RagStatus,DocumentSource,DocumentChunk, QueryResult, CollectionInfo};
+use sentinel_rag::service::RagService;
+use sentinel_rag::db::RagDatabase;
+use sentinel_rag::config::RagConfig;
 
 // ============================================================================
 // 全局RAG服务管理器
@@ -16,7 +17,101 @@ use tauri::{State, AppHandle, Emitter, Manager};
 
 /// 全局RAG服务实例
 /// 使用Arc<RwLock<Option<Arc<RagService>>>>来允许共享和可选性
-static GLOBAL_RAG_SERVICE: OnceLock<Arc<RwLock<Option<Arc<RagService>>>>> = OnceLock::new();
+type AppRagService = RagService<DatabaseService>;
+static GLOBAL_RAG_SERVICE: OnceLock<Arc<RwLock<Option<Arc<AppRagService>>>>> = OnceLock::new();
+
+#[async_trait::async_trait]
+impl RagDatabase for DatabaseService {
+    async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> anyhow::Result<String> {
+        self.create_rag_collection(name, description).await
+    }
+
+    async fn get_rag_collections(&self) -> anyhow::Result<Vec<CollectionInfo>> {
+        self.get_rag_collections().await
+    }
+
+    async fn get_rag_collection_by_id(&self, id: &str) -> anyhow::Result<Option<CollectionInfo>> {
+        self.get_rag_collection_by_id(id).await
+    }
+
+    async fn get_rag_collection_by_name(&self, name: &str) -> anyhow::Result<Option<CollectionInfo>> {
+        self.get_rag_collection_by_name(name).await
+    }
+
+    async fn delete_rag_collection(&self, id: &str) -> anyhow::Result<()> {
+        self.delete_rag_collection(id).await
+    }
+
+    async fn create_rag_document(
+        &self,
+        collection_id: &str,
+        file_path: &str,
+        file_name: &str,
+        content: &str,
+        metadata: &str,
+    ) -> anyhow::Result<String> {
+        self.create_rag_document(collection_id, file_path, file_name, content, metadata).await
+    }
+
+    async fn create_rag_chunk(
+        &self,
+        document_id: &str,
+        collection_id: &str,
+        content: &str,
+        chunk_index: i32,
+        embedding: Option<&[f32]>,
+        embedding_model: &str,
+        embedding_dimension: i32,
+        metadata_json: &str,
+    ) -> anyhow::Result<String> {
+        self.create_rag_chunk(
+            document_id,
+            collection_id,
+            content,
+            chunk_index,
+            embedding,
+            embedding_model,
+            embedding_dimension,
+            metadata_json,
+        )
+        .await
+    }
+
+    async fn update_collection_stats(&self, collection_id: &str) -> anyhow::Result<()> {
+        self.update_collection_stats(collection_id).await
+    }
+
+    async fn get_rag_documents(&self, collection_id: &str) -> anyhow::Result<Vec<DocumentSource>> {
+        self.get_rag_documents_by_collection_id(collection_id).await
+    }
+
+    async fn get_rag_chunks(&self, document_id: &str) -> anyhow::Result<Vec<DocumentChunk>> {
+        self.get_rag_chunks_by_document_id(document_id).await
+    }
+
+    async fn delete_rag_document(&self, document_id: &str) -> anyhow::Result<()> {
+        self.delete_rag_document(document_id).await
+    }
+
+    async fn save_rag_query(
+        &self,
+        collection_id: Option<&str>,
+        query: &str,
+        response: &str,
+        processing_time_ms: u64,
+    ) -> anyhow::Result<()> {
+        // Stored against provided id/name; current implementation treats param as name
+        self.save_rag_query(collection_id, query, response, processing_time_ms).await
+    }
+
+    async fn get_rag_query_history(
+        &self,
+        collection_id: Option<&str>,
+        limit: Option<i32>,
+    ) -> anyhow::Result<Vec<QueryResult>> {
+        self.get_rag_query_history(collection_id, limit).await
+    }
+}
 
 /// 初始化全局RAG服务
 pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Result<(), String> {
@@ -56,7 +151,7 @@ pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Re
 }
 
 /// 获取全局RAG服务实例
-pub async fn get_global_rag_service() -> Result<Arc<RagService>, String> {
+pub async fn get_global_rag_service() -> Result<Arc<AppRagService>, String> {
     let service_wrapper = GLOBAL_RAG_SERVICE.get()
         .ok_or("Global RAG service not initialized")?;
     
@@ -180,7 +275,7 @@ pub async fn rag_shutdown_service() -> Result<bool, String> {
 pub async fn list_rag_documents(
     collection_id: String,
     database: State<'_, Arc<DatabaseService>>,
-) -> Result<Vec<crate::rag::models::DocumentSource>, String> {
+) -> Result<Vec<DocumentSource>, String> {
     database
         .get_rag_documents_by_collection_id(&collection_id)
         .await
@@ -192,7 +287,7 @@ pub async fn list_rag_documents(
 pub async fn get_rag_document_chunks(
     document_id: String,
     database: State<'_, Arc<DatabaseService>>,
-) -> Result<Vec<crate::rag::models::DocumentChunk>, String> {
+) -> Result<Vec<DocumentChunk>, String> {
     database
         .get_rag_chunks_by_document_id(&document_id)
         .await
@@ -402,12 +497,12 @@ pub async fn get_folder_files(
 /// AI助手RAG答案生成（非流式）
 #[tauri::command]
 pub async fn assistant_rag_answer(
-    request: crate::rag::models::AssistantRagRequest,
+    request: AssistantRagRequest,
     database: State<'_, Arc<DatabaseService>>,
     ai_manager: State<'_, Arc<AiServiceManager>>,
     app: AppHandle,
-) -> Result<crate::rag::models::AssistantRagResponse, String> {
-    use crate::rag::models::AssistantRagResponse;
+) -> Result<AssistantRagResponse, String> {
+    use AssistantRagResponse;
     
     let start_time = std::time::Instant::now();
     info!("AI助手RAG查询: {}", request.query);
@@ -692,8 +787,8 @@ pub async fn get_active_rag_collections(
 pub async fn test_embedding_connection(
     config: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use crate::rag::config::EmbeddingConfig;
-    use crate::rag::embeddings::create_embedding_provider;
+    use sentinel_rag::config::EmbeddingConfig;
+    use sentinel_rag::embeddings::create_embedding_provider;
     
     info!("测试嵌入连接");
     

@@ -1,7 +1,7 @@
 //! Executor 组件 - 执行器
 //!
 //! 负责按照计划逐步执行子任务，调用具体的工具和服务
-
+use sentinel_rag::models::AssistantRagRequest;
 use crate::database::plan_execute_repository::PlanExecuteRepository;
 use crate::engines::plan_and_execute::memory_manager::MemoryManager;
 use crate::engines::plan_and_execute::replanner::Replanner;
@@ -2815,7 +2815,7 @@ impl Executor {
                     };
 
                 // 构建RAG查询请求
-                let rag_request = crate::rag::models::AssistantRagRequest {
+                let rag_request = AssistantRagRequest {
                     query: format!("{} {}", step.name, step.description),
                     collection_id: active_collection_id, // 使用激活集合
                     conversation_history: None,

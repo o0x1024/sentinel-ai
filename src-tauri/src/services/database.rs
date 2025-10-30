@@ -2,6 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bincode;
 use chrono::Utc;
+use sentinel_rag::config::RagConfig;
+use sentinel_rag::models::{CollectionInfo,ChunkMetadata,DocumentChunk,DocumentSource,IngestionStatusEnum,QueryResult};
 use serde_json::Value;
 use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
 use tracing::info;
@@ -1701,11 +1703,11 @@ impl DatabaseService {
     }
 
     /// RAG配置管理方法
-    pub async fn get_rag_config(&self) -> Result<Option<crate::rag::config::RagConfig>> {
+    pub async fn get_rag_config(&self) -> Result<Option<RagConfig>> {
         let config_json = self.get_config("rag", "config").await?;
         
         if let Some(json_str) = config_json {
-            match serde_json::from_str::<crate::rag::config::RagConfig>(&json_str) {
+            match serde_json::from_str::<RagConfig>(&json_str) {
                 Ok(config) => Ok(Some(config)),
                 Err(e) => {
                     log::warn!("Failed to parse RAG config from database: {}, using default", e);
@@ -1717,7 +1719,7 @@ impl DatabaseService {
         }
     }
 
-    pub async fn save_rag_config(&self, config: &crate::rag::config::RagConfig) -> Result<()> {
+    pub async fn save_rag_config(&self, config: &RagConfig) -> Result<()> {
         let config_json = serde_json::to_string(config)
             .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize RAG config: {}", e)))?;
         
@@ -3204,7 +3206,7 @@ impl DatabaseService {
         self.get_db()?.create_rag_collection(name, description).await
     }
 
-    pub async fn get_rag_collections(&self) -> Result<Vec<crate::rag::models::CollectionInfo>> {
+    pub async fn get_rag_collections(&self) -> Result<Vec<CollectionInfo>> {
         let pool = self.get_pool()?;
         let rows = self.get_db()?.get_rag_collections().await?;
         let mapped = rows
@@ -3216,7 +3218,7 @@ impl DatabaseService {
                 let updated_at = chrono::DateTime::parse_from_rfc3339(&r.updated_at)
                     .map(|dt| dt.with_timezone(&chrono::Utc))
                     .unwrap_or_else(|_| chrono::Utc::now());
-                crate::rag::models::CollectionInfo {
+                CollectionInfo {
                     id: r.id,
                     name: r.name,
                     description: r.description,
@@ -3237,7 +3239,7 @@ impl DatabaseService {
         self.get_db()?.delete_rag_collection(collection_id).await
     }
 
-    pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
+    pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<CollectionInfo>> {
         let pool = self.get_pool()?;
         let row = self.get_db()?.get_rag_collection_by_id(collection_id).await?;
         Ok(row.map(|r| {
@@ -3247,7 +3249,7 @@ impl DatabaseService {
             let updated_at = chrono::DateTime::parse_from_rfc3339(&r.updated_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now());
-            crate::rag::models::CollectionInfo {
+            CollectionInfo {
                 id: r.id,
                 name: r.name,
                 description: r.description,
@@ -3261,7 +3263,7 @@ impl DatabaseService {
         }))
     }
 
-    pub async fn get_rag_collection_by_name(&self, collection_name: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
+    pub async fn get_rag_collection_by_name(&self, collection_name: &str) -> Result<Option<CollectionInfo>> {
         let pool = self.get_pool()?;
         let row = self.get_db()?.get_rag_collection_by_name(collection_name).await?;
         Ok(row.map(|r| {
@@ -3271,7 +3273,7 @@ impl DatabaseService {
             let updated_at = chrono::DateTime::parse_from_rfc3339(&r.updated_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now());
-            crate::rag::models::CollectionInfo {
+            CollectionInfo {
                 id: r.id,
                 name: r.name,
                 description: r.description,
@@ -3298,7 +3300,7 @@ impl DatabaseService {
         embedding_model: &str,
         limit: usize,
         similarity_threshold: f32,
-    ) -> Result<Vec<(f32, crate::rag::models::DocumentChunk)>> {
+    ) -> Result<Vec<(f32, DocumentChunk)>> {
         let pool = self.get_pool()?;
         
         info!("向量搜索RAG文档块: collection_id={}, embedding_dim={}, limit={}, threshold={}", 
@@ -3338,7 +3340,7 @@ impl DatabaseService {
                     
                     // 只保留超过阈值的结果
                     if similarity >= similarity_threshold {
-                        let chunk = crate::rag::models::DocumentChunk {
+                        let chunk = DocumentChunk {
                             id: row.get("id"),
                             source_id: row.get("document_id"),
                             content: row.get("content"),
@@ -3348,7 +3350,7 @@ impl DatabaseService {
                             metadata: {
                                 let metadata_json: String = row.get("metadata");
                                 if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
-                                    crate::rag::models::ChunkMetadata {
+                                    ChunkMetadata {
                                         file_path: "unknown".to_string(),
                                         file_name: "unknown".to_string(),
                                         file_type: "unknown".to_string(),
@@ -3361,7 +3363,7 @@ impl DatabaseService {
                                     }
                                 } else {
                                     serde_json::from_str(&metadata_json).unwrap_or_else(|_| {
-                                        crate::rag::models::ChunkMetadata {
+                                        ChunkMetadata {
                                             file_path: "unknown".to_string(),
                                             file_name: "unknown".to_string(),
                                             file_type: "unknown".to_string(),
@@ -3413,7 +3415,7 @@ impl DatabaseService {
         dot_product / (norm_a * norm_b)
     }
 
-    pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
 
         // 朴素文本检索：将查询拆为多个词项（英文/数字/点 与 中文分别为词），以 AND 串联
@@ -3463,7 +3465,7 @@ impl DatabaseService {
 
             // 解析metadata - 如果是空JSON，创建默认的ChunkMetadata
             let metadata = if metadata_json.trim() == "{}" {
-                crate::rag::models::ChunkMetadata {
+                ChunkMetadata {
                     file_path: "unknown".to_string(),
                     file_name: "unknown".to_string(),
                     file_type: "unknown".to_string(),
@@ -3475,13 +3477,13 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 }
             } else {
-                match serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json) {
+                match serde_json::from_str::<ChunkMetadata>(&metadata_json) {
                     Ok(meta) => meta,
                     Err(_) => {
                         // 尝试解析为HashMap，然后转换
                         let meta_map: std::collections::HashMap<String, String> = 
                             serde_json::from_str(&metadata_json).unwrap_or_default();
-                        crate::rag::models::ChunkMetadata {
+                        ChunkMetadata {
                             file_path: meta_map.get("file_path").unwrap_or(&"unknown".to_string()).clone(),
                             file_name: meta_map.get("file_name").unwrap_or(&"unknown".to_string()).clone(),
                             file_type: meta_map.get("file_type").unwrap_or(&"unknown".to_string()).clone(),
@@ -3499,7 +3501,7 @@ impl DatabaseService {
             let created_at_datetime = chrono::DateTime::from_timestamp(created_at, 0)
                 .unwrap_or_else(|| chrono::Utc::now());
 
-            chunks.push(crate::rag::models::DocumentChunk {
+            chunks.push(DocumentChunk {
                 id,
                 source_id: document_id, // document_id acts as source_id
                 content,
@@ -3523,7 +3525,7 @@ impl DatabaseService {
         embedding_model: &str,
         embedding_dimension: i32,
         limit: usize,
-    ) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    ) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query(
@@ -3554,7 +3556,7 @@ impl DatabaseService {
             let embedding_bytes: Option<Vec<u8>> = row.get("embedding_vector");
 
             let metadata = if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
-                crate::rag::models::ChunkMetadata {
+                ChunkMetadata {
                     file_path: "unknown".to_string(),
                     file_name: "unknown".to_string(),
                     file_type: "unknown".to_string(),
@@ -3566,8 +3568,8 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 }
             } else {
-                serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json)
-                    .unwrap_or_else(|_| crate::rag::models::ChunkMetadata {
+                serde_json::from_str::<ChunkMetadata>(&metadata_json)
+                    .unwrap_or_else(|_| ChunkMetadata {
                         file_path: "unknown".to_string(),
                         file_name: "unknown".to_string(),
                         file_type: "unknown".to_string(),
@@ -3586,7 +3588,7 @@ impl DatabaseService {
                 bincode::deserialize::<Vec<f32>>(&bytes).ok()
             } else { None };
 
-            chunks.push(crate::rag::models::DocumentChunk {
+            chunks.push(DocumentChunk {
                 id,
                 source_id: document_id,
                 content,
@@ -3601,7 +3603,7 @@ impl DatabaseService {
         Ok(chunks)
     }
 
-    pub async fn search_rag_chunks(&self, collection_name: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    pub async fn search_rag_chunks(&self, collection_name: &str, query: &str, limit: usize) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
         
         // For now, do a simple text search. In a real implementation, you'd use vector similarity
@@ -3631,9 +3633,9 @@ impl DatabaseService {
             let metadata_json: String = row.get("metadata");
             let created_at: String = row.get("created_at");
 
-            let metadata: crate::rag::models::ChunkMetadata = serde_json::from_str(&metadata_json)?;
+            let metadata: ChunkMetadata = serde_json::from_str(&metadata_json)?;
 
-            chunks.push(crate::rag::models::DocumentChunk {
+            chunks.push(DocumentChunk {
                 id,
                 source_id,
                 content,
@@ -3679,7 +3681,7 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_rag_chunks(&self, collection_name: &str) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    pub async fn get_rag_chunks(&self, collection_name: &str) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
         
         let rows = sqlx::query(
@@ -3705,9 +3707,9 @@ impl DatabaseService {
             let metadata_json: String = row.get("metadata");
             let created_at: String = row.get("created_at");
 
-            let metadata: crate::rag::models::ChunkMetadata = serde_json::from_str(&metadata_json)?;
+            let metadata: ChunkMetadata = serde_json::from_str(&metadata_json)?;
 
-            chunks.push(crate::rag::models::DocumentChunk {
+            chunks.push(DocumentChunk {
                 id,
                 source_id,
                 content,
@@ -3722,7 +3724,7 @@ impl DatabaseService {
         Ok(chunks)
     }
 
-    pub async fn get_rag_query_history(&self, _collection_name: Option<&str>, limit: Option<i32>) -> Result<Vec<crate::rag::models::QueryResult>> {
+    pub async fn get_rag_query_history(&self, _collection_name: Option<&str>, limit: Option<i32>) -> Result<Vec<QueryResult>> {
         let _pool = self.get_pool()?;
         let _limit = limit.unwrap_or(50);
         
@@ -3741,13 +3743,13 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_rag_documents(&self, collection_name: &str) -> Result<Vec<crate::rag::models::DocumentSource>> {
+    pub async fn get_rag_documents(&self, collection_name: &str) -> Result<Vec<DocumentSource>> {
         let pool = self.get_pool()?;
         let rows = self.get_db()?.get_documents_by_collection_name(collection_name).await?;
         let mut documents = Vec::new();
         for r in rows {
             let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&r.metadata)?;
-            documents.push(crate::rag::models::DocumentSource {
+            documents.push(DocumentSource {
                 id: r.id,
                 file_path: r.file_path,
                 file_name: r.file_name,
@@ -3755,7 +3757,7 @@ impl DatabaseService {
                 file_size: r.file_size as u64,
                 file_hash: r.content_hash,
                 chunk_count: 0,
-                ingestion_status: crate::rag::models::IngestionStatusEnum::Completed,
+                ingestion_status: IngestionStatusEnum::Completed,
                 created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)?.with_timezone(&chrono::Utc),
                 updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)?.with_timezone(&chrono::Utc),
                 metadata,
@@ -3765,13 +3767,13 @@ impl DatabaseService {
     }
 
     /// 根据集合ID获取文档列表
-    pub async fn get_rag_documents_by_collection_id(&self, collection_id: &str) -> Result<Vec<crate::rag::models::DocumentSource>> {
+    pub async fn get_rag_documents_by_collection_id(&self, collection_id: &str) -> Result<Vec<DocumentSource>> {
         let pool = self.get_pool()?;
         let rows = self.get_db()?.get_documents_by_collection_id(collection_id).await?;
         let mut documents = Vec::new();
         for r in rows {
             let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&r.metadata)?;
-            documents.push(crate::rag::models::DocumentSource {
+            documents.push(DocumentSource {
                 id: r.id,
                 file_path: r.file_path,
                 file_name: r.file_name,
@@ -3779,7 +3781,7 @@ impl DatabaseService {
                 file_size: r.file_size as u64,
                 file_hash: r.content_hash,
                 chunk_count: 0,
-                ingestion_status: crate::rag::models::IngestionStatusEnum::Completed,
+                ingestion_status: IngestionStatusEnum::Completed,
                 created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)?.with_timezone(&chrono::Utc),
                 updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)?.with_timezone(&chrono::Utc),
                 metadata,
@@ -3789,7 +3791,7 @@ impl DatabaseService {
     }
 
     /// 根据文档ID获取其所有文本块（来自新表 rag_chunks）
-    pub async fn get_rag_chunks_by_document_id(&self, document_id: &str) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    pub async fn get_rag_chunks_by_document_id(&self, document_id: &str) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query(
@@ -3816,7 +3818,7 @@ impl DatabaseService {
 
             // 解析metadata，容错空/无效JSON
             let metadata = if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
-                crate::rag::models::ChunkMetadata {
+                ChunkMetadata {
                     file_path: "unknown".to_string(),
                     file_name: "unknown".to_string(),
                     file_type: "unknown".to_string(),
@@ -3828,8 +3830,8 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 }
             } else {
-                serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json)
-                    .unwrap_or_else(|_| crate::rag::models::ChunkMetadata {
+                serde_json::from_str::<ChunkMetadata>(&metadata_json)
+                    .unwrap_or_else(|_| ChunkMetadata {
                         file_path: "unknown".to_string(),
                         file_name: "unknown".to_string(),
                         file_type: "unknown".to_string(),
@@ -3845,7 +3847,7 @@ impl DatabaseService {
             let created_at = chrono::DateTime::from_timestamp(created_at_ts, 0)
                 .unwrap_or_else(|| chrono::Utc::now());
 
-            chunks.push(crate::rag::models::DocumentChunk {
+            chunks.push(DocumentChunk {
                 id,
                 source_id: document_id_val,
                 content,

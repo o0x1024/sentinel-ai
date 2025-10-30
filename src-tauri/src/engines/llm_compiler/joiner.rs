@@ -7,7 +7,8 @@
 //! - 上下文感知：考虑历史执行结果
 //! - 自适应学习：根据执行效果调整决策
 //! - 结果聚合：整合多轮执行结果
-
+use sentinel_rag::models::AssistantRagRequest;
+use sentinel_rag::query_utils::build_rag_query_pair;
 use anyhow::Result;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -341,8 +342,8 @@ impl IntelligentJoiner {
         if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
             if rag_service.get_config().augmentation_enabled {
                 use tokio::time::{timeout, Duration};
-                let (primary, fallback) = crate::rag::query_utils::build_rag_query_pair(original_query);
-                let rag_request = crate::rag::models::AssistantRagRequest {
+                let (primary, fallback) = build_rag_query_pair(original_query);
+                let rag_request = AssistantRagRequest {
                     query: primary.clone(),
                     collection_id: None,
                     conversation_history: None,
@@ -366,7 +367,7 @@ impl IntelligentJoiner {
                         decision_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
                         decision_prompt.push_str(&knowledge_context);
                     } else {
-                        let fallback_req = crate::rag::models::AssistantRagRequest {
+                        let fallback_req = AssistantRagRequest {
                             query: fallback,
                             collection_id: None,
                             conversation_history: None,

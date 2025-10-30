@@ -6,6 +6,9 @@
 //! - 识别任务间的依赖关系
 //! - 支持变量替换（$1, $2等）
 //! - 可重新规划
+use sentinel_rag::models::AssistantRagRequest;
+use sentinel_rag::query_utils::build_rag_query_pair;
+
 
 use anyhow::Result;
 use chrono::Utc;
@@ -186,8 +189,8 @@ impl LlmCompilerPlanner {
         if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
             if rag_service.get_config().augmentation_enabled {
                 use tokio::time::{timeout, Duration};
-                let (primary, fallback) = crate::rag::query_utils::build_rag_query_pair(&format!("{} {}", user_input, serde_json::to_string_pretty(context).unwrap_or_default()));
-                let rag_request = crate::rag::models::AssistantRagRequest {
+                let (primary, fallback) = build_rag_query_pair(&format!("{} {}", user_input, serde_json::to_string_pretty(context).unwrap_or_default()));
+                let rag_request = AssistantRagRequest {
                     query: primary.clone(),
                     collection_id: None,
                     conversation_history: None,
@@ -212,7 +215,7 @@ impl LlmCompilerPlanner {
                         base.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
                         base.push_str(&knowledge_context);
                     } else {
-                        let fallback_req = crate::rag::models::AssistantRagRequest {
+                        let fallback_req = AssistantRagRequest {
                             query: fallback,
                             collection_id: None,
                             conversation_history: None,

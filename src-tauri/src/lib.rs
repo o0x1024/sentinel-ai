@@ -9,8 +9,6 @@ pub mod services;
 pub mod tools;  // 包含原 MCP 功能
 pub mod prompt;
 pub mod utils;
-pub mod rag;
-
 
 use crate::commands::{get_active_rag_collections, set_rag_collection_active};
 // 导入依赖
