@@ -280,7 +280,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 
-type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute'
+type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct'
 type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Replan'
 type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
 type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom'
@@ -348,6 +348,10 @@ const groups = [
     { value: 'Planning', label: 'Planning' },
     { value: 'Execution', label: 'Execution' },
     { value: 'Replan', label: 'Replan' },
+  ]},
+  { value: 'ReAct', label: 'ReAct', stages: [
+    { value: 'Planning', label: 'Planning' },
+    { value: 'Execution', label: 'Execution' },
   ]},
 ]
 
@@ -434,6 +438,7 @@ const filteredTemplates = computed(() => {
 const stagesOfSelectedArch = computed<StageType[]>(() => {
   if (selected.value.architecture === 'ReWOO') return ['Planner','Worker','Solver'] as StageType[]
   if (selected.value.architecture === 'LLMCompiler') return ['Planning','Execution','Replan'] as StageType[]
+  if (selected.value.architecture === 'ReAct') return ['Planning','Execution'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
 })
 
@@ -442,6 +447,7 @@ const stagesOfGroupArch = computed<StageType[]>(() => {
   const arch = selectedGroup.value?.architecture || selected.value.architecture
   if (arch === 'ReWOO') return ['Planner','Worker','Solver'] as StageType[]
   if (arch === 'LLMCompiler') return ['Planning','Execution','Replan'] as StageType[]
+  if (arch === 'ReAct') return ['Planning','Execution'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
 })
 

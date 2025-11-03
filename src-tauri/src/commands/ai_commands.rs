@@ -229,6 +229,8 @@ pub struct DispatchQueryRequest {
     pub architecture: String,
     pub agent_id: Option<String>,
     pub options: Option<HashMap<String, serde_json::Value>>,
+    pub conversation_id: Option<String>,
+    pub message_id: Option<String>,
 }
 
 
@@ -277,7 +279,13 @@ fn default_notification_enabled() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum AgentEngine { PlanExecute, Rewoo, LlmCompiler, Auto }
+pub enum AgentEngine { 
+    PlanExecute, 
+    React,
+    Rewoo, 
+    LlmCompiler, 
+    Auto 
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmId { pub provider: String, pub model: String, pub temperature: Option<f32>, pub max_tokens: Option<u32> }
@@ -463,6 +471,8 @@ pub struct ScenarioTaskDispatchRequest {
     pub agent_id: String,
     pub query: String,
     pub options: Option<HashMap<String, serde_json::Value>>,
+    pub conversation_id: Option<String>,
+    pub message_id: Option<String>,
 }
 
 #[tauri::command]
@@ -482,6 +492,7 @@ pub async fn dispatch_scenario_task(
     // 选架构
     let architecture = match profile.engine {
         AgentEngine::PlanExecute => "plan-execute",
+        AgentEngine::React => "react",
         AgentEngine::Rewoo => "rewoo",
         AgentEngine::LlmCompiler => "llm-compiler",
         AgentEngine::Auto => "auto",
@@ -489,6 +500,12 @@ pub async fn dispatch_scenario_task(
 
     let mut options = request.options.unwrap_or_default();
     options.insert("agent_id".to_string(), serde_json::Value::String(request.agent_id.clone()));
+    
+    // 从 options 中提取 conversation_id 和 message_id（向后兼容前端把它们放在 options 里的情况）
+    let conversation_id = request.conversation_id.clone()
+        .or_else(|| options.get("conversation_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
+    let message_id = request.message_id.clone()
+        .or_else(|| options.get("message_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
     
     // 获取当前角色提示词并添加到options中
     if let Ok(Some(current_role)) = db_service.get_current_ai_role().await {
@@ -529,8 +546,14 @@ pub async fn dispatch_scenario_task(
     }
 
     // 工具白名单/黑名单策略（用于执行期过滤）
+    // 要求：System prompt 中的工具清单应严格依据 AgentManager.vue 中“可用+已选”的集合。
+    // 语义：
+    // - 若前端配置存在（profile.tools 有值）：按 allow/deny 透传；
+    // - 若前端未配置（profile.tools 为 None）：也要显式传入空白名单，表示“未选择任何工具 ⇒ 禁用所有工具”。
+    //   这样 ReAct/Planner 在构建工具清单时不会退回到“允许所有”。
     if let Some(tool_policy) = &profile.tools {
-        // 允许列表
+        log::info!("Agent tools policy - allow: {:?}, deny: {:?}", tool_policy.allow, tool_policy.deny);
+        // 允许列表（可能为空，但键一定存在）
         options.insert(
             "tools_allow".to_string(),
             serde_json::json!(tool_policy.allow.clone())
@@ -539,6 +562,10 @@ pub async fn dispatch_scenario_task(
         if let Some(deny) = &tool_policy.deny {
             options.insert("tools_deny".to_string(), serde_json::json!(deny.clone()));
         }
+    } else {
+        // 显式设置空白名单：与前端“未选择任何工具”一致，防止引擎回退到“全量可用”。
+        log::warn!("Agent has no tools policy configured! Falling back to strict: tools_allow = []");
+        options.insert("tools_allow".to_string(), serde_json::json!([] as [String; 0]));
     }
 
     // 执行策略（超时/重试/严格模式/并发）
@@ -575,10 +602,8 @@ pub async fn dispatch_scenario_task(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     
-    let conversation_id = options.get("conversation_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    // conversation_id 和 message_id 已经在上面从 request 或 options 中提取
+    // 这里不需要再次提取，直接使用之前的变量
     
     let execution_id = options.get("execution_id")
         .and_then(|v| v.as_str())
@@ -596,8 +621,10 @@ pub async fn dispatch_scenario_task(
     }
     
     // 提取会话ID（用于日志记录）
-    if !conversation_id.is_empty() {
-        info!("Processing request for conversation: {}", conversation_id);
+    if let Some(ref conv_id) = conversation_id {
+        if !conv_id.is_empty() {
+            info!("Processing request for conversation: {}", conv_id);
+        }
     }
     
     // 如果是任务模式且架构为"auto"，进行智能选择
@@ -618,6 +645,8 @@ pub async fn dispatch_scenario_task(
         architecture: selected_architecture.clone(),
         agent_id: Some(profile.id),
         options: Some(options),
+        conversation_id: conversation_id.clone(),
+        message_id: message_id.clone(),
     };
     
     let app_clone = app_handle.clone();
@@ -631,6 +660,16 @@ pub async fn dispatch_scenario_task(
                 (*db_service).clone(),
                 (*execution_manager).clone(),
                 app_handle.clone(),
+            ).await
+        },
+        "react" => {
+            dispatch_with_react(
+                execution_id.clone(),
+                dispatch_req,
+                (*ai_service_manager).clone(),
+                (*db_service).clone(),
+                (*execution_manager).clone(),
+                app_clone.clone(),
             ).await
         },
         "rewoo" => {
@@ -1214,6 +1253,191 @@ async fn dispatch_with_plan_execute(
         estimated_duration: plan.estimated_duration,
         selected_architecture: "Plan-and-Execute".to_string(),
     })
+}
+
+async fn dispatch_with_react(
+    execution_id: String,
+    request: DispatchQueryRequest,
+    ai_service_manager: Arc<AiServiceManager>,
+    db_service: Arc<DatabaseService>,
+    _execution_manager: Arc<crate::managers::ExecutionManager>,
+    app: AppHandle,
+) -> Result<DispatchResult, String> {
+    use crate::engines::react::{ReactEngine, ReactConfig};
+    use std::collections::HashMap;
+    use crate::agents::traits::{AgentTask, TaskPriority};
+    
+    info!("Creating ReAct dispatch for: {}", request.query);
+    
+    // 从 options 中提取配置
+    let options = request.options.unwrap_or_default();
+    let mut config = ReactConfig::default();
+    let max_iterations = config.max_iterations; // 保存用于超时计算
+    
+    if let Some(max_iter) = options.get("max_iterations").and_then(|v| v.as_u64()) {
+        config.max_iterations = max_iter as u32;
+    }
+    if let Some(temp) = options.get("temperature").and_then(|v| v.as_f64()) {
+        config.temperature = Some(temp as f32);
+    }
+    if let Some(max_tok) = options.get("max_tokens").and_then(|v| v.as_u64()) {
+        config.max_tokens = Some(max_tok as u32);
+    }
+    if let Some(rag) = options.get("enable_rag").and_then(|v| v.as_bool()) {
+        config.enable_rag = rag;
+    }
+    if let Some(verbose) = options.get("verbose").and_then(|v| v.as_bool()) {
+        config.verbose = verbose;
+    }
+    
+    // **关键修复**: 从 options 中读取 tools_allow 并设置到 ReactConfig.allowed_tools
+    // 这样 ReAct executor 的 build_tools_information 才能读取到正确的工具白名单
+    if let Some(tools_allow) = options.get("tools_allow") {
+        if let Some(arr) = tools_allow.as_array() {
+            let tool_names: Vec<String> = arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            log::info!("ReAct dispatch: 设置 allowed_tools = {:?}", tool_names);
+            config.allowed_tools = Some(tool_names);
+        }
+    }
+    
+    // 获取默认 AI 服务
+    let ai_service = match ai_service_manager.get_default_chat_model().await {
+        Ok(Some((provider, model))) => {
+            match ai_service_manager.get_provider_config(&provider).await {
+                Ok(Some(mut provider_config)) => {
+                    provider_config.model = model;
+                    let mcp_service = ai_service_manager.get_mcp_service();
+                    let ai_svc = crate::services::ai::AiService::new(
+                        provider_config,
+                        db_service.clone(),
+                        Some(app.clone()),
+                        mcp_service.clone(),
+                    );
+                    Arc::new(ai_svc)
+                }
+                _ => {
+                    return Err("Failed to get AI provider config".to_string());
+                }
+            }
+        }
+        _ => {
+            return Err("No default AI model configured".to_string());
+        }
+    };
+    
+    // 序列化 config
+    let config_json = serde_json::to_value(&config).map_err(|e| e.to_string())?;
+    
+    // 创建 ReactEngine
+    let engine = ReactEngine::new(config).with_services(
+        ai_service,
+        ai_service_manager.get_mcp_service(),
+        Some(db_service.clone()),
+        Some(app.clone()),
+    );
+    
+    // 创建 AgentTask
+    let task = AgentTask {
+        id: execution_id.clone(),
+        description: request.query.clone(),
+        target: None,
+        parameters: {
+            let mut map = HashMap::new();
+            map.insert("query".to_string(), serde_json::json!(request.query));
+            map.insert("config".to_string(), config_json);
+            
+            // **关键修复**: 将 tools_allow 和 tools_deny 从 options 透传到 task.parameters 顶层
+            // ReAct executor 的 build_tools_information 会从这里读取
+            if let Some(tools_allow) = options.get("tools_allow") {
+                log::info!("ReAct dispatch: 透传 tools_allow 到 task.parameters");
+                map.insert("tools_allow".to_string(), tools_allow.clone());
+            }
+            if let Some(tools_deny) = options.get("tools_deny") {
+                log::info!("ReAct dispatch: 透传 tools_deny 到 task.parameters");
+                map.insert("tools_deny".to_string(), tools_deny.clone());
+            }
+            
+            // 添加 conversation_id 和 message_id 到 parameters，让 ReAct 引擎能够提取
+            if let Some(conv_id) = &request.conversation_id {
+                map.insert("conversation_id".to_string(), serde_json::json!(conv_id));
+            }
+            if let Some(msg_id) = &request.message_id {
+                map.insert("message_id".to_string(), serde_json::json!(msg_id));
+            }
+            map
+        },
+        user_id: "default".to_string(),
+        priority: TaskPriority::Normal,
+        timeout: Some(max_iterations as u64 * 30000), // 30s per iteration
+    };
+    
+    // 创建 dummy session 用于执行
+    use crate::agents::traits::{AgentSession, AgentSessionStatus, LogLevel, AgentExecutionResult, SessionLog};
+    struct DummySession {
+        task: AgentTask,
+        status: AgentSessionStatus,
+        logs: Vec<SessionLog>,
+        result: Option<AgentExecutionResult>,
+    }
+    
+    #[async_trait::async_trait]
+    impl AgentSession for DummySession {
+        fn get_session_id(&self) -> &str { "dummy" }
+        fn get_task(&self) -> &AgentTask { &self.task }
+        fn get_status(&self) -> AgentSessionStatus { self.status.clone() }
+        async fn update_status(&mut self, status: AgentSessionStatus) -> anyhow::Result<()> {
+            self.status = status;
+            Ok(())
+        }
+        async fn add_log(&mut self, level: LogLevel, message: String) -> anyhow::Result<()> {
+            self.logs.push(SessionLog {
+                level,
+                message,
+                timestamp: chrono::Utc::now(),
+                source: "react".to_string(),
+            });
+            Ok(())
+        }
+        fn get_logs(&self) -> &[SessionLog] { &self.logs }
+        async fn set_result(&mut self, result: AgentExecutionResult) -> anyhow::Result<()> {
+            self.result = Some(result);
+            Ok(())
+        }
+        fn get_result(&self) -> Option<&AgentExecutionResult> { self.result.as_ref() }
+    }
+    
+    let mut session = DummySession {
+        task,
+        status: AgentSessionStatus::Executing,
+        logs: Vec::new(),
+        result: None,
+    };
+    
+    // 执行任务 - 先克隆 task 避免借用冲突
+    let task_clone = session.task.clone();
+    let start_time = std::time::Instant::now();
+    match engine.execute(&task_clone, &mut session).await {
+        Ok(result) => {
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            // 从 result.data 中提取响应文本
+            let response = if let Some(data) = &result.data {
+                data.as_str().unwrap_or("").to_string()
+            } else {
+                "ReAct execution completed".to_string()
+            };
+            
+            Ok(DispatchResult {
+                execution_id,
+                initial_response: response,
+                execution_plan: None,
+                estimated_duration: duration_ms,
+                selected_architecture: "ReAct".to_string(),
+            })
+        }
+        Err(e) => Err(format!("ReAct execution failed: {}", e))
+    }
 }
 
 async fn dispatch_with_rewoo(

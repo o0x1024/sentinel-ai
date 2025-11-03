@@ -546,9 +546,10 @@ impl Planner {
     /// 构建工具信息块
     async fn build_tools_information(&self, task: &TaskRequest) -> String {
         use std::collections::HashSet;
-        // 读取Agent传入的工具白名单/黑名单
-        let (allow, deny): (HashSet<String>, HashSet<String>) = {
+        // 读取Agent传入的工具白名单/黑名单，并检测是否显式传入空白名单
+        let (allow, allow_present, deny): (HashSet<String>, bool, HashSet<String>) = {
             let params = &task.parameters;
+            let allow_present = params.get("tools_allow").is_some();
             let allow = params
                 .get("tools_allow")
                 .and_then(|v| v.as_array())
@@ -559,8 +560,14 @@ impl Planner {
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_else(HashSet::new);
-            (allow, deny)
+            (allow, allow_present, deny)
         };
+
+        // 语义：若显式传入空白名单，表示严格禁用所有工具（与 ReAct 行为保持一致）
+        if allow_present && allow.is_empty() {
+            log::info!("Planner: 检测到显式空白名单 => 禁用所有工具");
+            return "没有找到任何可用工具".to_string();
+        }
         let mut all_tools: Vec<ToolInfo> = Vec::new();
         
         // 从框架适配器获取工具
@@ -570,10 +577,6 @@ impl Planner {
                 // 过滤白名单/黑名单
                 // 如果有白名单且工具不在白名单中，跳过
                 if !allow.is_empty() && !allow.contains(&tool_name) {
-                    continue;
-                }
-                // 如果没有白名单（空数组），则不允许任何工具
-                if allow.is_empty() {
                     continue;
                 }
                 // 如果工具在黑名单中，跳过

@@ -5,7 +5,7 @@
       <div class="card-body">
         <h3 class="card-title mb-4">选择执行架构</h3>
         
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <!-- Plan-and-Execute -->
           <div 
             :class="[
@@ -40,6 +40,44 @@
               </div>
               <div class="mt-3">
                 <div class="badge badge-outline badge-sm">稳定可靠</div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- ReAct -->
+          <div 
+            :class="[
+              'card cursor-pointer transition-all duration-200 border-2',
+              selectedArchitecture === 'react' 
+                ? 'border-primary bg-primary/10' 
+                : 'border-base-300 hover:border-primary/50'
+            ]"
+            @click="selectArchitecture('react')"
+          >
+            <div class="card-body p-4">
+              <div class="flex items-center gap-2 mb-2">
+                <div class="w-3 h-3 bg-green-500 rounded"></div>
+                <h4 class="font-semibold">ReAct</h4>
+              </div>
+              <p class="text-sm text-base-content/70 mb-3">
+                推理与行动交替架构，适合探索性任务
+              </p>
+              <div class="space-y-1 text-xs">
+                <div class="flex justify-between">
+                  <span>复杂度:</span>
+                  <span class="text-yellow-600">中等</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>执行速度:</span>
+                  <span class="text-yellow-600">中等</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>资源消耗:</span>
+                  <span class="text-yellow-600">中等</span>
+                </div>
+              </div>
+              <div class="mt-3">
+                <div class="badge badge-outline badge-sm">灵活适应</div>
               </div>
             </div>
           </div>
@@ -228,6 +266,23 @@ const architectureInfo = {
       token_efficiency: 70,
       execution_speed: 60,
       resource_usage: 40
+    }
+  },
+  react: {
+    title: 'ReAct 架构',
+    description: '推理与行动架构（Reasoning and Acting），通过迭代的思考-行动-观察循环解决问题。在每次迭代中，模型先推理思考，然后选择工具执行，最后观察结果决定下一步。',
+    scenarios: ['探索性任务', '多步推理', '工具调用', '调试分析', '信息收集'],
+    features: [
+      '交替推理和执行',
+      '自适应决策过程',
+      '支持迭代探索',
+      '良好的可解释性',
+      '适合不确定性任务'
+    ],
+    metrics: {
+      token_efficiency: 60,
+      execution_speed: 50,
+      resource_usage: 50
     }
   },
   rewoo: {

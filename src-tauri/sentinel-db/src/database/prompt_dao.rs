@@ -10,6 +10,7 @@ fn arch_str(a: &ArchitectureType) -> &'static str {
         ArchitectureType::ReWOO => "rewoo",
         ArchitectureType::LLMCompiler => "llmcompiler",
         ArchitectureType::PlanExecute => "planexecute",
+        ArchitectureType::ReAct => "react",
     }
 }
 
@@ -28,6 +29,7 @@ fn parse_arch(s: &str) -> ArchitectureType {
     match s.to_lowercase().as_str() {
         "rewoo" => ArchitectureType::ReWOO,
         "llmcompiler" => ArchitectureType::LLMCompiler,
+        "react" => ArchitectureType::ReAct,
         _ => ArchitectureType::PlanExecute,
     }
 }

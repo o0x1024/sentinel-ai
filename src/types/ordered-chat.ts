@@ -36,8 +36,6 @@ export interface MessageChunkProcessor {
   isComplete(messageId: string): boolean
   hasError(messageId: string): boolean
   cleanup(messageId: string): void
-  setViewMode(mode: 'timeline' | 'steps'): void
-  getViewMode(): 'timeline' | 'steps'
 }
 
 // 便捷的chunk类型标签映射

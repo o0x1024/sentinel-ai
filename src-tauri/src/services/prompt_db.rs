@@ -211,6 +211,7 @@ impl PromptRepository {
 
     fn arch_str(a: &ArchitectureType) -> &'static str {
         match a {
+            ArchitectureType::ReAct => "react",
             ArchitectureType::ReWOO => "rewoo",
             ArchitectureType::LLMCompiler => "llmcompiler",
             ArchitectureType::PlanExecute => "planexecute",

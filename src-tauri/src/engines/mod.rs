@@ -10,11 +10,17 @@ pub mod llm_compiler;
 
 pub mod plan_and_execute;
 
+// ReAct 架构模块
+pub mod react;
+
 
 // 重新导出核心类型和trait
 pub use types::*;
 
 pub use types::{ExecutionPlan, ExecutionContext, ExecutionMetrics, ExecutionSession, StepExecutionResult, ExecutionError, ErrorType};
+
+// 导出 ReAct 核心类型
+pub use react::{ReactEngine, ReactConfig, ReactTrace, ReactStatus};
 // // 导出prompt相关模块
 // pub use prompt_config::{
 //     PromptConfigManager, PromptConfig, AgentProfile, DomainTemplate,

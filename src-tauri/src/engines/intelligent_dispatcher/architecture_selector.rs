@@ -158,10 +158,27 @@ impl ArchitectureSelector {
                  0.85)
             },
             
+            // ReAct适用场景
+            ("调试任务" | "探索任务" | "信息收集", _, _) => {
+                ("ReAct".to_string(),
+                 "探索性任务需要迭代推理和工具调用，ReAct的Thought-Action-Observation循环能够适应性决策".to_string(),
+                 0.85)
+            },
+            ("分析任务", "medium", _) if steps <= 5 => {
+                ("ReAct".to_string(),
+                 "中等复杂度的分析任务适合ReAct的交替推理执行模式，提供良好的可解释性".to_string(),
+                 0.75)
+            },
+            (_, "medium", "low") if analysis.task_type.contains("研究") || analysis.task_type.contains("理解") => {
+                ("ReAct".to_string(),
+                 "研究和理解类任务需要灵活的推理过程，ReAct能够根据观察结果调整策略".to_string(),
+                 0.7)
+            },
+            
             // ReWOO适用场景  
-            ("分析任务", "medium" | "complex", _) => {
+            ("分析任务", "medium" | "complex", _) if steps > 5 => {
                 ("ReWoo".to_string(),
-                 "分析任务需要复杂推理链，ReWOO的Planner-Worker-Solver架构能提供结构化分析流程".to_string(),
+                 "复杂分析任务需要结构化推理链，ReWOO的Planner-Worker-Solver架构能提供高效的分析流程".to_string(),
                  0.8)
             },
             ("查询任务", "medium" | "complex", _) => {
@@ -211,6 +228,7 @@ impl ArchitectureSelector {
             ("LlmCompiler", "high") => 8,
             ("LlmCompiler", "medium") => 4,
             ("LlmCompiler", _) => 2,
+            ("ReAct", _) => 1, // ReAct 是顺序迭代的
             ("ReWoo", "high") => 5,
             ("ReWoo", _) => 3,
             ("PlanAndExecute", "high") => 3,
@@ -235,9 +253,9 @@ impl ArchitectureSelector {
         });
 
         let optimization_params = OptimizationParams {
-            enable_streaming: architecture == "LlmCompiler",
+            enable_streaming: architecture == "LlmCompiler" || architecture == "ReAct",
             enable_caching: analysis.complexity_level != "simple",
-            enable_adaptive_scheduling: architecture == "PlanAndExecute",
+            enable_adaptive_scheduling: architecture == "PlanAndExecute" || architecture == "ReAct",
             priority_weight: match analysis.time_sensitivity.as_str() {
                 "high" => 1.0,
                 "medium" => 0.7,
@@ -272,6 +290,7 @@ impl ArchitectureSelector {
         let efficiency_factor = match architecture {
             "LlmCompiler" if analysis.parallelization_potential == "high" => 0.4, // 高并行效率
             "LlmCompiler" => 0.7,
+            "ReAct" => 0.85, // ReAct 迭代执行，比基准稍快
             "ReWoo" => 0.8,
             "PlanAndExecute" => 1.0, // 基准
             _ => 1.0,
@@ -282,6 +301,8 @@ impl ArchitectureSelector {
         let estimated_success_rate = match (architecture, analysis.complexity_level.as_str()) {
             ("LlmCompiler", "complex") => 0.85,
             ("LlmCompiler", _) => 0.9,
+            ("ReAct", "complex") => 0.75, // 探索性任务成功率略低
+            ("ReAct", _) => 0.8,
             ("ReWoo", "complex") => 0.8,
             ("ReWoo", _) => 0.85,
             ("PlanAndExecute", _) => 0.9,
@@ -291,6 +312,7 @@ impl ArchitectureSelector {
         let parallel_efficiency = match (architecture, analysis.parallelization_potential.as_str()) {
             ("LlmCompiler", "high") => 0.8,
             ("LlmCompiler", "medium") => 0.6,
+            ("ReAct", _) => 0.1, // ReAct 顺序执行，并行效率低
             ("ReWoo", "high") => 0.5,
             ("ReWoo", "medium") => 0.3,
             ("PlanAndExecute", "high") => 0.4,
@@ -325,6 +347,7 @@ impl ArchitectureSelector {
     fn select_fallback_architecture(&self, primary: &str) -> String {
         match primary {
             "LlmCompiler" => "PlanAndExecute".to_string(),
+            "ReAct" => "PlanAndExecute".to_string(),
             "ReWoo" => "PlanAndExecute".to_string(), 
             "PlanAndExecute" => "ReWoo".to_string(),
             _ => "PlanAndExecute".to_string(),

@@ -16,7 +16,7 @@ fn extract_text_from_content(content: &rmcp::model::RawContent) -> String {
         _ => format!("[Non-text content: {:?}]", content),
     }
 }
-
+ 
 // 工具信息类型已移动到 types 模块
 
 /// MCP 连接信息

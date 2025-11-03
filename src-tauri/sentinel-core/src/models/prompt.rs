@@ -5,6 +5,7 @@ pub enum ArchitectureType {
     ReWOO,
     LLMCompiler,
     PlanExecute,
+    ReAct,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

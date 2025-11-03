@@ -93,6 +93,7 @@
             <select v-model="editingAgent.engine" class="select select-sm select-bordered w-full">
               <option value="auto">auto</option>
               <option value="plan-execute">plan-execute</option>
+              <option value="react">react</option>
               <option value="rewoo">rewoo</option>
               <option value="llm-compiler">llm-compiler</option>
             </select>
@@ -531,6 +532,8 @@ const stageLabels: Record<StageKey, string> = {
 }
 const computeStages = (engine: string | null | undefined): StageKey[] => {
   switch (engine) {
+    case 'react':
+      return ['system', 'planner'] // ReAct 使用 system 和 planner（作为主循环提示）
     case 'rewoo':
       return ['system', 'planner', 'executor', 'evaluator']
     case 'llm-compiler':
@@ -544,6 +547,7 @@ const computeStages = (engine: string | null | undefined): StageKey[] => {
 
 const mapArchToEngine = (arch?: string | null): string | null => {
   switch (arch) {
+    case 'ReAct': return 'react'
     case 'ReWOO': return 'rewoo'
     case 'LLMCompiler': return 'llm-compiler'
     case 'PlanExecute': return 'plan-execute'
@@ -674,6 +678,7 @@ const mapEngineToArchitectureType = (engine: string | null | undefined): string 
   if (!engine || engine === 'auto') return null
   switch (engine) {
     case 'plan-execute': return 'PlanExecute'
+    case 'react': return 'ReAct'
     case 'rewoo': return 'ReWOO'
     case 'llm-compiler': return 'LLMCompiler'
     default: return null

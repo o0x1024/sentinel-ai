@@ -1309,6 +1309,32 @@ impl AiService {
         is_final: bool,
         chunk_type: Option<ChunkType>,
     ) -> Result<String> {
+        // 新增参数：skip_save_user_message - 是否跳过保存用户消息到数据库
+        // 默认为false（即默认保存）
+        self.send_message_stream_with_save_control(
+            user_prompt,
+            user_prompt, // 默认情况下，保存的内容和发送给LLM的内容一样
+            system_prompt,
+            conversation_id,
+            message_id,
+            stream,
+            is_final,
+            chunk_type,
+        ).await
+    }
+
+    // 支持分离"发送给LLM的内容"和"保存到数据库的内容"
+    pub async fn send_message_stream_with_save_control(
+        &self,
+        user_prompt_for_llm: Option<&str>, // 发送给LLM的完整prompt
+        user_prompt_to_save: Option<&str>, // 保存到数据库的用户消息（可以不同于前者，也可以为None跳过保存）
+        system_prompt: Option<&str>,
+        conversation_id: Option<String>,
+        message_id: Option<String>,
+        stream: bool,
+        is_final: bool,
+        chunk_type: Option<ChunkType>,
+    ) -> Result<String> {
         info!("发送流式消息请求 - 模型: {}", self.config.model);
 
         // 生成或获取execution_id - 确保所有LLM交互都有一个唯一的execution_id
@@ -1350,16 +1376,16 @@ impl AiService {
                         Vec::new()
                     });
 
-                // 保存用户消息（如果提供了非空的用户输入）
-                if let Some(up) = user_prompt {
-                    if !up.trim().is_empty() {
+                // 保存用户消息（如果提供了要保存的内容）
+                if let Some(up_to_save) = user_prompt_to_save {
+                    if !up_to_save.trim().is_empty() {
                         let user_msg = AiMessage {
                             id: uuid::Uuid::new_v4().to_string(),
                             conversation_id: conv_id.clone(),
                             role: "user".to_string(),
-                            content: up.to_string(),
+                            content: up_to_save.to_string(), // 保存指定的内容
                             metadata: None,
-                            token_count: Some(up.len() as i32),
+                            token_count: Some(up_to_save.len() as i32),
                             cost: None,
                             tool_calls: None,
                             attachments: None,
@@ -1367,7 +1393,9 @@ impl AiService {
                         };
                         if conversation_exists {
                             match self.db.create_ai_message(&user_msg).await {
-                                Ok(_) => {}
+                                Ok(_) => {
+                                    debug!("用户消息已保存: {}", up_to_save.chars().take(50).collect::<String>());
+                                }
                                 Err(e) => {
                                     warn!("用户消息保存失败: {}, 继续执行但不保存到数据库", e)
                                 }
@@ -1375,7 +1403,38 @@ impl AiService {
                         } else {
                             debug!("跳过用户消息保存：对话记录不存在");
                         }
-                        messages.push(user_msg);
+                        // 注意：messages列表中使用发送给LLM的完整内容
+                        messages.push(AiMessage {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            conversation_id: conv_id.clone(),
+                            role: "user".to_string(),
+                            content: user_prompt_for_llm.unwrap_or("").to_string(),
+                            metadata: None,
+                            token_count: Some(user_prompt_for_llm.unwrap_or("").len() as i32),
+                            cost: None,
+                            tool_calls: None,
+                            attachments: None,
+                            timestamp: chrono::Utc::now(),
+                        });
+                    }
+                } else {
+                    debug!("跳过用户消息保存（user_prompt_to_save 为 None）");
+                    // 即使不保存，也要构建消息用于LLM调用
+                    if let Some(up) = user_prompt_for_llm {
+                        if !up.trim().is_empty() {
+                            messages.push(AiMessage {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                conversation_id: conv_id.clone(),
+                                role: "user".to_string(),
+                                content: up.to_string(),
+                                metadata: None,
+                                token_count: Some(up.len() as i32),
+                                cost: None,
+                                tool_calls: None,
+                                attachments: None,
+                                timestamp: chrono::Utc::now(),
+                            });
+                        }
                     }
                 }
 
@@ -1531,7 +1590,6 @@ impl AiService {
             None => {
                 // 无会话：仅进行内部流式调用，不向前端发块、不写入DB
                 let conv_id = &execution_id; // 使用 execution_id 作为临时会话标识
-
                 // 构建系统消息
                 if let Some(sp) = system_prompt {
                     if !sp.is_empty() {
@@ -1552,7 +1610,7 @@ impl AiService {
                 }
 
                 // 构建用户消息
-                if let Some(up) = user_prompt {
+                if let Some(up) = user_prompt_for_llm {
                     if !up.is_empty() {
                         let user_msg = AiMessage {
                             id: uuid::Uuid::new_v4().to_string(),

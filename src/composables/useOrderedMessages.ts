@@ -14,10 +14,8 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   chunks = new Map<string, OrderedMessageChunk[]>()
   // 步骤索引：存储每个消息的步骤信息
   private stepsByMessageId = new Map<string, Map<number, any>>()
-  // 视图模式：timeline（时间线）或 steps（步骤）
-  private viewMode: 'timeline' | 'steps' = 'steps'
-  // 调试模式：用于输出渲染顺序信息
-  private debugMode: boolean = false
+  // 调试模式：用于输出渲染顺序信息（改为公开，便于外部访问）
+  debugMode: boolean = false
   // 到达顺序跟踪（按消息ID维度），用于不同 execution_id 的chunk建立稳定全局顺序
   private arrivalCounterByMessageId = new Map<string, number>()
   private chunkArrivalOrder = new Map<string, Map<string, number>>()
@@ -56,48 +54,12 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   }
 
   buildContent(messageId: string): string {
-    if (this.viewMode === 'steps') {
-      return this.buildStepGroupedContent(messageId)
-    } else {
-      return this.buildTimelineContent(messageId)
-    }
-  }
-
-  // 设置视图模式
-  setViewMode(mode: 'timeline' | 'steps'): void {
-    this.viewMode = mode
-  }
-
-  // 获取当前视图模式
-  getViewMode(): 'timeline' | 'steps' {
-    return this.viewMode
+    return this.buildStepGroupedContent(messageId)
   }
 
   // 设置调试模式
   setDebugMode(enabled: boolean): void {
     this.debugMode = enabled
-  }
-
-  // 时间线视图：严格按 sequence 顺序
-  private buildTimelineContent(messageId: string): string {
-    const chunks = this.chunks.get(messageId) || []
-    const sorted = chunks.sort((a, b) => a.sequence - b.sequence)
-    const parts: string[] = []
-    let textBuffer = ''
-    for (const chunk of sorted) {
-      if (chunk.chunk_type === 'Content') {
-        textBuffer += chunk.content?.toString() || ''
-        continue
-      }
-      if (textBuffer.trim().length > 0) {
-        parts.push(textBuffer)
-        textBuffer = ''
-      }
-      const formatted = this.formatChunkWithSpecialHandling(chunk)
-      if (formatted.trim().length > 0) parts.push(formatted)
-    }
-    if (textBuffer.trim().length > 0) parts.push(textBuffer)
-    return parts.join('')
   }
 
   // 步骤视图：按步骤分组显示，严格按sequence顺序渲染内容
@@ -106,8 +68,12 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     const steps = this.stepsByMessageId.get(messageId) || new Map()
     
     if (steps.size === 0) {
-      // 如果没有步骤信息，回退到时间线视图
-      return this.buildTimelineContent(messageId)
+      // 如果没有步骤信息，直接按sequence顺序渲染所有chunks
+      const sorted = chunks.sort((a, b) => a.sequence - b.sequence)
+      const parts: string[] = []
+      const usedChunks = new Set<number>()
+      this.renderChunksInSequenceOrder(sorted, parts, usedChunks)
+      return parts.join('')
     }
 
     const parts: string[] = []
@@ -144,8 +110,8 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     return parts.join('')
   }
 
-  // 新增方法：智能排序渲染chunks，确保内容不穿插
-  // 核心策略：在步骤内，先渲染所有Content和Thinking，再渲染ToolResult
+  // 按服务端返回的 sequence 顺序严格增量渲染 chunks
+  // 核心策略：完全尊重服务端的 sequence 顺序，不做任何重排
   private renderChunksInSequenceOrder(
     chunks: OrderedMessageChunk[], 
     parts: string[], 
@@ -153,59 +119,47 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   ): void {
     if (chunks.length === 0) return
     
-    // 按到达顺序为主、sequence 为辅的稳定排序
+    if (this.debugMode) {
+      console.log('📊 Rendering chunks:', chunks.map(c => ({
+        sequence: c.sequence,
+        type: c.chunk_type,
+        content: c.content?.toString().substring(0, 30) + '...'
+      })))
+    }
+    
+    // 严格按 sequence 顺序排序（同一 message_id 内，sequence 应该是唯一且递增的）
     const sortedChunks = chunks.slice().sort((a, b) => {
+      // 首先按 sequence 排序
+      if (a.sequence !== b.sequence) {
+        return a.sequence - b.sequence
+      }
+      // sequence 相同时，使用到达顺序作为稳定排序的辅助
       const messageId = a.message_id
       const orderMap = this.chunkArrivalOrder.get(messageId)
-      const ka = orderMap?.get(`${a.execution_id}#${a.sequence}`) || a.sequence
-      const kb = orderMap?.get(`${b.execution_id}#${b.sequence}`) || b.sequence
-      if (ka !== kb) return ka - kb
-      return a.sequence - b.sequence
+      const ka = orderMap?.get(`${a.execution_id}#${a.sequence}`) || 0
+      const kb = orderMap?.get(`${b.execution_id}#${b.sequence}`) || 0
+      return ka - kb
     })
     
-    // 调试信息：记录渲染顺序
     if (this.debugMode) {
-      console.log('📊 Rendering chunks - Original sequence order:', sortedChunks.map(c => ({
+      console.log('📊 Sorted chunks by sequence:', sortedChunks.map(c => ({
         sequence: c.sequence,
         type: c.chunk_type,
         preview: c.content?.toString().substring(0, 30) + '...'
       })))
     }
     
-    // 智能分组：将chunks分为Content/Thinking组和ToolResult组
-    const contentChunks: OrderedMessageChunk[] = []
-    const toolResultChunks: OrderedMessageChunk[] = []
-    const otherChunks: OrderedMessageChunk[] = []
-    
-    for (const chunk of sortedChunks) {
-      if (chunk.chunk_type === 'Content' || chunk.chunk_type === 'Thinking') {
-        contentChunks.push(chunk)
-      } else if (chunk.chunk_type === 'ToolResult') {
-        toolResultChunks.push(chunk)
-      } else {
-        otherChunks.push(chunk)
-      }
-    }
-    
-    if (this.debugMode) {
-      console.log('📊 After grouping:', {
-        content: contentChunks.length,
-        toolResult: toolResultChunks.length,
-        other: otherChunks.length
-      })
-    }
-    
-    // 渲染顺序：Content/Thinking → Other → ToolResult
+    // 按顺序渲染，使用文本缓冲区优化连续的 Content chunks
     let textBuffer = ''
     
-    // 1. 先渲染所有Content和Thinking（按sequence顺序）
-    for (const chunk of contentChunks) {
+    for (const chunk of sortedChunks) {
       usedChunks.add(chunk.sequence)
       
       if (chunk.chunk_type === 'Content') {
+        // Content 类型：累积到缓冲区
         textBuffer += chunk.content?.toString() || ''
       } else {
-        // Thinking类型：先输出缓冲文本，再输出Thinking
+        // 非 Content 类型：先输出缓冲区，再渲染当前 chunk
         if (textBuffer.trim()) {
           parts.push(textBuffer)
           textBuffer = ''
@@ -217,28 +171,9 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       }
     }
     
-    // 输出缓冲的Content文本
+    // 输出剩余的缓冲文本
     if (textBuffer.trim()) {
       parts.push(textBuffer)
-      textBuffer = ''
-    }
-    
-    // 2. 渲染其他类型（Meta, Error等）
-    for (const chunk of otherChunks) {
-      usedChunks.add(chunk.sequence)
-      const formatted = this.formatChunkWithSpecialHandling(chunk)
-      if (formatted.trim()) {
-        parts.push(formatted)
-      }
-    }
-    
-    // 3. 最后渲染所有ToolResult（按sequence顺序）
-    for (const chunk of toolResultChunks) {
-      usedChunks.add(chunk.sequence)
-      const formatted = this.formatChunkWithSpecialHandling(chunk)
-      if (formatted.trim()) {
-        parts.push(formatted)
-      }
     }
   }
 
@@ -250,32 +185,53 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       case 'PlanInfo':
         return this.formatPlanInfo(chunk)
       case 'Content':
-        return chunk.content
+        // 智能过滤Content中的Action声明（ReAct架构）
+        return this.filterActionDeclarations(chunk.content)
       case 'Thinking':
-        return `🤔 **思考过程**\n${chunk.content}`
+        return this.formatThinking(chunk)
       case 'Error':
         return `❌ **错误**\n${chunk.content}`
       case 'Meta':
-        // Meta 事件在步骤视图中不直接显示，但在时间线视图中可以显示调试信息
-        if (this.viewMode === 'timeline') {
-          try {
-            const meta = JSON.parse(chunk.content?.toString() || '{}')
-            if (meta.type === 'step_started') {
-              return `\n🚀 **开始步骤 ${meta.step_index}**: ${meta.step_name} (${meta.step_type})\n`
-            } else if (meta.type === 'step_completed') {
-              return `\n✅ **完成步骤 ${meta.step_index}**: ${meta.step_name} (${meta.status})\n`
-            }
-          } catch (e) {
-            // 忽略解析错误
-          }
-        }
+        // Meta 事件不直接显示在内容中（步骤信息已通过 parseStepMeta 处理）
         return ''
       default:
         return chunk.content
     }
   }
 
-  
+  // 过滤Content中的Action声明（用于ReAct架构）
+  private filterActionDeclarations(content: any): string {
+    if (!content) return ''
+    
+    const contentStr = content.toString()
+    
+    // 匹配 "Action: tool_name" 和 "Action Input: {...}" 格式
+    // 这种格式的内容会在ToolResult中显示，所以这里可以选择性隐藏
+    // 注意：只过滤明确的格式化Action声明，保留其他内容
+    const lines = contentStr.split('\n')
+    const filtered = lines.filter(line => {
+      const trimmed = line.trim()
+      // 过滤掉单独的 "Action: xxx" 或 "Action Input: {...}" 行
+      if (/^Action:\s*[\w-]+\s*$/i.test(trimmed)) return false
+      if (/^Action Input:\s*\{[\s\S]*\}\s*$/i.test(trimmed)) return false
+      return true
+    }).join('\n')
+    
+    // 清理多余的空行
+    return filtered.replace(/\n{3,}/g, '\n\n').trim()
+  }
+
+  private formatThinking(chunk: OrderedMessageChunk): string {
+    try {
+      let contentStr = chunk.content.toString().replace("Thought","");
+      contentStr = chunk.content.toString()
+      // 直接以明文形式显示思考过程
+      return `🤔 **思考过程**\n${contentStr}\n`
+    } catch (err) {
+      console.error('格式化思考过程失败:', err)
+      return `🤔 **思考过程**\n${chunk.content}`
+    }
+  }
 
   private formatToolResult(chunk: OrderedMessageChunk): string {
     try {
@@ -285,6 +241,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       let tool_name = chunk.tool_name
       let stepName = 'Tool Execution'
       let resultContent = contentStr
+      let toolArgs: any = null // 新增：存储工具参数
 
       // 尝试解析JSON获取步骤名称和内容
       let isSuccess = true
@@ -294,26 +251,21 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         parsed = JSON.parse(contentStr)
         stepName = parsed?.step_name || parsed?.name || 'Tool Execution'
         
+        // 提取工具参数（如果存在）
+        if (parsed?.args || parsed?.arguments || parsed?.input) {
+          toolArgs = parsed.args || parsed.arguments || parsed.input
+        }
+        
         // 检查是否是执行失败的情况
-        // 处理 success 字段可能是布尔值或字符串的情况
         const successValue = parsed?.success
         const hasError = parsed?.error && parsed.error !== null && parsed.error !== ''
         
-        // 更健壮的失败判断逻辑
         const isFailure = successValue === false || 
                          successValue === 'false' || 
                          successValue === "false" ||
                          successValue === 0 ||
                          successValue === '0' ||
                          hasError
-        
-        // 调试信息
-        console.log('ToolResult parsing:', {
-          successValue,
-          hasError,
-          isFailure,
-          errorField: parsed?.error
-        })
         
         if (isFailure) {
           isSuccess = false
@@ -323,7 +275,6 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
           resultContent = parsed?.result || parsed?.output || contentStr
         }
       } catch (parseError) {
-        // 如果不是JSON，尝试从内容中提取步骤名称
         const stepMatch = contentStr.match(/(?:步骤|Step|工具|Tool)[:：]?\s*([^\n\r]+)/)
         if (stepMatch) {
           stepName = stepMatch[1].trim()
@@ -331,7 +282,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         resultContent = contentStr
       }
 
-      // 生成可安全渲染的HTML结构，避免 Markdown 在 HTML 块内不解析的情况
+      // 生成可安全渲染的HTML结构
       const contentType = this.detectContentType(resultContent)
       const escaped = this.escapeHtml(
         typeof resultContent === 'string' ? resultContent : JSON.stringify(resultContent, null, 2)
@@ -340,21 +291,32 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       // 根据执行结果调整标题显示
       const statusIcon = isSuccess ? '🔧' : '❌'
       const statusBadge = isSuccess ? 
-        `<span class="badge badge-success">成功</span>` : 
-        `<span class="badge badge-error">失败</span>`
+        `<span class="badge badge-success badge-sm">成功</span>` : 
+        `<span class="badge badge-error badge-sm">失败</span>`
       
-      // 标题栏显示工具名、步骤名和状态
       const displayName = stepName !== 'Tool Execution' ? stepName : (tool_name || 'Tool')
-      const summaryContent = `${statusIcon} <strong>${displayName}</strong> ${statusBadge}`
+
+      // 构建工具参数显示部分
+      let argsSection = ''
+      if (toolArgs) {
+        const argsStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs, null, 2)
+        const escapedArgs = this.escapeHtml(argsStr)
+        argsSection = `│ 📥 输入参数:                             │
+│   ${escapedArgs.replace(/\n/g, '\n│   ')}
+├─────────────────────────────────────────┤
+`
+      }
 
       return `
-<details class="tool-result border border-base-300 rounded-box bg-base-100">
-<summary class="text-sm font-medium flex items-center gap-2">
-  ${summaryContent}
-</summary>
-<div class="tool-result-body mt-2 p-3">
-  <pre class="tool-result-content"><code class="language-${contentType}">${escaped}</code></pre>
-</div>
+<details class="tool-result-block border-l-4 border-primary/30 bg-base-200/50 rounded-r-lg my-2">
+  <summary class="cursor-pointer px-4 py-2 text-sm font-medium hover:bg-base-200/80 transition-colors flex items-center gap-2">
+    <span class="text-primary">${statusIcon}</span>
+    <span>${displayName}</span>
+    <span class="badge badge-sm ${isSuccess ? 'badge-success' : 'badge-error'}">${isSuccess ? '成功' : '失败'}</span>
+  </summary>
+  <div class="px-4 py-3 border-t border-base-300">
+    <pre class="text-sm whitespace-pre-wrap text-base-content/80 leading-relaxed font-mono">${escaped}
+  </div>
 </details>
 
 `
@@ -644,16 +606,16 @@ export const useOrderedMessages = (
     let message = messages.value.find(m => m.id === messageId)
     if (message) return message
 
-    // 如果找不到，查找最近的streaming助手消息
-    const streamingMessage = messages.value
+    // ReAct 引擎使用相同的 message_id 进行多次迭代，需要查找最近的助手消息（不仅限于 streaming）
+    const recentAssistantMessage = messages.value
       .slice()
       .reverse()
-      .find(m => m.role === 'assistant' && m.isStreaming)
+      .find(m => m.role === 'assistant' && (m.isStreaming || m.id === messageId))
 
-    if (streamingMessage) {
-      // 不再改写已有消息ID，改为记录别名映射
-      idAlias.set(messageId, streamingMessage.id)
-      return streamingMessage
+    if (recentAssistantMessage) {
+      // 建立ID别名映射
+      idAlias.set(messageId, recentAssistantMessage.id)
+      return recentAssistantMessage
     }
 
     // 宽容模式：自动创建一个助手占位消息，避免丢弃chunk
@@ -670,7 +632,9 @@ export const useOrderedMessages = (
   }
 
   const handleMessageChunk = (chunk: OrderedMessageChunk) => {
-    // 可以通过 setDebugMode(true) 开启详细日志
+    if (processor.debugMode) {
+      console.log('📥 chunk received:', chunk)
+    }
 
     // 规范化 message_id：优先将新ID映射到当前streaming消息，避免产生新消息或覆盖旧消息
     let canonicalId = resolveCanonicalId(chunk.message_id)
@@ -717,7 +681,17 @@ export const useOrderedMessages = (
     }
 
     // 更新状态 - 确保使用规范化的ID检查状态
-    message.isStreaming = !processor.isComplete(canonicalId)
+    // ReAct 引擎：不因中间步骤的 is_final 而停止 streaming，只在真正完成时标记
+    const isComplete = processor.isComplete(canonicalId)
+    if (isComplete) {
+      if (processor.debugMode) {
+        console.log(`✅ Message ${canonicalId} completed (chunk type: ${chunk.chunk_type}, is_final: ${chunk.is_final})`)
+      }
+      message.isStreaming = false
+    } else {
+      // 保持 streaming 状态，即使某些 chunk 带有 is_final（可能是工具调用结果）
+      message.isStreaming = true
+    }
     message.hasError = processor.hasError(canonicalId)
 
 
@@ -739,11 +713,15 @@ export const useOrderedMessages = (
     if (unlistenCallbacks.length > 0) {
       cleanup()
     }
+
     
     try {
       // 只监听一个事件类型：message_chunk
       const unlistenChunk = await listen('message_chunk', (event) => {
         const chunk = event.payload as OrderedMessageChunk
+        if (processor.debugMode && chunk.is_final) {
+          console.log(`📥 Received chunk with is_final=true (type: ${chunk.chunk_type}, execution_id: ${chunk.execution_id})`)
+        }
         handleMessageChunk(chunk)
       })
 
@@ -797,10 +775,9 @@ export const useOrderedMessages = (
     addChunk,
     hasChunkType,
     getChunkStats,
-    processor: processor as MessageChunkProcessor,
-    // 新增调试功能
+    processor,
+    // 调试功能
     setDebugMode: (enabled: boolean) => processor.setDebugMode(enabled),
-    setViewMode: (mode: 'timeline' | 'steps') => processor.setViewMode(mode),
   }
 }
 

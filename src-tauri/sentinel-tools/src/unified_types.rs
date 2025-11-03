@@ -354,6 +354,7 @@ pub enum FrameworkType {
     PlanAndExecute,
     ReWOO,
     LLMCompiler,
+    React,
 }
 
 impl std::fmt::Display for FrameworkType {
@@ -362,6 +363,7 @@ impl std::fmt::Display for FrameworkType {
             FrameworkType::PlanAndExecute => write!(f, "plan_and_execute"),
             FrameworkType::ReWOO => write!(f, "rewoo"),
             FrameworkType::LLMCompiler => write!(f, "llm_compiler"),
+            FrameworkType::React => write!(f, "react"),
         }
     }
 }

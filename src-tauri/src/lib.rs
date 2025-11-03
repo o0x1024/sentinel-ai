@@ -718,6 +718,11 @@ pub fn run() {
             plan_execute_commands::get_plan_execute_active_tasks,
             plan_execute_commands::get_plan_execute_task_history,
             plan_execute_commands::execute_generic_prompt_task,
+            
+            // ReAct引擎相关命令
+            commands::react_commands::execute_react_task,
+            commands::react_commands::get_react_config,
+            commands::react_commands::update_react_config,
             // 代理测试命令 - DISABLED (ai_adapter removed)
             commands::test_proxy::test_proxy_dynamic_update,
             

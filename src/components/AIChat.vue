@@ -70,26 +70,6 @@
               {{ formatTime(message.timestamp) }}
             </time>
           </div>
-          
-          <!-- 视图切换按钮 - 仅在助手消息中显示 -->
-          <div v-if="message.role === 'assistant' && hasStepsInMessage(message.id)" class="flex items-center gap-1">
-            <div class="btn-group btn-group-xs">
-              <button 
-                @click="setMessageViewMode(message.id, 'steps')"
-                :class="['btn btn-xs', getMessageViewMode(message.id) === 'steps' ? 'btn-primary' : 'btn-ghost']"
-                title="步骤视图"
-              >
-                📋
-              </button>
-              <button 
-                @click="setMessageViewMode(message.id, 'timeline')"
-                :class="['btn btn-xs', getMessageViewMode(message.id) === 'timeline' ? 'btn-primary' : 'btn-ghost']"
-                title="时间线视图"
-              >
-                ⏱️
-              </button>
-            </div>
-          </div>
         </div>
 
         <div
@@ -110,26 +90,11 @@
           />
 
 
-          <!-- <div v-if="message.role === 'user'" class="whitespace-pre-wrap break-words leading-relaxed">
-            {{ message.content }}
-          </div>
-          <div 
-            v-else
-            :class="[
-              'prose prose-sm max-w-none leading-relaxed prose-neutral'
-            ]"
-            v-html="renderMarkdown(message.content)"
-          /> -->
-
-          
-
           <!-- 流式指示器 -->
           <div v-if="message.isStreaming" class="flex items-center gap-2 mt-2 text-base-content/70">
             <span class="loading loading-dots loading-sm text-primary"></span>
             <span class="text-sm">{{ t('aiAssistant.generating', 'AI正在思考...') }}</span>
           </div>
-
-          
 
           <!-- Citations (引用来源) -->
           <div
@@ -334,9 +299,6 @@ const messages = ref<ChatMessage[]>([])
 
 const { formatTime, renderMarkdown } = useMessageUtils()
 
-// 消息视图模式管理
-const messageViewModes = ref<Map<string, 'timeline' | 'steps'>>(new Map())
-
 // 持久化状态的key
 const AI_CHAT_STATE_KEY = 'ai-chat-state'
 
@@ -450,27 +412,6 @@ const orderedMessages = useOrderedMessages(messages, async (msgs) => {
     console.error('保存消息失败:', error)
   }
 })
-
-// 视图模式管理函数
-const hasStepsInMessage = (messageId: string): boolean => {
-  return orderedMessages.hasChunkType(messageId, 'Meta')
-}
-
-const getMessageViewMode = (messageId: string): 'timeline' | 'steps' => {
-  return messageViewModes.value.get(messageId) || 'steps'
-}
-
-const setMessageViewMode = (messageId: string, mode: 'timeline' | 'steps') => {
-  messageViewModes.value.set(messageId, mode)
-  orderedMessages.processor.setViewMode(mode)
-  
-  // 重新构建消息内容以应用新的视图模式
-  const message = messages.value.find(m => m.id === messageId)
-  if (message && message.role === 'assistant') {
-    message.content = orderedMessages.processor.buildContent(messageId)
-  }
-}
-
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || isLoading.value) return
 

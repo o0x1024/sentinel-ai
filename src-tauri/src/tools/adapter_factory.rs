@@ -42,6 +42,11 @@ impl AdapterFactory {
                 debug!("Creating LLM Compiler adapter");
                 Arc::new(LLMCompilerAdapter::new(self.tool_manager.clone()))
             }
+            FrameworkType::React => {
+                debug!("Creating ReAct adapter");
+                // ReAct 使用与 PlanAndExecute 相同的适配器
+                Arc::new(PlanAndExecuteAdapter::new(self.tool_manager.clone()))
+            }
         }
     }
 
