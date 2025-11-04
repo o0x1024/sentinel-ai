@@ -195,8 +195,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         return this.formatPlanInfo(chunk)
       case 'Content':
         // 智能过滤Content中的Action声明（ReAct架构）
-        const original = chunk.content?.toString() || ''
-        return original
+        return chunk.content?.toString() || ''
       case 'Thinking':
         // return this.formatThinking(chunk)
         //  return chunk.content?.toString() || ''
@@ -231,7 +230,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       const contentStr = chunk.content.toString()
 
       let parsed: any = null
-      let tool_name = chunk.tool_name
+      const tool_name = chunk.tool_name
       let stepName = 'Tool Execution'
       let resultContent = contentStr
       let toolArgs: any = null // 新增：存储工具参数
@@ -292,8 +291,8 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     <span>${displayName}</span>
     <span class="badge badge-sm ${isSuccess ? 'badge-success' : 'badge-error'}">${isSuccess ? '成功' : '失败'}</span>
   </summary>
-  <div class="px-4 py-3 border-t border-base-300">
-    <pre class="text-sm whitespace-pre-wrap text-base-content/80 leading-relaxed font-mono">${escaped}
+  <div class="border-t border-base-300 bg-base-100">
+    ${escaped}
   </div>
 </details>
 

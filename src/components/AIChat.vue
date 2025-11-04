@@ -84,7 +84,7 @@
           <div 
             :class="[
               'prose prose-sm max-w-none leading-relaxed',
-              message.role === 'user' ? 'prose-invert whitespace-pre-wrap' : 'prose-neutral'
+              message.role === 'user' ? 'prose-invert ' : 'prose-neutral'
             ]"
             v-html="renderMarkdown(message.content)"
           />
@@ -120,23 +120,7 @@
                   <i class="fas fa-file-alt text-xs"></i>
                   <span class="text-xs">[{{ index + 1 }}] {{ (citation.file_name || '').split('/').pop() }}</span>
                 </button>
-                
-                <!-- 悬浮预览 -->
-                <!-- <div class="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50 w-80 max-w-sm">
-                  <div class="bg-base-100 border border-base-300 rounded-lg shadow-lg p-3 text-xs">
-                    <div class="font-medium mb-1">{{ citation.file_name }}</div>
-                    <div class="text-base-content/70 mb-2">
-                      {{ citation.page_number ? `第${citation.page_number}页` : '' }}
-                      {{ citation.section_title ? ` - ${citation.section_title}` : '' }}
-                    </div>
-                    <div class="text-base-content/80 line-clamp-3">
-                      {{ citation.content_preview }}
-                    </div>
-                    <div class="mt-2 text-accent text-xs">
-                      相似度: {{ (citation.score * 100).toFixed(1) }}%
-                    </div>
-                  </div>
-                </div> -->
+              
               </div>
             </div>
           </div>
@@ -1078,26 +1062,6 @@ defineExpose({
     word-wrap: break-word;
     overflow-wrap: break-word;
   }
-}
-
-/* Tool result overflow handling */
-.chat-bubble :deep(details.tool-result) {
-  max-width: 100%;
-}
-
-.chat-bubble :deep(details.tool-result > summary) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-bubble :deep(.tool-result-body) {
-  max-width: 100%;
-  overflow-x: auto;
-}
-
-.chat-bubble :deep(.tool-result-content) {
-  max-width: 100%;
 }
 
 .chat-bubble :deep(pre),
