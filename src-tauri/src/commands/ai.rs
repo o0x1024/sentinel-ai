@@ -70,11 +70,12 @@ fn remove_cancellation_token(conversation_id: &str) {
     }
 }
 
-// 辅助函数：取消对话流
-fn cancel_conversation_stream(conversation_id: &str) {
+// 辅助函数：取消对话流（公开以便其他模块调用）
+pub fn cancel_conversation_stream(conversation_id: &str) {
     if let Some(token) = get_cancellation_token(conversation_id) {
         token.cancel();
         remove_cancellation_token(conversation_id);
+        tracing::info!("Cancelled conversation stream: {}", conversation_id);
     }
 }
 
@@ -93,6 +94,7 @@ pub struct SendMessageRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SaveMessageRequest {
+    pub id: Option<String>,
     pub conversation_id: String,
     pub role: String,
     pub content: String,
@@ -904,7 +906,7 @@ pub async fn save_ai_message(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     let message = AiMessage {
-        id: Uuid::new_v4().to_string(),
+        id: request.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
         conversation_id: request.conversation_id,
         role: request.role,
         content: request.content,

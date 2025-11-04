@@ -104,12 +104,20 @@ impl ReactEngine {
             .get("message_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let execution_id = task
+            .parameters
+            .get("execution_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
-        println!("ReactEngine execute: conversation_id={:?}, message_id={:?}", conversation_id, message_id);
+        println!("ReactEngine execute: conversation_id={:?}, message_id={:?}, execution_id={:?}", 
+            conversation_id, message_id, execution_id);
         let executor_config = ReactExecutorConfig {
             react_config: self.config.clone(),
             enable_streaming: true,
             conversation_id: conversation_id.clone(),
+            message_id: message_id.clone(),
+            execution_id: execution_id.clone(),
             app_handle: self.app_handle.clone(),
             prompt_repo,
             framework_adapter,

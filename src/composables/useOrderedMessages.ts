@@ -3,19 +3,13 @@
 
 import { ref, Ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import type {
-  OrderedMessageChunk,
-  ChunkType,
-  MessageChunkProcessor
-} from '../types/ordered-chat'
+import type { OrderedMessageChunk, ChunkType, MessageChunkProcessor } from '../types/ordered-chat'
 import type { ChatMessage } from '../types/chat'
 
 class MessageChunkProcessorImpl implements MessageChunkProcessor {
   chunks = new Map<string, OrderedMessageChunk[]>()
   // 步骤索引：存储每个消息的步骤信息
   private stepsByMessageId = new Map<string, Map<number, any>>()
-  // 调试模式：用于输出渲染顺序信息（改为公开，便于外部访问）
-  debugMode: boolean = false
   // 到达顺序跟踪（按消息ID维度），用于不同 execution_id 的chunk建立稳定全局顺序
   private arrivalCounterByMessageId = new Map<string, number>()
   private chunkArrivalOrder = new Map<string, Map<string, number>>()
@@ -30,12 +24,32 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     }
 
     const chunks = this.chunks.get(messageId)!
-    // 按sequence排序插入
-    const insertIndex = chunks.findIndex(c => c.sequence > chunk.sequence)
-    if (insertIndex === -1) {
-      chunks.push(chunk)
+    // 去重与幂等：同一 execution_id + sequence + chunk_type(+tool_name) 视为同一块
+    const existingIndex = chunks.findIndex(
+      c =>
+        c.sequence === chunk.sequence &&
+        c.chunk_type === chunk.chunk_type &&
+        c.execution_id === chunk.execution_id &&
+        (c.tool_name || '') === (chunk.tool_name || '')
+    )
+    if (existingIndex !== -1) {
+      const existed = chunks[existingIndex]
+      const prev = (existed.content ?? '').toString()
+      const next = (chunk.content ?? '').toString()
+      if (prev === next) {
+        // 完全重复，直接忽略
+      } else {
+        // 内容更新：替换原有项，保证顺序不变
+        chunks[existingIndex] = { ...existed, ...chunk }
+      }
     } else {
-      chunks.splice(insertIndex, 0, chunk)
+      // 按 sequence 插入，保持有序
+      const insertIndex = chunks.findIndex(c => c.sequence > chunk.sequence)
+      if (insertIndex === -1) {
+        chunks.push(chunk)
+      } else {
+        chunks.splice(insertIndex, 0, chunk)
+      }
     }
 
     // 解析 Meta 事件中的步骤信息
@@ -57,16 +71,11 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     return this.buildStepGroupedContent(messageId)
   }
 
-  // 设置调试模式
-  setDebugMode(enabled: boolean): void {
-    this.debugMode = enabled
-  }
-
   // 步骤视图：按步骤分组显示，严格按sequence顺序渲染内容
   private buildStepGroupedContent(messageId: string): string {
     const chunks = this.chunks.get(messageId) || []
     const steps = this.stepsByMessageId.get(messageId) || new Map()
-    
+
     if (steps.size === 0) {
       // 如果没有步骤信息，直接按sequence顺序渲染所有chunks
       const sorted = chunks.sort((a, b) => a.sequence - b.sequence)
@@ -82,24 +91,39 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
 
     // 添加步骤开始前的内容
     const preStepChunks = chunks.filter(chunk => {
-      const minStepSequence = Math.min(...Array.from(steps.values()).map(s => s.start_sequence || Infinity))
+      const minStepSequence = Math.min(
+        ...Array.from(steps.values()).map(s => s.start_sequence || Infinity)
+      )
       return chunk.sequence < minStepSequence
     })
-    
+
     this.renderChunksInSequenceOrder(preStepChunks, parts, usedChunks)
 
     // 按步骤渲染
     for (const [stepIndex, stepInfo] of sortedSteps) {
       // 步骤标题
       const stepIcon = this.getStepIcon(stepInfo.step_type)
-      const statusIcon = stepInfo.status === 'Completed' ? '✅' : 
-                        stepInfo.status === 'Failed' ? '❌' : 
-                        stepInfo.status === 'InProgress' ? '🔄' : '⏳'
-      
-      parts.push(`\n### ${stepIcon} 步骤 ${stepIndex}: ${stepInfo.step_name || '未命名步骤'} ${statusIcon}\n`)
-      
+      const statusIcon =
+        stepInfo.status === 'Completed'
+          ? '✅'
+          : stepInfo.status === 'Failed'
+            ? '❌'
+            : stepInfo.status === 'InProgress'
+              ? '🔄'
+              : '⏳'
+
+      parts.push(
+        `\n### ${stepIcon} 步骤 ${stepIndex}: ${stepInfo.step_name || '未命名步骤'} ${statusIcon}\n`
+      )
+
       // 获取该步骤的所有chunks，严格按sequence顺序渲染
-      const stepChunks = this.getStepChunksWithLogicalOrder(chunks, stepInfo, sortedSteps, stepIndex, usedChunks)
+      const stepChunks = this.getStepChunksWithLogicalOrder(
+        chunks,
+        stepInfo,
+        sortedSteps,
+        stepIndex,
+        usedChunks
+      )
       this.renderChunksInSequenceOrder(stepChunks, parts, usedChunks)
     }
 
@@ -113,20 +137,13 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   // 按服务端返回的 sequence 顺序严格增量渲染 chunks
   // 核心策略：完全尊重服务端的 sequence 顺序，不做任何重排
   private renderChunksInSequenceOrder(
-    chunks: OrderedMessageChunk[], 
-    parts: string[], 
+    chunks: OrderedMessageChunk[],
+    parts: string[],
     usedChunks: Set<number>
   ): void {
     if (chunks.length === 0) return
-    
-    if (this.debugMode) {
-      console.log('📊 Rendering chunks:', chunks.map(c => ({
-        sequence: c.sequence,
-        type: c.chunk_type,
-        content: c.content?.toString().substring(0, 30) + '...'
-      })))
-    }
-    
+
+    // console.log(`chunks data:${chunks.}`)
     // 严格按 sequence 顺序排序（同一 message_id 内，sequence 应该是唯一且递增的）
     const sortedChunks = chunks.slice().sort((a, b) => {
       // 首先按 sequence 排序
@@ -140,21 +157,13 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       const kb = orderMap?.get(`${b.execution_id}#${b.sequence}`) || 0
       return ka - kb
     })
-    
-    if (this.debugMode) {
-      console.log('📊 Sorted chunks by sequence:', sortedChunks.map(c => ({
-        sequence: c.sequence,
-        type: c.chunk_type,
-        preview: c.content?.toString().substring(0, 30) + '...'
-      })))
-    }
-    
+
     // 按顺序渲染，使用文本缓冲区优化连续的 Content chunks
     let textBuffer = ''
-    
+
     for (const chunk of sortedChunks) {
       usedChunks.add(chunk.sequence)
-      
+
       if (chunk.chunk_type === 'Content') {
         // Content 类型：累积到缓冲区
         textBuffer += chunk.content?.toString() || ''
@@ -170,7 +179,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         }
       }
     }
-    
+
     // 输出剩余的缓冲文本
     if (textBuffer.trim()) {
       parts.push(textBuffer)
@@ -186,9 +195,12 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         return this.formatPlanInfo(chunk)
       case 'Content':
         // 智能过滤Content中的Action声明（ReAct架构）
-        return this.filterActionDeclarations(chunk.content)
+        const original = chunk.content?.toString() || ''
+        return original
       case 'Thinking':
-        return this.formatThinking(chunk)
+        // return this.formatThinking(chunk)
+        //  return chunk.content?.toString() || ''
+        return ''
       case 'Error':
         return `❌ **错误**\n${chunk.content}`
       case 'Meta':
@@ -199,32 +211,13 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     }
   }
 
-  // 过滤Content中的Action声明（用于ReAct架构）
-  private filterActionDeclarations(content: any): string {
-    if (!content) return ''
-    
-    const contentStr = content.toString()
-    
-    // 匹配 "Action: tool_name" 和 "Action Input: {...}" 格式
-    // 这种格式的内容会在ToolResult中显示，所以这里可以选择性隐藏
-    // 注意：只过滤明确的格式化Action声明，保留其他内容
-    const lines = contentStr.split('\n')
-    const filtered = lines.filter(line => {
-      const trimmed = line.trim()
-      // 过滤掉单独的 "Action: xxx" 或 "Action Input: {...}" 行
-      if (/^Action:\s*[\w-]+\s*$/i.test(trimmed)) return false
-      if (/^Action Input:\s*\{[\s\S]*\}\s*$/i.test(trimmed)) return false
-      return true
-    }).join('\n')
-    
-    // 清理多余的空行
-    return filtered.replace(/\n{3,}/g, '\n\n').trim()
-  }
-
   private formatThinking(chunk: OrderedMessageChunk): string {
     try {
-      let contentStr = chunk.content.toString().replace("Thought","");
-      contentStr = chunk.content.toString()
+      // 移除 "Thought:" 前缀（如果存在）
+      const contentStr = chunk.content
+        .toString()
+        .replace(/^Thought:\s*/i, '')
+        .trim()
       // 直接以明文形式显示思考过程
       return `🤔 **思考过程**\n${contentStr}\n`
     } catch (err) {
@@ -246,27 +239,28 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       // 尝试解析JSON获取步骤名称和内容
       let isSuccess = true
       let errorMessage = ''
-      
+
       try {
         parsed = JSON.parse(contentStr)
         stepName = parsed?.step_name || parsed?.name || 'Tool Execution'
-        
+
         // 提取工具参数（如果存在）
         if (parsed?.args || parsed?.arguments || parsed?.input) {
           toolArgs = parsed.args || parsed.arguments || parsed.input
         }
-        
+
         // 检查是否是执行失败的情况
         const successValue = parsed?.success
         const hasError = parsed?.error && parsed.error !== null && parsed.error !== ''
-        
-        const isFailure = successValue === false || 
-                         successValue === 'false' || 
-                         successValue === "false" ||
-                         successValue === 0 ||
-                         successValue === '0' ||
-                         hasError
-        
+
+        const isFailure =
+          successValue === false ||
+          successValue === 'false' ||
+          successValue === 'false' ||
+          successValue === 0 ||
+          successValue === '0' ||
+          hasError
+
         if (isFailure) {
           isSuccess = false
           errorMessage = parsed?.error || 'Unknown error'
@@ -283,30 +277,14 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       }
 
       // 生成可安全渲染的HTML结构
-      const contentType = this.detectContentType(resultContent)
       const escaped = this.escapeHtml(
         typeof resultContent === 'string' ? resultContent : JSON.stringify(resultContent, null, 2)
       )
 
       // 根据执行结果调整标题显示
       const statusIcon = isSuccess ? '🔧' : '❌'
-      const statusBadge = isSuccess ? 
-        `<span class="badge badge-success badge-sm">成功</span>` : 
-        `<span class="badge badge-error badge-sm">失败</span>`
-      
-      const displayName = stepName !== 'Tool Execution' ? stepName : (tool_name || 'Tool')
 
-      // 构建工具参数显示部分
-      let argsSection = ''
-      if (toolArgs) {
-        const argsStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs, null, 2)
-        const escapedArgs = this.escapeHtml(argsStr)
-        argsSection = `│ 📥 输入参数:                             │
-│   ${escapedArgs.replace(/\n/g, '\n│   ')}
-├─────────────────────────────────────────┤
-`
-      }
-
+      const displayName = stepName !== 'Tool Execution' ? stepName : tool_name || 'Tool'
       return `
 <details class="tool-result-block border-l-4 border-primary/30 bg-base-200/50 rounded-r-lg my-2">
   <summary class="cursor-pointer px-4 py-2 text-sm font-medium hover:bg-base-200/80 transition-colors flex items-center gap-2">
@@ -326,54 +304,6 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     }
   }
 
-  // 智能检测内容类型以选择合适的语法高亮
-  private detectContentType(content: string): string {
-    const trimmedContent = content.trim()
-
-    try {
-      JSON.parse(trimmedContent)
-      return 'json'
-    } catch {
-
-
-      // 检测 XML/HTML
-      if (trimmedContent.startsWith('<') && trimmedContent.includes('>')) {
-        return 'xml'
-      }
-
-      // 检测代码片段
-      if (trimmedContent.includes('function') || trimmedContent.includes('const ') ||
-        trimmedContent.includes('let ') || trimmedContent.includes('var ')) {
-        return 'javascript'
-      }
-
-      // 检测Python代码
-      if (trimmedContent.includes('def ') || trimmedContent.includes('import ') ||
-        trimmedContent.includes('from ') || trimmedContent.includes('print(')) {
-        return 'python'
-      }
-
-      // 检测Shell命令
-      if (trimmedContent.startsWith('$') || trimmedContent.includes('curl ') ||
-        trimmedContent.includes('wget ') || trimmedContent.includes('chmod ')) {
-        return 'bash'
-      }
-
-      // 检测SQL
-      if (trimmedContent.toLowerCase().includes('select ') ||
-        trimmedContent.toLowerCase().includes('insert ') ||
-        trimmedContent.toLowerCase().includes('update ') ||
-        trimmedContent.toLowerCase().includes('delete ')) {
-        return 'sql'
-      }
-
-    }
-
-
-    // 默认为纯文本
-    return 'text'
-  }
-
   private escapeHtml(input: string): string {
     return input
       .replace(/&/g, '&amp;')
@@ -387,7 +317,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     try {
       // 优先参考后端提示的“有效计划信息”提取顺序：```json 块 > 任意 ``` 块 > 最外层花括号
       const raw = chunk.content?.toString() ?? ''
-      let contentStr = raw.trim()
+      const contentStr = raw.trim()
 
       // 1) 提取 ```json ... ```
       const jsonFenceStart = contentStr.indexOf('```json')
@@ -421,7 +351,11 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       // 解析对象，且仅当包含关键字段 steps 才认为是“有效计划”
       let parsed: any = null
       if (fenced) {
-        try { parsed = JSON.parse(fenced) } catch { parsed = null }
+        try {
+          parsed = JSON.parse(fenced)
+        } catch {
+          parsed = null
+        }
       }
 
       if (parsed && typeof parsed === 'object') {
@@ -457,22 +391,13 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
             } else {
               todoListMd += `- [ ] ${icon} **${stepName}**`
             }
-            
+
             if (step.dependencies && step.dependencies.length > 0) {
               todoListMd += `\n  > 依赖: ${step.dependencies.join(', ')}`
             }
             todoListMd += '\n'
           })
         }
-
-        // 添加估计时间等元信息
-        // if (parsed.estimated_duration) {
-        //   todoListMd += `\n> 📅 预计耗时: ${parsed.estimated_duration}\n`
-        // }
-        // if (parsed.resource_requirements) {
-        //   todoListMd += `> 💾 资源需求: ${JSON.stringify(parsed.resource_requirements)}\n`
-        // }
-
         // 确保TodoList格式正确，保留换行
         return todoListMd.trim()
       }
@@ -488,9 +413,9 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     try {
       let out = text
       // 匹配 IPv4:port
-      out = out.replace(/\b(?:\d{1,3}\.){3}\d{1,3}:(\d{1,5})\b/g, (m) => `\`${m}\``)
+      out = out.replace(/\b(?:\d{1,3}\.){3}\d{1,3}:(\d{1,5})\b/g, m => `\`${m}\``)
       // 匹配 http(s)://host:port 形式
-      out = out.replace(/\bhttps?:\/\/[^\s]+/gi, (m) => `\`${m}\``)
+      out = out.replace(/\bhttps?:\/\/[^\s]+/gi, m => `\`${m}\``)
       return out
     } catch {
       return text
@@ -512,19 +437,18 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     this.stepsByMessageId.delete(messageId)
   }
 
-
   // 解析步骤 Meta 事件
   private parseStepMeta(messageId: string, chunk: OrderedMessageChunk): void {
     try {
       const meta = JSON.parse(chunk.content?.toString() || '{}')
       const steps = this.stepsByMessageId.get(messageId)!
-      
+
       if (meta.type === 'step_started') {
         steps.set(meta.step_index, {
           step_name: meta.step_name,
           step_type: meta.step_type,
           start_sequence: chunk.sequence,
-          status: 'InProgress'
+          status: 'InProgress',
         })
       } else if (meta.type === 'step_completed') {
         const existing = steps.get(meta.step_index)
@@ -540,10 +464,10 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
 
   // 获取步骤相关的 chunks 并进行逻辑排序
   private getStepChunksWithLogicalOrder(
-    allChunks: OrderedMessageChunk[], 
-    stepInfo: any, 
-    sortedSteps: [number, any][], 
-    currentStepIndex: number, 
+    allChunks: OrderedMessageChunk[],
+    stepInfo: any,
+    sortedSteps: [number, any][],
+    currentStepIndex: number,
     usedChunks: Set<number>
   ): OrderedMessageChunk[] {
     // 优先使用当前步骤在 step_completed 元事件中记录的 end_sequence，
@@ -555,14 +479,15 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       const nextStep = sortedSteps.find(([idx]) => idx > currentStepIndex)
       endSequence = nextStep ? nextStep[1].start_sequence : Infinity
     }
-    
+
     return allChunks.filter(chunk => {
-      return chunk.sequence >= (stepInfo.start_sequence || 0) && 
-             chunk.sequence < endSequence &&
-             !usedChunks.has(chunk.sequence)
+      return (
+        chunk.sequence >= (stepInfo.start_sequence || 0) &&
+        chunk.sequence < endSequence &&
+        !usedChunks.has(chunk.sequence)
+      )
     })
   }
-
 
   // 获取步骤图标
   private getStepIcon(stepType: string): string {
@@ -603,7 +528,7 @@ export const useOrderedMessages = (
 
   const findOrCreateMessage = (messageId: string): ChatMessage | null => {
     // 首先尝试按ID查找
-    let message = messages.value.find(m => m.id === messageId)
+    const message = messages.value.find(m => m.id === messageId)
     if (message) return message
 
     // ReAct 引擎使用相同的 message_id 进行多次迭代，需要查找最近的助手消息（不仅限于 streaming）
@@ -632,10 +557,7 @@ export const useOrderedMessages = (
   }
 
   const handleMessageChunk = (chunk: OrderedMessageChunk) => {
-    if (processor.debugMode) {
-      console.log('📥 chunk received:', chunk)
-    }
-
+    console.log('Received chunk:', chunk)
     // 规范化 message_id：优先将新ID映射到当前streaming消息，避免产生新消息或覆盖旧消息
     let canonicalId = resolveCanonicalId(chunk.message_id)
     if (!idAlias.has(chunk.message_id)) {
@@ -652,6 +574,11 @@ export const useOrderedMessages = (
     const message = findOrCreateMessage(canonicalId)
     if (!message) {
       console.warn('找不到目标消息，丢弃chunk:', chunk)
+      return
+    }
+
+    // 🔒 防止已完成消息再次接收chunk导致内容重复
+    if (!message.isStreaming) {
       return
     }
 
@@ -684,16 +611,12 @@ export const useOrderedMessages = (
     // ReAct 引擎：不因中间步骤的 is_final 而停止 streaming，只在真正完成时标记
     const isComplete = processor.isComplete(canonicalId)
     if (isComplete) {
-      if (processor.debugMode) {
-        console.log(`✅ Message ${canonicalId} completed (chunk type: ${chunk.chunk_type}, is_final: ${chunk.is_final})`)
-      }
       message.isStreaming = false
     } else {
       // 保持 streaming 状态，即使某些 chunk 带有 is_final（可能是工具调用结果）
       message.isStreaming = true
     }
     message.hasError = processor.hasError(canonicalId)
-
 
     // 如果完成，清理processor中的数据
     if (!message.isStreaming) {
@@ -714,20 +637,14 @@ export const useOrderedMessages = (
       cleanup()
     }
 
-    
     try {
       // 只监听一个事件类型：message_chunk
-      const unlistenChunk = await listen('message_chunk', (event) => {
+      const unlistenChunk = await listen('message_chunk', event => {
         const chunk = event.payload as OrderedMessageChunk
-        if (processor.debugMode && chunk.is_final) {
-          console.log(`📥 Received chunk with is_final=true (type: ${chunk.chunk_type}, execution_id: ${chunk.execution_id})`)
-        }
         handleMessageChunk(chunk)
       })
 
-      unlistenCallbacks.push(
-        unlistenChunk,
-      )
+      unlistenCallbacks.push(unlistenChunk)
       console.log('统一消息事件监听器已设置')
     } catch (error) {
       console.error('设置事件监听器失败:', error)
@@ -776,8 +693,6 @@ export const useOrderedMessages = (
     hasChunkType,
     getChunkStats,
     processor,
-    // 调试功能
-    setDebugMode: (enabled: boolean) => processor.setDebugMode(enabled),
   }
 }
 
@@ -798,10 +713,7 @@ export function createUserMessage(
 }
 
 // 创建助手消息的便捷函数
-export function createAssistantMessage(
-  id: string,
-  timestamp = new Date()
-): ChatMessage {
+export function createAssistantMessage(id: string, timestamp = new Date()): ChatMessage {
   return {
     id,
     role: 'assistant',

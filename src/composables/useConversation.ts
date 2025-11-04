@@ -83,9 +83,6 @@ export const useConversation = () => {
       
       messages.value = historyMessages
       
-      // 清除已保存的消息ID缓存，因为切换了会话
-      savedMessageIdsByConversation.delete(conversationId)
-      
       return historyMessages
     } catch (error) {
       console.error('Failed to switch conversation:', error)
@@ -148,6 +145,7 @@ export const useConversation = () => {
         const metadata = (message as any)?.citations ? { citations: (message as any).citations } : undefined
         await invoke('save_ai_message', {
           request: {
+            id: id,
             conversation_id: convId,
             role,
             content,

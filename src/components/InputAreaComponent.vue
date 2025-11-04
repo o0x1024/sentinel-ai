@@ -50,8 +50,8 @@
             <button
               v-else
               class="send-btn bg-error text-error-content hover:bg-error/90"
-              @click="$emit('stop-execution')"
-              title="停止"
+              @click="handleStop"
+              title="停止执行"
             >
               <i class="fas fa-stop"></i>
             </button>
@@ -168,6 +168,11 @@ const emitSend = () => {
   emit('send-message')
   // 发送后恢复高度
   requestAnimationFrame(() => autoResize())
+}
+
+const handleStop = () => {
+  console.log('InputAreaComponent: 停止按钮被点击')
+  emit('stop-execution')
 }
 
 const onKeydown = (e: KeyboardEvent) => {

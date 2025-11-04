@@ -2437,8 +2437,8 @@ impl Database for DatabaseService {
 
     async fn create_ai_message(&self, message: &AiMessage) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query(
-            "INSERT INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, tool_calls, attachments, timestamp)
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, tool_calls, attachments, timestamp)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&message.id)
@@ -2454,12 +2454,14 @@ impl Database for DatabaseService {
         .execute(pool)
         .await?;
 
-        // 更新对话的updated_at和消息计数
-        sqlx::query("UPDATE ai_conversations SET updated_at = ?, total_messages = total_messages + 1 WHERE id = ?")
-            .bind(Utc::now())
-            .bind(&message.conversation_id)
-            .execute(pool)
-            .await?;
+        // 只有在实际插入了新消息时才更新计数（rows_affected > 0）
+        if result.rows_affected() > 0 {
+            sqlx::query("UPDATE ai_conversations SET updated_at = ?, total_messages = total_messages + 1 WHERE id = ?")
+                .bind(Utc::now())
+                .bind(&message.conversation_id)
+                .execute(pool)
+                .await?;
+        }
 
         Ok(())
     }

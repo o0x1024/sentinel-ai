@@ -6,10 +6,10 @@ use super::parser::ActionParser;
 use super::types::*;
 use crate::services::prompt_db::PromptRepository;
 use crate::utils::ordered_message::{emit_message_chunk, ChunkType};
+use anyhow::{anyhow, Context, Result};
 use sentinel_core::models::prompt::{ArchitectureType, StageType};
-use anyhow::{Context, Result, anyhow};
 use std::sync::Arc;
-use std::time::{SystemTime, Duration};
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
 /// ReAct 执行器配置
@@ -20,6 +20,10 @@ pub struct ReactExecutorConfig {
     pub enable_streaming: bool,
     /// Conversation ID（用于流式消息）
     pub conversation_id: Option<String>,
+    /// Message ID（前端创建的助手消息ID，用于流式消息）
+    pub message_id: Option<String>,
+    /// Execution ID（用于跟踪整个执行过程的唯一标识）
+    pub execution_id: Option<String>,
     /// App Handle（用于发送事件）
     pub app_handle: Option<tauri::AppHandle>,
     /// Prompt Repository（用于加载提示词模板）
@@ -47,14 +51,23 @@ impl ReactExecutor {
     }
 
     /// 执行主循环
-    pub async fn run<F, Ft>(
-        &self,
-        llm_call: F,
-        tool_executor: Ft,
-    ) -> Result<ReactTrace>
+    pub async fn run<F, Ft>(&self, llm_call: F, tool_executor: Ft) -> Result<ReactTrace>
     where
-        F: Fn(Option<String>, String, bool, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>> + Send + Sync,
-        Ft: Fn(ReactToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>> + Send + Sync,
+        F: Fn(
+                Option<String>,
+                String,
+                bool,
+                String,
+            )
+                -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
+            + Send
+            + Sync,
+        Ft: Fn(
+                ReactToolCall,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>,
+            > + Send
+            + Sync,
     {
         let start_time = SystemTime::now();
         let mut iteration = 0;
@@ -90,17 +103,24 @@ impl ReactExecutor {
 
             // === 步骤 1: Thought（思考） ===
             let thought_start = SystemTime::now();
-            let (system_prompt, user_prompt) = self.build_thought_prompt(&task, &context_history, &rag_context).await;
-            
+            let (system_prompt, user_prompt) = self
+                .build_thought_prompt(&task, &context_history, &rag_context)
+                .await;
+
             // 调用LLM时，传入原始任务作为要保存的用户消息（仅第一次迭代）
-            let original_user_input = if iteration == 1 { task.clone() } else { String::new() };
+            let original_user_input = if iteration == 1 {
+                task.clone()
+            } else {
+                String::new()
+            };
             let skip_save = iteration > 1; // 第一次迭代后不再保存用户消息
-            
+
             let llm_output = llm_call(system_prompt, user_prompt, skip_save, original_user_input)
                 .await
                 .context("LLM call failed during Thought phase")?;
 
-            let thought_duration = thought_start.elapsed()
+            let thought_duration = thought_start
+                .elapsed()
                 .unwrap_or(Duration::from_secs(0))
                 .as_millis() as u64;
 
@@ -124,10 +144,12 @@ impl ReactExecutor {
             if self.config.enable_streaming {
                 if let Some(app) = &self.config.app_handle {
                     let trace = self.trace.read().await;
+                    let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+                    let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
                     emit_message_chunk(
                         app,
-                        &trace.trace_id,
-                        &trace.trace_id, // 使用 trace_id 作为 message_id
+                        &execution_id,  // 使用统一的 execution_id
+                        &message_id,
                         self.config.conversation_id.as_deref(),
                         ChunkType::Thinking,
                         &llm_output,
@@ -144,7 +166,7 @@ impl ReactExecutor {
                 Err(e) => {
                     // 解析失败，尝试重试
                     tracing::warn!("Failed to parse action: {}", e);
-                    
+
                     if iteration <= self.config.react_config.retry_config.max_retries {
                         context_history.push(format!(
                             "Thought: {}\nError: Failed to parse action. Please use valid JSON format or 'Action: <tool>' format.",
@@ -163,8 +185,42 @@ impl ReactExecutor {
             match instruction {
                 ActionInstruction::FinalAnswer { final_answer } => {
                     // 达成最终答案
-                    tracing::info!("✅ ReAct: Reached Final Answer (length: {} chars)", final_answer.answer.len());
-                    
+                    tracing::info!(
+                        "✅ ReAct: Reached Final Answer (length: {} chars)",
+                        final_answer.answer.len()
+                    );
+
+                    // 获取 message_id、execution_id、trace_id 和 conversation_id 用于发送消息
+                    // 优先使用前端传入的 message_id 和 execution_id，否则回退到 trace_id
+                    let (message_id, execution_id, trace_id, conversation_id) = {
+                        let trace = self.trace.read().await;
+                        let msg_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+                        let exec_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+                        (msg_id, exec_id, trace.trace_id.clone(), self.config.conversation_id.clone())
+                    };
+
+                    // 发送最终完成标记（不发送内容，因为内容已经通过 LLM 流式输出发送过了）
+                    if self.config.enable_streaming {
+                        if let Some(app) = &self.config.app_handle {
+                            tracing::info!(
+                                "📤 ReAct: Emitting Final completion marker with is_final=true, execution_id={}, message_id={}", 
+                                execution_id, message_id
+                            );
+                            emit_message_chunk(
+                                app,
+                                &execution_id,  // 使用统一的 execution_id
+                                &message_id,
+                                conversation_id.as_deref(),
+                                ChunkType::Meta,  // 改为 Meta 类型，表示这是元数据标记
+                                "",  // 空内容，不重复发送
+                                true, // 这是最终消息标记
+                                Some("react"),
+                                None,
+                            );
+                        }
+                    }
+
+                    // 更新 trace 状态
                     let mut trace = self.trace.write().await;
                     trace.add_step(ReactStep {
                         id: format!("final_{}", iteration),
@@ -179,35 +235,17 @@ impl ReactExecutor {
                     });
                     trace.complete(ReactStatus::Completed);
                     trace.metrics.total_iterations = iteration;
-                    trace.metrics.total_duration_ms = start_time.elapsed()
+                    trace.metrics.total_duration_ms = start_time
+                        .elapsed()
                         .unwrap_or(Duration::from_secs(0))
                         .as_millis() as u64;
-
-                    // 发送最终结果
-                    // if self.config.enable_streaming {
-                        if let Some(app) = &self.config.app_handle {
-                            let trace = self.trace.read().await;
-                            tracing::info!("📤 ReAct: Emitting Final Answer chunk with is_final=true");
-                            emit_message_chunk(
-                                app,
-                                &trace.trace_id,
-                                &trace.trace_id,
-                                self.config.conversation_id.as_deref(),
-                                ChunkType::Content,
-                                &final_answer.answer,
-                                true, // 这是最终消息
-                                Some("react"),
-                                None,
-                            );
-                        }
-                    // }
 
                     return Ok(trace.clone());
                 }
                 ActionInstruction::ToolCall { action, .. } => {
                     // === 步骤 4: Action（工具调用） ===
                     let action_start = SystemTime::now();
-                    
+
                     // 记录 Action 步骤
                     {
                         let mut trace = self.trace.write().await;
@@ -228,6 +266,8 @@ impl ReactExecutor {
                     if self.config.enable_streaming {
                         if let Some(app) = &self.config.app_handle {
                             let trace = self.trace.read().await;
+                            let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+                            let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
                             let tool_info = serde_json::json!({
                                 "tool": action.tool,
                                 "args": action.args,
@@ -235,8 +275,8 @@ impl ReactExecutor {
                             });
                             emit_message_chunk(
                                 app,
-                                &trace.trace_id,
-                                &trace.trace_id,
+                                &execution_id,  // 使用统一的 execution_id
+                                &message_id,
                                 self.config.conversation_id.as_deref(),
                                 ChunkType::Meta,
                                 &serde_json::to_string(&tool_info).unwrap_or_default(),
@@ -250,7 +290,8 @@ impl ReactExecutor {
                     // 执行工具
                     let observation_result = tool_executor(action.clone()).await;
 
-                    let action_duration = action_start.elapsed()
+                    let action_duration = action_start
+                        .elapsed()
                         .unwrap_or(Duration::from_secs(0))
                         .as_millis() as u64;
 
@@ -277,11 +318,14 @@ impl ReactExecutor {
                             // 发送观察结果
                             if self.config.enable_streaming {
                                 if let Some(app) = &self.config.app_handle {
-                                    let trace = self.trace.read().await;
+                                    let trace: tokio::sync::RwLockReadGuard<'_, ReactTrace> =
+                                        self.trace.read().await;
+                                    let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+                                    let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
                                     emit_message_chunk(
                                         app,
-                                        &trace.trace_id,
-                                        &trace.trace_id,
+                                        &execution_id,  // 使用统一的 execution_id
+                                        &message_id,
                                         self.config.conversation_id.as_deref(),
                                         ChunkType::ToolResult,
                                         &serde_json::to_string(&result).unwrap_or_default(),
@@ -343,29 +387,34 @@ impl ReactExecutor {
 
     /// 构建 Thought 阶段的提示词
     /// 返回: (system_prompt, user_prompt)
-    async fn build_thought_prompt(&self, task: &str, history: &[String], rag_context: &str) -> (Option<String>, String) {
+    async fn build_thought_prompt(
+        &self,
+        task: &str,
+        history: &[String],
+        rag_context: &str,
+    ) -> (Option<String>, String) {
         let mut system_prompt = String::new();
         let mut user_prompt = String::new();
 
         // 尝试从数据库加载提示词模板
         if let Some(repo) = &self.config.prompt_repo {
-            if let Ok(Some(template)) = repo.get_template_by_arch_stage(
-                ArchitectureType::ReAct,
-                StageType::Planning,
-            ).await {
+            if let Ok(Some(template)) = repo
+                .get_template_by_arch_stage(ArchitectureType::ReAct, StageType::Planning)
+                .await
+            {
                 // 使用数据库中的模板作为 system prompt
                 system_prompt = template.content.clone();
-                
+
                 // 构建工具列表并替换 {tools} 占位符
                 let tools_block = self.build_tools_information().await;
                 system_prompt = system_prompt.replace("{tools}", &tools_block);
-                
+
                 // 清理多余的空行
                 while system_prompt.contains("\n\n\n") {
                     system_prompt = system_prompt.replace("\n\n\n", "\n\n");
                 }
                 system_prompt = system_prompt.trim().to_string();
-                
+
                 // 集成角色提示词到 system prompt（如果存在）
                 if let Some(params) = &self.config.task_parameters {
                     if let Some(role_prompt) = params.get("role_prompt").and_then(|v| v.as_str()) {
@@ -375,30 +424,32 @@ impl ReactExecutor {
                         }
                     }
                 }
-                
+
                 // 构建 user prompt
                 user_prompt.push_str(&format!("用户问题: {}", task));
-                
+
                 // 注入 RAG 证据到 user prompt
                 if !rag_context.is_empty() {
                     user_prompt.push_str("=== Evidence from Knowledge Base ===\n");
                     user_prompt.push_str(rag_context);
                     user_prompt.push_str("\n\n");
                 }
-                
+
                 // 添加历史上下文到 user prompt
                 if !history.is_empty() {
-                    user_prompt.push_str("\n=== Previous Steps ===\n");
+                    user_prompt.push_str("\n=== 前置步骤 ===\n");
                     for (idx, h) in history.iter().enumerate() {
                         user_prompt.push_str(&format!("Step {}:\n{}\n\n", idx + 1, h));
                     }
                     // 在有历史时，添加明确的提示引导下一步思考
-                    user_prompt.push_str("=== Your Turn ===\n基于之前的步骤，你的下一步思考和行动是什么？\n");
+                    user_prompt.push_str(
+                        "=== Your Turn ===\n基于之前的步骤，你的下一步思考和行动是什么？\n",
+                    );
                 } else {
                     // 首次思考时的提示
                     user_prompt.push_str("\n=== Your Turn ===\n你有什么想法和行动？\n");
                 }
-                
+
                 return (Some(system_prompt), user_prompt);
             }
         }
@@ -424,37 +475,46 @@ impl ReactExecutor {
             - Provide clear final answers",
             tools_block
         );
-        
+
         // User prompt 只包含任务
         user_prompt.push_str(&format!("Task: {}\n\n", task));
-        
-        return (Some(system_prompt), user_prompt);  
+
+        return (Some(system_prompt), user_prompt);
     }
 
     /// 构建工具信息块（参考 Plan-and-Execute 的实现）
     async fn build_tools_information(&self) -> String {
-        use std::collections::{HashSet, HashMap};
         use crate::tools::ToolInfo;
-        
+        use std::collections::{HashMap, HashSet};
+
         // 读取任务参数中的工具白名单/黑名单
-        let (allow, allow_present, deny): (HashSet<String>, bool, HashSet<String>) = if let Some(params) = &self.config.task_parameters {
-            log::info!("ReAct executor: task_parameters = {:?}", params);
-            let allow_present = params.get("tools_allow").is_some();
-            let allow = params
-                .get("tools_allow")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_else(HashSet::new);
-            let deny = params
-                .get("tools_deny")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_else(HashSet::new);
-            (allow, allow_present, deny)
-        } else {
-            log::warn!("ReAct executor: task_parameters is None!");
-            (HashSet::new(), false, HashSet::new())
-        };
+        let (allow, allow_present, deny): (HashSet<String>, bool, HashSet<String>) =
+            if let Some(params) = &self.config.task_parameters {
+                log::info!("ReAct executor: task_parameters = {:?}", params);
+                let allow_present = params.get("tools_allow").is_some();
+                let allow = params
+                    .get("tools_allow")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_else(HashSet::new);
+                let deny = params
+                    .get("tools_deny")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_else(HashSet::new);
+                (allow, allow_present, deny)
+            } else {
+                log::warn!("ReAct executor: task_parameters is None!");
+                (HashSet::new(), false, HashSet::new())
+            };
 
         // 语义约定：当前端显式传入 tools_allow 但为空数组 ⇒ 严格模式：禁用所有工具
         if allow_present && allow.is_empty() {
@@ -471,16 +531,23 @@ impl ReactExecutor {
             } else {
                 format!("{:?}", allow)
             },
-            if deny.is_empty() { "未配置".to_string() } else { format!("{:?}", deny) }
+            if deny.is_empty() {
+                "未配置".to_string()
+            } else {
+                format!("{:?}", deny)
+            }
         );
-        
+
         let mut all_tools: Vec<ToolInfo> = Vec::new();
-        
+
         // 从框架适配器获取工具
         if let Some(framework_adapter) = &self.config.framework_adapter {
             let available_tools = framework_adapter.list_available_tools().await;
-            log::info!("ReAct executor: 框架适配器提供了 {} 个工具", available_tools.len());
-            
+            log::info!(
+                "ReAct executor: 框架适配器提供了 {} 个工具",
+                available_tools.len()
+            );
+
             for tool_name in available_tools {
                 // 过滤白名单/黑名单（与 Plan-and-Execute 保持一致）
                 // 如果有白名单且工具不在白名单中，跳过
@@ -493,29 +560,32 @@ impl ReactExecutor {
                     log::debug!("ReAct executor: 工具 '{}' 在黑名单中，已跳过", tool_name);
                     continue;
                 }
-                
+
                 if let Some(tool_info) = framework_adapter.get_tool_info(&tool_name).await {
                     all_tools.push(tool_info);
                 }
             }
         }
-        
+
         log::info!("ReAct executor: 所有工具（包括MCP工具）已通过框架适配器统一获取");
-        
+
         // 去重工具（按名称）
         let mut unique_tools: HashMap<String, ToolInfo> = HashMap::new();
         for tool in all_tools {
             unique_tools.entry(tool.name.clone()).or_insert(tool);
         }
-        
+
         let tool_infos: Vec<&ToolInfo> = unique_tools.values().collect();
-        
+
         if tool_infos.is_empty() {
             log::warn!("ReAct executor: 没有找到任何可用工具");
             return "No tools available".to_string();
         }
-        
-        log::info!("ReAct executor: 构建工具信息，共 {} 个工具", tool_infos.len());
+
+        log::info!(
+            "ReAct executor: 构建工具信息，共 {} 个工具",
+            tool_infos.len()
+        );
         let mut tool_lines: Vec<String> = Vec::new();
         for info in &tool_infos {
             // 构建工具参数签名
@@ -535,15 +605,17 @@ impl ReactExecutor {
                 };
                 parts.push(param_str);
             }
-            
+
             let signature = if parts.is_empty() {
                 String::new()
             } else {
                 parts.join(", ")
             };
-            
-            tool_lines.push(format!("- {}({}) - {}", 
-                info.name, signature, info.description));
+
+            tool_lines.push(format!(
+                "- {}({}) - {}",
+                info.name, signature, info.description
+            ));
         }
         tool_lines.join("\n")
     }
@@ -554,10 +626,10 @@ impl ReactExecutor {
         // 示例代码：
         // use crate::commands::rag_commands::get_global_rag_service;
         // use sentinel_rag::models::AssistantRagRequest;
-        // 
+        //
         // let rag_service = get_global_rag_service().await
         //     .map_err(|e| anyhow!("Failed to get RAG service: {}", e))?;
-        // 
+        //
         // let rag_req = AssistantRagRequest {
         //     query: query.to_string(),
         //     collection_id: None,
@@ -573,12 +645,12 @@ impl ReactExecutor {
         //     temperature: None,
         //     system_prompt: None,
         // };
-        // 
+        //
         // match rag_service.query_for_assistant(&rag_req).await {
         //     Ok((context, _citations)) if !context.trim().is_empty() => Ok(context),
         //     _ => Ok(String::new()),
         // }
-        
+
         // 占位符返回
         Ok(String::new())
     }
@@ -599,6 +671,8 @@ mod tests {
             react_config: ReactConfig::default(),
             enable_streaming: false,
             conversation_id: None,
+            message_id: None,
+            execution_id: None,
             app_handle: None,
             prompt_repo: None,
             framework_adapter: None,

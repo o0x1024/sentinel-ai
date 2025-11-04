@@ -707,31 +707,35 @@ pub async fn dispatch_scenario_task(
         }
     };
     
-    // 如果调度成功，自动开始执行
+    // 如果调度成功，按架构决定是否需要异步开始“真实执行”
     if let Ok(ref dispatch_result) = result {
-        let execution_id_clone = dispatch_result.execution_id.clone();
-        let app_clone = app_handle.clone();
-        
-        // 异步开始执行，不阻塞调度响应
-        tokio::spawn(async move {
-            info!("Starting real engine execution: {}", execution_id_clone);
+        // 仅对需要 register_execution 的架构触发后续执行（如 plan-execute / llm-compiler）
+        let arch_for_exec = selected_architecture.clone();
+        if matches!(arch_for_exec.as_str(), "plan-execute" | "llm-compiler" | "auto") {
+            let execution_id_clone = dispatch_result.execution_id.clone();
+            let app_clone = app_handle.clone();
             
-            // 从应用状态获取执行管理器
-            let execution_manager = app_clone.state::<Arc<crate::managers::ExecutionManager>>();
-            let execution_manager_clone = execution_manager.inner().clone();
-            let app_inner = app_clone.clone();
-            let execution_id_inner = execution_id_clone.clone();
-            let db_service_clone = app_clone.state::<Arc<DatabaseService>>().inner().clone();
-            
+            // 异步开始执行，不阻塞调度响应
             tokio::spawn(async move {
-                // 获取执行上下文
-                let context = match execution_manager_clone.get_execution_context(&execution_id_inner).await {
-                    Some(ctx) => ctx,
-                    None => {
-                        log::error!("Execution context not found: {}", execution_id_inner);
-                        return;
-                    }
-                };
+                info!("Starting real engine execution: {}", execution_id_clone);
+                
+                // 从应用状态获取执行管理器
+                let execution_manager = app_clone.state::<Arc<crate::managers::ExecutionManager>>();
+                let execution_manager_clone = execution_manager.inner().clone();
+                let app_inner = app_clone.clone();
+                let execution_id_inner = execution_id_clone.clone();
+                let db_service_clone = app_clone.state::<Arc<DatabaseService>>().inner().clone();
+                
+                tokio::spawn(async move {
+                    // 获取执行上下文
+                    let context = match execution_manager_clone.get_execution_context(&execution_id_inner).await {
+                        Some(ctx) => ctx,
+                        None => {
+                            // 对于不该触发的情况已在外层过滤，这里若仍然缺失，可能是被外部取消或过期清理
+                            log::error!("Execution context not found: {}", execution_id_inner);
+                            return;
+                        }
+                    };
 
                 log::info!("Starting real execution for: {} with engine: {:?}", execution_id_inner, context.engine_type);
 
@@ -878,15 +882,22 @@ pub async fn dispatch_scenario_task(
                     }
                 }
 
-                // 清理执行上下文
-                execution_manager_clone.cleanup_execution(&execution_id_inner).await;
+                    // 清理执行上下文
+                    execution_manager_clone.cleanup_execution(&execution_id_inner).await;
+                });
             });
-        });
+        } else {
+            // ReAct 等架构已在调度阶段完成执行，这里不再重复触发
+            info!("Architecture '{}' completes within dispatch; skipping real engine execution.", arch_for_exec);
+        }
     }
     
     // 更新返回结果中的架构信息
     result.map(|mut dispatch_result| {
-        dispatch_result.selected_architecture = selected_architecture;
+        // 当外层选择为 "auto" 时，不覆盖具体调度器返回的架构信息
+        if selected_architecture != "auto" {
+            dispatch_result.selected_architecture = selected_architecture.clone();
+        }
         dispatch_result
     })
 }
@@ -921,19 +932,31 @@ pub async fn stop_execution(
 ) -> Result<(), String> {
     info!("Stopping execution: {}", execution_id);
 
-    // 调用执行管理器停止执行并清理上下文
+    // 1. 尝试停止执行管理器中的任务
     let execution_manager = app.state::<Arc<crate::managers::ExecutionManager>>();
     let manager = execution_manager.inner().clone();
     if let Err(e) = manager.stop_execution(&execution_id).await {
         log::warn!("Failed to stop execution {}: {}", execution_id, e);
     }
 
-    // 发送停止事件（统一事件名称）
-    app.emit("execution_stopped", serde_json::json!({
+    // 2. 如果execution_id看起来像会话ID，也尝试取消对应的流
+    // 这样可以处理用会话ID调用stop的情况
+    if execution_id.starts_with("conv_") || execution_id.len() == 36 {
+        // 可能是会话ID或UUID格式
+        use crate::commands::ai::cancel_conversation_stream;
+        cancel_conversation_stream(&execution_id);
+        info!("Also cancelled stream for conversation: {}", execution_id);
+    }
+
+    // 3. 发送停止事件（统一事件名称）
+    if let Err(e) = app.emit("execution_stopped", serde_json::json!({
         "execution_id": execution_id,
         "message": "Execution stopped by user"
-    })).map_err(|e| e.to_string())?;
+    })) {
+        log::warn!("Failed to emit execution_stopped event: {}", e);
+    }
 
+    info!("Execution stop completed: {}", execution_id);
     Ok(())
 }
 

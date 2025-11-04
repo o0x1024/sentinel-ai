@@ -598,9 +598,9 @@ const sendMessage = async () => {
           streamStartTime.value = null
           streamCharCount.value = 0
 
-          // 非流式路径下：主动保存会话消息（流式由 orderedMessages 统一保存）
+          // 非流式路径下：只保存本次新增的用户消息和助手消息
           try {
-            await saveMessagesToConversation(messages.value as any)
+            await saveMessagesToConversation([userMessage, assistantMessage] as any)
           } catch (e) {
             console.error('保存消息失败:', e)
           }
@@ -658,37 +658,51 @@ const sendMessage = async () => {
 }
 
 const stopExecution = async () => {
-  if (currentExecutionId.value) {
-    try {
+  console.log('停止执行 - 当前执行ID:', currentExecutionId.value, '会话ID:', currentConversationId.value)
+  
+  // 优先调用统一的停止命令
+  try {
+    if (currentConversationId.value) {
       await invoke('stop_execution', {
-        executionId: currentExecutionId.value,
+        executionId: currentExecutionId.value || currentConversationId.value,
       })
-    } catch (error) {
-      console.error('Failed to stop execution:', error)
+      console.log('成功调用 stop_execution 命令')
     }
+  } catch (error) {
+    console.error('停止执行失败:', error)
   }
 
+  // 额外调用取消流命令作为备用
   if (currentConversationId.value) {
     try {
       await invoke('cancel_ai_stream', {
         conversationId: currentConversationId.value,
       })
+      console.log('成功调用 cancel_ai_stream 命令')
     } catch (error) {
-      console.error('Failed to cancel stream:', error)
+      console.error('取消流失败:', error)
     }
   }
 
+  // 更新UI状态
   const lastAssistantMessage = messages.value.filter(m => m.role === 'assistant').pop()
   if (lastAssistantMessage && lastAssistantMessage.isStreaming) {
     lastAssistantMessage.isStreaming = false
-    lastAssistantMessage.content += '\n\n[用户中断了响应]'
+    if (!lastAssistantMessage.content.includes('[用户中断了响应]')) {
+      lastAssistantMessage.content += '\n\n[用户中断了响应]'
+    }
   }
 
-  // Always reset loading state when stopping
+  // 清理执行ID
+  currentExecutionId.value = null
+  
+  // 重置加载状态
   clearLoadingTimeout()
   isLoading.value = false
   streamStartTime.value = null
   streamCharCount.value = 0
+  
+  console.log('停止执行完成，已重置所有状态')
 }
 
 const retryLastMessage = () => {
