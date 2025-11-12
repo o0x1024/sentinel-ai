@@ -61,22 +61,17 @@ const applyStartupSettings = () => {
 
 // 懒加载页面组件 - 性能优化
 const Dashboard = () => import('./views/Dashboard.vue');
-const ScanTasks = () => import('./views/ScanTasks.vue');
-const ScanSessions = () => import('./views/ScanSessions.vue');
-const Vulnerabilities = () => import('./views/Vulnerabilities.vue');
-const AssetManagement = () => import('./views/AssetManagement.vue');
-const McpTools = () => import('./views/McpTools.vue');
+const SecurityCenter = () => import('./views/SecurityCenter.vue');
+const McpTools = () => import('./views/Tools.vue');
 const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 
 const AgentManagerView = () => import('./views/AgentManager.vue');
 const WorkflowMonitor = () => import('./views/WorkflowMonitor.vue');
-// const IntelligentSecurityTest = () => import('./components/IntelligentSecurityTest.vue');
-// const PlanExecuteDemo = () => import('./components/PlanExecuteDemo.vue');
-// const ReWOOTestPanel = () => import('./components/ReWOOTestPanel.vue');
-// const LLMCompilerTest = () => import('./views/LLMCompilerTest.vue');
 const PromptManagement = () => import('./views/PromptManagement.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
 const RAGManagement = () => import('./views/RAGManagement.vue');
+const PassiveScan = () => import('./views/PassiveScan.vue');
+const PluginManagement = () => import('./views/PluginManagement.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
@@ -100,28 +95,10 @@ const routes = [
     meta: { title: '总览' }
   },
   { 
-    path: '/scan-tasks', 
-    name: 'ScanTasks', 
-    component: ScanTasks,
-    meta: { title: '扫描任务' }
-  },
-  { 
-    path: '/scan-sessions', 
-    name: 'ScanSessions', 
-    component: ScanSessions,
-    meta: { title: '智能扫描会话' }
-  },
-  { 
-    path: '/vulnerabilities', 
-    name: 'Vulnerabilities', 
-    component: Vulnerabilities,
-    meta: { title: '漏洞管理' }
-  },
-  { 
-    path: '/assets', 
-    name: 'AssetManagement', 
-    component: AssetManagement,
-    meta: { title: '资产管理' }
+    path: '/security-center', 
+    name: 'SecurityCenter', 
+    component: SecurityCenter,
+    meta: { title: '安全中心' }
   },
   { 
     path: '/mcp-tools', 
@@ -160,25 +137,18 @@ const routes = [
     component: WorkflowMonitor,
     meta: { title: '工作流监控' }
   },
-  // { 
-  //   path: '/plan-execute', 
-  //   name: 'PlanExecuteDemo', 
-  //   component: PlanExecuteDemo,
-  //   meta: { title: 'Plan-and-Execute 演示' }
-  // },
-  // { 
-  //   path: '/rewoo-test', 
-  //   name: 'ReWOOTestPanel', 
-  //   component: ReWOOTestPanel,
-  //   meta: { title: 'ReWOO 架构测试' }
-  // },
-  // { 
-  //   path: '/llm-compiler-test', 
-  //   name: 'LLMCompilerTest', 
-  //   component: LLMCompilerTest,
-  //   meta: { title: 'LLMCompiler 引擎测试' }
-  // },
-
+  { 
+    path: '/passive-scan', 
+    name: 'PassiveScan', 
+    component: PassiveScan,
+    meta: { title: '被动扫描' }
+  },
+  { 
+    path: '/plugins', 
+    name: 'PluginManagement', 
+    component: PluginManagement,
+    meta: { title: '插件管理' }
+  },
   { 
     path: '/settings', 
     name: 'Settings', 

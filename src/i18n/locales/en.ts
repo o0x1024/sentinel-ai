@@ -876,7 +876,7 @@ export default {
       other: 'Other'
     }
   },
-  mcpTools: {
+  Tools: {
     title: 'MCP Tools',
     description: 'Manage and use MCP tools and services',
     mcpServer: 'MCP Server',
@@ -976,8 +976,10 @@ export default {
     dashboard: 'Dashboard',
     scanTasks: 'Scan Tasks',
     vulnerabilities: 'Vulnerabilities',
+    passiveScan: 'Passive Scan',
     dictionary: 'Dictionary Management',
     mcpTools: 'MCP Tools',
+    plugins: 'Plugin Management',
     smartAgent: 'Smart Agent Console',
     settings: 'System Settings',
     language: 'Language Settings',
@@ -1488,6 +1490,27 @@ export default {
       createFailed: 'Agent creation failed',
       validationFailed: 'Validation failed, please check configuration',
       fillRequired: 'Please fill in required fields'
+    }
+  },
+  
+  plugins: {
+    title: 'Plugin Management',
+    description: 'Manage and configure security testing plugins',
+    mainCategory: 'Main Category',
+    subCategory: 'Sub Category',
+    categories: {
+      all: 'All',
+      passiveScan: 'Passive Scan Plugins',
+      agentTools: 'Agent Tool Plugins',
+      builtinTools: 'Built-in Tool Plugins',
+      mcpTools: 'MCP Tool Plugins',
+      vulnerability: 'Vulnerability Detection',
+      injection: 'Injection Detection',
+      xss: 'Cross-Site Scripting',
+      scanner: 'Scanner',
+      analyzer: 'Analyzer',
+      reporter: 'Reporter',
+      custom: 'Custom'
     }
   }
 }

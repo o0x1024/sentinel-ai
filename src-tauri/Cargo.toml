@@ -26,6 +26,8 @@ sentinel-db = { path = "sentinel-db" }
 sentinel-prompt = { path = "sentinel-prompt" }
 sentinel-rag = { path = "sentinel-rag" }
 sentinel-tools = { path = "sentinel-tools" }
+sentinel-services = { path = "sentinel-services" }
+sentinel-passive = { path = "sentinel-passive" }
 
 html2text = "0.15.5"
 urlencoding = "2.1.3"
@@ -65,7 +67,7 @@ rmcp = { version = "0.8.3", features = [
 ] }
 
 # RAG and Vector Database
-lancedb = "0.21.3"
+lancedb = "0.22.3"
 
 # Document parsing
 docx-rs = "0.4.17"
@@ -136,6 +138,18 @@ derive_more = { version = "2.0.1", features = ["full"] }
 md5 = "0.7"
 sha2 = "0.10"
 
+# 被动扫描代理（已迁移到 sentinel-passive workspace）
+# hudsucker = "0.22"
+# rcgen = "0.13"
+# rustls = { version = "0.23", features = ["ring"] }
+# rustls-pemfile = "2.2"
+# x509-parser = "0.16"
+# deno_core = "0.316"
+# deno_runtime = "0.194"
+tera = "1.20"
+# flate2 = "1.0"
+# brotli = "7.0"
+
 # 网络扫描工具依赖
 # 子域名扫描相关
 trust-dns-resolver = "0.23"
@@ -171,8 +185,8 @@ fastrand = "2.3.0"
 # 信号处理
 signal-hook = "0.3"
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
-rig-core = { version = "0.22.0", features = ["derive"] }
-rig-lancedb = "0.2.24"
+rig-core = { version = "0.24.0", features = ["derive"] }
+rig-lancedb = "0.2.27"
 arrow-array = "55.2.0"
 arrow-schema = "55.2.0"
 
@@ -205,9 +219,11 @@ tauri-plugin-single-instance = "2"
 [workspace]
 members = [
     "sentinel-core",
-    "sentinel-db", "sentinel-prompt",
+    "sentinel-db",
+    "sentinel-prompt",
     "sentinel-rag",
     "sentinel-tools",
+    "sentinel-passive", "sentinel-plugins",
 ]
 resolver = "2"
 

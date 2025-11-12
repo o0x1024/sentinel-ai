@@ -169,7 +169,8 @@ impl DatabaseService {
 
     /// 创建数据库表结构
     async fn create_database_schema(&self, pool: &SqlitePool) -> Result<()> {
-
+        tracing::info!("Creating database schema...");
+        
         // 使用事务来确保所有表创建成功或全部回滚
         let mut tx = pool.begin().await?;
 

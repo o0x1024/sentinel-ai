@@ -274,10 +274,14 @@
         <!-- 工具选择 -->
         <div class="divider">可用工具</div>
         <div class="max-h-64 overflow-y-auto p-4 bg-base-100 rounded border space-y-4">
-          <!-- 展开/折叠全部 -->
+          <!-- 工具栏：展开/折叠全部 + 刷新 -->
           <div class="flex items-center gap-2 pb-2">
             <button type="button" class="btn btn-xs" @click="expandAllTools">展开全部</button>
             <button type="button" class="btn btn-xs" @click="collapseAllTools">折叠全部</button>
+            <button type="button" class="btn btn-xs btn-outline btn-primary" @click="refreshTools" :disabled="isRefreshingTools">
+              <i :class="['fas', 'fa-sync-alt', { 'fa-spin': isRefreshingTools }]"></i>
+              <span class="ml-1">刷新工具</span>
+            </button>
           </div>
           <!-- 全选 -->
           <div class="flex items-center gap-2 pb-2 border-b border-base-300">
@@ -331,6 +335,30 @@
                 <span class="flex-1">{{ tool.title || tool.name }}</span>
               </label>
               <div v-if="group.tools.length === 0" class="text-xs opacity-60 col-span-3">该连接暂无工具</div>
+            </div>
+          </div>
+
+          <!-- 插件工具分组 -->
+          <div class="pt-2 border-t border-base-300">
+            <div class="flex items-center gap-2 text-xs font-semibold opacity-70 mb-2">
+              <button type="button" class="btn btn-ghost btn-xs px-1" @click="togglePluginToolsCollapse">
+                <i :class="['fas', showPluginTools ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
+              </button>
+              <input type="checkbox" class="checkbox checkbox-xs"
+                     :checked="pluginToolsAllSelected"
+                     :indeterminate="pluginToolsSomeSelected && !pluginToolsAllSelected"
+                     @change="togglePluginToolsGroup($event)"/>
+              <span>插件工具</span>
+              <span class="text-xs opacity-50">({{ pluginTools.length }})</span>
+            </div>
+            <div v-show="showPluginTools" class="grid grid-cols-3 gap-2">
+              <label v-for="plugin in pluginTools" :key="'plugin-' + plugin.metadata.id" class="label cursor-pointer gap-2 text-sm px-3 py-2 rounded hover:bg-base-200">
+                <input type="checkbox" class="checkbox checkbox-sm"
+                       :checked="editingAgent.tools.allow.includes('plugin::' + plugin.metadata.id)"
+                       @change="togglePluginTool(plugin.metadata.id, $event)"/>
+                <span class="flex-1" :title="plugin.metadata.description">{{ plugin.metadata.name }}</span>
+              </label>
+              <div v-if="pluginTools.length === 0" class="text-xs opacity-60 col-span-3">暂无插件工具，可前往插件管理创建</div>
             </div>
           </div>
         </div>
@@ -490,6 +518,7 @@
 defineOptions({ inheritAttrs: false })
 import { ref, onMounted, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useMessageUtils } from '@/composables/useMessageUtils'
 
 const { renderMarkdown } = useMessageUtils()
@@ -570,12 +599,15 @@ const isCreating = ref(false)
 const toolsCatalog = ref<any[]>([])
 const builtinTools = ref<any[]>([])
 const mcpToolGroups = ref<Array<{ connection: string, tools: any[] }>>([])
+const pluginTools = ref<any[]>([]) // 插件工具列表
 const showBuiltin = ref(true)
+const showPluginTools = ref(true) // 插件工具展开状态
 const collapsedGroups = ref<Record<string, boolean>>({})
 const promptTemplates = ref<any[]>([])
 const selectedPlannerTemplateEdit = ref<number | null>(null)
 const selectedExecutorTemplateEdit = ref<number | null>(null)
 const loading = ref(false)
+const isRefreshingTools = ref(false)
 
 // 统一提示词系统相关数据
 const promptGroups = ref<any[]>([])
@@ -667,6 +699,24 @@ const loadTools = async () => {
   }
 }
 
+// 加载插件工具（仅 agentTools 类型）
+const loadPluginTools = async () => {
+  try {
+    const response = await invoke<any>('list_plugins')
+    if (response.success && response.data) {
+      // 只加载 agentTools 类型的已启用插件
+      pluginTools.value = response.data.filter((plugin: any) => 
+        plugin.metadata.category === 'agentTools' && plugin.status === 'Enabled'
+      )
+    } else {
+      pluginTools.value = []
+    }
+  } catch (error) {
+    console.error('Failed to load plugin tools:', error)
+    pluginTools.value = []
+  }
+}
+
 const loadPromptTemplates = async () => {
   try {
     promptTemplates.value = await invoke<any[]>('list_prompt_templates_api').catch(() => [])
@@ -692,19 +742,25 @@ const loadPromptGroups = async (engine?: string) => {
   } catch { promptGroups.value = [] }
 }
 
-const openCreateModal = () => {
+const openCreateModal = async () => {
   editingAgent.value = newProfile()
   isCreating.value = true
   selectedPlannerTemplateEdit.value = null
   selectedExecutorTemplateEdit.value = null
+  // 刷新工具列表以获取最新数据
+  await loadTools()
+  await loadPluginTools() // 确保插件工具列表最新
   showEditModal.value = true
 }
 
-const editAgent = (agent: AgentProfile) => {
+const editAgent = async (agent: AgentProfile) => {
   editingAgent.value = JSON.parse(JSON.stringify(agent)) // 深拷贝
   isCreating.value = false
   selectedPlannerTemplateEdit.value = agent.prompt_ids?.planner ?? null
   selectedExecutorTemplateEdit.value = agent.prompt_ids?.executor ?? null
+  // 刷新工具列表以获取最新数据
+  await loadTools()
+  await loadPluginTools() // 确保插件工具列表最新
   showEditModal.value = true
 }
 
@@ -794,6 +850,13 @@ const toggleToolForEdit = (name: string, e: Event) => {
 }
 
 const getToolTitle = (toolName: string) => {
+  // 检查是否是插件工具
+  if (toolName.startsWith('plugin::')) {
+    const pluginId = toolName.substring(8) // 移除 'plugin::' 前缀
+    const plugin = pluginTools.value.find(p => p.metadata.id === pluginId)
+    return plugin ? `${plugin.metadata.name} (插件)` : toolName
+  }
+  // 普通工具
   const tool = toolsCatalog.value.find(t => t.name === toolName)
   return tool?.title || toolName
 }
@@ -801,7 +864,9 @@ const getToolTitle = (toolName: string) => {
 // 计算属性：全选状态
 const allToolsSelected = computed(() => {
   if (!editingAgent.value) return false
-  const total = builtinTools.value.length + mcpToolGroups.value.reduce((acc, g) => acc + g.tools.length, 0)
+  const total = builtinTools.value.length + 
+                mcpToolGroups.value.reduce((acc, g) => acc + g.tools.length, 0) +
+                pluginTools.value.length
   return total > 0 && editingAgent.value.tools.allow.length >= total
 })
 const someToolsSelected = computed(() => {
@@ -840,7 +905,8 @@ const toggleAllTools = (e: Event) => {
   if (checked) {
     const all = [
       ...builtinTools.value.map(t => t.name),
-      ...mcpToolGroups.value.flatMap(g => g.tools.map(t => t.name))
+      ...mcpToolGroups.value.flatMap(g => g.tools.map(t => t.name)),
+      ...pluginTools.value.map(p => `plugin::${p.metadata.id}`)
     ]
     editingAgent.value.tools.allow = Array.from(new Set(all))
   } else {
@@ -874,17 +940,72 @@ const toggleGroupCollapse = (conn: string) => {
   collapsedGroups.value[conn] = !collapsedGroups.value[conn]
   collapsedGroups.value = { ...collapsedGroups.value }
 }
+
+// 插件工具相关计算属性
+const pluginToolsAllSelected = computed(() => {
+  if (!editingAgent.value || pluginTools.value.length === 0) return false
+  const pluginNames = pluginTools.value.map(p => `plugin::${p.metadata.id}`)
+  return pluginNames.every(n => editingAgent.value!.tools.allow.includes(n))
+})
+
+const pluginToolsSomeSelected = computed(() => {
+  if (!editingAgent.value || pluginTools.value.length === 0) return false
+  const pluginNames = pluginTools.value.map(p => `plugin::${p.metadata.id}`)
+  return pluginNames.some(n => editingAgent.value!.tools.allow.includes(n))
+})
+
+// 插件工具切换方法
+const togglePluginToolsCollapse = () => { showPluginTools.value = !showPluginTools.value }
+
+const togglePluginToolsGroup = (e: Event) => {
+  if (!editingAgent.value) return
+  const checked = (e.target as HTMLInputElement).checked
+  const pluginNames = pluginTools.value.map(p => `plugin::${p.metadata.id}`)
+  const set = new Set(editingAgent.value.tools.allow)
+  if (checked) {
+    pluginNames.forEach(n => set.add(n))
+  } else {
+    pluginNames.forEach(n => set.delete(n))
+  }
+  editingAgent.value.tools.allow = Array.from(set)
+}
+
+const togglePluginTool = (pluginId: string, e: Event) => {
+  if (!editingAgent.value) return
+  const checked = (e.target as HTMLInputElement).checked
+  const toolName = `plugin::${pluginId}`
+  const set = new Set(editingAgent.value.tools.allow)
+  if (checked) {
+    set.add(toolName)
+  } else {
+    set.delete(toolName)
+  }
+  editingAgent.value.tools.allow = Array.from(set)
+}
+
 const expandAllTools = () => {
   showBuiltin.value = true
+  showPluginTools.value = true
   const map: Record<string, boolean> = {}
   for (const g of mcpToolGroups.value) map[g.connection] = false
   collapsedGroups.value = map
 }
 const collapseAllTools = () => {
   showBuiltin.value = false
+  showPluginTools.value = false
   const map: Record<string, boolean> = {}
   for (const g of mcpToolGroups.value) map[g.connection] = true
   collapsedGroups.value = map
+}
+
+// 手动刷新工具列表
+const refreshTools = async () => {
+  isRefreshingTools.value = true
+  try {
+    await Promise.all([loadTools(), loadPluginTools()])
+  } finally {
+    isRefreshingTools.value = false
+  }
 }
 
 const formatDate = (dateStr?: string) => {
@@ -903,7 +1024,19 @@ const resetAgent = (agent: AgentProfile) => {
 }
 
 onMounted(async () => {
-  await Promise.all([loadAgents(), loadTools(), loadPromptTemplates(), loadPromptGroups()])
+  await Promise.all([loadAgents(), loadTools(), loadPluginTools(), loadPromptTemplates(), loadPromptGroups()])
+  
+  // 监听插件变化事件
+  listen('plugin:changed', async () => {
+    await loadPluginTools()
+  })
+  
+  // 监听MCP工具变更事件
+  listen('mcp:tools-changed', async () => {
+    console.log('AgentManager: MCP tools changed, refreshing tools...')
+    await loadTools()
+    await loadPluginTools()
+  })
 })
 
 // 当编辑中的Agent切换引擎时，按引擎过滤提示词分组

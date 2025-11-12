@@ -1,24 +1,31 @@
 pub mod ai;
 pub mod asset_service;
 pub mod database;
-pub mod dictionary;
 pub mod mcp;
-pub mod performance;
 pub mod prompt_db;
 pub mod scan;
 pub mod scan_session;
 pub mod vulnerability;
 pub mod prompt_service;
 
+// 从 sentinel-services crate 重新导出已迁移的模块
+pub use sentinel_services::message_emitter;
+pub use sentinel_services::performance;
+pub use sentinel_services::dictionary;
+
 // 导出所有服务
 pub use ai::{AiService, AiServiceManager};
 pub use asset_service::AssetService;
 pub use database::DatabaseService;
-pub use dictionary::DictionaryService;
 pub use mcp::McpService;
-pub use performance::{
+
+// 从 sentinel-services 重新导出
+pub use sentinel_services::performance::{
     PerformanceConfig, PerformanceMetrics, PerformanceMonitor, PerformanceOptimizer,
 };
+pub use sentinel_services::message_emitter::TauriMessageEmitter;
+pub use sentinel_services::dictionary::DictionaryService;
+
 
 pub use prompt_service::{
     PromptService, PromptServiceConfig, PromptSession, ExecutionRecord,

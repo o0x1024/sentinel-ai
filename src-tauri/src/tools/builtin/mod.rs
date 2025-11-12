@@ -1,14 +1,16 @@
 //! 内置工具模块
-//! 
+//!
 //! 提供系统内置的安全扫描和分析工具
 
 pub mod port_scan;
 pub mod subdomain_scan;
 // 使用 sentinel-tools 中的实现
-pub use sentinel_tools::builtin::{HttpRequestTool, HttpRequestConfig, HttpResponse, HttpRequestResult, LocalTimeTool};
+pub use sentinel_tools::builtin::{
+    HttpRequestConfig, HttpRequestResult, HttpRequestTool, HttpResponse, LocalTimeTool,
+};
 
 // 重新导出主要的工具结构体
-pub use port_scan::{PortScanTool, PortResult, PortScanResults, PortStatus, ScanConfig};
+pub use port_scan::{PortResult, PortScanResults, PortScanTool, PortStatus, ScanConfig};
 pub use subdomain_scan::{RSubdomainTool, SubdomainResult, SubdomainScanResults};
 
 use super::*;
@@ -27,13 +29,13 @@ pub struct BuiltinToolProvider {
 impl BuiltinToolProvider {
     pub fn new(db_service: Arc<DatabaseService>) -> Self {
         let mut tools: Vec<Arc<dyn UnifiedTool>> = Vec::new();
-        
+
         // 添加内置工具（只保留完全实现的工具）
         tools.push(Arc::new(PortScanTool::new()));
-        tools.push(Arc::new(RSubdomainTool::new(db_service)));
+        tools.push(Arc::new(RSubdomainTool::new(db_service.clone())));
         tools.push(Arc::new(HttpRequestTool::new()));
         tools.push(Arc::new(LocalTimeTool::new()));
-        
+
         Self { tools }
     }
 }

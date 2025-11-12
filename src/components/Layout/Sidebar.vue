@@ -153,32 +153,18 @@ const mainMenuItems = computed(() => [
     badgeClass: ''
   },
   {
-    path: '/scan-tasks',
-    name: t('sidebar.scanTasks', '扫描任务'),
-    icon: 'fas fa-search',
+    path: '/security-center',
+    name: t('sidebar.securityCenter', '安全中心'),
+    icon: 'fas fa-shield-alt',
     badge: taskStats.value.running > 0 ? taskStats.value.running.toString() : null,
     badgeClass: 'badge-primary'
   },
   {
-    path: '/scan-sessions',
-    name: t('scanSessions.title', '智能扫描会话'),
-    icon: 'fas fa-brain',
+    path: '/passive-scan',
+    name: t('sidebar.passiveScan', '被动扫描'),
+    icon: 'fas fa-satellite-dish',
     badge: null,
-    badgeClass: ''
-  },
-  {
-    path: '/vulnerabilities',
-    name: t('sidebar.vulnerabilities', '漏洞管理'),
-    icon: 'fas fa-bug',
-    badge: null,
-    badgeClass: 'badge-error'
-  },
-  {
-    path: '/assets',
-    name: t('sidebar.assets', '资产管理'),
-    icon: 'fas fa-server',
-    badge: null,
-    badgeClass: ''
+    badgeClass: 'badge-info'
   },
   {
     path: '/agent-manager',
@@ -236,7 +222,7 @@ const toolMenuItems = computed(() => [
   },
   {
     path: '/mcp-tools',
-    name: t('sidebar.mcpTools', 'MCP工具'),
+    name: t('sidebar.Tools', '应用工具'),
     icon: 'fas fa-tools',
     badge: null,
     badgeClass: ''
@@ -245,6 +231,13 @@ const toolMenuItems = computed(() => [
     path: '/dictionary',
     name: t('sidebar.dictionary', '字典管理'),
     icon: 'fas fa-book',
+    badge: null,
+    badgeClass: ''
+  },
+  {
+    path: '/plugins',
+    name: t('sidebar.plugins', '插件管理'),
+    icon: 'fas fa-puzzle-piece',
     badge: null,
     badgeClass: ''
   },

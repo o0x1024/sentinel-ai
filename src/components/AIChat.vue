@@ -80,15 +80,23 @@
               : 'bg-base-100 text-base-content border-base-300 hover:border-base-400',
           ]"
         >
-          <!-- 简化的消息内容显示 - 统一使用 Markdown 渲染 -->
-          <div 
+          <!-- ReAct 步骤显示 -->
+          <div v-if="isReActMessage(message)" class="space-y-3">
+            <ReActStepDisplay
+              v-for="(step, index) in parseReActSteps(message.content, message.id)"
+              :key="`react-step-${index}`"
+              :step-data="step"
+            />
+          </div>
+
+          <!-- 普通消息显示 - 统一使用 Markdown 渲染 -->
+          <div v-else
             :class="[
               'prose prose-sm max-w-none leading-relaxed',
               message.role === 'user' ? 'prose-invert ' : 'prose-neutral'
             ]"
             v-html="renderMarkdown(message.content)"
           />
-
 
           <!-- 流式指示器 -->
           <div v-if="message.isStreaming" class="flex items-center gap-2 mt-2 text-base-content/70">
@@ -232,6 +240,7 @@ import { useOrderedMessages } from '../composables/useOrderedMessages'
 
 // Components
 import InputAreaComponent from './InputAreaComponent.vue'
+import ReActStepDisplay from './MessageParts/ReActStepDisplay.vue'
 
 // Types
 import type { ChatMessage, Citation } from '../types/chat'
@@ -282,6 +291,210 @@ const {
 const messages = ref<ChatMessage[]>([])
 
 const { formatTime, renderMarkdown } = useMessageUtils()
+
+// ReAct 消息解析函数
+const isReActMessage = (message: ChatMessage) => {
+  if (message.role !== 'assistant') return false
+  const content = message.content || ''
+  
+  // 检测 ReAct 特征：Thought:, Action:, Observation:
+  return /(?:Thought:|Action:|Observation:|Final Answer:)/i.test(content)
+}
+
+interface ReActStepData {
+  thought?: string
+  action?: any
+  observation?: any
+  error?: string
+  finalAnswer?: string
+}
+
+// 修改版：优先使用消息中存储的 reactSteps，否则从 content 和 chunks 解析
+const parseReActSteps = (content: string, messageId?: string): ReActStepData[] => {
+  // 优先使用消息对象中已经解析并存储的 reactSteps
+  const message = messages.value.find(m => m.id === messageId)
+  if (message && (message as any).reactSteps) {
+    console.log('[parseReActSteps] Using pre-parsed reactSteps from message:', messageId)
+    return (message as any).reactSteps
+  }
+  
+  // 如果没有存储的数据，实时解析（流式传输期间）
+  console.log('[parseReActSteps] Parsing from content and chunks for message:', messageId)
+  
+  const steps: ReActStepData[] = []
+  
+  // 尝试从 processor 获取原始 chunks (包含 ToolResult)
+  const chunks = messageId ? (orderedMessages.processor.chunks.get(messageId) || []) : []
+  const toolResultChunks = chunks.filter(c => c.chunk_type === 'ToolResult')
+  
+  console.log('[parseReActSteps] Total chunks:', chunks.length, 'ToolResult chunks:', toolResultChunks.length)
+  
+  // 分割内容为多个步骤（每个步骤以 Thought: 开始或独立的 Action: 开始）
+  const lines = content.split('\n')
+  let currentStep: ReActStepData = {}
+  let inObservation = false
+  let observationLines: string[] = []
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    
+    // 检测 Thought
+    if (line.startsWith('Thought:')) {
+      // 保存之前的步骤
+      if (Object.keys(currentStep).length > 0) {
+        if (observationLines.length > 0) {
+          currentStep.observation = observationLines.join('\n')
+          observationLines = []
+          inObservation = false
+        }
+        steps.push(currentStep)
+      }
+      currentStep = {}
+      currentStep.thought = line.substring('Thought:'.length).trim()
+    }
+    // 检测 Action
+    else if (line.startsWith('Action:')) {
+      if (inObservation && observationLines.length > 0) {
+        currentStep.observation = observationLines.join('\n')
+        observationLines = []
+        inObservation = false
+      }
+      
+      const actionContent = line.substring('Action:'.length).trim()
+      
+      // 检查下一行是否有 Action Input
+      let actionInput = null
+      if (i + 1 < lines.length && lines[i + 1].trim().startsWith('Action Input:')) {
+        i++
+        const inputLine = lines[i].substring(lines[i].indexOf('Action Input:') + 'Action Input:'.length).trim()
+        try {
+          actionInput = JSON.parse(inputLine)
+        } catch {
+          actionInput = inputLine
+        }
+      }
+      
+      currentStep.action = {
+        tool: actionContent,
+        args: actionInput,
+        status: 'completed'
+      }
+      
+      // 🔧 新增：尝试从 ToolResult chunks 中查找对应的 Observation
+      const matchingToolResult = toolResultChunks.find(chunk => 
+        chunk.tool_name === actionContent
+      )
+      
+      if (matchingToolResult) {
+        console.log('[parseReActSteps] Found ToolResult for tool:', actionContent)
+        try {
+          const obsData = JSON.parse(matchingToolResult.content.toString())
+          currentStep.observation = obsData
+          
+          // 检查执行状态
+          if (obsData.success === false || obsData.error) {
+            currentStep.action.status = 'failed'
+          }
+        } catch (e) {
+          // 如果不是 JSON，直接使用原始内容
+          currentStep.observation = matchingToolResult.content.toString()
+        }
+      }
+    }
+    // 检测 Observation (保留旧逻辑作为后备)
+    else if (line.startsWith('Observation:')) {
+      inObservation = true
+      const obsContent = line.substring('Observation:'.length).trim()
+      if (obsContent) {
+        observationLines.push(obsContent)
+      }
+      
+      // 检查是否包含错误信息，如果有则更新 action 状态
+      if (currentStep.action && obsContent) {
+        try {
+          const obsJson = JSON.parse(obsContent)
+          if (obsJson.success === false || obsJson.error) {
+            currentStep.action.status = 'failed'
+            if (obsJson.error) {
+              currentStep.error = obsJson.error
+            }
+          }
+        } catch {
+          // 如果不是 JSON，检查文本中是否包含错误关键字
+          if (obsContent.toLowerCase().includes('error') || 
+              obsContent.toLowerCase().includes('failed') ||
+              obsContent.toLowerCase().includes('失败')) {
+            currentStep.action.status = 'failed'
+          }
+        }
+      }
+    }
+    // 检测 Final Answer
+    else if (line.match(/^Final\s+Answer:/i)) {
+      if (inObservation && observationLines.length > 0) {
+        currentStep.observation = observationLines.join('\n')
+        observationLines = []
+        inObservation = false
+      }
+      
+      const finalContent = line.substring(line.indexOf(':') + 1).trim()
+      currentStep.finalAnswer = finalContent
+      
+      // 收集后续所有行作为 Final Answer 的一部分，直到消息结束
+      // 不再检查 Thought/Action，因为 Final Answer 应该是最后一部分
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextLine = lines[j]
+        // 保留原始格式，包括空行
+        if (currentStep.finalAnswer) {
+          currentStep.finalAnswer += '\n' + nextLine
+        } else if (nextLine.trim()) {
+          currentStep.finalAnswer = nextLine
+        }
+      }
+      // 已经收集完所有后续行，可以跳出循环
+      break
+    }
+    // 继续收集 observation 内容
+    else if (inObservation && line) {
+      observationLines.push(line)
+      
+      // 持续检查后续行是否包含错误信息
+      if (currentStep.action) {
+        const combinedObs = observationLines.join('\n')
+        try {
+          const obsJson = JSON.parse(combinedObs)
+          if (obsJson.success === false || obsJson.error) {
+            currentStep.action.status = 'failed'
+            if (obsJson.error && !currentStep.error) {
+              currentStep.error = obsJson.error
+            }
+          }
+        } catch {
+          // 检查文本中的错误关键字
+          if (combinedObs.toLowerCase().includes('error') || 
+              combinedObs.toLowerCase().includes('failed') ||
+              combinedObs.toLowerCase().includes('失败')) {
+            currentStep.action.status = 'failed'
+          }
+        }
+      }
+    }
+    // 继续收集 thought 内容（多行 thought）
+    else if (!inObservation && line && !currentStep.action && currentStep.thought) {
+      currentStep.thought += '\n' + line
+    }
+  }
+  
+  // 保存最后一个步骤
+  if (Object.keys(currentStep).length > 0) {
+    if (observationLines.length > 0) {
+      currentStep.observation = observationLines.join('\n')
+    }
+    steps.push(currentStep)
+  }
+  
+  return steps
+}
 
 // 持久化状态的key
 const AI_CHAT_STATE_KEY = 'ai-chat-state'

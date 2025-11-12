@@ -1,0 +1,144 @@
+//! 插件系统类型定义
+
+use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
+use sha2::{Sha256, Digest};
+use std::collections::HashMap;
+
+/// 插件元数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginMetadata {
+    /// 插件 ID（唯一标识）
+    pub id: String,
+    /// 插件名称
+    pub name: String,
+    /// 版本号
+    pub version: String,
+    /// 作者
+    pub author: Option<String>,
+    /// 主分类 (passive/agent)
+    #[serde(default = "default_main_category")]
+    pub main_category: String,
+    /// 子分类 (vulnerability/injection/xss/scanner/analyzer/reporter)
+    pub category: String,
+    /// 默认严重等级
+    pub default_severity: Severity,
+    /// 标签
+    pub tags: Vec<String>,
+    /// 描述
+    pub description: Option<String>,
+}
+
+fn default_main_category() -> String {
+    "passive".to_string()
+}
+
+/// 严重等级
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Critical,
+    High,
+    Medium,
+    Low,
+    Info,
+}
+
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Severity::Critical => write!(f, "critical"),
+            Severity::High => write!(f, "high"),
+            Severity::Medium => write!(f, "medium"),
+            Severity::Low => write!(f, "low"),
+            Severity::Info => write!(f, "info"),
+        }
+    }
+}
+
+/// 置信度
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Confidence {
+    High,
+    Medium,
+    Low,
+}
+
+impl std::fmt::Display for Confidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Confidence::High => write!(f, "high"),
+            Confidence::Medium => write!(f, "medium"),
+            Confidence::Low => write!(f, "low"),
+        }
+    }
+}
+
+/// 请求上下文
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestContext {
+    pub id: String,
+    pub method: String,
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
+    pub content_type: Option<String>,
+    pub query_params: HashMap<String, String>,
+    pub is_https: bool,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// 响应上下文
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseContext {
+    pub request_id: String,
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
+    pub content_type: Option<String>,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// 漏洞发现
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Finding {
+    pub id: String,
+    pub plugin_id: String,
+    pub vuln_type: String,
+    pub severity: Severity,
+    pub title: String,
+    pub description: String,
+    pub evidence: String,
+    pub location: String,
+    pub confidence: Confidence,
+    pub cwe: Option<String>,
+    pub owasp: Option<String>,
+    pub remediation: Option<String>,
+    pub url: String,
+    pub method: String,
+    pub created_at: DateTime<Utc>,
+    // 完整请求/响应证据（用于展示）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_status: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_body: Option<String>,
+}
+
+impl Finding {
+    /// 计算 Finding 签名（用于去重）
+    pub fn calculate_signature(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.plugin_id.as_bytes());
+        hasher.update(self.url.as_bytes());
+        hasher.update(self.location.as_bytes());
+        hasher.update(self.evidence.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+}

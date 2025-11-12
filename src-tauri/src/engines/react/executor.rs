@@ -315,28 +315,38 @@ impl ReactExecutor {
                                 trace.metrics.successful_tool_calls += 1;
                             }
 
-                            // 发送观察结果
+                            // 🔧 修复：立即一次性发送完整的 Observation 结果
+                            // 不要等待下一次迭代的 LLM 流式输出
                             if self.config.enable_streaming {
                                 if let Some(app) = &self.config.app_handle {
                                     let trace: tokio::sync::RwLockReadGuard<'_, ReactTrace> =
                                         self.trace.read().await;
                                     let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
                                     let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+                                    
+                                    // 一次性发送完整的工具结果，不进行流式分块
+                                    let observation_content = serde_json::to_string(&result).unwrap_or_default();
                                     emit_message_chunk(
                                         app,
                                         &execution_id,  // 使用统一的 execution_id
                                         &message_id,
                                         self.config.conversation_id.as_deref(),
                                         ChunkType::ToolResult,
-                                        &serde_json::to_string(&result).unwrap_or_default(),
+                                        &observation_content,
                                         false,
                                         Some("react"),
                                         Some(&action.tool),
                                     );
+                                    
+                                    tracing::info!(
+                                        "📤 Observation sent as ToolResult chunk: tool={}, length={}",
+                                        action.tool,
+                                        observation_content.len()
+                                    );
                                 }
                             }
 
-                            // 添加到上下文历史
+                            // 添加到上下文历史（但不会在 LLM 流式输出中重复显示）
                             context_history.push(format!(
                                 "Thought: {}\nAction: {}\nObservation: {}",
                                 llm_output,
@@ -361,6 +371,39 @@ impl ReactExecutor {
                                     error: Some(e.to_string()),
                                 });
                                 trace.metrics.failed_tool_calls += 1;
+                            }
+
+                            // 🔧 修复：失败时也一次性发送完整的错误信息
+                            if self.config.enable_streaming {
+                                if let Some(app) = &self.config.app_handle {
+                                    let trace: tokio::sync::RwLockReadGuard<'_, ReactTrace> =
+                                        self.trace.read().await;
+                                    let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+                                    let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+                                    
+                                    let error_content = serde_json::json!({
+                                        "error": e.to_string(),
+                                        "success": false
+                                    }).to_string();
+                                    
+                                    emit_message_chunk(
+                                        app,
+                                        &execution_id,
+                                        &message_id,
+                                        self.config.conversation_id.as_deref(),
+                                        ChunkType::ToolResult,
+                                        &error_content,
+                                        false,
+                                        Some("react"),
+                                        Some(&action.tool),
+                                    );
+                                    
+                                    tracing::warn!(
+                                        "📤 Observation error sent as ToolResult chunk: tool={}, error={}",
+                                        action.tool,
+                                        e
+                                    );
+                                }
                             }
 
                             context_history.push(format!(
@@ -544,25 +587,87 @@ impl ReactExecutor {
         if let Some(framework_adapter) = &self.config.framework_adapter {
             let available_tools = framework_adapter.list_available_tools().await;
             log::info!(
-                "ReAct executor: 框架适配器提供了 {} 个工具",
-                available_tools.len()
+                "ReAct executor: 框架适配器提供了 {} 个工具 => {:?}",
+                available_tools.len(),
+                available_tools
             );
 
             for tool_name in available_tools {
+                // 兼容：某些插件工具在 ToolInfo 中可能存储去掉前缀的 id（如 "test_1"），
+                // 而白名单里是 "plugin::test_1"。这里做前缀匹配补偿。
+                let mut whitelist_hit = allow.contains(&tool_name);
+                let plugin_prefixed_candidate = format!("plugin::{}", tool_name);
+                let prefixed_whitelist_hit = allow.contains(&plugin_prefixed_candidate);
+                let is_plugin = prefixed_whitelist_hit || tool_name.starts_with("plugin::");
+
                 // 过滤白名单/黑名单（与 Plan-and-Execute 保持一致）
                 // 如果有白名单且工具不在白名单中，跳过
-                if !allow.is_empty() && !allow.contains(&tool_name) {
-                    log::debug!("ReAct executor: 工具 '{}' 不在白名单中，已跳过", tool_name);
-                    continue;
+                if !allow.is_empty() {
+                    // 如果直接命中或前缀命中，则视为命中
+                    whitelist_hit = whitelist_hit || prefixed_whitelist_hit;
+                    if !whitelist_hit {
+                        log::debug!(
+                            "ReAct executor: 工具 '{}' 未命中白名单 (raw='{}', prefixed='{}'), allow={:?}",
+                            tool_name,
+                            allow.contains(&tool_name),
+                            prefixed_whitelist_hit,
+                            allow
+                        );
+                        continue;
+                    }
                 }
                 // 如果工具在黑名单中，跳过
                 if deny.contains(&tool_name) {
-                    log::debug!("ReAct executor: 工具 '{}' 在黑名单中，已跳过", tool_name);
+                    log::debug!(
+                        "ReAct executor: 工具 '{}' 在黑名单中，跳过 (deny={:?})",
+                        tool_name, deny
+                    );
                     continue;
                 }
-
-                if let Some(tool_info) = framework_adapter.get_tool_info(&tool_name).await {
-                    all_tools.push(tool_info);
+                match framework_adapter.get_tool_info(&tool_name).await {
+                    Some(tool_info) => {
+                        // 如果白名单里仅存在带前缀形式，且当前工具名无前缀，但该工具属于被动扫描（tags 含 passive），
+                        // 则不应用前缀补偿，避免 passive 的 "test_params" 被误当成 "plugin::test_params" 覆盖 agent 工具。
+                        if prefixed_whitelist_hit
+                            && !tool_info.name.starts_with("plugin::")
+                            && tool_info.metadata.tags.iter().any(|t| t == "passive")
+                        {
+                            log::debug!(
+                                "ReAct executor: 跳过对被动工具 '{}' 的前缀补偿 (候选='{}')",
+                                tool_info.name,
+                                plugin_prefixed_candidate
+                            );
+                            // 放弃该工具，继续后续
+                            continue;
+                        }
+                        // 如果白名单里仅存在带前缀形式，且当前工具名无前缀，则在 system prompt 展示时补前缀
+                        let effective_name = if !tool_info.name.starts_with("plugin::") && prefixed_whitelist_hit {
+                            plugin_prefixed_candidate.clone()
+                        } else {
+                            tool_info.name.clone()
+                        };
+                        log::debug!(
+                            "ReAct executor: 接收工具 '{}' => effective='{}' (available={}, source={:?}, plugin_fix={})",
+                            tool_info.name,
+                            effective_name,
+                            tool_info.available,
+                            tool_info.source,
+                            if effective_name != tool_info.name { "applied" } else { "none" }
+                        );
+                        // 在 ToolInfo 进入后续去重前调整其 name（仅影响 system prompt 展示，不改原对象其他字段）
+                        let mut adjusted = tool_info;
+                        if effective_name != adjusted.name {
+                            // 复制并覆盖 name 字段
+                            adjusted.name = effective_name;
+                        }
+                        all_tools.push(adjusted);
+                    }
+                    None => {
+                        log::warn!(
+                            "ReAct executor: list_available_tools() 包含 '{}' 但 get_tool_info 返回 None",
+                            tool_name
+                        );
+                    }
                 }
             }
         }
@@ -572,13 +677,17 @@ impl ReactExecutor {
         // 去重工具（按名称）
         let mut unique_tools: HashMap<String, ToolInfo> = HashMap::new();
         for tool in all_tools {
+            let existed = unique_tools.contains_key(&tool.name);
+            if existed {
+                log::debug!("ReAct executor: 去重丢弃重复工具 '{}'", tool.name);
+            }
             unique_tools.entry(tool.name.clone()).or_insert(tool);
         }
 
         let tool_infos: Vec<&ToolInfo> = unique_tools.values().collect();
 
         if tool_infos.is_empty() {
-            log::warn!("ReAct executor: 没有找到任何可用工具");
+            log::warn!("ReAct executor: 没有找到任何可用工具 (unique_tools.size={})", unique_tools.len());
             return "No tools available".to_string();
         }
 
@@ -612,10 +721,14 @@ impl ReactExecutor {
                 parts.join(", ")
             };
 
-            tool_lines.push(format!(
-                "- {}({}) - {}",
-                info.name, signature, info.description
-            ));
+            log::info!(
+                "ReAct executor: 工具列入 system prompt => name='{}', signature='{}', available={}, source={:?}",
+                info.name,
+                signature,
+                info.available,
+                info.source
+            );
+            tool_lines.push(format!("- {}({}) - {}", info.name, signature, info.description));
         }
         tool_lines.join("\n")
     }

@@ -3941,11 +3941,6 @@ impl Executor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         log::info!("保存执行结果到数据库");
 
-        // 首先确保数据库迁移已运行
-        if let Err(e) = self.repository.run_migrations().await {
-            log::warn!("数据库迁移失败: {}", e);
-        }
-
         // 1. 转换并保存执行计划
         let engine_plan = crate::engines::types::ExecutionPlan {
             id: plan.id.clone(),

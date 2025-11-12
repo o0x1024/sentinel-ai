@@ -10,6 +10,7 @@ use crate::models::{DocumentChunk, QueryResult};
 use rig::embeddings::EmbeddingModel;
 use rig::client::EmbeddingsClient;
 use rig::vector_store::VectorStoreIndex;
+use rig::vector_store::VectorSearchRequest;
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
 use lancedb::{connect, Connection, Table};
 use lancedb::arrow::arrow_schema::{DataType, Field, Fields, Schema};
@@ -105,8 +106,14 @@ impl LanceDbManager {
         let ollama = rig::providers::ollama::Client::new();
         let embedding_model = ollama.embedding_model(self.embedding_config.model.as_str());
         let index = LanceDbVectorIndex::new(table, embedding_model, "id", SearchParams::default()).await.map_err(|e| anyhow!(e.to_string()))?;
-        let req = rig::vector_store::request::VectorSearchRequest::builder().query(query).samples(top_k as u64).build()?;
-        let top_docs = index.top_n::<serde_json::Value>(req).await?;
+        
+        // 构建VectorSearchRequest
+        let search_request = VectorSearchRequest::builder()
+            .query(query)
+            .samples(top_k as u64)
+            .build()?;
+        let top_docs = index.top_n::<serde_json::Value>(search_request).await?;
+        
         let mut results = Vec::new();
         for (rank, (score, _id, value)) in top_docs.into_iter().enumerate() {
             let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -126,7 +133,9 @@ impl LanceDbManager {
 
     pub async fn delete_collection(&self, collection_name: &str) -> Result<()> {
         let conn = { let guard = self.conn.read().await; guard.as_ref().cloned().ok_or_else(|| anyhow!("LanceDB not initialized"))? };
-        let _ = conn.drop_table(collection_name).await; info!("Deleted collection: {}", collection_name); Ok(())
+        let _ = conn.drop_table(collection_name, &[]).await; 
+        info!("Deleted collection: {}", collection_name); 
+        Ok(())
     }
 
     pub async fn list_collections(&self) -> Result<Vec<String>> {

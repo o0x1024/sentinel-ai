@@ -11,7 +11,7 @@ use crate::services::mcp::McpService;
 use crate::tools::client::McpClientManager as McpClientManagerDirect;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -604,14 +604,26 @@ pub async fn mcp_get_connections(
 
     for config in db_configs {
         let name = config.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-        let id = config.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let id = config.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(); // 修改：id 是字符串
         let description = config.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let command = config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let args_str = config.get("args").and_then(|v| v.as_str()).unwrap_or("[]");
         
+        // 解析args，失败时记录详细日志
+        let args = match serde_json::from_str::<Vec<String>>(args_str) {
+            Ok(parsed_args) => {
+                debug!("Parsed args for {}: {:?}", name, parsed_args);
+                parsed_args
+            },
+            Err(e) => {
+                warn!("Failed to parse args for {} ({}): {}, using empty array", name, args_str, e);
+                vec![]
+            }
+        };
+        
         if let Some(status) = connections_status.get(&name) {
             frontend_connections.push(FrontendMcpConnection {
-                db_id: id.to_string(),
+                db_id: id.clone(), // 修改：直接使用 UUID 字符串
                 id: Some(name.clone()),
                 name: name.clone(),
                 description: Some(description.clone()),
@@ -619,11 +631,11 @@ pub async fn mcp_get_connections(
                 endpoint: command.clone(),
                 status: status.to_string(),
                 command: command.clone(),
-                args: serde_json::from_str(args_str).unwrap_or_else(|_| vec![]),
+                args: args.clone(),
             });
         } else {
             frontend_connections.push(FrontendMcpConnection {
-                db_id: id.to_string(),
+                db_id: id.clone(), // 修改：直接使用 UUID 字符串
                 id: None,
                 name: name.clone(),
                 description: Some(description.clone()),
@@ -631,7 +643,7 @@ pub async fn mcp_get_connections(
                 endpoint: command.clone(),
                 status: "Disconnected".to_string(),
                 command: command.clone(),
-                args: serde_json::from_str(args_str).unwrap_or_else(|_| vec![]),
+                args: args.clone(),
             });
         }
     }
@@ -779,11 +791,58 @@ pub async fn mcp_connect_server(
 pub async fn mcp_disconnect_server(
     client_manager: State<'_, Arc<McpClientManager>>,
     connection_id: String,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let client = client_manager.get_client();
     match client.disconnect(&connection_id).await {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            // 发射工具变更事件
+            let _ = app_handle.emit("mcp:tools-changed", &serde_json::json!({
+                "action": "server_disconnected",
+                "server": connection_id
+            }));
+            Ok(())
+        },
         Err(e) => Err(e.to_string()),
+    }
+}
+
+/// 删除MCP服务器配置
+#[tauri::command]
+pub async fn mcp_delete_server_config(
+    client_manager: State<'_, Arc<McpClientManager>>,
+    db_service: State<'_, Arc<DatabaseService>>,
+    db_id: String,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let client = client_manager.get_client();
+    
+    // 1. 根据 db_id 查找服务器配置
+    let configs = (**db_service)
+        .get_all_mcp_server_configs()
+        .await
+        .map_err(|e| format!("Failed to get MCP server configs: {}", e))?;
+    
+    // db_id 已经是字符串类型，直接比较
+    if let Some(config) = configs.iter().find(|c| c.id == db_id) {
+        // 2. 尝试断开连接（忽略错误，因为可能未连接）
+        let _ = client.disconnect_from_server(&config.name).await;
+        
+        // 3. 从数据库删除配置
+        (**db_service)
+            .delete_mcp_server_config(&config.id)
+            .await
+            .map_err(|e| format!("Failed to delete MCP server config: {}", e))?;
+        
+        // 发射工具变更事件
+        let _ = app_handle.emit("mcp:tools-changed", &serde_json::json!({
+            "action": "server_deleted",
+            "server": config.name.clone()
+        }));
+        
+        Ok(())
+    } else {
+        Err(format!("MCP server config with db_id {} not found", db_id))
     }
 }
 
@@ -975,6 +1034,7 @@ pub async fn add_child_process_mcp_server(
     mut command: String,
     args: Vec<String>,
     client_manager: tauri::State<'_, Arc<McpClientManager>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     if cfg!(target_os = "windows") {
         if command == "npx" || command == "npm" {
@@ -1014,6 +1074,7 @@ pub async fn add_child_process_mcp_server(
     let name_clone = name.clone();
     let command_clone = command.clone();
     let args_clone = args.clone();
+    let app_handle_clone = app_handle.clone();
 
     // 使用更详细的连接状态跟踪
     tokio::spawn(async move {
@@ -1025,6 +1086,11 @@ pub async fn add_child_process_mcp_server(
         {
             Ok(_) => {
                 info!("Successfully connected to MCP server: {}", name_clone);
+                // 发射工具变更事件
+                let _ = app_handle_clone.emit("mcp:tools-changed", &serde_json::json!({
+                    "action": "server_connected",
+                    "server": name_clone
+                }));
             }
             Err(e) => {
                 error!("Failed to connect to MCP server {}: {}", name_clone, e);

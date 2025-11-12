@@ -404,6 +404,13 @@ pub async fn list_unified_tools_grouped(
     let mut groups: std::collections::HashMap<String, Vec<SimpleToolInfo>> = std::collections::HashMap::new();
 
     for t in tools.into_iter() {
+        // 跳过插件工具（名称以 plugin:: 开头或包含 plugin 标签）
+        // 插件工具应该通过 list_plugins 接口单独管理
+        let is_plugin = t.name.starts_with("plugin::") || t.metadata.tags.iter().any(|x| x == "plugin");
+        if is_plugin {
+            continue;
+        }
+        
         let is_mcp = t.metadata.tags.iter().any(|x| x == "mcp");
         let group = t.metadata.tags.iter()
             .find_map(|tag| tag.strip_prefix("connection:").map(|s| s.to_string()));

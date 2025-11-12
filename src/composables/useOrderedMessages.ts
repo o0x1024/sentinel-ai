@@ -617,8 +617,21 @@ export const useOrderedMessages = (
     }
     message.hasError = processor.hasError(canonicalId)
 
-    // 如果完成，清理processor中的数据
+    // 如果完成，先解析并保存 ReAct 步骤数据，再清理 processor 中的数据
     if (!message.isStreaming) {
+      // 检测是否为 ReAct 消息并提取 ToolResult chunks
+      const allChunks = processor.chunks.get(canonicalId) || []
+      const toolResultChunks = allChunks.filter(c => c.chunk_type === 'ToolResult')
+      
+      if (toolResultChunks.length > 0) {
+        // 是 ReAct 消息，解析并存储步骤数据
+        console.log('[useOrderedMessages] Parsing ReAct steps before cleanup, found', toolResultChunks.length, 'ToolResult chunks')
+        
+        const parsedSteps = parseReActStepsFromContent(message.content, canonicalId, allChunks)
+        ;(message as any).reactSteps = parsedSteps
+        console.log('[useOrderedMessages] Stored', parsedSteps.length, 'parsed ReAct steps in message')
+      }
+      
       processor.cleanup(canonicalId)
 
       // 仅在助手消息完成时持久化该条消息，避免重复保存用户消息
@@ -628,6 +641,129 @@ export const useOrderedMessages = (
         })
       }
     }
+  }
+
+  // 从内容和 chunks 中解析 ReAct 步骤
+  const parseReActStepsFromContent = (content: string, messageId: string, chunks: OrderedMessageChunk[]) => {
+    const steps: any[] = []
+    const toolResultChunks = chunks.filter(c => c.chunk_type === 'ToolResult')
+    
+    const lines = content.split('\n')
+    let currentStep: any = {}
+    let inObservation = false
+    let observationLines: string[] = []
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      
+      // 检测 Thought
+      if (line.startsWith('Thought:')) {
+        if (Object.keys(currentStep).length > 0) {
+          if (observationLines.length > 0) {
+            currentStep.observation = observationLines.join('\n')
+            observationLines = []
+            inObservation = false
+          }
+          steps.push(currentStep)
+        }
+        currentStep = {}
+        currentStep.thought = line.substring('Thought:'.length).trim()
+      }
+      // 检测 Action
+      else if (line.startsWith('Action:')) {
+        if (inObservation && observationLines.length > 0) {
+          currentStep.observation = observationLines.join('\n')
+          observationLines = []
+          inObservation = false
+        }
+        
+        const actionContent = line.substring('Action:'.length).trim()
+        
+        // 检查下一行是否有 Action Input
+        let actionInput = null
+        if (i + 1 < lines.length && lines[i + 1].trim().startsWith('Action Input:')) {
+          i++
+          const inputLine = lines[i].substring(lines[i].indexOf('Action Input:') + 'Action Input:'.length).trim()
+          try {
+            actionInput = JSON.parse(inputLine)
+          } catch {
+            actionInput = inputLine
+          }
+        }
+        
+        currentStep.action = {
+          tool: actionContent,
+          args: actionInput,
+          status: 'completed'
+        }
+        
+        // 从 ToolResult chunks 中查找对应的 Observation
+        const matchingToolResult = toolResultChunks.find(chunk => 
+          chunk.tool_name === actionContent
+        )
+        
+        if (matchingToolResult) {
+          try {
+            const obsData = JSON.parse(matchingToolResult.content.toString())
+            currentStep.observation = obsData
+            
+            if (obsData.success === false || obsData.error) {
+              currentStep.action.status = 'failed'
+            }
+          } catch (e) {
+            currentStep.observation = matchingToolResult.content.toString()
+          }
+        }
+      }
+      // 检测 Observation (保留旧逻辑作为后备)
+      else if (line.startsWith('Observation:')) {
+        inObservation = true
+        const obsContent = line.substring('Observation:'.length).trim()
+        if (obsContent) {
+          observationLines.push(obsContent)
+        }
+      }
+      // 检测 Final Answer
+      else if (line.match(/^Final\s+Answer:/i)) {
+        if (inObservation && observationLines.length > 0) {
+          currentStep.observation = observationLines.join('\n')
+          observationLines = []
+          inObservation = false
+        }
+        
+        const finalContent = line.substring(line.indexOf(':') + 1).trim()
+        currentStep.finalAnswer = finalContent
+        
+        // 收集后续所有行
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextLine = lines[j]
+          if (currentStep.finalAnswer) {
+            currentStep.finalAnswer += '\n' + nextLine
+          } else if (nextLine.trim()) {
+            currentStep.finalAnswer = nextLine
+          }
+        }
+        break
+      }
+      // 继续收集 observation 内容
+      else if (inObservation && line) {
+        observationLines.push(line)
+      }
+      // 继续收集 thought 内容
+      else if (!inObservation && line && !currentStep.action && currentStep.thought) {
+        currentStep.thought += '\n' + line
+      }
+    }
+    
+    // 保存最后一个步骤
+    if (Object.keys(currentStep).length > 0) {
+      if (observationLines.length > 0) {
+        currentStep.observation = observationLines.join('\n')
+      }
+      steps.push(currentStep)
+    }
+    
+    return steps
   }
 
   const setupEventListeners = async () => {

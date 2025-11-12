@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tauri::State;
 
-use crate::models::dictionary::{
+use sentinel_core::models::dictionary::{
     Dictionary, DictionaryExport, DictionaryFilter, DictionaryImportOptions, DictionarySet,
     DictionaryStats, DictionaryType, DictionaryWord, ServiceType,
 };

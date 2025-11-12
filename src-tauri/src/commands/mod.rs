@@ -1,4 +1,5 @@
 pub mod agent_commands;
+pub mod agent_plugin_commands;
 pub mod ai;
 pub mod ai_commands;
 pub mod asset;
@@ -6,6 +7,7 @@ pub mod config;
 pub mod database;
 pub mod dictionary;
 pub mod mcp;
+pub mod passive_scan_commands;
 pub mod performance;
 pub mod plan_execute_commands;
 pub mod prompt_commands;
@@ -26,6 +28,7 @@ pub mod window;
 
 // 重新导出所有命令
 pub use agent_commands::*;
+pub use agent_plugin_commands::*;
 pub use ai::*;
 pub use ai_commands::*;
 pub use asset::*;
@@ -33,6 +36,7 @@ pub use config::*;
 pub use database::*;
 pub use dictionary::*;
 pub use mcp::*;
+pub use passive_scan_commands::*;
 pub use performance::*;
 pub use plan_execute_commands::*;
 pub use prompt_commands::*;
@@ -53,8 +57,8 @@ pub use window::*;
 
 // 在现有的use语句后添加新的MCP命令导出
 pub use self::mcp::{
-    mcp_check_server_status, mcp_connect_server, mcp_create_custom_tool, mcp_disconnect_server,
-    mcp_get_connections, mcp_install_tool, mcp_install_tool_from_github,
+    mcp_check_server_status, mcp_connect_server, mcp_create_custom_tool, mcp_delete_server_config,
+    mcp_disconnect_server, mcp_get_connections, mcp_install_tool, mcp_install_tool_from_github,
     mcp_install_tool_from_registry, mcp_install_tool_from_url, mcp_list_tools, mcp_restart_tool,
     mcp_start_tool, mcp_stop_tool, mcp_uninstall_tool, start_mcp_server, stop_mcp_server,
 };

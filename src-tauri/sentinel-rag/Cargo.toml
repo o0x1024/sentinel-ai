@@ -21,9 +21,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # LanceDB and vector search
-lancedb = "0.21.3"
-arrow-array = "55.2.0"
-arrow-schema = "55.2.0"
+lancedb = "0.22.3"
+arrow-array = "56.2.0"
+arrow-schema = "56.2.0"
 
 # HTTP client for embeddings
 reqwest = { version = "0.12", features = ["json"] }
@@ -32,8 +32,8 @@ reqwest = { version = "0.12", features = ["json"] }
 md5 = "0.7"
 rand = "0.9"
 log = "0.4"
-rig-core = { version = "0.22.0", features = ["derive"] }
-rig-lancedb = "0.2.24"
+rig-core = { version = "0.24.0", features = ["derive"] }
+rig-lancedb = "0.2.27"
 regex = "1.11"
 pulldown-cmark = "0.12"
 futures-util = "0.3"

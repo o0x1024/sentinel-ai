@@ -51,30 +51,6 @@ impl PlanExecuteRepository {
         Self { pool }
     }
     
-    /// 运行数据库迁移
-    pub async fn run_migrations(&self) -> Result<(), RepositoryError> {
-        // 读取并执行迁移SQL
-        let migration_sql = include_str!("../../../migrations/20241220_plan_execute_architecture.sql");
-        
-        // 将SQL按语句分割并逐个执行
-        let statements: Vec<&str> = migration_sql
-            .split(';')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty() && !s.starts_with("--"))
-            .collect();
-        
-        for statement in statements {
-            if !statement.is_empty() {
-                sqlx::query(statement)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| RepositoryError::DatabaseError(format!("迁移失败: {} - SQL: {}", e, statement)))?;
-            }
-        }
-        
-        Ok(())
-    }
-    
     /// 保存执行计划
     pub async fn save_execution_plan(&self, plan: &ExecutionPlan) -> Result<(), RepositoryError> {
         let created_at = plan.created_at.duration_since(UNIX_EPOCH)

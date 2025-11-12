@@ -48,6 +48,14 @@ export interface ChatMessage {
   selectedArchitecture?: string
   execution_id?: string
   citations?: Citation[]
+  // 存储解析后的 ReAct 步骤数据（包含从 chunks 提取的 observation）
+  reactSteps?: Array<{
+    thought?: string
+    action?: any
+    observation?: any
+    error?: string
+    finalAnswer?: string
+  }>
   segments?: Array<{
     id: string
     type: 'reasoning' | 'plan' | 'tool' | 'content' | 'error' | 'meta'

@@ -1,4 +1,28 @@
 export default {
+  securityCenter: {
+    title: '安全中心',
+    stats: {
+      scanTasks: '扫描任务',
+      running: '运行中',
+      vulnerabilities: '漏洞',
+      critical: '严重',
+      assets: '资产',
+      active: '活跃',
+      riskScore: '风险评分',
+    },
+    tabs: {
+      scanTasks: '扫描任务',
+      vulnerabilities: '漏洞管理',
+      assets: '资产管理',
+    },
+    riskLevel: {
+      critical: '极高风险',
+      high: '高风险',
+      medium: '中等风险',
+      low: '低风险',
+      safe: '安全',
+    },
+  },
   common: {
     loading: '加载中...',
     error: '发生错误',
@@ -86,7 +110,10 @@ export default {
     of: '共',
     items: '条',
     importing: '导入中...',
+    import: '导入',
     never: '从未',
+    justNow: '刚刚',
+    url: '网址',
   },
   assetManagement: {
     title: '资产管理',
@@ -100,18 +127,33 @@ export default {
     last24Hours: '过去24小时',
     searchPlaceholder: '搜索资产名称、值或标签...',
     assetType: '资产类型',
-    riskLevel: '风险等级',
+    allTypes: '全部类型',
+    allRiskLevels: '全部风险等级',
+    allStatuses: '全部状态',
+    riskLevel: {
+      title: '风险等级',
+      high: '高',
+      medium: '中',
+      low: '低',
+    },
+    status: {
+      active: '活跃',
+      inactive: '未激活',
+    },
     assetList: '资产列表',
+    assetDetail: '资产详情',
     name: '名称',
     type: '类型',
     value: '值',
     lastSeen: '最后发现',
+    noAssets: '暂无资产',
     noAssetsFound: '未找到匹配的资产',
     importAssets: '导入资产',
     importFormat: '导入格式',
     selectFile: '选择文件',
     preview: '预览',
     andMore: '还有',
+    loadFailed: '加载资产失败',
     confirmDelete: '确定要删除这个资产吗？',
     deleteSuccess: '资产删除成功',
     deleteFailed: '删除资产失败',
@@ -872,6 +914,8 @@ export default {
     delete: '删除',
     export: '导出',
     viewReport: '查看报告',
+    noTasks: '暂无扫描任务',
+    createTaskHint: '创建扫描任务功能正在开发中...',
     scanTypes: {
       fullScan: '完整扫描',
       quickScan: '快速扫描',
@@ -922,6 +966,7 @@ export default {
     title: '漏洞管理',
     newVulnerability: '新漏洞',
     allVulnerabilities: '所有漏洞',
+    allSeverities: '全部严重程度',
     criticalVulnerabilities: '严重漏洞',
     highVulnerabilities: '高危漏洞',
     mediumVulnerabilities: '中危漏洞',
@@ -930,7 +975,16 @@ export default {
     vulnerabilityDetails: '漏洞详情',
     vulnerabilityName: '漏洞名称',
     vulnerabilityType: '漏洞类型',
-    severity: '严重程度',
+    severity: {
+      title: '严重程度',
+      critical: '严重',
+      high: '高危',
+      medium: '中危',
+      low: '低危',
+    },
+    plugin: '插件',
+    details: '漏洞详情',
+    noFindings: '暂无漏洞发现',
     cvss: 'CVSS评分',
     cve: 'CVE编号',
     affectedTarget: '受影响目标',
@@ -1042,10 +1096,10 @@ export default {
       other: '其他'
     }
   },
-  mcpTools: {
+  Tools: {
     title: 'MCP 工具',
     description: '管理和使用MCP工具和服务',
-    mcpServer: 'MCP 服务器',
+    mcpServer: '应用工具',
     startServer: '启动服务器',
     stopServer: '停止服务器',
     availableTools: '可用工具',
@@ -1110,7 +1164,7 @@ export default {
       sqlmap: '自动化 SQL 注入检测和利用工具',
       ffuf: '快速网络模糊测试工具'
     },
-    serversTitle: 'MCP 服务器',
+    serversTitle: '应用工具',
     serversDescription: '管理和连接到模型上下文协议（MCP）服务器，以扩展AI的功能。',
     myServers: '我的服务器',
     marketplace: '市场',
@@ -1141,11 +1195,17 @@ export default {
     agentManager: 'Agent管理',
     promptManagement:"提示词管理",
     dashboard: '总览',
+    securityCenter: '安全中心',
     scanTasks: '扫描任务',
     vulnerabilities: '漏洞管理',
+    assets: '资产管理',
+    passiveScan: '被动扫描',
     dictionary: '字典管理',
     projects: '赏金项目',
     mcpTools: 'MCP工具',
+    plugins: '插件管理',
+    workflowMonitor: '工作流监控',
+    ragManagement: '知识库管理',
     
     smartAgent: '智能Agent控制台',
     aiAssistant: 'AI助手',
@@ -1174,9 +1234,7 @@ export default {
     vulnerabilityCount: '12',
 
     remainingTimeDefault: '2小时15分钟',
-    assets: '资产管理',
     intelligentTest: '智能安全测试',
-    workflowMonitor: '工作流监控'
   },
   dictionary: {
     title: '字典管理',
@@ -1609,6 +1667,27 @@ export default {
       agents: 'Agent管理',
       defaultArchitecture: '默认架构',
       maxConcurrentTasks: '最大并发任务'
+    }
+  },
+  
+  plugins: {
+    title: '插件管理',
+    description: '管理和配置安全测试插件',
+    mainCategory: '主分类',
+    subCategory: '子分类',
+    categories: {
+      all: '全部',
+      passiveScan: '被动扫描插件',
+      agentTools: 'Agent工具插件',
+      builtinTools: '内置工具插件',
+      mcpTools: 'MCP工具插件',
+      vulnerability: '漏洞检测',
+      injection: '注入检测',
+      xss: '跨站脚本',
+      scanner: '扫描器',
+      analyzer: '分析器',
+      reporter: '报告生成',
+      custom: '自定义'
     }
   }
 }

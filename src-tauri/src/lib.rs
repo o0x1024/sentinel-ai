@@ -2,6 +2,7 @@
 pub mod agents;
 pub mod commands;
 pub mod engines;
+pub mod events;
 pub mod managers;
 pub mod models;
 pub mod services;
@@ -32,7 +33,7 @@ use services::{
 // 导入命令
 use commands::{
     agent_commands, ai, ai_commands, asset, config, database as db_commands, dictionary,
-    mcp as mcp_commands, performance,
+    mcp as mcp_commands, passive_scan_commands::{self, PassiveScanState}, performance,
     plan_execute_commands, rag_commands, scan, scan_commands, scan_session_commands, vulnerability,
     window, prompt_commands, rewoo_commands, unified_tools,
 };
@@ -272,6 +273,46 @@ pub fn run() {
                     tracing::error!("Cannot initialize adapter manager: global tool system not available");
                 }
 
+                // 注册被动扫描工具到全局工具系统
+                // 必须在 initialize_global_tool_system 之后执行
+                let passive_state = Arc::new(PassiveScanState::new());
+                if let Err(e) = crate::tools::passive_integration::register_passive_tools(passive_state.clone()).await {
+                    tracing::error!("Failed to register passive scan tools: {}", e);
+                } else {
+                    tracing::info!("Passive scan tools registered successfully");
+                }
+                
+                // 注册Agent插件工具到全局工具系统
+                if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+                    let agent_plugin_provider = Box::new(crate::tools::AgentPluginProvider::new(passive_state.clone()));
+                    let manager = tool_system.get_manager();
+                    let mut manager_guard = manager.write().await;
+                    if let Err(e) = manager_guard.register_provider(agent_plugin_provider).await {
+                        tracing::error!("Failed to register agent plugin provider: {}", e);
+                    } else {
+                        tracing::info!("Agent plugin provider registered successfully");
+                    }
+                    drop(manager_guard); // 显式释放锁
+
+                    // 调试：立即列出当前已注册的插件工具
+                    let all_tools = tool_system.list_tools().await;
+                    let plugin_tools: Vec<String> = all_tools
+                        .iter()
+                        .filter(|t| t.name.starts_with("plugin::"))
+                        .map(|t| format!("{}(available={})", t.name, t.available))
+                        .collect();
+                    tracing::info!(
+                        "Debug: After AgentPluginProvider registration, discovered {} plugin tools => {:?}",
+                        plugin_tools.len(),
+                        plugin_tools
+                    );
+                } else {
+                    tracing::error!("Cannot register agent plugin provider: global tool system not available");
+                }
+                
+                // 将 passive_state 保存以便后续 manage
+                let passive_state_for_manage = (*passive_state).clone();
+
                 // 创建MCP客户端管理器（保留用于MCP服务器连接）
                 let client_manager = Arc::new(McpClientManager::with_database(db_service.clone()));
                 
@@ -345,6 +386,8 @@ pub fn run() {
                 handle.manage(scan_session_service);
                 handle.manage(scan_service);
                 handle.manage(asset_service);
+                // Manage passive scan state (created in setup hook above)
+                handle.manage(passive_state_for_manage);
                 
 
 
@@ -487,6 +530,11 @@ pub fn run() {
             unified_tools::unified_clear_execution_history,
             unified_tools::unified_get_tool_categories,
             unified_tools::unified_is_tool_available,
+            // Agent插件工具测试命令
+            commands::agent_plugin_commands::list_agent_plugin_tools,
+            commands::agent_plugin_commands::search_agent_plugin_tools,
+            commands::agent_plugin_commands::test_execute_plugin_tool,
+            commands::agent_plugin_commands::get_plugin_tool_info,
             // MCP服务器管理命令（保留）
             mcp_commands::get_mcp_tools,
             mcp_commands::execute_mcp_tool,
@@ -502,6 +550,7 @@ pub fn run() {
             mcp_commands::save_mcp_server_state,
             mcp_commands::mcp_connect_server,
             mcp_commands::mcp_disconnect_server,
+            mcp_commands::mcp_delete_server_config,
             mcp_commands::mcp_list_tools,
             mcp_commands::mcp_start_tool,
             mcp_commands::mcp_stop_tool,
@@ -762,6 +811,39 @@ pub fn run() {
             rag_commands::ensure_default_rag_collection,
             // 嵌入连接测试命令
             rag_commands::test_embedding_connection,
+            
+            // 被动扫描相关命令
+            passive_scan_commands::start_passive_scan,
+            passive_scan_commands::stop_passive_scan,
+            passive_scan_commands::get_proxy_status,
+            passive_scan_commands::reload_plugin_in_pipeline,
+            passive_scan_commands::list_findings,
+            passive_scan_commands::count_findings,
+            passive_scan_commands::enable_plugin,
+            passive_scan_commands::disable_plugin,
+            passive_scan_commands::list_plugins,
+            passive_scan_commands::download_ca_cert,
+            passive_scan_commands::get_ca_cert_path,
+            passive_scan_commands::trust_ca_cert,
+            passive_scan_commands::regenerate_ca_cert,
+            passive_scan_commands::get_ca_fingerprint,
+            passive_scan_commands::get_finding,
+            passive_scan_commands::update_finding_status,
+            passive_scan_commands::export_findings_html,
+            // 代理请求历史相关命令
+            passive_scan_commands::list_proxy_requests,
+            passive_scan_commands::get_proxy_request,
+            passive_scan_commands::clear_proxy_requests,
+            passive_scan_commands::count_proxy_requests,
+            // 插件数据库操作命令
+            passive_scan_commands::create_plugin_in_db,
+            passive_scan_commands::update_plugin_code,
+            passive_scan_commands::get_plugin_code,
+            passive_scan_commands::get_plugin_by_id,
+            passive_scan_commands::test_plugin,
+            passive_scan_commands::delete_plugin,
+
+            passive_scan_commands::test_plugin_advanced
         ])
         .run(context)
         .expect("Failed to start Tauri application");

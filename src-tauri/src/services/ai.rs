@@ -7,18 +7,16 @@ use crate::utils::ordered_message::ChunkType;
 use anyhow::Result;
 use chrono::Utc;
 
-
 use futures::StreamExt;
+use rig::agent::{CancelSignal, MultiTurnStreamItem, PromptHook};
 use rig::client::builder::DynClientBuilder;
 use rig::client::ProviderClient;
-use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
-use rig::agent::{MultiTurnStreamItem, PromptHook, CancelSignal};
 use rig::completion::{CompletionModel, CompletionResponse, Message};
 use rig::message::{AssistantContent, UserContent};
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
-
+use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,7 +39,12 @@ struct LLMLoggingHook {
 }
 
 impl LLMLoggingHook {
-    fn new(session_id: String, conversation_id: Option<String>, provider: String, model: String) -> Self {
+    fn new(
+        session_id: String,
+        conversation_id: Option<String>,
+        provider: String,
+        model: String,
+    ) -> Self {
         Self {
             session_id,
             conversation_id,
@@ -70,8 +73,11 @@ impl LLMLoggingHook {
         }
 
         // 写入专门的LLM请求日志文件
-        let log_file_path = format!("logs/llm-http-requests-{}.log", chrono::Utc::now().format("%Y-%m-%d"));
-        
+        let log_file_path = format!(
+            "logs/llm-http-requests-{}.log",
+            chrono::Utc::now().format("%Y-%m-%d")
+        );
+
         match OpenOptions::new()
             .create(true)
             .append(true)
@@ -108,7 +114,10 @@ impl<M: CompletionModel> PromptHook<M> for LLMLoggingHook {
         result: &str,
         _cancel_sig: CancelSignal,
     ) {
-        let content = format!("TOOL_RESULT - Tool: {} | Args: {} | Result: {}", tool_name, args, result);
+        let content = format!(
+            "TOOL_RESULT - Tool: {} | Args: {} | Result: {}",
+            tool_name, args, result
+        );
         self.write_to_log("TOOL_RESULT", &content);
     }
 
@@ -132,10 +141,12 @@ impl<M: CompletionModel> PromptHook<M> for LLMLoggingHook {
                 .join("\n"),
             Message::Assistant { content, .. } => content
                 .iter()
-                .filter_map(|c| if let AssistantContent::Text(text_content) = c {
-                    Some(text_content.text.clone())
-                } else {
-                    None
+                .filter_map(|c| {
+                    if let AssistantContent::Text(text_content) = c {
+                        Some(text_content.text.clone())
+                    } else {
+                        None
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -144,7 +155,12 @@ impl<M: CompletionModel> PromptHook<M> for LLMLoggingHook {
         let content = format!(
             "REQUEST - History Length: {} | Prompt: {}",
             history.len(),
-            prompt_content.chars().take(500).collect::<String>() + if prompt_content.len() > 500 { "..." } else { "" }
+            prompt_content.chars().take(500).collect::<String>()
+                + if prompt_content.len() > 500 {
+                    "..."
+                } else {
+                    ""
+                }
         );
         self.write_to_log("REQUEST", &content);
     }
@@ -155,23 +171,26 @@ impl<M: CompletionModel> PromptHook<M> for LLMLoggingHook {
         response: &CompletionResponse<M::Response>,
         _cancel_sig: CancelSignal,
     ) {
-        let response_content = if let Ok(resp_json) = serde_json::to_string(&response.raw_response) {
-            format!("Raw Response: {}", resp_json.chars().take(1000).collect::<String>() + if resp_json.len() > 1000 { "..." } else { "" })
+        let response_content = if let Ok(resp_json) = serde_json::to_string(&response.raw_response)
+        {
+            format!(
+                "Raw Response: {}",
+                resp_json.chars().take(1000).collect::<String>()
+                    + if resp_json.len() > 1000 { "..." } else { "" }
+            )
         } else {
             "Response: <non-serializable>".to_string()
         };
 
         let content = format!(
             "RESPONSE - Content: {} | Usage: {:?}",
-            response_content,
-            response.usage
+            response_content, response.usage
         );
         self.write_to_log("RESPONSE", &content);
     }
 }
 
 // NOTE: rig-core's StreamingPromptHook is private; we only implement PromptHook above.
-
 
 // 模型配置相关结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,7 +254,7 @@ pub struct AiToolCall {
 }
 
 // AI工具调用结果流消息
-#[derive(Debug, Clone, Serialize)]    
+#[derive(Debug, Clone, Serialize)]
 pub struct ToolCallResultMessage {
     pub conversation_id: String,
     pub message_id: String,
@@ -301,7 +320,7 @@ pub struct TaskProgressMessage {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]                                                                                                                                                                                                                                  
+#[derive(Debug, Clone, Serialize)]
 pub struct StreamError {
     pub conversation_id: String,
     pub message_id: Option<String>,
@@ -547,8 +566,7 @@ impl AiServiceManager {
             match serde_json::from_str::<HashMap<String, ProviderConfig>>(&config_str) {
                 Ok(providers) => {
                     tracing::debug!("Successfully parsed 'providers_config' from DB.");
-                    for (_id, provider_config
-                    ) in providers {
+                    for (_id, provider_config) in providers {
                         if !provider_config.enabled {
                             continue;
                         }
@@ -913,10 +931,6 @@ impl AiServiceManager {
         );
         Ok(Some(service))
     }
-
-
-
-
 
     /// 获取指定阶段的AI配置，用于框架动态切换模型
     pub async fn get_ai_config_for_stage(
@@ -1320,7 +1334,8 @@ impl AiService {
             stream,
             is_final,
             chunk_type,
-        ).await
+        )
+        .await
     }
 
     // 支持分离"发送给LLM的内容"和"保存到数据库的内容"
@@ -1353,7 +1368,6 @@ impl AiService {
         // 处理对话历史和系统提示
         match conversation_id {
             Some(ref conv_id) => {
-
                 // 检查对话是否存在，但不自动创建
                 let conversation_exists = match self.db.get_ai_conversation(conv_id).await {
                     Ok(Some(_)) => true,
@@ -1394,7 +1408,10 @@ impl AiService {
                         if conversation_exists {
                             match self.db.create_ai_message(&user_msg).await {
                                 Ok(_) => {
-                                    debug!("用户消息已保存: {}", up_to_save.chars().take(50).collect::<String>());
+                                    debug!(
+                                        "用户消息已保存: {}",
+                                        up_to_save.chars().take(50).collect::<String>()
+                                    );
                                 }
                                 Err(e) => {
                                     warn!("用户消息保存失败: {}, 继续执行但不保存到数据库", e)
@@ -1438,13 +1455,12 @@ impl AiService {
                     }
                 }
 
-
                 // 内联原 send_chat_stream 逻辑：Rig 动态客户端真流式
                 {
                     use futures::StreamExt;
+                    use rig::agent::MultiTurnStreamItem;
                     use rig::client::builder::DynClientBuilder;
                     use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
-                    use rig::agent::MultiTurnStreamItem;
 
                     // 生成或获取 message_id / execution_id
                     let message_id = message_id
@@ -1455,7 +1471,8 @@ impl AiService {
 
                     // 校验配置
                     if self.config.provider == "unconfigured" || self.config.provider == "mock" {
-                        let error_msg = "AI provider not configured. Please go to Settings > AI Configuration";
+                        let error_msg =
+                            "AI provider not configured. Please go to Settings > AI Configuration";
                         error!("{}", error_msg);
                         return Err(anyhow::anyhow!(error_msg));
                     }
@@ -1495,7 +1512,7 @@ impl AiService {
                         model,
                         user_input.len()
                     );
-                    
+
                     // 创建日志记录器
                     let logger = LLMLoggingHook::new(
                         exec_id.clone(),
@@ -1503,23 +1520,36 @@ impl AiService {
                         provider.clone(),
                         model.clone(),
                     );
-                    
+
                     // 记录请求开始
-                    logger.write_to_log("REQUEST_START", &format!("Input length: {} chars", user_input.len()));
-                    logger.write_to_log("REQUEST_START", &format!("\n\n system prompt:\n {}\n\n", system_prompt.unwrap_or("You are a helpful AI assistant.")));
-                    logger.write_to_log("REQUEST_START", &format!("\n\n User input:\n {}\n\n", user_input));
-                    
+                    logger.write_to_log(
+                        "REQUEST_START",
+                        &format!("Input length: {} chars", user_input.len()),
+                    );
+                    logger.write_to_log(
+                        "REQUEST_START",
+                        &format!(
+                            "\n\n system prompt:\n {}\n\n",
+                            system_prompt.unwrap_or("You are a helpful AI assistant.")
+                        ),
+                    );
+                    logger.write_to_log(
+                        "REQUEST_START",
+                        &format!("\n\n User input:\n {}\n\n", user_input),
+                    );
+
                     let agent = {
                         let client = DynClientBuilder::new();
                         let mut agent_builder = client
                             .agent(&provider, &model)?
                             .preamble(system_prompt.unwrap_or("You are a helpful AI assistant."));
-                        
+
                         // 为 Gemini provider 添加必需的 generationConfig
                         if provider == "gemini" {
                             let gen_cfg = GenerationConfig::default();
                             let cfg = AdditionalParameters::default().with_config(gen_cfg);
-                            agent_builder = agent_builder.additional_params(serde_json::to_value(cfg).unwrap());
+                            agent_builder =
+                                agent_builder.additional_params(serde_json::to_value(cfg).unwrap());
                         }
                         agent_builder.build()
                     };
@@ -1528,9 +1558,13 @@ impl AiService {
                     let mut stream_iter = agent.stream_prompt(user_input).await;
                     while let Some(item) = stream_iter.next().await {
                         match item {
-                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::Text(t))) => {
+                            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::Text(t),
+                            )) => {
                                 let piece = t.text;
-                                if piece.is_empty() { continue; }
+                                if piece.is_empty() {
+                                    continue;
+                                }
                                 content.push_str(&piece);
                                 if stream {
                                     self.emit_message_chunk(
@@ -1544,7 +1578,9 @@ impl AiService {
                                     );
                                 }
                             }
-                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::Reasoning(r))) => {
+                            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::Reasoning(r),
+                            )) => {
                                 let piece = r.reasoning.join("");
                                 if !piece.is_empty() && stream {
                                     self.emit_message_chunk(
@@ -1558,8 +1594,12 @@ impl AiService {
                                     );
                                 }
                             }
-                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::ToolCall(_))) => {}
-                            Ok(MultiTurnStreamItem::FinalResponse(_)) => { break; }
+                            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::ToolCall(_),
+                            )) => {}
+                            Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                                break;
+                            }
                             Ok(_) => { /* ignore other stream items */ }
                             Err(e) => {
                                 error!("Dyn client stream error: {}", e);
@@ -1567,10 +1607,14 @@ impl AiService {
                             }
                         }
                     }
-                    
+
                     // 记录响应完成
-                    logger.write_to_log("RESPONSE_COMPLETE", &format!("Response length: {} chars", content.len()));
-                    logger.write_to_log("RESPONSE_COMPLETE", &format!("Response:\n {}\n\n", content));
+                    logger.write_to_log(
+                        "RESPONSE_COMPLETE",
+                        &format!("Response length: {} chars", content.len()),
+                    );
+                    logger
+                        .write_to_log("RESPONSE_COMPLETE", &format!("Response:\n {}\n\n", content));
 
                     if is_final {
                         self.emit_message_chunk(
@@ -1590,7 +1634,7 @@ impl AiService {
             None => {
                 // 无会话：仅进行内部流式调用，不向前端发块、不写入DB
                 let conv_id = &execution_id; // 使用 execution_id 作为临时会话标识
-                // 构建系统消息
+                                             // 构建系统消息
                 if let Some(sp) = system_prompt {
                     if !sp.is_empty() {
                         let sys_msg = AiMessage {
@@ -1632,8 +1676,6 @@ impl AiService {
                 let _model_name_owned = self.config.model.clone();
                 // 内联原 send_chat_stream 逻辑（无会话）：Rig 动态客户端真流式
                 {
-
-
                     let conv_id = conv_id; // same binding name
                     let message_id = message_id
                         .clone()
@@ -1660,7 +1702,7 @@ impl AiService {
 
                     let provider = self.config.provider.to_lowercase();
                     let model = self.config.model.clone();
-                    
+
                     // 创建日志记录器 (无会话)
                     let logger = LLMLoggingHook::new(
                         exec_id.clone(),
@@ -1668,27 +1710,40 @@ impl AiService {
                         provider.clone(),
                         model.clone(),
                     );
-                    
+
                     // 记录请求开始
-                    logger.write_to_log("REQUEST_START", &format!("Input length: {} chars", user_input.len()));
-                    logger.write_to_log("REQUEST_START", &format!("system prompt:\n {}\n\n", system_prompt.unwrap_or("You are a helpful AI assistant.")));
-                    logger.write_to_log("REQUEST_START", &format!("User input:\n {}\n\n", user_input));
-                    
+                    logger.write_to_log(
+                        "REQUEST_START",
+                        &format!("Input length: {} chars", user_input.len()),
+                    );
+                    logger.write_to_log(
+                        "REQUEST_START",
+                        &format!(
+                            "system prompt:\n {}\n\n",
+                            system_prompt.unwrap_or("You are a helpful AI assistant.")
+                        ),
+                    );
+                    logger.write_to_log(
+                        "REQUEST_START",
+                        &format!("User input:\n {}\n\n", user_input),
+                    );
+
                     let agent = {
                         let client = DynClientBuilder::new();
                         let mut agent_builder = client
                             .agent(&provider, &model)?
                             .preamble(system_prompt.unwrap_or("You are a helpful AI assistant."));
-                        
+
                         // 为 Gemini provider 添加必需的 generationConfig
                         if provider == "gemini" {
                             let gen_cfg = GenerationConfig {
                                 ..Default::default()
                             };
                             let cfg = AdditionalParameters::default().with_config(gen_cfg);
-                            agent_builder = agent_builder.additional_params(serde_json::to_value(cfg).unwrap());
+                            agent_builder =
+                                agent_builder.additional_params(serde_json::to_value(cfg).unwrap());
                         }
-                        
+
                         agent_builder.build()
                     };
 
@@ -1696,9 +1751,13 @@ impl AiService {
                     let mut stream_iter = agent.stream_prompt(user_input).await;
                     while let Some(item) = stream_iter.next().await {
                         match item {
-                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::Text(t))) => {
+                            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::Text(t),
+                            )) => {
                                 let piece = t.text;
-                                if piece.is_empty() { continue; }
+                                if piece.is_empty() {
+                                    continue;
+                                }
                                 content.push_str(&piece);
                                 if stream {
                                     self.emit_message_chunk(
@@ -1712,7 +1771,9 @@ impl AiService {
                                     );
                                 }
                             }
-                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::Reasoning(r))) => {
+                            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::Reasoning(r),
+                            )) => {
                                 let piece = r.reasoning.join("");
                                 if !piece.is_empty() && stream {
                                     self.emit_message_chunk(
@@ -1726,16 +1787,24 @@ impl AiService {
                                     );
                                 }
                             }
-                            Ok(MultiTurnStreamItem::StreamItem(StreamedAssistantContent::ToolCall(_))) => {}
-                            Ok(MultiTurnStreamItem::FinalResponse(_)) => { break; }
+                            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::ToolCall(_),
+                            )) => {}
+                            Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                                break;
+                            }
                             Ok(_) => { /* ignore other stream items */ }
                             Err(e) => return Err(anyhow::anyhow!(format!("Stream error: {}", e))),
                         }
                     }
 
                     // 记录响应完成
-                    logger.write_to_log("RESPONSE_COMPLETE", &format!("Response length: {} chars", content.len()));
-                    logger.write_to_log("RESPONSE_COMPLETE", &format!("Response:\n {}\n\n", content));
+                    logger.write_to_log(
+                        "RESPONSE_COMPLETE",
+                        &format!("Response length: {} chars", content.len()),
+                    );
+                    logger
+                        .write_to_log("RESPONSE_COMPLETE", &format!("Response:\n {}\n\n", content));
 
                     if is_final {
                         self.emit_message_chunk(
@@ -1877,9 +1946,8 @@ impl AiService {
                 content,
                 is_final,
                 stage,
-                None
+                None,
             );
         }
     }
 }
-
