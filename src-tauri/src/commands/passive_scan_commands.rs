@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
 
 use sentinel_passive::{
@@ -1650,4 +1650,175 @@ pub async fn delete_plugin(
     
     tracing::info!("Plugin deleted: {}", plugin_id);
     Ok(CommandResponse::ok(()))
+}
+
+/// 删除单个被动扫描发现的漏洞
+#[tauri::command]
+pub async fn delete_passive_vulnerability(
+    state: State<'_, PassiveScanState>,
+    vuln_id: String,
+) -> Result<CommandResponse<()>, String> {
+    let db = state.get_db_service().await?;
+    
+    db.delete_vulnerability(&vuln_id)
+        .await
+        .map_err(|e| format!("Failed to delete vulnerability: {}", e))?;
+    
+    tracing::info!("Vulnerability deleted: {}", vuln_id);
+    Ok(CommandResponse::ok(()))
+}
+
+/// 批量删除被动扫描发现的漏洞
+#[tauri::command]
+pub async fn delete_passive_vulnerabilities_batch(
+    state: State<'_, PassiveScanState>,
+    vuln_ids: Vec<String>,
+) -> Result<CommandResponse<()>, String> {
+    let db = state.get_db_service().await?;
+    
+    let mut deleted_count = 0;
+    for vuln_id in &vuln_ids {
+        match db.delete_vulnerability(vuln_id).await {
+            Ok(_) => deleted_count += 1,
+            Err(e) => {
+                tracing::warn!("Failed to delete vulnerability {}: {}", vuln_id, e);
+            }
+        }
+    }
+    
+    tracing::info!("Batch deleted {} vulnerabilities out of {}", deleted_count, vuln_ids.len());
+    Ok(CommandResponse::ok(()))
+}
+
+/// 删除所有被动扫描发现的漏洞
+#[tauri::command]
+pub async fn delete_all_passive_vulnerabilities(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<()>, String> {
+    let db = state.get_db_service().await?;
+    
+    db.delete_all_vulnerabilities()
+        .await
+        .map_err(|e| format!("Failed to delete all vulnerabilities: {}", e))?;
+    
+    tracing::info!("All vulnerabilities deleted");
+    Ok(CommandResponse::ok(()))
+}
+
+/// 代理监听器配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyListenerConfig {
+    pub host: String,
+    pub port: u16,
+    pub mitm_enabled: bool,
+}
+
+/// 启动代理监听器
+#[tauri::command]
+pub async fn start_proxy_listener(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+    host: String,
+    port: u16,
+    index: usize,
+) -> Result<CommandResponse<String>, String> {
+    tracing::info!("Starting proxy listener on {}:{} (index: {})", host, port, index);
+    
+    // 检查代理是否已经在运行
+    let is_running = *state.is_running.read().await;
+    if is_running {
+        // 如果代理已经在运行，直接返回成功
+        tracing::info!("Proxy already running, listener request acknowledged");
+        return Ok(CommandResponse::ok(format!("Listener {}:{} is already running", host, port)));
+    }
+    
+    // 创建代理配置
+    let config = ProxyConfig {
+        start_port: port,
+        max_port_attempts: 1,
+        mitm_enabled: true,
+        max_request_body_size: 2 * 1024 * 1024,
+        max_response_body_size: 2 * 1024 * 1024,
+        mitm_bypass_fail_threshold: 3,
+    };
+    
+    // 调用启动代理的命令
+    match start_passive_scan(app, state, Some(config)).await {
+        Ok(response) => {
+            if response.success {
+                tracing::info!("Proxy listener started successfully on {}:{}", host, port);
+                Ok(CommandResponse::ok(format!("Listener started on {}:{}", host, port)))
+            } else {
+                let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
+                Ok(CommandResponse::err(error_msg))
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to start proxy listener: {}", e);
+            Ok(CommandResponse::err(e))
+        }
+    }
+}
+
+/// 停止代理监听器
+#[tauri::command]
+pub async fn stop_proxy_listener(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+    index: usize,
+) -> Result<CommandResponse<String>, String> {
+    tracing::info!("Stopping proxy listener at index: {}", index);
+    
+    // 调用停止代理的命令
+    match stop_passive_scan(app, state).await {
+        Ok(response) => {
+            if response.success {
+                tracing::info!("Proxy listener stopped successfully");
+                Ok(CommandResponse::ok("Listener stopped".to_string()))
+            } else {
+                let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
+                Ok(CommandResponse::err(error_msg))
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to stop proxy listener: {}", e);
+            Ok(CommandResponse::err(e))
+        }
+    }
+}
+
+/// 保存代理配置
+#[tauri::command]
+pub async fn save_proxy_config(
+    state: State<'_, PassiveScanState>,
+    config: ProxyConfig,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Saving proxy configuration: {:?}", config);
+    
+    // 这里可以将配置保存到数据库或文件
+    // 目前简单返回成功
+    // TODO: 实现配置持久化
+    
+    Ok(CommandResponse::ok(()))
+}
+
+/// 获取代理配置
+#[tauri::command]
+pub async fn get_proxy_config(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<ProxyConfig>, String> {
+    tracing::info!("Getting proxy configuration");
+    
+    // 返回默认配置
+    // TODO: 从数据库或文件加载配置
+    let config = ProxyConfig {
+        start_port: 8080,
+        max_port_attempts: 10,
+        mitm_enabled: true,
+        max_request_body_size: 2 * 1024 * 1024,
+        max_response_body_size: 2 * 1024 * 1024,
+        mitm_bypass_fail_threshold: 3,
+    };
+    
+    Ok(CommandResponse::ok(config))
 }

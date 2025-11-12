@@ -15,6 +15,14 @@
           <table class="table table-sm w-full">
             <thead>
               <tr>
+                <th class="w-12">
+                  <input 
+                    type="checkbox" 
+                    class="checkbox checkbox-sm"
+                    @change="toggleAllListeners"
+                    :checked="selectedListeners.length === proxyListeners.length && proxyListeners.length > 0"
+                  />
+                </th>
                 <th class="w-20">运行中</th>
                 <th>接口</th>
                 <th>不可见</th>
@@ -25,12 +33,25 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(listener, index) in proxyListeners" :key="index">
+              <tr 
+                v-for="(listener, index) in proxyListeners" 
+                :key="index"
+                :class="{ 'bg-base-200': selectedListeners.includes(index) }"
+              >
+                <td>
+                  <input 
+                    type="checkbox" 
+                    class="checkbox checkbox-sm"
+                    :checked="selectedListeners.includes(index)"
+                    @change="toggleListenerSelection(index)"
+                  />
+                </td>
                 <td>
                   <input 
                     type="checkbox" 
                     class="checkbox checkbox-sm"
                     v-model="listener.running"
+                    @change="toggleListenerRunning(listener, index)"
                   />
                 </td>
                 <td>{{ listener.interface }}</td>
@@ -39,6 +60,7 @@
                     type="checkbox" 
                     class="checkbox checkbox-sm"
                     v-model="listener.invisible"
+                    disabled
                   />
                 </td>
                 <td>
@@ -46,6 +68,7 @@
                     type="checkbox" 
                     class="checkbox checkbox-sm"
                     v-model="listener.redirect"
+                    disabled
                   />
                 </td>
                 <td>{{ listener.certificate }}</td>
@@ -55,6 +78,7 @@
                     type="checkbox" 
                     class="checkbox checkbox-sm"
                     v-model="listener.supportHTTP2"
+                    disabled
                   />
                 </td>
               </tr>
@@ -67,11 +91,19 @@
             <i class="fas fa-plus mr-1"></i>
             添加
           </button>
-          <button class="btn btn-sm btn-outline" @click="editListener">
+          <button 
+            class="btn btn-sm btn-outline" 
+            @click="editListener"
+            :disabled="selectedListeners.length !== 1"
+          >
             <i class="fas fa-edit mr-1"></i>
             编辑
           </button>
-          <button class="btn btn-sm btn-outline btn-error" @click="removeListener">
+          <button 
+            class="btn btn-sm btn-outline btn-error" 
+            @click="removeListener"
+            :disabled="selectedListeners.length === 0"
+          >
             <i class="fas fa-trash mr-1"></i>
             移除
           </button>
@@ -79,21 +111,128 @@
 
         <div class="mt-4 space-y-2">
           <div class="flex gap-2">
-            <button class="btn btn-sm btn-outline">
-              <i class="fas fa-file-import mr-1"></i>
-              导入/导出 CA 证书
+            <button 
+              class="btn btn-sm btn-outline"
+              @click="downloadCACert"
+              :disabled="isDownloadingCert"
+            >
+              <i :class="['fas fa-download mr-1', { 'fa-spin': isDownloadingCert }]"></i>
+              导出 CA 证书
             </button>
-            <button class="btn btn-sm btn-outline">
-              <i class="fas fa-sync-alt mr-1"></i>
+            <button 
+              class="btn btn-sm btn-outline"
+              @click="regenerateCACert"
+              :disabled="isRegeneratingCert"
+            >
+              <i :class="['fas fa-sync-alt mr-1', { 'fa-spin': isRegeneratingCert }]"></i>
               重新生成 CA 证书
             </button>
           </div>
           <p class="text-xs text-base-content/60">
-            每个安装都会生成自己的 CA 证书，代理监听器在协商 TLS 连接时可以使用该证书。您可以导入或导出此证书以在其他工具或另一个安装中使用。
+            每个安装都会生成自己的 CA 证书，代理监听器在协商 TLS 连接时可以使用该证书。导出证书后，请手动将其安装到系统信任列表中。
           </p>
         </div>
       </div>
     </div>
+
+    <!-- 编辑监听器对话框 -->
+    <dialog ref="editDialogRef" class="modal">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">编辑监听器</h3>
+        
+        <div class="space-y-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">绑定地址</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingListener.host"
+              class="input input-bordered"
+              placeholder="127.0.0.1"
+            />
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">端口</span>
+            </label>
+            <input 
+              type="number" 
+              v-model.number="editingListener.port"
+              class="input input-bordered"
+              placeholder="8080"
+              min="1024"
+              max="65535"
+            />
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">证书模式</span>
+            </label>
+            <select v-model="editingListener.certificate" class="select select-bordered">
+              <option value="Per-host">Per-host（每个主机独立证书）</option>
+              <option value="Wildcard">Wildcard（通配符证书）</option>
+              <option value="Custom">Custom（自定义证书）</option>
+            </select>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">TLS 协议</span>
+            </label>
+            <select v-model="editingListener.tlsProtocols" class="select select-bordered">
+              <option value="Default">Default（默认）</option>
+              <option value="TLS 1.2">TLS 1.2</option>
+              <option value="TLS 1.3">TLS 1.3</option>
+              <option value="TLS 1.2+1.3">TLS 1.2+1.3</option>
+            </select>
+          </div>
+
+          <div class="form-control">
+            <label class="label cursor-pointer">
+              <span class="label-text">支持 HTTP/2</span>
+              <input 
+                type="checkbox" 
+                v-model="editingListener.supportHTTP2"
+                class="checkbox"
+              />
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label cursor-pointer">
+              <span class="label-text">不可见模式</span>
+              <input 
+                type="checkbox" 
+                v-model="editingListener.invisible"
+                class="checkbox"
+              />
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label cursor-pointer">
+              <span class="label-text">启用重定向</span>
+              <input 
+                type="checkbox" 
+                v-model="editingListener.redirect"
+                class="checkbox"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="cancelEdit">取消</button>
+          <button class="btn btn-primary" @click="saveEdit">保存</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+      </form>
+    </dialog>
 
     <!-- Request Interception Rules -->
     <div class="card bg-base-100 shadow-xl">
@@ -663,6 +802,105 @@
       </div>
     </div>
 
+    <!-- Advanced Proxy Settings -->
+    <div class="card bg-base-100 shadow-xl">
+      <div class="card-body">
+        <h2 class="card-title text-base mb-3">
+          <i class="fas fa-sliders-h mr-2"></i>
+          高级代理设置
+        </h2>
+        <p class="text-sm text-base-content/70 mb-4">
+          配置代理服务器的高级选项，包括端口范围、MITM 设置和请求/响应体大小限制。
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">起始端口</span>
+            </label>
+            <input 
+              type="number" 
+              v-model.number="proxyConfig.start_port" 
+              class="input input-bordered input-sm"
+              placeholder="8080"
+              min="1024"
+              max="65535"
+            />
+            <label class="label">
+              <span class="label-text-alt text-xs">代理将从此端口开始尝试绑定</span>
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">最大尝试次数</span>
+            </label>
+            <input 
+              type="number" 
+              v-model.number="proxyConfig.max_port_attempts" 
+              class="input input-bordered input-sm"
+              placeholder="10"
+              min="1"
+              max="100"
+            />
+            <label class="label">
+              <span class="label-text-alt text-xs">端口被占用时的尝试次数</span>
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label cursor-pointer">
+              <span class="label-text">启用 MITM (HTTPS 拦截)</span>
+              <input 
+                type="checkbox" 
+                v-model="proxyConfig.mitm_enabled" 
+                class="toggle toggle-primary"
+              />
+            </label>
+            <label class="label">
+              <span class="label-text-alt text-xs">启用后可拦截 HTTPS 流量</span>
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">请求体大小限制 (MB)</span>
+            </label>
+            <input 
+              type="number" 
+              v-model.number="requestBodySizeMB" 
+              class="input input-bordered input-sm"
+              placeholder="2"
+              min="1"
+              max="100"
+              @input="updateRequestBodySize"
+            />
+            <label class="label">
+              <span class="label-text-alt text-xs">超过此大小的请求将被跳过</span>
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">响应体大小限制 (MB)</span>
+            </label>
+            <input 
+              type="number" 
+              v-model.number="responseBodySizeMB" 
+              class="input input-bordered input-sm"
+              placeholder="2"
+              min="1"
+              max="100"
+              @input="updateResponseBodySize"
+            />
+            <label class="label">
+              <span class="label-text-alt text-xs">超过此大小的响应将被跳过</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Save Button -->
     <div class="flex justify-end gap-2">
       <button class="btn btn-outline" @click="resetToDefaults">
@@ -678,7 +916,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { dialog } from '@/composables/useDialog'
+
+// Proxy configuration
+const proxyConfig = ref({
+  start_port: 8080,
+  max_port_attempts: 10,
+  mitm_enabled: true,
+  max_request_body_size: 2 * 1024 * 1024,
+  max_response_body_size: 2 * 1024 * 1024,
+})
+
+// 辅助变量：请求/响应体大小（MB）
+const requestBodySizeMB = ref(2)
+const responseBodySizeMB = ref(2)
 
 // Proxy listeners
 const proxyListeners = ref([
@@ -692,6 +946,9 @@ const proxyListeners = ref([
     supportHTTP2: true
   }
 ])
+
+// 选中的监听器索引列表
+const selectedListeners = ref<number[]>([])
 
 // Interception settings
 const masterInterceptionEnabled = ref(false)
@@ -851,31 +1108,338 @@ const suppressBurpErrorMessages = ref(false)
 const dontSendToProxyHistory = ref(false)
 const dontSendToProxyHistoryIfOutOfScope = ref(false)
 
+// Certificate management states
+const isDownloadingCert = ref(false)
+const isRegeneratingCert = ref(false)
+
+// 编辑监听器相关状态
+const editDialogRef = ref<HTMLDialogElement | null>(null)
+const editingIndex = ref(-1)
+const editingListener = ref({
+  host: '127.0.0.1',
+  port: 8080,
+  certificate: 'Per-host',
+  tlsProtocols: 'Default',
+  supportHTTP2: true,
+  invisible: false,
+  redirect: false
+})
+
 // Methods
+const toggleAllListeners = (event: Event) => {
+  const checked = (event.target as HTMLInputElement).checked
+  if (checked) {
+    selectedListeners.value = proxyListeners.value.map((_, index) => index)
+  } else {
+    selectedListeners.value = []
+  }
+}
+
+const toggleListenerSelection = (index: number) => {
+  const idx = selectedListeners.value.indexOf(index)
+  if (idx > -1) {
+    selectedListeners.value.splice(idx, 1)
+  } else {
+    selectedListeners.value.push(index)
+  }
+}
+
+const toggleListenerRunning = async (listener: any, index: number) => {
+  try {
+    if (listener.running) {
+      // 启动代理监听器
+      const [host, port] = listener.interface.split(':')
+      await invoke('start_proxy_listener', { 
+        host,
+        port: parseInt(port),
+        index
+      })
+      dialog.toast.success(`代理监听器 ${listener.interface} 已启动`)
+    } else {
+      // 停止代理监听器
+      await invoke('stop_proxy_listener', { index })
+      dialog.toast.success(`代理监听器 ${listener.interface} 已停止`)
+    }
+  } catch (error: any) {
+    console.error('Failed to toggle listener:', error)
+    // 操作失败时恢复状态
+    listener.running = !listener.running
+    dialog.toast.error(`操作失败: ${error}`)
+  }
+}
+
 const addListener = () => {
-  console.log('Add listener')
-  // TODO: Open dialog to add new listener
+  const newPort = 8080 + proxyListeners.value.length
+  proxyListeners.value.push({
+    running: false,
+    interface: `127.0.0.1:${newPort}`,
+    invisible: false,
+    redirect: false,
+    certificate: 'Per-host',
+    tlsProtocols: 'Default',
+    supportHTTP2: true
+  })
+  dialog.toast.success('已添加新的监听器')
 }
 
 const editListener = () => {
-  console.log('Edit listener')
-  // TODO: Open dialog to edit selected listener
+  if (selectedListeners.value.length !== 1) {
+    dialog.toast.warning('请选择一个监听器进行编辑')
+    return
+  }
+  
+  const index = selectedListeners.value[0]
+  const listener = proxyListeners.value[index]
+  
+  // 解析接口字符串
+  const [host, portStr] = listener.interface.split(':')
+  const port = parseInt(portStr)
+  
+  // 填充编辑表单
+  editingIndex.value = index
+  editingListener.value = {
+    host,
+    port,
+    certificate: listener.certificate,
+    tlsProtocols: listener.tlsProtocols,
+    supportHTTP2: listener.supportHTTP2,
+    invisible: listener.invisible,
+    redirect: listener.redirect
+  }
+  
+  // 打开对话框
+  editDialogRef.value?.showModal()
 }
 
-const removeListener = () => {
-  console.log('Remove listener')
-  // TODO: Remove selected listener
+const saveEdit = () => {
+  if (editingIndex.value === -1) return
+  
+  // 验证端口号
+  if (editingListener.value.port < 1024 || editingListener.value.port > 65535) {
+    dialog.toast.error('端口号必须在 1024-65535 之间')
+    return
+  }
+  
+  // 验证地址
+  if (!editingListener.value.host.trim()) {
+    dialog.toast.error('绑定地址不能为空')
+    return
+  }
+  
+  // 更新监听器配置
+  const listener = proxyListeners.value[editingIndex.value]
+  const wasRunning = listener.running
+  
+  listener.interface = `${editingListener.value.host}:${editingListener.value.port}`
+  listener.certificate = editingListener.value.certificate
+  listener.tlsProtocols = editingListener.value.tlsProtocols
+  listener.supportHTTP2 = editingListener.value.supportHTTP2
+  listener.invisible = editingListener.value.invisible
+  listener.redirect = editingListener.value.redirect
+  
+  // 如果监听器正在运行，需要重启以应用新配置
+  if (wasRunning) {
+    dialog.toast.warning('监听器配置已更新，请重启以应用新配置')
+    listener.running = false
+  }
+  
+  // 关闭对话框
+  editDialogRef.value?.close()
+  dialog.toast.success('监听器配置已保存')
+  editingIndex.value = -1
 }
 
-const saveConfiguration = () => {
-  console.log('Save configuration')
-  // TODO: Save configuration to backend
+const cancelEdit = () => {
+  editDialogRef.value?.close()
+  editingIndex.value = -1
+}
+
+const removeListener = async () => {
+  if (selectedListeners.value.length === 0) {
+    dialog.toast.warning('请至少选择一个监听器')
+    return
+  }
+  
+  if (!confirm(`确定要删除选中的 ${selectedListeners.value.length} 个监听器吗？`)) {
+    return
+  }
+  
+  // 按索引降序排序，从后往前删除
+  const sortedIndices = [...selectedListeners.value].sort((a, b) => b - a)
+  
+  for (const index of sortedIndices) {
+    const listener = proxyListeners.value[index]
+    // 如果监听器正在运行，先停止它
+    if (listener.running) {
+      try {
+        await invoke('stop_proxy_listener', { index })
+      } catch (error) {
+        console.error('Failed to stop listener before removal:', error)
+      }
+    }
+    proxyListeners.value.splice(index, 1)
+  }
+  
+  selectedListeners.value = []
+  dialog.toast.success('已删除选中的监听器')
+}
+
+// 更新请求体大小（MB -> 字节）
+const updateRequestBodySize = () => {
+  proxyConfig.value.max_request_body_size = requestBodySizeMB.value * 1024 * 1024
+}
+
+// 更新响应体大小（MB -> 字节）
+const updateResponseBodySize = () => {
+  proxyConfig.value.max_response_body_size = responseBodySizeMB.value * 1024 * 1024
+}
+
+const saveConfiguration = async () => {
+  try {
+    // 更新代理监听器配置
+    proxyListeners.value[0].interface = `127.0.0.1:${proxyConfig.value.start_port}`
+    
+    // 保存配置到后端
+    const response = await invoke<any>('save_proxy_config', { 
+      config: proxyConfig.value 
+    })
+    
+    if (response.success) {
+      dialog.toast.success('配置已保存，重启代理后生效')
+    } else {
+      throw new Error(response.error || '保存失败')
+    }
+  } catch (error: any) {
+    console.error('Failed to save configuration:', error)
+    dialog.toast.error(`保存配置失败: ${error}`)
+  }
 }
 
 const resetToDefaults = () => {
-  console.log('Reset to defaults')
-  // TODO: Reset all settings to default values
+  proxyConfig.value = {
+    start_port: 8080,
+    max_port_attempts: 10,
+    mitm_enabled: true,
+    max_request_body_size: 2 * 1024 * 1024,
+    max_response_body_size: 2 * 1024 * 1024,
+  }
+  requestBodySizeMB.value = 2
+  responseBodySizeMB.value = 2
+  dialog.toast.info('已重置为默认配置')
 }
+
+// Certificate management methods
+async function downloadCACert() {
+  isDownloadingCert.value = true
+  try {
+    const response = await invoke<any>('download_ca_cert')
+    if (response.success && response.data) {
+      dialog.toast.success(`证书已下载到: ${response.data.path}`)
+    } else {
+      dialog.toast.error(`下载证书失败: ${response.message || '未知错误'}`)
+    }
+  } catch (error: any) {
+    console.error('Failed to download CA cert:', error)
+    dialog.toast.error(`下载证书失败: ${error}`)
+  } finally {
+    isDownloadingCert.value = false
+  }
+}
+
+async function regenerateCACert() {
+  if (!confirm('重新生成证书将使旧证书失效，需要重新安装。确定继续吗？')) {
+    return
+  }
+  
+  isRegeneratingCert.value = true
+  try {
+    await invoke('regenerate_ca_cert')
+    dialog.toast.success('证书已重新生成，请重新安装到系统')
+  } catch (error: any) {
+    console.error('Failed to regenerate CA cert:', error)
+    dialog.toast.error(`重新生成证书失败: ${error}`)
+  } finally {
+    isRegeneratingCert.value = false
+  }
+}
+
+// 加载保存的配置
+onMounted(async () => {
+  try {
+    // 加载代理配置
+    const configResponse = await invoke<any>('get_proxy_config')
+    if (configResponse.success && configResponse.data) {
+      proxyConfig.value = configResponse.data
+      requestBodySizeMB.value = Math.round(configResponse.data.max_request_body_size / (1024 * 1024))
+      responseBodySizeMB.value = Math.round(configResponse.data.max_response_body_size / (1024 * 1024))
+      proxyListeners.value[0].interface = `127.0.0.1:${configResponse.data.start_port}`
+    }
+    
+    // 检查代理实际运行状态
+    const statusResponse = await invoke<any>('get_proxy_status')
+    if (statusResponse.success && statusResponse.data) {
+      const isRunning = statusResponse.data.running
+      const actualPort = statusResponse.data.port
+      
+      // 同步运行状态到界面
+      if (isRunning && actualPort > 0) {
+        // 代理正在运行，更新界面状态
+        const listenerIndex = proxyListeners.value.findIndex(
+          l => l.interface === `127.0.0.1:${actualPort}`
+        )
+        if (listenerIndex !== -1) {
+          proxyListeners.value[listenerIndex].running = true
+        } else {
+          // 如果找不到匹配的监听器，更新第一个
+          proxyListeners.value[0].interface = `127.0.0.1:${actualPort}`
+          proxyListeners.value[0].running = true
+        }
+        console.log(`Proxy is running on port ${actualPort}`)
+      } else {
+        // 代理未运行，确保所有监听器的运行状态为 false
+        proxyListeners.value.forEach(listener => {
+          listener.running = false
+        })
+        console.log('Proxy is not running')
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load proxy config or status:', error)
+    // 确保在出错时所有监听器的运行状态为 false
+    proxyListeners.value.forEach(listener => {
+      listener.running = false
+    })
+  }
+  
+  // 监听代理状态变化事件
+  const unlisten = await listen('proxy:status', (event: any) => {
+    const payload = event.payload
+    console.log('Received proxy status event:', payload)
+    
+    if (payload.running && payload.port > 0) {
+      // 代理正在运行
+      const listenerIndex = proxyListeners.value.findIndex(
+        l => l.interface === `127.0.0.1:${payload.port}`
+      )
+      if (listenerIndex !== -1) {
+        proxyListeners.value[listenerIndex].running = true
+      } else {
+        proxyListeners.value[0].interface = `127.0.0.1:${payload.port}`
+        proxyListeners.value[0].running = true
+      }
+    } else {
+      // 代理已停止
+      proxyListeners.value.forEach(listener => {
+        listener.running = false
+      })
+    }
+  })
+  
+  // 保存取消监听函数，用于组件卸载时清理
+  onUnmounted(() => {
+    unlisten()
+  })
+})
 </script>
 
 <style scoped>

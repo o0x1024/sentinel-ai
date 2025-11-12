@@ -212,6 +212,12 @@ import AIChat from '@/components/AIChat.vue'
 import RoleManagement from '@/components/RoleManagement.vue'
 import { useRoleManagement } from '@/composables/useRoleManagement'
 
+
+defineOptions({
+  name: 'AIAssistant'
+});
+
+
 const { t } = useI18n()
 
 // 角色管理

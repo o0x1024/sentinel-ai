@@ -62,22 +62,37 @@ export const useConversation = () => {
       })
       
       const historyMessages = (history as any[])
-        .map((msg: any) => ({
-          id: msg.id,
-          role: msg.role,
-          content: msg.content,
-          timestamp: new Date(msg.timestamp),
-          isStreaming: false,
-          citations: (() => {
-            try {
-              if (msg.metadata) {
-                const meta = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata
-                if (meta && Array.isArray(meta.citations)) return meta.citations
+        .map((msg: any) => {
+          let citations = undefined
+          let reactSteps = undefined
+          
+          try {
+            if (msg.metadata) {
+              const meta = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata
+              if (meta) {
+                if (Array.isArray(meta.citations)) {
+                  citations = meta.citations
+                }
+                if (Array.isArray(meta.reactSteps)) {
+                  reactSteps = meta.reactSteps
+                  console.log('[useConversation] Restored reactSteps for message:', msg.id, 'steps:', reactSteps.length)
+                }
               }
-            } catch (e) { /* ignore parse errors */ }
-            return undefined
-          })()
-        }))
+            }
+          } catch (e) {
+            console.warn('[useConversation] Failed to parse metadata:', e)
+          }
+          
+          return {
+            id: msg.id,
+            role: msg.role,
+            content: msg.content,
+            timestamp: new Date(msg.timestamp),
+            isStreaming: false,
+            citations,
+            reactSteps
+          }
+        })
         // Ensure messages are in ascending time order so newest appears at bottom
         .sort((a, b) => (a.timestamp as any) - (b.timestamp as any))
       
@@ -141,15 +156,23 @@ export const useConversation = () => {
         const content = (message as any)?.content
         if (!id || savedSet.has(id)) continue
 
-        // 将 citations（若存在）嵌入 metadata 保存
-        const metadata = (message as any)?.citations ? { citations: (message as any).citations } : undefined
+        // 将 citations 和 reactSteps（若存在）嵌入 metadata 保存
+        const metadata: any = {}
+        if ((message as any)?.citations) {
+          metadata.citations = (message as any).citations
+        }
+        if ((message as any)?.reactSteps) {
+          metadata.reactSteps = (message as any).reactSteps
+          console.log('[useConversation] Saving reactSteps to metadata for message:', id, 'steps:', metadata.reactSteps.length)
+        }
+        
         await invoke('save_ai_message', {
           request: {
             id: id,
             conversation_id: convId,
             role,
             content,
-            metadata
+            metadata: Object.keys(metadata).length > 0 ? metadata : undefined
           }
         })
 

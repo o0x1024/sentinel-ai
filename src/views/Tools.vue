@@ -61,9 +61,19 @@
 
     <!-- 内置工具列表 -->
     <div v-if="activeTab === 'builtin_tools'" class="space-y-4">
-      <div class="alert alert-info">
-        <i class="fas fa-info-circle"></i>
-        <span>这些是系统内置的MCP工具，已自动注册并可供AI助手调用。</span>
+      <div class="flex justify-between items-center">
+        <div class="alert alert-info flex-1 mr-4">
+          <i class="fas fa-info-circle"></i>
+          <span>这些是系统内置的MCP工具，已自动注册并可供AI助手调用。</span>
+        </div>
+        <div class="join">
+          <button @click="builtinToolsView = 'card'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': builtinToolsView === 'card'}]">
+            <i class="fas fa-th-large"></i>
+          </button>
+          <button @click="builtinToolsView = 'list'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': builtinToolsView === 'list'}]">
+            <i class="fas fa-list"></i>
+          </button>
+        </div>
       </div>
       
       <div v-if="isLoadingBuiltinTools" class="text-center p-8">
@@ -71,7 +81,8 @@
         <p class="mt-2">正在加载内置工具...</p>
       </div>
       
-      <div v-else-if="builtinTools.length > 0" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+      <!-- 卡片视图 -->
+      <div v-else-if="builtinTools.length > 0 && builtinToolsView === 'card'" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         <div 
           v-for="tool in builtinTools" 
           :key="tool.id"
@@ -119,6 +130,55 @@
         </div>
       </div>
       
+      <!-- 列表视图 -->
+      <div v-else-if="builtinTools.length > 0 && builtinToolsView === 'list'" class="overflow-x-auto">
+        <table class="table w-full">
+          <thead>
+            <tr>
+              <th class="w-1/12">启用</th>
+              <th>名称</th>
+              <th>分类</th>
+              <th>描述</th>
+              <th>版本</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="tool in builtinTools" :key="tool.id">
+              <td>
+                <input 
+                  type="checkbox" 
+                  class="toggle toggle-success toggle-sm" 
+                  :checked="tool.enabled !== false"
+                  @change="toggleBuiltinTool(tool)"
+                  :disabled="tool.is_toggling"
+                />
+              </td>
+              <td>
+                <div class="flex items-center gap-2">
+                  <i :class="getToolIcon(tool.name)" class="text-success"></i>
+                  <span class="font-semibold">{{ tool.name }}</span>
+                </div>
+              </td>
+              <td><span class="badge badge-success badge-sm">{{ tool.category }}</span></td>
+              <td class="text-sm">{{ tool.description }}</td>
+              <td class="text-xs text-base-content/60">v{{ tool.version }}</td>
+              <td>
+                <button 
+                  @click="testBuiltinTool(tool)"
+                  class="btn btn-success btn-xs"
+                  :disabled="tool.is_testing"
+                >
+                  <i v-if="tool.is_testing" class="fas fa-spinner fa-spin mr-1"></i>
+                  <i v-else class="fas fa-play mr-1"></i>
+                  {{ tool.is_testing ? '测试中...' : '测试' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      
       <div v-else class="text-center p-8">
         <i class="fas fa-exclamation-triangle text-4xl text-warning mb-4"></i>
         <p class="text-lg font-semibold">未找到内置工具</p>
@@ -132,7 +192,19 @@
 
     <!-- 我的服务器列表 -->
     <div v-if="activeTab === 'my_servers'" class="space-y-4">
-      <div class="overflow-x-auto">
+      <div class="flex justify-end mb-4">
+        <div class="join">
+          <button @click="myServersView = 'card'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': myServersView === 'card'}]">
+            <i class="fas fa-th-large"></i>
+          </button>
+          <button @click="myServersView = 'list'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': myServersView === 'list'}]">
+            <i class="fas fa-list"></i>
+          </button>
+        </div>
+      </div>
+      
+      <!-- 列表视图 -->
+      <div v-if="myServersView === 'list'" class="overflow-x-auto">
         <table class="table w-full">
           <thead>
             <tr>
@@ -198,6 +270,85 @@
             </tr>
           </tbody>
         </table>
+      </div>
+      
+      <!-- 卡片视图 -->
+      <div v-if="myServersView === 'card'" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div 
+          v-for="connection in mcpConnections" 
+          :key="connection.id || connection.name"
+          class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow"
+        >
+          <div class="card-body">
+            <div class="flex items-center gap-3">
+              <div class="avatar">
+                <div class="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <i class="fas fa-server text-primary text-xl"></i>
+                </div>
+              </div>
+              <div class="flex-1">
+                <h3 class="card-title text-lg">{{ connection.name }}</h3>
+                <span class="badge badge-ghost badge-sm">{{ connection.transport_type }}</span>
+              </div>
+              <div class="form-control">
+                <label class="label cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    class="toggle toggle-sm toggle-success" 
+                    :checked="connection.status === 'Connected'" 
+                    @change="toggleServerEnabled(connection)" 
+                  />
+                </label>
+              </div>
+            </div>
+
+            <p class="text-sm mt-2 h-12 overflow-hidden">{{ connection.endpoint }}</p>
+
+            <div class="flex items-center justify-between mt-2">
+              <span :class="getStatusBadgeClass(connection.status)" class="flex items-center gap-1">
+                <i :class="getStatusIcon(connection.status)"></i>
+                {{ connection.status }}
+              </span>
+            </div>
+
+            <div class="card-actions justify-end mt-4">
+              <button 
+                v-if="connection.status === 'Connected' && connection.id"
+                @click="disconnectMcpServer(connection)" 
+                class="btn btn-xs btn-outline btn-warning" 
+                :title="'断开连接'"
+              >
+                <i class="fas fa-unlink"></i>
+              </button>
+              <button 
+                v-else-if="connection.status !== 'Connected'"
+                @click="connectMcpServer(connection)" 
+                class="btn btn-xs btn-outline btn-success" 
+                :title="'连接'"
+              >
+                <i class="fas fa-link"></i>
+              </button>
+              <button 
+                @click="deleteMcpServer(connection)" 
+                class="btn btn-xs btn-outline btn-error" 
+                :title="$t('common.delete')"
+              >
+                <i class="fas fa-trash"></i>
+              </button>
+              <button 
+                @click="openDetailsModal(connection)"
+                class="btn btn-xs btn-outline" 
+                :title="$t('common.details')"
+              >
+                <i class="fas fa-info"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div v-if="mcpConnections.length === 0" class="col-span-full text-center py-8">
+          {{ $t('Tools.noConnections') }}
+        </div>
       </div>
     </div>
 
@@ -292,9 +443,19 @@
 
     <!-- 插件工具管理 -->
     <div v-if="activeTab === 'plugin_tools'" class="space-y-4">
-      <div class="alert alert-info">
-        <i class="fas fa-info-circle"></i>
-        <span>管理 Agent 插件工具，可在创建 Agent 时选择启用的插件工具</span>
+      <div class="flex justify-between items-center">
+        <div class="alert alert-info flex-1 mr-4">
+          <i class="fas fa-info-circle"></i>
+          <span>管理 Agent 插件工具，可在创建 Agent 时选择启用的插件工具</span>
+        </div>
+        <div class="join">
+          <button @click="pluginToolsView = 'card'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': pluginToolsView === 'card'}]">
+            <i class="fas fa-th-large"></i>
+          </button>
+          <button @click="pluginToolsView = 'list'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': pluginToolsView === 'list'}]">
+            <i class="fas fa-list"></i>
+          </button>
+        </div>
       </div>
       
       <!-- 插件列表 -->
@@ -311,7 +472,8 @@
           </button>
         </div>
         
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- 卡片视图 -->
+        <div v-if="pluginToolsView === 'card'" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div 
             v-for="plugin in passivePlugins" 
             :key="plugin.metadata.id"
@@ -385,6 +547,73 @@
             </div>
           </div>
         </div>
+        
+        <!-- 列表视图 -->
+        <div v-if="pluginToolsView === 'list'" class="overflow-x-auto">
+          <table class="table w-full">
+            <thead>
+              <tr>
+                <th class="w-1/12">启用</th>
+                <th>名称</th>
+                <th>版本</th>
+                <th>作者</th>
+                <th>描述</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="plugin in passivePlugins" :key="plugin.metadata.id">
+                <td>
+                  <input 
+                    type="checkbox" 
+                    class="toggle toggle-primary toggle-sm" 
+                    :checked="plugin.status === 'Enabled'"
+                    @change="togglePlugin(plugin)"
+                    :disabled="plugin.is_toggling"
+                  />
+                </td>
+                <td>
+                  <div class="flex items-center gap-2">
+                    <i class="fas fa-puzzle-piece text-primary"></i>
+                    <span class="font-semibold">{{ plugin.metadata.name }}</span>
+                  </div>
+                </td>
+                <td><span class="badge badge-ghost badge-sm">v{{ plugin.metadata.version }}</span></td>
+                <td><span class="badge badge-outline badge-xs">{{ plugin.metadata.author }}</span></td>
+                <td class="text-sm">{{ plugin.metadata.description }}</td>
+                <td>
+                  <div class="flex flex-col gap-1">
+                    <span :class="['badge badge-sm', plugin.status === 'Enabled' ? 'badge-success' : 'badge-ghost']">
+                      {{ plugin.status }}
+                    </span>
+                    <span v-if="plugin.last_error" class="badge badge-error badge-sm" :title="plugin.last_error">
+                      <i class="fas fa-exclamation-triangle"></i>
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <div class="flex gap-1">
+                    <button 
+                      @click="editPlugin(plugin)"
+                      class="btn btn-xs btn-outline"
+                      :title="'编辑'"
+                    >
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button 
+                      @click="viewPluginInfo(plugin)"
+                      class="btn btn-xs btn-outline"
+                      :title="'详情'"
+                    >
+                      <i class="fas fa-info"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
       
       <div v-else class="text-center p-8">
@@ -400,7 +629,7 @@
 
     <!-- 服务器详情模态框 -->
     <dialog :class="['modal', { 'modal-open': showDetailsModal }]">
-      <div class="modal-box w-11/12 max-w-5xl">
+      <div v-if="showDetailsModal" class="modal-box w-11/12 max-w-5xl">
         <div v-if="selectedServer">
           <div class="flex justify-between items-center mb-4">
             <h3 class="font-bold text-lg">{{ $t('Tools.serverDetails.title') }}: {{ selectedServer.name }}</h3>
@@ -531,7 +760,7 @@
 
     <!-- 添加服务器模态框 (保持不变) -->
     <dialog :class="['modal', { 'modal-open': showAddServerModal }]">
-      <div class="modal-box w-11/12 max-w-5xl">
+      <div v-if="showAddServerModal" class="modal-box w-11/12 max-w-5xl">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-bold text-lg">{{ $t('Tools.addServer.title') }}</h3>
           <button @click="showAddServerModal = false" class="btn btn-sm btn-ghost">✕</button>
@@ -691,7 +920,10 @@ const isLoadingPlugins = ref(false);
 const showUploadPluginModal = ref(false);
 const showAddServerModal = ref(false);
 const addServerMode = ref('quick');
-const marketplaceView = ref('card'); // 'card' or 'list'
+const marketplaceView = ref('list'); // 'card' or 'list'
+const builtinToolsView = ref('list'); // 'card' or 'list'
+const myServersView = ref('list'); // 'card' or 'list'
+const pluginToolsView = ref('list'); // 'card' or 'list'
 const showDetailsModal = ref(false);
 const detailsTab = ref('general');
 const editMode = ref('form'); // 'form' or 'json'
@@ -781,11 +1013,15 @@ function getToolProperties(schema: any) {
 }
 
 async function openDetailsModal(connection: McpConnection) {
-  selectedServer.value = connection;
+  // 先初始化所有数据，防止闪烁
+  selectedServer.value = { ...connection };
   Object.assign(editableServer, {
-    ...connection,
-    args: connection.args.join(' '), // 将数组转为空格分隔的字符串以便编辑
+    db_id: connection.db_id,
+    name: connection.name,
     description: connection.description || '',
+    command: connection.command,
+    args: connection.args.join(' '), // 将数组转为空格分隔的字符串以便编辑
+    enabled: true,
   });
   
   // 初始化 JSON 编辑模式的数据
@@ -803,19 +1039,25 @@ async function openDetailsModal(connection: McpConnection) {
   
   detailsTab.value = 'general';
   editMode.value = 'form';
+  serverTools.value = [];
+  
+  // 最后再显示模态框
   showDetailsModal.value = true;
   
+  // 异步加载工具列表
   if (connection.status === 'Connected' && connection.id) {
     fetchServerTools();
-  } else {
-    serverTools.value = [];
   }
 }
 
 function closeDetailsModal() {
   showDetailsModal.value = false;
-  selectedServer.value = null;
-  editMode.value = 'form';
+  // 延迟清空数据，避免闪烁
+  setTimeout(() => {
+    selectedServer.value = null;
+    editMode.value = 'form';
+    serverTools.value = [];
+  }, 300);
 }
 
 async function fetchServerTools() {
@@ -1275,3 +1517,34 @@ onUnmounted(() => {
   stopStatusUpdates();
 });
 </script>
+
+<style scoped>
+/* 优化模态框动画，防止闪烁 */
+.modal {
+  transition: opacity 0.2s ease-in-out;
+}
+
+.modal-box {
+  transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+.modal-open .modal-box {
+  animation: modalSlideIn 0.2s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 防止内容切换时的闪烁 */
+.space-y-4 > * {
+  transition: opacity 0.15s ease-in-out;
+}
+</style>

@@ -185,7 +185,7 @@ impl ScanPipeline {
         let req_ctx = match req_ctx {
             Some(ctx) => ctx,
             None => {
-                warn!(
+                debug!(
                     "Request context not found for response: {}",
                     resp_ctx.request_id
                 );
@@ -420,7 +420,7 @@ impl ScanPipeline {
         
         info!("Loading enabled plugins from database...");
         
-        // 查询所有启用的插件
+        // 查询所有启用的被动扫描插件（过滤掉 agent 工具插件）
         let rows = sqlx::query_as::<_, (
             String, String, String, Option<String>, String, Option<String>,
             String, Option<String>, String
@@ -429,7 +429,7 @@ impl ScanPipeline {
             SELECT id, name, version, author, category, description,
                    default_severity, tags, plugin_code
             FROM plugin_registry
-            WHERE enabled = true
+            WHERE enabled = true AND main_category = 'passive'
             "#
         )
         .fetch_all(db_service.pool())
@@ -524,14 +524,14 @@ impl ScanPipeline {
         
         info!("Reloading plugin from database: {}", plugin_id);
         
-        // 查询插件信息
+        // 查询插件信息（仅加载 passive 类型的插件）
         let row = sqlx::query_as::<_, (
             String, String, String, Option<String>, String, Option<String>,
-            String, Option<String>, String, bool
+            String, Option<String>, String, bool, String
         )>(
             r#"
             SELECT id, name, version, author, category, description,
-                   default_severity, tags, plugin_code, enabled
+                   default_severity, tags, plugin_code, enabled, main_category
             FROM plugin_registry
             WHERE id = ?
             "#
@@ -541,8 +541,16 @@ impl ScanPipeline {
         .await
         .map_err(|e| PassiveError::Database(format!("Failed to query plugin {}: {}", plugin_id, e)))?;
 
-        let (id, name, version, author, category, description, default_severity, tags, plugin_code, enabled) = 
+        let (id, name, version, author, category, description, default_severity, tags, plugin_code, enabled, main_category) = 
             row.ok_or_else(|| PassiveError::Plugin(format!("Plugin not found in database: {}", plugin_id)))?;
+
+        // 检查插件类型，只允许加载 passive 类型的插件
+        if main_category != "passive" {
+            return Err(PassiveError::Plugin(format!(
+                "Plugin {} is not a passive scan plugin (main_category: {})",
+                plugin_id, main_category
+            )));
+        }
 
         if !enabled {
             return Err(PassiveError::Plugin(format!(

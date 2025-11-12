@@ -842,8 +842,15 @@ pub fn run() {
             passive_scan_commands::get_plugin_by_id,
             passive_scan_commands::test_plugin,
             passive_scan_commands::delete_plugin,
-
-            passive_scan_commands::test_plugin_advanced
+            passive_scan_commands::delete_passive_vulnerability,
+            passive_scan_commands::delete_passive_vulnerabilities_batch,
+            passive_scan_commands::delete_all_passive_vulnerabilities,
+            passive_scan_commands::test_plugin_advanced,
+            // 代理监听器管理命令
+            passive_scan_commands::start_proxy_listener,
+            passive_scan_commands::stop_proxy_listener,
+            passive_scan_commands::save_proxy_config,
+            passive_scan_commands::get_proxy_config,
         ])
         .run(context)
         .expect("Failed to start Tauri application");

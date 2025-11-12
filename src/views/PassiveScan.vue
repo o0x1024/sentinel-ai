@@ -40,7 +40,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onErrorCaptured, watch } from 'vue'
-import PassiveScanControl from '../components/PassiveScanControl.vue'
+import PassiveScanControl from '../components/ProxyIntercept.vue'
 import ProxyHistory from '../components/ProxyHistory.vue'
 import ProxyConfiguration from '../components/ProxyConfiguration.vue'
 

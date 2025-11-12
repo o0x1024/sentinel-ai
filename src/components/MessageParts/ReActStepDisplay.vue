@@ -18,7 +18,7 @@
       <details 
         class="collapse collapse-arrow bg-base-100 border rounded-lg"
         :class="getToolCallBorderClass()"
-        open
+        :open="isToolCallInProgress()"
       >
         <summary class="collapse-title min-h-0 py-3 px-4 cursor-pointer hover:bg-base-200/50 transition-colors">
           <div class="flex items-center gap-3">
@@ -178,6 +178,13 @@ const formatObservation = (obs: any) => {
   } catch {
     return String(obs)
   }
+}
+
+const isToolCallInProgress = () => {
+  if (!action.value) return false
+  const status = action.value.status
+  // 只有在运行中时才展开，完成、成功、失败或错误时都折叠
+  return status === 'running' || status === 'pending'
 }
 
 const getToolCallBorderClass = () => {

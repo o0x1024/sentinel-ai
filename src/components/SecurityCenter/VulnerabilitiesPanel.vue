@@ -22,7 +22,19 @@
 
     <!-- 筛选器 -->
     <div class="bg-base-100 rounded-lg p-4 shadow-sm border border-base-300">
-      <div class="flex flex-wrap gap-3">
+      <div class="flex flex-wrap gap-3 items-center">
+        <!-- 批量操作 -->
+        <div v-if="selectedIds.size > 0" class="flex items-center gap-2 mr-auto">
+          <span class="text-sm text-base-content/70">已选择 {{ selectedIds.size }} 项</span>
+          <button @click="deleteSelected" class="btn btn-error btn-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            删除选中
+          </button>
+          <button @click="selectedIds.clear()" class="btn btn-ghost btn-sm">取消选择</button>
+        </div>
+        
         <div class="form-control">
           <select v-model="filters.severity" class="select select-bordered select-sm" @change="applyFilters">
             <option value="">{{ $t('vulnerabilities.allSeverities') }}</option>
@@ -47,6 +59,12 @@
           </svg>
           {{ $t('common.refresh') }}
         </button>
+        <button @click="deleteAll" class="btn btn-error btn-outline btn-sm" :disabled="totalCount === 0">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+          </svg>
+          清空全部
+        </button>
       </div>
     </div>
 
@@ -61,6 +79,16 @@
         <table class="table table-zebra">
           <thead>
             <tr>
+              <th>
+                <label>
+                  <input 
+                    type="checkbox" 
+                    class="checkbox checkbox-sm" 
+                    :checked="isAllSelected"
+                    @change="toggleSelectAll"
+                  />
+                </label>
+              </th>
               <th>{{ $t('vulnerabilities.severity.title') }}</th>
               <th>{{ $t('vulnerabilities.title') }}</th>
               <th>类型</th>
@@ -73,6 +101,16 @@
           </thead>
           <tbody>
             <tr v-for="finding in paginatedFindings" :key="finding.id">
+              <td>
+                <label>
+                  <input 
+                    type="checkbox" 
+                    class="checkbox checkbox-sm" 
+                    :checked="selectedIds.has(finding.id)"
+                    @change="toggleSelect(finding.id)"
+                  />
+                </label>
+              </td>
               <td>
                 <span :class="getSeverityBadgeClass(finding?.severity)" class="badge badge-sm">
                   {{ finding?.severity || 'unknown' }}
@@ -91,12 +129,19 @@
               </td>
               <td class="text-xs opacity-70">{{ formatTime(finding?.last_seen_at) }}</td>
               <td>
-                <button @click="openDetails(finding)" class="btn btn-xs btn-outline">
-                  <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"></path>
-                    <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"></path>
-                  </svg>
-                </button>
+                <div class="flex gap-1">
+                  <button @click="openDetails(finding)" class="btn btn-xs btn-outline" title="查看详情">
+                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"></path>
+                      <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"></path>
+                    </svg>
+                  </button>
+                  <button @click="deleteSingle(finding.id)" class="btn btn-xs btn-error btn-outline" title="删除">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -124,7 +169,7 @@
     </div>
 
     <!-- 详情模态框 -->
-    <dialog :class="['modal', { 'modal-open': showDetailsModal }]">
+    <dialog :class="['modal', { 'modal-open': showDetailsModal }]" @click.self="closeDetails" @keydown.esc="closeDetails">
       <div class="modal-box w-11/12 max-w-5xl max-h-[90vh] overflow-y-auto">
         <div v-if="selectedFinding">
           <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
@@ -303,6 +348,36 @@
         <button @click="closeDetails">close</button>
       </form>
     </dialog>
+
+    <!-- 删除全部确认对话框 -->
+    <dialog :class="['modal', { 'modal-open': showDeleteAllModal }]">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg text-error">
+          <svg class="w-6 h-6 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+          </svg>
+          确认删除
+        </h3>
+        <p class="py-4">
+          确定要清空所有 <span class="font-bold text-error">{{ totalCount }}</span> 条漏洞记录吗？
+        </p>
+        <p class="text-sm text-warning pb-4">
+          ⚠️ 此操作不可恢复，所有漏洞记录及相关证据将被永久删除！
+        </p>
+        <div class="modal-action">
+          <button @click="showDeleteAllModal = false" class="btn btn-ghost">取消</button>
+          <button @click="confirmDeleteAll" class="btn btn-error">
+            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            确认删除
+          </button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button @click="showDeleteAllModal = false">close</button>
+      </form>
+    </dialog>
   </div>
 </template>
 
@@ -356,7 +431,9 @@ interface Finding {
 const findings = ref<Finding[]>([]);
 const isLoading = ref(false);
 const showDetailsModal = ref(false);
+const showDeleteAllModal = ref(false);
 const selectedFinding = ref<Finding | null>(null);
+const selectedIds = ref<Set<string>>(new Set());
 
 const stats = ref({
   critical: 0,
@@ -386,6 +463,11 @@ const paginatedFindings = computed(() => {
 
 const totalPages = computed(() => {
   return Math.ceil(totalCount.value / pageSize);
+});
+
+const isAllSelected = computed(() => {
+  return paginatedFindings.value.length > 0 && 
+         paginatedFindings.value.every(f => selectedIds.value.has(f.id));
 });
 
 const refreshFindings = async () => {
@@ -471,6 +553,88 @@ const closeDetails = () => {
   selectedFinding.value = null;
 };
 
+const toggleSelect = (id: string) => {
+  if (selectedIds.value.has(id)) {
+    selectedIds.value.delete(id);
+  } else {
+    selectedIds.value.add(id);
+  }
+};
+
+const toggleSelectAll = () => {
+  if (isAllSelected.value) {
+    // 取消全选当前页
+    paginatedFindings.value.forEach(f => selectedIds.value.delete(f.id));
+  } else {
+    // 全选当前页
+    paginatedFindings.value.forEach(f => selectedIds.value.add(f.id));
+  }
+};
+
+const deleteSingle = async (id: string) => {
+
+  try {
+    const response = await invoke<any>('delete_passive_vulnerability', { vulnId: id });
+    if (response.success) {
+      console.log('Vulnerability deleted:', id);
+      await refreshFindings();
+      selectedIds.value.delete(id);
+    } else {
+      alert('删除失败: ' + (response.error || '未知错误'));
+    }
+  } catch (error) {
+    console.error('Failed to delete vulnerability:', error);
+    alert('删除失败: ' + error);
+  }
+};
+
+const deleteSelected = async () => {
+  if (selectedIds.value.size === 0) return;
+  
+
+  
+  try {
+    const ids = Array.from(selectedIds.value);
+    const response = await invoke<any>('delete_passive_vulnerabilities_batch', { vulnIds: ids });
+    if (response.success) {
+      console.log(`Deleted ${ids.length} vulnerabilities`);
+      await refreshFindings();
+      selectedIds.value.clear();
+    } else {
+      alert('批量删除失败: ' + (response.error || '未知错误'));
+    }
+  } catch (error) {
+    console.error('Failed to delete vulnerabilities:', error);
+    alert('批量删除失败: ' + error);
+  }
+};
+
+const deleteAll = () => {
+  if (totalCount.value === 0) return;
+  showDeleteAllModal.value = true;
+};
+
+const confirmDeleteAll = async () => {
+  showDeleteAllModal.value = false;
+  isLoading.value = true;
+  
+  try {
+    const response = await invoke<any>('delete_all_passive_vulnerabilities');
+    if (response.success) {
+      console.log('All vulnerabilities deleted');
+      await refreshFindings();
+      selectedIds.value.clear();
+    } else {
+      alert('清空失败: ' + (response.error || '未知错误'));
+    }
+  } catch (error) {
+    console.error('Failed to delete all vulnerabilities:', error);
+    alert('清空失败: ' + error);
+  } finally {
+    isLoading.value = false;
+  }
+};
+
 const getSeverityBadgeClass = (severity?: string) => {
   if (!severity) return 'badge-ghost';
   switch (severity.toLowerCase()) {
@@ -519,12 +683,20 @@ watch(currentPage, () => {
   refreshFindings();
 });
 
+const handleKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && showDetailsModal.value) {
+    closeDetails();
+  }
+};
+
 onMounted(() => {
   refreshFindings();
   window.addEventListener('security-center-refresh', handleRefresh);
+  window.addEventListener('keydown', handleKeyDown);
 });
 
 onUnmounted(() => {
   window.removeEventListener('security-center-refresh', handleRefresh);
+  window.removeEventListener('keydown', handleKeyDown);
 });
 </script>

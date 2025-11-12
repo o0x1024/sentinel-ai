@@ -1055,6 +1055,11 @@ onMounted(async () => {
       if (e.detail.engine) webSearchEngine.value = e.detail.engine
     }
   })
+
+  // 首次打开时滚动到底部
+  nextTick(() => {
+    scrollToBottom()
+  })
 })
 
 // 同步全局会话消息到本地列表（不再转换类型）

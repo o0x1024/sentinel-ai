@@ -10,7 +10,6 @@ use crate::{Finding, PassiveError, PluginMetadata, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite, SqlitePool};
-use std::path::PathBuf;
 use tracing::info;
 
 /// 数据库服务
@@ -452,6 +451,39 @@ impl PassiveDatabaseService {
         }
 
         info!("Vulnerability status updated: {} -> {}", vuln_id, status);
+        Ok(())
+    }
+
+    /// 删除单个漏洞及其关联的证据和去重索引
+    pub async fn delete_vulnerability(&self, vuln_id: &str) -> Result<()> {
+        // SQLite 会自动通过 FOREIGN KEY ON DELETE CASCADE 删除关联的证据和去重索引
+        let result = sqlx::query(
+            r#"
+            DELETE FROM passive_vulnerabilities WHERE id = ?
+            "#,
+        )
+        .bind(vuln_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| PassiveError::Database(format!("Failed to delete vulnerability: {}", e)))?;
+
+        if result.rows_affected() == 0 {
+            return Err(PassiveError::Database(format!("Vulnerability not found: {}", vuln_id)));
+        }
+
+        info!("Vulnerability deleted: {}", vuln_id);
+        Ok(())
+    }
+
+    /// 删除所有漏洞
+    pub async fn delete_all_vulnerabilities(&self) -> Result<()> {
+        // 删除所有漏洞（级联删除会自动处理证据和去重索引）
+        sqlx::query("DELETE FROM passive_vulnerabilities")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| PassiveError::Database(format!("Failed to delete all vulnerabilities: {}", e)))?;
+
+        info!("All vulnerabilities deleted");
         Ok(())
     }
 
