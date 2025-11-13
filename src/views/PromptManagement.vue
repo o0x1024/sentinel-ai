@@ -69,9 +69,10 @@
       <div class="px-4 pb-2" v-if="selectedCategory === 'LlmArchitecture'">
         <div class="flex items-center justify-between mb-1">
           <div class="text-xs opacity-70">{{ $t('promptMgmt.groups') }}</div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1">
             <button class="btn btn-xs" @click="createGroup">{{ $t('promptMgmt.new') }}</button>
             <button class="btn btn-xs" :disabled="!selectedGroupId" @click="setDefaultGroup">{{ $t('promptMgmt.setDefault') }}</button>
+            <button class="btn btn-xs btn-error" :disabled="!selectedGroupId || selectedGroup?.is_default" @click="deleteGroup">{{ $t('common.delete') }}</button>
           </div>
         </div>
         <div class="flex flex-col gap-2 max-h-40 overflow-auto">
@@ -281,7 +282,7 @@ import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 
 type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct'
-type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Replan'
+type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Evaluation' | 'Replan'
 type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
 type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom'
 
@@ -335,23 +336,24 @@ const promptCategories = [
 
 const groups = [
   { value: 'ReWOO', label: 'ReWOO', stages: [
-    { value: 'Planner', label: 'Planner' },
-    { value: 'Worker', label: 'Worker' },
-    { value: 'Solver', label: 'Solver' },
+    { value: 'Planner', label: 'Planner (规划器)' },
+    { value: 'Worker', label: 'Worker (执行器)' },
+    { value: 'Solver', label: 'Solver (求解器)' },
   ]},
   { value: 'LLMCompiler', label: 'LLMCompiler', stages: [
-    { value: 'Planning', label: 'Planning' },
-    { value: 'Execution', label: 'Execution' },
-    { value: 'Replan', label: 'Replan' },
+    { value: 'Planning', label: 'Planning (规划)' },
+    { value: 'Execution', label: 'Execution (执行)' },
+    { value: 'Evaluation', label: 'Evaluation (评估)' },
+    { value: 'Replan', label: 'Replan (重规划)' },
   ]},
   { value: 'PlanExecute', label: 'Plan&Execute', stages: [
-    { value: 'Planning', label: 'Planning' },
-    { value: 'Execution', label: 'Execution' },
-    { value: 'Replan', label: 'Replan' },
+    { value: 'Planning', label: 'Planning (规划)' },
+    { value: 'Execution', label: 'Execution (执行)' },
+    { value: 'Replan', label: 'Replan (重规划)' },
   ]},
   { value: 'ReAct', label: 'ReAct', stages: [
-    { value: 'Planning', label: 'Planning' },
-    { value: 'Execution', label: 'Execution' },
+    { value: 'Planning', label: 'Planning (规划)' },
+    { value: 'Execution', label: 'Execution (执行)' },
   ]},
 ]
 
@@ -437,7 +439,7 @@ const filteredTemplates = computed(() => {
 
 const stagesOfSelectedArch = computed<StageType[]>(() => {
   if (selected.value.architecture === 'ReWOO') return ['Planner','Worker','Solver'] as StageType[]
-  if (selected.value.architecture === 'LLMCompiler') return ['Planning','Execution','Replan'] as StageType[]
+  if (selected.value.architecture === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
   if (selected.value.architecture === 'ReAct') return ['Planning','Execution'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
 })
@@ -446,7 +448,7 @@ const stagesOfSelectedArch = computed<StageType[]>(() => {
 const stagesOfGroupArch = computed<StageType[]>(() => {
   const arch = selectedGroup.value?.architecture || selected.value.architecture
   if (arch === 'ReWOO') return ['Planner','Worker','Solver'] as StageType[]
-  if (arch === 'LLMCompiler') return ['Planning','Execution','Replan'] as StageType[]
+  if (arch === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
   if (arch === 'ReAct') return ['Planning','Execution'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
 })
@@ -774,6 +776,35 @@ async function setDefaultGroup() {
   await invoke('set_arch_default_group_api', { architecture: selected.value.architecture, groupId: selectedGroupId.value } as any)
   await loadGroups()
   toast.success(t('promptMgmt.defaultGroupSet') as unknown as string)
+}
+
+async function deleteGroup() {
+  if (!selectedGroupId.value) return
+  
+  // 防止删除默认分组
+  const group = promptGroups.value.find(g => g.id === selectedGroupId.value)
+  if (group?.is_default) {
+    toast.error('不能删除默认分组')
+    return
+  }
+  
+  const confirmed = await dialog.confirm({
+    title: t('promptMgmt.groups') as unknown as string,
+    message: `确定要删除分组"${group?.name}"吗？此操作将删除该分组的所有阶段映射。`,
+    variant: 'error'
+  })
+  
+  if (!confirmed) return
+  
+  try {
+    await invoke('delete_prompt_group_api', { id: selectedGroupId.value } as any)
+    selectedGroupId.value = null
+    await loadGroups()
+    toast.success('分组已删除')
+  } catch (error) {
+    console.error('Failed to delete group:', error)
+    toast.error('删除分组失败: ' + (error as any).message)
+  }
 }
 
 async function loadGroupItems(groupId: number) {

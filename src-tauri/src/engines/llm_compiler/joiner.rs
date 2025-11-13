@@ -13,7 +13,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use chrono::Utc;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
@@ -34,6 +34,10 @@ pub struct IntelligentJoiner {
     decision_history: Vec<JoinerDecisionRecord>,
     /// 执行上下文
     execution_context: ExecutionContext,
+    /// Conversation ID（用于流式消息）
+    conversation_id: Option<String>,
+    /// Message ID（用于流式消息）
+    message_id: Option<String>,
 }
 
 /// 决策记录
@@ -102,7 +106,15 @@ impl IntelligentJoiner {
             prompt_repo,
             decision_history: Vec::new(),
             execution_context: ExecutionContext::default(),
+            conversation_id: None,
+            message_id: None,
         }
+    }
+
+    /// 设置消息ID（用于流式推送）
+    pub fn set_message_ids(&mut self, conversation_id: Option<String>, message_id: Option<String>) {
+        self.conversation_id = conversation_id;
+        self.message_id = message_id;
     }
 
     /// 分析执行结果并做出决策
@@ -229,22 +241,26 @@ impl IntelligentJoiner {
             return Ok(0.0);
         }
         
-        // 构建目标完成度分析提示
-        let completion_prompt = self.build_goal_completion_prompt(
-            original_query,
-            &successful_outputs,
-        ).await?;
-        
-        // 调用AI分析目标完成度
-        match self.ai_service.send_message_stream(
-            Some(&completion_prompt), 
-            None, 
-            None, 
-            None,
-            true, 
-            false,
-            Some(ChunkType::Content)
-        ).await {
+        // 构建目标完成度分析的 system/user 提示
+        let (system_prompt, user_prompt) = self
+            .build_goal_completion_prompts(original_query, &successful_outputs)
+            .await?;
+
+        // 调用AI分析目标完成度（携带system_prompt，避免默认system）
+        match self
+            .ai_service
+            .send_message_stream_with_save_control(
+                Some(&user_prompt),
+                None,
+                Some(&system_prompt),
+                self.conversation_id.clone(),
+                self.message_id.clone(),
+                true,
+                false,
+                Some(ChunkType::Thinking),
+            )
+            .await
+        {
             Ok(response) => {
                 // 解析AI响应中的完成度分数
                 self.parse_completion_score(&response)
@@ -332,12 +348,14 @@ impl IntelligentJoiner {
         execution_results: &[TaskExecutionResult],
         round: usize,
     ) -> Result<JoinerDecision> {
-        let mut decision_prompt = self.build_ai_decision_prompt(
+        // ✅ 构建拟人化的system_prompt和user_prompt
+        let (mut system_prompt, mut user_prompt) = self.build_ai_decision_prompts(
             original_query,
             execution_plan,
             execution_results,
             round,
         ).await?;
+        
         // RAG augmentation for joiner decision
         if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
             if rag_service.get_config().augmentation_enabled {
@@ -356,7 +374,8 @@ impl IntelligentJoiner {
                     model_name: None,
                     max_tokens: None,
                     temperature: None,
-                    system_prompt: None,                };
+                    system_prompt: None,
+                };
                 if let Ok(Ok((knowledge_context, _))) = timeout(
                     Duration::from_millis(1200),
                     rag_service.query_for_assistant(&rag_request),
@@ -364,8 +383,8 @@ impl IntelligentJoiner {
                 .await
                 {
                     if !knowledge_context.trim().is_empty() {
-                        decision_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
-                        decision_prompt.push_str(&knowledge_context);
+                        system_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                        system_prompt.push_str(&knowledge_context);
                     } else {
                         let fallback_req = AssistantRagRequest {
                             query: fallback,
@@ -380,11 +399,12 @@ impl IntelligentJoiner {
                             model_name: None,
                             max_tokens: None,
                             temperature: None,
-                    system_prompt: None,                        };
+                            system_prompt: None,
+                        };
                         if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
                             if !kb2.trim().is_empty() {
-                                decision_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
-                                decision_prompt.push_str(&kb2);
+                                system_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                                system_prompt.push_str(&kb2);
                             }
                         }
                     }
@@ -392,14 +412,16 @@ impl IntelligentJoiner {
             }
         }
         
-        match self.ai_service.send_message_stream(
-            Some(&decision_prompt), 
-            None, 
-            None, 
-            None,
-            true, 
-            false,
-            Some(ChunkType::Content)
+        // ✅ 使用拟人化的消息格式调用LLM
+        match self.ai_service.send_message_stream_with_save_control(
+            Some(&user_prompt),  // user_prompt: 具体的分析请求
+            None,  // 不保存user消息(已在上层保存)
+            Some(&system_prompt),  // system_prompt: 拟人化的决策助手提示词
+            self.conversation_id.clone(), 
+            self.message_id.clone(),
+            true,  // 流式输出
+            false,  // 不是最终消息
+            Some(ChunkType::Thinking)  // 标记为Thinking类型
         ).await {
             Ok(response) => {
                 self.parse_ai_decision(&response)
@@ -430,10 +452,12 @@ impl IntelligentJoiner {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
         
-        // 决策逻辑
-        let should_complete = goal_completion >= 0.8 || // 目标完成度高
+        // 决策逻辑 - 改进判断条件
+        let should_complete = goal_completion >= 0.7 || // 目标完成度高（降低阈值）
+                             (goal_completion >= 0.5 && round >= 3) || // 中等完成度且已执行多轮
                              success_rate < 0.3 || // 成功率太低
                              overall_risk > 0.8 || // 风险太高
+                             (success_rate >= 0.9 && round >= 2) || // 高成功率且已执行2轮以上
                              round >= self.config.max_iterations; // 达到最大轮次
         
         let recommended_decision = if should_complete {
@@ -518,59 +542,144 @@ impl IntelligentJoiner {
         ))
     }
 
-    /// 构建AI决策提示
-    async fn build_ai_decision_prompt(
+    /// 构建目标完成度分析提示（返回 system_prompt 与 user_prompt）
+    async fn build_goal_completion_prompts(
+        &self,
+        original_query: &str,
+        successful_outputs: &[&HashMap<String, Value>],
+    ) -> Result<(String, String)> {
+        use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
+
+        // user_prompt：仅包含数据上下文，避免把系统说明塞到user里
+        let user_prompt = format!(
+            "请评估以下执行结果是否足以回答原始问题，并返回0到1之间的完成度分数（仅返回数字）。\n\n原始问题: {}\n\n执行结果:\n{}",
+            original_query,
+            self.format_outputs_for_analysis(successful_outputs)
+        );
+
+        // system_prompt：优先从数据库读取 Evaluation 阶段模板
+        if let Some(repo) = &self.prompt_repo {
+            let resolver = PromptResolver::new(repo.clone());
+            let agent_config = AgentPromptConfig::default();
+            if let Ok(system_template) = resolver
+                .resolve_prompt(
+                    &agent_config,
+                    ArchitectureType::LLMCompiler,
+                    CanonicalStage::Evaluator, // 映射到 Evaluation
+                    Some(&"".to_string()),
+                )
+                .await
+            {
+                return Ok((system_template, user_prompt));
+            }
+        }
+
+        // 后备 system_prompt：轻量、稳定，且不含数据
+        let fallback_system = r#"你是一名严格的结果评估助手。
+你的任务是根据提供的执行结果，判断这些信息是否足以回答原始问题。
+请先在心里完成推理，然后只输出一个0到1之间的小数分数，表示完成度（不要输出其他任何文本）。"#.to_string();
+
+        Ok((fallback_system, user_prompt))
+    }
+
+    /// 构建拟人化的AI决策提示（system_prompt + user_prompt）
+    async fn build_ai_decision_prompts(
         &self,
         original_query: &str,
         execution_plan: &DagExecutionPlan,
         execution_results: &[TaskExecutionResult],
         round: usize,
-    ) -> Result<String> {
+    ) -> Result<(String, String)> {
+        use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
+        
         let execution_summary = self.format_execution_summary(execution_results);
         let plan_summary = self.format_plan_summary(execution_plan);
-        if let Some(repo) = &self.prompt_repo {
-            if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Replan).await {
-                let replaced = Self::apply_placeholders(&dynamic, vec![
-                    ("{{USER_QUERY}}", original_query),
-                    ("{original_query}", original_query),
-                    ("{{ROUND}}", &round.to_string()),
-                    ("{round}", &round.to_string()),
-                    ("{{MAX_ROUNDS}}", &self.config.max_iterations.to_string()),
-                    ("{max_rounds}", &self.config.max_iterations.to_string()),
-                    ("{{PLAN_SUMMARY}}", &plan_summary),
-                    ("{plan_summary}", &plan_summary),
-                    ("{{EXECUTION_SUMMARY}}", &execution_summary),
-                    ("{execution_summary}", &execution_summary),
-                    ("{{DECISION_HISTORY}}", &self.format_decision_history()),
-                    ("{decision_history}", &self.format_decision_history()),
-                ]);
-                return Ok(replaced);
-            }
-        }
-        Ok(format!(
-            "作为LLMCompiler的智能决策器，请分析当前执行状态并决定下一步行动。\n\n\
-            原始查询: {}\n\n\
-            当前轮次: {}\n\
-            最大轮次: {}\n\n\
-            执行计划:\n{}\n\n\
-            执行结果:\n{}\n\n\
-            历史决策: {}\n\n\
-            请基于以上信息决定：\n\
-            - COMPLETE: 如果查询已被充分回答或继续执行风险过高\n\
-            - CONTINUE: 如果需要更多信息或可以进一步优化结果\n\n\
-            请返回JSON格式：\n\
-            {{\n\
-              \"decision\": \"COMPLETE\" 或 \"CONTINUE\",\n\
-              \"reasoning\": \"决策原因\",\n\
-              \"confidence\": 0.95\n\
-            }}",
+        let decision_history = self.format_decision_history();
+        let error_info = self.format_error_info(execution_results);
+        
+        // ✅ 从数据库读取拟人化的system模板（Execution阶段用于Joiner）
+        let system_template = if let Some(repo) = &self.prompt_repo {
+            let resolver = PromptResolver::new(repo.clone());
+            // 使用空的agent_config，因为joiner不需要特定的agent配置
+            let agent_config = AgentPromptConfig::default();
+            resolver
+                .resolve_prompt(
+                    &agent_config,
+                    ArchitectureType::LLMCompiler,
+                    CanonicalStage::Executor,  // Joiner使用Executor阶段(映射到Execution)
+                    Some(&"".to_string()),
+                )
+                .await
+                .unwrap_or_else(|_| self.get_default_joiner_template())
+        } else {
+            self.get_default_joiner_template()
+        };
+        
+        // ✅ system_prompt就是模板本身
+        let system_prompt = system_template;
+        
+        // ✅ user_prompt包含具体的分析上下文
+        let user_prompt = format!(
+            r#"请分析以下任务执行情况并做出决策:
+
+**用户原始问题**:
+{}
+
+**执行轮次**: {}/{}
+
+**执行计划摘要**:
+{}
+
+**本轮执行结果**:
+{}
+
+{}
+
+**历史决策**:
+{}
+
+请先思考分析这些结果，然后做出决策（COMPLETE或CONTINUE）。"#,
             original_query,
             round,
             self.config.max_iterations,
             plan_summary,
             execution_summary,
-            self.format_decision_history()
-        ))
+            if !error_info.is_empty() {
+                format!("**错误信息**:\n{}", error_info)
+            } else {
+                String::new()
+            },
+            if decision_history.is_empty() {
+                "无历史决策".to_string()
+            } else {
+                decision_history
+            }
+        );
+        
+        Ok((system_prompt, user_prompt))
+    }
+    
+    /// 获取默认的Joiner模板
+    fn get_default_joiner_template(&self) -> String {
+        r#"你是一个善于分析和总结的AI助手。你的工作是分析任务执行的结果,并决定下一步该怎么做。
+
+请用自然、口语化的方式表达你的思考过程,然后给出明确的决策。
+
+响应格式:
+
+[THINKING]
+(你的分析思考过程)
+
+[DECISION]
+```json
+{
+  "decision": "COMPLETE" or "CONTINUE",
+  "response": "给用户的回答(仅当COMPLETE时)",
+  "feedback": "继续执行的原因(仅当CONTINUE时)",
+  "suggested_tasks": [],
+  "confidence": 0.9
+}
+```"#.to_string()
     }
 
     fn apply_placeholders(template: &str, pairs: Vec<(&str, &str)>) -> String {
@@ -761,19 +870,61 @@ impl IntelligentJoiner {
     }
 
     // 辅助方法
+    /// 清理 Markdown 代码块标记（如 ```json...```）
+    fn strip_markdown_fences(content: &str) -> String {
+        let content = content.trim();
+        
+        // 移除开头的 ```json 或 ```
+        let content = if content.starts_with("```json") {
+            content.strip_prefix("```json").unwrap_or(content)
+        } else if content.starts_with("```") {
+            content.strip_prefix("```").unwrap_or(content)
+        } else {
+            content
+        };
+        
+        // 移除结尾的 ```
+        let content = if content.ends_with("```") {
+            content.strip_suffix("```").unwrap_or(content)
+        } else {
+            content
+        };
+        
+        content.trim().to_string()
+    }
+
     fn parse_completion_score(&self, response: &str) -> Result<f64> {
+        // ✅ 清理markdown标记
+        let cleaned = Self::strip_markdown_fences(response);
+        
         // 尝试从响应中解析数字
-        let score_str = response.trim();
+        let score_str = cleaned.trim();
         
         // 尝试直接解析数字
         if let Ok(score) = score_str.parse::<f64>() {
             return Ok(score.max(0.0).min(1.0));
         }
         
-        // 尝试从文本中提取数字
-        for line in response.lines() {
-            if let Ok(score) = line.trim().parse::<f64>() {
+        // 尝试从文本中提取数字（第一行或第一个数字）
+        for line in cleaned.lines() {
+            let line = line.trim();
+            // 跳过空行和注释
+            if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+                continue;
+            }
+            
+            // 尝试直接解析
+            if let Ok(score) = line.parse::<f64>() {
                 return Ok(score.max(0.0).min(1.0));
+            }
+            
+            // 尝试提取第一个数字（支持 "0.8", "分数: 0.8" 等格式）
+            let words: Vec<&str> = line.split_whitespace().collect();
+            for word in words {
+                let word = word.trim_matches(|c: char| !c.is_numeric() && c != '.');
+                if let Ok(score) = word.parse::<f64>() {
+                    return Ok(score.max(0.0).min(1.0));
+                }
             }
         }
         
@@ -783,20 +934,56 @@ impl IntelligentJoiner {
     }
 
     fn parse_ai_decision(&self, response: &str) -> Result<JoinerDecision> {
+        // ✅ 首先尝试从拟人化格式中提取[DECISION]部分
+        let decision_json = if let Some(json_str) = self.extract_decision_from_humanized_response(response) {
+            debug!("从拟人化响应中提取到DECISION部分");
+            json_str
+        } else {
+            // 否则清理markdown标记
+            Self::strip_markdown_fences(response)
+        };
+        
         // 尝试解析JSON响应
-        if let Ok(json_value) = serde_json::from_str::<Value>(response) {
+        if let Ok(json_value) = serde_json::from_str::<Value>(&decision_json) {
             if let Some(decision_str) = json_value.get("decision").and_then(|v| v.as_str()) {
+                let confidence = json_value.get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.8) as f32;
+                
                 return match decision_str.to_uppercase().as_str() {
-                    "COMPLETE" => Ok(JoinerDecision::Complete {
-                        response: "AI决策: 完成执行".to_string(),
-                        confidence: 0.8,
+                    "COMPLETE" => {
+                        let response_text = json_value.get("response")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("任务执行完成")
+                            .to_string();
+                        Ok(JoinerDecision::Complete {
+                            response: response_text,
+                            confidence,
                         summary: self.get_execution_stats(),
-                    }),
-                    "CONTINUE" => Ok(JoinerDecision::Continue {
-                        feedback: "AI决策: 继续执行".to_string(),
-                        suggested_tasks: Vec::new(),
-                        confidence: 0.8,
-                    }),
+                        })
+                    },
+                    "CONTINUE" => {
+                        let feedback = json_value.get("feedback")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("需要继续执行以获取更多信息")
+                            .to_string();
+                        
+                        // 解析suggested_tasks(如果有)
+                        let suggested_tasks = json_value.get("suggested_tasks")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|task_val| self.parse_suggested_task(task_val))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        
+                        Ok(JoinerDecision::Continue {
+                            feedback,
+                            suggested_tasks,
+                            confidence,
+                        })
+                    },
                     _ => Ok(JoinerDecision::Continue {
                         feedback: "默认决策: 继续执行".to_string(),
                         suggested_tasks: Vec::new(),
@@ -807,7 +994,7 @@ impl IntelligentJoiner {
         }
         
         // 如果JSON解析失败，尝试文本解析
-        let response_upper = response.to_uppercase();
+        let response_upper = decision_json.to_uppercase();
         if response_upper.contains("COMPLETE") {
             Ok(JoinerDecision::Complete {
                 response: "文本解析: 完成执行".to_string(),
@@ -828,6 +1015,100 @@ impl IntelligentJoiner {
                 confidence: 0.5,
             })
         }
+    }
+    
+    /// 从拟人化响应中提取[DECISION]部分的JSON
+    fn extract_decision_from_humanized_response(&self, response: &str) -> Option<String> {
+        // 查找 [DECISION] 标记
+        if let Some(decision_start) = response.find("[DECISION]") {
+            let content_after_decision = &response[decision_start + 10..]; // 跳过 "[DECISION]"
+            
+            // 提取 DECISION 后的JSON内容（可能在代码块中或直接是JSON）
+            let json_candidates = vec![
+                Self::extract_json_from_code_block(content_after_decision),
+                Self::extract_json_by_braces(content_after_decision),
+            ];
+            
+            for candidate in json_candidates {
+                if serde_json::from_str::<Value>(&candidate).is_ok() {
+                    return Some(candidate);
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// 从代码块中提取JSON
+    fn extract_json_from_code_block(text: &str) -> String {
+        let patterns = ["```json\n", "```\n", "```json", "```"];
+        for pattern in &patterns {
+            if let Some(start_pos) = text.find(pattern) {
+                let content_start = start_pos + pattern.len();
+                if let Some(end_pos) = text[content_start..].find("```") {
+                    return text[content_start..content_start + end_pos].trim().to_string();
+                }
+            }
+        }
+        text.trim().to_string()
+    }
+    
+    /// 通过大括号提取JSON
+    fn extract_json_by_braces(text: &str) -> String {
+        let mut brace_count = 0;
+        let mut start_pos = None;
+        let mut end_pos = None;
+
+        for (i, ch) in text.char_indices() {
+            match ch {
+                '{' => {
+                    if brace_count == 0 {
+                        start_pos = Some(i);
+                    }
+                    brace_count += 1;
+                }
+                '}' => {
+                    brace_count -= 1;
+                    if brace_count == 0 && start_pos.is_some() {
+                        end_pos = Some(i + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let (Some(start), Some(end)) = (start_pos, end_pos) {
+            text[start..end].to_string()
+        } else {
+            text.to_string()
+        }
+    }
+    
+    /// 解析建议的任务
+    fn parse_suggested_task(&self, task_val: &Value) -> Option<DagTaskNode> {
+        let id = task_val.get("id")?.as_str()?.to_string();
+        let name = task_val.get("name")?.as_str()?.to_string();
+        let tool_name = task_val.get("tool")?.as_str()?.to_string();
+        
+        let inputs: HashMap<String, Value> = task_val.get("inputs")
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.clone().into_iter().collect())
+            .unwrap_or_default();
+        
+        let dependencies: Vec<String> = task_val.get("dependencies")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+        
+        let mut task = DagTaskNode::new(id, name, tool_name, inputs);
+        task.dependencies = dependencies;
+        
+        if let Some(desc) = task_val.get("description").and_then(|v| v.as_str()) {
+            task.description = desc.to_string();
+        }
+        
+        Some(task)
     }
 
     fn default_decision_logic(
@@ -886,9 +1167,21 @@ impl IntelligentJoiner {
                 factors += 1;
             }
             
+            // 对于扫描类任务，即使没有发现问题也算完成
+            // 检查是否有扫描相关的输出
+            if output.contains_key("scan_results") || 
+               output.contains_key("scanned_ports") ||
+               output.contains_key("closed_ports") ||
+               output.contains_key("scan_summary") ||
+               output.contains_key("execution_success") {
+                score += 0.4; // 扫描完成本身就是一个有价值的结果
+                factors += 1;
+            }
+            
             // 检查结果质量
-            if output.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-                score += 0.2;
+            if output.get("success").and_then(|v| v.as_bool()).unwrap_or(false) ||
+               output.get("execution_success").and_then(|v| v.as_bool()).unwrap_or(false) {
+                score += 0.3;
                 factors += 1;
             }
         }
@@ -954,6 +1247,38 @@ impl IntelligentJoiner {
                 .collect::<Vec<_>>()
                 .join("\n")
         }
+    }
+    
+    /// 格式化错误信息
+    fn format_error_info(&self, execution_results: &[TaskExecutionResult]) -> String {
+        let failed: Vec<&TaskExecutionResult> = execution_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Failed)
+            .collect();
+        
+        if failed.is_empty() {
+            return "无错误".to_string();
+        }
+        
+        let mut error_info = String::new();
+        for result in failed {
+            if let Some(error) = &result.error {
+                error_info.push_str(&format!("任务 {}: {}\n", result.task_id, error));
+            }
+        }
+        error_info
+    }
+    
+    /// 格式化执行上下文
+    fn format_execution_context(&self) -> String {
+        format!(
+            "已执行轮次: {}\n总耗时: {}ms\n完成任务: {}\n失败任务: {}\n关键发现: {}",
+            self.execution_context.total_rounds,
+            self.execution_context.total_execution_time_ms,
+            self.execution_context.total_completed_tasks,
+            self.execution_context.total_failed_tasks,
+            self.execution_context.key_findings.len()
+        )
     }
 
     /// 获取决策历史

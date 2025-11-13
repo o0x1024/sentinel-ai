@@ -15,7 +15,7 @@ use chrono::Utc;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::services::ai::AiService;
@@ -64,40 +64,124 @@ impl LlmCompilerPlanner {
     ) -> Result<DagExecutionPlan> {
         info!("开始生成DAG执行计划: {}", user_input);
 
-        // 获取可用工具列表
-        let available_tools = self.get_available_tools_description().await?;
-        let prompt = self
-            .build_planning_prompt_with_tools(user_input, context, &available_tools)
+        // ✅ 获取可用工具列表（从context读取工具权限配置）
+        let available_tools = self.get_available_tools_description(context).await?;
+        
+        // ✅ 拆分为system_prompt和user_prompt
+        let (system_prompt, user_prompt) = self
+            .build_planning_prompts(user_input, context, &available_tools)
             .await?;
 
-        // 调用LLM生成计划
-        let response = self
+        // ✅ 从context中提取conversation_id和message_id（用于统一消息推送）
+        let conversation_id = context
+            .get("conversation_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let message_id = context
+            .get("message_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // ✅ 调用LLM生成计划（流式输出,前端可以看到思考过程）
+        // 注意: 这里不保存user消息,因为在engine_adapter层已经保存过了
+        let response = match self
             .ai_service
-            .send_message_stream(
-                None, 
-                Some(&prompt), 
-                None, 
-                None, 
-                true, 
-                false,
-                Some(ChunkType::PlanInfo)
+            .send_message_stream_with_save_control(
+                Some(&user_prompt),  // ✅ user_prompt: 用户的实际任务+上下文
+                None,  // ✅ 不保存user消息(已在上层保存)
+                Some(&system_prompt),  // ✅ system_prompt: 拟人化的规划助手提示词
+                conversation_id, 
+                message_id, 
+                true,  // 使用流式输出
+                false,  // 不是最终消息
+                Some(ChunkType::Thinking)  // ✅ 标记为Thinking类型,前端显示思考过程
             )
-            .await?;
+            .await
+        {
+            Ok(resp) => {
+                debug!("LLMCompiler Planner: LLM响应长度 {} 字符", resp.len());
+                resp
+            }
+            Err(e) => {
+                error!("LLMCompiler Planner: LLM调用失败: {}", e);
+                return Err(anyhow::anyhow!(
+                    "Failed to generate DAG plan: LLM call failed - {}. Please check your AI service configuration.",
+                    e
+                ));
+            }
+        };
 
         // 解析LLM响应为DAG计划
         self.parse_dag_plan(&response, user_input).await
     }
 
-    /// 获取可用工具描述
-    async fn get_available_tools_description(&self) -> Result<String> {
-        let tools = self.tool_adapter.list_available_tools().await;
+    /// 获取可用工具描述（应用工具权限过滤）
+    async fn get_available_tools_description(&self, context: &HashMap<String, Value>) -> Result<String> {
+        use std::collections::HashSet;
+        
+        // ✅ 优先从context读取工具白名单/黑名单，其次从runtime_params读取
+        let params = if !context.is_empty() {
+            context
+        } else if let Some(ref rp) = self.runtime_params {
+            rp
+        } else {
+            context // 空HashMap
+        };
+        
+        let allow_present = params.get("tools_allow").is_some();
+        let allow = params
+            .get("tools_allow")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_else(HashSet::new);
+        let deny = params
+            .get("tools_deny")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_else(HashSet::new);
+        
+        info!("LLMCompiler Planner: 工具过滤配置 - allow_present: {}, allow_count: {}, deny_count: {}", 
+            allow_present, allow.len(), deny.len());
+        if allow_present {
+            info!("LLMCompiler Planner: 允许的工具: {:?}", allow);
+        }
 
-        if tools.is_empty() {
+        // 如果显式传入空白名单，表示禁用所有工具
+        if allow_present && allow.is_empty() {
+            info!("LLMCompiler Planner: 检测到显式空白名单 => 禁用所有工具");
             return Ok("暂无可用工具".to_string());
         }
 
+        let all_tools = self.tool_adapter.list_available_tools().await;
+        
+        // 应用工具过滤
+        let filtered_tools: Vec<String> = all_tools
+            .into_iter()
+            .filter(|tool_name| {
+                // 如果有白名单（非空），只允许白名单中的工具
+                if allow_present && !allow.is_empty() {
+                    if !allow.contains(tool_name) {
+                        debug!("LLMCompiler Planner: 工具 '{}' 不在白名单中，已过滤", tool_name);
+                        return false;
+                    }
+                }
+                // 如果在黑名单中，拒绝
+                if deny.contains(tool_name) {
+                    debug!("LLMCompiler Planner: 工具 '{}' 在黑名单中，已过滤", tool_name);
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        if filtered_tools.is_empty() {
+            return Ok("暂无可用工具".to_string());
+        }
+
+        info!("LLMCompiler Planner: 过滤后可用工具数量: {}/{}", filtered_tools.len(), filtered_tools.len());
+
         let mut tool_descriptions = Vec::new();
-        for tool_name in &tools {
+        for tool_name in &filtered_tools {
             if let Some(tool_info) = self.tool_adapter.get_tool_info(tool_name).await {
                 tool_descriptions.push(format!(
                     "- {}: {} (类别: {:?})",
@@ -111,80 +195,102 @@ impl LlmCompilerPlanner {
         Ok(tool_descriptions.join("\n"))
     }
 
-    /// 构建包含工具信息的规划提示
-    async fn build_planning_prompt_with_tools(
+    /// 过滤用户上下文，移除系统内部参数
+    fn filter_user_context(&self, context: &HashMap<String, Value>) -> HashMap<String, Value> {
+        // 定义需要过滤掉的系统内部参数
+        let system_params = vec![
+            "conversation_id",
+            "execution_id", 
+            "message_id",
+            "prompt_ids",
+            "prompts",
+            "execution_retry_max",
+            "execution_retry_backoff",
+            "execution_timeout_sec",
+            "prompt_strategy",
+            "group_id",
+            "agent_id",
+            "task_mode",
+            "pinned_versions",
+            "llm",
+            "tools_allow",
+            "tools_deny",
+            "task_description", // 这个已经是user_input了，不需要重复
+        ];
+        
+        context
+            .iter()
+            .filter(|(key, _)| !system_params.contains(&key.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// 构建规划提示（拆分为system_prompt和user_prompt）
+    async fn build_planning_prompts(
         &self,
         user_input: &str,
         context: &HashMap<String, Value>,
         available_tools: &str,
-    ) -> Result<String> {
-        let mut base = format!(
-            r#"你是一个专业的LLMCompiler规划器，专门设计并行执行的DAG任务计划。
+    ) -> Result<(String, String)> {
+        use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
+        use crate::models::prompt::ArchitectureType;
 
-**用户输入**: {}
-**上下文**: {}
+        // ✅ 从数据库读取 system 模板（优先使用配置的模板）
+        let system_template = if let Some(repo) = &self.prompt_repo {
+            let resolver = PromptResolver::new(repo.clone());
+            let agent_config = AgentPromptConfig::parse_agent_config(context);
+            resolver
+                .resolve_prompt(
+                    &agent_config,
+                    ArchitectureType::LLMCompiler,
+                    CanonicalStage::Planner,
+                    Some(&"".to_string()),
+                )
+                .await
+                .unwrap_or_else(|_| self.get_default_planner_template())
+        } else {
+            self.get_default_planner_template()
+        };
 
-**规划要求**：
-1. 生成可并行执行的任务DAG
-2. 最小化任务间的依赖关系
-3. 使用变量引用（$1, $2等）处理任务间数据传递
-4. 优化执行效率和资源利用
-
-**可用工具**:
-{}
-
-**工具使用指南**：
-- 选择最适合任务目标的工具
-- 考虑工具间的数据依赖关系
-- 优先使用可并行执行的工具组合
-- 确保工具参数格式正确
-- 只使用上述列出的可用工具
-
-**DAG设计原则**：
-1. **并行优先**: 无依赖的任务应该并行执行
-2. **依赖最小化**: 减少不必要的任务依赖
-3. **数据流清晰**: 使用变量引用明确数据传递
-4. **错误隔离**: 单个任务失败不应影响无关任务
-
-请以JSON格式返回DAG计划，包含：
-- nodes: 任务节点列表
-- dependency_graph: 依赖关系
-- variable_mappings: 变量映射
-
-示例格式：
-{{
-  "nodes": [
-    {{
-      "id": "task_1",
-      "name": "基础信息收集",
-      "description": "收集目标的基本信息",
-      "tool_name": "dns_scanner",
-      "inputs": {{"target": "example.com"}},
-      "dependencies": [],
-      "variable_refs": [],
-      "priority": 1,
-      "estimated_duration": 30
-    }},
-    {{
-      "id": "task_2",
-      "name": "端口扫描",
-      "description": "基于IP地址进行端口扫描",
-      "tool_name": "port_scanner",
-      "inputs": {{"target": "$1", "scan_type": "tcp"}},
-      "dependencies": ["task_1"],
-      "variable_refs": ["$1"],
-      "priority": 2,
-      "estimated_duration": 60
-    }}
-  ],
-  "dependency_graph": {{"task_2": ["task_1"]}},
-  "variable_mappings": {{"$1": "task_1.outputs.ip_address"}}
-}}
-"#,
-            user_input,
-            serde_json::to_string_pretty(context).unwrap_or_default(),
-            available_tools
-        );
+        // 渲染工具变量到 system 提示
+        let mut system_ctx = HashMap::new();
+        system_ctx.insert("tools".to_string(), serde_json::Value::String(available_tools.to_string()));
+        
+        let mut system_prompt = if let Some(repo) = &self.prompt_repo {
+            let resolver = PromptResolver::new(repo.clone());
+            resolver
+                .render_variables(&system_template, &system_ctx)
+                .unwrap_or_else(|_| system_template.replace("{tools}", available_tools))
+        } else {
+            system_template.replace("{tools}", available_tools)
+        };
+        
+        // ✅ user_prompt: 用户的实际任务（不包含系统内部参数）
+        // 过滤掉内部系统参数，只保留用户业务相关的上下文
+        let filtered_context = self.filter_user_context(context);
+        
+        let user_prompt = if filtered_context.is_empty() {
+            format!("请为以下任务生成DAG执行计划：\n\n{}", user_input)
+        } else {
+            format!(
+                "请为以下任务生成DAG执行计划：\n\n**任务**: {}\n\n**业务上下文**: {}",
+                user_input,
+                serde_json::to_string_pretty(&filtered_context).unwrap_or_default()
+            )
+        };
+        
+        // 集成角色提示词（如果存在）
+        if let Some(role_prompt) = context.get("role_prompt").and_then(|v| v.as_str()) {
+            if !role_prompt.trim().is_empty() {
+                system_prompt = if system_prompt.trim().is_empty() {
+                    role_prompt.to_string()
+                } else {
+                    format!("{}\n\n{}", role_prompt, system_prompt)
+                };
+                log::info!("LLM-Compiler planner: integrated role prompt");
+            }
+        }
+        
         // RAG augmentation for LLMCompiler planning (global toggle)
         if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
             if rag_service.get_config().augmentation_enabled {
@@ -212,95 +318,80 @@ impl LlmCompilerPlanner {
                 .await
                 {
                     if !knowledge_context.trim().is_empty() {
-                        base.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
-                        base.push_str(&knowledge_context);
-                    } else {
-                        let fallback_req = AssistantRagRequest {
-                            query: fallback,
-                            collection_id: None,
-                            conversation_history: None,
-                            top_k: Some(7),
-                            use_mmr: Some(true),
-                            mmr_lambda: Some(0.7),
-                            similarity_threshold: Some(0.55),
-                            reranking_enabled: Some(false),
-                            model_provider: None,
-                            model_name: None,
-                            max_tokens: None,
-                            temperature: None,
-                            system_prompt: None,
-                        };
-                        if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
-                            if !kb2.trim().is_empty() {
-                                base.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
-                                base.push_str(&kb2);
-                            }
-                        }
+                        system_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
+                        system_prompt.push_str(&knowledge_context);
+                        info!("LLM-Compiler planner: Added RAG context to system prompt");
                     }
                 }
             }
         }
 
-        if let Some(repo) = &self.prompt_repo {
-            // 使用统一提示词解析器，尽量从 context 解析 agent-level 配置
-            let resolver = PromptResolver::new(repo.clone());
-            let agent_config = AgentPromptConfig::parse_agent_config(context);
-            let template = resolver
-                .resolve_prompt(
-                    &agent_config,
-                    ArchitectureType::LLMCompiler,
-                    CanonicalStage::Planner,
-                    Some(&base),
-                )
-                .await
-                .unwrap_or(base.clone());
+        // ✅ 返回(system_prompt, user_prompt)元组
+        Ok((system_prompt, user_prompt))
+    }
 
-            let mut replaced = Self::apply_placeholders(
-                &template,
-                vec![
-                    ("{{USER_INPUT}}", user_input),
-                    ("{user_input}", user_input),
-                    (
-                        "{{CONTEXT}}",
-                        &serde_json::to_string_pretty(context).unwrap_or_default(),
-                    ),
-                    (
-                        "{context}",
-                        &serde_json::to_string_pretty(context).unwrap_or_default(),
-                    ),
-                    ("{{TOOLS}}", available_tools),
-                    ("{tools}", available_tools),
-                ],
-            );
-            
-            // 集成角色提示词（如果存在）
-            if let Some(role_prompt) = context.get("role_prompt").and_then(|v| v.as_str()) {
-                if !role_prompt.trim().is_empty() {
-                    replaced = if replaced.trim().is_empty() {
-                        role_prompt.to_string()
-                    } else {
-                        format!("{}\n\n{}", role_prompt, replaced)
-                    };
-                    log::info!("LLM-Compiler planner: integrated role prompt");
-                }
-            }
-            
-            return Ok(replaced);
-        }
-        
-        // 如果没有 prompt_repo，也要检查角色提示词
-        if let Some(role_prompt) = context.get("role_prompt").and_then(|v| v.as_str()) {
-            if !role_prompt.trim().is_empty() {
-                base = if base.trim().is_empty() {
-                    role_prompt.to_string()
-                } else {
-                    format!("{}\n\n{}", role_prompt, base)
-                };
-                log::info!("LLM-Compiler planner: integrated role prompt (no repo)");
-            }
-        }
-        
-        Ok(base)
+    /// 获取默认的规划器模板（作为后备）
+    fn get_default_planner_template(&self) -> String {
+        r#"你是一个专业的LLMCompiler规划器，专门设计并行执行的DAG任务计划。
+
+**规划要求**：
+1. 生成可并行执行的任务DAG
+2. 最小化任务间的依赖关系
+3. 使用变量引用（$1, $2等）处理任务间数据传递
+4. 优化执行效率和资源利用
+
+**可用工具**:
+{tools}
+
+**工具使用指南**：
+- 选择最适合任务目标的工具
+- 考虑工具间的数据依赖关系
+- 优先使用可并行执行的工具组合
+- 确保工具参数格式正确
+- 只使用上述列出的可用工具
+
+**DAG设计原则**：
+1. **并行优先**: 无依赖的任务应该并行执行
+2. **依赖最小化**: 减少不必要的任务依赖
+3. **数据流清晰**: 使用变量引用明确数据传递
+4. **错误隔离**: 单个任务失败不应影响无关任务
+
+**输出格式要求**：
+请以JSON格式返回DAG计划，包含：
+- nodes: 任务节点列表
+- dependency_graph: 依赖关系
+- variable_mappings: 变量映射
+- 不要使用任何markdown标记，请直接返回可解析的JSON
+
+示例格式：
+{
+  "nodes": [
+    {
+      "id": "task_1",
+      "name": "基础信息收集",
+      "description": "收集目标的基本信息",
+      "tool_name": "dns_scanner",
+      "inputs": {"target": "example.com"},
+      "dependencies": [],
+      "variable_refs": [],
+      "priority": 1,
+      "estimated_duration": 30
+    },
+    {
+      "id": "task_2",
+      "name": "端口扫描",
+      "description": "基于IP地址进行端口扫描",
+      "tool_name": "port_scanner",
+      "inputs": {"target": "$1", "scan_type": "tcp"},
+      "dependencies": ["task_1"],
+      "variable_refs": ["$1"],
+      "priority": 2,
+      "estimated_duration": 60
+    }
+  ],
+  "dependency_graph": {"task_2": ["task_1"]},
+  "variable_mappings": {"$1": "task_1.outputs.ip_address"}
+}"#.to_string()
     }
 
     fn apply_placeholders(template: &str, pairs: Vec<(&str, &str)>) -> String {
@@ -320,17 +411,18 @@ impl LlmCompilerPlanner {
     ) -> Result<DagExecutionPlan> {
         info!("开始重新规划，反馈: {}", feedback);
 
-        let prompt = self.build_replanning_prompt(original_plan, execution_results, feedback);
+        // ✅ 拆分为system_prompt和user_prompt
+        let (system_prompt, user_prompt) = self.build_replanning_prompts(original_plan, execution_results, feedback);
         let response = self
             .ai_service
             .send_message_stream(
+                Some(&user_prompt),  // ✅ user_prompt: 重规划请求和上下文
+                Some(&system_prompt),  // ✅ system_prompt: 重规划指导原则
                 None, 
-                Some(&prompt), 
                 None, 
-                None, 
+                false,  // 不使用流式输出
                 false,
-                false,
-                Some(ChunkType::PlanInfo),
+                None,  // 不发送PlanInfo chunk到前端
             )
             .await?;
 
@@ -338,13 +430,13 @@ impl LlmCompilerPlanner {
             .await
     }
 
-    /// 构建重规划提示
-    fn build_replanning_prompt(
+    /// 构建重规划提示（拆分为system_prompt和user_prompt）
+    fn build_replanning_prompts(
         &self,
         original_plan: &DagExecutionPlan,
         results: &[TaskExecutionResult],
         feedback: &str,
-    ) -> String {
+    ) -> (String, String) {
         // 分析已完成的任务和结果
         let completed_tasks: Vec<_> = results
             .iter()
@@ -356,14 +448,8 @@ impl LlmCompilerPlanner {
             .filter(|r| r.status == TaskStatus::Failed)
             .collect();
 
-        format!(
-            r#"你是一个专业的LLMCompiler重规划专家。请根据执行反馈重新制定计划。
-
-**原始计划**: {}
-**已完成任务**: {} 个
-**失败任务**: {} 个
-**执行结果**: {}
-**反馈信息**: {}
+        // ✅ system_prompt: 重规划指导原则（固定内容）
+        let system_prompt = r#"你是一个专业的LLMCompiler重规划专家。请根据执行反馈重新制定计划。
 
 **重规划指导原则**：
 1. **保留有效结果**: 利用已完成任务的输出
@@ -377,18 +463,40 @@ impl LlmCompilerPlanner {
 - 如果某些工具失败，尝试替代方案
 - 基于已有结果优化后续任务的输入参数
 
-请基于以上信息生成新的DAG计划，使用相同的JSON格式。
+**输出要求**：
+请生成新的DAG计划，使用JSON格式（不要使用markdown标记）。
 新计划应该：
 1. 包含针对发现问题的深入测试
 2. 利用已有的执行结果
 3. 保持高效的并行执行结构
+"#.to_string();
+
+        // ✅ user_prompt: 具体的重规划请求和上下文
+        let user_prompt = format!(
+            r#"请基于以下信息重新生成DAG执行计划：
+
+**原始计划**: {}
+
+**执行统计**:
+- 已完成任务: {} 个
+- 失败任务: {} 个
+
+**执行结果详情**: 
+{}
+
+**反馈信息**: 
+{}
+
+请生成优化后的新计划。
 "#,
             serde_json::to_string_pretty(original_plan).unwrap_or_default(),
             completed_tasks.len(),
             failed_tasks.len(),
             serde_json::to_string_pretty(results).unwrap_or_default(),
             feedback
-        )
+        );
+
+        (system_prompt, user_prompt)
     }
 
     /// 解析DAG计划
@@ -402,25 +510,32 @@ impl LlmCompilerPlanner {
         let parsed: Value = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("解析LLM响应失败: {}", e))?;
 
+        // ✅ 同时支持 "nodes" 和 "tasks" 字段（拟人化prompt使用tasks）
         let nodes = parsed["nodes"]
             .as_array()
-            .ok_or_else(|| anyhow::anyhow!("缺少nodes字段"))?
+            .or_else(|| parsed["tasks"].as_array())
+            .ok_or_else(|| anyhow::anyhow!("缺少nodes或tasks字段"))?
             .iter()
             .enumerate()
             .map(|(index, node)| {
                 Ok(DagTaskNode {
-                    id: node["id"]
+                    id: node["task_id"]
                         .as_str()
+                        .or_else(|| node["id"].as_str())
                         .unwrap_or(&format!("task_{}", index + 1))
                         .to_string(),
                     name: node["name"].as_str().unwrap_or("未命名任务").to_string(),
                     description: node["description"].as_str().unwrap_or("").to_string(),
+                    // ✅ 同时支持 "tool_name" 和 "tool" 字段（拟人化prompt使用tool）
                     tool_name: node["tool_name"]
                         .as_str()
-                        .ok_or_else(|| anyhow::anyhow!("任务缺少tool_name字段"))?
+                        .or_else(|| node["tool"].as_str())
+                        .ok_or_else(|| anyhow::anyhow!("任务缺少tool_name或tool字段"))?
                         .to_string(),
-                    inputs: node["inputs"]
+                    // ✅ 同时支持 "arguments" 和 "inputs" 字段（优先 arguments）
+                    inputs: node["arguments"]
                         .as_object()
+                        .or_else(|| node["inputs"].as_object())
                         .cloned()
                         .unwrap_or_default()
                         .into_iter()
@@ -495,9 +610,15 @@ impl LlmCompilerPlanner {
         })
     }
 
-    /// 从响应中提取JSON（增强的鲁棒性）
+    /// 从响应中提取JSON（增强的鲁棒性，支持拟人化格式）
     fn extract_json_from_response(&self, response: &str) -> Result<String> {
         let trimmed = response.trim();
+
+        // ✅ 首先尝试从拟人化格式中提取 [PLAN] 部分
+        if let Some(plan_json) = self.extract_plan_from_humanized_response(trimmed) {
+            debug!("从拟人化响应中提取到PLAN部分");
+            return Ok(plan_json);
+        }
 
         // 1. 尝试多种JSON提取策略
         let candidates = vec![
@@ -527,6 +648,28 @@ impl LlmCompilerPlanner {
                 trimmed.to_string()
             }
         ))
+    }
+
+    /// 从拟人化响应中提取[PLAN]部分的JSON
+    fn extract_plan_from_humanized_response(&self, response: &str) -> Option<String> {
+        // 查找 [PLAN] 标记
+        if let Some(plan_start) = response.find("[PLAN]") {
+            let content_after_plan = &response[plan_start + 6..]; // 跳过 "[PLAN]"
+            
+            // 提取 PLAN 后的JSON内容（可能在代码块中或直接是JSON）
+            let json_candidates = vec![
+                self.extract_json_from_code_blocks(content_after_plan),
+                self.extract_json_from_braces(content_after_plan),
+            ];
+            
+            for candidate in json_candidates {
+                if let Some(cleaned) = self.clean_and_validate_json(&candidate) {
+                    return Some(cleaned);
+                }
+            }
+        }
+        
+        None
     }
 
     /// 从代码块中提取JSON (```json ... ```)

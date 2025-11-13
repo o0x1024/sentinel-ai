@@ -32,7 +32,7 @@ pub struct ParallelExecutorPool {
     config: LlmCompilerConfig,
     /// 执行统计
     execution_metrics: Arc<tokio::sync::RwLock<ExecutionMetrics>>,
-    /// 运行时参数（包含工具权限等）
+    /// 运行时参数（包含工具权限、conversation_id、message_id等）
     runtime_params: Arc<tokio::sync::RwLock<Option<HashMap<String, serde_json::Value>>>>,
 }
 
@@ -121,10 +121,29 @@ impl ParallelExecutorPool {
         let (status, outputs, error) = match self.execute_tool_with_timeout(&task).await {
             Ok(result) => {
                 info!("任务执行成功: {}", task.id);
+                
+                // ✅ 发送工具执行结果到前端（参考React架构）
+                // 从runtime_params中读取app_handle、conversation_id、message_id等
+                let runtime_params = self.runtime_params.read().await;
+                if let Some(params) = runtime_params.as_ref() {
+                    if let Some(app_handle_value) = params.get("app_handle") {
+                        // 注意：由于app_handle无法直接序列化，我们需要从全局状态或其他方式获取
+                        // 这里先跳过，或者在engine_adapter层面处理消息推送
+                        drop(runtime_params);  // 释放锁
+                        
+                        // 暂时使用日志记录，实际消息推送在engine_adapter层面处理
+                        info!("✅ Task completed: {}, tool={}", task.id, task.tool_name);
+                    }
+                }
+                
                 (TaskStatus::Completed, result, None)
             }
             Err(e) => {
                 error!("任务执行失败: {} - {}", task.id, e);
+                
+                // 失败也记录日志，实际消息推送在engine_adapter层面处理
+                warn!("❌ Task failed: {}, tool={}, error={}", task.id, task.tool_name, e);
+                
                 (TaskStatus::Failed, HashMap::new(), Some(e.to_string()))
             }
         };

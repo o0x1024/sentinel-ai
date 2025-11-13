@@ -670,7 +670,13 @@ impl ExecutionEngine for PlanAndExecuteEngine {
     }
     
     async fn cancel_execution(&self, _session_id: &str) -> anyhow::Result<()> {
-        // 简化的取消执行实现
+        // ✅ 触发executor的取消令牌
+        if let Some(executor) = &self.executor {
+            executor.cancel();
+            log::info!("Plan-and-Execute: Cancelled execution via executor");
+        } else {
+            log::warn!("Plan-and-Execute: No executor available to cancel");
+        }
         Ok(())
     }
 }

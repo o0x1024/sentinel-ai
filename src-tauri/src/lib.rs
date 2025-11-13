@@ -154,6 +154,8 @@ pub fn run() {
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("sentinel_ai=info".parse().unwrap())
+                // 屏蔽 rig crate 的 "Agent multi-turn stream finished" 日志
+                .add_directive("rig::agent::prompt_request::streaming=warn".parse().unwrap())
         )
         .with_writer(non_blocking)
         .without_time()  // 不显示时间戳
@@ -276,7 +278,10 @@ pub fn run() {
                 // 注册被动扫描工具到全局工具系统
                 // 必须在 initialize_global_tool_system 之后执行
                 let passive_state = Arc::new(PassiveScanState::new());
-                if let Err(e) = crate::tools::passive_integration::register_passive_tools(passive_state.clone()).await {
+                if let Err(e) = crate::tools::passive_integration::register_passive_tools(
+                    passive_state.clone(),
+                    handle.clone(),
+                ).await {
                     tracing::error!("Failed to register passive scan tools: {}", e);
                 } else {
                     tracing::info!("Passive scan tools registered successfully");

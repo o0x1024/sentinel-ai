@@ -58,7 +58,7 @@ impl PassiveDatabaseService {
 
     /// 创建数据库表结构
     pub async fn run_migrations(&self) -> Result<()> {
-        info!("Creating passive scan database schema...");
+        // info!("Creating passive scan database schema...");
         
         // 漏洞表
         sqlx::query(

@@ -262,7 +262,7 @@ pub struct ParsedAction {
 impl Default for ReactConfig {
     fn default() -> Self {
         Self {
-            max_iterations: 10,
+            max_iterations: 100,  // Increased from 10 to 20 for complex security testing workflows
             max_thinking_time: Some(300.0), // 5 分钟
             temperature: Some(0.7),
             max_tokens: Some(2000),

@@ -112,6 +112,23 @@ impl ReactEngine {
 
         println!("ReactEngine execute: conversation_id={:?}, message_id={:?}, execution_id={:?}", 
             conversation_id, message_id, execution_id);
+        
+        // ✅ 获取取消令牌（优先从全局管理器获取，如果有execution_id）
+        let cancellation_token = if let Some(exec_id) = &execution_id {
+            match crate::managers::cancellation_manager::get_token(exec_id).await {
+                Some(token) => {
+                    log::info!("✅ Retrieved cancellation token for execution: {}", exec_id);
+                    Some(token)
+                }
+                None => {
+                    log::warn!("⚠️ No cancellation token found for execution: {}", exec_id);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
         let executor_config = ReactExecutorConfig {
             react_config: self.config.clone(),
             enable_streaming: true,
@@ -122,6 +139,7 @@ impl ReactEngine {
             prompt_repo,
             framework_adapter,
             task_parameters: Some(serde_json::to_value(&task.parameters).unwrap_or(serde_json::Value::Object(serde_json::Map::new()))),
+            cancellation_token,  // ✅ 传递取消令牌
         };
 
         let executor = ReactExecutor::new(
@@ -216,6 +234,11 @@ impl ReactEngine {
 
         // 执行循环
         let trace = executor.run(llm_call, tool_executor).await?;
+        
+        // ✅ 清理取消令牌
+        if let Some(exec_id) = &execution_id {
+            crate::managers::cancellation_manager::cleanup_token(exec_id).await;
+        }
 
         // 转换为 AgentExecutionResult
         self.trace_to_result(trace)

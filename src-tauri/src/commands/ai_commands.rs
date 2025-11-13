@@ -937,31 +937,42 @@ pub async fn stop_execution(
     execution_id: String,
     app: AppHandle,
 ) -> Result<(), String> {
-    info!("Stopping execution: {}", execution_id);
+    info!("🛑 Stopping execution: {}", execution_id);
 
-    // 1. 尝试停止执行管理器中的任务
+    // 1. ✅ 取消CancellationToken（对ReAct架构有效）
+    use crate::managers::cancellation_manager;
+    let cancelled_by_token = cancellation_manager::cancel_execution(&execution_id).await;
+    if cancelled_by_token {
+        log::info!("✅ Cancelled execution via CancellationToken: {}", execution_id);
+    }
+
+    // 2. 尝试停止执行管理器中的任务（对Plan-Execute/LLMCompiler有效）
     let execution_manager = app.state::<Arc<crate::managers::ExecutionManager>>();
     let manager = execution_manager.inner().clone();
     if let Err(e) = manager.stop_execution(&execution_id).await {
-        log::warn!("Failed to stop execution {}: {}", execution_id, e);
+        log::warn!("Failed to stop execution via ExecutionManager {}: {}", execution_id, e);
+    } else {
+        log::info!("✅ Stopped execution via ExecutionManager: {}", execution_id);
     }
 
-    // 2. 如果execution_id看起来像会话ID，也尝试取消对应的流
+    // 3. 如果execution_id看起来像会话ID，也尝试取消对应的流
     // 这样可以处理用会话ID调用stop的情况
     if execution_id.starts_with("conv_") || execution_id.len() == 36 {
         // 可能是会话ID或UUID格式
         use crate::commands::ai::cancel_conversation_stream;
         cancel_conversation_stream(&execution_id);
-        info!("Also cancelled stream for conversation: {}", execution_id);
+        log::info!("✅ Cancelled stream for conversation: {}", execution_id);
     }
 
-    // 3. 发送停止事件（统一事件名称）
+    // 4. 发送停止事件（统一事件名称）
     if let Err(e) = app.emit("execution_stopped", serde_json::json!({
         "execution_id": execution_id,
         "message": "Execution stopped by user"
     })) {
         log::warn!("Failed to emit execution_stopped event: {}", e);
     }
+    
+    log::info!("✅ Stop execution completed: {}", execution_id);
 
     info!("Execution stop completed: {}", execution_id);
     Ok(())
@@ -1296,8 +1307,12 @@ async fn dispatch_with_react(
     use crate::engines::react::{ReactEngine, ReactConfig};
     use std::collections::HashMap;
     use crate::agents::traits::{AgentTask, TaskPriority};
+    use crate::managers::cancellation_manager;
     
     info!("Creating ReAct dispatch for: {}", request.query);
+    
+    // ✅ 注册取消令牌
+    let cancellation_token = cancellation_manager::register_cancellation_token(execution_id.clone()).await;
     
     // 从 options 中提取配置
     let options = request.options.unwrap_or_default();
@@ -1488,9 +1503,9 @@ async fn dispatch_with_llm_compiler(
     ai_service_manager: Arc<AiServiceManager>,
     db_service: Arc<DatabaseService>,
     execution_manager: Arc<crate::managers::ExecutionManager>,
-    _app: AppHandle,
+    app: AppHandle,
 ) -> Result<DispatchResult, String> {
-    info!("Creating LLMCompiler dispatch for: {}", request.query);
+    // info!("Creating LLMCompiler dispatch for: {}", request.query);
     
     // 创建LLMCompiler引擎配置
     let config = LlmCompilerConfig::default();
@@ -1502,6 +1517,9 @@ async fn dispatch_with_llm_compiler(
         db_service.clone(),
     ).await.map_err(|e| format!("Failed to create LLMCompiler engine: {}", e))?;
     
+    // ✅ 设置app_handle用于推送工具执行结果到前端
+    engine.set_app_handle(app.clone());
+    
     // 创建Agent任务
     let task = AgentTask {
         id: execution_id.clone(),
@@ -1512,8 +1530,14 @@ async fn dispatch_with_llm_compiler(
         parameters: request.options.unwrap_or_default(),
         timeout: Some(240), // 4分钟超时
     };
-    // 注入运行期参数
-    engine.set_runtime_params(task.parameters.clone());
+    
+    // ✅ 注入运行期参数，包括用户的任务描述
+    let mut runtime_params = task.parameters.clone();
+    runtime_params.insert(
+        "task_description".to_string(), 
+        serde_json::Value::String(task.description.clone())
+    );
+    engine.set_runtime_params(runtime_params);
     
     // 创建执行计划
     let plan = engine.create_plan(&task).await

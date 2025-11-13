@@ -1476,7 +1476,13 @@ impl AiService {
                         error!("{}", error_msg);
                         return Err(anyhow::anyhow!(error_msg));
                     }
-                    if self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
+                    // 某些本地/自托管提供商不需要 API Key（如 ollama）
+                    let provider_lc = self.config.provider.to_lowercase();
+                    let api_key_required = match provider_lc.as_str() {
+                        "ollama" => false,
+                        _ => true,
+                    };
+                    if api_key_required && self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
                         let error_msg = format!(
                             "API key not configured for provider '{}'. Please check your AI configuration settings.",
                             self.config.provider
@@ -1491,12 +1497,13 @@ impl AiService {
                         error!("{}", error_msg);
                         return Err(anyhow::anyhow!(error_msg));
                     }
-                    let mut history_buf = String::new();
-                    let take = messages.len().min(12);
-                    for m in messages.iter().rev().take(take).rev() {
-                        history_buf.push_str(&format!("{}\n", m.content));
-                    }
-                    let user_input = history_buf.trim();
+                    
+                    // ✅ 对于LLMCompiler等架构，只使用最后一条user消息
+                    // 不合并历史消息，避免prompt重复累积
+                    let user_input = messages.last()
+                        .map(|m| m.content.as_str())
+                        .unwrap_or("");
+                    
                     if user_input.is_empty() {
                         let error_msg = "Message content is empty after processing";
                         error!("{}", error_msg);
@@ -1506,12 +1513,12 @@ impl AiService {
                     // Rig DynClient 真流式
                     let provider = self.config.provider.to_lowercase();
                     let model = self.config.model.clone();
-                    info!(
-                        "Starting Rig dyn client streaming: provider={}, model={}, input_len={}",
-                        provider,
-                        model,
-                        user_input.len()
-                    );
+                    // info!(
+                    //     "Starting Rig dyn client streaming: provider={}, model={}, input_len={}",
+                    //     provider,
+                    //     model,
+                    //     user_input.len()
+                    // );
 
                     // 创建日志记录器
                     let logger = LLMLoggingHook::new(
@@ -1540,8 +1547,23 @@ impl AiService {
 
                     let agent = {
                         let client = DynClientBuilder::new();
-                        let mut agent_builder = client
-                            .agent(&provider, &model)?
+                        
+                        // 尝试创建 agent，提供详细错误信息
+                        let agent_builder = match client.agent(&provider, &model) {
+                            Ok(builder) => builder,
+                            Err(e) => {
+                                error!(
+                                    "Failed to create agent for provider '{}' with model '{}': {}",
+                                    provider, model, e
+                                );
+                                return Err(anyhow::anyhow!(
+                                    "Failed to create AI agent: Provider '{}' may not be supported or model '{}' is invalid. Error: {}",
+                                    provider, model, e
+                                ));
+                            }
+                        };
+                        
+                        let mut agent_builder = agent_builder
                             .preamble(system_prompt.unwrap_or("You are a helpful AI assistant."));
 
                         // 为 Gemini provider 添加必需的 generationConfig
@@ -1555,7 +1577,7 @@ impl AiService {
                     };
 
                     let mut content = String::new();
-                    let mut stream_iter = agent.stream_prompt(user_input).await;
+                    let mut stream_iter = agent.stream_prompt(user_input).multi_turn(100).await;
                     while let Some(item) = stream_iter.next().await {
                         match item {
                             Ok(MultiTurnStreamItem::StreamAssistantItem(
@@ -1634,26 +1656,17 @@ impl AiService {
             None => {
                 // 无会话：仅进行内部流式调用，不向前端发块、不写入DB
                 let conv_id = &execution_id; // 使用 execution_id 作为临时会话标识
-                                             // 构建系统消息
-                if let Some(sp) = system_prompt {
-                    if !sp.is_empty() {
-                        let sys_msg = AiMessage {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            conversation_id: conv_id.to_string(),
-                            role: "system".to_string(),
-                            content: sp.to_string(),
-                            metadata: None,
-                            token_count: Some(sp.len() as i32),
-                            cost: None,
-                            tool_calls: None,
-                            attachments: None,
-                            timestamp: chrono::Utc::now(),
-                        };
-                        messages.push(sys_msg);
-                    }
-                }
+                
+                // ✅ 修复：不要把system_prompt添加到messages中，因为它会通过.preamble()传递
+                // 如果添加到messages，会导致system内容被合并到user_input中
+                // if let Some(sp) = system_prompt {
+                //     if !sp.is_empty() {
+                //         let sys_msg = AiMessage { ... };
+                //         messages.push(sys_msg);
+                //     }
+                // }
 
-                // 构建用户消息
+                // 构建用户消息（只包含user_prompt_for_llm）
                 if let Some(up) = user_prompt_for_llm {
                     if !up.is_empty() {
                         let user_msg = AiMessage {
@@ -1730,8 +1743,23 @@ impl AiService {
 
                     let agent = {
                         let client = DynClientBuilder::new();
-                        let mut agent_builder = client
-                            .agent(&provider, &model)?
+                        
+                        // 尝试创建 agent，提供详细错误信息（无会话分支）
+                        let agent_builder = match client.agent(&provider, &model) {
+                            Ok(builder) => builder,
+                            Err(e) => {
+                                error!(
+                                    "Failed to create agent (no conversation) for provider '{}' with model '{}': {}",
+                                    provider, model, e
+                                );
+                                return Err(anyhow::anyhow!(
+                                    "Failed to create AI agent: Provider '{}' may not be supported or model '{}' is invalid. Error: {}",
+                                    provider, model, e
+                                ));
+                            }
+                        };
+                        
+                        let mut agent_builder = agent_builder
                             .preamble(system_prompt.unwrap_or("You are a helpful AI assistant."));
 
                         // 为 Gemini provider 添加必需的 generationConfig
@@ -1748,7 +1776,7 @@ impl AiService {
                     };
 
                     let mut content = String::new();
-                    let mut stream_iter = agent.stream_prompt(user_input).await;
+                    let mut stream_iter = agent.stream_prompt(user_input).multi_turn(100).await;
                     while let Some(item) = stream_iter.next().await {
                         match item {
                             Ok(MultiTurnStreamItem::StreamAssistantItem(
@@ -1823,10 +1851,6 @@ impl AiService {
             }
         }
     }
-
-    // 已移除 send_chat_stream，逻辑合并入 send_message_stream
-
-    // rig_complete 已合并进 send_message_stream，无需保留
 
     // 创建新对话
     pub async fn create_conversation(&self, title: Option<String>) -> Result<String> {

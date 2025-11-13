@@ -17,6 +17,7 @@ pub enum StageType {
     // LLMCompiler & Plan&Execute stages
     Planning,
     Execution,
+    Evaluation,  // LLMCompiler Joiner/Evaluator stage
     Replan,
 }
 

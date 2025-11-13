@@ -12,11 +12,11 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc::UnboundedSender};
 
 use sentinel_passive::{
     CertificateService, Finding, FindingDeduplicator, PassiveDatabaseService, PluginManager,
-    PluginRecord, PluginStatus, PluginMetadata, ProxyConfig, ProxyService, ProxyStats, ProxyStatus, ScanPipeline,
+    PluginRecord, PluginStatus, PluginMetadata, ProxyConfig, ProxyService, ProxyStats, ProxyStatus, ScanPipeline, ScanTask,
     VulnerabilityFilters, VulnerabilityRecord, EvidenceRecord,
 };
 
@@ -117,6 +117,27 @@ impl PassiveScanState {
     /// 公开方法：获取插件管理器（用于工具提供者）
     pub fn get_plugin_manager(&self) -> Arc<PluginManager> {
         self.plugin_manager.clone()
+    }
+
+    /// 公开方法：获取运行状态（用于工具提供者）
+    pub fn get_is_running(&self) -> Arc<RwLock<bool>> {
+        self.is_running.clone()
+    }
+
+    /// 公开方法：获取代理服务（用于工具提供者）
+    pub fn get_proxy_service(&self) -> Arc<RwLock<Option<ProxyService>>> {
+        self.proxy_service.clone()
+    }
+    
+    /// Public method: Get scan_tx (for tool providers)
+    pub fn get_scan_tx(&self) -> Arc<RwLock<Option<UnboundedSender<ScanTask>>>> {
+        self.scan_tx.clone()
+    }
+    
+    /// Public method: Set scan_tx (for tool providers)
+    pub async fn set_scan_tx(&self, tx: UnboundedSender<ScanTask>) {
+        let mut scan_tx_guard = self.scan_tx.write().await;
+        *scan_tx_guard = Some(tx);
     }
 
     /// 内部方法：列出所有插件（数据库来源，供工具提供者使用）

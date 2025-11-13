@@ -1,25 +1,25 @@
 //! LLMCompiler引擎适配器 - 实现统一的ExecutionEngine接口
 
-use crate::agents::traits::*;
-use crate::tools::ToolExecutionParams;
-use crate::services::ai::{AiService, AiServiceManager};
-use crate::services::database::DatabaseService;
-use crate::services::database::Database; // trait for DB methods
-use crate::commands::agent_commands::WorkflowStepDetail;
-use crate::services::prompt_db::PromptRepository;
-use crate::models::prompt::{ArchitectureType, StageType};
-use crate::utils::ordered_message::{ChunkType, emit_message_chunk};
-use super::types::*;
-use super::planner::LlmCompilerPlanner;
-use super::task_fetcher::TaskFetchingUnit;
 use super::executor::ParallelExecutorPool;
 use super::joiner::IntelligentJoiner;
-use async_trait::async_trait;
+use super::planner::LlmCompilerPlanner;
+use super::task_fetcher::TaskFetchingUnit;
+use super::types::*;
+use crate::agents::traits::*;
+use crate::commands::agent_commands::WorkflowStepDetail;
+use crate::models::prompt::{ArchitectureType, StageType};
+use crate::services::ai::{AiService, AiServiceManager};
+use crate::services::database::Database; // trait for DB methods
+use crate::services::database::DatabaseService;
+use crate::services::prompt_db::PromptRepository;
+use crate::tools::ToolExecutionParams;
+use crate::utils::ordered_message::{emit_message_chunk, ChunkType};
 use anyhow::Result;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-use tracing::{info, warn, error, debug};
 
 /// LLMCompiler引擎适配器 - 集成原有引擎逻辑
 pub struct LlmCompilerEngine {
@@ -30,6 +30,7 @@ pub struct LlmCompilerEngine {
     executor_pool: Option<Arc<ParallelExecutorPool>>,
     joiner: Option<Arc<tokio::sync::Mutex<IntelligentJoiner>>>,
     ai_service: Option<Arc<AiService>>,
+    ai_service_manager: Option<Arc<AiServiceManager>>,  // ✅ 添加AI服务管理器，用于获取各阶段模型
     config: LlmCompilerConfig,
     prompt_repo: Option<PromptRepository>,
     runtime_params: Option<std::collections::HashMap<String, serde_json::Value>>, // prompt_ids 等
@@ -61,13 +62,14 @@ impl LlmCompilerEngine {
 
         let config = LlmCompilerConfig::default();
 
-        Ok(Self { 
+        Ok(Self {
             engine_info,
             planner: None,
             task_fetcher: None,
             executor_pool: None,
             joiner: None,
             ai_service: None,
+            ai_service_manager: None,
             config,
             prompt_repo: None,
             runtime_params: None,
@@ -75,7 +77,7 @@ impl LlmCompilerEngine {
             db_service: None,
         })
     }
-    
+
     /// 使用完整依赖创建引擎适配器
     pub async fn new_with_dependencies(
         ai_service_manager: Arc<AiServiceManager>,
@@ -102,40 +104,51 @@ impl LlmCompilerEngine {
         };
 
         // 初始化各个组件
-        let pool = db_service.get_pool().map_err(|e| anyhow::anyhow!("DB pool error: {}", e))?;
+        let pool = db_service
+            .get_pool()
+            .map_err(|e| anyhow::anyhow!("DB pool error: {}", e))?;
         let tool_adapter = crate::tools::get_global_engine_adapter()
             .map_err(|e| anyhow::anyhow!("获取全局工具适配器失败: {}", e))?;
-        
-        // 从AI服务管理器获取默认AI服务
-        let ai_service = Self::get_ai_service_from_manager(&ai_service_manager)?;
-        
+
+        // ✅ 获取各阶段的AI服务
+        // Planner阶段使用Planning模型
+        let planner_service = Self::get_ai_service_for_stage(&ai_service_manager, crate::services::ai::SchedulerStage::Planning).await?;
+        // Joiner阶段使用Evaluation模型
+        let joiner_service = Self::get_ai_service_for_stage(&ai_service_manager, crate::services::ai::SchedulerStage::Evaluation).await?;
+        // 默认AI服务作为后备
+        let default_service = Self::get_ai_service_from_manager(&ai_service_manager)?;
+
+        info!("LLMCompiler: Planner using model: {}/{}", planner_service.get_config().provider, planner_service.get_config().model);
+        info!("LLMCompiler: Joiner using model: {}/{}", joiner_service.get_config().provider, joiner_service.get_config().model);
+
         let planner = Some(Arc::new(LlmCompilerPlanner::new(
-            ai_service.clone(),
+            planner_service,
             tool_adapter.clone(),
             config.clone(),
             Some(PromptRepository::new(pool.clone())),
         )));
-        
+
         let task_fetcher = Some(Arc::new(TaskFetchingUnit::new(config.clone())));
-        
+
         let executor_pool = Some(Arc::new(ParallelExecutorPool::new(
             tool_adapter.clone(),
             config.clone(),
         )));
-        
+
         let joiner = Some(Arc::new(tokio::sync::Mutex::new(IntelligentJoiner::new(
-            (*ai_service).clone(),
+            (*joiner_service).clone(),
             config.clone(),
             Some(PromptRepository::new(pool.clone())),
         ))));
 
-        Ok(Self { 
+        Ok(Self {
             engine_info,
             planner,
             task_fetcher,
             executor_pool,
             joiner,
-            ai_service: Some(ai_service),
+            ai_service: Some(default_service),
+            ai_service_manager: Some(ai_service_manager),  // ✅ 保存AI服务管理器
             config,
             prompt_repo: Some(PromptRepository::new(pool.clone())),
             runtime_params: None,
@@ -144,7 +157,10 @@ impl LlmCompilerEngine {
         })
     }
 
-    pub fn set_runtime_params(&mut self, params: std::collections::HashMap<String, serde_json::Value>) {
+    pub fn set_runtime_params(
+        &mut self,
+        params: std::collections::HashMap<String, serde_json::Value>,
+    ) {
         self.runtime_params = Some(params.clone());
         // 透传到各组件（planner/joiner/executor）
         if let Some(_planner) = &self.planner {
@@ -170,9 +186,18 @@ impl LlmCompilerEngine {
     }
 
     /// 发送错误消息到前端
-    fn emit_error(&self, execution_id: &str, message_id: &str, conversation_id: Option<&str>, error_msg: &str) {
+    fn emit_error(
+        &self,
+        execution_id: &str,
+        message_id: &str,
+        conversation_id: Option<&str>,
+        error_msg: &str,
+    ) {
         if let Some(ref app_handle) = self.app_handle {
-            let error_message = format!("LLMCompiler引擎执行失败: {}\n\n如需帮助，请检查执行配置或联系技术支持。", error_msg);
+            let error_message = format!(
+                "LLMCompiler引擎执行失败: {}\n\n如需帮助，请检查执行配置或联系技术支持。",
+                error_msg
+            );
             emit_message_chunk(
                 app_handle,
                 execution_id,
@@ -186,33 +211,124 @@ impl LlmCompilerEngine {
             );
         }
     }
-    
+
+    /// ✅ 根据调度器阶段获取对应的AI服务
+    async fn get_ai_service_for_stage(
+        ai_service_manager: &Arc<AiServiceManager>,
+        stage: crate::services::ai::SchedulerStage,
+    ) -> Result<Arc<AiService>> {
+        // 首先尝试从调度器配置获取该阶段的模型
+        match ai_service_manager.get_ai_config_for_stage(stage.clone()).await {
+            Ok(Some(config)) => {
+                info!(
+                    "LLMCompiler: Using scheduler config for stage {:?} -> provider: {}, model: {}",
+                    stage, config.provider, config.model
+                );
+                
+                // 根据provider和model创建AI服务key
+                // 格式：provider::model
+                let service_key = format!("{}::{}", config.provider, config.model);
+                if let Some(service) = ai_service_manager.get_service(&service_key) {
+                    return Ok(Arc::new(service));
+                }
+                
+                // 如果没有找到，尝试只用provider作为key（精确匹配）
+                if let Some(service) = ai_service_manager.get_service(&config.provider) {
+                    return Ok(Arc::new(service));
+                }
+                
+                // ✅ 尝试大小写不敏感匹配（遍历所有可用服务）
+                let provider_lower = config.provider.to_lowercase();
+                let all_services = ai_service_manager.list_services();
+                for service_name in &all_services {
+                    if service_name.to_lowercase() == provider_lower {
+                        if let Some(service) = ai_service_manager.get_service(service_name) {
+                            info!(
+                                "LLMCompiler: Found service '{}' via case-insensitive match for provider '{}'",
+                                service_name, config.provider
+                            );
+                            return Ok(Arc::new(service));
+                        }
+                    }
+                }
+                
+                warn!(
+                    "LLMCompiler: No service found for stage {:?} (provider: {}, model: {}), falling back to default",
+                    stage, config.provider, config.model
+                );
+            }
+            Ok(None) => {
+                info!("LLMCompiler: No scheduler config for stage {:?}, using default service", stage);
+            }
+            Err(e) => {
+                warn!(
+                    "LLMCompiler: Failed to get scheduler config for stage {:?}: {}, using default service",
+                    stage, e
+                );
+            }
+        }
+        
+        // 如果没有配置或获取失败，回退到默认服务
+        Self::get_ai_service_from_manager(ai_service_manager)
+    }
+
     /// 从AI服务管理器获取默认AI服务
     fn get_ai_service_from_manager(
         ai_service_manager: &Arc<AiServiceManager>,
     ) -> Result<Arc<AiService>> {
+        // 列出所有可用服务用于调试
+        let all_services = ai_service_manager.list_services();
+        info!("LLMCompiler: Available AI services: {:?}", all_services);
+        
         // 首先尝试获取"default"服务
         if let Some(service) = ai_service_manager.get_service("default") {
+            let config = service.get_config();
+            info!(
+                "LLMCompiler: Using 'default' AI service -> provider: {}, model: {}",
+                config.provider, config.model
+            );
             return Ok(Arc::new(service));
         }
-        
+
         // 如果没有default，尝试按优先级获取
-        let preferred_providers = vec!["deepseek", "openai", "anthropic", "gemini", "groq", "modelscope", "openrouter"];
-        for provider in preferred_providers {
+        let preferred_providers = vec![
+            "deepseek",
+            "openai",
+            "anthropic",
+            "gemini",
+            "groq",
+            "modelscope",
+            "openrouter",
+        ];
+        for provider in &preferred_providers {
             if let Some(service) = ai_service_manager.get_service(provider) {
+                let config = service.get_config();
+                info!(
+                    "LLMCompiler: Using preferred provider '{}' -> model: {}",
+                    config.provider, config.model
+                );
                 return Ok(Arc::new(service));
             }
         }
-        
+
         // 获取第一个可用的服务
         let services = ai_service_manager.list_services();
         if let Some(first_service_name) = services.first() {
             if let Some(service) = ai_service_manager.get_service(first_service_name) {
+                let config = service.get_config();
+                warn!(
+                    "LLMCompiler: No preferred provider found, using first available service '{}' -> provider: {}, model: {}",
+                    first_service_name, config.provider, config.model
+                );
+                warn!("Recommended: Configure a preferred AI provider in Settings > AI Configuration");
                 return Ok(Arc::new(service));
             }
         }
-        
-        Err(anyhow::anyhow!("No AI service available in AiServiceManager"))
+
+        error!("LLMCompiler: No AI service available. Please configure at least one AI provider.");
+        Err(anyhow::anyhow!(
+            "No AI service available in AiServiceManager. Please configure an AI provider in Settings."
+        ))
     }
 }
 
@@ -221,32 +337,39 @@ impl ExecutionEngine for LlmCompilerEngine {
     fn get_engine_info(&self) -> &EngineInfo {
         &self.engine_info
     }
-    
+
     fn supports_task(&self, task: &AgentTask) -> bool {
         // LLMCompiler适合复杂多步骤、高并发需求的任务
-        if task.description.to_lowercase().contains("complex") ||
-           task.description.to_lowercase().contains("parallel") ||
-           task.description.to_lowercase().contains("concurrent") ||
-           task.description.to_lowercase().contains("large") ||
-           task.description.to_lowercase().contains("performance") {
+        if task.description.to_lowercase().contains("complex")
+            || task.description.to_lowercase().contains("parallel")
+            || task.description.to_lowercase().contains("concurrent")
+            || task.description.to_lowercase().contains("large")
+            || task.description.to_lowercase().contains("performance")
+        {
             return true;
         }
-        
+
         // 检查优先级是否为高或紧急
         matches!(task.priority, TaskPriority::High | TaskPriority::Critical)
     }
-    
+
     async fn create_plan(&self, task: &AgentTask) -> Result<ExecutionPlan> {
         // 创建LLMCompiler风格的DAG执行计划
         let steps = vec![
             ExecutionStep {
                 id: "dag_planner".to_string(),
                 name: "Create Task DAG".to_string(),
-                description: "Generate DAG with task dependencies and parallel execution opportunities".to_string(),
+                description:
+                    "Generate DAG with task dependencies and parallel execution opportunities"
+                        .to_string(),
                 step_type: StepType::LlmCall,
                 dependencies: vec![],
-                parameters: [("dag_mode".to_string(), serde_json::Value::String("parallel".to_string()))]
-                    .into_iter().collect(),
+                parameters: [(
+                    "dag_mode".to_string(),
+                    serde_json::Value::String("parallel".to_string()),
+                )]
+                .into_iter()
+                .collect(),
             },
             ExecutionStep {
                 id: "task_fetcher".to_string(),
@@ -262,8 +385,12 @@ impl ExecutionEngine for LlmCompilerEngine {
                 description: "Execute multiple tasks concurrently based on DAG".to_string(),
                 step_type: StepType::Parallel,
                 dependencies: vec!["task_fetcher".to_string()],
-                parameters: [("max_concurrent".to_string(), serde_json::Value::Number(serde_json::Number::from(10)))]
-                    .into_iter().collect(),
+                parameters: [(
+                    "max_concurrent".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(10)),
+                )]
+                .into_iter()
+                .collect(),
             },
             ExecutionStep {
                 id: "dependency_resolver".to_string(),
@@ -279,8 +406,12 @@ impl ExecutionEngine for LlmCompilerEngine {
                 description: "Aggregate and join all task results".to_string(),
                 step_type: StepType::LlmCall,
                 dependencies: vec!["dependency_resolver".to_string()],
-                parameters: [("join_strategy".to_string(), serde_json::Value::String("intelligent".to_string()))]
-                    .into_iter().collect(),
+                parameters: [(
+                    "join_strategy".to_string(),
+                    serde_json::Value::String("intelligent".to_string()),
+                )]
+                .into_iter()
+                .collect(),
             },
         ];
 
@@ -299,17 +430,24 @@ impl ExecutionEngine for LlmCompilerEngine {
 
         Ok(plan)
     }
-    
-    async fn execute_plan(
-        &self, 
-        plan: &ExecutionPlan
-    ) -> Result<AgentExecutionResult> {
+
+    async fn execute_plan(&self, plan: &ExecutionPlan) -> Result<AgentExecutionResult> {
         let _start_time = std::time::Instant::now();
-        
+
         // 如果有完整的LLMCompiler组件，使用原有的工作流执行逻辑
-        if let (Some(_planner), Some(_task_fetcher), Some(_executor_pool), Some(_joiner), Some(_ai_service)) = 
-           (&self.planner, &self.task_fetcher, &self.executor_pool, &self.joiner, &self.ai_service) {
-            
+        if let (
+            Some(_planner),
+            Some(_task_fetcher),
+            Some(_executor_pool),
+            Some(_joiner),
+            Some(_ai_service),
+        ) = (
+            &self.planner,
+            &self.task_fetcher,
+            &self.executor_pool,
+            &self.joiner,
+            &self.ai_service,
+        ) {
             match self.execute_llm_compiler_workflow(plan).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
@@ -320,7 +458,7 @@ impl ExecutionEngine for LlmCompilerEngine {
             return Err(anyhow::anyhow!("LLMCompilerEngine execute_plan error"));
         }
     }
-    
+
     async fn get_progress(&self, _session_id: &str) -> Result<ExecutionProgress> {
         // 模拟进度查询
         Ok(ExecutionProgress {
@@ -331,9 +469,12 @@ impl ExecutionEngine for LlmCompilerEngine {
             estimated_remaining_seconds: Some(30),
         })
     }
-    
+
     async fn cancel_execution(&self, session_id: &str) -> Result<()> {
-        log::info!("Cancelling LLMCompiler execution for session: {}", session_id);
+        log::info!(
+            "Cancelling LLMCompiler execution for session: {}",
+            session_id
+        );
         // 直接实现取消逻辑
         if let Some(task_fetcher) = &self.task_fetcher {
             task_fetcher.cancel_pending_tasks().await?;
@@ -346,16 +487,35 @@ impl LlmCompilerEngine {
     /// 执行原有的LLMCompiler工作流逻辑
     async fn execute_llm_compiler_workflow(
         &self,
-        _plan: &ExecutionPlan
+        _plan: &ExecutionPlan,
     ) -> Result<AgentExecutionResult> {
         let workflow_start = std::time::Instant::now();
-        
-        // 从session中获取任务描述
-        let user_query = "LLMCompiler workflow execution";
+
+        // ✅ 从runtime_params中获取用户的实际任务描述和前端消息ID
         let context = self.runtime_params.clone().unwrap_or_default();
-        
+        let user_query = context
+            .get("task_description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("LLMCompiler workflow execution");
+
+        // ✅ 提取conversation_id、message_id、execution_id（用于统一消息推送）
+        let conversation_id = context
+            .get("conversation_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let message_id = context
+            .get("message_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let execution_id = context
+            .get("execution_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         info!("开始执行LLMCompiler工作流: {}", user_query);
-        
+        info!("LLMCompiler: conversation_id={:?}, message_id={:?}, execution_id={:?}", 
+            conversation_id, message_id, execution_id);
+
         let mut execution_summary = ExecutionSummary {
             total_tasks: 0,
             successful_tasks: 0,
@@ -370,73 +530,115 @@ impl LlmCompilerEngine {
                 average_task_duration_ms: 0.0,
             },
         };
-        
+
         let mut all_results: Vec<TaskExecutionResult> = Vec::new();
-        
+
         // 主执行循环
         for round in 1..=self.config.max_iterations {
             info!("开始执行轮次: {}/{}", round, self.config.max_iterations);
-            
+
             if round > 1 {
                 execution_summary.replanning_count = round - 1;
             }
-            
+
             // 1. 规划阶段
             if let Some(planner) = &self.planner {
-                
-                let execution_plan = planner.generate_dag_plan(user_query, &context).await?;
-                info!("执行计划包含 {} 个任务", execution_plan.nodes.len());
-                
+                info!("开始生成DAG执行计划...");
+                let execution_plan = match planner.generate_dag_plan(user_query, &context).await {
+                    Ok(plan) => {
+                        info!("✓ DAG规划成功: {} 个任务节点", plan.nodes.len());
+                        plan
+                    }
+                    Err(e) => {
+                        error!("✗ DAG规划失败: {}", e);
+                        return Err(anyhow::anyhow!(
+                            "LLMCompiler planning phase failed: {}. This may be due to LLM service configuration issues or network problems.",
+                            e
+                        ));
+                    }
+                };
+
                 // 2. 任务调度阶段
                 if let Some(task_fetcher) = &self.task_fetcher {
                     task_fetcher.initialize_plan(&execution_plan).await?;
-                    
+
                     // 3. 并行执行阶段
                     let round_results = self.execute_parallel_round().await?;
-                    
+
                     if round_results.is_empty() {
                         warn!("轮次 {} 没有执行任何任务", round);
                         break;
                     }
-                    
+
                     // 更新统计信息
-                    let completed_count = round_results.iter().filter(|r| r.status == TaskStatus::Completed).count();
-                    let failed_count = round_results.iter().filter(|r| r.status == TaskStatus::Failed).count();
-                    
+                    let completed_count = round_results
+                        .iter()
+                        .filter(|r| r.status == TaskStatus::Completed)
+                        .count();
+                    let failed_count = round_results
+                        .iter()
+                        .filter(|r| r.status == TaskStatus::Failed)
+                        .count();
+
                     execution_summary.successful_tasks += completed_count;
                     execution_summary.failed_tasks += failed_count;
                     execution_summary.total_tasks += round_results.len();
-                    
+
                     let round_duration: u64 = round_results.iter().map(|r| r.duration_ms).sum();
                     execution_summary.total_duration_ms += round_duration;
-                    
+
                     all_results.extend(round_results.clone());
-                    
-                    info!("轮次 {} 完成: 成功 {} 个任务, 失败 {} 个任务, 耗时 {}ms", round, completed_count, failed_count, round_duration);
-                    
+
+                    info!(
+                        "轮次 {} 完成: 成功 {} 个任务, 失败 {} 个任务, 耗时 {}ms",
+                        round, completed_count, failed_count, round_duration
+                    );
+
                     // 4. 智能决策阶段
                     if let Some(joiner) = &self.joiner {
+                        info!("开始 Joiner 智能决策阶段...");
                         let mut joiner_guard = joiner.lock().await;
-                        let decision = joiner_guard.analyze_and_decide(
-                            user_query,
-                            &execution_plan,
-                            &round_results,
-                            round,
-                        ).await?;
-                        
+                        // ✅ 设置消息ID，确保Joiner的AI调用使用正确的ID
+                        joiner_guard.set_message_ids(conversation_id.clone(), message_id.clone());
+                        let decision = match joiner_guard
+                            .analyze_and_decide(user_query, &execution_plan, &round_results, round)
+                            .await
+                        {
+                            Ok(d) => {
+                                debug!("Joiner 决策成功");
+                                d
+                            }
+                            Err(e) => {
+                                warn!("Joiner 决策失败: {}", e);
+                                // Joiner 失败不应导致整个流程中断，记录警告并继续
+                                warn!("Joiner decision failed, continuing with available results");
+                                JoinerDecision::Complete {
+                                    response: format!("Task execution completed with {} successful and {} failed tasks", 
+                                        execution_summary.successful_tasks, 
+                                        execution_summary.failed_tasks),
+                                    confidence: 0.7,
+                                    summary: execution_summary.clone(),
+                                }
+                            }
+                        };
+
                         match &decision {
                             JoinerDecision::Complete { response, .. } => {
-                                execution_summary.key_findings.push(format!("决策: 完成执行 - {}", response));
+                                execution_summary
+                                    .key_findings
+                                    .push(format!("决策: 完成执行 - {}", response));
                                 info!("Joiner决定完成执行: {}", response);
                                 break;
                             }
                             JoinerDecision::Continue { feedback, .. } => {
-                                execution_summary.key_findings.push(format!("决策: 继续执行 - {}", feedback));
+                                execution_summary
+                                    .key_findings
+                                    .push(format!("决策: 继续执行 - {}", feedback));
                                 info!("Joiner决定继续执行: {}", feedback);
                             }
                         }
                     }
-                    
+
                     // 检查是否还有待执行的任务
                     if !task_fetcher.has_pending_tasks().await {
                         info!("所有任务已完成，结束执行");
@@ -445,24 +647,33 @@ impl LlmCompilerEngine {
                 }
             }
         }
-        
+
         let total_duration = workflow_start.elapsed();
         execution_summary.total_duration_ms = total_duration.as_millis() as u64;
-        
+
         // 计算最终效率指标
-        execution_summary.efficiency_metrics = self.calculate_efficiency_metrics(&execution_summary);
-        
-        info!("工作流执行完成: {} 个任务, 成功 {}, 失败 {}, 耗时 {}ms", 
-            execution_summary.total_tasks, execution_summary.successful_tasks, 
-            execution_summary.failed_tasks, execution_summary.total_duration_ms);
-        
-        // 生成最终结果
-        let final_response = self.generate_final_response(
-            user_query,
-            &all_results,
-            &execution_summary,
-        ).await?;
-        
+        execution_summary.efficiency_metrics =
+            self.calculate_efficiency_metrics(&execution_summary);
+
+        info!(
+            "工作流执行完成: {} 个任务, 成功 {}, 失败 {}, 耗时 {}ms",
+            execution_summary.total_tasks,
+            execution_summary.successful_tasks,
+            execution_summary.failed_tasks,
+            execution_summary.total_duration_ms
+        );
+
+        // 生成最终结果（传递正确的conversation_id和message_id）
+        let final_response = self
+            .generate_final_response(
+                user_query, 
+                &all_results, 
+                &execution_summary,
+                conversation_id.as_deref(),
+                message_id.as_deref()
+            )
+            .await?;
+
         // 转换为AgentExecutionResult
         Ok(AgentExecutionResult {
             id: uuid::Uuid::new_v4().to_string(),
@@ -477,78 +688,139 @@ impl LlmCompilerEngine {
             error: None,
             execution_time_ms: execution_summary.total_duration_ms,
             resources_used: [
-                ("total_tasks".to_string(), execution_summary.total_tasks as f64),
-                ("successful_tasks".to_string(), execution_summary.successful_tasks as f64),
-                ("failed_tasks".to_string(), execution_summary.failed_tasks as f64),
-                ("parallelism".to_string(), execution_summary.efficiency_metrics.average_parallelism as f64),
-            ].into_iter().collect(),
-            artifacts: vec![
-                ExecutionArtifact {
-                    artifact_type: ArtifactType::AnalysisResult,
-                    name: "llm_compiler_workflow_result".to_string(),
-                    data: serde_json::json!({
-                        "execution_summary": execution_summary,
-                        "task_results": all_results,
-                        "final_response": final_response
-                    }),
-                    created_at: chrono::Utc::now(),
-                }
-            ],
+                (
+                    "total_tasks".to_string(),
+                    execution_summary.total_tasks as f64,
+                ),
+                (
+                    "successful_tasks".to_string(),
+                    execution_summary.successful_tasks as f64,
+                ),
+                (
+                    "failed_tasks".to_string(),
+                    execution_summary.failed_tasks as f64,
+                ),
+                (
+                    "parallelism".to_string(),
+                    execution_summary.efficiency_metrics.average_parallelism as f64,
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            artifacts: vec![ExecutionArtifact {
+                artifact_type: ArtifactType::AnalysisResult,
+                name: "llm_compiler_workflow_result".to_string(),
+                data: serde_json::json!({
+                    "execution_summary": execution_summary,
+                    "task_results": all_results,
+                    "final_response": final_response
+                }),
+                created_at: chrono::Utc::now(),
+            }],
         })
     }
-    
+
     /// 执行一轮并行任务
     async fn execute_parallel_round(&self) -> Result<Vec<TaskExecutionResult>> {
         let mut results = Vec::new();
-        
-        if let (Some(task_fetcher), Some(executor_pool)) = (&self.task_fetcher, &self.executor_pool) {
+
+        if let (Some(task_fetcher), Some(executor_pool)) = (&self.task_fetcher, &self.executor_pool)
+        {
             // 获取所有就绪的任务
-            let ready_tasks = task_fetcher.fetch_ready_tasks(self.config.max_concurrency).await;
-            
+            let ready_tasks = task_fetcher
+                .fetch_ready_tasks(self.config.max_concurrency)
+                .await;
+
             if ready_tasks.is_empty() {
                 return Ok(results);
             }
-            
+
             info!("开始并行执行 {} 个就绪任务", ready_tasks.len());
-            
+
             // 标记任务为执行中并启动执行
             let mut handles = Vec::new();
             for task in ready_tasks {
                 let task_id = task.id.clone();
                 let executor = executor_pool.clone();
-                let handle = tokio::spawn(async move {
-                    executor.execute_task(task).await
-                });
-                
+                let handle = tokio::spawn(async move { executor.execute_task(task).await });
+
                 // 标记任务开始执行
-                task_fetcher.mark_task_executing(task_id, handle.abort_handle()).await;
+                task_fetcher
+                    .mark_task_executing(task_id, handle.abort_handle())
+                    .await;
                 handles.push(handle);
             }
-            
+
             // 等待所有任务完成
             for handle in handles {
                 match handle.await {
                     Ok(result) => {
+                        // ✅ 发送工具执行结果到前端（参考React架构）
+                        if let Some(app) = &self.app_handle {
+                            if let Some(params) = &self.runtime_params {
+                                let conversation_id = params.get("conversation_id").and_then(|v| v.as_str());
+                                let message_id = params.get("message_id").and_then(|v| v.as_str());
+                                let execution_id = params.get("execution_id").and_then(|v| v.as_str());
+                                
+                                // 构造工具结果内容
+                                let tool_result_content = if result.status == TaskStatus::Completed {
+                                    serde_json::to_string(&result.outputs).unwrap_or_default()
+                                } else {
+                                    serde_json::json!({
+                                        "error": result.error.clone().unwrap_or_else(|| "Unknown error".to_string()),
+                                        "success": false,
+                                        "task_id": result.task_id
+                                    }).to_string()
+                                };
+                                
+                                emit_message_chunk(
+                                    app,
+                                    execution_id.unwrap_or(&result.task_id),
+                                    message_id.unwrap_or(&result.task_id),
+                                    conversation_id,
+                                    ChunkType::ToolResult,
+                                    &tool_result_content,
+                                    false,
+                                    Some("llm_compiler"),
+                                    None,  // 工具名称可以从result中提取，但这里暂时为None
+                                );
+                                
+                                info!("📤 LLMCompiler: Tool result sent to frontend: task={}, status={:?}", 
+                                    result.task_id, result.status);
+                            }
+                        }
+                        
                         // 更新任务状态
                         task_fetcher.complete_task(result.clone()).await?;
                         // 落库单个任务作为步骤
                         if let (Some(db), Some(params)) = (&self.db_service, &self.runtime_params) {
-                            if let Some(session_id) = params.get("execution_id").and_then(|v| v.as_str()) {
+                            if let Some(session_id) =
+                                params.get("execution_id").and_then(|v| v.as_str())
+                            {
                                 let step_name = result.task_id.clone();
-                                let status = match result.status { TaskStatus::Completed => "Completed", TaskStatus::Failed => "Failed", _ => "Running" };
-                                let _ = db.save_agent_execution_step(session_id, &WorkflowStepDetail {
-                                    step_id: format!("step_{}", results.len() + 1),
-                                    step_name,
-                                    status: status.to_string(),
-                                    started_at: None,
-                                    completed_at: None,
-                                    duration_ms: result.duration_ms,
-                                    result_data: Some(serde_json::json!(result.outputs)),
-                                    error: result.error.clone(),
-                                    retry_count: 0,
-                                    dependencies: vec![],
-                                    tool_result: None,
-                                }).await;
+                                let status = match result.status {
+                                    TaskStatus::Completed => "Completed",
+                                    TaskStatus::Failed => "Failed",
+                                    _ => "Running",
+                                };
+                                let _ = db
+                                    .save_agent_execution_step(
+                                        session_id,
+                                        &WorkflowStepDetail {
+                                            step_id: format!("step_{}", results.len() + 1),
+                                            step_name,
+                                            status: status.to_string(),
+                                            started_at: None,
+                                            completed_at: None,
+                                            duration_ms: result.duration_ms,
+                                            result_data: Some(serde_json::json!(result.outputs)),
+                                            error: result.error.clone(),
+                                            retry_count: 0,
+                                            dependencies: vec![],
+                                            tool_result: None,
+                                        },
+                                    )
+                                    .await;
                             }
                         }
                         results.push(result);
@@ -559,49 +831,77 @@ impl LlmCompilerEngine {
                 }
             }
         }
-        
+
         Ok(results)
     }
-    
+
     /// 生成最终响应
     async fn generate_final_response(
         &self,
         user_query: &str,
         task_results: &[TaskExecutionResult],
         execution_summary: &ExecutionSummary,
+        conversation_id: Option<&str>,
+        message_id: Option<&str>,
     ) -> Result<String> {
         // 收集所有成功任务的输出
-        let successful_outputs: Vec<&std::collections::HashMap<String, serde_json::Value>> = task_results
-            .iter()
-            .filter(|r| r.status == TaskStatus::Completed)
-            .map(|r| &r.outputs)
-            .collect();
-        
+        let successful_outputs: Vec<&std::collections::HashMap<String, serde_json::Value>> =
+            task_results
+                .iter()
+                .filter(|r| r.status == TaskStatus::Completed)
+                .map(|r| &r.outputs)
+                .collect();
+
         if successful_outputs.is_empty() {
             return Ok("抱歉，没有成功执行任何任务，无法提供有效结果。".to_string());
         }
-        
+
         // 构建响应生成提示
         let mut response_prompt = if let Some(repo) = &self.prompt_repo {
             // 优先按 prompt_ids.executor 覆盖
             if let Some(rp) = &self.runtime_params {
-                if let Some(pid) = rp.get("prompt_ids").and_then(|v| v.get("executor")).and_then(|v| v.as_i64()) {
+                if let Some(pid) = rp
+                    .get("prompt_ids")
+                    .and_then(|v| v.get("executor"))
+                    .and_then(|v| v.as_i64())
+                {
                     if let Ok(Some(dynamic)) = repo.get_template(pid).await {
                         dynamic.content
-                    } else if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
+                    } else if let Ok(Some(dynamic)) = repo
+                        .get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution)
+                        .await
+                    {
                         dynamic
                     } else {
-                        self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
+                        self.build_default_response_prompt(
+                            user_query,
+                            &successful_outputs,
+                            execution_summary,
+                        )
                     }
-                } else if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
+                } else if let Ok(Some(dynamic)) = repo
+                    .get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution)
+                    .await
+                {
                     dynamic
                 } else {
-                    self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
+                    self.build_default_response_prompt(
+                        user_query,
+                        &successful_outputs,
+                        execution_summary,
+                    )
                 }
-            } else if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
+            } else if let Ok(Some(dynamic)) = repo
+                .get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution)
+                .await
+            {
                 dynamic
             } else {
-                self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
+                self.build_default_response_prompt(
+                    user_query,
+                    &successful_outputs,
+                    execution_summary,
+                )
             }
         } else {
             self.build_default_response_prompt(user_query, &successful_outputs, execution_summary)
@@ -623,21 +923,65 @@ impl LlmCompilerEngine {
 
         // RAG augmentation for final response prompt
         log::debug!("RAG augmentation skipped in llm_compiler engine_adapter");
-        
-        // 调用AI生成最终响应
-        if let Some(ai_service) = &self.ai_service {
-            info!("开始调用AI生成最终响应，提示词长度: {} 字符", response_prompt.len());
+
+        // ✅ 调用AI生成最终响应，使用Execution阶段的模型
+        let execution_service = if let Some(ai_service_manager) = &self.ai_service_manager {
+            match Self::get_ai_service_for_stage(ai_service_manager, crate::services::ai::SchedulerStage::Execution).await {
+                Ok(service) => {
+                    info!("LLMCompiler: Final response using Execution stage model: {}/{}", 
+                        service.get_config().provider, service.get_config().model);
+                    Some(service)
+                }
+                Err(e) => {
+                    warn!("LLMCompiler: Failed to get Execution stage service: {}, using default", e);
+                    self.ai_service.clone()
+                }
+            }
+        } else {
+            self.ai_service.clone()
+        };
+
+        if let Some(ai_service) = execution_service {
+            info!(
+                "开始调用AI生成最终响应，提示词长度: {} 字符",
+                response_prompt.len()
+            );
             debug!("AI响应生成提示词: {}", response_prompt);
-            
-            match ai_service.send_message_stream(
-                None, 
-                Some(&response_prompt), 
-                None, 
-                None,
-                true, 
-                false,
-                Some(ChunkType::Content)
-            ).await {
+
+            // 构建最终回答的 user 提示（仅包含业务上下文，不包含系统说明）
+            let outputs_block = successful_outputs
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let pretty = serde_json::to_string_pretty(m).unwrap_or_else(|_| "{}".to_string());
+                    format!("Result {}:\n{}", i + 1, pretty)
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            let final_user_prompt = format!(
+                "Please generate a clear, friendly final answer for the user based on the results below.\n\nUser query:\n{}\n\nExecution summary:\n- total_tasks: {}\n- successful_tasks: {}\n- failed_tasks: {}\n- total_duration_ms: {}\n\nOutputs:\n{}\n",
+                user_query,
+                execution_summary.total_tasks,
+                execution_summary.successful_tasks,
+                execution_summary.failed_tasks,
+                execution_summary.total_duration_ms,
+                outputs_block
+            );
+
+            match ai_service
+                .send_message_stream_with_save_control(
+                    Some(&final_user_prompt),        // 发送给LLM的用户消息
+                    None,                             // 不重复保存用户消息
+                    Some(&response_prompt),           // 作为system prompt使用（来自DB模板或默认）
+                    conversation_id.map(|s| s.to_string()),
+                    message_id.map(|s| s.to_string()),
+                    true,
+                    false,
+                    Some(ChunkType::Content),
+                )
+                .await
+            {
                 Ok(ai_response) => {
                     if ai_response.trim().is_empty() {
                         warn!("AI返回了空响应，使用默认响应");
@@ -656,8 +1000,7 @@ impl LlmCompilerEngine {
             Ok(self.generate_default_response(task_results, execution_summary))
         }
     }
-    
-    
+
     /// 执行DAG中的单个工具（静态方法，用于并发执行）
     async fn execute_dag_tool_static(
         tool_system: &Arc<crate::tools::ToolSystem>,
@@ -667,41 +1010,38 @@ impl LlmCompilerEngine {
         // 准备工具执行参数
         let mut tool_inputs = HashMap::new();
         tool_inputs.insert("target".to_string(), serde_json::json!(target));
-        
+
         // 根据工具类型添加特定参数
         match tool_name {
             "port_scan" => {
                 tool_inputs.insert("ports".to_string(), serde_json::json!("common"));
-                tool_inputs.insert("threads".to_string(), serde_json::json!(100)); // LLMCompiler使用更高并发
+                tool_inputs.insert("threads".to_string(), serde_json::json!(100));
+                // LLMCompiler使用更高并发
             }
             "rsubdomain" => {
                 tool_inputs.insert("wordlist".to_string(), serde_json::json!("common"));
             }
             _ => {}
         }
-        
+
         let execution_params = ToolExecutionParams {
             inputs: tool_inputs,
             context: HashMap::new(),
             timeout: Some(std::time::Duration::from_secs(120)), // LLMCompiler使用较短超时
             execution_id: Some(Uuid::new_v4()),
         };
-        
+
         // 执行工具
         match tool_system.execute_tool(tool_name, execution_params).await {
-            Ok(result) => {
-                Ok(if result.output.is_null() { 
-                    serde_json::json!({"status": "completed"}) 
-                } else { 
-                    result.output 
-                })
-            }
-            Err(e) => {
-                Err(e)
-            }
+            Ok(result) => Ok(if result.output.is_null() {
+                serde_json::json!({"status": "completed"})
+            } else {
+                result.output
+            }),
+            Err(e) => Err(e),
         }
     }
-    
+
     // 其他辅助方法
     fn build_default_response_prompt(
         &self,
@@ -731,7 +1071,8 @@ impl LlmCompilerEngine {
             execution_summary.failed_tasks,
             execution_summary.total_duration_ms,
             if execution_summary.total_tasks > 0 {
-                (execution_summary.successful_tasks as f32 / execution_summary.total_tasks as f32) * 100.0
+                (execution_summary.successful_tasks as f32 / execution_summary.total_tasks as f32)
+                    * 100.0
             } else {
                 0.0
             },
@@ -757,7 +1098,7 @@ impl LlmCompilerEngine {
             .enumerate()
             .map(|(i, output)| {
                 let mut formatted_output = Vec::new();
-                
+
                 // 格式化每个输出字段
                 for (key, value) in output.iter() {
                     let formatted_value = match value {
@@ -766,29 +1107,28 @@ impl LlmCompilerEngine {
                         serde_json::Value::Bool(b) => b.to_string(),
                         serde_json::Value::Array(arr) => {
                             if arr.len() <= 5 {
-                                format!("[{}]", arr.iter()
-                                    .map(|v| match v {
-                                        serde_json::Value::String(s) => s.clone(),
-                                        _ => v.to_string()
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(", "))
+                                format!(
+                                    "[{}]",
+                                    arr.iter()
+                                        .map(|v| match v {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            _ => v.to_string(),
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                )
                             } else {
                                 format!("[{} 个项目]", arr.len())
                             }
-                        },
+                        }
                         serde_json::Value::Object(_) => "[对象数据]".to_string(),
                         serde_json::Value::Null => "null".to_string(),
                     };
-                    
+
                     formatted_output.push(format!("  - {}: {}", key, formatted_value));
                 }
-                
-                format!(
-                    "### 任务 {}\n{}",
-                    i + 1,
-                    formatted_output.join("\n")
-                )
+
+                format!("### 任务 {}\n{}", i + 1, formatted_output.join("\n"))
             })
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -799,9 +1139,15 @@ impl LlmCompilerEngine {
         task_results: &[TaskExecutionResult],
         execution_summary: &ExecutionSummary,
     ) -> String {
-        let successful_tasks = task_results.iter().filter(|r| r.status == TaskStatus::Completed).count();
-        let failed_tasks = task_results.iter().filter(|r| r.status == TaskStatus::Failed).count();
-        
+        let successful_tasks = task_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Completed)
+            .count();
+        let failed_tasks = task_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Failed)
+            .count();
+
         format!(
             "执行完成！\n\n\
             📊 执行统计:\n\
@@ -827,7 +1173,7 @@ impl LlmCompilerEngine {
 
     fn summarize_task_outputs(&self, task_results: &[TaskExecutionResult]) -> String {
         let mut summaries = Vec::new();
-        
+
         for result in task_results {
             if result.status == TaskStatus::Completed {
                 let summary = if let Some(result_value) = result.outputs.get("result") {
@@ -841,7 +1187,7 @@ impl LlmCompilerEngine {
                 summaries.push(format!("- {}: 执行失败 - {}", result.task_id, error_msg));
             }
         }
-        
+
         if summaries.is_empty() {
             "无可用结果".to_string()
         } else {
@@ -849,35 +1195,40 @@ impl LlmCompilerEngine {
         }
     }
 
-    fn calculate_efficiency_metrics(&self, execution_summary: &ExecutionSummary) -> EfficiencyMetrics {
+    fn calculate_efficiency_metrics(
+        &self,
+        execution_summary: &ExecutionSummary,
+    ) -> EfficiencyMetrics {
         let total_tasks = execution_summary.total_tasks;
-        
+
         let task_success_rate = if total_tasks > 0 {
             execution_summary.successful_tasks as f32 / total_tasks as f32
         } else {
             0.0
         };
-        
+
         let average_task_duration_ms = if execution_summary.successful_tasks > 0 {
             execution_summary.total_duration_ms as f32 / execution_summary.successful_tasks as f32
         } else {
             0.0
         };
-        
+
         // 简化的并行效率计算（基于重规划次数+1作为轮次）
         let total_rounds = execution_summary.replanning_count + 1;
         let average_parallelism = if total_rounds > 0 {
             total_tasks as f32 / total_rounds as f32
         } else {
             0.0
-        }.min(self.config.max_concurrency as f32);
-        
+        }
+        .min(self.config.max_concurrency as f32);
+
         let resource_utilization = if self.config.max_concurrency > 0 {
             average_parallelism / self.config.max_concurrency as f32
         } else {
             0.0
-        }.min(1.0);
-        
+        }
+        .min(1.0);
+
         EfficiencyMetrics {
             average_parallelism,
             resource_utilization,
@@ -885,19 +1236,22 @@ impl LlmCompilerEngine {
             average_task_duration_ms,
         }
     }
-    
+
     /// 获取引擎状态
     pub async fn get_engine_status(&self) -> EngineStatus {
         if let Some(task_fetcher) = &self.task_fetcher {
             let task_stats = task_fetcher.get_execution_stats().await;
-            
+
             EngineStatus {
                 is_running: task_stats.executing_tasks > 0,
                 pending_tasks: task_stats.waiting_tasks + task_stats.ready_tasks,
                 executing_tasks: task_stats.executing_tasks,
                 completed_tasks: task_stats.completed_tasks,
                 failed_tasks: task_stats.failed_tasks,
-                available_capacity: self.executor_pool.as_ref().map_or(0, |e| e.available_permits()),
+                available_capacity: self
+                    .executor_pool
+                    .as_ref()
+                    .map_or(0, |e| e.available_permits()),
                 total_capacity: self.config.max_concurrency,
             }
         } else {
@@ -930,7 +1284,7 @@ impl LlmCompilerEngine {
         }
         Ok(())
     }
-    
+
     /// 执行工作流 - 主入口点 (从原有引擎移植)
     pub async fn execute_workflow(
         &self,
@@ -938,8 +1292,8 @@ impl LlmCompilerEngine {
         context: Option<std::collections::HashMap<String, serde_json::Value>>,
     ) -> Result<WorkflowExecutionResult> {
         // 这个方法保持与原有引擎完全一致的逻辑
-        info!("开始执行LLMCompiler工作流: {}", user_query);
-        
+        // info!("开始执行LLMCompiler工作流: {}", user_query);
+
         let context = context.unwrap_or_default();
         let mut execution_summary = ExecutionSummary {
             total_tasks: 0,
@@ -955,11 +1309,11 @@ impl LlmCompilerEngine {
                 average_task_duration_ms: 0.0,
             },
         };
-        
+
         let workflow_start = std::time::Instant::now();
         let mut current_plan: Option<DagExecutionPlan> = None;
         let mut all_results: Vec<TaskExecutionResult> = Vec::new();
-        
+
         // 主执行循环
         for round in 1..=self.config.max_iterations {
             info!("开始执行轮次: {}/{}", round, self.config.max_iterations);
@@ -967,7 +1321,7 @@ impl LlmCompilerEngine {
             if round > 1 {
                 execution_summary.replanning_count = round - 1;
             }
-            
+
             // 1. 规划阶段
             let execution_plan = if let Some(ref plan) = current_plan {
                 // 如果有现有计划，检查是否需要重新规划
@@ -981,7 +1335,7 @@ impl LlmCompilerEngine {
             } else {
                 // 生成初始计划
                 info!("生成初始执行计划...");
-                
+
                 if let Some(planner) = &self.planner {
                     let plan = planner.generate_dag_plan(user_query, &context).await?;
                     current_plan = Some(plan.clone());
@@ -990,75 +1344,89 @@ impl LlmCompilerEngine {
                     return Err(anyhow::anyhow!("Planner not available"));
                 }
             };
-            
+
             info!("执行计划包含 {} 个任务", execution_plan.nodes.len());
-            
+
             // 2. 任务调度阶段
             if let Some(task_fetcher) = &self.task_fetcher {
                 task_fetcher.initialize_plan(&execution_plan).await?;
-                
+
                 // 3. 并行执行阶段
                 let round_results = self.execute_parallel_round().await?;
-                
+
                 if round_results.is_empty() {
                     warn!("轮次 {} 没有执行任何任务", round);
                     break;
                 }
-                
+
                 // 更新统计信息
-                let completed_count = round_results.iter().filter(|r| r.status == TaskStatus::Completed).count();
-                let failed_count = round_results.iter().filter(|r| r.status == TaskStatus::Failed).count();
-                
+                let completed_count = round_results
+                    .iter()
+                    .filter(|r| r.status == TaskStatus::Completed)
+                    .count();
+                let failed_count = round_results
+                    .iter()
+                    .filter(|r| r.status == TaskStatus::Failed)
+                    .count();
+
                 execution_summary.successful_tasks += completed_count;
                 execution_summary.failed_tasks += failed_count;
                 execution_summary.total_tasks += round_results.len();
-                
+
                 let round_duration: u64 = round_results.iter().map(|r| r.duration_ms).sum();
                 execution_summary.total_duration_ms += round_duration;
-                
+
                 all_results.extend(round_results.clone());
-                
+
                 info!(
                     "轮次 {} 完成: 成功 {} 个任务, 失败 {} 个任务, 耗时 {}ms",
                     round, completed_count, failed_count, round_duration
                 );
-                
+
                 // 4. 智能决策阶段
                 if let Some(joiner) = &self.joiner {
                     let mut joiner_guard = joiner.lock().await;
-                    let decision = joiner_guard.analyze_and_decide(
-                        user_query,
-                        &execution_plan,
-                        &round_results,
-                        round,
-                    ).await?;
-                    
+                    let decision = joiner_guard
+                        .analyze_and_decide(user_query, &execution_plan, &round_results, round)
+                        .await?;
+
                     // 记录决策信息（可以添加到key_findings中）
                     match &decision {
                         JoinerDecision::Complete { response, .. } => {
-                            execution_summary.key_findings.push(format!("决策: 完成执行 - {}", response));
+                            execution_summary
+                                .key_findings
+                                .push(format!("决策: 完成执行 - {}", response));
                         }
                         JoinerDecision::Continue { feedback, .. } => {
-                            execution_summary.key_findings.push(format!("决策: 继续执行 - {}", feedback));
+                            execution_summary
+                                .key_findings
+                                .push(format!("决策: 继续执行 - {}", feedback));
                         }
                     }
-                    
+
                     match decision {
                         JoinerDecision::Complete { response, .. } => {
                             info!("Joiner decided to complete: {}", response);
                             break;
                         }
-                        JoinerDecision::Continue { feedback, suggested_tasks, .. } => {
+                        JoinerDecision::Continue {
+                            feedback,
+                            suggested_tasks,
+                            ..
+                        } => {
                             info!("Joiner decided to continue: {}", feedback);
-                            
+
                             // 如果有建议的新任务，触发重规划
                             if !suggested_tasks.is_empty() {
-                                info!("Adding {} suggested tasks from Joiner", suggested_tasks.len());
+                                info!(
+                                    "Adding {} suggested tasks from Joiner",
+                                    suggested_tasks.len()
+                                );
                                 for new_task in suggested_tasks {
                                     // 通过事件系统添加新任务
                                     if let Err(e) = task_fetcher.send_event(
-                                        crate::engines::llm_compiler::task_fetcher::SchedulingEvent::TaskAdded { 
-                                            task: new_task 
+                                        crate::engines::llm_compiler::task_fetcher::SchedulingEvent::TaskAdded {
+                                            task: new_task
                                         }
                                     ) {
                                         warn!("Failed to add suggested task: {}", e);
@@ -1067,18 +1435,26 @@ impl LlmCompilerEngine {
                                 execution_summary.replanning_count += 1;
                             } else {
                                 // 没有新任务但决定继续，触发重规划
-                                if self.config.enable_replanning && round < self.config.max_iterations {
+                                if self.config.enable_replanning
+                                    && round < self.config.max_iterations
+                                {
                                     info!("Triggering replanning due to Continue decision");
-                                    match self.trigger_replanning(
-                                        &execution_plan,
-                                        &round_results,
-                                        &feedback,
-                                        task_fetcher
-                                    ).await {
+                                    match self
+                                        .trigger_replanning(
+                                            &execution_plan,
+                                            &round_results,
+                                            &feedback,
+                                            task_fetcher,
+                                        )
+                                        .await
+                                    {
                                         Ok(new_tasks_added) => {
                                             if new_tasks_added > 0 {
                                                 execution_summary.replanning_count += 1;
-                                                info!("Replanning added {} new tasks", new_tasks_added);
+                                                info!(
+                                                    "Replanning added {} new tasks",
+                                                    new_tasks_added
+                                                );
                                             } else {
                                                 info!("Replanning did not generate new tasks");
                                             }
@@ -1092,7 +1468,7 @@ impl LlmCompilerEngine {
                         }
                     }
                 }
-                
+
                 // 检查是否还有待执行的任务
                 if !task_fetcher.has_pending_tasks().await {
                     info!("所有任务已完成，结束执行");
@@ -1100,13 +1476,14 @@ impl LlmCompilerEngine {
                 }
             }
         }
-        
+
         let total_duration = workflow_start.elapsed();
         execution_summary.total_duration_ms = total_duration.as_millis() as u64;
-        
+
         // 计算最终效率指标
-        execution_summary.efficiency_metrics = self.calculate_efficiency_metrics(&execution_summary);
-        
+        execution_summary.efficiency_metrics =
+            self.calculate_efficiency_metrics(&execution_summary);
+
         info!(
             "工作流执行完成: {} 个任务, 成功 {}, 失败 {}, 耗时 {}ms",
             execution_summary.total_tasks,
@@ -1114,14 +1491,12 @@ impl LlmCompilerEngine {
             execution_summary.failed_tasks,
             execution_summary.total_duration_ms
         );
-        
-        // 生成最终结果
-        let final_response = self.generate_final_response(
-            user_query,
-            &all_results,
-            &execution_summary,
-        ).await?;
-        
+
+        // 生成最终结果（暂不传递ID，因为这个方法可能是测试/单独使用）
+        let final_response = self
+            .generate_final_response(user_query, &all_results, &execution_summary, None, None)
+            .await?;
+
         Ok(WorkflowExecutionResult {
             success: true,
             response: final_response,
@@ -1141,39 +1516,44 @@ impl LlmCompilerEngine {
         task_fetcher: &Arc<TaskFetchingUnit>,
     ) -> Result<usize> {
         info!("Starting replanning process");
-        
+
         if let Some(planner) = &self.planner {
             // 调用规划器进行重规划
-            let new_plan = planner.replan(original_plan, execution_results, feedback).await?;
-            
+            let new_plan = planner
+                .replan(original_plan, execution_results, feedback)
+                .await?;
+
             let new_tasks_count = new_plan.nodes.len();
             info!("Replanning generated {} new tasks", new_tasks_count);
-            
+
             // 将新任务添加到调度器
             for new_task in new_plan.nodes {
                 task_fetcher.send_event(
-                    crate::engines::llm_compiler::task_fetcher::SchedulingEvent::TaskAdded { 
-                        task: new_task 
-                    }
+                    crate::engines::llm_compiler::task_fetcher::SchedulingEvent::TaskAdded {
+                        task: new_task,
+                    },
                 )?;
             }
-            
+
             // 更新依赖图（如果有新的依赖关系）
             if !new_plan.dependency_graph.is_empty() {
-                task_fetcher.merge_dependency_graph(&new_plan.dependency_graph).await?;
+                task_fetcher
+                    .merge_dependency_graph(&new_plan.dependency_graph)
+                    .await?;
             }
-            
+
             // 更新变量映射
             if !new_plan.variable_mappings.is_empty() {
-                task_fetcher.merge_variable_mappings(&new_plan.variable_mappings).await?;
+                task_fetcher
+                    .merge_variable_mappings(&new_plan.variable_mappings)
+                    .await?;
             }
-            
+
             Ok(new_tasks_count)
         } else {
             Err(anyhow::anyhow!("Planner not available for replanning"))
         }
     }
-
 }
 
 /// 工作流执行结果

@@ -225,6 +225,7 @@ impl PromptRepository {
             StageType::Solver => "solver",
             StageType::Planning => "planning",
             StageType::Execution => "execution",
+            StageType::Evaluation => "evaluation",
             StageType::Replan => "replan",
         }
     }
@@ -244,6 +245,7 @@ impl PromptRepository {
             "solver" => StageType::Solver,
             "planning" => StageType::Planning,
             "execution" => StageType::Execution,
+            "evaluation" => StageType::Evaluation,
             "replan" => StageType::Replan,
             _ => StageType::Replan, // Default to Replan for unknown stages
         }

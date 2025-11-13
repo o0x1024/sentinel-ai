@@ -318,8 +318,6 @@ const parseReActSteps = (content: string, messageId?: string): ReActStepData[] =
     return (message as any).reactSteps
   }
   
-  // 如果没有存储的数据，实时解析（流式传输期间）
-  console.log('[parseReActSteps] Parsing from content and chunks for message:', messageId)
   
   const steps: ReActStepData[] = []
   
@@ -327,7 +325,6 @@ const parseReActSteps = (content: string, messageId?: string): ReActStepData[] =
   const chunks = messageId ? (orderedMessages.processor.chunks.get(messageId) || []) : []
   const toolResultChunks = chunks.filter(c => c.chunk_type === 'ToolResult')
   
-  console.log('[parseReActSteps] Total chunks:', chunks.length, 'ToolResult chunks:', toolResultChunks.length)
   
   // 分割内容为多个步骤（每个步骤以 Thought: 开始或独立的 Action: 开始）
   const lines = content.split('\n')

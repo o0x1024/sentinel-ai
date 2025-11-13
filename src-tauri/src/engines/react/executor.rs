@@ -11,6 +11,7 @@ use sentinel_core::models::prompt::{ArchitectureType, StageType};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 /// ReAct 执行器配置
 #[derive(Debug, Clone)]
@@ -32,21 +33,28 @@ pub struct ReactExecutorConfig {
     pub framework_adapter: Option<Arc<dyn crate::tools::FrameworkToolAdapter>>,
     /// 任务参数（包含角色提示词、工具过滤等）
     pub task_parameters: Option<serde_json::Value>,
+    /// 取消令牌（用于支持任务取消）
+    pub cancellation_token: Option<CancellationToken>,
 }
 
 /// ReAct 执行器
 pub struct ReactExecutor {
     config: ReactExecutorConfig,
     trace: Arc<RwLock<ReactTrace>>,
+    cancellation_token: CancellationToken,
 }
 
 impl ReactExecutor {
     /// 创建新的执行器
     pub fn new(task: String, config: ReactExecutorConfig) -> Self {
         let trace = ReactTrace::new(task);
+        let cancellation_token = config.cancellation_token.clone()
+            .unwrap_or_else(|| CancellationToken::new());
+        
         Self {
             config,
             trace: Arc::new(RwLock::new(trace)),
+            cancellation_token,
         }
     }
 
@@ -92,6 +100,19 @@ impl ReactExecutor {
 
         loop {
             iteration += 1;
+
+            // ✅ 检查取消状态（优先级最高）
+            if self.cancellation_token.is_cancelled() {
+                tracing::info!("❌ ReAct: Execution cancelled by user (iteration {})", iteration);
+                let mut trace = self.trace.write().await;
+                trace.complete(ReactStatus::Cancelled);
+                trace.metrics.total_iterations = iteration - 1;
+                trace.metrics.total_duration_ms = start_time
+                    .elapsed()
+                    .unwrap_or(Duration::from_secs(0))
+                    .as_millis() as u64;
+                return Ok(trace.clone());
+            }
 
             // 检查终止条件
             if iteration > self.config.react_config.max_iterations {
@@ -586,11 +607,11 @@ impl ReactExecutor {
         // 从框架适配器获取工具
         if let Some(framework_adapter) = &self.config.framework_adapter {
             let available_tools = framework_adapter.list_available_tools().await;
-            log::info!(
-                "ReAct executor: 框架适配器提供了 {} 个工具 => {:?}",
-                available_tools.len(),
-                available_tools
-            );
+            // log::info!(
+            //     "ReAct executor: 框架适配器提供了 {} 个工具 => {:?}",
+            //     available_tools.len(),
+            //     available_tools
+            // );
 
             for tool_name in available_tools {
                 // 兼容：某些插件工具在 ToolInfo 中可能存储去掉前缀的 id（如 "test_1"），
@@ -721,13 +742,6 @@ impl ReactExecutor {
                 parts.join(", ")
             };
 
-            log::info!(
-                "ReAct executor: 工具列入 system prompt => name='{}', signature='{}', available={}, source={:?}",
-                info.name,
-                signature,
-                info.available,
-                info.source
-            );
             tool_lines.push(format!("- {}({}) - {}", info.name, signature, info.description));
         }
         tool_lines.join("\n")

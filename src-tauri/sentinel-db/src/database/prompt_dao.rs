@@ -21,6 +21,7 @@ fn stage_str(s: &StageType) -> &'static str {
         StageType::Solver => "solver",
         StageType::Planning => "planning",
         StageType::Execution => "execution",
+        StageType::Evaluation => "evaluation",
         StageType::Replan => "replan",
     }
 }
@@ -41,6 +42,8 @@ fn parse_stage(s: &str) -> StageType {
         "solver" => StageType::Solver,
         "planning" => StageType::Planning,
         "execution" => StageType::Execution,
+        "evaluation" => StageType::Evaluation,
+        "replan" => StageType::Replan,
         _ => StageType::Replan,
     }
 }

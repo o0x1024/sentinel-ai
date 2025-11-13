@@ -24,6 +24,7 @@ use std::time::{Duration, SystemTime};
 use tauri::AppHandle;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 /// 执行器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -426,9 +427,16 @@ pub struct Executor {
     memory_manager: Option<Arc<MemoryManager>>,
     repository: Arc<PlanExecuteRepository>,
     app_handle: Option<Arc<AppHandle>>,
+    cancellation_token: CancellationToken,  // ✅ 新增取消令牌
 }
 
 impl Executor {
+    /// 取消执行（触发取消令牌）
+    pub fn cancel(&self) {
+        self.cancellation_token.cancel();
+        log::info!("Plan-and-Execute: Cancellation token triggered");
+    }
+    
     /// 解析 execution_id（优先任务参数中的 execution_id，其次回退 task_id）
     async fn resolve_execution_id(&self, context: &ExecutionContext) -> String {
         let mut execution_id = context.task_id.clone();
@@ -613,6 +621,7 @@ impl Executor {
             memory_manager: None,
             repository,
             app_handle: None,
+            cancellation_token: CancellationToken::new(),  // ✅ 初始化取消令牌
         }
     }
 
@@ -638,6 +647,7 @@ impl Executor {
             memory_manager: None,
             repository,
             app_handle: None,
+            cancellation_token: CancellationToken::new(),  // ✅ 初始化取消令牌
         }
     }
 
@@ -665,6 +675,7 @@ impl Executor {
             memory_manager: None,
             repository,
             app_handle,
+            cancellation_token: CancellationToken::new(),  // ✅ 初始化取消令牌
         }
     }
 
@@ -693,6 +704,7 @@ impl Executor {
             memory_manager,
             repository,
             app_handle,
+            cancellation_token: CancellationToken::new(),  // ✅ 初始化取消令牌
         }
     }
 
@@ -746,6 +758,12 @@ impl Executor {
 
         // Plan-and-Execute主循环：Planner -> Agent -> Tools -> Replan -> Agent...
         loop {
+            // ✅ 检查取消状态（优先级最高）
+            if self.cancellation_token.is_cancelled() {
+                log::info!("❌ Plan-and-Execute: Execution cancelled by user");
+                return Err(PlanAndExecuteError::ExecutionFailed("Task cancelled by user".to_string()));
+            }
+            
             let loop_start_time = SystemTime::now();
             log::info!(
                 "=== 执行计划循环 (尝试 {}/{}) ===",
@@ -2148,6 +2166,12 @@ impl Executor {
         let context = context_guard.as_ref().unwrap();
 
         for step in &plan.steps {
+            // ✅ 在每个步骤前检查取消状态
+            if self.cancellation_token.is_cancelled() {
+                log::info!("❌ Plan-and-Execute: Execution cancelled during step execution");
+                return Err(PlanAndExecuteError::ExecutionFailed("Task cancelled by user".to_string()));
+            }
+            
             let result = self.execute_step(step, context).await?;
 
             // 检查步骤是否失败，如果失败且有replanner，尝试实时重新规划
@@ -2448,13 +2472,14 @@ impl Executor {
         Ok(())
     }
 
-    /// 取消执行
-    pub async fn cancel(&self) -> Result<(), PlanAndExecuteError> {
+    /// 取消执行（旧版本，已被CancellationToken替代）
+    /// 保留此方法以兼容旧代码，但实际使用的是上面的cancel()方法
+    pub async fn cancel_legacy(&self) -> Result<(), PlanAndExecuteError> {
         let context_guard = self.context.lock().await;
         if let Some(context) = context_guard.as_ref() {
             let mut state = context.execution_state.write().await;
             state.is_cancelled = true;
-            log::info!("执行已取消");
+            log::info!("执行已取消（旧版本方法）");
         }
         Ok(())
     }

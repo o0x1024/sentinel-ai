@@ -47,6 +47,7 @@ impl CanonicalStage {
             
             (CanonicalStage::Planner, ArchitectureType::LLMCompiler) => Some(StageType::Planning),
             (CanonicalStage::Executor, ArchitectureType::LLMCompiler) => Some(StageType::Execution),
+            (CanonicalStage::Evaluator, ArchitectureType::LLMCompiler) => Some(StageType::Evaluation),
             (CanonicalStage::Replanner, ArchitectureType::LLMCompiler) => Some(StageType::Replan),
             
             (CanonicalStage::Planner, ArchitectureType::PlanExecute) => Some(StageType::Planning),
