@@ -387,7 +387,6 @@ const promptCategories = [
 const groups = [
   { value: 'ReWOO', label: 'ReWOO', stages: [
     { value: 'Planner', label: 'Planner (规划器)' },
-    { value: 'Worker', label: 'Worker (执行器)' },
     { value: 'Solver', label: 'Solver (求解器)' },
   ]},
   { value: 'LLMCompiler', label: 'LLMCompiler', stages: [
@@ -488,7 +487,7 @@ const filteredTemplates = computed(() => {
 })
 
 const stagesOfSelectedArch = computed<StageType[]>(() => {
-  if (selected.value.architecture === 'ReWOO') return ['Planner','Worker','Solver'] as StageType[]
+  if (selected.value.architecture === 'ReWOO') return ['Planner','Solver'] as StageType[]
   if (selected.value.architecture === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
   if (selected.value.architecture === 'ReAct') return ['Planning','Execution'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
@@ -497,7 +496,7 @@ const stagesOfSelectedArch = computed<StageType[]>(() => {
 // 按当前选中分组的架构计算阶段（用于分组映射区）
 const stagesOfGroupArch = computed<StageType[]>(() => {
   const arch = selectedGroup.value?.architecture || selected.value.architecture
-  if (arch === 'ReWOO') return ['Planner','Worker','Solver'] as StageType[]
+  if (arch === 'ReWOO') return ['Planner','Solver'] as StageType[]
   if (arch === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
   if (arch === 'ReAct') return ['Planning','Execution'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
@@ -1032,20 +1031,132 @@ function createPluginGenerationTemplate() {
 
 You are an expert security researcher and TypeScript developer. Your task is to generate a high-quality security testing plugin for a passive scanning system.
 
-The plugin should:
-1. Be written in TypeScript
-2. Detect specific vulnerability types based on HTTP traffic analysis
-3. Follow the provided plugin interface
-4. Include proper error handling and validation
-5. Emit findings using the \`Deno.core.ops.op_emit_finding()\` API
+## Environment and Context
+
+### Available APIs
+- **Finding Emission**: Use \`Deno.core.ops.op_emit_finding(finding)\` to report vulnerabilities
+- **Logging**: Use \`console.log()\`, \`console.warn()\`, \`console.error()\` for debugging
+- **HTTP Analysis**: Access request/response data through the provided context objects
+
+### Plugin Interface (Required)
+Your plugin MUST implement these functions:
+
+\`\`\`typescript
+interface PluginMetadata {
+  id: string;                    // Unique plugin identifier
+  name: string;                  // Human-readable name
+  version: string;               // Semantic version (e.g., "1.0.0")
+  author: string;                // Author name
+  main_category: "passive";      // Must be "passive" for passive scan plugins
+  category: string;              // Vulnerability category (e.g., "sqli", "xss")
+  description: string;           // Brief description
+  default_severity: "critical" | "high" | "medium" | "low";
+  tags: string[];                // Descriptive tags
+}
+
+interface RequestContext {
+  id: string;                    // Request ID
+  url: string;                   // Full URL
+  method: string;                // HTTP method (GET, POST, etc.)
+  headers: Record<string, string>;
+  query_params: Record<string, string>;  // Parsed query parameters
+  body: number[] | Uint8Array;   // Request body as bytes
+  content_type?: string;         // Content-Type header
+  is_https: boolean;             // Whether using HTTPS
+  timestamp: string;             // ISO 8601 timestamp
+}
+
+interface ResponseContext {
+  id: string;                    // Response ID (matches request)
+  status: number;                // HTTP status code
+  headers: Record<string, string>;
+  body: number[] | Uint8Array;   // Response body as bytes
+  timestamp: string;             // ISO 8601 timestamp
+}
+
+// Required functions:
+export function get_metadata(): PluginMetadata;
+export function scan_request(ctx: RequestContext): void;   // Optional
+export function scan_response(ctx: ResponseContext): void; // Optional
+\`\`\`
+
+### Body Handling
+Request/response bodies are provided as \`number[]\` or \`Uint8Array\`. Use this helper:
+
+\`\`\`typescript
+function bodyToString(body: number[] | Uint8Array): string {
+  try {
+    if (body instanceof Uint8Array) {
+      return new TextDecoder().decode(body);
+    } else if (Array.isArray(body)) {
+      return new TextDecoder().decode(new Uint8Array(body));
+    }
+    return "";
+  } catch (e) {
+    return "";
+  }
+}
+\`\`\`
+
+### Iterating Over Objects
+Use \`Object.entries()\` to iterate over plain JavaScript objects:
+
+\`\`\`typescript
+// ✅ Correct
+for (const [key, value] of Object.entries(query_params)) {
+  // ...
+}
+
+// ❌ Wrong (objects don't have .entries() method)
+for (const [key, value] of query_params.entries()) {
+  // ...
+}
+\`\`\`
+
+### Emitting Findings
+\`\`\`typescript
+Deno.core.ops.op_emit_finding({
+  title: "SQL Injection Detected",
+  description: "Potential SQL injection in parameter 'id'",
+  severity: "high",
+  confidence: 0.85,
+  request_id: ctx.id,
+  evidence: {
+    parameter: "id",
+    value: "1' OR '1'='1",
+    pattern: "SQL_INJECTION"
+  }
+});
+\`\`\`
+
+## Task Requirements
 
 **Variables**: 
-- {vuln_type}: Vulnerability type to detect
-- {analysis}: Website analysis data
-- {endpoints}: Target endpoints
-- {requirements}: Additional requirements
+- {vuln_type}: Vulnerability type to detect (e.g., "sqli", "xss", "idor")
+- {analysis}: Website analysis data (technologies, endpoints, patterns)
+- {endpoints}: Target endpoints to focus on
+- {requirements}: Additional specific requirements
 
-Please generate a complete TypeScript plugin that follows the standard plugin interface.`
+## Output Format
+
+Return ONLY the complete TypeScript plugin code wrapped in a markdown code block:
+
+\`\`\`typescript
+// Your plugin code here
+\`\`\`
+
+Do NOT include explanations or comments outside the code block.
+
+## Important Constraints
+
+1. **Use \`Object.entries()\`** for iterating over objects (query_params, headers, etc.)
+2. **Convert body to string** using the \`bodyToString()\` helper function
+3. **Check for null/undefined** before accessing properties
+4. **Use try-catch blocks** to handle errors gracefully
+5. **Emit findings** only when confident (confidence >= 0.7)
+6. **Include proper TypeScript types** for all variables and functions
+
+Please generate a complete, production-ready TypeScript plugin that follows all the above guidelines.`
 
   editingTemplate.value = {
     name: `被动扫描插件生成模板-${Date.now()}`,
@@ -1111,14 +1222,97 @@ function createPluginFixTemplate() {
 
 You are an expert TypeScript developer and security researcher. A security plugin was generated but failed execution testing. Your task is to fix the code so it executes correctly.
 
-**Variables**:
-- {original_code}: The original plugin code
-- {error_message}: Error message from execution
-- {error_details}: Detailed error information
-- {vuln_type}: Vulnerability type
-- {attempt}: Fix attempt number
+## Error Information
 
-Please analyze the error and provide a fixed version of the plugin code.`
+**Fix Attempt**: {attempt}
+
+**Error Message**: {error_message}
+
+**Detailed Error**:
+\`\`\`
+{error_details}
+\`\`\`
+
+## Original Plugin Code
+
+\`\`\`typescript
+{original_code}
+\`\`\`
+
+## Fix Instructions
+
+Please fix the code to resolve the error. The fixed plugin must:
+
+1. **Fix the specific error** mentioned above
+2. **Maintain the plugin interface**:
+   - \`function get_metadata()\` - returns plugin metadata with id, name, version, etc.
+   - \`function scan_response(ctx)\` - scans HTTP response for vulnerabilities
+   - Optionally \`function scan_request(ctx)\` - scans HTTP request
+3. **Detect {vuln_type} vulnerabilities** correctly
+4. **Use proper TypeScript syntax** - no syntax errors
+5. **Emit findings** using \`Deno.core.ops.op_emit_finding()\`
+6. **Include error handling** - use try-catch blocks
+7. **Be executable** - the code must run without errors
+
+## Common Issues to Check
+
+- **Missing or incorrect function signatures**: Ensure \`get_metadata()\`, \`scan_request()\`, \`scan_response()\` are properly defined
+- **Undefined variables or functions**: Check all variable declarations and function calls
+- **Incorrect API usage**: Use \`Deno.core.ops.op_emit_finding()\` (not \`Sentinel.emitFinding()\`)
+- **Missing metadata fields**: Ensure all required fields (id, name, version, category, etc.) are present
+- **Syntax errors**: Check for missing brackets, semicolons, parentheses
+- **Type errors in TypeScript**: Ensure proper type annotations
+- **Accessing undefined properties**: Use optional chaining (\`?.\`) or null checks
+- **Object iteration**: Use \`Object.entries()\` not \`.entries()\` for plain objects
+- **Body handling**: Use \`bodyToString()\` helper to convert \`number[]\` or \`Uint8Array\` to string
+
+## Body Handling Helper
+
+\`\`\`typescript
+function bodyToString(body: number[] | Uint8Array): string {
+  try {
+    if (body instanceof Uint8Array) {
+      return new TextDecoder().decode(body);
+    } else if (Array.isArray(body)) {
+      return new TextDecoder().decode(new Uint8Array(body));
+    }
+    return "";
+  } catch (e) {
+    return "";
+  }
+}
+\`\`\`
+
+## Correct Object Iteration
+
+\`\`\`typescript
+// ✅ Correct
+for (const [key, value] of Object.entries(query_params)) {
+  // ...
+}
+
+// ❌ Wrong
+for (const [key, value] of query_params.entries()) {
+  // ...
+}
+\`\`\`
+
+## Output Format
+
+Return ONLY the fixed TypeScript code, wrapped in a code block:
+
+\`\`\`typescript
+// Fixed plugin code here
+\`\`\`
+
+Do NOT include explanations, comments about the fix, or any other text outside the code block.
+
+## Important Reminders
+
+- Focus on fixing the SPECIFIC error mentioned
+- Maintain all existing functionality
+- Ensure the plugin is production-ready
+- Test edge cases in your mind before outputting`
 
   editingTemplate.value = {
     name: `插件修复模板-${Date.now()}`,
@@ -1132,7 +1326,7 @@ Please analyze the error and provide a fixed version of the plugin code.`
     template_type: 'PluginFix' as TemplateType,
     is_system: true,
     priority: 85,
-    tags: ['plugin', 'fix', 'repair'],
+    tags: ['plugin', 'fix', 'repair', 'passive'],
     variables: ['original_code', 'error_message', 'error_details', 'vuln_type', 'attempt'],
     version: '1.0.0',
   }

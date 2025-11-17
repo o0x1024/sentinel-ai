@@ -741,7 +741,26 @@ impl Executor {
         log::info!("执行计划: {}", plan.name);
 
         // 初始化执行上下文
-        self.initialize_context(plan, task).await?;
+        let context = self.initialize_context(plan, task).await?;
+        
+        // 解析消息ID用于前端推送
+        let execution_id = self.resolve_execution_id(&context).await;
+        let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(&context).await;
+        
+        log::info!("Plan-and-Execute: execution_id={}, message_id={}, conversation_id={:?}", 
+            execution_id, message_id, conversation_id);
+        
+        // 发送执行开始消息
+        if let Some(app) = &self.app_handle {
+            crate::utils::ordered_message::emit_thinking_chunk(
+                app,
+                &execution_id,
+                &message_id,
+                conversation_id.as_deref(),
+                &format!("开始执行计划: {}", plan.name),
+                Some("plan_execute_start"),
+            );
+        }
 
         let _start_time = SystemTime::now();
         let mut current_plan = plan.clone();
@@ -2228,6 +2247,164 @@ impl Executor {
             .await
     }
 
+    /// 检测资源泄露（CRITICAL - 最高优先级）
+    async fn detect_resource_leak(&self, execution_result: &ExecutionResult) -> bool {
+        if let Some(ctx) = self.context.lock().await.as_ref() {
+            let shared = ctx.shared_data.read().await;
+            
+            // Check playwright browser session
+            let has_playwright_open = shared
+                .get("playwright_session_active")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            
+            // Check passive scan proxy
+            let has_proxy_running = shared
+                .get("passive_scan_running")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            
+            // Check if cleanup steps were executed
+            let has_playwright_close = execution_result.completed_steps.iter()
+                .any(|s| s.contains("playwright_close") || s.contains("close_browser"));
+            let has_proxy_stop = execution_result.completed_steps.iter()
+                .any(|s| s.contains("stop_passive_scan") || s.contains("stop_proxy"));
+            
+            // Resource leak detected if resource is active but not cleaned up
+            let playwright_leak = has_playwright_open && !has_playwright_close;
+            let proxy_leak = has_proxy_running && !has_proxy_stop;
+            
+            if playwright_leak || proxy_leak {
+                log::warn!(
+                    "Resource leak detected - Playwright: {}, Proxy: {}",
+                    playwright_leak,
+                    proxy_leak
+                );
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 检测安全测试是否包含关键步骤
+    async fn has_required_security_steps(&self, execution_result: &ExecutionResult) -> bool {
+        let completed = &execution_result.completed_steps;
+        
+        // Check for analyze_website
+        let has_analyze = completed.iter()
+            .any(|s| s.contains("analyze_website") || s.contains("分析网站"));
+        
+        // Check for generate_advanced_plugin
+        let has_plugin = completed.iter()
+            .any(|s| s.contains("generate_advanced_plugin") || s.contains("生成插件"));
+        
+        has_analyze && has_plugin
+    }
+
+    /// 判断是否为安全测试任务
+    async fn is_security_test(&self) -> bool {
+        if let Some(ctx) = self.context.lock().await.as_ref() {
+            let shared = ctx.shared_data.read().await;
+            
+            // Check task parameters for security test indicators
+            if let Some(params) = shared.get("task_parameters").and_then(|v| v.as_object()) {
+                // Check task type
+                if let Some(task_type) = params.get("task_type").and_then(|v| v.as_str()) {
+                    if task_type.contains("security") || task_type.contains("penetration") 
+                        || task_type.contains("vulnerability") {
+                        return true;
+                    }
+                }
+                
+                // Check task description
+                if let Some(desc) = params.get("description").and_then(|v| v.as_str()) {
+                    let desc_lower = desc.to_lowercase();
+                    if desc_lower.contains("安全测试") || desc_lower.contains("漏洞扫描")
+                        || desc_lower.contains("渗透测试") || desc_lower.contains("security test")
+                        || desc_lower.contains("vulnerability scan") {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// 检测步骤执行顺序是否违反依赖关系
+    async fn detect_step_order_violation(&self, execution_result: &ExecutionResult) -> bool {
+        // Check if resource usage steps were executed before initialization
+        let completed = &execution_result.completed_steps;
+        
+        // Find indices of key steps
+        let mut playwright_nav_idx: Option<usize> = None;
+        let mut playwright_init_idx: Option<usize> = None;
+        let mut proxy_use_idx: Option<usize> = None;
+        let mut proxy_start_idx: Option<usize> = None;
+        
+        for (idx, step) in completed.iter().enumerate() {
+            if step.contains("playwright_navigate") {
+                playwright_nav_idx = Some(idx);
+            }
+            if step.contains("start_passive_scan") {
+                proxy_start_idx = Some(idx);
+            }
+            // Proxy usage is typically indicated by navigate with proxy parameter
+            if step.contains("proxy") && !step.contains("start") && !step.contains("stop") {
+                proxy_use_idx = Some(idx);
+            }
+        }
+        
+        // Check order violations
+        if let (Some(nav_idx), Some(start_idx)) = (proxy_use_idx, proxy_start_idx) {
+            if nav_idx < start_idx {
+                log::warn!("Step order violation: proxy used before started");
+                return true;
+            }
+        }
+        
+        false
+    }
+
+    /// 检测执行结果是否包含足够信息
+    async fn has_insufficient_information(&self, execution_result: &ExecutionResult) -> bool {
+        if let Some(ctx) = self.context.lock().await.as_ref() {
+            let shared = ctx.shared_data.read().await;
+            
+            // Count meaningful step results
+            let mut result_count = 0;
+            let mut total_output_size = 0;
+            
+            for (key, value) in shared.iter() {
+                if key.starts_with("step_result_") {
+                    result_count += 1;
+                    // Estimate output size
+                    if let Ok(json_str) = serde_json::to_string(value) {
+                        total_output_size += json_str.len();
+                    }
+                }
+            }
+            
+            // Insufficient if:
+            // 1. Less than 2 step results
+            // 2. Total output is too small (< 100 chars)
+            // 3. All steps completed but no meaningful output
+            if result_count < 2 && !execution_result.completed_steps.is_empty() {
+                log::warn!("Insufficient information: only {} step results", result_count);
+                return true;
+            }
+            
+            if total_output_size < 100 && execution_result.completed_steps.len() > 2 {
+                log::warn!(
+                    "Insufficient information: total output size {} bytes is too small",
+                    total_output_size
+                );
+                return true;
+            }
+        }
+        
+        false
+    }
+
     /// 统一的重新规划判定函数（聚合多种信号）
     async fn should_trigger_replan(
         &self,
@@ -2255,7 +2432,12 @@ impl Executor {
 
         let mut replan_signals = Vec::new();
 
-        // 信号1: 失败步骤检查
+        // 信号1: 资源泄露检查（CRITICAL - 最高优先级）
+        if self.detect_resource_leak(execution_result).await {
+            replan_signals.push("🔴 CRITICAL: 资源泄露（浏览器/代理未关闭）".to_string());
+        }
+
+        // 信号2: 失败步骤检查
         if !execution_result.failed_steps.is_empty() {
             let failed_ratio = execution_result.failed_steps.len() as f64
                 / (execution_result.completed_steps.len() + execution_result.failed_steps.len())
@@ -2266,7 +2448,7 @@ impl Executor {
             }
         }
 
-        // 信号2: 可重试错误检查
+        // 信号3: 可重试错误检查
         let retryable_errors = execution_result
             .errors
             .iter()
@@ -2276,7 +2458,24 @@ impl Executor {
             replan_signals.push(format!("存在 {} 个可重试错误", retryable_errors));
         }
 
-        // 信号3: 质量评估信号（来自增强反馈）
+        // 信号4: 安全测试关键步骤检查
+        if self.is_security_test().await {
+            if !self.has_required_security_steps(execution_result).await {
+                replan_signals.push("安全测试缺少关键步骤（analyze_website/generate_advanced_plugin）".to_string());
+            }
+        }
+
+        // 信号5: 步骤顺序违反检查
+        if self.detect_step_order_violation(execution_result).await {
+            replan_signals.push("步骤执行顺序违反依赖关系".to_string());
+        }
+
+        // 信号6: 信息充分性检查
+        if self.has_insufficient_information(execution_result).await {
+            replan_signals.push("执行结果信息不足".to_string());
+        }
+
+        // 信号7: 质量评估信号（来自增强反馈）
         let quality_score = execution_result
             .enhanced_feedback
             .quality_assessment
@@ -2288,14 +2487,14 @@ impl Executor {
             ));
         }
 
-        // 信号4: 性能信号（平均步骤时间过长）
+        // 信号8: 性能信号（平均步骤时间过长）
         let avg_duration = execution_result.metrics.avg_step_duration_ms;
         if avg_duration > self.config.default_timeout * 1000 / 2 {
             // 超过超时时间的一半
             replan_signals.push(format!("平均步骤耗时过长: {}ms", avg_duration));
         }
 
-        // 信号5: 资源使用信号（来自增强反馈）
+        // 信号9: 资源使用信号（来自增强反馈）
         if execution_result
             .enhanced_feedback
             .resource_analysis
@@ -2500,7 +2699,7 @@ impl Executor {
         &self,
         plan: &ExecutionPlan,
         task: &TaskRequest,
-    ) -> Result<(), PlanAndExecuteError> {
+    ) -> Result<ExecutionContext, PlanAndExecuteError> {
         let mut shared_data = HashMap::new();
 
         // 如果有内存管理器，从中构建上下文并加载到 shared_data
@@ -2560,16 +2759,18 @@ impl Executor {
             .map_err(|e| PlanAndExecuteError::ToolFailed(format!("获取全局工具系统失败: {}", e)))?;
         let tool_manager = tool_system.get_manager();
 
-        let mut context = self.context.lock().await;
-        *context = Some(ExecutionContext {
+        let exec_context = ExecutionContext {
             task_id: task.id.clone(),
             plan_id: plan.id.clone(),
             shared_data,
             execution_state,
             tool_manager,
-        });
+        };
+        
+        let mut context = self.context.lock().await;
+        *context = Some(exec_context.clone());
 
-        Ok(())
+        Ok(exec_context)
     }
 
     async fn execute_step_once(

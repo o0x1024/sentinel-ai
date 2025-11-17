@@ -138,8 +138,10 @@ impl AgentManager {
             }
         }
 
-        // DISABLED: ReWOO engine registration (needs Rig refactor)
-        warn!("ReWOO engine disabled - needs Rig refactor");
+        // 注册ReWOO引擎适配器
+        // Note: ReWOO engine requires full dependencies, so this is a placeholder
+        // The actual registration happens in register_engines_with_dependencies
+        debug!("ReWOO engine will be registered with full dependencies");
 
         // 注册LLMCompiler引擎适配器
         match crate::engines::llm_compiler::engine_adapter::LlmCompilerEngine::new().await {
@@ -191,7 +193,7 @@ impl AgentManager {
             db_service.clone(),
         ).await {
             Ok(engine) => {
-                // DISABLED: ReWOO engine registration removed
+                engines.insert("rewoo".to_string(), Arc::new(engine));
                 info!("Registered ReWOO engine adapter with full dependencies");
             }
             Err(e) => {

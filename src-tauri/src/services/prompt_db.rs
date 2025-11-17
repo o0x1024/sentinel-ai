@@ -99,6 +99,19 @@ impl PromptRepository {
         self.db.duplicate_template(id, new_name).await
     }
 
+    /// Get active template by type (returns the first active template of the given type)
+    pub async fn get_active_template_by_type(&self, template_type: TemplateType) -> Result<Option<PromptTemplate>> {
+        let templates = self.list_templates_filtered(
+            None,
+            Some(template_type),
+            None,
+            None
+        ).await?;
+        
+        // Find first active template
+        Ok(templates.into_iter().find(|t| t.is_active))
+    }
+
     /// Evaluate prompt with variables
     pub async fn evaluate_prompt(&self, template_id: i64, context: serde_json::Value) -> Result<String> {
         if let Some(template) = self.get_template(template_id).await? {
@@ -122,6 +135,27 @@ impl PromptRepository {
         } else {
             Err(anyhow::anyhow!("Template not found"))
         }
+    }
+    
+    /// Evaluate template content directly with variables (without needing template_id)
+    pub fn evaluate_content(&self, content: &str, context: &serde_json::Value) -> String {
+        let mut result = content.to_string();
+        
+        // Simple variable replacement supporting {var} and {{VAR}} syntax
+        if let Some(context_obj) = context.as_object() {
+            for (key, value) in context_obj {
+                let placeholder_curly = format!("{{{}}}", key);
+                let placeholder_double = format!("{{{{{}}}}}", key.to_uppercase());
+                let replacement = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => value.to_string(),
+                };
+                result = result.replace(&placeholder_curly, &replacement);
+                result = result.replace(&placeholder_double, &replacement);
+            }
+        }
+        
+        result
     }
 
     fn row_to_template(row: sqlx::sqlite::SqliteRow) -> PromptTemplate {

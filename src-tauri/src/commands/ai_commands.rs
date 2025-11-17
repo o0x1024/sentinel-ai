@@ -11,6 +11,8 @@ use crate::engines::plan_and_execute::engine_adapter::PlanAndExecuteEngine;
 use crate::engines::llm_compiler::engine_adapter::LlmCompilerEngine;
 use crate::engines::llm_compiler::types::LlmCompilerConfig;
 use crate::engines::plan_and_execute::types::PlanAndExecuteConfig;
+use crate::engines::rewoo::engine_adapter::ReWooEngine;
+use crate::engines::rewoo::rewoo_types::ReWOOConfig;
 // use crate::engines::plan_and_execute::executor::ExecutionMode; // not needed directly
 use crate::agents::traits::{ExecutionEngine, AgentTask, TaskPriority};
 
@@ -1058,9 +1060,9 @@ pub async fn get_agent_statistics(
     
     Ok(AgentStatistics {
         active_count: active_count as u32,
-        total_tasks: stats.total_tasks,
-        successful_tasks: stats.successful_tasks,
-        failed_tasks: stats.failed_tasks,
+        total_tasks: stats.total_tasks as u32,
+        successful_tasks: stats.successful_tasks as u32,
+        failed_tasks: stats.failed_tasks as u32,
         average_execution_time: stats.average_execution_time_ms / 1000.0, // 转换为秒
     })
 }
@@ -1516,15 +1518,80 @@ async fn dispatch_with_react(
 }
 
 async fn dispatch_with_rewoo(
-    _execution_id: String,
-    _request: DispatchQueryRequest,
-    _ai_service_manager: Arc<AiServiceManager>,
-    _db_service: Arc<DatabaseService>,
+    execution_id: String,
+    request: DispatchQueryRequest,
+    ai_service_manager: Arc<AiServiceManager>,
+    db_service: Arc<DatabaseService>,
     _execution_manager: Arc<crate::managers::ExecutionManager>,
-    _app: AppHandle,
+    app: AppHandle,
 ) -> Result<DispatchResult, String> {
-    // DISABLED: ReWOO engine needs Rig refactor
-    Err("ReWOO engine disabled - needs Rig refactor".to_string())
+    log::info!("Creating ReWOO dispatch for: {}", request.query);
+    
+    // 创建ReWOO引擎配置
+    let config = ReWOOConfig::default();
+    
+    // 创建ReWOO引擎
+    let mut engine = ReWooEngine::new_with_dependencies(
+        ai_service_manager.clone(),
+        config,
+        db_service.clone(),
+    ).await.map_err(|e| format!("Failed to create ReWOO engine: {}", e))?;
+    
+    // 设置app_handle用于推送执行结果到前端
+    engine.set_app_handle(app.clone());
+    
+    // 创建Agent任务
+    let mut task_params = request.options.unwrap_or_default();
+    
+    // 添加 conversation_id 和 message_id 到 parameters
+    if let Some(conv_id) = &request.conversation_id {
+        task_params.insert("conversation_id".to_string(), serde_json::json!(conv_id));
+    }
+    if let Some(msg_id) = &request.message_id {
+        task_params.insert("message_id".to_string(), serde_json::json!(msg_id));
+    }
+    task_params.insert("execution_id".to_string(), serde_json::json!(execution_id));
+    
+    let task = AgentTask {
+        id: execution_id.clone(),
+        user_id: "system".to_string(),
+        description: request.query.clone(),
+        priority: TaskPriority::Normal,
+        target: None,
+        parameters: task_params.clone(),
+        timeout: Some(300), // 5分钟超时
+    };
+    
+    // 设置运行时参数
+    engine.set_runtime_params(task_params);
+    
+    // 执行ReWOO流程
+    let start_time = std::time::Instant::now();
+    match engine.execute(&task).await {
+        Ok(result) => {
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            
+            // 从 result.data 中提取响应文本
+            let response = if let Some(data) = &result.data {
+                if let Some(result_str) = data.get("result").and_then(|v| v.as_str()) {
+                    result_str.to_string()
+                } else {
+                    data.to_string()
+                }
+            } else {
+                "ReWOO execution completed".to_string()
+            };
+            
+            Ok(DispatchResult {
+                execution_id,
+                initial_response: response,
+                execution_plan: None,
+                estimated_duration: duration_ms,
+                selected_architecture: "ReWOO".to_string(),
+            })
+        }
+        Err(e) => Err(format!("ReWOO execution failed: {}", e))
+    }
 }
 
 async fn dispatch_with_llm_compiler(

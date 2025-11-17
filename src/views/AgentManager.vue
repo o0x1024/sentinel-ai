@@ -518,7 +518,7 @@
 defineOptions({ inheritAttrs: false })
 import { ref, onMounted, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { listen, emit } from '@tauri-apps/api/event'
 import { useMessageUtils } from '@/composables/useMessageUtils'
 
 const { renderMarkdown } = useMessageUtils()
@@ -837,7 +837,11 @@ const removeAgent = async (idx: number) => {
   const item = agents.value[idx]
   agents.value.splice(idx, 1)
   if (item?.id) {
-    try { await invoke('delete_scenario_agent', { id: item.id }) } catch {}
+    try { 
+      await invoke('delete_scenario_agent', { id: item.id })
+      // Emit event to notify other components
+      await emit('agent:changed', { action: 'deleted', agentId: item.id })
+    } catch {}
   }
 }
 
@@ -1016,6 +1020,8 @@ const formatDate = (dateStr?: string) => {
 const saveAgent = async (agent: AgentProfile) => {
   agent.updated_at = new Date().toISOString()
   await invoke('save_scenario_agent', { profile: agent })
+  // Emit event to notify other components
+  await emit('agent:changed', { action: 'saved', agentId: agent.id })
 }
 
 

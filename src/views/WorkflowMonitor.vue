@@ -26,19 +26,41 @@
     </div>
 
     <!-- 操作按钮 -->
-    <div class="flex gap-4 mb-6">
-      <button class="btn btn-primary" @click="refreshExecutions">
-        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-        刷新
-      </button>
-      <button class="btn btn-outline" @click="refreshStatistics">
-        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-        </svg>
-        更新统计
-      </button>
+    <div class="flex items-center justify-between gap-4 mb-6">
+      <div class="flex gap-2">
+        <button class="btn btn-primary" @click="() => refreshExecutions()">
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          刷新
+        </button>
+        <button class="btn btn-outline" @click="refreshStatistics">
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          更新统计
+        </button>
+      </div>
+      
+      <!-- 批量操作按钮 -->
+      <div v-if="showBatchActions" class="flex gap-2 items-center">
+        <span class="text-sm text-gray-600">已选择 {{ selectedExecutionIds.size }} 项</span>
+        <button class="btn btn-sm btn-warning" @click="batchCancelExecutions">
+          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          批量取消
+        </button>
+        <button class="btn btn-sm btn-error" @click="batchDeleteExecutions">
+          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          批量删除
+        </button>
+        <button class="btn btn-sm btn-ghost" @click="clearSelection">
+          清除选择
+        </button>
+      </div>
     </div>
 
     <!-- 执行列表 -->
@@ -62,6 +84,14 @@
           <table class="table table-zebra w-full">
             <thead>
               <tr>
+                <th class="w-12">
+                  <input 
+                    type="checkbox" 
+                    class="checkbox checkbox-sm" 
+                    v-model="selectAll"
+                    @change="toggleSelectAll"
+                  />
+                </th>
                 <th>执行ID</th>
                 <th>工作流ID</th>
                 <th>状态</th>
@@ -73,6 +103,14 @@
             </thead>
             <tbody>
               <tr v-for="execution in executions" :key="execution.execution_id">
+                <td>
+                  <input 
+                    type="checkbox" 
+                    class="checkbox checkbox-sm" 
+                    :checked="selectedExecutionIds.has(execution.execution_id)"
+                    @change="toggleSelectExecution(execution.execution_id)"
+                  />
+                </td>
                 <td>
                   <code class="text-sm bg-gray-100 px-2 py-1 rounded">{{ execution.execution_id.substring(0, 8) }}...</code>
                 </td>
@@ -160,6 +198,49 @@
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <!-- 分页控件 -->
+        <div v-if="totalPages > 1" class="flex items-center justify-between mt-4 px-4">
+          <div class="text-sm text-gray-600">
+            共 {{ totalExecutions }} 条记录，第 {{ currentPage }} / {{ totalPages }} 页
+          </div>
+          <div class="flex gap-2">
+            <button 
+              class="btn btn-sm" 
+              :disabled="currentPage === 1"
+              @click="prevPage"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+              </svg>
+              上一页
+            </button>
+            
+            <!-- 页码按钮 -->
+            <template v-for="page in getPageNumbers()" :key="page">
+              <button 
+                v-if="typeof page === 'number'"
+                class="btn btn-sm"
+                :class="{ 'btn-primary': page === currentPage }"
+                @click="goToPage(page)"
+              >
+                {{ page }}
+              </button>
+              <span v-else class="px-2 flex items-center">...</span>
+            </template>
+            
+            <button 
+              class="btn btn-sm" 
+              :disabled="currentPage === totalPages"
+              @click="nextPage"
+            >
+              下一页
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -683,7 +764,18 @@ const statistics = ref<WorkflowStatistics>({
   running_executions: 0
 })
 const loading = ref(false)
+
+// 分页相关状态
+const currentPage = ref(1)
+const pageSize = ref(10)
+const totalExecutions = ref(0)
+const totalPages = ref(0)
 const loadingFlowchart = ref(false)
+
+// 批量操作相关状态
+const selectedExecutionIds = ref<Set<string>>(new Set())
+const selectAll = ref(false)
+const showBatchActions = ref(false)
 const selectedExecution = ref<WorkflowExecution | null>(null)
 const workflowPlan = ref<WorkflowExecutionPlan | null>(null)
 const selectedStep = ref<WorkflowStepDetail | null>(null)
@@ -706,19 +798,181 @@ const ensureAgentManagerInitialized = async () => {
 }
 
 // 获取执行列表
-const refreshExecutions = async () => {
+const refreshExecutions = async (page?: number) => {
   loading.value = true
   try {
     // 确保Agent管理器已初始化
     await ensureAgentManagerInitialized()
     
-    const result = await invoke<WorkflowExecution[]>('list_workflow_executions')
-    executions.value = result
+    const targetPage = page ?? currentPage.value
+    const result = await invoke<any>('list_workflow_executions', { 
+      page: targetPage,
+      pageSize: pageSize.value 
+    })
+    
+    executions.value = result.items || []
+    totalExecutions.value = result.total || 0
+    currentPage.value = result.page || 1
+    totalPages.value = result.total_pages || 0
   } catch (error) {
     console.error('获取执行列表失败:', error)
+    executions.value = []
   } finally {
     loading.value = false
   }
+}
+
+// 切换页码
+const goToPage = (page: number) => {
+  if (page < 1 || page > totalPages.value) return
+  currentPage.value = page
+  refreshExecutions(page)
+}
+
+// 上一页
+const prevPage = () => {
+  if (currentPage.value > 1) {
+    goToPage(currentPage.value - 1)
+  }
+}
+
+// 下一页
+const nextPage = () => {
+  if (currentPage.value < totalPages.value) {
+    goToPage(currentPage.value + 1)
+  }
+}
+
+// 批量选择相关方法
+const toggleSelectAll = () => {
+  if (selectAll.value) {
+    // 全选当前页
+    executions.value.forEach(exec => {
+      selectedExecutionIds.value.add(exec.execution_id)
+    })
+  } else {
+    // 取消全选当前页
+    executions.value.forEach(exec => {
+      selectedExecutionIds.value.delete(exec.execution_id)
+    })
+  }
+  updateBatchActionsVisibility()
+}
+
+const toggleSelectExecution = (executionId: string) => {
+  if (selectedExecutionIds.value.has(executionId)) {
+    selectedExecutionIds.value.delete(executionId)
+  } else {
+    selectedExecutionIds.value.add(executionId)
+  }
+  updateSelectAllState()
+  updateBatchActionsVisibility()
+}
+
+const updateSelectAllState = () => {
+  const currentPageIds = executions.value.map(e => e.execution_id)
+  selectAll.value = currentPageIds.length > 0 && currentPageIds.every(id => selectedExecutionIds.value.has(id))
+}
+
+const updateBatchActionsVisibility = () => {
+  showBatchActions.value = selectedExecutionIds.value.size > 0
+}
+
+const clearSelection = () => {
+  selectedExecutionIds.value.clear()
+  selectAll.value = false
+  showBatchActions.value = false
+}
+
+// 批量删除
+const batchDeleteExecutions = async () => {
+  if (selectedExecutionIds.value.size === 0) return
+  
+  const confirmed = confirm(`确定要删除选中的 ${selectedExecutionIds.value.size} 条执行记录吗？此操作不可恢复。`)
+  if (!confirmed) return
+  
+  try {
+    const ids = Array.from(selectedExecutionIds.value)
+    const result = await invoke<any>('batch_delete_workflow_executions', { executionIds: ids })
+    
+    if (result.success_count > 0) {
+      alert(`成功删除 ${result.success_count} 条记录${result.failed_count > 0 ? `，失败 ${result.failed_count} 条` : ''}`)
+      clearSelection()
+      await refreshExecutions()
+      await refreshStatistics()
+    } else {
+      alert(`删除失败: ${result.error_messages.join(', ')}`)
+    }
+  } catch (error) {
+    console.error('批量删除失败:', error)
+    alert('批量删除失败: ' + error)
+  }
+}
+
+// 批量取消
+const batchCancelExecutions = async () => {
+  if (selectedExecutionIds.value.size === 0) return
+  
+  const confirmed = confirm(`确定要取消选中的 ${selectedExecutionIds.value.size} 个正在运行的任务吗？`)
+  if (!confirmed) return
+  
+  try {
+    const ids = Array.from(selectedExecutionIds.value)
+    const result = await invoke<any>('batch_cancel_workflow_executions', { executionIds: ids })
+    
+    if (result.success_count > 0) {
+      alert(`成功取消 ${result.success_count} 个任务${result.failed_count > 0 ? `，失败 ${result.failed_count} 个` : ''}`)
+      clearSelection()
+      await refreshExecutions()
+    } else {
+      alert(`取消失败: ${result.error_messages.join(', ')}`)
+    }
+  } catch (error) {
+    console.error('批量取消失败:', error)
+    alert('批量取消失败: ' + error)
+  }
+}
+
+// 生成页码数组（智能显示）
+const getPageNumbers = (): (number | string)[] => {
+  const pages: (number | string)[] = []
+  const total = totalPages.value
+  const current = currentPage.value
+  
+  if (total <= 7) {
+    // 总页数少于7页，全部显示
+    for (let i = 1; i <= total; i++) {
+      pages.push(i)
+    }
+  } else {
+    // 总页数大于7页，智能显示
+    pages.push(1) // 始终显示第一页
+    
+    if (current <= 3) {
+      // 当前页在前面
+      for (let i = 2; i <= 4; i++) {
+        pages.push(i)
+      }
+      pages.push('...')
+      pages.push(total)
+    } else if (current >= total - 2) {
+      // 当前页在后面
+      pages.push('...')
+      for (let i = total - 3; i <= total; i++) {
+        pages.push(i)
+      }
+    } else {
+      // 当前页在中间
+      pages.push('...')
+      for (let i = current - 1; i <= current + 1; i++) {
+        pages.push(i)
+      }
+      pages.push('...')
+      pages.push(total)
+    }
+  }
+  
+  return pages
 }
 
 // 获取统计信息

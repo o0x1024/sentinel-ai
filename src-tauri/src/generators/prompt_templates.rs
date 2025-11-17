@@ -92,29 +92,35 @@ impl PromptTemplateBuilder {
         vuln_type: &str,
         attempt: u32,
     ) -> Result<String> {
-        // Try to get template from database
+        // Try to get template from database first
         let base_template = self.get_template_content(TemplateType::PluginFix).await?;
         
-        let mut prompt = base_template;
-        
-        // Add dynamic content
-        if attempt > 1 {
-            prompt.push_str(&format!("\n\n**Fix Attempt**: {}\n\n", attempt));
-        }
-        
-        prompt.push_str(&format!("\n\n## Error Information\n\n**Error**: {}\n\n", error_message));
+        // Build context for variable replacement
+        let mut context = serde_json::json!({
+            "original_code": original_code,
+            "error_message": error_message,
+            "vuln_type": vuln_type,
+            "attempt": attempt
+        });
         
         if let Some(details) = error_details {
-            prompt.push_str("**Detailed Error**:\n```\n");
-            prompt.push_str(details);
-            prompt.push_str("\n```\n\n");
+            context["error_details"] = serde_json::Value::String(details.to_string());
         }
         
-        prompt.push_str("## Original Plugin Code\n\n```typescript\n");
-        prompt.push_str(original_code);
-        prompt.push_str("\n```\n\n");
-        
-        prompt.push_str(&format!("**Vulnerability Type**: {}\n", vuln_type));
+        // Simple variable replacement
+        let mut prompt = base_template;
+        if let Some(context_obj) = context.as_object() {
+            for (key, value) in context_obj {
+                let placeholder_curly = format!("{{{}}}", key);
+                let placeholder_double = format!("{{{{{}}}}}", key.to_uppercase());
+                let replacement = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => value.to_string(),
+                };
+                prompt = prompt.replace(&placeholder_curly, &replacement);
+                prompt = prompt.replace(&placeholder_double, &replacement);
+            }
+        }
         
         Ok(prompt)
     }

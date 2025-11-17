@@ -80,8 +80,15 @@
               : 'bg-base-100 text-base-content border-base-300 hover:border-base-400',
           ]"
         >
+          <!-- ReWOO 步骤显示 -->
+          <div v-if="isReWOOMessageFn(message)" class="space-y-3">
+            <ReWOOStepDisplay
+              v-bind="parseReWOOMessageData(message)"
+            />
+          </div>
+
           <!-- ReAct 步骤显示 -->
-          <div v-if="isReActMessage(message)" class="space-y-3">
+          <div v-else-if="isReActMessage(message)" class="space-y-3">
             <ReActStepDisplay
               v-for="(step, index) in parseReActSteps(message.content, message.id)"
               :key="`react-step-${index}`"
@@ -246,10 +253,13 @@ import { getRagConfig, saveRagConfig } from '../services/rag_config'
 import { useConversation } from '../composables/useConversation'
 import { useMessageUtils } from '../composables/useMessageUtils'
 import { useOrderedMessages } from '../composables/useOrderedMessages'
+import { isReWOOMessage, parseReWOOMessage } from '../composables/useReWOOMessage'
+import type { ReWOOMessageData } from '../composables/useReWOOMessage'
 
 // Components
 import InputAreaComponent from './InputAreaComponent.vue'
 import ReActStepDisplay from './MessageParts/ReActStepDisplay.vue'
+import ReWOOStepDisplay from './MessageParts/ReWOOStepDisplay.vue'
 
 // Types
 import type { ChatMessage, Citation } from '../types/chat'
@@ -308,6 +318,21 @@ const isReActMessage = (message: ChatMessage) => {
   
   // 检测 ReAct 特征：Thought:, Action:, Observation:
   return /(?:Thought:|Action:|Observation:|Final Answer:)/i.test(content)
+}
+
+// ReWOO 消息检测函数
+const isReWOOMessageFn = (message: ChatMessage) => {
+  if (message.role !== 'assistant') return false
+  const content = message.content || ''
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return isReWOOMessage(content, chunks)
+}
+
+// ReWOO 消息解析函数
+const parseReWOOMessageData = (message: ChatMessage): ReWOOMessageData => {
+  const content = message.content || ''
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return parseReWOOMessage(content, chunks)
 }
 
 interface ReActStepData {

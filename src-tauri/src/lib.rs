@@ -768,6 +768,8 @@ pub fn run() {
             agent_commands::get_workflow_execution_details,
             agent_commands::cancel_workflow_execution,
             agent_commands::delete_workflow_execution,
+            agent_commands::batch_delete_workflow_executions,
+            agent_commands::batch_cancel_workflow_executions,
             agent_commands::get_agent_task_logs,
             agent_commands::add_test_session_data,
             

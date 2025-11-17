@@ -428,6 +428,33 @@ const refreshAgentStatistics = async () => {
   }
 }
 
+// 加载场景Agent列表
+const loadScenarioAgents = async () => {
+  try {
+    const agents = await invoke<any[]>('list_scenario_agents').catch(() => [])
+    availableAgents.value = Array.isArray(agents) ? agents.map(a => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      type: a.engine,
+      status: a.enabled ? 'active' : 'idle',
+      tasks_completed: 0,
+    })) : []
+    
+    // 如果当前选中的agent已被删除，清除选择
+    if (selectedAgent.value) {
+      const stillExists = availableAgents.value.find(a => a.id === selectedAgent.value.id)
+      if (!stillExists) {
+        selectedAgent.value = null
+        localStorage.removeItem(SELECTED_AGENT_KEY)
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load scenario agents:', error)
+    availableAgents.value = []
+  }
+}
+
 // 初始化
 onMounted(async () => {
   try {
@@ -441,21 +468,27 @@ onMounted(async () => {
     await refreshAgentStatistics()
 
     // 加载场景Agent
-    const agents = await invoke<any[]>('list_scenario_agents').catch(() => [])
-    availableAgents.value = Array.isArray(agents) ? agents.map(a => ({
-      id: a.id,
-      name: a.name,
-      description: a.description,
-      type: a.engine,
-      status: a.enabled ? 'active' : 'idle',
-      tasks_completed: 0,
-    })) : []
+    await loadScenarioAgents()
 
     // 尝试还原已选择的Agent
     restoreSelectedAgent()
 
     // 加载角色列表
     await loadRoles()
+
+    // 监听agent变更事件
+    listen('agent:changed', async (event) => {
+      console.log('AIAssistant: Agent changed, refreshing agents list...', event.payload)
+      await loadScenarioAgents()
+      // 如果当前选中的agent被更新，也需要刷新其信息
+      const payload = event.payload as any
+      if (selectedAgent.value && payload?.agentId === selectedAgent.value.id) {
+        const updatedAgent = availableAgents.value.find(a => a.id === selectedAgent.value.id)
+        if (updatedAgent) {
+          selectedAgent.value = updatedAgent
+        }
+      }
+    })
 
     // 启动定时刷新（每5秒刷新一次统计数据）
     statsRefreshTimer = window.setInterval(refreshAgentStatistics, 5000)
@@ -476,6 +509,12 @@ onUnmounted(() => {
 <style scoped>
 .ai-assistant-view {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Assistant bubbles width constraints */
+:deep(.enhanced-ai-chat .chat-start .chat-bubble) {
+  min-width: 600px;
+  max-width: 1000px !important;
 }
 
 /* 自定义滚动条 */

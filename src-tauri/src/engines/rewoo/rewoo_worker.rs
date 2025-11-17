@@ -287,13 +287,42 @@ impl ReWOOWorker {
         raw_params: HashMap<String, Value>
     ) -> Result<ParameterValidationResult, ReWOOError> {
         let mut result = ParameterValidationResult::default();
+        // 先拷贝一份可变参数，便于做预处理归一化
+        let mut preprocessed_params = raw_params;
+        
+        // 针对已知工具做必要的参数归一化，避免上游包装结构导致的类型/字段不匹配
+        // 场景：analyze_website 的输出通常为 { "analysis": {...}, "summary": "..." }
+        // 而 generate_advanced_plugin 期望的 "analysis" 是内部的对象本身
+        if tool_name == "generate_advanced_plugin" {
+            // 解包嵌套的 analysis: { analysis: {...}, summary: ... }
+            if let Some(val) = preprocessed_params.get("analysis").cloned() {
+                if let Value::Object(obj) = val {
+                    if let Some(inner) = obj.get("analysis") {
+                        if inner.is_object() {
+                            preprocessed_params.insert("analysis".to_string(), inner.clone());
+                        }
+                    }
+                }
+            }
+            // 兼容常见别名（如果缺少 vuln_types，尝试从其它字段映射）
+            if !preprocessed_params.contains_key("vuln_types") {
+                if let Some(v) = preprocessed_params
+                    .get("vulnTypes")
+                    .or_else(|| preprocessed_params.get("vulnerabilities"))
+                    .or_else(|| preprocessed_params.get("types"))
+                    .cloned()
+                {
+                    preprocessed_params.insert("vuln_types".to_string(), v);
+                }
+            }
+        }
         
         // 获取工具的参数定义
         let tool_info = match self.framework_adapter.get_tool_info(tool_name).await {
             Some(info) => info,
             None => {
                 // 如果没有工具信息，直接返回原始参数
-                result.normalized_params = raw_params;
+                result.normalized_params = preprocessed_params;
                 result.warnings.push(format!("No schema found for tool '{}'", tool_name));
                 return Ok(result);
             }
@@ -303,7 +332,7 @@ impl ReWOOWorker {
         
         // 验证必填参数
         for param_def in param_definitions {
-            if param_def.required && !raw_params.contains_key(&param_def.name) {
+            if param_def.required && !preprocessed_params.contains_key(&param_def.name) {
                 // 尝试应用默认值
                 if let Some(default_value) = &param_def.default_value {
                     result.normalized_params.insert(param_def.name.clone(), default_value.clone());
@@ -316,7 +345,7 @@ impl ReWOOWorker {
         }
         
         // 验证和转换每个提供的参数
-        for (param_name, param_value) in raw_params {
+        for (param_name, param_value) in preprocessed_params {
             if let Some(param_def) = param_definitions.iter().find(|p| p.name == param_name) {
                 // 类型验证和转换
                 match self.validate_and_convert_param_type(param_def, &param_value) {

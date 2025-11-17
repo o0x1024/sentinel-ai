@@ -186,7 +186,7 @@ impl PluginEngine {
             ..Default::default()
         });
 
-        info!("PluginEngine initialized with ESM/TS support via ModuleLoader");
+        // info!("PluginEngine initialized with ESM/TS support via ModuleLoader");
 
         Ok(Self {
             runtime,
@@ -521,7 +521,7 @@ impl PluginEngine {
                 ))
             })?;
 
-        info!(
+        debug!(
             "Loaded ESM/TS plugin: {} v{}",
             metadata.name, metadata.version
         );

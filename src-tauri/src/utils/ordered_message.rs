@@ -183,6 +183,29 @@ pub fn emit_thinking_chunk(
     );
 }
 
+/// Emit thinking chunk with tool name
+pub fn emit_thinking_chunk_with_tool(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    message_id: &str,
+    conversation_id: Option<&str>,
+    thinking: &str,
+    stage: Option<&str>,
+    tool_name: Option<&str>,
+) {
+    emit_message_chunk(
+        app_handle,
+        execution_id,
+        message_id,
+        conversation_id,
+        ChunkType::Thinking,
+        thinking,
+        false,
+        stage,
+        tool_name,
+    );
+}
+
 /// 便捷函数：发送工具结果块
 pub fn emit_tool_result_chunk(
     app_handle: &AppHandle,

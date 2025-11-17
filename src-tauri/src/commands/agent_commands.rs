@@ -274,12 +274,26 @@ pub struct WorkflowStatistics {
     pub running_executions: u32,
 }
 
-/// 获取工作流执行列表
+/// 分页结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedWorkflowExecutions {
+    pub items: Vec<WorkflowExecution>,
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub total_pages: usize,
+}
+
+/// 获取工作流执行列表（带分页）
 #[command]
 pub async fn list_workflow_executions(
     manager: State<'_, GlobalAgentManager>,
     db_service: State<'_, Arc<DatabaseService>>,
-) -> Result<Vec<WorkflowExecution>, String> {
+    page: Option<usize>,
+    page_size: Option<usize>,
+) -> Result<PaginatedWorkflowExecutions, String> {
+    let page = page.unwrap_or(1).max(1); // 页码从1开始
+    let page_size = page_size.unwrap_or(10).max(1).min(100); // 默认10条，最多100条
     // 首先尝试从数据库获取Plan-and-Execute执行记录
     let pool = db_service.get_pool().map_err(|e| format!("Failed to get database pool: {}", e))?;
     let repository = PlanExecuteRepository::new(pool.clone());
@@ -431,7 +445,25 @@ pub async fn list_workflow_executions(
     // 按创建时间排序，最新的在前
     executions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
     
-    Ok(executions)
+    // 计算分页
+    let total = executions.len();
+    let total_pages = (total + page_size - 1) / page_size;
+    let start = (page - 1) * page_size;
+    let end = start + page_size;
+    
+    let items = if start < total {
+        executions[start..end.min(total)].to_vec()
+    } else {
+        Vec::new()
+    };
+    
+    Ok(PaginatedWorkflowExecutions {
+        items,
+        total,
+        page,
+        page_size,
+        total_pages,
+    })
 }
 
 /// 获取工作流统计信息
@@ -498,8 +530,9 @@ pub async fn get_workflow_execution(
     manager: State<'_, GlobalAgentManager>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Option<WorkflowExecution>, String> {
-    let executions = list_workflow_executions(manager, db_service).await?;
-    Ok(executions.into_iter().find(|e| e.execution_id == execution_id))
+    // 获取所有执行记录（不分页）来查找特定ID
+    let paginated = list_workflow_executions(manager, db_service, None, Some(10000)).await?;
+    Ok(paginated.items.into_iter().find(|e| e.execution_id == execution_id))
 }
 
 /// 取消工作流执行
@@ -509,6 +542,15 @@ pub async fn cancel_workflow_execution(
     manager: State<'_, GlobalAgentManager>,
 ) -> Result<String, String> {
     cancel_agent_task(execution_id, manager).await
+}
+
+/// 批量操作结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchOperationResult {
+    pub success_count: usize,
+    pub failed_count: usize,
+    pub failed_ids: Vec<String>,
+    pub error_messages: Vec<String>,
 }
 
 /// 删除工作流执行记录
@@ -555,6 +597,73 @@ pub async fn delete_workflow_execution(
     Ok("Execution deleted successfully".to_string())
 }
 
+/// 批量删除工作流执行记录
+#[command]
+pub async fn batch_delete_workflow_executions(
+    execution_ids: Vec<String>,
+    manager: State<'_, GlobalAgentManager>,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<BatchOperationResult, String> {
+    let mut success_count = 0;
+    let mut failed_count = 0;
+    let mut failed_ids = Vec::new();
+    let mut error_messages = Vec::new();
+    
+    for execution_id in execution_ids {
+        match delete_workflow_execution(execution_id.clone(), manager.clone(), db_service.clone()).await {
+            Ok(_) => {
+                success_count += 1;
+            },
+            Err(e) => {
+                failed_count += 1;
+                failed_ids.push(execution_id.clone());
+                error_messages.push(format!("{}: {}", execution_id, e));
+                log::warn!("Failed to delete execution {}: {}", execution_id, e);
+            }
+        }
+    }
+    
+    Ok(BatchOperationResult {
+        success_count,
+        failed_count,
+        failed_ids,
+        error_messages,
+    })
+}
+
+/// 批量取消工作流执行
+#[command]
+pub async fn batch_cancel_workflow_executions(
+    execution_ids: Vec<String>,
+    manager: State<'_, GlobalAgentManager>,
+) -> Result<BatchOperationResult, String> {
+    let mut success_count = 0;
+    let mut failed_count = 0;
+    let mut failed_ids = Vec::new();
+    let mut error_messages = Vec::new();
+    
+    for execution_id in execution_ids {
+        match cancel_workflow_execution(execution_id.clone(), manager.clone()).await {
+            Ok(_) => {
+                success_count += 1;
+            },
+            Err(e) => {
+                failed_count += 1;
+                failed_ids.push(execution_id.clone());
+                error_messages.push(format!("{}: {}", execution_id, e));
+                log::warn!("Failed to cancel execution {}: {}", execution_id, e);
+            }
+        }
+    }
+    
+    Ok(BatchOperationResult {
+        success_count,
+        failed_count,
+        failed_ids,
+        error_messages,
+    })
+}
+
 /// 工作流步骤详情
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStepDetail {
@@ -591,64 +700,67 @@ pub async fn get_workflow_execution_details(
     manager: State<'_, GlobalAgentManager>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Option<WorkflowExecutionPlan>, String> {
-    let manager_guard = manager.read().await;
+    // 首先尝试从数据库获取执行记录（包括已完成的）
+    match db_service.get_agent_execution_steps(&execution_id).await {
+        Ok(db_steps) if !db_steps.is_empty() => {
+            // 从数据库获取会话信息
+            match db_service.get_agent_session(&execution_id).await {
+                Ok(Some(session)) => {
+                    let completed_steps: u32 = db_steps
+                        .iter()
+                        .filter(|s| s.status == "Completed")
+                        .count()
+                        .try_into()
+                        .unwrap_or(0);
+                    let failed_steps: u32 = db_steps
+                        .iter()
+                        .filter(|s| s.status == "Failed")
+                        .count()
+                        .try_into()
+                        .unwrap_or(0);
+                    let skipped_steps: u32 = db_steps
+                        .iter()
+                        .filter(|s| s.status == "Skipped")
+                        .count()
+                        .try_into()
+                        .unwrap_or(0);
+                    
+                    let execution_plan = WorkflowExecutionPlan {
+                        plan_id: execution_id.clone(),
+                        name: format!("Agent Execution - {}", session.agent_name),
+                        description: Some(format!("Task ID: {} | Status: {}", session.task_id, session.status)),
+                        steps: db_steps.clone(),
+                        total_steps: db_steps.len().try_into().unwrap_or(u32::MAX),
+                        completed_steps,
+                        failed_steps,
+                        skipped_steps,
+                    };
+                    
+                    return Ok(Some(execution_plan));
+                },
+                Ok(None) => {
+                    warn!("Session {} found in steps but not in sessions table", execution_id);
+                },
+                Err(e) => {
+                    warn!("Failed to get session data from database: {}", e);
+                }
+            }
+        },
+        Ok(_) => {
+            // 数据库中没有步骤数据，尝试从内存获取
+        },
+        Err(e) => {
+            warn!("Failed to get steps from database: {}", e);
+        }
+    }
     
+    // 尝试从内存中获取会话信息（用于正在运行的任务）
+    let manager_guard = manager.read().await;
     let agent_manager = match manager_guard.as_ref() {
         Some(manager) => manager,
         None => return Err("Agent manager not initialized".to_string())
     };
     
-    // 首先尝试从数据库获取Agent执行步骤
-    match db_service.get_agent_execution_steps(&execution_id).await {
-        Ok(db_steps) if !db_steps.is_empty() => {
-            // 从数据库获取会话信息
-            let session_data = db_service.get_agent_session(&execution_id).await
-                .map_err(|e| format!("Failed to get session data: {}", e))?;
-            
-            if let Some(session) = session_data {
-                let completed_steps: u32 = db_steps
-                    .iter()
-                    .filter(|s| s.status == "Completed")
-                    .count()
-                    .try_into()
-                    .unwrap_or(0);
-                let failed_steps: u32 = db_steps
-                    .iter()
-                    .filter(|s| s.status == "Failed")
-                    .count()
-                    .try_into()
-                    .unwrap_or(0);
-                let skipped_steps: u32 = db_steps
-                    .iter()
-                    .filter(|s| s.status == "Skipped")
-                    .count()
-                    .try_into()
-                    .unwrap_or(0);
-                
-                let execution_plan = WorkflowExecutionPlan {
-                    plan_id: execution_id.clone(),
-                    name: format!("Agent Execution - {}", session.agent_name),
-                    description: Some(format!("Task ID: {} | Status: {}", session.task_id, session.status)),
-                    steps: db_steps.clone(),
-                    total_steps: db_steps.len().try_into().unwrap_or(u32::MAX),
-                    completed_steps,
-                    failed_steps,
-                    skipped_steps,
-                };
-                
-                return Ok(Some(execution_plan));
-            }
-        },
-        Ok(_) => {
-            // 数据库中没有步骤数据，使用原有的模拟逻辑
-        },
-        Err(e) => {
-            warn!("Failed to get steps from database: {}", e);
-            // 继续使用模拟逻辑作为fallback
-        }
-    }
-    
-    // 获取所有会话信息（fallback到内存数据）
     let all_sessions = agent_manager.get_all_sessions().await;
     
     if let Some(session_info) = all_sessions.get(&execution_id) {

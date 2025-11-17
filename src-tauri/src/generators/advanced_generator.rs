@@ -7,6 +7,8 @@ use chrono::Utc;
 
 use crate::analyzers::WebsiteAnalysis;
 use crate::services::ai::AiServiceManager;
+use crate::services::prompt_db::PromptRepository;
+use crate::models::prompt::TemplateType;
 use super::prompt_templates::PromptTemplateBuilder;
 use super::validator::{PluginValidator, ValidationResult, ExecutionTestResult};
 use super::few_shot_examples::FewShotRepository;
@@ -88,6 +90,7 @@ pub enum PluginStatus {
 /// Advanced plugin generator
 pub struct AdvancedPluginGenerator {
     ai_manager: Arc<AiServiceManager>,
+    prompt_repo: Option<Arc<PromptRepository>>,
     validator: PluginValidator,
     prompt_builder: PromptTemplateBuilder,
     few_shot_repo: FewShotRepository,
@@ -98,6 +101,7 @@ impl AdvancedPluginGenerator {
     pub fn new(ai_manager: Arc<AiServiceManager>) -> Self {
         Self {
             ai_manager,
+            prompt_repo: None,
             validator: PluginValidator::new(),
             prompt_builder: PromptTemplateBuilder::new(),
             few_shot_repo: FewShotRepository::new(),
@@ -108,11 +112,31 @@ impl AdvancedPluginGenerator {
     pub fn new_with_config(ai_manager: Arc<AiServiceManager>, auto_approval_config: PluginAutoApprovalConfig) -> Self {
         Self {
             ai_manager,
+            prompt_repo: None,
             validator: PluginValidator::new(),
             prompt_builder: PromptTemplateBuilder::new(),
             few_shot_repo: FewShotRepository::new(),
             auto_approval_engine: PluginAutoApprovalEngine::new(auto_approval_config),
         }
+    }
+    
+    pub fn new_with_prompt_repo(
+        ai_manager: Arc<AiServiceManager>, 
+        prompt_repo: Arc<PromptRepository>,
+        auto_approval_config: PluginAutoApprovalConfig
+    ) -> Self {
+        Self {
+            ai_manager,
+            prompt_repo: Some(prompt_repo),
+            validator: PluginValidator::new(),
+            prompt_builder: PromptTemplateBuilder::new(),
+            few_shot_repo: FewShotRepository::new(),
+            auto_approval_engine: PluginAutoApprovalEngine::new(auto_approval_config),
+        }
+    }
+    
+    pub fn set_prompt_repo(&mut self, prompt_repo: Arc<PromptRepository>) {
+        self.prompt_repo = Some(prompt_repo);
     }
 
     /// Generate plugin using AI
@@ -343,14 +367,29 @@ impl AdvancedPluginGenerator {
     ) -> Result<(String, String)> {
         log::info!("Attempting to fix plugin code (attempt {})", attempt);
 
-        // Build fix prompt
-        let prompt = self.prompt_builder.build_fix_prompt(
+        // Build fix prompt - try async version first (uses DB templates), fallback to sync
+        let prompt = match self.prompt_builder.build_fix_prompt_async(
             original_code,
             execution_test.error_message.as_deref().unwrap_or("Unknown error"),
             execution_test.error_details.as_deref(),
             vuln_type,
             attempt,
-        )?;
+        ).await {
+            Ok(p) => {
+                log::info!("Using dynamic fix prompt template from database");
+                p
+            }
+            Err(e) => {
+                log::warn!("Failed to load dynamic fix prompt template: {}, using fallback", e);
+                self.prompt_builder.build_fix_prompt(
+                    original_code,
+                    execution_test.error_message.as_deref().unwrap_or("Unknown error"),
+                    execution_test.error_details.as_deref(),
+                    vuln_type,
+                    attempt,
+                )?
+            }
+        };
 
         // Call LLM to fix the code
         let (fixed_code, model) = self.call_llm_for_generation(&prompt).await?;
@@ -432,10 +471,37 @@ impl AdvancedPluginGenerator {
         );
         
         // Build complete prompt with system message
-        let full_prompt = format!(
-            "You are an expert security researcher and TypeScript developer. Generate high-quality security testing plugins based on website analysis.\n\n{}",
-            prompt
-        );
+        // 优先使用动态配置的 prompt 模板，回退到硬编码
+        let full_prompt = if let Some(ref prompt_repo) = self.prompt_repo {
+            // 尝试从数据库获取激活的插件生成模板
+            match prompt_repo.get_active_template_by_type(TemplateType::PluginGeneration).await {
+                Ok(Some(template)) => {
+                    log::info!("Using dynamic plugin generation template: {}", template.name);
+                    // 模板内容已经包含完整的 prompt，直接使用
+                    format!("{}\n\n{}", template.content, prompt)
+                }
+                Ok(None) => {
+                    log::warn!("No active plugin generation template found, using fallback");
+                    format!(
+                        "You are an expert security researcher and TypeScript developer. Generate high-quality security testing plugins based on website analysis.\n\n{}",
+                        prompt
+                    )
+                }
+                Err(e) => {
+                    log::error!("Failed to load plugin generation template: {}, using fallback", e);
+                    format!(
+                        "You are an expert security researcher and TypeScript developer. Generate high-quality security testing plugins based on website analysis.\n\n{}",
+                        prompt
+                    )
+                }
+            }
+        } else {
+            log::debug!("No prompt repository configured, using fallback prompt");
+            format!(
+                "You are an expert security researcher and TypeScript developer. Generate high-quality security testing plugins based on website analysis.\n\n{}",
+                prompt
+            )
+        };
 
         // Call AI service using send_message_stream (non-streaming mode)
         let content = service.send_message_stream(

@@ -544,13 +544,59 @@ impl LlmCompilerEngine {
             // 1. 规划阶段
             if let Some(planner) = &self.planner {
                 info!("开始生成DAG执行计划...");
+                
+                // 发送Planning阶段开始消息
+                if let Some(app) = &self.app_handle {
+                    crate::utils::ordered_message::emit_thinking_chunk(
+                        app,
+                        execution_id.as_deref().unwrap_or("unknown"),
+                        message_id.as_deref().unwrap_or("unknown"),
+                        conversation_id.as_deref(),
+                        "开始生成DAG执行计划...",
+                        Some("llm_compiler_planning"),
+                    );
+                }
+                
                 let execution_plan = match planner.generate_dag_plan(user_query, &context).await {
                     Ok(plan) => {
                         info!("✓ DAG规划成功: {} 个任务节点", plan.nodes.len());
+                        
+                        // 发送计划信息到前端
+                        if let Some(app) = &self.app_handle {
+                            let plan_info = format!(
+                                "DAG规划成功，共{}个任务节点",
+                                plan.nodes.len()
+                            );
+                            crate::utils::ordered_message::emit_plan_info_chunk(
+                                app,
+                                execution_id.as_deref().unwrap_or("unknown"),
+                                message_id.as_deref().unwrap_or("unknown"),
+                                conversation_id.as_deref(),
+                                &plan_info,
+                                Some("llm_compiler_planning"),
+                                None,
+                            );
+                        }
+                        
                         plan
                     }
                     Err(e) => {
                         error!("✗ DAG规划失败: {}", e);
+                        
+                        // 发送错误消息到前端
+                        if let Some(app) = &self.app_handle {
+                            let error_msg = format!("DAG规划失败: {}", e);
+                            crate::utils::ordered_message::emit_error_chunk(
+                                app,
+                                execution_id.as_deref().unwrap_or("unknown"),
+                                message_id.as_deref().unwrap_or("unknown"),
+                                conversation_id.as_deref(),
+                                &error_msg,
+                                Some("llm_compiler_planning"),
+                                None,
+                            );
+                        }
+                        
                         return Err(anyhow::anyhow!(
                             "LLMCompiler planning phase failed: {}. This may be due to LLM service configuration issues or network problems.",
                             e
@@ -594,49 +640,104 @@ impl LlmCompilerEngine {
                         round, completed_count, failed_count, round_duration
                     );
 
-                    // 4. 智能决策阶段
-                    if let Some(joiner) = &self.joiner {
-                        info!("开始 Joiner 智能决策阶段...");
-                        let mut joiner_guard = joiner.lock().await;
-                        // ✅ 设置消息ID，确保Joiner的AI调用使用正确的ID
-                        joiner_guard.set_message_ids(conversation_id.clone(), message_id.clone());
-                        let decision = match joiner_guard
-                            .analyze_and_decide(user_query, &execution_plan, &round_results, round)
-                            .await
-                        {
-                            Ok(d) => {
-                                debug!("Joiner 决策成功");
-                                d
+                // 4. 智能决策阶段
+                if let Some(joiner) = &self.joiner {
+                    info!("开始 Joiner 智能决策阶段...");
+                    
+                    // 发送Joiner阶段开始消息
+                    if let Some(app) = &self.app_handle {
+                        crate::utils::ordered_message::emit_thinking_chunk(
+                            app,
+                            execution_id.as_deref().unwrap_or("unknown"),
+                            message_id.as_deref().unwrap_or("unknown"),
+                            conversation_id.as_deref(),
+                            "开始智能决策分析...",
+                            Some("llm_compiler_joiner"),
+                        );
+                    }
+                    
+                    let mut joiner_guard = joiner.lock().await;
+                    // ✅ 设置消息ID，确保Joiner的AI调用使用正确的ID
+                    joiner_guard.set_message_ids(conversation_id.clone(), message_id.clone());
+                    let decision = match joiner_guard
+                        .analyze_and_decide(user_query, &execution_plan, &round_results, round)
+                        .await
+                    {
+                        Ok(d) => {
+                            debug!("Joiner 决策成功");
+                            d
+                        }
+                        Err(e) => {
+                            warn!("Joiner 决策失败: {}", e);
+                            
+                            // 发送错误消息到前端
+                            if let Some(app) = &self.app_handle {
+                                let error_msg = format!("Joiner决策失败: {}", e);
+                                crate::utils::ordered_message::emit_error_chunk(
+                                    app,
+                                    execution_id.as_deref().unwrap_or("unknown"),
+                                    message_id.as_deref().unwrap_or("unknown"),
+                                    conversation_id.as_deref(),
+                                    &error_msg,
+                                    Some("llm_compiler_joiner"),
+                                    None,
+                                );
                             }
-                            Err(e) => {
-                                warn!("Joiner 决策失败: {}", e);
-                                // Joiner 失败不应导致整个流程中断，记录警告并继续
-                                warn!("Joiner decision failed, continuing with available results");
-                                JoinerDecision::Complete {
-                                    response: format!("Task execution completed with {} successful and {} failed tasks", 
-                                        execution_summary.successful_tasks, 
-                                        execution_summary.failed_tasks),
-                                    confidence: 0.7,
-                                    summary: execution_summary.clone(),
-                                }
-                            }
-                        };
-
-                        match &decision {
-                            JoinerDecision::Complete { response, .. } => {
-                                execution_summary
-                                    .key_findings
-                                    .push(format!("决策: 完成执行 - {}", response));
-                                info!("Joiner决定完成执行: {}", response);
-                                break;
-                            }
-                            JoinerDecision::Continue { feedback, .. } => {
-                                execution_summary
-                                    .key_findings
-                                    .push(format!("决策: 继续执行 - {}", feedback));
-                                info!("Joiner决定继续执行: {}", feedback);
+                            
+                            // Joiner 失败不应导致整个流程中断，记录警告并继续
+                            warn!("Joiner decision failed, continuing with available results");
+                            JoinerDecision::Complete {
+                                response: format!("Task execution completed with {} successful and {} failed tasks", 
+                                    execution_summary.successful_tasks, 
+                                    execution_summary.failed_tasks),
+                                confidence: 0.7,
+                                summary: execution_summary.clone(),
                             }
                         }
+                    };
+
+                    match &decision {
+                        JoinerDecision::Complete { response, .. } => {
+                            execution_summary
+                                .key_findings
+                                .push(format!("决策: 完成执行 - {}", response));
+                            info!("Joiner决定完成执行: {}", response);
+                            
+                            // 发送决策结果到前端
+                            if let Some(app) = &self.app_handle {
+                                let decision_msg = format!("✓ 决策: 完成执行\n{}", response);
+                                crate::utils::ordered_message::emit_meta_chunk(
+                                    app,
+                                    execution_id.as_deref().unwrap_or("unknown"),
+                                    message_id.as_deref().unwrap_or("unknown"),
+                                    conversation_id.as_deref(),
+                                    &decision_msg,
+                                    None,
+                                );
+                            }
+                            
+                            break;
+                        }
+                        JoinerDecision::Continue { feedback, .. } => {
+                            execution_summary
+                                .key_findings
+                                .push(format!("决策: 继续执行 - {}", feedback));
+                            info!("Joiner决定继续执行: {}", feedback);
+                            
+                            // 发送决策结果到前端
+                            if let Some(app) = &self.app_handle {
+                                let decision_msg = format!("→ 决策: 继续执行\n{}", feedback);
+                                crate::utils::ordered_message::emit_meta_chunk(
+                                    app,
+                                    execution_id.as_deref().unwrap_or("unknown"),
+                                    message_id.as_deref().unwrap_or("unknown"),
+                                    conversation_id.as_deref(),
+                                    &decision_msg,
+                                    None,
+                                );
+                            }
+                        }
+                    }
                     }
 
                     // 检查是否还有待执行的任务
