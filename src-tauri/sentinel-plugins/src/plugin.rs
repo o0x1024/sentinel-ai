@@ -55,6 +55,9 @@ pub struct PluginRecord {
     pub status: PluginStatus,
     /// 最后错误消息（如果有）
     pub last_error: Option<String>,
+    /// 是否已收藏
+    #[serde(default)]
+    pub is_favorited: bool,
 }
 
 // PathBuf 序列化辅助函数（可选版本）
@@ -182,6 +185,7 @@ impl PluginManager {
             path: None, // 插件存储在数据库中
             status,
             last_error: None,
+            is_favorited: false, // 默认未收藏
         };
 
         registry.insert(plugin_id.clone(), record);

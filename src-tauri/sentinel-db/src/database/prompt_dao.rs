@@ -78,6 +78,14 @@ fn template_type_str(t: &TemplateType) -> &'static str {
         TemplateType::ReportGenerator => "ReportGenerator",
         TemplateType::Domain => "Domain",
         TemplateType::Custom => "Custom",
+        TemplateType::PluginGeneration => "PluginGeneration",
+        TemplateType::AgentPluginGeneration => "AgentPluginGeneration",
+        TemplateType::PluginFix => "PluginFix",
+        TemplateType::AgentPluginFix => "AgentPluginFix",
+        TemplateType::PluginVulnSpecific => "PluginVulnSpecific",
+        TemplateType::PluginInterface => "PluginInterface",
+        TemplateType::PluginOutputFormat => "PluginOutputFormat",
+        TemplateType::AgentPluginOutputFormat => "AgentPluginOutputFormat",
     }
 }
 
@@ -92,6 +100,14 @@ fn parse_template_type(s: &str) -> Option<TemplateType> {
         "ReportGenerator" => Some(TemplateType::ReportGenerator),
         "Domain" => Some(TemplateType::Domain),
         "Custom" => Some(TemplateType::Custom),
+        "PluginGeneration" => Some(TemplateType::PluginGeneration),
+        "AgentPluginGeneration" => Some(TemplateType::AgentPluginGeneration),
+        "PluginFix" => Some(TemplateType::PluginFix),
+        "AgentPluginFix" => Some(TemplateType::AgentPluginFix),
+        "PluginVulnSpecific" => Some(TemplateType::PluginVulnSpecific),
+        "PluginInterface" => Some(TemplateType::PluginInterface),
+        "PluginOutputFormat" => Some(TemplateType::PluginOutputFormat),
+        "AgentPluginOutputFormat" => Some(TemplateType::AgentPluginOutputFormat),
         _ => None,
     }
 }

@@ -37,6 +37,46 @@ impl BaseFrameworkAdapter {
         }
     }
 
+    /// 执行单次工具调用（不做重试），供内部复用
+    async fn execute_once(
+        &self,
+        call: &UnifiedToolCall,
+        timeout_duration: Duration,
+    ) -> Result<UnifiedToolResult> {
+        let execution_params = ToolExecutionParams {
+            inputs: call.parameters.clone(),
+            context: call.context.clone(),
+            timeout: Some(timeout_duration),
+            execution_id: Some(
+                Uuid::parse_str(&call.id).unwrap_or_else(|_| Uuid::new_v4()),
+            ),
+        };
+
+        let manager = self.tool_manager.read().await;
+
+        match timeout(timeout_duration, manager.call_tool(&call.tool_name, execution_params)).await {
+            Ok(Ok(tool_result)) => Ok(UnifiedToolResult {
+                id: call.id.clone(),
+                tool_name: call.tool_name.clone(),
+                success: tool_result.success,
+                output: tool_result.output,
+                error: tool_result.error,
+                execution_time_ms: tool_result.execution_time_ms,
+                metadata: tool_result.metadata,
+            }),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                let timeout_error =
+                    anyhow!("Tool execution timeout after {:?}", timeout_duration);
+                error!(
+                    "Tool execution timeout (no retry path): {}",
+                    call.tool_name
+                );
+                Err(timeout_error)
+            }
+        }
+    }
+
     /// 执行工具调用的核心逻辑
     async fn execute_tool_internal(&self, call: UnifiedToolCall) -> Result<UnifiedToolResult> {
         let _start_time = Instant::now();
@@ -52,7 +92,20 @@ impl BaseFrameworkAdapter {
         
         // 执行工具调用
         let timeout_duration = call.timeout.unwrap_or(self.config.default_timeout);
-        let result = self.execute_with_retry(call.clone(), timeout_duration).await?;
+
+        // 对于 generate_advanced_plugin 这种重型长耗时工具：
+        // - 使用更长的超时时间（例如 15 分钟）
+        // - 不做自动重试，避免重复生成插件
+        let result = if call.tool_name == "generate_advanced_plugin" {
+            let long_timeout = Duration::from_secs(1800);
+            info!(
+                "Executing heavy tool '{}' with long timeout {:?} and no retries",
+                call.tool_name, long_timeout
+            );
+            self.execute_once(&call, long_timeout).await?
+        } else {
+            self.execute_with_retry(call.clone(), timeout_duration).await?
+        };
         
         // 缓存结果
         if self.config.cache_enabled && result.success {

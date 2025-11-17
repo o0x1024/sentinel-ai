@@ -324,8 +324,9 @@ impl PluginEngine {
             PluginError::Load(format!("Module evaluation error {}: {:?}", plugin_id, e))
         })?;
 
-        // 注入 Sentinel 全局对象，提供插件 API
+        // 注入 Sentinel 全局对象和必要的运行时 polyfill（如 TextDecoder、URL 等），提供插件 API
         let init_script = r#"
+            // Sentinel plugin API
             globalThis.Sentinel = {
                 emitFinding: function(finding) {
                     Deno.core.ops.op_emit_finding(finding);
@@ -334,6 +335,177 @@ impl PluginEngine {
                     Deno.core.ops.op_plugin_log(level, message);
                 }
             };
+
+            // Polyfill TextDecoder / TextEncoder for plugin environment
+            (function () {
+                if (typeof TextDecoder === "undefined") {
+                    class SimpleTextDecoder {
+                        constructor(label = "utf-8", options) {
+                            this.encoding = label.toLowerCase();
+                        }
+                        decode(input) {
+                            if (input == null) {
+                                return "";
+                            }
+                            if (input instanceof Uint8Array) {
+                                let s = "";
+                                for (let i = 0; i < input.length; i++) {
+                                    s += String.fromCharCode(input[i]);
+                                }
+                                try {
+                                    // 尝试按 UTF-8 解码
+                                    return decodeURIComponent(escape(s));
+                                } catch (_) {
+                                    return s;
+                                }
+                            }
+                            return String(input);
+                        }
+                    }
+                    globalThis.TextDecoder = SimpleTextDecoder;
+                }
+
+                if (typeof TextEncoder === "undefined") {
+                    class SimpleTextEncoder {
+                        constructor() {}
+                        encode(input) {
+                            input = input == null ? "" : String(input);
+                            const utf8 = unescape(encodeURIComponent(input));
+                            const arr = new Uint8Array(utf8.length);
+                            for (let i = 0; i < utf8.length; i++) {
+                                arr[i] = utf8.charCodeAt(i);
+                            }
+                            return arr;
+                        }
+                    }
+                    globalThis.TextEncoder = SimpleTextEncoder;
+                }
+
+                // Minimal URLSearchParams polyfill
+                if (typeof URLSearchParams === "undefined") {
+                    class SimpleURLSearchParams {
+                        constructor(init) {
+                            this._params = [];
+                            if (!init) return;
+                            let query = typeof init === "string" ? init : "";
+                            if (query.startsWith("?")) {
+                                query = query.substring(1);
+                            }
+                            if (query.length === 0) return;
+                            const pairs = query.split("&");
+                            for (const pair of pairs) {
+                                if (!pair) continue;
+                                const [k, v = ""] = pair.split("=");
+                                const key = decodeURIComponent(k.replace(/\+/g, " "));
+                                const value = decodeURIComponent(v.replace(/\+/g, " "));
+                                this._params.push([key, value]);
+                            }
+                        }
+                        append(name, value) {
+                            this._params.push([String(name), String(value)]);
+                        }
+                        get(name) {
+                            name = String(name);
+                            for (const [k, v] of this._params) {
+                                if (k === name) return v;
+                            }
+                            return null;
+                        }
+                        getAll(name) {
+                            name = String(name);
+                            const res = [];
+                            for (const [k, v] of this._params) {
+                                if (k === name) res.push(v);
+                            }
+                            return res;
+                        }
+                        has(name) {
+                            name = String(name);
+                            for (const [k] of this._params) {
+                                if (k === name) return true;
+                            }
+                            return false;
+                        }
+                        toString() {
+                            return this._params
+                                .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
+                                .join("&");
+                        }
+                        forEach(callback, thisArg) {
+                            for (const [k, v] of this._params) {
+                                callback.call(thisArg, v, k, this);
+                            }
+                        }
+                    }
+                    globalThis.URLSearchParams = SimpleURLSearchParams;
+                }
+
+                // Minimal URL polyfill (HTTP/HTTPS only, enough for plugin parsing)
+                if (typeof URL === "undefined") {
+                    class SimpleURL {
+                        constructor(input, base) {
+                            let url = String(input);
+                            if (base) {
+                                // Very small base support: if input is relative, prepend base
+                                if (!/^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(url)) {
+                                    const b = String(base);
+                                    if (b.endsWith("/") && !url.startsWith("/")) {
+                                        url = b + url;
+                                    } else {
+                                        url = b.replace(/\/+$/, "") + "/" + url.replace(/^\/+/, "");
+                                    }
+                                }
+                            }
+                            this.href = url;
+                            const m = url.match(/^(https?:)(\/\/([^\/?#]*))?([^?#]*)(\?[^#]*)?(#.*)?$/i);
+                            this.protocol = m && m[1] ? m[1].toLowerCase() : "";
+                            this.host = m && m[3] ? m[3] : "";
+                            const hostParts = this.host.split(":");
+                            this.hostname = hostParts[0] || "";
+                            this.port = hostParts[1] || "";
+                            this.pathname = m && m[4] ? (m[4] || "/") : url;
+                            this.search = m && m[5] ? m[5] : "";
+                            this.hash = m && m[6] ? m[6] : "";
+                            this.origin = this.protocol && this.host ? this.protocol + "//" + this.host : "";
+                            const searchWithoutQ = this.search.startsWith("?") ? this.search.substring(1) : this.search;
+                            this.searchParams = new globalThis.URLSearchParams(searchWithoutQ);
+                        }
+                        toString() {
+                            return this.href;
+                        }
+                    }
+                    globalThis.URL = SimpleURL;
+                }
+
+                // Fetch API polyfill using Deno.core.ops.op_fetch
+                if (typeof fetch === "undefined") {
+                    globalThis.fetch = async function(url, options = {}) {
+                        const fetchOptions = {
+                            method: options.method || "GET",
+                            headers: options.headers || {},
+                            body: options.body || null,
+                            timeout: options.timeout || 30000,
+                        };
+                        
+                        const response = await Deno.core.ops.op_fetch(url, fetchOptions);
+                        
+                        // Check for errors
+                        if (!response.success || response.error) {
+                            throw new Error(`Fetch failed: ${response.error || 'Unknown error'}`);
+                        }
+                        
+                        // Return a Response-like object
+                        return {
+                            ok: response.ok,
+                            status: response.status,
+                            headers: response.headers,
+                            text: async () => response.body,
+                            json: async () => JSON.parse(response.body),
+                            body: response.body,
+                        };
+                    };
+                }
+            })();
         "#
         .to_string();
 
@@ -442,6 +614,11 @@ impl PluginEngine {
 
                 // 如果全局作用域没有，尝试从模块获取（假设已导出到 globalThis）
                 if (typeof fn !== 'function') {{
+                    // Debug: 打印 globalThis 上的所有函数
+                    const availableFunctions = Object.keys(globalThis).filter(key => typeof globalThis[key] === 'function');
+                    console.error('Available functions on globalThis:', availableFunctions);
+                    console.error('Looking for function: {}');
+                    console.error('Type of globalThis.{}: ', typeof globalThis.{});
                     throw new Error('Function {} not found in global scope or module exports');
                 }}
 
@@ -454,6 +631,9 @@ impl PluginEngine {
             }})();
             "#,
             serde_json::to_string(args).unwrap(),
+            fn_name,
+            fn_name,
+            fn_name,
             fn_name,
             fn_name,
         );

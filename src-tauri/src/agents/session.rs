@@ -54,22 +54,22 @@ impl DefaultAgentSession {
             is_cancellation_requested: false,
         }
     }
-    
+
     /// 获取创建时间
     pub fn get_created_at(&self) -> chrono::DateTime<Utc> {
         self.created_at
     }
-    
+
     /// 获取更新时间
     pub fn get_updated_at(&self) -> chrono::DateTime<Utc> {
         self.updated_at
     }
-    
+
     /// 检查是否有取消请求
     pub fn is_cancellation_requested(&self) -> bool {
         self.is_cancellation_requested
     }
-    
+
     /// 请求取消
     pub fn request_cancellation(&mut self) {
         self.is_cancellation_requested = true;
@@ -82,31 +82,31 @@ impl AgentSession for DefaultAgentSession {
     fn get_session_id(&self) -> &str {
         &self.session_id
     }
-    
+
     fn get_task(&self) -> &AgentTask {
         &self.task
     }
-    
+
     fn get_status(&self) -> AgentSessionStatus {
         self.status.clone()
     }
-    
+
     async fn update_status(&mut self, status: AgentSessionStatus) -> Result<()> {
         // 如果状态变更为已取消，设置取消标记
         if matches!(status, AgentSessionStatus::Cancelled) {
             self.is_cancellation_requested = true;
         }
-        
+
         self.status = status;
         self.updated_at = Utc::now();
-        
+
         // 记录状态变更日志
         let message = format!("Status changed to {:?}", self.status);
         self.add_log(LogLevel::Info, message).await?;
-        
+
         Ok(())
     }
-    
+
     async fn add_log(&mut self, level: LogLevel, message: String) -> Result<()> {
         let log = SessionLog {
             level,
@@ -114,21 +114,21 @@ impl AgentSession for DefaultAgentSession {
             timestamp: Utc::now(),
             source: "agent_session".to_string(),
         };
-        
+
         self.logs.push(log);
         self.updated_at = Utc::now();
-        
+
         Ok(())
     }
-    
+
     fn get_logs(&self) -> &[SessionLog] {
         &self.logs
     }
-    
+
     async fn set_result(&mut self, result: AgentExecutionResult) -> Result<()> {
         self.result = Some(result);
         self.updated_at = Utc::now();
-        
+
         // 根据结果更新状态
         if let Some(ref result) = self.result {
             let new_status = if result.success {
@@ -138,10 +138,10 @@ impl AgentSession for DefaultAgentSession {
             };
             self.update_status(new_status).await?;
         }
-        
+
         Ok(())
     }
-    
+
     fn get_result(&self) -> Option<&AgentExecutionResult> {
         self.result.as_ref()
     }

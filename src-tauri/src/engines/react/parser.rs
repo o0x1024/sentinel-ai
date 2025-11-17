@@ -135,8 +135,9 @@ impl ActionParser {
             .map(|m| m.as_str().trim().to_string())
             .context("No Action found in text")?;
 
-        // 提取 Action Input（尝试解析为 JSON，失败则当字符串）
-        let input_re = regex::Regex::new(r"(?i)Action\s*Input\s*:\s*(.+)")
+        // 提取 Action Input（支持多行JSON）
+        // (?s) 使 . 匹配换行符，.+? 非贪婪匹配
+        let input_re = regex::Regex::new(r"(?is)Action\s*Input\s*:\s*(.+?)(?:\n\n|$)")
             .context("Failed to compile Action Input regex")?;
         let input_str = input_re
             .captures(text)
@@ -194,6 +195,52 @@ Action Input: {"query": "Rust programming"}
                 assert_eq!(final_answer.answer, "The answer is 42.");
             }
             _ => panic!("Expected FinalAnswer"),
+        }
+    }
+
+    #[test]
+    fn test_parse_multiline_action_input() {
+        // 测试多行格式化的JSON（这是LLM常见的输出格式）
+        let text = r#"
+Thought: I need to navigate to the URL with proxy settings.
+Action: playwright_navigate
+Action Input: {
+  "url": "http://testphp.vulnweb.com",
+  "proxy": {
+    "server": "http://127.0.0.1:8080"
+  }
+}
+"#;
+        let result = ActionParser::parse(text);
+        assert!(result.is_ok(), "Failed to parse multiline Action Input");
+        
+        match result.unwrap() {
+            ActionInstruction::ToolCall { action, .. } => {
+                assert_eq!(action.tool, "playwright_navigate");
+                assert!(action.args.get("url").is_some());
+                assert_eq!(action.args["url"], "http://testphp.vulnweb.com");
+                assert!(action.args.get("proxy").is_some());
+            }
+            _ => panic!("Expected ToolCall"),
+        }
+    }
+
+    #[test]
+    fn test_parse_single_line_action_input() {
+        // 测试单行紧凑的JSON
+        let text = r#"
+Action: playwright_navigate
+Action Input: {"url": "http://testphp.vulnweb.com"}
+"#;
+        let result = ActionParser::parse(text);
+        assert!(result.is_ok(), "Failed to parse single-line Action Input");
+        
+        match result.unwrap() {
+            ActionInstruction::ToolCall { action, .. } => {
+                assert_eq!(action.tool, "playwright_navigate");
+                assert_eq!(action.args["url"], "http://testphp.vulnweb.com");
+            }
+            _ => panic!("Expected ToolCall"),
         }
     }
 }

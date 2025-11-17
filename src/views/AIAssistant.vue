@@ -382,9 +382,10 @@ const restoreSelectedAgent = () => {
 
 
 // 事件处理
-const handleExecutionStarted = (execution) => {
+const handleExecutionStarted = async (execution) => {
   currentExecution.value = execution
-  activeAgentsCount.value++
+  // 立即刷新统计数据
+  await refreshAgentStatistics()
 }
 
 // 架构变更已移除
@@ -395,13 +396,14 @@ const handleExecutionProgress = (progress) => {
   }
 }
 
-const handleExecutionCompleted = (result) => {
+const handleExecutionCompleted = async (result) => {
   if (currentExecution.value) {
     currentExecution.value.status = result.success ? 'completed' : 'failed'
     currentExecution.value.progress = 100
   }
-  activeAgentsCount.value = Math.max(0, activeAgentsCount.value - 1)
-  totalTasksCount.value++
+  
+  // 立即刷新统计数据
+  await refreshAgentStatistics()
   
   // 3秒后清除执行状态
   setTimeout(() => {
@@ -409,6 +411,21 @@ const handleExecutionCompleted = (result) => {
       currentExecution.value = null
     }
   }, 3000)
+}
+
+// 定时刷新统计数据
+let statsRefreshTimer: number | null = null
+
+const refreshAgentStatistics = async () => {
+  try {
+    const agentStats = await invoke<AgentStats>('get_agent_statistics')
+    if (agentStats) {
+      activeAgentsCount.value = agentStats.active_count || 0
+      totalTasksCount.value = agentStats.total_tasks || 0
+    }
+  } catch (error) {
+    console.error('Failed to refresh agent statistics:', error)
+  }
 }
 
 // 初始化
@@ -421,11 +438,7 @@ onMounted(async () => {
     }
     
     // 加载Agent状态
-    const agentStats = await invoke<AgentStats>('get_agent_statistics')
-    if (agentStats) {
-      activeAgentsCount.value = agentStats.active_count || 0
-      totalTasksCount.value = agentStats.total_tasks || 0
-    }
+    await refreshAgentStatistics()
 
     // 加载场景Agent
     const agents = await invoke<any[]>('list_scenario_agents').catch(() => [])
@@ -443,8 +456,19 @@ onMounted(async () => {
 
     // 加载角色列表
     await loadRoles()
+
+    // 启动定时刷新（每5秒刷新一次统计数据）
+    statsRefreshTimer = window.setInterval(refreshAgentStatistics, 5000)
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
+  }
+})
+
+// 清理定时器
+onUnmounted(() => {
+  if (statsRefreshTimer !== null) {
+    clearInterval(statsRefreshTimer)
+    statsRefreshTimer = null
   }
 })
 </script>

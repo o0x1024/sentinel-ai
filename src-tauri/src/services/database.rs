@@ -784,7 +784,27 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
+        // 创建插件收藏表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS plugin_favorites (
+                user_id TEXT NOT NULL DEFAULT 'default',
+                plugin_id TEXT NOT NULL,
+                favorited_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, plugin_id)
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
         // 创建索引
+
+        // 插件收藏索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_plugin_favorites_user_id ON plugin_favorites(user_id)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_plugin_favorites_plugin_id ON plugin_favorites(plugin_id)")
+            .execute(&mut *tx)
+            .await?;
 
         // Agent任务索引
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_user_id ON agent_tasks(user_id)")
@@ -4066,6 +4086,441 @@ impl DatabaseService {
                 self.set_current_ai_role(None).await?;
                 Ok(None)
             }
+        }
+    }
+    
+    /// Get plugins from plugin_registry with pagination and filters
+    pub async fn get_plugins_paginated(
+        &self,
+        page: i64,
+        page_size: i64,
+        status_filter: Option<&str>,
+        search_text: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let pool = self.get_pool()?;
+        let offset = (page - 1) * page_size;
+        
+        // Build WHERE clause
+        let mut where_clauses = Vec::new();
+        if let Some(status) = status_filter {
+            if status != "all" {
+                // Handle NULL values - treat them as PendingReview
+                if status == "PendingReview" {
+                    where_clauses.push(format!("COALESCE(validation_status, 'PendingReview') = 'PendingReview'"));
+                } else {
+                    where_clauses.push(format!("validation_status = '{}'", status));
+                }
+            }
+        }
+        if let Some(search) = search_text {
+            if !search.is_empty() {
+                where_clauses.push(format!(
+                    "(name LIKE '%{}%' OR id LIKE '%{}%' OR category LIKE '%{}%')",
+                    search, search, search
+                ));
+            }
+        }
+        
+        let where_clause = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+        
+        // Get total count
+        let count_query = format!("SELECT COUNT(*) as count FROM plugin_registry {}", where_clause);
+        let count_row = sqlx::query(&count_query)
+            .fetch_one(pool)
+            .await?;
+        let total: i64 = count_row.get("count");
+        
+        // Get paginated data
+        let data_query = format!(
+            r#"
+            SELECT 
+                p.id as plugin_id,
+                p.name as plugin_name,
+                p.version,
+                p.author,
+                p.main_category,
+                p.category as vuln_type,
+                p.description,
+                p.default_severity,
+                p.tags,
+                p.enabled,
+                p.plugin_code as code,
+                p.quality_score,
+                p.validation_status as status,
+                p.created_at as generated_at,
+                p.updated_at,
+                CASE WHEN f.plugin_id IS NOT NULL THEN 1 ELSE 0 END as is_favorited
+            FROM plugin_registry p
+            LEFT JOIN plugin_favorites f ON p.id = f.plugin_id AND f.user_id = ?
+            {}
+            ORDER BY p.created_at DESC
+            LIMIT ? OFFSET ?
+            "#,
+            where_clause
+        );
+        
+        let rows = sqlx::query(&data_query)
+            .bind(user_id.unwrap_or("default"))
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+        
+        let mut plugins = Vec::new();
+        for row in rows {
+            let plugin_id: String = row.get("plugin_id");
+            let plugin_name: String = row.get("plugin_name");
+            let code: Option<String> = row.try_get("code").ok();
+            let description: Option<String> = row.try_get("description").ok();
+            let vuln_type: String = row.try_get("vuln_type").unwrap_or_else(|_| "unknown".to_string());
+            let main_category: Option<String> = row.try_get("main_category").ok();
+            let quality_score: Option<f64> = row.try_get("quality_score").ok();
+            let status: Option<String> = row.try_get("status").ok();
+            let generated_at: String = row.try_get("generated_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+            let is_favorited: i64 = row.try_get("is_favorited").unwrap_or(0);
+            
+            let plugin = serde_json::json!({
+                "plugin_id": plugin_id,
+                "plugin_name": plugin_name,
+                "code": code.unwrap_or_default(),
+                "description": description.unwrap_or_default(),
+                "vuln_type": vuln_type,
+                "main_category": main_category.unwrap_or_else(|| "passive".to_string()),
+                "quality_score": quality_score.unwrap_or(0.0),
+                "quality_breakdown": {
+                    "syntax_score": quality_score.unwrap_or(0.0),
+                    "logic_score": quality_score.unwrap_or(0.0),
+                    "security_score": quality_score.unwrap_or(0.0),
+                    "code_quality_score": quality_score.unwrap_or(0.0)
+                },
+                "validation": {
+                    "is_valid": status.as_ref().map(|s: &String| s == "Passed" || s == "Approved").unwrap_or(false),
+                    "syntax_valid": true,
+                    "has_required_functions": true,
+                    "security_check_passed": true,
+                    "errors": [],
+                    "warnings": []
+                },
+                "status": status.unwrap_or_else(|| "PendingReview".to_string()),
+                "generated_at": generated_at,
+                "model": "AI Generated",
+                "is_favorited": is_favorited == 1
+            });
+            
+            plugins.push(plugin);
+        }
+        
+        Ok(serde_json::json!({
+            "data": plugins,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) / page_size
+        }))
+    }
+    
+    /// Get all plugins from plugin_registry table for review (deprecated, use get_plugins_paginated)
+    pub async fn get_plugins_from_registry(&self) -> Result<Vec<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                id as plugin_id,
+                name as plugin_name,
+                version,
+                author,
+                main_category,
+                category as vuln_type,
+                description,
+                default_severity,
+                tags,
+                enabled,
+                plugin_code as code,
+                quality_score,
+                validation_status as status,
+                created_at as generated_at,
+                updated_at
+            FROM plugin_registry
+            ORDER BY created_at DESC
+            "#
+        )
+        .fetch_all(pool)
+        .await?;
+        
+        let mut plugins = Vec::new();
+        for row in rows {
+            // Extract data from row
+            let plugin_id: String = row.get("plugin_id");
+            let plugin_name: String = row.get("plugin_name");
+            let code: Option<String> = row.try_get("code").ok();
+            let description: Option<String> = row.try_get("description").ok();
+            let vuln_type: String = row.try_get("vuln_type").unwrap_or_else(|_| "unknown".to_string());
+            let main_category: Option<String> = row.try_get("main_category").ok();
+            let quality_score: Option<f64> = row.try_get("quality_score").ok();
+            let status: Option<String> = row.try_get("status").ok();
+            let generated_at: String = row.try_get("generated_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+            
+            // Create plugin JSON object
+            let plugin = serde_json::json!({
+                "plugin_id": plugin_id,
+                "plugin_name": plugin_name,
+                "code": code.unwrap_or_default(),
+                "description": description.unwrap_or_default(),
+                "vuln_type": vuln_type,
+                "main_category": main_category.unwrap_or_else(|| "passive".to_string()),
+                "quality_score": quality_score.unwrap_or(0.0),
+                "quality_breakdown": {
+                    "syntax_score": quality_score.unwrap_or(0.0),
+                    "logic_score": quality_score.unwrap_or(0.0),
+                    "security_score": quality_score.unwrap_or(0.0),
+                    "code_quality_score": quality_score.unwrap_or(0.0)
+                },
+                "validation": {
+                    "is_valid": status.as_ref().map(|s: &String| s == "Passed" || s == "Approved").unwrap_or(false),
+                    "syntax_valid": true,
+                    "has_required_functions": true,
+                    "security_check_passed": true,
+                    "errors": [],
+                    "warnings": []
+                },
+                "status": status.unwrap_or_else(|| "PendingReview".to_string()),
+                "generated_at": generated_at,
+                "model": "AI Generated"
+            });
+            
+            plugins.push(plugin);
+        }
+        
+        Ok(plugins)
+    }
+    
+    /// Update plugin status in registry
+    pub async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
+        sqlx::query(
+            r#"
+            UPDATE plugin_registry 
+            SET validation_status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#
+        )
+        .bind(status)
+        .bind(plugin_id)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// Update plugin code in registry
+    pub async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
+        sqlx::query(
+            r#"
+            UPDATE plugin_registry 
+            SET plugin_code = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#
+        )
+        .bind(code)
+        .bind(plugin_id)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// Delete plugin from registry
+    pub async fn delete_plugin_from_registry(&self, plugin_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
+        sqlx::query(
+            r#"
+            DELETE FROM plugin_registry 
+            WHERE id = ?
+            "#
+        )
+        .bind(plugin_id)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// Toggle plugin favorite status
+    pub async fn toggle_plugin_favorite(&self, plugin_id: &str, user_id: Option<&str>) -> Result<bool> {
+        let pool = self.get_pool()?;
+        let uid = user_id.unwrap_or("default");
+        
+        // Check if already favorited
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM plugin_favorites WHERE user_id = ? AND plugin_id = ?"
+        )
+        .bind(uid)
+        .bind(plugin_id)
+        .fetch_one(pool)
+        .await?;
+        
+        let count: i64 = row.get("count");
+        
+        if count > 0 {
+            // Remove favorite
+            sqlx::query(
+                "DELETE FROM plugin_favorites WHERE user_id = ? AND plugin_id = ?"
+            )
+            .bind(uid)
+            .bind(plugin_id)
+            .execute(pool)
+            .await?;
+            Ok(false)
+        } else {
+            // Add favorite
+            sqlx::query(
+                "INSERT INTO plugin_favorites (user_id, plugin_id) VALUES (?, ?)"
+            )
+            .bind(uid)
+            .bind(plugin_id)
+            .execute(pool)
+            .await?;
+            Ok(true)
+        }
+    }
+    
+    /// Get favorited plugins
+    pub async fn get_favorited_plugins(&self, user_id: Option<&str>) -> Result<Vec<String>> {
+        let pool = self.get_pool()?;
+        let uid = user_id.unwrap_or("default");
+        
+        let rows = sqlx::query(
+            "SELECT plugin_id FROM plugin_favorites WHERE user_id = ? ORDER BY favorited_at DESC"
+        )
+        .bind(uid)
+        .fetch_all(pool)
+        .await?;
+        
+        let plugin_ids: Vec<String> = rows.iter().map(|row| row.get("plugin_id")).collect();
+        Ok(plugin_ids)
+    }
+    
+    /// Get plugin review statistics
+    pub async fn get_plugin_review_stats(&self) -> Result<serde_json::Value> {
+        let pool = self.get_pool()?;
+        
+        // Get counts for each status (treat NULL as PendingReview)
+        let total_row = sqlx::query("SELECT COUNT(*) as count FROM plugin_registry")
+            .fetch_one(pool)
+            .await?;
+        let total: i64 = total_row.get("count");
+        
+        let pending_row = sqlx::query(
+            "SELECT COUNT(*) as count FROM plugin_registry WHERE COALESCE(validation_status, 'PendingReview') = 'PendingReview'"
+        )
+        .fetch_one(pool)
+        .await?;
+        let pending: i64 = pending_row.get("count");
+        
+        let approved_row = sqlx::query(
+            "SELECT COUNT(*) as count FROM plugin_registry WHERE validation_status = 'Approved'"
+        )
+        .fetch_one(pool)
+        .await?;
+        let approved: i64 = approved_row.get("count");
+        
+        let rejected_row = sqlx::query(
+            "SELECT COUNT(*) as count FROM plugin_registry WHERE validation_status = 'Rejected'"
+        )
+        .fetch_one(pool)
+        .await?;
+        let rejected: i64 = rejected_row.get("count");
+        
+        let failed_row = sqlx::query(
+            "SELECT COUNT(*) as count FROM plugin_registry WHERE validation_status = 'ValidationFailed'"
+        )
+        .fetch_one(pool)
+        .await?;
+        let failed: i64 = failed_row.get("count");
+        
+        Ok(serde_json::json!({
+            "total": total,
+            "pending": pending,
+            "approved": approved,
+            "rejected": rejected,
+            "failed": failed
+        }))
+    }
+    
+    /// Get plugin by ID from registry
+    pub async fn get_plugin_from_registry(&self, plugin_id: &str) -> Result<Option<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        
+        let row = sqlx::query(
+            r#"
+            SELECT 
+                id as plugin_id,
+                name as plugin_name,
+                version,
+                author,
+                main_category,
+                category as vuln_type,
+                description,
+                default_severity,
+                tags,
+                enabled,
+                plugin_code as code,
+                quality_score,
+                validation_status as status,
+                created_at as generated_at,
+                updated_at
+            FROM plugin_registry
+            WHERE id = ?
+            "#
+        )
+        .bind(plugin_id)
+        .fetch_optional(pool)
+        .await?;
+        
+        if let Some(row) = row {
+            let plugin_id: String = row.get("plugin_id");
+            let plugin_name: String = row.get("plugin_name");
+            let code: Option<String> = row.try_get("code").ok();
+            let description: Option<String> = row.try_get("description").ok();
+            let vuln_type: String = row.try_get("vuln_type").unwrap_or_else(|_| "unknown".to_string());
+            let quality_score: Option<f64> = row.try_get("quality_score").ok();
+            let status: Option<String> = row.try_get("status").ok();
+            let generated_at: String = row.try_get("generated_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+            let main_category: Option<String> = row.try_get("main_category").ok();
+            
+            let plugin = serde_json::json!({
+                "plugin_id": plugin_id,
+                "plugin_name": plugin_name,
+                "code": code.unwrap_or_default(),
+                "description": description.unwrap_or_default(),
+                "vuln_type": vuln_type,
+                "main_category": main_category.unwrap_or_else(|| "passive".to_string()),
+                "quality_score": quality_score.unwrap_or(0.0),
+                "validation": {
+                    "is_valid": true,
+                    "has_required_functions": true,
+                    "security_check_passed": true,
+                    "errors": [],
+                    "warnings": []
+                },
+                "status": status.unwrap_or_else(|| "PendingReview".to_string()),
+                "generated_at": generated_at,
+                "model": "AI Generated"
+            });
+            
+            Ok(Some(plugin))
+        } else {
+            Ok(None)
         }
     }
 }

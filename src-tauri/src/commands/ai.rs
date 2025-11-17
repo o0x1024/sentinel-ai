@@ -1814,7 +1814,7 @@ async fn test_moonshot_connection(
 pub async fn save_ai_config(
     config: SaveAiConfigRequest,
     db: State<'_, Arc<DatabaseService>>,
-    _ai_manager: State<'_, Arc<AiServiceManager>>,
+    ai_manager_state: State<'_, Arc<AiServiceManager>>,
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!("Starting to save AI configuration...");
@@ -1859,6 +1859,31 @@ pub async fn save_ai_config(
     }
 
     tracing::info!("AI configuration saved successfully");
+
+    // 重新加载运行态 AI 服务，确保启用/禁用即时生效
+    if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
+        if let Err(e) = ai_manager.reload_services().await {
+            tracing::error!("Failed to reload AI services after saving config: {}", e);
+        } else {
+            tracing::info!("AI services reloaded after saving config");
+        }
+        // 尝试应用数据库中的默认 provider 到 default 别名
+        if let Ok(Some(default_provider)) = db
+            .inner()
+            .get_config("ai", "default_provider")
+            .await
+        {
+            if let Err(e) = ai_manager.set_default_alias_to(&default_provider).await {
+                tracing::warn!(
+                    "Failed to set default alias to '{}': {}",
+                    default_provider,
+                    e
+                );
+            } else {
+                tracing::info!("Default provider alias updated to '{}'", default_provider);
+            }
+        }
+    }
 
 
     // 验证配置是否正确加载

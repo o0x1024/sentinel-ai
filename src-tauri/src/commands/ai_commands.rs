@@ -1024,14 +1024,44 @@ pub async fn save_ai_assistant_settings(
 
 /// 获取Agent统计信息
 #[tauri::command]
-pub async fn get_agent_statistics() -> Result<AgentStatistics, String> {
-    // 从数据库或监控系统获取统计信息
+pub async fn get_agent_statistics(
+    manager: State<'_, crate::commands::agent_commands::GlobalAgentManager>,
+) -> Result<AgentStatistics, String> {
+    let manager_guard = manager.read().await;
+    
+    let agent_manager = match manager_guard.as_ref() {
+        Some(manager) => manager,
+        None => {
+            // Agent管理器未初始化，返回默认值
+            return Ok(AgentStatistics {
+                active_count: 0,
+                total_tasks: 0,
+                successful_tasks: 0,
+                failed_tasks: 0,
+                average_execution_time: 0.0,
+            });
+        }
+    };
+    
+    // 从Agent管理器获取真实统计数据
+    let stats = agent_manager.get_statistics().await;
+    let sessions = agent_manager.get_all_sessions().await;
+    
+    // 统计活跃会话数
+    let active_count = sessions.iter().filter(|(_, info)| {
+        matches!(
+            info.status,
+            crate::agents::traits::AgentSessionStatus::Planning |
+            crate::agents::traits::AgentSessionStatus::Executing
+        )
+    }).count();
+    
     Ok(AgentStatistics {
-        active_count: 2,
-        total_tasks: 156,
-        successful_tasks: 142,
-        failed_tasks: 14,
-        average_execution_time: 180.5,
+        active_count: active_count as u32,
+        total_tasks: stats.total_tasks,
+        successful_tasks: stats.successful_tasks,
+        failed_tasks: stats.failed_tasks,
+        average_execution_time: stats.average_execution_time_ms / 1000.0, // 转换为秒
     })
 }
 

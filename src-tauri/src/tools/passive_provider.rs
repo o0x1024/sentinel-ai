@@ -56,7 +56,7 @@ impl ToolProvider for PassiveToolProvider {
 
         // 1. 被动扫描控制工具
         tools.push(Arc::new(StartPassiveScanTool::new(self.state.clone(), self.app_handle.clone())));
-        tools.push(Arc::new(StopPassiveScanTool::new(self.state.clone())));
+        tools.push(Arc::new(StopPassiveScanTool::new(self.state.clone(), self.app_handle.clone())));
         tools.push(Arc::new(GetPassiveScanStatusTool::new(self.state.clone())));
 
         // 2. 漏洞查询工具
@@ -68,7 +68,7 @@ impl ToolProvider for PassiveToolProvider {
         tools.push(Arc::new(EnablePluginTool::new(self.state.clone())));
         tools.push(Arc::new(DisablePluginTool::new(self.state.clone())));
         tools.push(Arc::new(LoadPluginTool::new(self.state.clone())));
-        tools.push(Arc::new(GeneratePluginTool::new(self.state.clone())));
+        // Note: generate_plugin (方案A) 已删除，请使用 generate_advanced_plugin (方案B)
 
         // 4. 动态添加每个启用插件的工具
         let plugins = self.state.list_plugins_internal().await
@@ -92,7 +92,7 @@ impl ToolProvider for PassiveToolProvider {
         // 被动扫描控制工具
         match name {
             "start_passive_scan" => return Ok(Some(Arc::new(StartPassiveScanTool::new(self.state.clone(), self.app_handle.clone())))),
-            "stop_passive_scan" => return Ok(Some(Arc::new(StopPassiveScanTool::new(self.state.clone())))),
+            "stop_passive_scan" => return Ok(Some(Arc::new(StopPassiveScanTool::new(self.state.clone(), self.app_handle.clone())))),
             "get_passive_scan_status" => return Ok(Some(Arc::new(GetPassiveScanStatusTool::new(self.state.clone())))),
             "list_findings" => return Ok(Some(Arc::new(ListFindingsTool::new(self.state.clone())))),
             "get_finding_detail" => return Ok(Some(Arc::new(GetFindingDetailTool::new(self.state.clone())))),
@@ -100,7 +100,7 @@ impl ToolProvider for PassiveToolProvider {
             "enable_plugin" => return Ok(Some(Arc::new(EnablePluginTool::new(self.state.clone())))),
             "disable_plugin" => return Ok(Some(Arc::new(DisablePluginTool::new(self.state.clone())))),
             "load_plugin" => return Ok(Some(Arc::new(LoadPluginTool::new(self.state.clone())))),
-            "generate_plugin" => return Ok(Some(Arc::new(GeneratePluginTool::new(self.state.clone())))),
+            // "generate_plugin" (方案A) 已删除，请使用 "generate_advanced_plugin" (方案B)
             _ => {}
         }
 
@@ -427,12 +427,13 @@ impl UnifiedTool for StartPassiveScanTool {
 #[derive(Debug, Clone)]
 struct StopPassiveScanTool {
     state: Arc<PassiveScanState>,
+    app_handle: Option<tauri::AppHandle>,
     parameters: ToolParameters,
     metadata: ToolMetadata,
 }
 
 impl StopPassiveScanTool {
-    fn new(state: Arc<PassiveScanState>) -> Self {
+    fn new(state: Arc<PassiveScanState>, app_handle: Option<tauri::AppHandle>) -> Self {
         let parameters = ToolParameters {
             parameters: vec![],
             schema: json!({
@@ -456,6 +457,7 @@ impl StopPassiveScanTool {
 
         Self {
             state,
+            app_handle,
             parameters,
             metadata,
         }
@@ -487,6 +489,7 @@ impl UnifiedTool for StopPassiveScanTool {
     async fn execute(&self, params: ToolExecutionParams) -> anyhow::Result<ToolExecutionResult> {
         let start_time = chrono::Utc::now();
 
+        // Check if proxy is running
         let is_running_lock = self.state.get_is_running();
         let is_running = *is_running_lock.read().await;
         if !is_running {
@@ -507,28 +510,70 @@ impl UnifiedTool for StopPassiveScanTool {
             });
         }
 
-        // Similar to start, this requires Tauri AppHandle
-        let output = json!({
-            "message": "Please use the Tauri command 'stop_passive_scan' from frontend for full functionality",
-            "note": "MCP tool implementation requires AppHandle which is only available in Tauri context"
-        });
+        // Check if AppHandle is available
+        let app_handle = match &self.app_handle {
+            Some(app) => app.clone(),
+            None => {
+                return Ok(ToolExecutionResult {
+                    execution_id: params.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4()),
+                    tool_name: "stop_passive_scan".to_string(),
+                    tool_id: "passive.stop_passive_scan".to_string(),
+                    success: false,
+                    output: json!({
+                        "error": "AppHandle not available in tool context",
+                        "note": "This tool requires Tauri application context"
+                    }),
+                    error: Some("AppHandle not available".to_string()),
+                    execution_time_ms: 0,
+                    metadata: HashMap::new(),
+                    started_at: start_time,
+                    completed_at: Some(chrono::Utc::now()),
+                    status: ExecutionStatus::Failed,
+                });
+            }
+        };
 
-        let end_time = chrono::Utc::now();
-        let duration = (end_time - start_time).to_std().unwrap_or_default();
-
-        Ok(ToolExecutionResult {
-            execution_id: params.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4()),
-            tool_name: "stop_passive_scan".to_string(),
-            tool_id: "passive.stop_passive_scan".to_string(),
-            success: true,
-            output,
-            error: None,
-            execution_time_ms: duration.as_millis() as u64,
-            metadata: HashMap::new(),
-            started_at: start_time,
-            completed_at: Some(end_time),
-            status: ExecutionStatus::Completed,
-        })
+        // Stop the proxy
+        tracing::info!("Stopping passive scan proxy via tool");
+        
+        // Update the is_running flag
+            let mut is_running_guard = is_running_lock.write().await;
+            *is_running_guard = false;
+            drop(is_running_guard);
+            
+        // Emit stop event using the events module
+        use crate::events::{emit_proxy_status, ProxyStatusEvent};
+        use sentinel_passive::ProxyStats;
+        emit_proxy_status(
+            &app_handle,
+            ProxyStatusEvent {
+                running: false,
+                port: 0,
+                mitm: false,
+                stats: ProxyStats::default(),
+            },
+        );
+            
+            tracing::info!("Passive scan proxy stopped successfully");
+            
+            let end_time = chrono::Utc::now();
+            let duration = (end_time - start_time).to_std().unwrap_or_default();
+            
+            Ok(ToolExecutionResult {
+                execution_id: params.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4()),
+                tool_name: "stop_passive_scan".to_string(),
+                tool_id: "passive.stop_passive_scan".to_string(),
+                success: true,
+                output: json!({
+                    "message": "Passive scan proxy stopped successfully"
+                }),
+                error: None,
+                execution_time_ms: duration.as_millis() as u64,
+                metadata: HashMap::new(),
+                started_at: start_time,
+                completed_at: Some(end_time),
+                status: ExecutionStatus::Completed,
+            })
     }
 }
 
@@ -1251,202 +1296,10 @@ impl UnifiedTool for LoadPluginTool {
     }
 }
 
-/// 生成插件工具
-#[derive(Debug, Clone)]
-struct GeneratePluginTool {
-    state: Arc<PassiveScanState>,
-    parameters: ToolParameters,
-    metadata: ToolMetadata,
-}
-
-impl GeneratePluginTool {
-    fn new(state: Arc<PassiveScanState>) -> Self {
-        let parameters = ToolParameters {
-            parameters: vec![
-                ParameterDefinition {
-                    name: "template_type".to_string(),
-                    description: "Template type: sqli, xss, auth_bypass, info_leak, csrf".to_string(),
-                    param_type: ParameterType::String,
-                    required: true,
-                    default_value: None,
-                },
-                ParameterDefinition {
-                    name: "target_url".to_string(),
-                    description: "Target website URL (e.g., https://example.com)".to_string(),
-                    param_type: ParameterType::String,
-                    required: true,
-                    default_value: None,
-                },
-                ParameterDefinition {
-                    name: "target_params".to_string(),
-                    description: "Array of target parameter names (e.g., [\"id\", \"search\"])".to_string(),
-                    param_type: ParameterType::Array,
-                    required: false,
-                    default_value: Some(json!([])),
-                },
-                ParameterDefinition {
-                    name: "sensitivity".to_string(),
-                    description: "Detection sensitivity: low, medium, high".to_string(),
-                    param_type: ParameterType::String,
-                    required: false,
-                    default_value: Some(json!("medium")),
-                },
-                ParameterDefinition {
-                    name: "auto_enable".to_string(),
-                    description: "Automatically enable the generated plugin".to_string(),
-                    param_type: ParameterType::Boolean,
-                    required: false,
-                    default_value: Some(json!(true)),
-                },
-            ],
-            schema: json!({
-                "type": "object",
-                "properties": {
-                    "template_type": { "type": "string", "enum": ["sqli", "xss", "auth_bypass", "info_leak", "csrf"] },
-                    "target_url": { "type": "string" },
-                    "target_params": { "type": "array", "items": { "type": "string" } },
-                    "sensitivity": { "type": "string", "enum": ["low", "medium", "high"], "default": "medium" },
-                    "auto_enable": { "type": "boolean", "default": true }
-                },
-                "required": ["template_type", "target_url"]
-            }),
-            required: vec!["template_type".to_string(), "target_url".to_string()],
-            optional: vec!["target_params".to_string(), "sensitivity".to_string(), "auto_enable".to_string()],
-        };
-
-        let metadata = ToolMetadata {
-            author: "Sentinel AI".to_string(),
-            version: "1.0.0".to_string(),
-            license: "MIT".to_string(),
-            homepage: None,
-            repository: None,
-            tags: vec!["passive".to_string(), "plugin".to_string(), "generator".to_string()],
-            install_command: None,
-            requirements: vec![],
-        };
-
-        Self {
-            state,
-            parameters,
-            metadata,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl UnifiedTool for GeneratePluginTool {
-    fn name(&self) -> &str {
-        "generate_plugin"
-    }
-
-    fn description(&self) -> &str {
-        "Generate a passive scanning plugin from template based on website characteristics"
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::VulnerabilityScanning
-    }
-
-    fn parameters(&self) -> &ToolParameters {
-        &self.parameters
-    }
-
-    fn metadata(&self) -> &ToolMetadata {
-        &self.metadata
-    }
-
-    async fn execute(&self, params: ToolExecutionParams) -> anyhow::Result<ToolExecutionResult> {
-        let start_time = chrono::Utc::now();
-
-        let template_type = params.inputs.get("template_type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: template_type"))?;
-
-        let target_url = params.inputs.get("target_url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: target_url"))?;
-
-        let target_params = params.inputs.get("target_params")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let sensitivity = params.inputs.get("sensitivity")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let auto_enable = params.inputs.get("auto_enable")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-
-        // Generate plugin
-        let generator = crate::tools::plugin_generator::PluginGenerator::new();
-        let gen_params = crate::tools::plugin_generator::PluginGenerationParams {
-            template_type: template_type.to_string(),
-            target_url: target_url.to_string(),
-            target_params,
-            sensitivity,
-            custom_config: None,
-        };
-
-        let generated = generator.generate_from_template(gen_params)
-            .map_err(|e| anyhow::anyhow!("Failed to generate plugin: {}", e))?;
-
-        // Save to database
-        let db_service = self.state.get_db_service().await
-            .map_err(|e| anyhow::anyhow!("Failed to get database service: {}", e))?;
-
-        let result = db_service.register_plugin_with_code(&generated.metadata, &generated.plugin_code).await;
-
-        let (success, output, error) = match result {
-            Ok(_) => {
-                tracing::info!("Plugin generated and saved: {}", generated.plugin_id);
-
-                // Auto-enable if requested
-                if auto_enable {
-                    let enable_result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
-                        .bind(true)
-                        .bind(&generated.plugin_id)
-                        .execute(db_service.pool())
-                        .await;
-
-                    if enable_result.is_ok() {
-                        tracing::info!("Plugin auto-enabled: {}", generated.plugin_id);
-                    }
-                }
-
-                (true, json!({
-                    "plugin_id": generated.plugin_id,
-                    "plugin_name": generated.plugin_name,
-                    "message": "Plugin generated and saved successfully",
-                    "enabled": auto_enable
-                }), None)
-            }
-            Err(e) => (false, json!({"error": e.to_string()}), Some(e.to_string())),
-        };
-
-        let end_time = chrono::Utc::now();
-        let duration = (end_time - start_time).to_std().unwrap_or_default();
-
-        Ok(ToolExecutionResult {
-            execution_id: params.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4()),
-            tool_name: "generate_plugin".to_string(),
-            tool_id: "passive.generate_plugin".to_string(),
-            success,
-            output,
-            error,
-            execution_time_ms: duration.as_millis() as u64,
-            metadata: HashMap::new(),
-            started_at: start_time,
-            completed_at: Some(end_time),
-            status: if success { ExecutionStatus::Completed } else { ExecutionStatus::Failed },
-        })
-    }
-}
+// ============================================================
+// 方案A的 GeneratePluginTool 已删除
+// 请使用方案B的 generate_advanced_plugin (在 generator_tools.rs 中)
+// ============================================================
 
 /// 列出漏洞发现工具
 #[derive(Debug, Clone)]

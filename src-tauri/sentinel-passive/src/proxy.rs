@@ -617,16 +617,18 @@ impl HttpHandler for PassiveProxyHandler {
         err: hyper_util::client::legacy::Error,
     ) -> impl std::future::Future<Output = Response<Body>> + Send {
         let conn_key = Self::generate_connection_key(ctx);
-        let host_opt = {
-            let map = self.conn_to_host.blocking_read();
-            map.get(&conn_key).cloned()
-        };
 
         // 复制必要的状态用于 async 块
         let stats = self.stats.clone();
         let self_clone = self.clone();
 
         async move {
+            // 在异步上下文中获取 host，避免在 Tokio runtime 线程中使用阻塞读
+            let host_opt = {
+                let map = self_clone.conn_to_host.read().await;
+                map.get(&conn_key).cloned()
+            };
+
             if let Some(host) = host_opt {
                 let msg = err.to_string().to_lowercase();
                 // 启发式匹配证书/握手错误

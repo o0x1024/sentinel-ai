@@ -577,8 +577,14 @@ export const useOrderedMessages = (
     }
 
     // 🔒 防止已完成消息再次接收chunk导致内容重复
+    // 但如果之前被错误地标记为完成（例如内部工具误发 is_final），
+    // 当收到新的非最终 chunk 时允许重新打开 streaming 状态。
     if (!message.isStreaming) {
-      return
+      if (chunk.is_final) {
+        return
+      } else {
+        message.isStreaming = true
+      }
     }
 
     // 如果是携带RAG引用的Meta块，解析其中的citations并直接绑定到当前消息

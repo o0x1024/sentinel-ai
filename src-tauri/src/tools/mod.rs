@@ -8,7 +8,9 @@
 //! - 执行历史和统计信息
 
 // 核心模块
+pub mod analyzer_tools; // 网站分析工具（Plan B）
 pub mod builtin;
+pub mod generator_tools; // AI插件生成工具（Plan B）
 pub mod mapping {
     pub use sentinel_tools::mapping::*;
 }
@@ -18,7 +20,7 @@ pub mod passive_provider; // 被动扫描工具提供者
 pub mod agent_plugin_provider; // Agent插件工具提供者
 pub mod plugin_parser; // 插件代码解析器
 pub mod passive_integration; // 被动扫描工具集成
-pub mod plugin_generator; // 插件生成器
+// plugin_generator (方案A) 已删除，使用 generator_tools (方案B)
 pub mod protocol;
 pub mod server; // 重新启用 // MCP工具提供者
 

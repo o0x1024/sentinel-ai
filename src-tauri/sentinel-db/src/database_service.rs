@@ -205,7 +205,15 @@ impl DatabaseService {
                 is_default INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                category TEXT,
+                template_type TEXT,
+                target_architecture TEXT,
+                is_system INTEGER DEFAULT 0,
+                priority INTEGER DEFAULT 50,
+                tags TEXT DEFAULT '[]',
+                variables TEXT DEFAULT '[]',
+                version TEXT DEFAULT '1.0.0'
             )",
         )
         .execute(&mut *tx)
@@ -1181,15 +1189,231 @@ impl DatabaseService {
         ];
 
         for (arch, stage, name, content) in defaults {
-            sqlx::query(r#"INSERT INTO prompt_templates (name, description, architecture, stage, content, is_default, is_active) VALUES (?, ?, ?, ?, ?, 1, 1)"#)
+            sqlx::query(r#"INSERT INTO prompt_templates (name, description, architecture, stage, content, is_default, is_active, category, template_type) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)"#)
                 .bind(*name)
                 .bind(Option::<&str>::None)
                 .bind(*arch)
                 .bind(*stage)
                 .bind(*content)
+                .bind("LlmArchitecture")
+                .bind(match *stage {
+                    "planner" | "planning" => "Planner",
+                    "worker" | "execution" => "Executor",
+                    "solver" => "Evaluator",
+                    "replan" => "Replanner",
+                    _ => "Custom"
+                })
                 .execute(pool)
                 .await?;
         }
+        
+        // 插入插件生成相关的默认模板
+        self.insert_plugin_generation_templates(pool).await?;
+        
+        Ok(())
+    }
+    
+    async fn insert_plugin_generation_templates(&self, pool: &SqlitePool) -> Result<()> {
+        // 插件生成主模板（任务说明和指导原则）
+        sqlx::query(r#"
+            INSERT INTO prompt_templates (
+                name, description, architecture, stage, content, 
+                is_default, is_active, category, template_type, 
+                is_system, priority, tags, variables, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind("Plugin Generation Template")
+        .bind("Task overview and guiding principles for plugin generation")
+        .bind("rewoo")
+        .bind("planner")
+        .bind(include_str!("../../../src/generators/templates/plugin_generation.txt"))
+        .bind(1)
+        .bind(1)
+        .bind("Application")
+        .bind("PluginGeneration")
+        .bind(1)
+        .bind(90)
+        .bind(r#"["plugin","generation","security","task"]"#)
+        .bind(r#"["vuln_type","analysis","endpoints","requirements"]"#)
+        .bind("1.0.0")
+        .execute(pool)
+        .await?;
+        
+        // 插件修复模板
+        sqlx::query(r#"
+            INSERT INTO prompt_templates (
+                name, description, architecture, stage, content, 
+                is_default, is_active, category, template_type, 
+                is_system, priority, tags, variables, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind("Plugin Fix Template")
+        .bind("Template for fixing broken plugin code")
+        .bind("rewoo")
+        .bind("planner")
+        .bind(include_str!("../../../src/generators/templates/plugin_fix.txt"))
+        .bind(1)
+        .bind(1)
+        .bind("Application")
+        .bind("PluginFix")
+        .bind(1)
+        .bind(85)
+        .bind(r#"["plugin","fix","repair"]"#)
+        .bind(r#"["original_code","error_message","error_details","vuln_type","attempt"]"#)
+        .bind("1.0.0")
+        .execute(pool)
+        .await?;
+        
+        // 插件接口模板
+        sqlx::query(r#"
+            INSERT INTO prompt_templates (
+                name, description, architecture, stage, content, 
+                is_default, is_active, category, template_type, 
+                is_system, priority, tags, variables, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind("Plugin Interface Template")
+        .bind("Template describing the plugin interface and API")
+        .bind("rewoo")
+        .bind("planner")
+        .bind(include_str!("../../../src/generators/templates/plugin_interface.txt"))
+        .bind(1)
+        .bind(1)
+        .bind("Application")
+        .bind("PluginInterface")
+        .bind(1)
+        .bind(80)
+        .bind(r#"["plugin","interface","api"]"#)
+        .bind(r#"[]"#)
+        .bind("1.0.0")
+        .execute(pool)
+        .await?;
+        
+        // 插件输出格式模板
+        sqlx::query(r#"
+            INSERT INTO prompt_templates (
+                name, description, architecture, stage, content, 
+                is_default, is_active, category, template_type, 
+                is_system, priority, tags, variables, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind("Plugin Output Format Template")
+        .bind("Template describing the expected output format")
+        .bind("rewoo")
+        .bind("planner")
+        .bind(include_str!("../../../src/generators/templates/plugin_output_format.txt"))
+        .bind(1)
+        .bind(1)
+        .bind("Application")
+        .bind("PluginOutputFormat")
+        .bind(1)
+        .bind(75)
+        .bind(r#"["plugin","output","format"]"#)
+        .bind(r#"[]"#)
+        .bind("1.0.0")
+        .execute(pool)
+        .await?;
+        
+        // Agent 插件生成主模板
+        sqlx::query(r#"
+            INSERT INTO prompt_templates (
+                name, description, architecture, stage, content, 
+                is_default, is_active, category, template_type, 
+                is_system, priority, tags, variables, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind("Agent Plugin Generation Template")
+        .bind("Task overview and guiding principles for Agent tool plugin generation")
+        .bind("rewoo")
+        .bind("planner")
+        .bind(include_str!("../../../src/generators/templates/agent_plugin_generation.txt"))
+        .bind(1)
+        .bind(1)
+        .bind("Application")
+        .bind("AgentPluginGeneration")
+        .bind(1)
+        .bind(90)
+        .bind(r#"["agent","plugin","generation","tool"]"#)
+        .bind(r#"["tool_type","requirements","options"]"#)
+        .bind("1.0.0")
+        .execute(pool)
+        .await?;
+        
+        // Agent 插件接口模板
+        sqlx::query(r#"
+            INSERT INTO prompt_templates (
+                name, description, architecture, stage, content, 
+                is_default, is_active, category, template_type, 
+                is_system, priority, tags, variables, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind("Agent Plugin Interface Template")
+        .bind("Template describing the Agent tool plugin interface and API")
+        .bind("rewoo")
+        .bind("planner")
+        .bind(include_str!("../../../src/generators/templates/agent_plugin_interface.txt"))
+        .bind(1)
+        .bind(1)
+        .bind("Application")
+        .bind("PluginInterface")
+        .bind(1)
+        .bind(80)
+        .bind(r#"["agent","plugin","interface","api"]"#)
+        .bind(r#"[]"#)
+        .bind("1.0.0")
+        .execute(pool)
+        .await?;
+        
+        // Agent 插件修复模板
+        sqlx::query(r#"
+            INSERT INTO prompt_templates (
+                name, description, architecture, stage, content, 
+                is_default, is_active, category, template_type, 
+                is_system, priority, tags, variables, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind("Agent Plugin Fix Template")
+        .bind("Template for fixing broken Agent tool plugin code")
+        .bind("rewoo")
+        .bind("planner")
+        .bind(include_str!("../../../src/generators/templates/agent_plugin_fix.txt"))
+        .bind(1)
+        .bind(1)
+        .bind("Application")
+        .bind("AgentPluginFix")
+        .bind(1)
+        .bind(85)
+        .bind(r#"["agent","plugin","fix","repair"]"#)
+        .bind(r#"["original_code","error_message","error_details","tool_type","attempt"]"#)
+        .bind("1.0.0")
+        .execute(pool)
+        .await?;
+        
+        // Agent 插件输出格式模板
+        sqlx::query(r#"
+            INSERT INTO prompt_templates (
+                name, description, architecture, stage, content, 
+                is_default, is_active, category, template_type, 
+                is_system, priority, tags, variables, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind("Agent Plugin Output Format Template")
+        .bind("Template describing the expected Agent plugin output format")
+        .bind("rewoo")
+        .bind("planner")
+        .bind(include_str!("../../../src/generators/templates/agent_plugin_output_format.txt"))
+        .bind(1)
+        .bind(1)
+        .bind("Application")
+        .bind("AgentPluginOutputFormat")
+        .bind(1)
+        .bind(75)
+        .bind(r#"["agent","plugin","output","format"]"#)
+        .bind(r#"[]"#)
+        .bind("1.0.0")
+        .execute(pool)
+        .await?;
+        
         Ok(())
     }
 

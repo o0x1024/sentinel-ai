@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onErrorCaptured, watch } from 'vue'
+import { ref, onMounted, onActivated, onDeactivated, onErrorCaptured, watch, provide } from 'vue'
 import PassiveScanControl from '../components/ProxyIntercept.vue'
 import ProxyHistory from '../components/ProxyHistory.vue'
 import ProxyConfiguration from '../components/ProxyConfiguration.vue'
@@ -47,9 +47,24 @@ import ProxyConfiguration from '../components/ProxyConfiguration.vue'
 const activeTab = ref<'control' | 'proxyhistory' | 'proxyconfig'>('control')
 const isDevelopment = ref(import.meta.env.DEV)
 const componentError = ref<string | null>(null)
+const refreshTrigger = ref(0)
+
+// 提供刷新触发器给子组件
+provide('refreshTrigger', refreshTrigger)
 
 onMounted(() => {
     console.log('PassiveScan view mounted, activeTab:', activeTab.value)
+})
+
+// 当组件从缓存中激活时，触发刷新
+onActivated(() => {
+    console.log('PassiveScan view activated, triggering refresh')
+    refreshTrigger.value++
+})
+
+// 当组件被缓存时
+onDeactivated(() => {
+    console.log('PassiveScan view deactivated')
 })
 
 // 捕获子组件错误

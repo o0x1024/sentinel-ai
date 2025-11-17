@@ -268,10 +268,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, nextTick, watch, inject } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
+
+// 注入父组件的刷新触发器
+const refreshTrigger = inject<any>('refreshTrigger', ref(0));
 
 // 定义组件名称，用于 keep-alive
 defineOptions({
@@ -1230,5 +1233,11 @@ onUnmounted(() => {
 watch(selectedRequest, async () => {
   await nextTick();
   updateContainerHeight();
+});
+
+// 监听父组件的刷新触发器
+watch(refreshTrigger, async () => {
+  console.log('[ProxyHistory] Refresh triggered by parent');
+  await loadHistory();
 });
 </script>

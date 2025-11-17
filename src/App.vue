@@ -42,6 +42,20 @@ const setupAIChatShortcut = () => {
     if (e.key === 'Escape' && showMobileMenu.value) {
       closeMobileMenu()
     }
+    
+    // 阻止退格键的默认后退行为
+    // 只在非输入元素上阻止
+    if (e.key === 'Backspace') {
+      const target = e.target as HTMLElement
+      const tagName = target.tagName.toLowerCase()
+      const isEditable = target.isContentEditable
+      const isInput = tagName === 'input' || tagName === 'textarea'
+      
+      // 如果不是在可编辑元素中，阻止默认行为
+      if (!isInput && !isEditable) {
+        e.preventDefault()
+      }
+    }
   }
 
   // 点击外部区域关闭移动端菜单

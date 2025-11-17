@@ -33,6 +33,31 @@ pub async fn create_prompt_template_api(db: State<'_, Arc<DatabaseService>>, tem
 pub async fn update_prompt_template_api(db: State<'_, Arc<DatabaseService>>, id: i64, template: PromptTemplate) -> Result<(), String> {
     let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
     let repo = PromptRepository::new(pool);
+    
+    // If activating this template, deactivate other templates of the same type
+    if template.is_active && template.template_type.is_some() {
+        let template_type = template.template_type.as_ref().unwrap();
+        
+        // Get all templates of the same type
+        let all_templates = repo.list_templates_filtered(
+            template.category.clone(),
+            Some(template_type.clone()),
+            None,
+            None
+        ).await.map_err(|e| e.to_string())?;
+        
+        // Deactivate other active templates of the same type
+        for other_template in all_templates {
+            if other_template.id.is_some() && other_template.id.unwrap() != id && other_template.is_active {
+                let mut deactivated = other_template.clone();
+                deactivated.is_active = false;
+                repo.update_template(other_template.id.unwrap(), &deactivated)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    
     repo.update_template(id, &template).await.map_err(|e| e.to_string())
 }
 
@@ -246,6 +271,129 @@ pub async fn preview_resolved_prompt_api(
         .resolve_prompt(&cfg, arch, canonical, None)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Get plugin generation prompt template by type
+#[tauri::command]
+pub async fn get_plugin_generation_prompt_api(
+    db: State<'_, Arc<DatabaseService>>,
+    template_type: String, // "passive" or "agent"
+) -> Result<String, String> {
+    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
+    let repo = PromptRepository::new(pool);
+    
+    // 根据类型获取对应的模板
+    let t_type = match template_type.as_str() {
+        "passive" => TemplateType::PluginGeneration,
+        "agent" => TemplateType::AgentPluginGeneration,
+        _ => return Err(format!("Unknown template type: {}", template_type)),
+    };
+    
+    // 获取该类型的模板（优先获取激活的，否则获取第一个）
+    let templates = repo.list_templates_filtered(
+        Some(PromptCategory::Application),
+        Some(t_type),
+        None,
+        None
+    ).await.map_err(|e| e.to_string())?;
+    
+    if templates.is_empty() {
+        return Err("No plugin generation template found in database".to_string());
+    }
+    
+    // 返回第一个激活的模板，如果没有激活的则返回第一个
+    let template = templates.iter()
+        .find(|t| t.is_active)
+        .or_else(|| templates.first())
+        .ok_or_else(|| "No suitable template found".to_string())?;
+    
+    Ok(template.content.clone())
+}
+
+/// Get combined plugin generation prompt (generation + interface + output format)
+#[tauri::command]
+pub async fn get_combined_plugin_prompt_api(
+    db: State<'_, Arc<DatabaseService>>,
+    plugin_type: String, // "passive" or "agent"
+    vuln_type: String,
+    severity: String,
+) -> Result<String, String> {
+    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
+    let repo = PromptRepository::new(pool);
+    
+    // 根据插件类型选择对应的模板类型
+    let (generation_template_type, interface_template_type, output_template_type) = match plugin_type.as_str() {
+        "passive" => (
+            TemplateType::PluginGeneration,
+            TemplateType::PluginInterface,
+            TemplateType::PluginOutputFormat
+        ),
+        "agent" => (
+            TemplateType::AgentPluginGeneration,
+            TemplateType::PluginInterface, // Agent 也使用 PluginInterface，但可以有自己的
+            TemplateType::AgentPluginOutputFormat
+        ),
+        _ => (
+            TemplateType::PluginGeneration,
+            TemplateType::PluginInterface,
+            TemplateType::PluginOutputFormat
+        ),
+    };
+    
+    // 获取三个模板：生成、接口、输出格式
+    let generation_templates = repo.list_templates_filtered(
+        Some(PromptCategory::Application),
+        Some(generation_template_type),
+        None,
+        None
+    ).await.map_err(|e| e.to_string())?;
+    
+    let interface_templates = repo.list_templates_filtered(
+        Some(PromptCategory::Application),
+        Some(interface_template_type),
+        None,
+        None
+    ).await.map_err(|e| e.to_string())?;
+    
+    let output_templates = repo.list_templates_filtered(
+        Some(PromptCategory::Application),
+        Some(output_template_type),
+        None,
+        None
+    ).await.map_err(|e| e.to_string())?;
+    
+    // 获取激活的模板，如果没有激活的则使用第一个
+    let get_active_or_first = |templates: &[PromptTemplate], template_name: &str| -> Result<String, String> {
+        if templates.is_empty() {
+            return Err(format!("No {} template found in database", template_name));
+        }
+        
+        // 优先选择激活的模板
+        templates.iter()
+            .find(|t| t.is_active)
+            .or_else(|| templates.first())
+            .map(|t| t.content.clone())
+            .ok_or_else(|| format!("No suitable {} template found", template_name))
+    };
+    
+    let generation_content = get_active_or_first(&generation_templates, "generation")?;
+    let interface_content = get_active_or_first(&interface_templates, "interface")?;
+    let output_content = get_active_or_first(&output_templates, "output format")?;
+    
+    // 组合模板，进行变量替换
+    let mut combined = format!(
+        "{}\n\n{}\n\n{}",
+        generation_content,
+        interface_content,
+        output_content
+    );
+    
+    // 简单的变量替换
+    combined = combined.replace("{plugin_type}", &plugin_type);
+    combined = combined.replace("{vuln_type}", &vuln_type);
+    combined = combined.replace("{severity}", &severity);
+    
+    Ok(combined)
 }
 
 

@@ -181,7 +181,7 @@ fn parse_confidence(s: &str) -> Confidence {
 
 extension!(
     sentinel_plugin_ext,
-    ops = [op_emit_finding, op_plugin_log],
+    ops = [op_emit_finding, op_plugin_log, op_fetch],
     state = |state| {
         state.put(PluginContext::new());
     }
@@ -222,6 +222,141 @@ fn op_plugin_log(
         "info" => info!("[Plugin] {}", message),
         "debug" => debug!("[Plugin] {}", message),
         _ => debug!("[Plugin] {}", message),
+    }
+}
+
+/// Fetch request options from JavaScript
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchOptions {
+    #[serde(default)]
+    pub method: String,
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub timeout: Option<u64>, // timeout in milliseconds
+}
+
+/// Fetch response to JavaScript
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchResponse {
+    pub success: bool,
+    pub status: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: String,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// Op: HTTP fetch (网络请求)
+#[op2(async)]
+#[serde]
+async fn op_fetch(
+    #[string] url: String,
+    #[serde] options: Option<FetchOptions>,
+) -> FetchResponse {
+    debug!("[Plugin] Fetching URL: {}", url);
+    
+    let opts = options.unwrap_or_else(|| FetchOptions {
+        method: "GET".to_string(),
+        headers: std::collections::HashMap::new(),
+        body: None,
+        timeout: Some(30000), // 30s default
+    });
+    
+    let method = opts.method.to_uppercase();
+    let timeout_ms = opts.timeout.unwrap_or(30000);
+    
+    // Build reqwest client
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return FetchResponse {
+                success: false,
+                status: 0,
+                headers: std::collections::HashMap::new(),
+                body: String::new(),
+                ok: false,
+                error: Some(format!("Failed to build HTTP client: {}", e)),
+            };
+        }
+    };
+    
+    // Build request
+    let mut req_builder = match method.as_str() {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        "HEAD" => client.head(&url),
+        _ => client.get(&url),
+    };
+    
+    // Add headers
+    for (key, value) in opts.headers {
+        req_builder = req_builder.header(&key, &value);
+    }
+    
+    // Add body if present
+    if let Some(body) = opts.body {
+        req_builder = req_builder.body(body);
+    }
+    
+    // Execute request
+    let response = match req_builder.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return FetchResponse {
+                success: false,
+                status: 0,
+                headers: std::collections::HashMap::new(),
+                body: String::new(),
+                ok: false,
+                error: Some(format!("HTTP request failed: {}", e)),
+            };
+        }
+    };
+    
+    let status = response.status().as_u16();
+    let ok = response.status().is_success();
+    
+    // Extract headers
+    let mut headers = std::collections::HashMap::new();
+    for (key, value) in response.headers() {
+        if let Ok(v) = value.to_str() {
+            headers.insert(key.to_string(), v.to_string());
+        }
+    }
+    
+    // Read body
+    let body = match response.text().await {
+        Ok(b) => b,
+        Err(e) => {
+            return FetchResponse {
+                success: false,
+                status,
+                headers,
+                body: String::new(),
+                ok: false,
+                error: Some(format!("Failed to read response body: {}", e)),
+            };
+        }
+    };
+    
+    debug!("[Plugin] Fetch completed: {} (status: {})", url, status);
+    
+    FetchResponse {
+        success: true,
+        status,
+        headers,
+        body,
+        ok,
+        error: None,
     }
 }
 

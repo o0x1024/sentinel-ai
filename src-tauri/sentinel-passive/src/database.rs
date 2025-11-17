@@ -153,6 +153,46 @@ impl PassiveDatabaseService {
         .await
         .map_err(|e| PassiveError::Database(format!("Failed to create proxy_requests table: {}", e)))?;
 
+        // 插件注册表 (用于存储AI生成的插件和手动创建的插件)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS plugin_registry (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                author TEXT,
+                main_category TEXT NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT,
+                default_severity TEXT NOT NULL,
+                tags TEXT,
+                enabled BOOLEAN NOT NULL DEFAULT 0,
+                plugin_code TEXT,
+                quality_score REAL,
+                validation_status TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| PassiveError::Database(format!("Failed to create plugin_registry table: {}", e)))?;
+
+        // 配置表 (用于存储代理配置)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS proxy_config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| PassiveError::Database(format!("Failed to create proxy_config table: {}", e)))?;
+
         // 创建索引
         let indices = vec![
             "CREATE INDEX IF NOT EXISTS idx_passive_vulns_plugin ON passive_vulnerabilities(plugin_id)",
@@ -165,6 +205,9 @@ impl PassiveDatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_host ON proxy_requests(host)",
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_method ON proxy_requests(method)",
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)",
+            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_category ON plugin_registry(main_category, category)",
+            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_enabled ON plugin_registry(enabled)",
+            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_created ON plugin_registry(created_at DESC)",
         ];
 
         for index_sql in indices {
@@ -531,6 +574,17 @@ impl PassiveDatabaseService {
         plugin: &PluginMetadata, 
         plugin_code: &str
     ) -> Result<()> {
+        self.register_plugin_with_code_and_quality(plugin, plugin_code, None, None).await
+    }
+
+    /// Register plugin with code and optional quality score
+    pub async fn register_plugin_with_code_and_quality(
+        &self, 
+        plugin: &PluginMetadata, 
+        plugin_code: &str,
+        quality_score: Option<f64>,
+        validation_status: Option<&str>
+    ) -> Result<()> {
         let tags_json = serde_json::to_string(&plugin.tags).unwrap_or_default();
         
         // 从category推断main_category
@@ -540,8 +594,8 @@ impl PassiveDatabaseService {
             r#"
             INSERT OR REPLACE INTO plugin_registry (
                 id, name, version, author, main_category, category, description, default_severity,
-                tags, enabled, plugin_code
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                tags, enabled, plugin_code, quality_score, validation_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
             "#,
         )
         .bind(&plugin.id)
@@ -554,6 +608,8 @@ impl PassiveDatabaseService {
         .bind(format!("{}", plugin.default_severity))
         .bind(&tags_json)
         .bind(plugin_code)
+        .bind(quality_score)
+        .bind(validation_status)
         .execute(&self.pool)
         .await
         .map_err(|e| PassiveError::Database(format!("Failed to register plugin with code: {}", e)))?;
@@ -637,6 +693,62 @@ impl PassiveDatabaseService {
         } else {
             Ok(None)
         }
+    }
+
+    /// 查询指定类别的高质量插件（用于复用检查）
+    pub async fn find_reusable_plugins_by_category(
+        &self,
+        category: &str,
+        min_quality_score: f64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let rows: Vec<(
+            String, String, String, Option<String>, String, String, Option<String>,
+            String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
+        )> = sqlx::query_as(
+            r#"
+            SELECT id, name, version, author, main_category, category, description,
+                   default_severity, tags, enabled, plugin_code, quality_score, validation_status
+            FROM plugin_registry
+            WHERE category = ? 
+              AND quality_score >= ?
+              AND validation_status IN ('Approved', 'Passed')
+              AND main_category = 'passive'
+            ORDER BY quality_score DESC, updated_at DESC
+            LIMIT 5
+            "#,
+        )
+        .bind(category)
+        .bind(min_quality_score)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| PassiveError::Database(format!("Failed to query reusable plugins: {}", e)))?;
+
+        let mut plugins = Vec::new();
+        for (id, name, version, author, main_category, category, description,
+             default_severity, tags, enabled, plugin_code, quality_score, validation_status) in rows
+        {
+            let tags_array: Vec<String> = tags
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or_default();
+
+            plugins.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "version": version,
+                "author": author,
+                "main_category": main_category,
+                "category": category,
+                "description": description,
+                "default_severity": default_severity,
+                "tags": tags_array,
+                "enabled": enabled,
+                "plugin_code": plugin_code,
+                "quality_score": quality_score,
+                "validation_status": validation_status
+            }));
+        }
+
+        Ok(plugins)
     }
 
     /// 更新插件启用状态
@@ -757,6 +869,19 @@ impl PassiveDatabaseService {
         Ok(records)
     }
 
+    /// 按主机名列出代理请求（便捷方法）
+    pub async fn list_proxy_requests_by_host(
+        &self,
+        host: &str,
+        limit: i64,
+    ) -> Result<Vec<ProxyRequestRecord>> {
+        self.list_proxy_requests(ProxyRequestFilters {
+            host: Some(host.to_string()),
+            limit: Some(limit),
+            ..Default::default()
+        }).await
+    }
+
     /// 统计代理请求数量
     pub async fn count_proxy_requests(&self, filters: ProxyRequestFilters) -> Result<i64> {
         let mut query = String::from(
@@ -832,6 +957,52 @@ impl PassiveDatabaseService {
 
         info!("Deleted {} old proxy request records", result.rows_affected());
         Ok(result.rows_affected())
+    }
+
+    /// 保存配置项
+    pub async fn save_config(&self, key: &str, value: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO proxy_config (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| PassiveError::Database(format!("Failed to save config: {}", e)))?;
+
+        info!("Saved config: {} = {}", key, value);
+        Ok(())
+    }
+
+    /// 加载配置项
+    pub async fn load_config(&self, key: &str) -> Result<Option<String>> {
+        let result: Option<(String,)> = sqlx::query_as(
+            "SELECT value FROM proxy_config WHERE key = ?"
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| PassiveError::Database(format!("Failed to load config: {}", e)))?;
+
+        Ok(result.map(|(value,)| value))
+    }
+
+    /// 删除配置项
+    pub async fn delete_config(&self, key: &str) -> Result<()> {
+        sqlx::query("DELETE FROM proxy_config WHERE key = ?")
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| PassiveError::Database(format!("Failed to delete config: {}", e)))?;
+
+        info!("Deleted config: {}", key);
+        Ok(())
     }
 }
 

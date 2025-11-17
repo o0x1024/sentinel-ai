@@ -140,6 +140,19 @@ impl ReactExecutor {
                 .await
                 .context("LLM call failed during Thought phase")?;
 
+            // ✅ LLM调用后再次检查取消状态
+            if self.cancellation_token.is_cancelled() {
+                tracing::info!("❌ ReAct: Execution cancelled after LLM call (iteration {})", iteration);
+                let mut trace = self.trace.write().await;
+                trace.complete(ReactStatus::Cancelled);
+                trace.metrics.total_iterations = iteration;
+                trace.metrics.total_duration_ms = start_time
+                    .elapsed()
+                    .unwrap_or(Duration::from_secs(0))
+                    .as_millis() as u64;
+                return Ok(trace.clone());
+            }
+
             let thought_duration = thought_start
                 .elapsed()
                 .unwrap_or(Duration::from_secs(0))
@@ -310,6 +323,19 @@ impl ReactExecutor {
 
                     // 执行工具
                     let observation_result = tool_executor(action.clone()).await;
+
+                    // ✅ 工具执行后检查取消状态
+                    if self.cancellation_token.is_cancelled() {
+                        tracing::info!("❌ ReAct: Execution cancelled after tool execution (iteration {})", iteration);
+                        let mut trace = self.trace.write().await;
+                        trace.complete(ReactStatus::Cancelled);
+                        trace.metrics.total_iterations = iteration;
+                        trace.metrics.total_duration_ms = start_time
+                            .elapsed()
+                            .unwrap_or(Duration::from_secs(0))
+                            .as_millis() as u64;
+                        return Ok(trace.clone());
+                    }
 
                     let action_duration = action_start
                         .elapsed()

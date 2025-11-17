@@ -49,6 +49,32 @@
         <div v-if="selectedCategory === 'Application'">
           <h3 class="card-title text-sm">应用级提示模板</h3>
           <div class="text-xs opacity-70 mt-1">管理应用特定的提示模板</div>
+          <div class="mt-2 flex flex-col gap-1">
+            <button class="btn btn-xs btn-outline" @click="createPluginGenerationTemplate">
+              创建插件生成模板(被动扫描)
+            </button>
+            <button class="btn btn-xs btn-outline" @click="createAgentPluginGenerationTemplate">
+              创建插件生成模板(Agent工具)
+            </button>
+            <button class="btn btn-xs btn-outline" @click="createPluginFixTemplate">
+              创建插件修复模板(被动扫描)
+            </button>
+            <button class="btn btn-xs btn-outline" @click="createAgentPluginFixTemplate">
+              创建插件修复模板(Agent工具)
+            </button>
+            <button class="btn btn-xs btn-outline" @click="createPluginInterfaceTemplate">
+              创建插件接口模板(被动扫描)
+            </button>
+            <button class="btn btn-xs btn-outline" @click="createAgentPluginInterfaceTemplate">
+              创建插件接口模板(Agent工具)
+            </button>
+            <button class="btn btn-xs btn-outline" @click="createPluginOutputFormatTemplate">
+              创建插件输出格式模板(被动扫描)
+            </button>
+            <button class="btn btn-xs btn-outline" @click="createAgentPluginOutputFormatTemplate">
+              创建插件输出格式模板(Agent工具)
+            </button>
+          </div>
         </div>
         
         <!-- 用户自定义 - 仅在用户自定义分类时显示 -->
@@ -108,10 +134,22 @@
           >
             <div class="w-full flex items-center gap-2">
               <div class="truncate flex-1 text-left">
-                <div class="font-medium text-xs truncate">{{ t.name }}</div>
-                <div class="text-[10px] opacity-70 truncate">#{{ t.id }} · {{ t.architecture }} / {{ t.stage }}</div>
+                <div class="font-medium text-xs truncate flex items-center gap-1">
+                  <span v-if="t.is_active" class="inline-block w-2 h-2 rounded-full bg-success" title="已激活"></span>
+                  {{ t.name }}
+                </div>
+                <div class="text-[10px] opacity-70 truncate">
+                  #{{ t.id }} · 
+                  <span v-if="t.category === 'Application' || t.category === 'System' || t.category === 'UserDefined'">
+                    {{ t.template_type || 'Custom' }}
+                  </span>
+                  <span v-else>
+                    {{ t.architecture }} / {{ t.stage }}
+                  </span>
+                </div>
               </div>
-              <span v-if="t.id === activePromptId" class="badge badge-success badge-xs">{{ $t('promptMgmt.activeBadge') }}</span>
+              <span v-if="t.is_active" class="badge badge-success badge-xs">激活</span>
+              <span v-else-if="t.id === activePromptId" class="badge badge-success badge-xs">{{ $t('promptMgmt.activeBadge') }}</span>
               <span v-else-if="t.is_default" class="badge badge-outline badge-xs">{{ $t('promptMgmt.default') }}</span>
             </div>
           </button>
@@ -161,6 +199,14 @@
                   <option value="Replanner">重规划器</option>
                   <option value="Evaluator">评估器</option>
                   <option value="ReportGenerator">报告生成器</option>
+                  <option value="PluginGeneration">插件生成(被动扫描)</option>
+                  <option value="AgentPluginGeneration">插件生成(Agent工具)</option>
+                  <option value="PluginFix">插件修复(被动扫描)</option>
+                  <option value="AgentPluginFix">插件修复(Agent工具)</option>
+                  <option value="PluginVulnSpecific">插件漏洞专用</option>
+                  <option value="PluginInterface">插件接口(被动扫描)</option>
+                  <option value="PluginOutputFormat">插件输出格式(被动扫描)</option>
+                  <option value="AgentPluginOutputFormat">插件输出格式(Agent工具)</option>
                   <option value="Custom">自定义</option>
                 </select>
               </div>
@@ -174,6 +220,10 @@
               <label class="cursor-pointer label">
                 <input v-model="editingTemplate.is_system" type="checkbox" class="checkbox checkbox-xs" />
                 <span class="label-text text-xs ml-2">系统级模板</span>
+              </label>
+              <label class="cursor-pointer label">
+                <input v-model="editingTemplate.is_active" type="checkbox" class="checkbox checkbox-xs checkbox-success" />
+                <span class="label-text text-xs ml-2">激活此模板</span>
               </label>
             </div>
             
@@ -284,7 +334,7 @@ import { dialog } from '@/composables/useDialog'
 type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct'
 type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Evaluation' | 'Replan'
 type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
-type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom'
+type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'PluginInterface' | 'PluginOutputFormat' | 'AgentPluginOutputFormat'
 
 interface PromptTemplate {
   id?: number
@@ -475,10 +525,16 @@ const allTemplatesForGroupByStage = computed<Record<string, PromptTemplate[]>>((
 // 从后端拿到所有模板后缓存一份，便于分组映射下拉使用
 const allTemplates = ref<PromptTemplate[]>([])
 
-function select(architecture: ArchitectureType, stage: StageType) {
+async function select(architecture: ArchitectureType, stage: StageType) {
+  console.log('[select] Selecting:', { architecture, stage })
   selected.value = { architecture, stage }
   selectedGroupId.value = null
-  refresh()
+  console.log('[select] Calling refresh...')
+  await refresh()
+  console.log('[select] Refresh complete, calling loadDefaultStagePrompt...')
+  // 切换阶段后，自动加载并显示默认分组的默认提示词
+  await loadDefaultStagePrompt()
+  console.log('[select] loadDefaultStagePrompt complete')
 }
 
 async function onSelectWithGuard(architecture: ArchitectureType, stage: StageType) {
@@ -556,6 +612,64 @@ async function loadActiveId() {
   }
 }
 
+// 加载默认分组中当前阶段的默认提示词并显示在编辑器中
+async function loadDefaultStagePrompt() {
+  try {
+    console.log('[loadDefaultStagePrompt] Starting...', {
+      architecture: selected.value.architecture,
+      stage: selected.value.stage,
+      category: selectedCategory.value
+    })
+    
+    // 优先使用默认分组，如果没有默认分组则使用第一个分组
+    let defId = defaultGroupId.value
+    console.log('[loadDefaultStagePrompt] Default group ID:', defId)
+    console.log('[loadDefaultStagePrompt] All groups:', promptGroups.value)
+    
+    if (!defId && promptGroups.value.length > 0) {
+      defId = promptGroups.value[0].id || null
+      console.log('[loadDefaultStagePrompt] No default group, using first group:', defId)
+    }
+    
+    if (!defId) {
+      console.log('[loadDefaultStagePrompt] No group found')
+      editingTemplate.value = null
+      return
+    }
+    
+    // 加载默认分组的阶段映射
+    await loadGroupItems(defId)
+    console.log('[loadDefaultStagePrompt] Group items loaded:', groupItems.value)
+    
+    // 获取当前阶段对应的模板ID
+    const templateId = groupItems.value[selected.value.stage]
+    console.log('[loadDefaultStagePrompt] Template ID for stage:', templateId)
+    
+    if (!templateId) {
+      console.log('[loadDefaultStagePrompt] No template ID found for stage:', selected.value.stage)
+      editingTemplate.value = null
+      return
+    }
+    
+    // 从缓存的所有模板中查找对应的模板
+    console.log('[loadDefaultStagePrompt] All templates count:', allTemplates.value.length)
+    console.log('[loadDefaultStagePrompt] Looking for template with ID:', templateId)
+    const template = allTemplates.value.find(t => t.id === templateId)
+    console.log('[loadDefaultStagePrompt] Found template:', template)
+    
+    if (template) {
+      console.log('[loadDefaultStagePrompt] Loading template:', template.name)
+      loadTemplate(template)
+    } else {
+      console.log('[loadDefaultStagePrompt] Template not found in cache')
+      editingTemplate.value = null
+    }
+  } catch (error) {
+    console.error('[loadDefaultStagePrompt] Error:', error)
+    editingTemplate.value = null
+  }
+}
+
 function newTemplate() {
   const baseTemplate = {
     name: selectedCategory.value === 'LlmArchitecture' 
@@ -624,16 +738,25 @@ async function saveTemplate() {
     toast.error(t('promptMgmt.requiredFields') as unknown as string)
     return
   }
+  
+  // 保存模板（后端会自动处理同类型模板的激活互斥逻辑）
   if (tpl.id) {
     await invoke('update_prompt_template_api', { id: tpl.id, template: tpl })
   } else {
     const id = await invoke<number>('create_prompt_template_api', { template: tpl })
     editingTemplate.value.id = id
   }
+  
   await refresh()
   originalTemplateHash.value = calcTemplateHash(editingTemplate.value)
   isDirty.value = false
-  toast.success(t('promptMgmt.savedToast') as unknown as string)
+  
+  // 如果激活了模板，提示用户同类型的其他模板已被自动取消激活
+  if (tpl.is_active && tpl.template_type) {
+    toast.success('模板已保存并激活，同类型的其他模板已自动取消激活')
+  } else {
+    toast.success(t('promptMgmt.savedToast') as unknown as string)
+  }
 }
 
 async function removeTemplate() {
@@ -658,8 +781,12 @@ async function activateTemplate() {
   toast.success(t('promptMgmt.activatedToast') as unknown as string)
 }
 
-onMounted(() => {
-  refresh()
+onMounted(async () => {
+  await refresh()
+  // 初始加载时也显示默认分组的默认提示词
+  if (selectedCategory.value === 'LlmArchitecture') {
+    await loadDefaultStagePrompt()
+  }
   const onKey = (e: KeyboardEvent) => {
     const isMac = navigator.platform.toLowerCase().includes('mac')
     const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey
@@ -740,13 +867,17 @@ const selectedGroup = computed(() => promptGroups.value.find(g => g.id === selec
 
 async function loadGroups() {
   try {
+    console.log('[loadGroups] Loading groups for architecture:', selected.value.architecture)
     const list = await invoke<PromptGroup[]>('list_prompt_groups_api', { architecture: selected.value.architecture })
+    console.log('[loadGroups] Loaded groups:', list)
     promptGroups.value = list
     if (!selectedGroupId.value && list.length) {
       selectedGroupId.value = (list.find(g => g.is_default)?.id ?? list[0].id) || null
+      console.log('[loadGroups] Selected group ID:', selectedGroupId.value)
       if (selectedGroupId.value) await loadGroupItems(selectedGroupId.value)
     }
   } catch (e) {
+    console.error('[loadGroups] Error loading groups:', e)
     promptGroups.value = []
   }
 }
@@ -893,6 +1024,269 @@ function createIntentClassifierTemplate() {
     version: '1.0.0',
   }
   isDirty.value = false // 这是新创建的模板，不算脏数据
+}
+
+// 创建插件生成模板(被动扫描)
+function createPluginGenerationTemplate() {
+  const defaultContent = `# Security Plugin Generation Task
+
+You are an expert security researcher and TypeScript developer. Your task is to generate a high-quality security testing plugin for a passive scanning system.
+
+The plugin should:
+1. Be written in TypeScript
+2. Detect specific vulnerability types based on HTTP traffic analysis
+3. Follow the provided plugin interface
+4. Include proper error handling and validation
+5. Emit findings using the \`Deno.core.ops.op_emit_finding()\` API
+
+**Variables**: 
+- {vuln_type}: Vulnerability type to detect
+- {analysis}: Website analysis data
+- {endpoints}: Target endpoints
+- {requirements}: Additional requirements
+
+Please generate a complete TypeScript plugin that follows the standard plugin interface.`
+
+  editingTemplate.value = {
+    name: `被动扫描插件生成模板-${Date.now()}`,
+    description: '用于生成被动扫描插件的AI提示模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'PluginGeneration' as TemplateType,
+    is_system: true,
+    priority: 90,
+    tags: ['plugin', 'generation', 'security', 'passive'],
+    variables: ['vuln_type', 'analysis', 'endpoints', 'requirements'],
+    version: '1.0.0',
+  }
+  isDirty.value = false
+}
+
+// 创建Agent插件生成模板
+function createAgentPluginGenerationTemplate() {
+  const defaultContent = `# Agent Tool Plugin Generation Task
+
+You are an expert security researcher and TypeScript developer. Your task is to generate a high-quality Agent tool plugin for an AI-powered security testing system.
+
+The plugin should:
+1. Be written in TypeScript
+2. Implement specific security testing or analysis functionality
+3. Follow the Agent tool plugin interface
+4. Include proper error handling and validation
+5. Return structured results using the ToolOutput interface
+
+**Variables**: 
+- {tool_type}: Type of tool to implement
+- {requirements}: Specific requirements
+- {options}: Additional options
+
+Please generate a complete TypeScript Agent tool plugin that follows the standard interface.`
+
+  editingTemplate.value = {
+    name: `Agent插件生成模板-${Date.now()}`,
+    description: '用于生成Agent工具插件的AI提示模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'AgentPluginGeneration' as TemplateType,
+    is_system: true,
+    priority: 90,
+    tags: ['agent', 'plugin', 'generation', 'tool'],
+    variables: ['tool_type', 'requirements', 'options'],
+    version: '1.0.0',
+  }
+  isDirty.value = false
+}
+
+// 创建插件修复模板
+function createPluginFixTemplate() {
+  const defaultContent = `# Plugin Code Fix Task
+
+You are an expert TypeScript developer and security researcher. A security plugin was generated but failed execution testing. Your task is to fix the code so it executes correctly.
+
+**Variables**:
+- {original_code}: The original plugin code
+- {error_message}: Error message from execution
+- {error_details}: Detailed error information
+- {vuln_type}: Vulnerability type
+- {attempt}: Fix attempt number
+
+Please analyze the error and provide a fixed version of the plugin code.`
+
+  editingTemplate.value = {
+    name: `插件修复模板-${Date.now()}`,
+    description: '用于修复失败插件代码的AI提示模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'PluginFix' as TemplateType,
+    is_system: true,
+    priority: 85,
+    tags: ['plugin', 'fix', 'repair'],
+    variables: ['original_code', 'error_message', 'error_details', 'vuln_type', 'attempt'],
+    version: '1.0.0',
+  }
+  isDirty.value = false
+}
+
+// 创建插件接口模板(被动扫描)
+function createPluginInterfaceTemplate() {
+  const defaultContent = `## Plugin Interface (Required Structure)
+
+Your generated plugin MUST implement the following TypeScript interface:
+
+**Variables**: None (this is a static interface definition)
+
+Please ensure all generated plugins follow this exact interface structure.`
+
+  editingTemplate.value = {
+    name: `被动扫描插件接口模板-${Date.now()}`,
+    description: '定义被动扫描插件接口和API的模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'PluginInterface' as TemplateType,
+    is_system: true,
+    priority: 80,
+    tags: ['plugin', 'interface', 'api', 'passive'],
+    variables: [],
+    version: '1.0.0',
+  }
+  isDirty.value = false
+}
+
+// 创建插件输出格式模板(被动扫描)
+function createPluginOutputFormatTemplate() {
+  const defaultContent = `## Output Format
+
+Return ONLY the TypeScript plugin code wrapped in a markdown code block.
+
+**Variables**: None (this is a static format requirement)
+
+Ensure the output follows the exact format specified.`
+
+  editingTemplate.value = {
+    name: `被动扫描插件输出格式模板-${Date.now()}`,
+    description: '定义被动扫描插件输出格式要求的模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'PluginOutputFormat' as TemplateType,
+    is_system: true,
+    priority: 75,
+    tags: ['plugin', 'output', 'format', 'passive'],
+    variables: [],
+    version: '1.0.0',
+  }
+  isDirty.value = false
+}
+
+// 创建Agent插件接口模板
+function createAgentPluginInterfaceTemplate() {
+  const defaultContent = `## Agent Tool Plugin Interface (Required Structure)
+
+Your generated Agent tool plugin MUST implement the following TypeScript interface:
+
+**Variables**: None (this is a static interface definition)
+
+Please ensure all generated Agent tool plugins follow this exact interface structure.`
+
+  editingTemplate.value = {
+    name: `Agent工具插件接口模板-${Date.now()}`,
+    description: '定义Agent工具插件接口和API的模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'PluginInterface' as TemplateType,
+    is_system: true,
+    priority: 80,
+    tags: ['agent', 'plugin', 'interface', 'api'],
+    variables: [],
+    version: '1.0.0',
+  }
+  isDirty.value = false
+}
+
+// 创建Agent插件修复模板
+function createAgentPluginFixTemplate() {
+  const defaultContent = `# Agent Tool Plugin Code Fix Task
+
+You are an expert TypeScript developer. An Agent tool plugin failed execution. Your task is to fix the code.
+
+**Variables**:
+- {original_code}: The original plugin code
+- {error_message}: Error message from execution
+- {error_details}: Detailed error information
+- {tool_type}: Tool type
+- {attempt}: Fix attempt number
+
+Please analyze the error and provide a fixed version of the plugin code.`
+
+  editingTemplate.value = {
+    name: `Agent插件修复模板-${Date.now()}`,
+    description: '用于修复失败Agent工具插件代码的AI提示模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'AgentPluginFix' as TemplateType,
+    is_system: true,
+    priority: 85,
+    tags: ['agent', 'plugin', 'fix', 'repair'],
+    variables: ['original_code', 'error_message', 'error_details', 'tool_type', 'attempt'],
+    version: '1.0.0',
+  }
+  isDirty.value = false
+}
+
+// 创建Agent插件输出格式模板
+function createAgentPluginOutputFormatTemplate() {
+  const defaultContent = `## Agent Tool Plugin Output Format
+
+Return ONLY the TypeScript plugin code wrapped in a markdown code block.
+
+**Variables**: None (this is a static format requirement)
+
+Ensure the output follows the exact Agent tool plugin format.`
+
+  editingTemplate.value = {
+    name: `Agent插件输出格式模板-${Date.now()}`,
+    description: '定义Agent工具插件输出格式要求的模板',
+    architecture: 'ReWOO' as ArchitectureType,
+    stage: 'Planner' as StageType,
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'AgentPluginOutputFormat' as TemplateType,
+    is_system: true,
+    priority: 75,
+    tags: ['agent', 'plugin', 'output', 'format'],
+    variables: [],
+    version: '1.0.0',
+  }
+  isDirty.value = false
 }
 
 // ===== Tags 和 Variables 管理方法 =====

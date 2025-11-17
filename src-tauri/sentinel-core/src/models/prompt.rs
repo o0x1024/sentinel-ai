@@ -42,6 +42,15 @@ pub enum TemplateType {
     ReportGenerator,
     Domain,
     Custom,
+    // Plugin generation templates
+    PluginGeneration,        // Passive scanning plugin generation
+    AgentPluginGeneration,   // Agent tool plugin generation
+    PluginFix,               // Passive plugin fix
+    AgentPluginFix,          // Agent plugin fix
+    PluginVulnSpecific,
+    PluginInterface,         // Passive plugin interface
+    PluginOutputFormat,      // Passive plugin output format
+    AgentPluginOutputFormat, // Agent plugin output format
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +118,37 @@ pub struct PromptGroupItem {
     pub template_id: i64,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_template_type_serde() {
+        // Test all new plugin-related template types
+        let test_cases = vec![
+            ("PluginGeneration", TemplateType::PluginGeneration),
+            ("AgentPluginGeneration", TemplateType::AgentPluginGeneration),
+            ("PluginFix", TemplateType::PluginFix),
+            ("AgentPluginFix", TemplateType::AgentPluginFix),
+            ("PluginVulnSpecific", TemplateType::PluginVulnSpecific),
+            ("PluginInterface", TemplateType::PluginInterface),
+            ("PluginOutputFormat", TemplateType::PluginOutputFormat),
+            ("AgentPluginOutputFormat", TemplateType::AgentPluginOutputFormat),
+        ];
+
+        for (json_str, expected) in test_cases {
+            let json = format!("\"{}\"", json_str);
+            let deserialized: TemplateType = serde_json::from_str(&json)
+                .expect(&format!("Failed to deserialize {}", json_str));
+            assert_eq!(deserialized, expected, "Mismatch for {}", json_str);
+            
+            let serialized = serde_json::to_string(&expected)
+                .expect(&format!("Failed to serialize {:?}", expected));
+            assert_eq!(serialized, json, "Serialization mismatch for {:?}", expected);
+        }
+    }
 }
 
 

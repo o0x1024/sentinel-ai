@@ -37,6 +37,8 @@
                 v-for="(listener, index) in proxyListeners" 
                 :key="index"
                 :class="{ 'bg-base-200': selectedListeners.includes(index) }"
+                @dblclick="editListenerByIndex(index)"
+                class="cursor-pointer hover:bg-base-300 transition-colors"
               >
                 <td>
                   <input 
@@ -901,25 +903,33 @@
       </div>
     </div>
 
-    <!-- Save Button -->
+    <!-- Reset Button -->
     <div class="flex justify-end gap-2">
       <button class="btn btn-outline" @click="resetToDefaults">
         <i class="fas fa-undo mr-2"></i>
         重置为默认
       </button>
-      <button class="btn btn-primary" @click="saveConfiguration">
-        <i class="fas fa-save mr-2"></i>
-        保存配置
-      </button>
+      <div v-if="isSaving" class="flex items-center gap-2 text-sm text-base-content/70">
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>正在保存...</span>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, inject, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
+
+// 注入父组件的刷新触发器
+const refreshTrigger = inject<any>('refreshTrigger', ref(0))
+
+// 保存状态
+const isSaving = ref(false)
+const saveTimeout = ref<NodeJS.Timeout | null>(null)
+const isInitialLoad = ref(true) // 标记是否是初始加载，避免初始加载时触发保存
 
 // Proxy configuration
 const proxyConfig = ref({
@@ -1182,13 +1192,7 @@ const addListener = () => {
   dialog.toast.success('已添加新的监听器')
 }
 
-const editListener = () => {
-  if (selectedListeners.value.length !== 1) {
-    dialog.toast.warning('请选择一个监听器进行编辑')
-    return
-  }
-  
-  const index = selectedListeners.value[0]
+const editListenerByIndex = (index: number) => {
   const listener = proxyListeners.value[index]
   
   // 解析接口字符串
@@ -1209,6 +1213,16 @@ const editListener = () => {
   
   // 打开对话框
   editDialogRef.value?.showModal()
+}
+
+const editListener = () => {
+  if (selectedListeners.value.length !== 1) {
+    dialog.toast.warning('请选择一个监听器进行编辑')
+    return
+  }
+  
+  const index = selectedListeners.value[0]
+  editListenerByIndex(index)
 }
 
 const saveEdit = () => {
@@ -1237,6 +1251,12 @@ const saveEdit = () => {
   listener.invisible = editingListener.value.invisible
   listener.redirect = editingListener.value.redirect
   
+  // 同步更新 proxyConfig 中的 start_port（如果编辑的是第一个监听器）
+  if (editingIndex.value === 0) {
+    proxyConfig.value.start_port = editingListener.value.port
+    console.log('[ProxyConfiguration] Updated start_port to:', editingListener.value.port)
+  }
+  
   // 如果监听器正在运行，需要重启以应用新配置
   if (wasRunning) {
     dialog.toast.warning('监听器配置已更新，请重启以应用新配置')
@@ -1247,6 +1267,9 @@ const saveEdit = () => {
   editDialogRef.value?.close()
   dialog.toast.success('监听器配置已保存')
   editingIndex.value = -1
+  
+  // 触发自动保存
+  debouncedSave()
 }
 
 const cancelEdit = () => {
@@ -1287,17 +1310,37 @@ const removeListener = async () => {
 // 更新请求体大小（MB -> 字节）
 const updateRequestBodySize = () => {
   proxyConfig.value.max_request_body_size = requestBodySizeMB.value * 1024 * 1024
+  debouncedSave()
 }
 
 // 更新响应体大小（MB -> 字节）
 const updateResponseBodySize = () => {
   proxyConfig.value.max_response_body_size = responseBodySizeMB.value * 1024 * 1024
+  debouncedSave()
+}
+
+// 防抖保存函数
+const debouncedSave = () => {
+  // 如果是初始加载阶段，不触发保存
+  if (isInitialLoad.value) {
+    return
+  }
+  
+  // 清除之前的定时器
+  if (saveTimeout.value) {
+    clearTimeout(saveTimeout.value)
+  }
+  
+  // 设置新的定时器（1秒后保存）
+  saveTimeout.value = setTimeout(() => {
+    saveConfiguration()
+  }, 1000)
 }
 
 const saveConfiguration = async () => {
   try {
-    // 更新代理监听器配置
-    proxyListeners.value[0].interface = `127.0.0.1:${proxyConfig.value.start_port}`
+    isSaving.value = true
+    console.log('[ProxyConfiguration] Saving configuration...', proxyConfig.value)
     
     // 保存配置到后端
     const response = await invoke<any>('save_proxy_config', { 
@@ -1305,13 +1348,16 @@ const saveConfiguration = async () => {
     })
     
     if (response.success) {
-      dialog.toast.success('配置已保存，重启代理后生效')
+      console.log('[ProxyConfiguration] Configuration saved successfully')
+      // 静默保存，不显示提示
     } else {
       throw new Error(response.error || '保存失败')
     }
   } catch (error: any) {
-    console.error('Failed to save configuration:', error)
+    console.error('[ProxyConfiguration] Failed to save configuration:', error)
     dialog.toast.error(`保存配置失败: ${error}`)
+  } finally {
+    isSaving.value = false
   }
 }
 
@@ -1363,9 +1409,10 @@ async function regenerateCACert() {
   }
 }
 
-// 加载保存的配置
-onMounted(async () => {
+// 加载配置的通用函数
+const loadConfig = async () => {
   try {
+    console.log('[ProxyConfiguration] Loading config...')
     // 加载代理配置
     const configResponse = await invoke<any>('get_proxy_config')
     if (configResponse.success && configResponse.data) {
@@ -1394,22 +1441,33 @@ onMounted(async () => {
           proxyListeners.value[0].interface = `127.0.0.1:${actualPort}`
           proxyListeners.value[0].running = true
         }
-        console.log(`Proxy is running on port ${actualPort}`)
+        console.log(`[ProxyConfiguration] Proxy is running on port ${actualPort}`)
       } else {
         // 代理未运行，确保所有监听器的运行状态为 false
         proxyListeners.value.forEach(listener => {
           listener.running = false
         })
-        console.log('Proxy is not running')
+        console.log('[ProxyConfiguration] Proxy is not running')
       }
     }
   } catch (error) {
-    console.error('Failed to load proxy config or status:', error)
+    console.error('[ProxyConfiguration] Failed to load config or status:', error)
     // 确保在出错时所有监听器的运行状态为 false
     proxyListeners.value.forEach(listener => {
       listener.running = false
     })
   }
+}
+
+// 加载保存的配置
+onMounted(async () => {
+  await loadConfig()
+  
+  // 初始加载完成后，延迟启用自动保存
+  setTimeout(() => {
+    isInitialLoad.value = false
+    console.log('[ProxyConfiguration] Auto-save enabled')
+  }, 500)
   
   // 监听代理状态变化事件
   const unlisten = await listen('proxy:status', (event: any) => {
@@ -1438,8 +1496,30 @@ onMounted(async () => {
   // 保存取消监听函数，用于组件卸载时清理
   onUnmounted(() => {
     unlisten()
+    // 清理定时器
+    if (saveTimeout.value) {
+      clearTimeout(saveTimeout.value)
+    }
   })
 })
+
+// 监听父组件的刷新触发器
+watch(refreshTrigger, async () => {
+  console.log('[ProxyConfiguration] Refresh triggered by parent')
+  // 刷新时暂时禁用自动保存
+  isInitialLoad.value = true
+  await loadConfig()
+  // 延迟重新启用自动保存
+  setTimeout(() => {
+    isInitialLoad.value = false
+  }, 500)
+})
+
+// 监听 proxyConfig 的变化，自动保存
+watch(proxyConfig, () => {
+  console.log('[ProxyConfiguration] Config changed, triggering auto-save')
+  debouncedSave()
+}, { deep: true })
 </script>
 
 <style scoped>

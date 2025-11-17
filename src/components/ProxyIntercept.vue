@@ -8,7 +8,7 @@
             <i class="fas fa-shield-alt mr-2"></i>
             Intercept
           </h2>
-          <div class="badge badge-lg" :class="interceptEnabled ? 'badge-success' : 'badge-error'">
+          <div class="badge badge-sm" :class="interceptEnabled ? 'badge-success' : 'badge-error'">
             <i :class="['fas fa-circle mr-2', interceptEnabled ? 'text-success-content' : 'text-error-content']"></i>
             {{ interceptEnabled ? 'Intercept is on' : 'Intercept is off' }}
           </div>
@@ -188,10 +188,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
+
+// 注入父组件的刷新触发器
+const refreshTrigger = inject<any>('refreshTrigger', ref(0));
 
 // 类型定义
 interface ProxyStats {
@@ -265,14 +268,27 @@ let unlistenInterceptRequest: (() => void) | null = null;
 
 // 方法
 async function toggleIntercept() {
-  interceptEnabled.value = !interceptEnabled.value;
+  const newState = !interceptEnabled.value;
+  
+  // TODO: 后端需要实现 set_intercept_enabled 命令来真正启用/禁用拦截
+  // 目前只在前端切换状态，实际的拦截功能需要后端支持
+  
   try {
-    await invoke('set_intercept_enabled', { enabled: interceptEnabled.value });
-    dialog.toast.success(interceptEnabled.value ? '拦截已启用' : '拦截已禁用');
+    // 暂时注释掉后端调用，避免命令不存在的错误
+    // await invoke('set_intercept_enabled', { enabled: newState });
+    
+    // 直接更新前端状态
+    interceptEnabled.value = newState;
+    dialog.toast.info(
+      interceptEnabled.value 
+        ? '拦截已启用（前端状态，后端功能待实现）' 
+        : '拦截已禁用（前端状态）'
+    );
+    
+    console.log('[ProxyIntercept] Intercept toggled:', interceptEnabled.value);
   } catch (error: any) {
-    console.error('Failed to toggle intercept:', error);
+    console.error('[ProxyIntercept] Failed to toggle intercept:', error);
     dialog.toast.error(`切换拦截状态失败: ${error}`);
-    interceptEnabled.value = !interceptEnabled.value;
   }
 }
 
@@ -387,6 +403,14 @@ onMounted(async () => {
 onUnmounted(() => {
   if (unlistenProxyStatus) unlistenProxyStatus();
   if (unlistenInterceptRequest) unlistenInterceptRequest();
+});
+
+// 监听父组件的刷新触发器
+watch(refreshTrigger, async () => {
+  console.log('[ProxyIntercept] Refresh triggered by parent');
+  await refreshStatus();
+  // TODO: 刷新拦截状态（需要后端实现 get_intercept_status 命令）
+  // 目前拦截状态由前端维护，不需要从后端获取
 });
 </script>
 

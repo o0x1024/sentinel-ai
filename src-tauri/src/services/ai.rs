@@ -1529,17 +1529,17 @@ impl AiService {
                     );
 
                     // 记录请求开始
-                    logger.write_to_log(
-                        "REQUEST_START",
-                        &format!("Input length: {} chars", user_input.len()),
-                    );
-                    logger.write_to_log(
-                        "REQUEST_START",
-                        &format!(
-                            "\n\n system prompt:\n {}\n\n",
-                            system_prompt.unwrap_or("You are a helpful AI assistant.")
-                        ),
-                    );
+                    // logger.write_to_log(
+                    //     "REQUEST_START",
+                    //     &format!("Input length: {} chars", user_input.len()),
+                    // );
+                    // logger.write_to_log(
+                    //     "REQUEST_START",
+                    //     &format!(
+                    //         "\n\n system prompt:\n {}\n\n",
+                    //         system_prompt.unwrap_or("You are a helpful AI assistant.")
+                    //     ),
+                    // );
                     logger.write_to_log(
                         "REQUEST_START",
                         &format!("\n\n User input:\n {}\n\n", user_input),
@@ -1743,7 +1743,6 @@ impl AiService {
 
                     let agent = {
                         let client = DynClientBuilder::new();
-                        
                         // 尝试创建 agent，提供详细错误信息（无会话分支）
                         let agent_builder = match client.agent(&provider, &model) {
                             Ok(builder) => builder,
@@ -1834,17 +1833,8 @@ impl AiService {
                     logger
                         .write_to_log("RESPONSE_COMPLETE", &format!("Response:\n {}\n\n", content));
 
-                    if is_final {
-                        self.emit_message_chunk(
-                            &exec_id,
-                            &message_id,
-                            Some(conv_id),
-                            Some(ChunkType::Meta),
-                            "",
-                            true,
-                            None,
-                        );
-                    }
+                    // 注意：无会话模式仅用于内部调用（如插件生成、规划器等），
+                    // 不应向前端发送任何 chunk，也不应发 is_final 标记。
 
                     return Ok(content);
                 }

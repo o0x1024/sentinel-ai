@@ -22,6 +22,7 @@ pub struct HttpRequestConfig {
     pub timeout_seconds: u64,
     pub follow_redirects: bool,
     pub verify_ssl: bool,
+    pub use_passive_proxy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +130,13 @@ impl HttpRequestTool {
                     required: false,
                     default_value: Some(json!(true)),
                 },
+                ParameterDefinition {
+                    name: "use_passive_proxy".to_string(),
+                    param_type: ParameterType::Boolean,
+                    description: "Route traffic through passive scanning proxy (port 4201) for vulnerability detection".to_string(),
+                    required: false,
+                    default_value: Some(json!(false)),
+                },
             ],
             schema: serde_json::json!({
                 "type": "object",
@@ -140,7 +148,8 @@ impl HttpRequestTool {
                     "body": {"type": "string"},
                     "timeout_seconds": {"type": "number", "minimum": 1, "maximum": 300},
                     "follow_redirects": {"type": "boolean"},
-                    "verify_ssl": {"type": "boolean"}
+                    "verify_ssl": {"type": "boolean"},
+                    "use_passive_proxy": {"type": "boolean"}
                 },
                 "required": ["url"]
             }),
@@ -153,6 +162,7 @@ impl HttpRequestTool {
                 "timeout_seconds".to_string(),
                 "follow_redirects".to_string(),
                 "verify_ssl".to_string(),
+                "use_passive_proxy".to_string(),
             ],
         };
 
@@ -210,14 +220,29 @@ impl HttpRequestTool {
 
     async fn execute_request(&self, config: HttpRequestConfig) -> Result<HttpRequestResult> {
         let start_time = std::time::Instant::now();
-        info!("Executing HTTP {} request to: {}", config.method, config.url);
+        
+        if config.use_passive_proxy {
+            info!("Executing HTTP {} request to: {} (via passive proxy)", config.method, config.url);
+        } else {
+            info!("Executing HTTP {} request to: {}", config.method, config.url);
+        }
+        
         let method = self.parse_method(&config.method)?;
-        let client = Client::builder()
+        
+        let mut client_builder = Client::builder()
             .user_agent("Sentinel-AI/1.0")
             .timeout(Duration::from_secs(config.timeout_seconds))
             .redirect(if config.follow_redirects { reqwest::redirect::Policy::limited(10) } else { reqwest::redirect::Policy::none() })
-            .danger_accept_invalid_certs(!config.verify_ssl)
-            .build()?;
+            .danger_accept_invalid_certs(!config.verify_ssl);
+        
+        // Configure passive scanning proxy if requested
+        if config.use_passive_proxy {
+            client_builder = client_builder
+                .proxy(reqwest::Proxy::http("http://127.0.0.1:4201")?)
+                .proxy(reqwest::Proxy::https("http://127.0.0.1:4201")?);
+        }
+        
+        let client = client_builder.build()?;
 
         let mut request_builder = client.request(method, &config.url);
         if !config.query_params.is_empty() { request_builder = request_builder.query(&config.query_params); }
@@ -278,8 +303,19 @@ impl UnifiedTool for HttpRequestTool {
         if timeout_seconds == 0 || timeout_seconds > 300 { return Err(anyhow!("参数错误：超时时间必须在1-300秒之间，当前值: {}秒", timeout_seconds)); }
         let follow_redirects = params.inputs.get("follow_redirects").and_then(|v| v.as_bool()).unwrap_or(true);
         let verify_ssl = params.inputs.get("verify_ssl").and_then(|v| v.as_bool()).unwrap_or(true);
+        let use_passive_proxy = params.inputs.get("use_passive_proxy").and_then(|v| v.as_bool()).unwrap_or(false);
 
-        let config = HttpRequestConfig { url: url.to_string(), method: method.to_string(), headers, query_params, body, timeout_seconds, follow_redirects, verify_ssl };
+        let config = HttpRequestConfig { 
+            url: url.to_string(), 
+            method: method.to_string(), 
+            headers, 
+            query_params, 
+            body, 
+            timeout_seconds, 
+            follow_redirects, 
+            verify_ssl,
+            use_passive_proxy,
+        };
 
         match self.execute_request(config).await {
             Ok(result) => {

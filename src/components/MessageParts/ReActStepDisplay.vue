@@ -54,9 +54,17 @@
                 PARAMETERS
               </div>
               <div class="bg-base-200/50 rounded-lg p-3 border border-base-300/30">
-                <div v-for="(value, key) in formatParams(action.args)" :key="key" class="flex items-start gap-2 py-1">
-                  <span class="text-xs font-medium text-base-content/70 min-w-[100px]">{{ key }}</span>
-                  <span class="text-xs text-base-content font-mono break-all">{{ value }}</span>
+                <div
+                  v-for="(value, key) in formatParams(action.args)"
+                  :key="key"
+                  class="flex items-start gap-2 py-1"
+                >
+                  <span class="text-xs font-medium text-base-content/70 min-w-[100px]">
+                    {{ key }}
+                  </span>
+                  <span class="text-xs text-base-content font-mono break-all whitespace-pre-wrap">
+                    {{ typeof value === 'object' ? formatJson(value) : value }}
+                  </span>
                 </div>
               </div>
             </div>

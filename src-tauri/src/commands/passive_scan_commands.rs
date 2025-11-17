@@ -141,9 +141,11 @@ impl PassiveScanState {
     }
 
     /// 内部方法：列出所有插件（数据库来源，供工具提供者使用）
+    /// 只返回已批准（Approved）的插件，待审核和已拒绝的插件不显示
     pub async fn list_plugins_internal(&self) -> Result<Vec<PluginRecord>, String> {
         let db = self.get_db_service().await.map_err(|e| e.to_string())?;
-        // 查询数据库中所有插件（包含 main_category）
+        // 查询数据库中所有插件（包含 main_category 和收藏状态）
+        // 只查询已批准的插件：validation_status = 'Approved'
         let rows = sqlx::query_as::<_, (
             String, // id
             String, // name
@@ -155,12 +157,16 @@ impl PassiveScanState {
             String, // default_severity
             Option<String>, // tags (JSON)
             bool,   // enabled
-            Option<String> // plugin_code
+            Option<String>, // plugin_code
+            i64,    // is_favorited (0 or 1)
         )>(
             r#"
-            SELECT id, name, version, author, main_category, category, description,
-                   default_severity, tags, enabled, plugin_code
-            FROM plugin_registry
+            SELECT p.id, p.name, p.version, p.author, p.main_category, p.category, p.description,
+                   p.default_severity, p.tags, p.enabled, p.plugin_code,
+                   CASE WHEN f.plugin_id IS NOT NULL THEN 1 ELSE 0 END as is_favorited
+            FROM plugin_registry p
+            LEFT JOIN plugin_favorites f ON p.id = f.plugin_id AND f.user_id = 'default'
+            WHERE p.validation_status = 'Approved'
             "#
         )
         .fetch_all(db.pool())
@@ -168,11 +174,7 @@ impl PassiveScanState {
         .map_err(|e| format!("Failed to query database plugins: {}", e))?;
 
         let mut records = Vec::new();
-        for (id, name, version, author, main_category, category, description, default_severity, tags, enabled, _plugin_code) in rows {
-            tracing::info!(
-                "list_plugins_internal: row id='{}', main_category='{}', category='{}', enabled={}",
-                id, main_category, category, enabled
-            );
+        for (id, name, version, author, main_category, category, description, default_severity, tags, enabled, _plugin_code, is_favorited) in rows {
             let tags_array: Vec<String> = tags
                 .and_then(|t| serde_json::from_str(&t).ok())
                 .unwrap_or_default();
@@ -206,6 +208,7 @@ impl PassiveScanState {
                 path: None,  // 插件存储在数据库中，不再使用文件路径
                 status,
                 last_error: None,
+                is_favorited: is_favorited == 1,
             });
         }
 
@@ -282,6 +285,9 @@ pub async fn start_passive_scan(
             .build()
             .expect("Failed to build current_thread runtime for ScanPipeline");
         rt.block_on(async move {
+            // 使用 LocalSet 确保所有 !Send 任务固定在该线程执行
+            let local = tokio::task::LocalSet::new();
+            local.run_until(async move {
             let pipeline = ScanPipeline::new(scan_rx, finding_tx)
                 .with_db_service(db_for_pipeline.clone())
                 .with_app_handle(app_for_pipeline);
@@ -294,6 +300,7 @@ pub async fn start_passive_scan(
             } else {
                 tracing::info!("ScanPipeline stopped normally");
             }
+            }).await;
         });
     });
 
@@ -1816,10 +1823,25 @@ pub async fn save_proxy_config(
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Saving proxy configuration: {:?}", config);
     
-    // 这里可以将配置保存到数据库或文件
-    // 目前简单返回成功
-    // TODO: 实现配置持久化
+    // 获取数据库服务
+    let db = state.get_db_service().await.map_err(|e| {
+        tracing::error!("Failed to get database service: {}", e);
+        format!("Failed to get database service: {}", e)
+    })?;
     
+    // 将配置序列化为 JSON
+    let config_json = serde_json::to_string(&config).map_err(|e| {
+        tracing::error!("Failed to serialize config: {}", e);
+        format!("Failed to serialize config: {}", e)
+    })?;
+    
+    // 保存到数据库
+    db.save_config("proxy_config", &config_json).await.map_err(|e| {
+        tracing::error!("Failed to save config to database: {}", e);
+        format!("Failed to save config: {}", e)
+    })?;
+    
+    tracing::info!("Proxy configuration saved successfully");
     Ok(CommandResponse::ok(()))
 }
 
@@ -1830,15 +1852,35 @@ pub async fn get_proxy_config(
 ) -> Result<CommandResponse<ProxyConfig>, String> {
     tracing::info!("Getting proxy configuration");
     
-    // 返回默认配置
-    // TODO: 从数据库或文件加载配置
-    let config = ProxyConfig {
-        start_port: 8080,
-        max_port_attempts: 10,
-        mitm_enabled: true,
-        max_request_body_size: 2 * 1024 * 1024,
-        max_response_body_size: 2 * 1024 * 1024,
-        mitm_bypass_fail_threshold: 3,
+    // 获取数据库服务
+    let db = state.get_db_service().await.map_err(|e| {
+        tracing::error!("Failed to get database service: {}", e);
+        format!("Failed to get database service: {}", e)
+    })?;
+    
+    // 从数据库加载配置
+    let config = match db.load_config("proxy_config").await {
+        Ok(Some(config_json)) => {
+            // 反序列化配置
+            match serde_json::from_str::<ProxyConfig>(&config_json) {
+                Ok(config) => {
+                    tracing::info!("Loaded proxy configuration from database: {:?}", config);
+                    config
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize config, using default: {}", e);
+                    ProxyConfig::default()
+                }
+            }
+        }
+        Ok(None) => {
+            tracing::info!("No saved configuration found, using default");
+            ProxyConfig::default()
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load config from database, using default: {}", e);
+            ProxyConfig::default()
+        }
     };
     
     Ok(CommandResponse::ok(config))

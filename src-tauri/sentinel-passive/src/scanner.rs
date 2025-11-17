@@ -22,15 +22,22 @@ pub use crate::proxy::ScanTask;
 pub type FindingSender = mpsc::UnboundedSender<Finding>;
 pub type FindingReceiver = mpsc::UnboundedReceiver<Finding>;
 
+/// 被动插件配置（仅保存元数据和代码）
+#[derive(Clone)]
+pub struct PassivePluginConfig {
+    pub metadata: crate::types::PluginMetadata,
+    pub code: String,
+}
+
 /// 被动扫描流水线
 pub struct ScanPipeline {
     /// 接收来自代理的扫描任务
     task_rx: mpsc::UnboundedReceiver<ScanTask>,
     /// 发送 Finding 到去重服务
     finding_tx: FindingSender,
-    /// 已启用插件引擎（plugin_id -> PluginEngine）
-    /// 注意：PluginEngine 不是 Send，需要在单线程中使用
-    plugin_engines: Arc<RwLock<HashMap<String, PluginEngine>>>,
+    /// 已启用插件配置（plugin_id -> PassivePluginConfig）
+    /// 仅保存元数据和代码，每次扫描时创建临时 PluginEngine 避免长期持有 V8 Runtime
+    plugin_engines: Arc<RwLock<HashMap<String, PassivePluginConfig>>>,
     /// 请求上下文缓存（request_id -> RequestContext）
     /// 用于匹配请求和响应
     request_cache: Arc<RwLock<HashMap<String, RequestContext>>>,
@@ -51,6 +58,55 @@ impl ScanPipeline {
             db_service: None,
             app_handle: None,
         }
+    }
+
+    /// 执行单个插件的请求扫描（为每次调用创建独立 PluginEngine）
+    async fn run_plugin_scan_request(
+        plugin: &PassivePluginConfig,
+        req_ctx: &RequestContext,
+    ) -> Result<Vec<Finding>> {
+        let mut engine = PluginEngine::new()
+            .map_err(|e| PassiveError::Plugin(format!("Failed to create PluginEngine: {}", e)))?;
+
+        engine
+            .load_plugin_with_metadata(&plugin.code, plugin.metadata.clone())
+            .await
+            .map_err(|e| {
+                PassiveError::Plugin(format!(
+                    "Failed to load plugin {}: {}",
+                    plugin.metadata.id, e
+                ))
+            })?;
+
+        engine
+            .scan_request(req_ctx)
+            .await
+            .map_err(|e| PassiveError::Plugin(format!("Plugin execution error: {}", e)))
+    }
+
+    /// 执行单个插件的响应扫描（为每次调用创建独立 PluginEngine）
+    async fn run_plugin_scan_response(
+        plugin: &PassivePluginConfig,
+        req_ctx: &RequestContext,
+        resp_ctx: &ResponseContext,
+    ) -> Result<Vec<Finding>> {
+        let mut engine = PluginEngine::new()
+            .map_err(|e| PassiveError::Plugin(format!("Failed to create PluginEngine: {}", e)))?;
+
+        engine
+            .load_plugin_with_metadata(&plugin.code, plugin.metadata.clone())
+            .await
+            .map_err(|e| {
+                PassiveError::Plugin(format!(
+                    "Failed to load plugin {}: {}",
+                    plugin.metadata.id, e
+                ))
+            })?;
+
+        engine
+            .scan_response(req_ctx, resp_ctx)
+            .await
+            .map_err(|e| PassiveError::Plugin(format!("Plugin execution error: {}", e)))
     }
 
     /// 设置数据库服务
@@ -100,16 +156,20 @@ impl ScanPipeline {
 
     /// 处理请求上下文
     async fn process_request(&self, req_ctx: RequestContext) {
-        let plugins = self.plugin_engines.read().await;
-        if plugins.is_empty() {
-            // 暂无插件，跳过
-            return;
-        }
-
-        // 缓存请求上下文（用于后续响应匹配）
+        // 无论是否有插件，都先缓存请求上下文（用于后续响应匹配和历史记录）
         {
             let mut cache = self.request_cache.write().await;
             cache.insert(req_ctx.id.clone(), req_ctx.clone());
+        }
+
+        let plugins = self.plugin_engines.read().await;
+        if plugins.is_empty() {
+            // 暂无插件，仅记录历史，不进行被动扫描
+            debug!(
+                "No passive plugins enabled, skipping request scan but keeping context for history: {}",
+                req_ctx.url
+            );
+            return;
         }
 
         debug!(
@@ -130,9 +190,14 @@ impl ScanPipeline {
 
         // 依次调用每个插件（注意：这里是串行，可以后续优化为并行）
         for plugin_id in plugin_ids {
-            let mut plugins = self.plugin_engines.write().await;
-            if let Some(engine) = plugins.get_mut(&plugin_id) {
-                match engine.scan_request(&req_ctx).await {
+            // 读取插件配置（不在持有写锁期间执行异步等待）
+            let plugin_opt = {
+                let plugins = self.plugin_engines.read().await;
+                plugins.get(&plugin_id).cloned()
+            };
+
+            if let Some(plugin) = plugin_opt {
+                match Self::run_plugin_scan_request(&plugin, &req_ctx).await {
                     Ok(findings) => {
                         debug!(
                             "Plugin {} found {} issues in request {}",
@@ -324,9 +389,14 @@ impl ScanPipeline {
 
         // 依次调用每个插件
         for plugin_id in plugin_ids {
-            let mut plugins = self.plugin_engines.write().await;
-            if let Some(engine) = plugins.get_mut(&plugin_id) {
-                match engine.scan_response(&req_ctx, &resp_ctx).await {
+            // 读取插件配置（不在持有写锁期间执行异步等待）
+            let plugin_opt = {
+                let plugins = self.plugin_engines.read().await;
+                plugins.get(&plugin_id).cloned()
+            };
+
+            if let Some(plugin) = plugin_opt {
+                match Self::run_plugin_scan_response(&plugin, &req_ctx, &resp_ctx).await {
                     Ok(findings) => {
                         debug!(
                             "Plugin {} found {} issues in response for {}",
@@ -385,8 +455,8 @@ impl ScanPipeline {
         }
     }
 
-    /// 添加插件到启用列表（供 PluginManager 调用）
-    pub async fn add_plugin(&self, plugin_id: String, engine: PluginEngine) -> Result<()> {
+    /// 添加插件到启用列表（供 PluginManager 或测试调用）
+    pub async fn add_plugin(&self, plugin_id: String, plugin: PassivePluginConfig) -> Result<()> {
         let mut engines = self.plugin_engines.write().await;
         if engines.contains_key(&plugin_id) {
             return Err(PassiveError::Plugin(format!(
@@ -394,7 +464,7 @@ impl ScanPipeline {
                 plugin_id
             )));
         }
-        engines.insert(plugin_id.clone(), engine);
+        engines.insert(plugin_id.clone(), plugin);
         info!("Plugin added to pipeline: {}", plugin_id);
         Ok(())
     }
@@ -467,25 +537,15 @@ impl ScanPipeline {
                 tags: tags_array,
             };
 
-            // 创建插件引擎并加载代码
-            let mut engine = match PluginEngine::new() {
-                Ok(e) => e,
-                Err(e) => {
-                    error!("Failed to create PluginEngine for {}: {}", id, e);
-                    continue;
-                }
+            // 仅保存插件配置（元数据 + 代码），实际执行时再创建 PluginEngine
+            let config = PassivePluginConfig {
+                metadata,
+                code: plugin_code,
             };
 
-            match engine.load_plugin_with_metadata(&plugin_code, metadata.clone()).await {
-                Ok(_) => {
-                    engines.insert(id.clone(), engine);
+            engines.insert(id.clone(), config);
                     loaded_count += 1;
-                    info!("Plugin loaded and registered: {} v{}", name, metadata.version);
-                }
-                Err(e) => {
-                    error!("Failed to load plugin {} ({}): {}", name, id, e);
-                }
-            }
+            info!("Plugin registered in pipeline: {} ({})", name, id);
         }
 
         info!("Loaded {} enabled plugins from database", loaded_count);
@@ -585,18 +645,17 @@ impl ScanPipeline {
             tags: tags_array,
         };
 
-        // 创建新的插件引擎
-        let mut engine = PluginEngine::new()
-            .map_err(|e| PassiveError::Plugin(format!("Failed to create PluginEngine: {}", e)))?;
-
-        engine.load_plugin_with_metadata(&plugin_code, metadata.clone()).await
-            .map_err(|e| PassiveError::Plugin(format!("Failed to load plugin code: {}", e)))?;
-
-        // 替换旧实例
+        // 替换旧配置
         let mut engines = self.plugin_engines.write().await;
-        engines.insert(id.clone(), engine);
+        engines.insert(
+            id.clone(),
+            PassivePluginConfig {
+                metadata,
+                code: plugin_code,
+            },
+        );
 
-        info!("Plugin reloaded: {} v{}", name, metadata.version);
+        info!("Plugin reloaded: {}", name);
         Ok(())
     }
 

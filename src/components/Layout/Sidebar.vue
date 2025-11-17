@@ -161,7 +161,7 @@ const mainMenuItems = computed(() => [
   },
   {
     path: '/passive-scan',
-    name: t('sidebar.passiveScan', '被动扫描'),
+    name: t('sidebar.passive', '被动扫描'),
     icon: 'fas fa-satellite-dish',
     badge: null,
     badgeClass: 'badge-info'
@@ -238,8 +238,8 @@ const toolMenuItems = computed(() => [
     path: '/plugins',
     name: t('sidebar.plugins', '插件管理'),
     icon: 'fas fa-puzzle-piece',
-    badge: null,
-    badgeClass: ''
+    badge: pendingPlugins.value > 0 ? pendingPlugins.value.toString() : null,
+    badgeClass: pendingPlugins.value > 0 ? 'badge-warning' : ''
   },
   {
     path: '/prompts',
@@ -276,6 +276,7 @@ const hasRunningTasks = ref(true)
 // 统计数据
 const todayVulns = ref(3)
 const completedTasks = ref(8)
+const pendingPlugins = ref(0)  // 待审核插件数量
 const taskStats = ref({
   total: 0,
   running: 0,
@@ -305,10 +306,23 @@ const loadTaskStats = async () => {
   }
 }
 
+// 加载待审核插件数量
+const loadPendingPlugins = async () => {
+  try {
+    const result = await invoke<any>('get_plugin_statistics')
+    pendingPlugins.value = result.pending_review || 0
+  } catch (error) {
+    console.log('Failed to load pending plugins count:', error)
+    // 忽略错误，可能是后端命令还未实现
+  }
+}
+
 // 模拟数据更新
 onMounted(() => {
   // 加载任务统计信息
   loadTaskStats()
+  // 加载待审核插件数量
+  loadPendingPlugins()
   
   // 定期更新任务统计信息
   setInterval(() => {

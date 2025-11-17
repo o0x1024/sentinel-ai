@@ -144,11 +144,14 @@ sha2 = "0.10"
 # rustls = { version = "0.23", features = ["ring"] }
 # rustls-pemfile = "2.2"
 # x509-parser = "0.16"
-# deno_core = "0.316"
 # deno_runtime = "0.194"
 tera = "1.20"
 # flate2 = "1.0"
 # brotli = "7.0"
+
+# Plan B: AI插件生成依赖
+deno_core = "0.368.0"
+deno_ast = { version = "0.51.0", features = ["transpiling"] }
 
 # 网络扫描工具依赖
 # 子域名扫描相关

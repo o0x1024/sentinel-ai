@@ -3,7 +3,7 @@
     class="enhanced-ai-chat w-full h-full flex flex-col bg-gradient-to-br from-base-100 to-base-200 overflow-hidden"
   >
     <!-- Messages Area -->
-    <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 max-w-full">
+    <div ref="messagesContainer" @scroll="handleUserScroll" class="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 max-w-full">
       <!-- Welcome Message -->
       <div v-if="messages.length === 0" class="flex justify-center items-center h-full">
         <div class="text-center">
@@ -87,6 +87,15 @@
               :key="`react-step-${index}`"
               :step-data="step"
             />
+
+            <!-- ReAct 工具运行中提示 -->
+            <div
+              v-if="hasRunningTool(message)"
+              class="flex items-center gap-2 mt-1 text-warning text-xs"
+            >
+              <span class="loading loading-spinner loading-xs"></span>
+              <span>工具正在运行...</span>
+            </div>
           </div>
 
           <!-- 普通消息显示 - 统一使用 Markdown 渲染 -->
@@ -371,10 +380,11 @@ const parseReActSteps = (content: string, messageId?: string): ReActStepData[] =
         }
       }
       
+      // 默认认为工具调用仍在运行中，等待 ToolResult 或 Observation 更新状态
       currentStep.action = {
         tool: actionContent,
         args: actionInput,
-        status: 'completed'
+        status: 'running'
       }
       
       // 🔧 新增：尝试从 ToolResult chunks 中查找对应的 Observation
@@ -388,13 +398,16 @@ const parseReActSteps = (content: string, messageId?: string): ReActStepData[] =
           const obsData = JSON.parse(matchingToolResult.content.toString())
           currentStep.observation = obsData
           
-          // 检查执行状态
+          // 根据 ToolResult 中的 success / error 字段更新状态
           if (obsData.success === false || obsData.error) {
             currentStep.action.status = 'failed'
+          } else {
+            currentStep.action.status = 'success'
           }
         } catch (e) {
-          // 如果不是 JSON，直接使用原始内容
+          // 如果不是 JSON，直接使用原始内容，但仍认为调用已结束
           currentStep.observation = matchingToolResult.content.toString()
+          currentStep.action.status = 'success'
         }
       }
     }
@@ -493,6 +506,16 @@ const parseReActSteps = (content: string, messageId?: string): ReActStepData[] =
   return steps
 }
 
+// 判断指定消息中是否存在仍在运行中的工具调用
+const hasRunningTool = (message: ChatMessage): boolean => {
+  if (!isReActMessage(message)) return false
+  const steps = parseReActSteps(message.content || '', message.id)
+  return steps.some(step => {
+    const action: any = step.action
+    return action && typeof action === 'object' && action.status === 'running'
+  })
+}
+
 // 持久化状态的key
 const AI_CHAT_STATE_KEY = 'ai-chat-state'
 
@@ -588,11 +611,41 @@ const clearLoadingTimeout = () => {
   }
 }
 
-// Define scrollToBottom function before using in event listeners
-const scrollToBottom = () => {
+// 检查用户是否在底部（允许一定误差）
+const isUserAtBottom = () => {
+  if (!messagesContainer.value) return true
+  const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
+  const threshold = 100 // 距离底部100px以内认为是在底部
+  return scrollHeight - scrollTop - clientHeight < threshold
+}
+
+// 用户滚动状态跟踪
+const userIsScrolling = ref(false)
+const scrollTimeout = ref<number | null>(null)
+
+// 监听用户滚动行为
+const handleUserScroll = () => {
+  userIsScrolling.value = true
+  
+  // 清除之前的定时器
+  if (scrollTimeout.value) {
+    clearTimeout(scrollTimeout.value)
+  }
+  
+  // 500ms后重置滚动状态
+  scrollTimeout.value = window.setTimeout(() => {
+    userIsScrolling.value = false
+  }, 500)
+}
+
+// 智能滚动到底部：只在用户已经在底部时才滚动
+const scrollToBottom = (force = false) => {
   nextTick(() => {
     if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      // 强制滚动或用户在底部时才滚动
+      if (force || isUserAtBottom()) {
+        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      }
     }
   })
 }
@@ -640,7 +693,7 @@ const sendMessage = async () => {
     messages.value.push(assistantMessage)
 
     await nextTick()
-    scrollToBottom()
+    scrollToBottom(true) // 发送新消息时强制滚动到底部
 
     // Handle based on input prefix
     if (isTaskMode.value) {
@@ -852,29 +905,49 @@ const sendMessage = async () => {
 }
 
 const stopExecution = async () => {
-  console.log('停止执行 - 当前执行ID:', currentExecutionId.value, '会话ID:', currentConversationId.value)
+  console.log('[AIChat] ========== 停止执行被调用 ==========')
+  console.log('[AIChat] 当前执行ID:', currentExecutionId.value)
+  console.log('[AIChat] 当前会话ID:', currentConversationId.value)
+  console.log('[AIChat] isLoading状态:', isLoading.value)
   
-  // 优先调用统一的停止命令
-  try {
+  // 必须有 execution_id 才能停止
+  if (!currentExecutionId.value) {
+    console.warn('[AIChat] ⚠️ 没有执行ID，无法停止')
+    // 如果没有执行ID，尝试使用会话ID
     if (currentConversationId.value) {
+      console.log('[AIChat] 尝试使用会话ID停止:', currentConversationId.value)
+      try {
       await invoke('stop_execution', {
-        executionId: currentExecutionId.value || currentConversationId.value,
-      })
-      console.log('成功调用 stop_execution 命令')
+          execution_id: currentConversationId.value,
+        })
+        console.log('[AIChat] ✅ 使用会话ID停止成功')
+      } catch (error) {
+        console.error('[AIChat] ❌ 使用会话ID停止失败:', error)
+      }
     }
+  } else {
+    // 使用 execution_id 停止
+    try {
+      console.log('[AIChat] 🛑 正在停止执行，execution_id:', currentExecutionId.value)
+      const result = await invoke('stop_execution', {
+        execution_id: currentExecutionId.value,
+      })
+      console.log('[AIChat] ✅ stop_execution 命令成功，返回:', result)
   } catch (error) {
-    console.error('停止执行失败:', error)
+      console.error('[AIChat] ❌ stop_execution 失败:', error)
+    }
   }
 
-  // 额外调用取消流命令作为备用
+  // 额外调用取消流命令作为备用（使用当前会话ID）
   if (currentConversationId.value) {
     try {
+      console.log('[AIChat] 📡 调用 cancel_ai_stream，会话ID:', currentConversationId.value)
       await invoke('cancel_ai_stream', {
         conversationId: currentConversationId.value,
       })
-      console.log('成功调用 cancel_ai_stream 命令')
+      console.log('[AIChat] ✅ cancel_ai_stream 成功')
     } catch (error) {
-      console.error('取消流失败:', error)
+      console.error('[AIChat] ❌ cancel_ai_stream 失败:', error)
     }
   }
 
@@ -1053,9 +1126,9 @@ onMounted(async () => {
     }
   })
 
-  // 首次打开时滚动到底部
+  // 首次打开时强制滚动到底部
   nextTick(() => {
-    scrollToBottom()
+    scrollToBottom(true)
   })
 })
 
@@ -1065,10 +1138,12 @@ watch(
     msgs: conversationMessages.value,
     cid: currentConversationId.value,
   }),
-  ({ msgs }) => {
+  ({ msgs, cid }, oldVal) => {
     if (Array.isArray(msgs)) {
       messages.value = msgs as ChatMessage[]
-      // nextTick(() => scrollToBottom())
+      // 如果是切换会话，强制滚动到底部；否则智能滚动
+      const isConversationSwitch = oldVal && cid !== oldVal.cid
+      nextTick(() => scrollToBottom(isConversationSwitch))
     }
   },
   { deep: true, immediate: true }
@@ -1102,6 +1177,12 @@ watch(
 onUnmounted(() => {
   clearLoadingTimeout()
   orderedMessages.cleanup()
+  
+  // 清理滚动定时器
+  if (scrollTimeout.value) {
+    clearTimeout(scrollTimeout.value)
+    scrollTimeout.value = null
+  }
   
   // 清理保存状态的定时器并立即保存
   if (saveStateTimer) {

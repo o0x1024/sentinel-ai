@@ -1,8 +1,10 @@
 // 模块声明
 pub mod agents;
+pub mod analyzers;
 pub mod commands;
 pub mod engines;
 pub mod events;
+pub mod generators;
 pub mod managers;
 pub mod models;
 pub mod services;
@@ -353,6 +355,19 @@ pub fn run() {
                 }
 
                 let ai_manager = Arc::new(ai_manager);
+
+                // 注册 GeneratorToolProvider (Plan B - 必须在ai_manager创建后)
+                if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+                    use crate::tools::generator_tools::GeneratorToolProvider;
+                    let generator_provider = Box::new(GeneratorToolProvider::new(ai_manager.clone(), passive_state.clone()));
+                    let manager = tool_system.get_manager();
+                    let mut manager_guard = manager.write().await;
+                    if let Err(e) = manager_guard.register_provider(generator_provider).await {
+                        tracing::error!("Failed to register generator tool provider: {}", e);
+                    } else {
+                        tracing::info!("Advanced plugin generator tools registered successfully (Plan B)");
+                    }
+                }
 
                 // AI adapter manager removed - using Rig directly
 
@@ -713,6 +728,8 @@ pub fn run() {
             commands::prompt_api::list_prompt_templates_filtered_api,
             commands::prompt_api::duplicate_prompt_template_api,
             commands::prompt_api::evaluate_prompt_api,
+            commands::prompt_api::get_plugin_generation_prompt_api,
+            commands::prompt_api::get_combined_plugin_prompt_api,
 
             // ReWOO测试相关命令 - DISABLED
             rewoo_commands::test_rewoo_engine,
@@ -856,6 +873,28 @@ pub fn run() {
             passive_scan_commands::stop_proxy_listener,
             passive_scan_commands::save_proxy_config,
             passive_scan_commands::get_proxy_config,
+            // Plugin review commands (Plan B)
+            commands::plugin_review_commands::get_plugins_for_review,
+            commands::plugin_review_commands::list_generated_plugins,
+            commands::plugin_review_commands::get_plugin_detail,
+            commands::plugin_review_commands::approve_plugin,
+            commands::plugin_review_commands::reject_plugin,
+            commands::plugin_review_commands::review_update_plugin_code,
+            // Plugin auto-approval configuration (Plan B)
+            commands::config_commands::get_auto_approval_config,
+            commands::config_commands::update_auto_approval_config,
+            commands::config_commands::get_config_presets,
+            commands::config_commands::test_config_impact,
+            commands::plugin_review_commands::batch_approve_plugins,
+            commands::plugin_review_commands::batch_reject_plugins,
+            commands::plugin_review_commands::get_plugin_statistics,
+            commands::plugin_review_commands::search_plugins,
+            commands::plugin_review_commands::export_plugin,
+            commands::plugin_review_commands::review_delete_plugin,
+            commands::plugin_review_commands::get_plugins_paginated,
+            commands::plugin_review_commands::toggle_plugin_favorite,
+            commands::plugin_review_commands::get_favorited_plugins,
+            commands::plugin_review_commands::get_plugin_review_statistics,
         ])
         .run(context)
         .expect("Failed to start Tauri application");
