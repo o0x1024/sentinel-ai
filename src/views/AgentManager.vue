@@ -92,6 +92,7 @@
             <label class="label"><span class="label-text">引擎</span></label>
             <select v-model="editingAgent.engine" class="select select-sm select-bordered w-full">
               <option value="auto">auto</option>
+              <option value="orchestrator">orchestrator (安全测试编排)</option>
               <option value="plan-execute">plan-execute</option>
               <option value="react">react</option>
               <option value="rewoo">rewoo</option>

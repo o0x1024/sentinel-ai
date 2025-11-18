@@ -447,8 +447,12 @@ impl Planner {
         // 获取可用工具信息（放入 system 提示），支持根据Agent工具策略过滤
         let tools_block = self.build_tools_information(task).await;
 
-        // 解析并获取 system 模板（仅渲染通用变量，避免注入用户任务内容）
-        let system_template = if let Some(repo) = &self.prompt_repo {
+        // 优先检查 task.parameters 中是否有来自 Orchestrator 的自定义 prompt
+        let system_template = if let Some(custom_prompt) = task.parameters.get("custom_system_prompt").and_then(|v| v.as_str()) {
+            log::info!("Plan-Execute Planner: Using custom system prompt from Orchestrator");
+            custom_prompt.to_string()
+        } else if let Some(repo) = &self.prompt_repo {
+            // 解析并获取 system 模板（仅渲染通用变量，避免注入用户任务内容）
             let resolver = PromptResolver::new(repo.clone());
             let agent_config = AgentPromptConfig::parse_agent_config(&task.parameters);
             resolver
@@ -459,7 +463,10 @@ impl Planner {
                     Some(&"".to_string()),
                 )
                 .await
-                .unwrap_or_else(|_| "".to_string())
+                .unwrap_or_else(|_| {
+                    log::info!("Plan-Execute Planner: Using prompt from database");
+                    "".to_string()
+                })
         } else {
            "".to_string()
         };
@@ -488,10 +495,21 @@ impl Planner {
             }
         }
 
-        let user_prompt = format!(
-            "{}",
-            task.name.clone()
-        );
+        // 构建 user 提示：包含任务名称 + 关键目标信息（如明确的目标URL）
+        let mut user_prompt = task.name.clone();
+        if let Some(target_url) = task
+            .parameters
+            .get("target_url")
+            .and_then(|v| v.as_str())
+        {
+            if !target_url.trim().is_empty() {
+                user_prompt = format!(
+                    "{}\n\n[目标网站]\n{}",
+                    user_prompt,
+                    target_url.trim()
+                );
+            }
+        }
 
         // RAG augmentation for planning stage (global toggle)
         if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {

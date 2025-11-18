@@ -1232,7 +1232,18 @@ pub async fn create_plugin_in_db(
         .await
         .map_err(|e| format!("Failed to create plugin in database: {}", e))?;
     
-    tracing::info!("Plugin created in database: {}", plugin_id);
+    tracing::info!("Plugin created/updated in database: {}", plugin_id);
+    
+    // **关键修复**：更新 PluginManager 的代码缓存（如果插件已在内存中）
+    let plugin_manager = state.get_plugin_manager();
+    if plugin_manager.get_plugin(&plugin_id).await.is_some() {
+        // 插件已在内存中，更新代码缓存
+        if let Err(e) = plugin_manager.set_plugin_code(plugin_id.clone(), plugin_code.clone()).await {
+            tracing::warn!("Failed to update plugin code cache after create: {}", e);
+        } else {
+            tracing::info!("Plugin code cache updated after create: {}", plugin_id);
+        }
+    }
     
     // 如果是Agent插件，刷新全局工具系统
     if main_category == "agent" {
@@ -1270,7 +1281,15 @@ pub async fn update_plugin_code(
         .await
         .map_err(|e| format!("Failed to update plugin code: {}", e))?;
     
-    tracing::info!("Plugin code updated: {}", plugin_id);
+    tracing::info!("Plugin code updated in database: {}", plugin_id);
+    
+    // **关键修复**：更新 PluginManager 的代码缓存
+    let plugin_manager = state.get_plugin_manager();
+    if let Err(e) = plugin_manager.set_plugin_code(plugin_id.clone(), plugin_code.clone()).await {
+        tracing::warn!("Failed to update plugin code cache: {}", e);
+    } else {
+        tracing::info!("Plugin code cache updated: {}", plugin_id);
+    }
     
     // 如果是Agent插件，刷新全局工具系统
     if let Some(cat) = main_category {

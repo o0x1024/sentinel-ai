@@ -11,6 +11,7 @@ use crate::agents::traits::{AgentTask, AgentExecutionResult, AgentSession, Execu
 /// 执行引擎类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EngineType {
+    Orchestrator,
     PlanExecute,
     ReWOO,
     LLMCompiler,
@@ -28,6 +29,7 @@ pub struct ExecutionContext {
 
 /// 存储的引擎实例
 pub enum EngineInstance {
+    Orchestrator(Box<crate::engines::orchestrator::OrchestratorEngineAdapter>),
     PlanExecute(PlanAndExecuteEngine),
     ReWOO(ReWooEngine),
     LLMCompiler(LlmCompilerEngine),
@@ -40,6 +42,7 @@ impl EngineInstance {
         plan: &AgentExecutionPlan,
     ) -> Result<AgentExecutionResult> {
         match self {
+            EngineInstance::Orchestrator(engine) => engine.execute_plan(plan).await,
             EngineInstance::PlanExecute(engine) => engine.execute_plan(plan).await,
             EngineInstance::ReWOO(engine) => engine.execute_plan(plan).await,
             EngineInstance::LLMCompiler(engine) => engine.execute_plan(plan).await,
@@ -49,6 +52,7 @@ impl EngineInstance {
     /// 获取进度
     pub async fn get_progress(&self, session_id: &str) -> Result<ExecutionProgress> {
         match self {
+            EngineInstance::Orchestrator(engine) => engine.get_progress(session_id).await,
             EngineInstance::PlanExecute(engine) => engine.get_progress(session_id).await,
             EngineInstance::ReWOO(engine) => engine.get_progress(session_id).await,
             EngineInstance::LLMCompiler(engine) => engine.get_progress(session_id).await,
@@ -58,6 +62,7 @@ impl EngineInstance {
     /// 停止执行
     pub async fn stop_execution(&self, session_id: &str) -> Result<()> {
         match self {
+            EngineInstance::Orchestrator(engine) => engine.cancel_execution(session_id).await,
             EngineInstance::PlanExecute(engine) => engine.cancel_execution(session_id).await,
             EngineInstance::ReWOO(engine) => engine.cancel_execution(session_id).await,
             EngineInstance::LLMCompiler(engine) => engine.cancel_execution(session_id).await,

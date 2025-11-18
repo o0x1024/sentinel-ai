@@ -228,7 +228,7 @@ impl ScanPipeline {
                         }
                     }
                     Err(e) => {
-                        error!("Plugin {} failed to scan request: {}", plugin_id, e);
+                        error!("Plugin {} failed to scan request: {:?}", plugin_id, e);
                     }
                 }
             }
@@ -742,7 +742,7 @@ impl FindingDeduplicator {
                             error!("Failed to update hit count: {}", e);
                         }
                         self.cache.write().await.insert(signature.clone());
-                        info!(
+                        debug!(
                             "Finding exists in DB, updated hit count: {} (signature: {})",
                             finding.title,
                             &signature[..8]
@@ -754,7 +754,7 @@ impl FindingDeduplicator {
                         match db.insert_vulnerability(&finding).await {
                             Ok(_) => {
                                 self.cache.write().await.insert(signature.clone());
-                                info!(
+                                debug!(
                                     "New finding inserted to DB: {} - {} (signature: {})",
                                     finding.title,
                                     finding.severity,

@@ -55,6 +55,10 @@ pub struct ReWOOPlanner {
     prompt_repo: Arc<PromptRepository>,
     /// 配置
     config: PlannerConfig,
+    /// 框架适配器（用于获取工具详细信息）
+    framework_adapter: Arc<dyn crate::tools::FrameworkToolAdapter>,
+    /// 运行时参数（包含工具权限等）
+    runtime_params: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl ReWOOPlanner {
@@ -63,12 +67,20 @@ impl ReWOOPlanner {
         ai_service_manager: Arc<AiServiceManager>,
         prompt_repo: Arc<PromptRepository>,
         config: PlannerConfig,
+        framework_adapter: Arc<dyn crate::tools::FrameworkToolAdapter>,
     ) -> Result<Self> {
         Ok(Self {
             ai_service_manager,
             prompt_repo,
             config,
+            framework_adapter,
+            runtime_params: None,
         })
+    }
+    
+    /// 设置运行时参数
+    pub fn set_runtime_params(&mut self, params: HashMap<String, serde_json::Value>) {
+        self.runtime_params = Some(params);
     }
 
     /// 生成执行计划
@@ -107,25 +119,52 @@ impl ReWOOPlanner {
     ) -> Result<(String, String)> {
         use crate::models::prompt::{ArchitectureType, StageType};
         
-        // 从数据库获取ReWOO planner模板作为system prompt
-        let system_template = if let Ok(Some(template)) = self.prompt_repo
-            .get_template_by_arch_stage(ArchitectureType::ReWOO, StageType::Planner)
-            .await
-        {
-            template.content
+        // 优先使用 runtime_params 中的自定义 system prompt（来自 Orchestrator）
+        let system_template = if let Some(params) = &self.runtime_params {
+            if let Some(custom_prompt) = params.get("custom_system_prompt").and_then(|v| v.as_str()) {
+                // info!("ReWOO Planner: Using custom system prompt from runtime_params");
+                custom_prompt.to_string()
+            } else {
+                // 从数据库获取ReWOO planner模板作为system prompt
+                if let Ok(Some(template)) = self.prompt_repo
+                    .get_template_by_arch_stage(ArchitectureType::ReWOO, StageType::Planner)
+                    .await
+                {
+                    // info!("ReWOO Planner: Using prompt from database");
+                    template.content
+                } else {
+                    // Fallback到默认模板
+                    warn!("ReWOO planner template not found in database, using default template");
+                    include_str!("../prompt_md/rewoo_prompts.md")
+                        .split("## rewoo_planner")
+                        .nth(1)
+                        .and_then(|s| s.split("---").next())
+                        .unwrap_or(DEFAULT_PLANNER_PROMPT)
+                        .to_string()
+                }
+            }
         } else {
-            // Fallback到默认模板
-            warn!("ReWOO planner template not found in database, using default template");
-            include_str!("../prompt_md/rewoo_prompts.md")
-                .split("## rewoo_planner")
-                .nth(1)
-                .and_then(|s| s.split("---").next())
-                .unwrap_or(DEFAULT_PLANNER_PROMPT)
-                .to_string()
+            // 从数据库获取ReWOO planner模板作为system prompt
+            if let Ok(Some(template)) = self.prompt_repo
+                .get_template_by_arch_stage(ArchitectureType::ReWOO, StageType::Planner)
+                .await
+            {
+                info!("ReWOO Planner: Using prompt from database");
+                template.content
+            } else {
+                // Fallback到默认模板
+                warn!("ReWOO planner template not found in database, using default template");
+                include_str!("../prompt_md/rewoo_prompts.md")
+                    .split("## rewoo_planner")
+                    .nth(1)
+                    .and_then(|s| s.split("---").next())
+                    .unwrap_or(DEFAULT_PLANNER_PROMPT)
+                    .to_string()
+            }
         };
         
-        // 构建工具列表描述
-        let tools_desc = available_tools.join(", ");
+        // 构建详细的工具列表描述（参考ReAct的实现）
+        let tools_desc = self.build_tools_description(available_tools).await;
         
         // 填充system prompt中的占位符
         let mut system_prompt = system_template.replace("{tools}", &tools_desc);
@@ -136,13 +175,11 @@ impl ReWOOPlanner {
             system_prompt = system_prompt.replace("{context}", "No additional context provided.");
         }
         
-        // 替换{task}占位符为用户输入
-        let system_part = system_prompt.replace("{task}", query);
-        
-        // user prompt就是用户的输入
+        // 不要在 system prompt 中替换 {task}，保持模板原样
+        // user prompt 才是用户的真实输入
         let user_part = query.to_string();
         
-        Ok((system_part, user_part))
+        Ok((system_prompt, user_part))
     }
     
     /// 调用LLM生成计划
@@ -315,6 +352,185 @@ impl ReWOOPlanner {
             }
         }
         String::new()
+    }
+    
+    /// 构建详细的工具描述信息（参考ReAct的实现）
+    async fn build_tools_description(&self, tool_names: &[String]) -> String {
+        use crate::tools::ToolInfo;
+        use std::collections::{HashMap, HashSet};
+        
+        // 从runtime_params读取工具白名单/黑名单
+        let (allow, allow_present, deny): (HashSet<String>, bool, HashSet<String>) =
+            if let Some(params) = &self.runtime_params {
+                log::Debug!("ReWOO Planner: task_parameters = {:?}", params);
+                let allow_present = params.get("tools_allow").is_some();
+                let allow = params
+                    .get("tools_allow")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_else(HashSet::new);
+                let deny = params
+                    .get("tools_deny")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_else(HashSet::new);
+                (allow, allow_present, deny)
+            } else {
+                log::warn!("ReWOO Planner: runtime_params is None!");
+                (HashSet::new(), false, HashSet::new())
+            };
+        
+        // 如果显式传入空白名单，禁用所有工具
+        if allow_present && allow.is_empty() {
+            log::info!("ReWOO Planner: 检测到显式空白名单 => 禁用所有工具");
+            return "No tools available".to_string();
+        }
+        
+        log::info!(
+            "ReWOO Planner: 工具过滤配置 - 白名单: {:?}, 黑名单: {:?}",
+            if allow_present && allow.is_empty() {
+                "空(禁用所有)".to_string()
+            } else if allow.is_empty() {
+                "未配置(允许所有)".to_string()
+            } else {
+                format!("{:?}", allow)
+            },
+            if deny.is_empty() {
+                "未配置".to_string()
+            } else {
+                format!("{:?}", deny)
+            }
+        );
+        
+        let mut all_tools: Vec<ToolInfo> = Vec::new();
+        
+        // 从框架适配器获取工具详细信息
+        for tool_name in tool_names {
+            // 应用白名单/黑名单过滤
+            let mut whitelist_hit = allow.contains(tool_name);
+            let plugin_prefixed_candidate = format!("plugin::{}", tool_name);
+            let prefixed_whitelist_hit = allow.contains(&plugin_prefixed_candidate);
+            
+            // 如果有白名单且工具不在白名单中，跳过
+            if !allow.is_empty() {
+                whitelist_hit = whitelist_hit || prefixed_whitelist_hit;
+                if !whitelist_hit {
+                    log::debug!(
+                        "ReWOO Planner: 工具 '{}' 未命中白名单, allow={:?}",
+                        tool_name, allow
+                    );
+                    continue;
+                }
+            }
+            
+            // 如果工具在黑名单中，跳过
+            if deny.contains(tool_name) {
+                log::debug!(
+                    "ReWOO Planner: 工具 '{}' 在黑名单中，跳过 (deny={:?})",
+                    tool_name, deny
+                );
+                continue;
+            }
+            
+            // 获取工具详细信息
+            if let Some(tool_info) = self.framework_adapter.get_tool_info(tool_name).await {
+                // 处理前缀补偿（与ReAct保持一致）
+                if prefixed_whitelist_hit
+                    && !tool_info.name.starts_with("plugin::")
+                    && tool_info.metadata.tags.iter().any(|t| t == "passive")
+                {
+                    log::debug!(
+                        "ReWOO Planner: 跳过对被动工具 '{}' 的前缀补偿",
+                        tool_info.name
+                    );
+                    continue;
+                }
+                
+                let effective_name = if !tool_info.name.starts_with("plugin::") && prefixed_whitelist_hit {
+                    plugin_prefixed_candidate.clone()
+                } else {
+                    tool_info.name.clone()
+                };
+                
+                log::debug!(
+                    "ReWOO Planner: 接收工具 '{}' => effective='{}' (available={}, source={:?})",
+                    tool_info.name, effective_name, tool_info.available, tool_info.source
+                );
+                
+                let mut adjusted = tool_info;
+                if effective_name != adjusted.name {
+                    adjusted.name = effective_name;
+                }
+                all_tools.push(adjusted);
+            } else {
+                log::warn!(
+                    "ReWOO Planner: 工具 '{}' 在列表中但无法获取详细信息",
+                    tool_name
+                );
+            }
+        }
+        
+        // 去重工具（按名称）
+        let mut unique_tools: HashMap<String, ToolInfo> = HashMap::new();
+        for tool in all_tools {
+            let existed = unique_tools.contains_key(&tool.name);
+            if existed {
+                log::debug!("ReWOO Planner: 去重丢弃重复工具 '{}'", tool.name);
+            }
+            unique_tools.entry(tool.name.clone()).or_insert(tool);
+        }
+        
+        let tool_infos: Vec<&ToolInfo> = unique_tools.values().collect();
+        
+        if tool_infos.is_empty() {
+            log::warn!("ReWOO Planner: 没有找到任何可用工具");
+            return "No tools available".to_string();
+        }
+        
+        log::info!(
+            "ReWOO Planner: 构建工具信息，共 {} 个工具",
+            tool_infos.len()
+        );
+        
+        // 构建工具描述字符串
+        let mut tool_lines: Vec<String> = Vec::new();
+        for info in &tool_infos {
+            // 构建工具参数签名
+            let mut parts: Vec<String> = Vec::new();
+            for param in &info.parameters.parameters {
+                let param_type = match param.param_type {
+                    crate::tools::ParameterType::String => "string",
+                    crate::tools::ParameterType::Number => "number",
+                    crate::tools::ParameterType::Boolean => "boolean",
+                    crate::tools::ParameterType::Array => "array",
+                    crate::tools::ParameterType::Object => "object",
+                };
+                let param_str = if param.required {
+                    format!("{}: {}", param.name, param_type)
+                } else {
+                    format!("{}?: {}", param.name, param_type)
+                };
+                parts.push(param_str);
+            }
+            
+            let signature = if parts.is_empty() {
+                String::new()
+            } else {
+                parts.join(", ")
+            };
+            
+            tool_lines.push(format!("- {}({}) - {}", info.name, signature, info.description));
+        }
+        
+        tool_lines.join("\n")
     }
 }
 

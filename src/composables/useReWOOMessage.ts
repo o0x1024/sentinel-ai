@@ -185,7 +185,7 @@ function parseExecutionSteps(content: string, chunks: any[], planningData?: ReWO
         step.thinking += '\n' + thinkingText
       }
       
-      step.status = 'running'
+        step.status = 'running'
     } else if (chunkType === 'ToolResult') {
       // 工具执行结果
       try {

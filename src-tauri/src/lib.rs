@@ -435,6 +435,12 @@ pub fn run() {
                         }
                     }
 
+                    // 初始化默认 prompt 文件
+                    match commands::prompt_api::initialize_default_prompts().await {
+                        Ok(msg) => tracing::info!("Prompt initialization: {}", msg),
+                        Err(e) => tracing::warn!("Failed to initialize default prompts: {}", e),
+                    }
+
                                     // 初始化Prompt服务状态
                 let prompt_service_state: commands::prompt_commands::PromptServiceState = 
                 Arc::new(tokio::sync::RwLock::new(None));
@@ -730,6 +736,8 @@ pub fn run() {
             commands::prompt_api::evaluate_prompt_api,
             commands::prompt_api::get_plugin_generation_prompt_api,
             commands::prompt_api::get_combined_plugin_prompt_api,
+            commands::prompt_api::get_default_prompt_content,
+            commands::prompt_api::initialize_default_prompts,
 
             // ReWOO测试相关命令 - DISABLED
             rewoo_commands::test_rewoo_engine,

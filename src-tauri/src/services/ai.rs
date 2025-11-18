@@ -1533,13 +1533,13 @@ impl AiService {
                     //     "REQUEST_START",
                     //     &format!("Input length: {} chars", user_input.len()),
                     // );
-                    // logger.write_to_log(
-                    //     "REQUEST_START",
-                    //     &format!(
-                    //         "\n\n system prompt:\n {}\n\n",
-                    //         system_prompt.unwrap_or("You are a helpful AI assistant.")
-                    //     ),
-                    // );
+                    logger.write_to_log(
+                        "REQUEST_START",
+                        &format!(
+                            "\n\n system prompt:\n {}\n\n",
+                            system_prompt.unwrap_or("You are a helpful AI assistant.")
+                        ),
+                    );
                     logger.write_to_log(
                         "REQUEST_START",
                         &format!("\n\n User input:\n {}\n\n", user_input),

@@ -10,7 +10,7 @@ use crate::{Finding, PassiveError, PluginMetadata, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite, SqlitePool};
-use tracing::info;
+use tracing::{debug, info};
 
 /// 数据库服务
 pub struct PassiveDatabaseService {
@@ -229,7 +229,7 @@ impl PassiveDatabaseService {
     pub async fn insert_vulnerability(&self, finding: &Finding) -> Result<()> {
         let signature = finding.calculate_signature();
 
-        info!("Inserting vulnerability: title='{}', description='{}'", 
+        debug!("Inserting vulnerability: title='{}', description='{}'", 
               finding.title, finding.description);
 
         sqlx::query(
@@ -287,7 +287,7 @@ impl PassiveDatabaseService {
         
         self.insert_evidence(&evidence).await?;
 
-        info!("Vulnerability inserted with evidence: {} - {}", finding.id, finding.title);
+        debug!("Vulnerability inserted with evidence: {} - {}", finding.id, finding.title);
         Ok(())
     }
 

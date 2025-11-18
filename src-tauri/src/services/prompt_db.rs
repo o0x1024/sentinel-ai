@@ -245,6 +245,7 @@ impl PromptRepository {
 
     fn arch_str(a: &ArchitectureType) -> &'static str {
         match a {
+            ArchitectureType::Orchestrator => "orchestrator",
             ArchitectureType::ReAct => "react",
             ArchitectureType::ReWOO => "rewoo",
             ArchitectureType::LLMCompiler => "llmcompiler",
@@ -266,8 +267,10 @@ impl PromptRepository {
 
     fn parse_arch(s: &str) -> ArchitectureType {
         match s.to_lowercase().as_str() {
+            "orchestrator" => ArchitectureType::Orchestrator,
             "rewoo" => ArchitectureType::ReWOO,
             "llmcompiler" => ArchitectureType::LLMCompiler,
+            "react" => ArchitectureType::ReAct,
             _ => ArchitectureType::PlanExecute,
         }
     }

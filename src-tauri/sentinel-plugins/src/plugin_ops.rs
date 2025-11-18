@@ -200,7 +200,7 @@ fn op_emit_finding(
     let ctx = state.borrow::<PluginContext>().clone();
     let rust_finding = Finding::from(finding.clone());
 
-    info!(
+    debug!(
         "Plugin emitted finding: {:?}",
         rust_finding
     );

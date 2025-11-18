@@ -404,6 +404,10 @@ impl PluginEngine {
                         append(name, value) {
                             this._params.push([String(name), String(value)]);
                         }
+                        delete(name) {
+                            name = String(name);
+                            this._params = this._params.filter(([k]) => k !== name);
+                        }
                         get(name) {
                             name = String(name);
                             for (const [k, v] of this._params) {
@@ -426,6 +430,34 @@ impl PluginEngine {
                             }
                             return false;
                         }
+                        set(name, value) {
+                            name = String(name);
+                            value = String(value);
+                            let found = false;
+                            this._params = this._params.filter(([k, v]) => {
+                                if (k === name) {
+                                    if (!found) {
+                                        found = true;
+                                        return true;
+                                    }
+                                    return false;
+                                }
+                                return true;
+                            });
+                            if (found) {
+                                for (let i = 0; i < this._params.length; i++) {
+                                    if (this._params[i][0] === name) {
+                                        this._params[i][1] = value;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                this._params.push([name, value]);
+                            }
+                        }
+                        sort() {
+                            this._params.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+                        }
                         toString() {
                             return this._params
                                 .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
@@ -435,6 +467,19 @@ impl PluginEngine {
                             for (const [k, v] of this._params) {
                                 callback.call(thisArg, v, k, this);
                             }
+                        }
+                        // Iterator methods (ES6)
+                        entries() {
+                            return this._params[Symbol.iterator]();
+                        }
+                        keys() {
+                            return this._params.map(([k]) => k)[Symbol.iterator]();
+                        }
+                        values() {
+                            return this._params.map(([, v]) => v)[Symbol.iterator]();
+                        }
+                        [Symbol.iterator]() {
+                            return this._params[Symbol.iterator]();
                         }
                     }
                     globalThis.URLSearchParams = SimpleURLSearchParams;

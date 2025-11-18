@@ -13,6 +13,9 @@ pub mod plan_and_execute;
 // ReAct 架构模块
 pub mod react;
 
+// Orchestrator 架构模块
+pub mod orchestrator;
+
 
 // 重新导出核心类型和trait
 pub use types::*;

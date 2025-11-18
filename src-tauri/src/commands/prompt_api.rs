@@ -229,6 +229,8 @@ fn map_engine_to_arch(engine: &str) -> ArchitectureType {
     match engine {
         "rewoo" => ArchitectureType::ReWOO,
         "llm-compiler" => ArchitectureType::LLMCompiler,
+        "orchestrator" => ArchitectureType::Orchestrator,
+        "react" => ArchitectureType::ReAct,
         _ => ArchitectureType::PlanExecute,
     }
 }
@@ -394,6 +396,102 @@ pub async fn get_combined_plugin_prompt_api(
     combined = combined.replace("{severity}", &severity);
     
     Ok(combined)
+}
+
+/// Get default prompt content from prompt.md files in app data directory
+#[tauri::command]
+pub async fn get_default_prompt_content(
+    architecture: ArchitectureType,
+    stage: StageType,
+) -> Result<String, String> {
+    use std::fs;
+    use std::path::PathBuf;
+    
+    // Map architecture to directory name
+    let arch_dir = match architecture {
+        ArchitectureType::ReWOO => "rewoo",
+        ArchitectureType::LLMCompiler => "llm_compiler",
+        ArchitectureType::PlanExecute => "plan_and_execute",
+        ArchitectureType::ReAct => "react",
+        ArchitectureType::Orchestrator => "orchestrator",
+    };
+    
+    // Get app data directory
+    let app_data_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sentinel-ai")
+        .join("prompts");
+    
+    // Construct path to prompt.md in app data directory
+    let prompt_path = app_data_dir.join(arch_dir).join("prompt.md");
+    
+    // Read the file
+    let content = fs::read_to_string(&prompt_path)
+        .map_err(|e| format!("Failed to read prompt file for {} at {:?}: {}", arch_dir, prompt_path, e))?;
+    
+    // For architectures with multiple stages, try to extract the relevant section
+    // For now, return the full content - frontend can handle stage-specific extraction if needed
+    Ok(content)
+}
+
+/// Initialize default prompt files by copying from source to app data directory
+#[tauri::command]
+pub async fn initialize_default_prompts() -> Result<String, String> {
+    use std::fs;
+    use std::path::PathBuf;
+    
+    // Get app data directory
+    let app_data_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sentinel-ai")
+        .join("prompts");
+    
+    // Create prompts directory if it doesn't exist
+    fs::create_dir_all(&app_data_dir)
+        .map_err(|e| format!("Failed to create prompts directory: {}", e))?;
+    
+    let architectures = vec![
+        ("rewoo", "rewoo"),
+        ("llm_compiler", "llm_compiler"),
+        ("plan_and_execute", "plan_and_execute"),
+        ("react", "react"),
+        ("orchestrator", "orchestrator"),
+    ];
+    
+    let mut copied_count = 0;
+    let mut skipped_count = 0;
+    
+    for (arch_name, arch_dir) in architectures {
+        // Source path (from compiled binary resources)
+        let source_path: PathBuf = [
+            env!("CARGO_MANIFEST_DIR"),
+            "src",
+            "engines",
+            arch_dir,
+            "prompt.md"
+        ].iter().collect();
+        
+        // Destination path (in app data directory)
+        let dest_dir = app_data_dir.join(arch_name);
+        let dest_path = dest_dir.join("prompt.md");
+        
+        // Create architecture directory
+        fs::create_dir_all(&dest_dir)
+            .map_err(|e| format!("Failed to create directory for {}: {}", arch_name, e))?;
+        
+        // Only copy if destination doesn't exist (don't overwrite user modifications)
+        if !dest_path.exists() {
+            if source_path.exists() {
+                fs::copy(&source_path, &dest_path)
+                    .map_err(|e| format!("Failed to copy prompt file for {}: {}", arch_name, e))?;
+                copied_count += 1;
+            }
+        } else {
+            skipped_count += 1;
+        }
+    }
+    
+    Ok(format!("Initialized prompts: {} copied, {} skipped (already exist)", copied_count, skipped_count))
 }
 
 

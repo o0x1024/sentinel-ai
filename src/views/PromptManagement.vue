@@ -82,6 +82,7 @@
           <h3 class="card-title text-sm">用户自定义模板</h3>
           <div class="text-xs opacity-70 mt-1">管理用户创建的自定义模板</div>
         </div>
+        
       </div>
       <div class="px-4 pb-2">
         <input v-model.trim="searchQuery" class="input input-sm input-bordered w-full" :placeholder="$t('promptMgmt.searchTemplates') as string" />
@@ -256,6 +257,12 @@
               <div class="flex gap-1">
                 <input v-model="newVariable" @keyup.enter="addVariable" class="input input-xs input-bordered flex-1" placeholder="变量名 (如: task_name)" />
                 <button @click="addVariable" class="btn btn-xs btn-outline">添加</button>
+                <button @click="loadDefaultPrompt" class="btn btn-xs btn-outline" :disabled="!editingTemplate" title="从应用数据目录的prompts文件夹导入默认内容">
+                  📥 导入默认prompt
+                </button>
+              </div>
+              <div class="text-xs opacity-60 mt-1">
+                提示：默认prompt存储在应用数据目录的prompts文件夹中，可以手动编辑
               </div>
             </div>
             
@@ -331,7 +338,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 
-type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct'
+type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct' | 'Orchestrator'
 type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Evaluation' | 'Replan'
 type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
 type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'PluginInterface' | 'PluginOutputFormat' | 'AgentPluginOutputFormat'
@@ -403,6 +410,10 @@ const groups = [
   { value: 'ReAct', label: 'ReAct', stages: [
     { value: 'Planning', label: 'Planning (规划)' },
     { value: 'Execution', label: 'Execution (执行)' },
+  ]},
+  { value: 'Orchestrator', label: 'Orchestrator', stages: [
+    { value: 'Planning', label: 'Planning (规划/编排)' },
+    { value: 'Execution', label: 'Execution (执行/协调)' },
   ]},
 ]
 
@@ -490,6 +501,7 @@ const stagesOfSelectedArch = computed<StageType[]>(() => {
   if (selected.value.architecture === 'ReWOO') return ['Planner','Solver'] as StageType[]
   if (selected.value.architecture === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
   if (selected.value.architecture === 'ReAct') return ['Planning','Execution'] as StageType[]
+  if (selected.value.architecture === 'Orchestrator') return ['Planning','Execution'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
 })
 
@@ -499,6 +511,7 @@ const stagesOfGroupArch = computed<StageType[]>(() => {
   if (arch === 'ReWOO') return ['Planner','Solver'] as StageType[]
   if (arch === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
   if (arch === 'ReAct') return ['Planning','Execution'] as StageType[]
+  if (arch === 'Orchestrator') return ['Planning','Execution'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
 })
 
@@ -906,6 +919,48 @@ async function setDefaultGroup() {
   await invoke('set_arch_default_group_api', { architecture: selected.value.architecture, groupId: selectedGroupId.value } as any)
   await loadGroups()
   toast.success(t('promptMgmt.defaultGroupSet') as unknown as string)
+}
+
+// 导入默认prompt内容
+async function loadDefaultPrompt() {
+  if (!editingTemplate.value) {
+    toast.error('请先选择或创建一个模板')
+    return
+  }
+  
+  try {
+    statusText.value = '正在加载默认prompt...'
+    
+    const content = await invoke<string>('get_default_prompt_content', {
+      architecture: editingTemplate.value.architecture,
+      stage: editingTemplate.value.stage
+    })
+    
+    // 确认是否覆盖当前内容
+    if (editingTemplate.value.content && editingTemplate.value.content.trim()) {
+      const confirmed = await dialog.confirm({
+        title: '确认导入',
+        message: '当前模板已有内容，是否覆盖？',
+        variant: 'warning'
+      })
+      
+      if (!confirmed) {
+        statusText.value = ''
+        return
+      }
+    }
+    
+    // 设置内容
+    editingTemplate.value.content = content
+    isDirty.value = true
+    
+    statusText.value = ''
+    toast.success(`已导入 ${editingTemplate.value.architecture} 的默认prompt`)
+  } catch (error: any) {
+    console.error('Failed to load default prompt:', error)
+    statusText.value = ''
+    toast.error(`导入失败: ${error.message || error}`)
+  }
 }
 
 async function deleteGroup() {

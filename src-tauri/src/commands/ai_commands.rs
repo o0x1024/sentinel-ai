@@ -1,5 +1,5 @@
 //! AI相关命令整合模块
-//! 
+//!
 //! 整合了智能调度器和AI助手的功能，包括：
 //! - 智能查询调度
 //! - 执行监控
@@ -13,6 +13,7 @@ use crate::engines::llm_compiler::types::LlmCompilerConfig;
 use crate::engines::plan_and_execute::types::PlanAndExecuteConfig;
 use crate::engines::rewoo::engine_adapter::ReWooEngine;
 use crate::engines::rewoo::rewoo_types::ReWOOConfig;
+use crate::engines::orchestrator::engine_adapter::OrchestratorEngineAdapter;
 // use crate::engines::plan_and_execute::executor::ExecutionMode; // not needed directly
 use crate::agents::traits::{ExecutionEngine, AgentTask, TaskPriority};
 
@@ -24,10 +25,10 @@ async fn create_ai_assistant_session(
     task_description: &str,
 ) -> Result<(), String> {
     use crate::services::database::Database;
-    
+
     // 创建task_id
     let task_id = format!("{}_task", execution_id);
-    
+
     // 先创建agent_task记录（因为agent_sessions表有外键约束）
     let agent_task = crate::agents::traits::AgentTask {
         id: task_id.clone(),
@@ -38,14 +39,14 @@ async fn create_ai_assistant_session(
         parameters: std::collections::HashMap::new(),
         timeout: Some(300),
     };
-    
+
     db_service.create_agent_task(&agent_task).await
         .map_err(|e| format!("Failed to create agent task: {}", e))?;
-    
+
     // 然后创建agent_session记录
     db_service.create_agent_session(execution_id, &task_id, agent_name).await
         .map_err(|e| format!("Failed to create agent session: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -64,7 +65,7 @@ async fn save_ai_assistant_execution(
 ) -> Result<(), String> {
     use crate::services::database::Database;
     use crate::commands::agent_commands::WorkflowStepDetail;
-    
+
     // 保存执行步骤到 agent_execution_steps 表
     let step_detail = WorkflowStepDetail {
         step_id: "step_1".to_string(),
@@ -79,19 +80,19 @@ async fn save_ai_assistant_execution(
         dependencies: vec![],
         tool_result: None,
     };
-    
+
     db_service.save_agent_execution_step(execution_id, &step_detail).await
         .map_err(|e| format!("Failed to save execution step: {}", e))?;
-    
+
     // 更新session状态
     let status_str = if success { "Completed" } else { "Failed" };
     if let Err(e) = db_service.update_agent_session_status(execution_id, status_str).await {
         log::warn!("Failed to update agent session status: {}", e);
     }
-    
+
     Ok(())
 }
- 
+
 
 
 use tauri::{AppHandle, State, Emitter, Manager};
@@ -125,7 +126,7 @@ impl<T> CommandResponse<T> {
             request_id: Uuid::new_v4().to_string(),
         }
     }
-    
+
     pub fn error(message: String) -> Self {
         Self {
             success: false,
@@ -281,12 +282,13 @@ fn default_notification_enabled() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum AgentEngine { 
-    PlanExecute, 
+pub enum AgentEngine {
+    Orchestrator,
+    PlanExecute,
     React,
-    Rewoo, 
-    LlmCompiler, 
-    Auto 
+    Rewoo,
+    LlmCompiler,
+    Auto
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,7 +346,7 @@ pub struct ScenarioAgentProfile {
     #[serde(default)]
     pub group_id: Option<i64>,
     #[serde(default)]
-    pub pinned_versions: Option<std::collections::HashMap<i64, String>>,    
+    pub pinned_versions: Option<std::collections::HashMap<i64, String>>,
     #[serde(default)]
     pub pre_hooks: Option<Vec<String>>,
     #[serde(default)]
@@ -355,10 +357,10 @@ pub struct ScenarioAgentProfile {
 
 // Expose tools catalog for agent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SimpleToolInfo { 
-    pub name: String, 
-    pub title: Option<String>, 
-    pub category: Option<String>, 
+pub struct SimpleToolInfo {
+    pub name: String,
+    pub title: Option<String>,
+    pub category: Option<String>,
     pub description: Option<String>,
     pub available: bool,
     pub source: Option<String>,
@@ -412,7 +414,7 @@ pub async fn list_unified_tools_grouped(
         if is_plugin {
             continue;
         }
-        
+
         let is_mcp = t.metadata.tags.iter().any(|x| x == "mcp");
         let group = t.metadata.tags.iter()
             .find_map(|tag| tag.strip_prefix("connection:").map(|s| s.to_string()));
@@ -500,6 +502,7 @@ pub async fn dispatch_scenario_task(
 
     // 选架构
     let architecture = match profile.engine {
+        AgentEngine::Orchestrator => "orchestrator",
         AgentEngine::PlanExecute => "plan-execute",
         AgentEngine::React => "react",
         AgentEngine::Rewoo => "rewoo",
@@ -509,13 +512,13 @@ pub async fn dispatch_scenario_task(
 
     let mut options = request.options.unwrap_or_default();
     options.insert("agent_id".to_string(), serde_json::Value::String(request.agent_id.clone()));
-    
+
     // 从 options 中提取 conversation_id 和 message_id（向后兼容前端把它们放在 options 里的情况）
     let conversation_id = request.conversation_id.clone()
         .or_else(|| options.get("conversation_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
     let message_id = request.message_id.clone()
         .or_else(|| options.get("message_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
-    
+
     // 获取当前角色提示词并添加到options中
     if let Ok(Some(current_role)) = db_service.get_current_ai_role().await {
         if !current_role.prompt.trim().is_empty() {
@@ -523,7 +526,7 @@ pub async fn dispatch_scenario_task(
             tracing::info!("Added role prompt from: {}", current_role.title);
         }
     }
-    
+
     // 透传已绑定的提示词模板ID，供引擎或执行层使用
     if let Some(pids) = &profile.prompt_ids {
         options.insert("prompt_ids".to_string(), serde_json::json!({
@@ -610,15 +613,15 @@ pub async fn dispatch_scenario_task(
     let is_task_mode = options.get("task_mode")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    
+
     // conversation_id 和 message_id 已经在上面从 request 或 options 中提取
     // 这里不需要再次提取，直接使用之前的变量
-    
+
     let execution_id = options.get("execution_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    
+
     // 创建agent_session记录用于统一的工作流监控
     if let Err(e) = create_ai_assistant_session(
         &db_service,
@@ -628,26 +631,26 @@ pub async fn dispatch_scenario_task(
     ).await {
         log::warn!("Failed to create AI assistant session: {}", e);
     }
-    
+
     // 提取会话ID（用于日志记录）
     if let Some(ref conv_id) = conversation_id {
         if !conv_id.is_empty() {
             info!("Processing request for conversation: {}", conv_id);
         }
     }
-    
+
     // 如果是任务模式且架构为"auto"，进行智能选择
     let selected_architecture = if is_task_mode && architecture == "auto" {
         let auto_selected = select_best_architecture(&request.query).await
             .map_err(|e| format!("Failed to select architecture: {}", e))?;
-        
+
         info!("Auto-selected architecture: {} for query: {}", auto_selected, request.query);
-        
+
         auto_selected
     } else {
         architecture.clone()
     };
-    
+
     // 创建 DispatchQueryRequest
     let dispatch_req = DispatchQueryRequest {
         query: request.query,
@@ -657,7 +660,7 @@ pub async fn dispatch_scenario_task(
         conversation_id: conversation_id.clone(),
         message_id: message_id.clone(),
     };
-    
+
     let app_clone = app_handle.clone();
     // 根据选择的架构创建调度器
     let result = match selected_architecture.as_str() {
@@ -711,30 +714,40 @@ pub async fn dispatch_scenario_task(
                 app_clone.clone(),
             ).await
         }
+        "orchestrator" => {
+            dispatch_with_orchestrator(
+                execution_id.clone(),
+                dispatch_req,
+                (*ai_service_manager).clone(),
+                (*db_service).clone(),
+                (*execution_manager).clone(),
+                app_clone.clone(),
+            ).await
+        }
         _ => {
             Err(format!("Unsupported architecture: {}", selected_architecture))
         }
     };
-    
-    // 如果调度成功，按架构决定是否需要异步开始“真实执行”
+
+    // 如果调度成功，按架构决定是否需要异步开始"真实执行"
     if let Ok(ref dispatch_result) = result {
-        // 仅对需要 register_execution 的架构触发后续执行（如 plan-execute / llm-compiler）
+        // 仅对需要 register_execution 的架构触发后续执行（如 plan-execute / llm-compiler / orchestrator）
         let arch_for_exec = selected_architecture.clone();
-        if matches!(arch_for_exec.as_str(), "plan-execute" | "llm-compiler" | "auto") {
+        if matches!(arch_for_exec.as_str(), "plan-execute" | "llm-compiler" | "orchestrator" | "auto") {
             let execution_id_clone = dispatch_result.execution_id.clone();
             let app_clone = app_handle.clone();
-            
+
             // 异步开始执行，不阻塞调度响应
             tokio::spawn(async move {
                 info!("Starting real engine execution: {}", execution_id_clone);
-                
+
                 // 从应用状态获取执行管理器
                 let execution_manager = app_clone.state::<Arc<crate::managers::ExecutionManager>>();
                 let execution_manager_clone = execution_manager.inner().clone();
                 let app_inner = app_clone.clone();
                 let execution_id_inner = execution_id_clone.clone();
                 let db_service_clone = app_clone.state::<Arc<DatabaseService>>().inner().clone();
-                
+
                 tokio::spawn(async move {
                     // 获取执行上下文
                     let context = match execution_manager_clone.get_execution_context(&execution_id_inner).await {
@@ -751,7 +764,7 @@ pub async fn dispatch_scenario_task(
                 // 从任务参数中提取消息ID和会话ID
                 let message_id = context.task.parameters.get("message_id").and_then(|v| v.as_str()).map(|s| s.to_string());
                 let conversation_id = context.task.parameters.get("conversation_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                
+
                 // 发送 PlanUpdate 事件给前端展示执行计划（预留）
                 let _plan_json = serde_json::json!({
                     "id": context.plan.id,
@@ -805,24 +818,24 @@ pub async fn dispatch_scenario_task(
 
                 // 记录执行开始时间
                 let execution_start_time = std::time::SystemTime::now();
-                
+
                 // 执行真实的引擎计划
                 let exec_result = execution_manager_clone.execute_plan(&execution_id_inner).await;
-                
+
                 // 记录执行完成时间
                 let execution_end_time = std::time::SystemTime::now();
-                
+
                 // 保存执行结果到数据库
                 let task_name = context.task.description.clone();
                 let architecture = format!("{:?}", context.engine_type);
                 let started_at = execution_start_time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                 let completed_at = execution_end_time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                 let duration_ms = execution_end_time.duration_since(execution_start_time).unwrap_or_default().as_millis() as u64;
-                
+
                 let success = exec_result.is_ok();
                 let error = if let Err(ref e) = exec_result { Some(e.to_string()) } else { None };
                 let result = if success { Some("Task completed successfully".to_string()) } else { None };
-                
+
                 // 只有非Plan-and-Execute架构才保存通用的AI助手执行步骤
                 // Plan-and-Execute引擎会自己保存详细的步骤信息
                 if !architecture.contains("PlanExecute") {
@@ -848,7 +861,7 @@ pub async fn dispatch_scenario_task(
                         log::warn!("Failed to update agent session status: {}", e);
                     }
                 }
-                
+
                 match exec_result {
                     Ok(_result) => {
                         log::info!("Execution completed successfully: {}", execution_id_inner);
@@ -856,13 +869,13 @@ pub async fn dispatch_scenario_task(
                     }
                     Err(e) => {
                         log::error!("Execution failed: {}: {}", execution_id_inner, e);
-                        
+
                         // 使用更友好的错误消息格式
                         let error_message = format!(
                             "任务执行失败: {}\n\n如需帮助，请检查执行配置或联系技术支持。",
                             e.to_string()
                         );
-                        
+
                         // 使用有序消息块发送错误
                         crate::utils::ordered_message::emit_message_chunk_arc(
                             &Arc::new(app_inner.clone()),
@@ -875,7 +888,7 @@ pub async fn dispatch_scenario_task(
                             None,
                             None,
                         );
-                        
+
                         // 确保发送一个内容块来正式结束会话
                         crate::utils::ordered_message::emit_message_chunk_arc(
                             &Arc::new(app_inner.clone()),
@@ -900,7 +913,7 @@ pub async fn dispatch_scenario_task(
             info!("Architecture '{}' completes within dispatch; skipping real engine execution.", arch_for_exec);
         }
     }
-    
+
     // 更新返回结果中的架构信息
     result.map(|mut dispatch_result| {
         // 当外层选择为 "auto" 时，不覆盖具体调度器返回的架构信息
@@ -973,7 +986,7 @@ pub async fn stop_execution(
     })) {
         log::warn!("Failed to emit execution_stopped event: {}", e);
     }
-    
+
     log::info!("✅ Stop execution completed: {}", execution_id);
 
     info!("Execution stop completed: {}", execution_id);
@@ -1030,7 +1043,7 @@ pub async fn get_agent_statistics(
     manager: State<'_, crate::commands::agent_commands::GlobalAgentManager>,
 ) -> Result<AgentStatistics, String> {
     let manager_guard = manager.read().await;
-    
+
     let agent_manager = match manager_guard.as_ref() {
         Some(manager) => manager,
         None => {
@@ -1044,11 +1057,11 @@ pub async fn get_agent_statistics(
             });
         }
     };
-    
+
     // 从Agent管理器获取真实统计数据
     let stats = agent_manager.get_statistics().await;
     let sessions = agent_manager.get_all_sessions().await;
-    
+
     // 统计活跃会话数
     let active_count = sessions.iter().filter(|(_, info)| {
         matches!(
@@ -1057,7 +1070,7 @@ pub async fn get_agent_statistics(
             crate::agents::traits::AgentSessionStatus::Executing
         )
     }).count();
-    
+
     Ok(AgentStatistics {
         active_count: active_count as u32,
         total_tasks: stats.total_tasks as u32,
@@ -1207,14 +1220,14 @@ pub struct NodeCapacityRequest {
 async fn select_best_architecture(user_input: &str) -> Result<String, String> {
     // 简单的规则基础架构选择
     let input_lower = user_input.to_lowercase();
-    
+
     // 分析任务特征
     let has_complex_analysis = input_lower.contains("分析") || input_lower.contains("analysis");
     let has_scanning = input_lower.contains("扫描") || input_lower.contains("scan");
     let has_monitoring = input_lower.contains("监控") || input_lower.contains("monitor");
     let has_multiple_steps = input_lower.contains("步骤") || input_lower.contains("多个") || input_lower.contains("multiple");
     let has_parallel_tasks = input_lower.contains("同时") || input_lower.contains("并行") || input_lower.contains("parallel");
-    
+
     // 架构选择逻辑
     if has_parallel_tasks || (has_scanning && has_multiple_steps) {
         Ok("llm-compiler".to_string())
@@ -1243,9 +1256,10 @@ async fn dispatch_with_auto(
         "plan-execute" => dispatch_with_plan_execute(execution_id, request, ai_service_manager, db_service, execution_manager, app).await,
         "rewoo" => dispatch_with_rewoo(execution_id, request, ai_service_manager, db_service, execution_manager, app).await,
         "llm-compiler" => dispatch_with_llm_compiler(execution_id, request, ai_service_manager, db_service, execution_manager, app).await,
+        "orchestrator" => dispatch_with_orchestrator(execution_id, request, ai_service_manager, db_service, execution_manager, app).await,
         _ => Err(format!("Unsupported architecture: {}", architecture)),
     }
-}   
+}
 
 async fn dispatch_with_plan_execute(
     execution_id: String,
@@ -1255,10 +1269,10 @@ async fn dispatch_with_plan_execute(
     execution_manager: Arc<crate::managers::ExecutionManager>,
     app: AppHandle,
 ) -> Result<DispatchResult, String> {
-    
+
     // 创建Plan-and-Execute引擎配置
     let config = PlanAndExecuteConfig::default();
-    
+
     // 创建Plan-and-Execute引擎
     let mut engine = PlanAndExecuteEngine::new_with_dependencies(
         ai_service_manager.clone(),
@@ -1266,7 +1280,7 @@ async fn dispatch_with_plan_execute(
         db_service.clone(),
         Some(Arc::new(app.clone())),
     ).await.map_err(|e| format!("Failed to create Plan-and-Execute engine: {}", e))?;
-    
+
     // 创建Agent任务
     let mut parameters = request.options.unwrap_or_default();
     // 统一使用 snake_case keys，兼容可能传入的 camelCase
@@ -1287,7 +1301,7 @@ async fn dispatch_with_plan_execute(
         parameters,
         timeout: Some(600), // 10 minute timeout
     };
-    
+
     // 将参数注入引擎，便于执行阶段访问（如 prompt_ids ）
     engine.set_runtime_params(task.parameters.clone());
 
@@ -1304,7 +1318,7 @@ async fn dispatch_with_plan_execute(
         task,
         engine_instance,
     ).await.map_err(|e| format!("Failed to register execution: {}", e))?;
-    
+
     let execution_plan = ExecutionPlanView {
         id: plan.id.clone(),
         name: plan.name.clone(),
@@ -1318,7 +1332,7 @@ async fn dispatch_with_plan_execute(
         }).collect(),
         estimated_duration: plan.estimated_duration,
     };
-    
+
     Ok(DispatchResult {
         execution_id,
         initial_response: "已创建Plan-and-Execute执行计划，引擎实例已注册，准备真实执行...".to_string(),
@@ -1340,17 +1354,17 @@ async fn dispatch_with_react(
     use std::collections::HashMap;
     use crate::agents::traits::{AgentTask, TaskPriority};
     use crate::managers::cancellation_manager;
-    
+
     info!("Creating ReAct dispatch for: {}", request.query);
-    
+
     // ✅ 注册取消令牌
     let cancellation_token = cancellation_manager::register_cancellation_token(execution_id.clone()).await;
-    
+
     // 从 options 中提取配置
     let options = request.options.unwrap_or_default();
     let mut config = ReactConfig::default();
     let max_iterations = config.max_iterations; // 保存用于超时计算
-    
+
     if let Some(max_iter) = options.get("max_iterations").and_then(|v| v.as_u64()) {
         config.max_iterations = max_iter as u32;
     }
@@ -1366,7 +1380,7 @@ async fn dispatch_with_react(
     if let Some(verbose) = options.get("verbose").and_then(|v| v.as_bool()) {
         config.verbose = verbose;
     }
-    
+
     // **关键修复**: 从 options 中读取 tools_allow 并设置到 ReactConfig.allowed_tools
     // 这样 ReAct executor 的 build_tools_information 才能读取到正确的工具白名单
     if let Some(tools_allow) = options.get("tools_allow") {
@@ -1378,7 +1392,7 @@ async fn dispatch_with_react(
             config.allowed_tools = Some(tool_names);
         }
     }
-    
+
     // 获取默认 AI 服务
     let ai_service = match ai_service_manager.get_default_chat_model().await {
         Ok(Some((provider, model))) => {
@@ -1403,10 +1417,10 @@ async fn dispatch_with_react(
             return Err("No default AI model configured".to_string());
         }
     };
-    
+
     // 序列化 config
     let config_json = serde_json::to_value(&config).map_err(|e| e.to_string())?;
-    
+
     // 创建 ReactEngine
     let engine = ReactEngine::new(config).with_services(
         ai_service,
@@ -1414,7 +1428,7 @@ async fn dispatch_with_react(
         Some(db_service.clone()),
         Some(app.clone()),
     );
-    
+
     // 创建 AgentTask
     let task = AgentTask {
         id: execution_id.clone(),
@@ -1424,7 +1438,7 @@ async fn dispatch_with_react(
             let mut map = HashMap::new();
             map.insert("query".to_string(), serde_json::json!(request.query));
             map.insert("config".to_string(), config_json);
-            
+
             // **关键修复**: 将 tools_allow 和 tools_deny 从 options 透传到 task.parameters 顶层
             // ReAct executor 的 build_tools_information 会从这里读取
             if let Some(tools_allow) = options.get("tools_allow") {
@@ -1435,7 +1449,7 @@ async fn dispatch_with_react(
                 log::info!("ReAct dispatch: 透传 tools_deny 到 task.parameters");
                 map.insert("tools_deny".to_string(), tools_deny.clone());
             }
-            
+
             // 添加 conversation_id 和 message_id 到 parameters，让 ReAct 引擎能够提取
             if let Some(conv_id) = &request.conversation_id {
                 map.insert("conversation_id".to_string(), serde_json::json!(conv_id));
@@ -1449,7 +1463,7 @@ async fn dispatch_with_react(
         priority: TaskPriority::Normal,
         timeout: Some(max_iterations as u64 * 30000), // 30s per iteration
     };
-    
+
     // 创建 dummy session 用于执行
     use crate::agents::traits::{AgentSession, AgentSessionStatus, LogLevel, AgentExecutionResult, SessionLog};
     struct DummySession {
@@ -1458,7 +1472,7 @@ async fn dispatch_with_react(
         logs: Vec<SessionLog>,
         result: Option<AgentExecutionResult>,
     }
-    
+
     #[async_trait::async_trait]
     impl AgentSession for DummySession {
         fn get_session_id(&self) -> &str { "dummy" }
@@ -1484,14 +1498,14 @@ async fn dispatch_with_react(
         }
         fn get_result(&self) -> Option<&AgentExecutionResult> { self.result.as_ref() }
     }
-    
+
     let mut session = DummySession {
         task,
         status: AgentSessionStatus::Executing,
         logs: Vec::new(),
         result: None,
     };
-    
+
     // 执行任务 - 先克隆 task 避免借用冲突
     let task_clone = session.task.clone();
     let start_time = std::time::Instant::now();
@@ -1504,7 +1518,7 @@ async fn dispatch_with_react(
             } else {
                 "ReAct execution completed".to_string()
             };
-            
+
             Ok(DispatchResult {
                 execution_id,
                 initial_response: response,
@@ -1526,23 +1540,23 @@ async fn dispatch_with_rewoo(
     app: AppHandle,
 ) -> Result<DispatchResult, String> {
     log::info!("Creating ReWOO dispatch for: {}", request.query);
-    
+
     // 创建ReWOO引擎配置
     let config = ReWOOConfig::default();
-    
+
     // 创建ReWOO引擎
     let mut engine = ReWooEngine::new_with_dependencies(
         ai_service_manager.clone(),
         config,
         db_service.clone(),
     ).await.map_err(|e| format!("Failed to create ReWOO engine: {}", e))?;
-    
+
     // 设置app_handle用于推送执行结果到前端
     engine.set_app_handle(app.clone());
-    
+
     // 创建Agent任务
     let mut task_params = request.options.unwrap_or_default();
-    
+
     // 添加 conversation_id 和 message_id 到 parameters
     if let Some(conv_id) = &request.conversation_id {
         task_params.insert("conversation_id".to_string(), serde_json::json!(conv_id));
@@ -1551,7 +1565,7 @@ async fn dispatch_with_rewoo(
         task_params.insert("message_id".to_string(), serde_json::json!(msg_id));
     }
     task_params.insert("execution_id".to_string(), serde_json::json!(execution_id));
-    
+
     let task = AgentTask {
         id: execution_id.clone(),
         user_id: "system".to_string(),
@@ -1561,16 +1575,16 @@ async fn dispatch_with_rewoo(
         parameters: task_params.clone(),
         timeout: Some(300), // 5分钟超时
     };
-    
+
     // 设置运行时参数
     engine.set_runtime_params(task_params);
-    
+
     // 执行ReWOO流程
     let start_time = std::time::Instant::now();
     match engine.execute(&task).await {
         Ok(result) => {
             let duration_ms = start_time.elapsed().as_millis() as u64;
-            
+
             // 从 result.data 中提取响应文本
             let response = if let Some(data) = &result.data {
                 if let Some(result_str) = data.get("result").and_then(|v| v.as_str()) {
@@ -1581,7 +1595,7 @@ async fn dispatch_with_rewoo(
             } else {
                 "ReWOO execution completed".to_string()
             };
-            
+
             Ok(DispatchResult {
                 execution_id,
                 initial_response: response,
@@ -1603,20 +1617,20 @@ async fn dispatch_with_llm_compiler(
     app: AppHandle,
 ) -> Result<DispatchResult, String> {
     // info!("Creating LLMCompiler dispatch for: {}", request.query);
-    
+
     // 创建LLMCompiler引擎配置
     let config = LlmCompilerConfig::default();
-    
+
     // 创建LLMCompiler引擎
     let mut engine = LlmCompilerEngine::new_with_dependencies(
         ai_service_manager.clone(),
         config,
         db_service.clone(),
     ).await.map_err(|e| format!("Failed to create LLMCompiler engine: {}", e))?;
-    
+
     // ✅ 设置app_handle用于推送工具执行结果到前端
     engine.set_app_handle(app.clone());
-    
+
     // 创建Agent任务
     let task = AgentTask {
         id: execution_id.clone(),
@@ -1627,19 +1641,19 @@ async fn dispatch_with_llm_compiler(
         parameters: request.options.unwrap_or_default(),
         timeout: Some(240), // 4分钟超时
     };
-    
+
     // ✅ 注入运行期参数，包括用户的任务描述
     let mut runtime_params = task.parameters.clone();
     runtime_params.insert(
-        "task_description".to_string(), 
+        "task_description".to_string(),
         serde_json::Value::String(task.description.clone())
     );
     engine.set_runtime_params(runtime_params);
-    
+
     // 创建执行计划
     let plan = engine.create_plan(&task).await
         .map_err(|e| format!("Failed to create LLMCompiler plan: {}", e))?;
-    
+
     // 注册执行上下文和引擎实例到执行管理器
     let engine_instance = crate::managers::EngineInstance::LLMCompiler(engine);
     execution_manager.register_execution(
@@ -1649,7 +1663,7 @@ async fn dispatch_with_llm_compiler(
         task,
         engine_instance,
     ).await.map_err(|e| format!("Failed to register execution: {}", e))?;
-    
+
     let execution_plan = ExecutionPlanView {
         id: plan.id.clone(),
         name: plan.name.clone(),
@@ -1663,12 +1677,102 @@ async fn dispatch_with_llm_compiler(
         }).collect(),
         estimated_duration: plan.estimated_duration,
     };
-    
+
     Ok(DispatchResult {
         execution_id,
         initial_response: "已启动LLMCompiler并行执行引擎，引擎实例已注册，准备真实执行...".to_string(),
         execution_plan: Some(execution_plan),
         estimated_duration: plan.estimated_duration,
         selected_architecture: "LLMCompiler".to_string(),
+    })
+}
+
+async fn dispatch_with_orchestrator(
+    execution_id: String,
+    request: DispatchQueryRequest,
+    ai_service_manager: Arc<AiServiceManager>,
+    db_service: Arc<DatabaseService>,
+    execution_manager: Arc<crate::managers::ExecutionManager>,
+    app: AppHandle,
+) -> Result<DispatchResult, String> {
+    log::info!("Creating Orchestrator dispatch for: {}", request.query);
+
+    // 创建 SecurityTestManager
+    let session_manager = Arc::new(crate::managers::SecurityTestManager::new());
+
+    // 创建 Orchestrator 引擎 (prompt repository 会在内部创建)
+    let mut engine = OrchestratorEngineAdapter::new(
+        session_manager.clone(), 
+        db_service.clone(),
+        ai_service_manager.clone(),
+        None, // prompt_repo will be created internally if needed
+    );
+
+    // 确保子代理已注册
+    engine.ensure_sub_agents_registered(
+        ai_service_manager.clone(),
+        db_service.clone(),
+        Some(app.clone()),
+    ).await.map_err(|e| format!("Failed to register sub-agents: {}", e))?;
+
+    // 创建 Agent 任务
+    let mut parameters = request.options.unwrap_or_default();
+    
+    // 添加 execution_id, message_id, conversation_id 到 parameters 用于消息发送
+    parameters.insert("execution_id".to_string(), serde_json::json!(execution_id));
+    if let Some(msg_id) = &request.message_id {
+        parameters.insert("message_id".to_string(), serde_json::json!(msg_id));
+    }
+    if let Some(conv_id) = &request.conversation_id {
+        parameters.insert("conversation_id".to_string(), serde_json::json!(conv_id));
+    }
+    
+    let task = AgentTask {
+        id: execution_id.clone(),
+        user_id: "system".to_string(),
+        description: request.query.clone(),
+        priority: TaskPriority::High,
+        target: None,
+        parameters,
+        timeout: Some(1800), // 30分钟超时
+    };
+
+    // 创建执行计划
+    let plan = engine.create_plan(&task).await
+        .map_err(|e| format!("Failed to create Orchestrator plan: {}", e))?;
+
+    // 设置 app_handle 用于消息发送
+    engine.set_app_handle(app.clone()).await;
+
+    // 注册执行上下文和引擎实例到执行管理器
+    let engine_instance = crate::managers::EngineInstance::Orchestrator(Box::new(engine));
+    execution_manager.register_execution(
+        execution_id.clone(),
+        crate::managers::EngineType::Orchestrator,
+        plan.clone(),
+        task,
+        engine_instance,
+    ).await.map_err(|e| format!("Failed to register execution: {}", e))?;
+
+    let execution_plan = ExecutionPlanView {
+        id: plan.id.clone(),
+        name: plan.name.clone(),
+        description: format!("Orchestrator安全测试编排: {}", request.query),
+        steps: plan.steps.iter().map(|step| ExecutionStepView {
+            id: step.id.clone(),
+            name: step.name.clone(),
+            description: step.description.clone(),
+            status: "pending".to_string(),
+            estimated_duration: 60, // Orchestrator步骤可能较长
+        }).collect(),
+        estimated_duration: plan.estimated_duration,
+    };
+
+    Ok(DispatchResult {
+        execution_id,
+        initial_response: "已启动Orchestrator安全测试编排引擎，引擎实例已注册，准备真实执行...".to_string(),
+        execution_plan: Some(execution_plan),
+        estimated_duration: plan.estimated_duration,
+        selected_architecture: "Orchestrator".to_string(),
     })
 }

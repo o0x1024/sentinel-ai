@@ -60,9 +60,9 @@ impl ReWOOWorker {
     ) -> Result<ToolResult, ReWOOError> {
         let start_time = SystemTime::now();
         
-        info!("step: {:?}", step);
+        // info!("step: {:?}", step);
 
-        info!("Executing tool '{}' with args: {}", step.tool, substituted_args);
+        // info!("Executing tool '{}' with args: {}", step.tool, substituted_args);
         
         // 工具权限检查（从runtime_params读取）
         if let Some(params) = &self.runtime_params {

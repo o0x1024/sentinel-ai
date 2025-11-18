@@ -159,7 +159,7 @@ impl UnifiedTool for GenerateAdvancedPluginTool {
         let requirements: Option<String> = params.inputs.get("requirements")
             .and_then(|v| v.as_str().map(|s| s.to_string()));
 
-        log::info!(
+        log::debug!(
             "Generating advanced plugins for domain: {}, vuln_types: {:?}",
             analysis.domain,
             vuln_types
@@ -174,7 +174,7 @@ impl UnifiedTool for GenerateAdvancedPluginTool {
         let min_quality_score = 70.0; // 最低质量分数阈值
         
         for vuln_type in &vuln_types {
-            log::info!("Checking for reusable plugins for type: {}", vuln_type);
+            log::debug!("Checking for reusable plugins for type: {}", vuln_type);
             
             match db_service.find_reusable_plugins_by_category(vuln_type, min_quality_score).await {
                 Ok(existing_plugins) if !existing_plugins.is_empty() => {

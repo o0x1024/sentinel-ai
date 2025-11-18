@@ -7,6 +7,7 @@ use sentinel_core::models::prompt::{
 
 fn arch_str(a: &ArchitectureType) -> &'static str {
     match a {
+        ArchitectureType::Orchestrator => "orchestrator",
         ArchitectureType::ReWOO => "rewoo",
         ArchitectureType::LLMCompiler => "llmcompiler",
         ArchitectureType::PlanExecute => "planexecute",
@@ -28,6 +29,7 @@ fn stage_str(s: &StageType) -> &'static str {
 
 fn parse_arch(s: &str) -> ArchitectureType {
     match s.to_lowercase().as_str() {
+        "orchestrator" => ArchitectureType::Orchestrator,
         "rewoo" => ArchitectureType::ReWOO,
         "llmcompiler" => ArchitectureType::LLMCompiler,
         "react" => ArchitectureType::ReAct,

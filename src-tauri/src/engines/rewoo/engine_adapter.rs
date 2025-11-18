@@ -48,16 +48,17 @@ impl ReWooEngine {
         let db = db_service.get_db()?;
         let prompt_repo = Arc::new(PromptRepository::new(db.pool().clone()));
         
-        // 创建Planner
+        // 创建Worker（先创建以获取framework_adapter）
+        let framework_adapter = crate::tools::get_framework_adapter(crate::tools::FrameworkType::ReWOO).await?;
+        let worker = ReWOOWorker::new(framework_adapter.clone(), config.worker.clone());
+        
+        // 创建Planner（传递framework_adapter用于获取工具详细信息）
         let planner = ReWOOPlanner::new(
             ai_service_manager.clone(),
             prompt_repo.clone(),
             config.planner.clone(),
+            framework_adapter.clone(),
         )?;
-        
-        // 创建Worker
-        let framework_adapter = crate::tools::get_framework_adapter(crate::tools::FrameworkType::ReWOO).await?;
-        let worker = ReWOOWorker::new(framework_adapter, config.worker.clone());
         
         // 创建Solver
         let solver = ReWOOSolver::new(
@@ -101,7 +102,8 @@ impl ReWooEngine {
     /// 设置运行时参数
     pub fn set_runtime_params(&mut self, params: HashMap<String, serde_json::Value>) {
         self.runtime_params = Some(params.clone());
-        self.worker.set_runtime_params(params);
+        self.worker.set_runtime_params(params.clone());
+        self.planner.set_runtime_params(params);
     }
     
     /// 设置应用句柄

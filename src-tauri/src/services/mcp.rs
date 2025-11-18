@@ -243,7 +243,7 @@ impl McpService {
     /// 执行客户端连接的MCP工具（按连接名定向调用）
     pub async fn execute_client_tool(&self, connection_name: &str, tool_name: &str, parameters: Value) -> Result<Value> {
         use rmcp::model::CallToolRequestParam;
-        tracing::info!("[MCP] Executing client tool '{}' on connection '{}' with params: {:?}", tool_name, connection_name, parameters);
+        // tracing::info!("[MCP] Executing client tool '{}' on connection '{}' with params: {:?}", tool_name, connection_name, parameters);
 
         // 获取会话
         if let Some(session) = self.client_manager.get_session(connection_name).await {

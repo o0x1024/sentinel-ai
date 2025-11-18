@@ -751,15 +751,7 @@
                   </button>
                 </div>
               </div>
-              <div class="max-h-96 overflow-auto bg-gray-900 rounded-lg p-4">
-                <pre v-if="!reviewEditMode" class="text-sm text-gray-100"><code>{{ selectedReviewPlugin.code }}</code></pre>
-                <textarea 
-                  v-else
-                  v-model="editedReviewCode"
-                  class="textarea textarea-bordered w-full font-mono text-sm h-96"
-                  spellcheck="false"
-                ></textarea>
-              </div>
+              <div ref="reviewCodeEditorContainer" class="border border-base-300 rounded-lg overflow-hidden min-h-96"></div>
             </div>
           </div>
         </div>
@@ -1008,13 +1000,7 @@
               </button>
             </div>
           </div>
-          <textarea 
-            v-model="pluginCode"
-            class="textarea textarea-bordered font-mono text-sm h-96 w-full"
-            :readonly="editingPlugin && !isEditing"
-            spellcheck="false"
-            :placeholder="$t('plugins.codePlaceholder', '在此输入或粘贴插件代码...')"
-          ></textarea>
+          <div ref="codeEditorContainer" class="border border-base-300 rounded-lg overflow-hidden min-h-96"></div>
         </div>
         
         <div v-if="codeError" class="alert alert-error mt-4">
@@ -1400,11 +1386,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { readFile } from '@tauri-apps/plugin-fs'
+import { EditorView, basicSetup } from 'codemirror'
+import { EditorState, Compartment } from '@codemirror/state'
+import { javascript } from '@codemirror/lang-javascript'
+import { oneDark } from '@codemirror/theme-one-dark'
+import { keymap } from '@codemirror/view'
+import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 
 const { t } = useI18n()
 
@@ -1505,6 +1497,16 @@ const testResultDialog = ref<HTMLDialogElement>()
 const advancedDialog = ref<HTMLDialogElement>()
 const reviewDetailDialog = ref<HTMLDialogElement>()
 const fileInput = ref<HTMLInputElement>()
+
+// CodeMirror Editor Refs
+const codeEditorContainer = ref<HTMLDivElement>()
+const reviewCodeEditorContainer = ref<HTMLDivElement>()
+let codeEditorView: EditorView | null = null
+let reviewCodeEditorView: EditorView | null = null
+
+// CodeMirror Compartments for dynamic configuration
+const codeEditorReadOnly = new Compartment()
+const reviewCodeEditorReadOnly = new Compartment()
 
 // Review Plugin State
 const reviewPlugins = ref<ReviewPlugin[]>([])
@@ -1929,6 +1931,112 @@ const getStatusText = (status: string): string => {
   return statusMap[status] || status
 }
 
+// Initialize CodeMirror for Code Editor Dialog
+const initCodeEditor = async () => {
+  await nextTick()
+  if (!codeEditorContainer.value) return
+  
+  // Destroy existing editor if any
+  if (codeEditorView) {
+    codeEditorView.destroy()
+    codeEditorView = null
+  }
+  
+  // Clear container
+  codeEditorContainer.value.innerHTML = ''
+  
+  const readonly = editingPlugin.value && !isEditing.value
+  
+  const state = EditorState.create({
+    doc: pluginCode.value,
+    extensions: [
+      basicSetup,
+      javascript({ typescript: true }),
+      oneDark,
+      keymap.of([...defaultKeymap, indentWithTab]),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          pluginCode.value = update.state.doc.toString()
+        }
+      }),
+      codeEditorReadOnly.of(EditorView.editable.of(!readonly)),
+    ],
+  })
+  
+  codeEditorView = new EditorView({
+    state,
+    parent: codeEditorContainer.value,
+  })
+}
+
+// Initialize CodeMirror for Review Plugin Detail Dialog
+const initReviewCodeEditor = async () => {
+  await nextTick()
+  if (!reviewCodeEditorContainer.value) return
+  
+  // Destroy existing editor if any
+  if (reviewCodeEditorView) {
+    reviewCodeEditorView.destroy()
+    reviewCodeEditorView = null
+  }
+  
+  // Clear container
+  reviewCodeEditorContainer.value.innerHTML = ''
+  
+  const state = EditorState.create({
+    doc: editedReviewCode.value,
+    extensions: [
+      basicSetup,
+      javascript({ typescript: true }),
+      oneDark,
+      keymap.of([...defaultKeymap, indentWithTab]),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          editedReviewCode.value = update.state.doc.toString()
+        }
+      }),
+      reviewCodeEditorReadOnly.of(EditorView.editable.of(reviewEditMode.value)),
+    ],
+  })
+  
+  reviewCodeEditorView = new EditorView({
+    state,
+    parent: reviewCodeEditorContainer.value,
+  })
+}
+
+// Update CodeMirror editor content
+const updateCodeEditorContent = (newContent: string) => {
+  if (codeEditorView) {
+    const transaction = codeEditorView.state.update({
+      changes: {
+        from: 0,
+        to: codeEditorView.state.doc.length,
+        insert: newContent
+      }
+    })
+    codeEditorView.dispatch(transaction)
+  }
+}
+
+// Update CodeMirror editor readonly state
+const updateCodeEditorReadonly = (readonly: boolean) => {
+  if (codeEditorView) {
+    codeEditorView.dispatch({
+      effects: codeEditorReadOnly.reconfigure(EditorView.editable.of(!readonly))
+    })
+  }
+}
+
+// Update Review CodeMirror editor readonly state
+const updateReviewCodeEditorReadonly = (readonly: boolean) => {
+  if (reviewCodeEditorView) {
+    reviewCodeEditorView.dispatch({
+      effects: reviewCodeEditorReadOnly.reconfigure(EditorView.editable.of(!readonly))
+    })
+  }
+}
+
 // Show Toast
 const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
   const toast = document.createElement('div')
@@ -2043,7 +2151,7 @@ const togglePlugin = async (plugin: PluginRecord) => {
 }
 
 // Open Create Plugin Dialog
-const openCreateDialog = () => {
+const openCreateDialog = async () => {
   newPluginMetadata.value = {
     id: '',
     name: '',
@@ -2060,6 +2168,7 @@ const openCreateDialog = () => {
   isEditing.value = false
   codeError.value = ''
   codeEditorDialog.value?.showModal()
+  await initCodeEditor()
 }
 
 // Open Upload Dialog
@@ -2220,6 +2329,7 @@ const viewPluginCode = async (plugin: PluginRecord) => {
       isEditing.value = false
       codeError.value = ''
       codeEditorDialog.value?.showModal()
+      await initCodeEditor()
     } else if (response.success && response.data === null && plugin.path) {
       // Fallback to reading from file only if path exists
       try {
@@ -2246,6 +2356,7 @@ const viewPluginCode = async (plugin: PluginRecord) => {
         isEditing.value = false
         codeError.value = ''
         codeEditorDialog.value?.showModal()
+        await initCodeEditor()
       } catch (fileError) {
         console.error('Error reading plugin file:', fileError)
         codeError.value = t('plugins.readCodeError', '读取代码失败')
@@ -2265,6 +2376,10 @@ const viewPluginCode = async (plugin: PluginRecord) => {
 // Close Code Editor Dialog
 const closeCodeEditorDialog = () => {
   codeEditorDialog.value?.close()
+  if (codeEditorView) {
+    codeEditorView.destroy()
+    codeEditorView = null
+  }
   editingPlugin.value = null
   pluginCode.value = ''
   originalCode.value = ''
@@ -2275,13 +2390,16 @@ const closeCodeEditorDialog = () => {
 // Enable Editing
 const enableEditing = () => {
   isEditing.value = true
+  updateCodeEditorReadonly(false)
 }
 
 // Cancel Editing
 const cancelEditing = () => {
   pluginCode.value = originalCode.value
+  updateCodeEditorContent(originalCode.value)
   isEditing.value = false
   codeError.value = ''
+  updateCodeEditorReadonly(true)
   
   // Restore original metadata if editing existing plugin
   if (editingPlugin.value) {
@@ -2343,7 +2461,21 @@ const savePluginCode = async () => {
     // Combine new metadata with code
     const fullCode = metadataComment + '\n' + codeWithoutMetadata
     
-    // Update metadata object
+    // 判断是更新还是创建
+    // 如果有 editingPlugin，说明是编辑现有插件，使用 update_plugin_code
+    // 如果元数据被修改了，需要使用 create_plugin_in_db 来更新完整信息
+    const metadataChanged = 
+      editingPlugin.value.metadata.name !== newPluginMetadata.value.name ||
+      editingPlugin.value.metadata.version !== newPluginMetadata.value.version ||
+      editingPlugin.value.metadata.author !== (newPluginMetadata.value.author || 'Unknown') ||
+      editingPlugin.value.metadata.description !== (newPluginMetadata.value.description || '') ||
+      editingPlugin.value.metadata.default_severity !== newPluginMetadata.value.default_severity ||
+      editingPlugin.value.metadata.tags.join(', ') !== tags.join(', ')
+    
+    let response: CommandResponse<string> | CommandResponse<void>
+    
+    if (metadataChanged) {
+      // 元数据有变化，使用 create_plugin_in_db 完整更新
     const metadata = {
       id: newPluginMetadata.value.id,
       name: newPluginMetadata.value.name,
@@ -2355,11 +2487,17 @@ const savePluginCode = async () => {
       tags: tags
     }
     
-    // Use create_plugin_in_db for both create and update (it uses INSERT OR REPLACE)
-    const response = await invoke<CommandResponse<string>>('create_plugin_in_db', {
+      response = await invoke<CommandResponse<string>>('create_plugin_in_db', {
       metadata: metadata,
       pluginCode: fullCode
     })
+    } else {
+      // 仅代码有变化，使用 update_plugin_code
+      response = await invoke<CommandResponse<void>>('update_plugin_code', {
+        pluginId: newPluginMetadata.value.id,
+        pluginCode: fullCode
+      })
+    }
     
     if (response.success) {
       originalCode.value = fullCode
@@ -2505,15 +2643,14 @@ const insertTemplate = async () => {
     }
     
     pluginCode.value = codeTemplate
+    updateCodeEditorContent(codeTemplate)
     showToast('已插入模板代码', 'success')
   } catch (error) {
     console.error('[Insert Template] Failed to load template from backend:', error)
     // 如果后端加载失败，使用回退模板
-    if (isAgentPlugin) {
-      pluginCode.value = getAgentFallbackTemplate()
-    } else {
-      pluginCode.value = getPassiveFallbackTemplate()
-    }
+    const fallbackTemplate = isAgentPlugin ? getAgentFallbackTemplate() : getPassiveFallbackTemplate()
+    pluginCode.value = fallbackTemplate
+    updateCodeEditorContent(fallbackTemplate)
     showToast('使用内置模板', 'info')
   }
 }
@@ -2843,6 +2980,7 @@ const generatePluginWithAI = async () => {
       
       closeAIGenerateDialog()
       codeEditorDialog.value?.showModal()
+      await initCodeEditor()
     } finally {
       unlisten()
       unlistenError()
@@ -3135,15 +3273,20 @@ const refreshReviewPlugins = async () => {
   }
 }
 
-const viewReviewPluginDetail = (plugin: ReviewPlugin) => {
+const viewReviewPluginDetail = async (plugin: ReviewPlugin) => {
   selectedReviewPlugin.value = plugin
   editedReviewCode.value = plugin.code
   reviewEditMode.value = false
   reviewDetailDialog.value?.showModal()
+  await initReviewCodeEditor()
 }
 
 const closeReviewDetailDialog = () => {
   reviewDetailDialog.value?.close()
+  if (reviewCodeEditorView) {
+    reviewCodeEditorView.destroy()
+    reviewCodeEditorView = null
+  }
   selectedReviewPlugin.value = null
   reviewEditMode.value = false
   editedReviewCode.value = ''
@@ -3324,6 +3467,11 @@ const getReviewStatusText = (status: string): string => {
   return statusMap[status] || status
 }
 
+// Watch reviewEditMode to update editor readonly state
+watch(reviewEditMode, (newValue) => {
+  updateReviewCodeEditorReadonly(!newValue)
+})
+
 // Component Lifecycle
 onMounted(async () => {
   await refreshPlugins()
@@ -3334,6 +3482,14 @@ onMounted(async () => {
 onUnmounted(() => {
   if (pluginChangedUnlisten) {
     pluginChangedUnlisten()
+  }
+  if (codeEditorView) {
+    codeEditorView.destroy()
+    codeEditorView = null
+  }
+  if (reviewCodeEditorView) {
+    reviewCodeEditorView.destroy()
+    reviewCodeEditorView = null
   }
 })
 </script>
@@ -3359,5 +3515,38 @@ textarea.textarea {
 
 .badge {
   font-weight: 600;
+}
+
+/* CodeMirror 样式 */
+:deep(.cm-editor) {
+  height: 600px;
+  font-size: 12px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+:deep(.cm-scroller) {
+  overflow: auto;
+}
+
+:deep(.cm-content) {
+  padding: 10px 0;
+}
+
+:deep(.cm-line) {
+  padding: 0 4px;
+}
+
+:deep(.cm-gutters) {
+  background-color: #282c34;
+  color: #5c6370;
+  border: none;
+}
+
+:deep(.cm-activeLineGutter) {
+  background-color: #2c313c;
+}
+
+:deep(.cm-activeLine) {
+  background-color: #2c313c;
 }
 </style>

@@ -61,7 +61,7 @@ impl ToolProvider for PassiveToolProvider {
 
         // 2. 漏洞查询工具
         tools.push(Arc::new(ListFindingsTool::new(self.state.clone())));
-        tools.push(Arc::new(GetFindingDetailTool::new(self.state.clone())));
+        // tools.push(Arc::new(GetFindingDetailTool::new(self.state.clone())));
 
         // 3. 插件管理工具
         tools.push(Arc::new(ListPluginsTool::new(self.state.clone())));

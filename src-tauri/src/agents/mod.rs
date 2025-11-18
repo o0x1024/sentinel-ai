@@ -1,6 +1,7 @@
 pub mod traits;
 pub mod manager;
 pub mod session;
+pub mod orchestrator;
 
 #[cfg(test)]
 pub mod test_cancellation;

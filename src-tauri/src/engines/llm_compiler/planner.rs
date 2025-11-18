@@ -235,8 +235,32 @@ impl LlmCompilerPlanner {
         use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
         use crate::models::prompt::ArchitectureType;
 
-        // ✅ 从数据库读取 system 模板（优先使用配置的模板）
-        let system_template = if let Some(repo) = &self.prompt_repo {
+        // 优先检查 runtime_params 或 context 中是否有来自 Orchestrator 的自定义 prompt
+        let system_template = if let Some(params) = &self.runtime_params {
+            if let Some(custom_prompt) = params.get("custom_system_prompt").and_then(|v| v.as_str()) {
+                info!("LLMCompiler Planner: Using custom system prompt from runtime_params (Orchestrator)");
+                custom_prompt.to_string()
+            } else if let Some(repo) = &self.prompt_repo {
+                // ✅ 从数据库读取 system 模板（优先使用配置的模板）
+                let resolver = PromptResolver::new(repo.clone());
+                let agent_config = AgentPromptConfig::parse_agent_config(context);
+                resolver
+                    .resolve_prompt(
+                        &agent_config,
+                        ArchitectureType::LLMCompiler,
+                        CanonicalStage::Planner,
+                        Some(&"".to_string()),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        info!("LLMCompiler Planner: Using prompt from database");
+                        self.get_default_planner_template()
+                    })
+            } else {
+                self.get_default_planner_template()
+            }
+        } else if let Some(repo) = &self.prompt_repo {
+            // ✅ 从数据库读取 system 模板（优先使用配置的模板）
             let resolver = PromptResolver::new(repo.clone());
             let agent_config = AgentPromptConfig::parse_agent_config(context);
             resolver
@@ -247,7 +271,10 @@ impl LlmCompilerPlanner {
                     Some(&"".to_string()),
                 )
                 .await
-                .unwrap_or_else(|_| self.get_default_planner_template())
+                .unwrap_or_else(|_| {
+                    info!("LLMCompiler Planner: Using prompt from database");
+                    self.get_default_planner_template()
+                })
         } else {
             self.get_default_planner_template()
         };

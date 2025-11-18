@@ -80,8 +80,27 @@
               : 'bg-base-100 text-base-content border-base-300 hover:border-base-400',
           ]"
         >
+          <!-- Orchestrator 步骤显示 -->
+          <div v-if="isOrchestratorMessageFn(message)" class="space-y-3">
+            <OrchestratorStepDisplay :content="message.content" />
+          </div>
+
+          <!-- Plan-and-Execute 步骤显示 -->
+          <div v-else-if="isPlanAndExecuteMessageFn(message)" class="space-y-3">
+            <PlanAndExecuteStepDisplay
+              v-bind="parsePlanAndExecuteMessageData(message)"
+            />
+          </div>
+
+          <!-- LLM Compiler 步骤显示 -->
+          <div v-else-if="isLLMCompilerMessageFn(message)" class="space-y-3">
+            <LLMCompilerStepDisplay
+              v-bind="parseLLMCompilerMessageData(message)"
+            />
+          </div>
+
           <!-- ReWOO 步骤显示 -->
-          <div v-if="isReWOOMessageFn(message)" class="space-y-3">
+          <div v-else-if="isReWOOMessageFn(message)" class="space-y-3">
             <ReWOOStepDisplay
               v-bind="parseReWOOMessageData(message)"
             />
@@ -255,11 +274,18 @@ import { useMessageUtils } from '../composables/useMessageUtils'
 import { useOrderedMessages } from '../composables/useOrderedMessages'
 import { isReWOOMessage, parseReWOOMessage } from '../composables/useReWOOMessage'
 import type { ReWOOMessageData } from '../composables/useReWOOMessage'
+import { isLLMCompilerMessage, parseLLMCompilerMessage } from '../composables/useLLMCompilerMessage'
+import type { LLMCompilerMessageData } from '../composables/useLLMCompilerMessage'
+import { isPlanAndExecuteMessage, parsePlanAndExecuteMessage } from '../composables/usePlanAndExecuteMessage'
+import type { PlanAndExecuteMessageData } from '../composables/usePlanAndExecuteMessage'
 
 // Components
 import InputAreaComponent from './InputAreaComponent.vue'
 import ReActStepDisplay from './MessageParts/ReActStepDisplay.vue'
 import ReWOOStepDisplay from './MessageParts/ReWOOStepDisplay.vue'
+import LLMCompilerStepDisplay from './MessageParts/LLMCompilerStepDisplay.vue'
+import PlanAndExecuteStepDisplay from './MessageParts/PlanAndExecuteStepDisplay.vue'
+import OrchestratorStepDisplay from './MessageParts/OrchestratorStepDisplay.vue'
 
 // Types
 import type { ChatMessage, Citation } from '../types/chat'
@@ -320,6 +346,36 @@ const isReActMessage = (message: ChatMessage) => {
   return /(?:Thought:|Action:|Observation:|Final Answer:)/i.test(content)
 }
 
+// Plan-and-Execute 消息检测函数
+const isPlanAndExecuteMessageFn = (message: ChatMessage) => {
+  if (message.role !== 'assistant') return false
+  const content = message.content || ''
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return isPlanAndExecuteMessage(content, chunks)
+}
+
+// Plan-and-Execute 消息解析函数
+const parsePlanAndExecuteMessageData = (message: ChatMessage): PlanAndExecuteMessageData => {
+  const content = message.content || ''
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return parsePlanAndExecuteMessage(content, chunks)
+}
+
+// LLM Compiler 消息检测函数
+const isLLMCompilerMessageFn = (message: ChatMessage) => {
+  if (message.role !== 'assistant') return false
+  const content = message.content || ''
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return isLLMCompilerMessage(content, chunks)
+}
+
+// LLM Compiler 消息解析函数
+const parseLLMCompilerMessageData = (message: ChatMessage): LLMCompilerMessageData => {
+  const content = message.content || ''
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return parseLLMCompilerMessage(content, chunks)
+}
+
 // ReWOO 消息检测函数
 const isReWOOMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
@@ -333,6 +389,18 @@ const parseReWOOMessageData = (message: ChatMessage): ReWOOMessageData => {
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return parseReWOOMessage(content, chunks)
+}
+
+// Orchestrator 消息检测函数
+const isOrchestratorMessageFn = (message: ChatMessage) => {
+  if (message.role !== 'assistant') return false
+  const content = message.content || ''
+  try {
+    const parsed = JSON.parse(content)
+    return parsed.type === 'orchestrator_session' || parsed.type === 'orchestrator_step'
+  } catch {
+    return false
+  }
 }
 
 interface ReActStepData {
