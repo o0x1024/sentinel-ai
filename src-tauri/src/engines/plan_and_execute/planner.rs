@@ -752,7 +752,7 @@ impl Planner {
             .await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
         
-        log::info!("AI响应内容: {}", result);
+        // log::info!("AI响应内容: {}", result);
         Ok(result)
     }
 

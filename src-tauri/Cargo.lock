@@ -10100,6 +10100,7 @@ dependencies = [
  "arrow-schema 56.2.0",
  "async-trait",
  "chrono",
+ "dirs 5.0.1",
  "futures-util",
  "lancedb",
  "log",

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn, error};
 
 use crate::config::EmbeddingConfig;
 use crate::models::{DocumentChunk, QueryResult};
@@ -44,9 +44,117 @@ impl LanceDbManager {
 
     pub async fn insert_chunks(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
         if chunks.is_empty() { return Ok(0); }
-        // For now, compute embeddings via rig-ollama provider (through LanceDbVectorIndex API requires embedding model)
-        let ollama = rig::providers::ollama::Client::new();
-        let embedding_model = ollama.embedding_model(self.embedding_config.model.as_str());
+        
+        let provider = self.embedding_config.provider.to_lowercase();
+        info!("Using embedding provider: {}, model: {}", provider, self.embedding_config.model);
+        
+        // Dispatch to provider-specific implementation
+        match provider.as_str() {
+            "ollama" => self.insert_chunks_ollama(collection_name, chunks).await,
+            "openai" => self.insert_chunks_openai(collection_name, chunks).await,
+            "cohere" => self.insert_chunks_cohere(collection_name, chunks).await,
+            "anthropic" => self.insert_chunks_anthropic(collection_name, chunks).await,
+            "gemini" | "google" => self.insert_chunks_gemini(collection_name, chunks).await,
+            "deepseek" => self.insert_chunks_deepseek(collection_name, chunks).await,
+            "moonshot" => self.insert_chunks_moonshot(collection_name, chunks).await,
+            "openrouter" => self.insert_chunks_openrouter(collection_name, chunks).await,
+            "modelscope" => self.insert_chunks_modelscope(collection_name, chunks).await,
+            _ => Err(anyhow!("Unsupported embedding provider: {}. Please check your RAG configuration.", provider))
+        }
+    }
+    
+    async fn insert_chunks_ollama(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
+        let base_url = self.embedding_config.base_url.as_deref().unwrap_or("http://localhost:11434");
+        info!("Using Ollama embedding service at: {}", base_url);
+        // rig-core 的 Ollama provider 使用 OLLAMA_API_BASE_URL 环境变量
+        std::env::set_var("OLLAMA_API_BASE_URL", base_url);
+        let client = rig::providers::ollama::Client::from_env();
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.insert_chunks_impl(collection_name, chunks, embedding_model).await
+    }
+    
+    async fn insert_chunks_openai(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .ok_or_else(|| anyhow!("OpenAI API key not configured"))?;
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.insert_chunks_impl(collection_name, chunks, embedding_model).await
+    }
+    
+    async fn insert_chunks_cohere(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("COHERE_API_KEY").ok())
+            .ok_or_else(|| anyhow!("Cohere API key not configured"))?;
+        let client = rig::providers::cohere::Client::new(&api_key_str);
+        // Cohere requires input_type parameter: "search_document" for indexing
+        let embedding_model = client.embedding_model(&self.embedding_config.model, "search_document");
+        self.insert_chunks_impl(collection_name, chunks, embedding_model).await
+    }
+    
+    async fn insert_chunks_anthropic(&self, _collection_name: &str, _chunks: Vec<DocumentChunk>) -> Result<usize> {
+        // Anthropic doesn't have native embedding models
+        warn!("Anthropic doesn't provide embedding models. Consider using OpenAI or other providers for embeddings.");
+        Err(anyhow!("Anthropic doesn't support embedding models. Please use OpenAI, Cohere, or other embedding providers."))
+    }
+    
+    async fn insert_chunks_gemini(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
+            .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+            .ok_or_else(|| anyhow!("Google/Gemini API key not configured"))?;
+        let client = rig::providers::gemini::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.insert_chunks_impl(collection_name, chunks, embedding_model).await
+    }
+    
+    async fn insert_chunks_deepseek(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
+        // DeepSeek uses OpenAI-compatible API
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
+            .ok_or_else(|| anyhow!("DeepSeek API key not configured"))?;
+        
+        // For OpenAI-compatible APIs, we use OpenAI client
+        // Note: Custom base URLs need to be set via environment or client configuration
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.insert_chunks_impl(collection_name, chunks, embedding_model).await
+    }
+    
+    async fn insert_chunks_moonshot(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
+        // Moonshot uses OpenAI-compatible API
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
+            .ok_or_else(|| anyhow!("Moonshot API key not configured"))?;
+        
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.insert_chunks_impl(collection_name, chunks, embedding_model).await
+    }
+    
+    async fn insert_chunks_openrouter(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
+        // OpenRouter uses OpenAI-compatible API
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+            .ok_or_else(|| anyhow!("OpenRouter API key not configured"))?;
+        
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.insert_chunks_impl(collection_name, chunks, embedding_model).await
+    }
+    
+    async fn insert_chunks_modelscope(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
+        // ModelScope may use OpenAI-compatible API or custom implementation
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("MODELSCOPE_API_KEY").ok())
+            .ok_or_else(|| anyhow!("ModelScope API key not configured"))?;
+        
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.insert_chunks_impl(collection_name, chunks, embedding_model).await
+    }
+    
+    async fn insert_chunks_impl<M: EmbeddingModel>(&self, collection_name: &str, chunks: Vec<DocumentChunk>, embedding_model: M) -> Result<usize> {
 
         let ids: Vec<String> = chunks.iter().map(|c| c.id.clone()).collect();
         let source_ids: Vec<String> = chunks.iter().map(|c| c.source_id.clone()).collect();
@@ -57,7 +165,24 @@ impl LanceDbManager {
         let start_chars: Vec<i64> = chunks.iter().map(|c| c.metadata.chunk_start_char as i64).collect();
         let end_chars: Vec<i64> = chunks.iter().map(|c| c.metadata.chunk_end_char as i64).collect();
 
-        let embeddings = embedding_model.embed_texts(definitions.clone()).await?;
+        // Retry embedding with exponential backoff
+        let mut retry_count = 0;
+        let max_retries = 3;
+        let embeddings = loop {
+            match embedding_model.embed_texts(definitions.clone()).await {
+                Ok(emb) => break emb,
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count >= max_retries {
+                        error!("Failed to generate embeddings after {} retries: {}", max_retries, e);
+                        return Err(anyhow!("Failed to generate embeddings: {}. Please check if embedding service ({}) is running", e, self.embedding_config.provider));
+                    }
+                    let delay = std::time::Duration::from_secs(2u64.pow(retry_count));
+                    warn!("Embedding request failed (attempt {}/{}): {}. Retrying in {:?}...", retry_count, max_retries, e, delay);
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        };
         if embeddings.len() != definitions.len() { return Err(anyhow!("Embedding count mismatch: expected {}, got {}", definitions.len(), embeddings.len())); }
         let embedding_dim = embeddings.first().map(|e| e.vec.len()).unwrap_or(0);
         if embedding_dim == 0 { return Err(anyhow!("Embedding dims is 0")); }
@@ -101,11 +226,118 @@ impl LanceDbManager {
     }
 
     pub async fn search_similar(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let provider = self.embedding_config.provider.to_lowercase();
+        
+        // Dispatch to provider-specific implementation
+        match provider.as_str() {
+            "ollama" => self.search_similar_ollama(collection_name, query, top_k).await,
+            "openai" => self.search_similar_openai(collection_name, query, top_k).await,
+            "cohere" => self.search_similar_cohere(collection_name, query, top_k).await,
+            "anthropic" => self.search_similar_anthropic(collection_name, query, top_k).await,
+            "gemini" | "google" => self.search_similar_gemini(collection_name, query, top_k).await,
+            "deepseek" => self.search_similar_deepseek(collection_name, query, top_k).await,
+            "moonshot" => self.search_similar_moonshot(collection_name, query, top_k).await,
+            "openrouter" => self.search_similar_openrouter(collection_name, query, top_k).await,
+            "modelscope" => self.search_similar_modelscope(collection_name, query, top_k).await,
+            _ => Err(anyhow!("Unsupported embedding provider: {}. Please check your RAG configuration.", provider))
+        }
+    }
+    
+    async fn search_similar_ollama(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let base_url = self.embedding_config.base_url.as_deref().unwrap_or("http://localhost:11434");
+        // 与 insert_chunks 保持一致，使用 OLLAMA_API_BASE_URL 供 rig-core 读取
+        std::env::set_var("OLLAMA_API_BASE_URL", base_url);
+        let client = rig::providers::ollama::Client::from_env();
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.search_similar_impl(collection_name, query, top_k, embedding_model).await
+    }
+    
+    async fn search_similar_openai(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .ok_or_else(|| anyhow!("OpenAI API key not configured"))?;
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.search_similar_impl(collection_name, query, top_k, embedding_model).await
+    }
+    
+    async fn search_similar_cohere(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("COHERE_API_KEY").ok())
+            .ok_or_else(|| anyhow!("Cohere API key not configured"))?;
+        let client = rig::providers::cohere::Client::new(&api_key_str);
+        // Cohere requires input_type parameter: "search_query" for querying
+        let embedding_model = client.embedding_model(&self.embedding_config.model, "search_query");
+        self.search_similar_impl(collection_name, query, top_k, embedding_model).await
+    }
+    
+    async fn search_similar_anthropic(&self, _collection_name: &str, _query: &str, _top_k: usize) -> Result<Vec<QueryResult>> {
+        warn!("Anthropic doesn't provide embedding models.");
+        Err(anyhow!("Anthropic doesn't support embedding models. Please use OpenAI, Cohere, or other embedding providers."))
+    }
+    
+    async fn search_similar_gemini(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
+            .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+            .ok_or_else(|| anyhow!("Google/Gemini API key not configured"))?;
+        let client = rig::providers::gemini::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.search_similar_impl(collection_name, query, top_k, embedding_model).await
+    }
+    
+    async fn search_similar_deepseek(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
+            .ok_or_else(|| anyhow!("DeepSeek API key not configured"))?;
+        
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.search_similar_impl(collection_name, query, top_k, embedding_model).await
+    }
+    
+    async fn search_similar_moonshot(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
+            .ok_or_else(|| anyhow!("Moonshot API key not configured"))?;
+        
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.search_similar_impl(collection_name, query, top_k, embedding_model).await
+    }
+    
+    async fn search_similar_openrouter(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+            .ok_or_else(|| anyhow!("OpenRouter API key not configured"))?;
+        
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.search_similar_impl(collection_name, query, top_k, embedding_model).await
+    }
+    
+    async fn search_similar_modelscope(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
+        let api_key_str = self.embedding_config.api_key.clone()
+            .or_else(|| std::env::var("MODELSCOPE_API_KEY").ok())
+            .ok_or_else(|| anyhow!("ModelScope API key not configured"))?;
+        
+        let client = rig::providers::openai::Client::new(&api_key_str);
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.search_similar_impl(collection_name, query, top_k, embedding_model).await
+    }
+    
+    async fn search_similar_impl<M: EmbeddingModel>(&self, collection_name: &str, query: &str, top_k: usize, embedding_model: M) -> Result<Vec<QueryResult>> {
         let conn = { let guard = self.conn.read().await; guard.as_ref().cloned().ok_or_else(|| anyhow!("LanceDB not initialized"))? };
         let table = match conn.open_table(collection_name).execute().await { Ok(t) => t, Err(_) => return Ok(Vec::new()) };
-        let ollama = rig::providers::ollama::Client::new();
-        let embedding_model = ollama.embedding_model(self.embedding_config.model.as_str());
-        let index = LanceDbVectorIndex::new(table, embedding_model, "id", SearchParams::default()).await.map_err(|e| anyhow!(e.to_string()))?;
+        
+        // Retry index creation with better error handling
+        let index = match LanceDbVectorIndex::new(table, embedding_model, "id", SearchParams::default()).await {
+            Ok(idx) => idx,
+            Err(e) => {
+                error!("Failed to create LanceDB vector index: {}. Please check if embedding service ({}) is running", e, self.embedding_config.provider);
+                return Err(anyhow!("Failed to create vector index: {}", e));
+            }
+        };
         
         // 构建VectorSearchRequest
         let search_request = VectorSearchRequest::builder()

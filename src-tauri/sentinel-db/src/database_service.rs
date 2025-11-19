@@ -1040,6 +1040,30 @@ impl DatabaseService {
                 .await;
         }
 
+
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS execution_sessions (
+                id TEXT PRIMARY KEY,
+                plan_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at INTEGER,
+                completed_at INTEGER,
+                current_step INTEGER,
+                progress INTEGER NOT NULL DEFAULT 0,
+                context TEXT,
+                metadata TEXT,
+                FOREIGN KEY (plan_id) REFERENCES execution_plans(id) ON DELETE CASCADE
+            )"#
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_execution_sessions_plan_id ON execution_sessions(plan_id)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_execution_sessions_status ON execution_sessions(status)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_execution_sessions_started_at ON execution_sessions(started_at)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_execution_sessions_completed_at ON execution_sessions(completed_at)").execute(&mut *tx).await?;
+
         // 创建RAG文档源表
         sqlx::query(
             r#"

@@ -574,11 +574,15 @@
     
     <!-- Review Plugin Detail Dialog -->
     <dialog ref="reviewDetailDialog" class="modal">
-      <div class="modal-box w-11/12 max-w-6xl max-h-[90vh]">
-        <h3 class="font-bold text-lg mb-4">
+      <div class="modal-box w-11/12 max-w-6xl max-h-[90vh] overflow-y-auto">
+        <!-- Fixed Header -->
+        <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
+          <h3 class="font-bold text-lg">
           <i class="fas fa-eye mr-2"></i>
           {{ $t('plugins.pluginDetail', '插件详情') }}
         </h3>
+          <button @click="closeReviewDetailDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
+        </div>
         
         <div v-if="selectedReviewPlugin" class="space-y-4">
           <!-- Basic Info -->
@@ -756,11 +760,12 @@
           </div>
         </div>
         
-        <div class="modal-action">
-          <button class="btn" @click="closeReviewDetailDialog">{{ $t('common.close', '关闭') }}</button>
+        <!-- Fixed Footer -->
+        <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
+          <button class="btn btn-sm" @click="closeReviewDetailDialog">{{ $t('common.close', '关闭') }}</button>
           <button 
             v-if="reviewEditMode" 
-            class="btn btn-primary" 
+            class="btn btn-primary btn-sm" 
             @click="saveReviewEdit"
             :disabled="savingReview"
           >
@@ -768,7 +773,7 @@
             {{ savingReview ? $t('common.saving', '保存中...') : $t('common.save', '保存') }}
           </button>
           <button 
-            class="btn btn-success"
+            class="btn btn-success btn-sm"
             @click="approvePlugin(selectedReviewPlugin)"
             :disabled="selectedReviewPlugin?.status === 'Approved'"
           >
@@ -776,7 +781,7 @@
             {{ $t('plugins.approve', '批准') }}
           </button>
           <button 
-            class="btn btn-error"
+            class="btn btn-error btn-sm"
             @click="rejectPlugin(selectedReviewPlugin)"
             :disabled="selectedReviewPlugin?.status === 'Rejected'"
           >
@@ -792,8 +797,12 @@
     
     <!-- Upload Plugin Dialog -->
     <dialog ref="uploadDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="font-bold text-base mb-4">{{ $t('plugins.uploadPlugin', '上传插件') }}</h3>
+      <div class="modal-box max-h-[90vh] overflow-y-auto">
+        <!-- Fixed Header -->
+        <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
+          <h3 class="font-bold text-lg">{{ $t('plugins.uploadPlugin', '上传插件') }}</h3>
+          <button @click="closeUploadDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
+        </div>
         
         <div class="form-control w-full">
           <label class="label">
@@ -813,10 +822,11 @@
           <span>{{ uploadError }}</span>
         </div>
         
-        <div class="modal-action">
-          <button class="btn" @click="closeUploadDialog">{{ $t('common.cancel', '取消') }}</button>
+        <!-- Fixed Footer -->
+        <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
+          <button class="btn btn-sm" @click="closeUploadDialog">{{ $t('common.cancel', '取消') }}</button>
           <button 
-            class="btn btn-primary" 
+            class="btn btn-primary btn-sm" 
             :disabled="!selectedFile || uploading"
             @click="uploadPlugin"
           >
@@ -832,13 +842,17 @@
     
     <!-- Code Editor Dialog -->
     <dialog ref="codeEditorDialog" class="modal">
-      <div class="modal-box w-11/12 max-w-5xl">
-        <h3 class="font-bold text-base mb-4">
+      <div class="modal-box w-11/12 max-w-5xl max-h-[90vh] overflow-y-auto">
+        <!-- Fixed Header -->
+        <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
+          <h3 class="font-bold text-lg">
           {{ editingPlugin ? $t('plugins.codeEditor', '插件代码编辑器') : $t('plugins.newPlugin', '新增插件') }}
           <span v-if="editingPlugin" class="text-sm font-normal text-gray-500 ml-2">
             {{ editingPlugin.metadata.name }} ({{ editingPlugin.metadata.id }})
           </span>
         </h3>
+          <button @click="closeCodeEditorDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
+        </div>
         
         <!-- Plugin Metadata Form (for both new and editing) -->
         <div class="grid grid-cols-2 gap-4 mb-4">
@@ -1008,23 +1022,24 @@
           <span>{{ codeError }}</span>
         </div>
         
-        <div class="modal-action">
-          <button class="btn" @click="closeCodeEditorDialog">{{ $t('common.close', '关闭') }}</button>
+        <!-- Fixed Footer -->
+        <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
+          <button class="btn btn-sm" @click="closeCodeEditorDialog">{{ $t('common.close', '关闭') }}</button>
           
           <!-- Edit Mode Buttons -->
           <template v-if="editingPlugin">
             <button 
               v-if="!isEditing"
-              class="btn btn-primary"
+              class="btn btn-primary btn-sm"
               @click="enableEditing"
             >
               <i class="fas fa-edit mr-2"></i>
               {{ $t('common.edit', '编辑') }}
             </button>
             <template v-else>
-              <button class="btn btn-warning" @click="cancelEditing">{{ $t('plugins.cancelEdit', '取消编辑') }}</button>
+              <button class="btn btn-warning btn-sm" @click="cancelEditing">{{ $t('plugins.cancelEdit', '取消编辑') }}</button>
               <button 
-                class="btn btn-success"
+                class="btn btn-success btn-sm"
                 :disabled="saving"
                 @click="savePluginCode"
               >
@@ -1037,7 +1052,7 @@
           <!-- New Plugin Mode Buttons -->
           <template v-else>
             <button 
-              class="btn btn-success"
+              class="btn btn-success btn-sm"
               :disabled="saving || !isNewPluginValid"
               @click="createNewPlugin"
             >
@@ -1054,16 +1069,22 @@
     
     <!-- Delete Confirmation Dialog -->
     <dialog ref="deleteDialog" class="modal">
-      <div class="modal-box">
-        <h3 class="font-bold text-base">{{ $t('plugins.confirmDelete', '确认删除') }}</h3>
+      <div class="modal-box max-h-[90vh] overflow-y-auto">
+        <!-- Fixed Header -->
+        <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
+          <h3 class="font-bold text-lg">{{ $t('plugins.confirmDelete', '确认删除') }}</h3>
+          <button @click="closeDeleteDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
+        </div>
+        
         <p class="py-4">
           {{ $t('plugins.deleteConfirmText', '确定要删除插件') }} <strong>{{ deletingPlugin?.metadata.name }}</strong> {{ $t('plugins.deleteWarning', '吗？此操作不可撤销。') }}
         </p>
         
-        <div class="modal-action">
-          <button class="btn" @click="closeDeleteDialog">{{ $t('common.cancel', '取消') }}</button>
+        <!-- Fixed Footer -->
+        <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
+          <button class="btn btn-sm" @click="closeDeleteDialog">{{ $t('common.cancel', '取消') }}</button>
           <button 
-            class="btn btn-error"
+            class="btn btn-error btn-sm"
             :disabled="deleting"
             @click="deletePlugin"
           >
@@ -1406,7 +1427,8 @@ interface PluginMetadata {
   name: string
   version: string
   author?: string
-  category: string
+  main_category: string  // 主分类：passive 或 agent
+  category: string       // 子分类：sqli, xss, scanner, analyzer 等
   default_severity: string
   tags: string[]
   description?: string
@@ -1534,7 +1556,7 @@ const reviewStatsData = ref({
 })
 
 // Plugin List Filter and Pagination State (被动扫描/Agent工具)
-const pluginViewMode = ref<'favorited' | 'all'>('favorited') // 默认显示已收藏
+const pluginViewMode = ref<'favorited' | 'all'>('all') // 默认显示全部插件
 const pluginCurrentPage = ref(1)
 const pluginPageSize = ref(10)
 const pluginTotalCount = ref(0)
@@ -1578,7 +1600,7 @@ const mainCategories = [
 const passiveScanCategories = [
   'sqli', 'command_injection', 'xss', 'idor', 'auth_bypass', 'csrf', 
   'info_leak', 'file_upload', 'file_inclusion', 'path_traversal', 
-  'xxe', 'ssrf', 'custom'
+  'xxe', 'ssrf', 'report', 'custom'
 ]
 
 // Agent 插件的所有子分类
@@ -1743,14 +1765,14 @@ const filteredPlugins = computed(() => {
   if (selectedCategory.value === 'all') {
     filtered = plugins.value
   } else if (selectedCategory.value === 'passiveScan') {
-    // 被动扫描插件：显示所有被动扫描相关插件
+    // 被动扫描插件：直接使用 main_category 字段
     filtered = plugins.value.filter(p => {
-      // 包含预定义的被动扫描子分类
-      if (passiveScanCategories.includes(p.metadata.category)) {
+      // 优先使用 main_category 字段（后端已提供）
+      if (p.metadata.main_category === 'passive') {
         return true
       }
-      // 推断主分类为被动扫描的插件
-      if (inferMainCategory(p.metadata.category) === 'passive') {
+      // 兼容旧数据：检查预定义的被动扫描子分类
+      if (passiveScanCategories.includes(p.metadata.category)) {
         return true
       }
       // 兼容旧的 passiveScan 分类
@@ -1760,14 +1782,14 @@ const filteredPlugins = computed(() => {
       return false
     })
   } else if (selectedCategory.value === 'agentTools') {
-    // Agent 工具插件：显示所有 Agent 相关插件
+    // Agent 工具插件：直接使用 main_category 字段
     filtered = plugins.value.filter(p => {
-      // 包含预定义的 Agent 子分类
-      if (agentToolsCategories.includes(p.metadata.category)) {
+      // 优先使用 main_category 字段（后端已提供）
+      if (p.metadata.main_category === 'agent') {
         return true
       }
-      // 推断主分类为 Agent 的插件
-      if (inferMainCategory(p.metadata.category) === 'agent') {
+      // 兼容旧数据：检查预定义的 Agent 子分类
+      if (agentToolsCategories.includes(p.metadata.category)) {
         return true
       }
       return false
@@ -1835,12 +1857,12 @@ const getCategoryCount = (category: string) => {
   // 被动扫描插件：统计所有被动扫描相关插件
   if (category === 'passiveScan') {
     return plugins.value.filter(p => {
-      // 包含预定义的被动扫描子分类
-      if (passiveScanCategories.includes(p.metadata.category)) {
+      // 优先使用 main_category 字段
+      if (p.metadata.main_category === 'passive') {
         return true
       }
-      // 推断主分类为被动扫描的插件
-      if (inferMainCategory(p.metadata.category) === 'passive') {
+      // 兼容旧数据：检查预定义的被动扫描子分类
+      if (passiveScanCategories.includes(p.metadata.category)) {
         return true
       }
       // 兼容旧的 passiveScan 分类
@@ -1853,12 +1875,12 @@ const getCategoryCount = (category: string) => {
   // Agent 工具插件：统计所有 Agent 相关插件
   if (category === 'agentTools') {
     return plugins.value.filter(p => {
-      // 包含预定义的 Agent 子分类
-      if (agentToolsCategories.includes(p.metadata.category)) {
+      // 优先使用 main_category 字段
+      if (p.metadata.main_category === 'agent') {
         return true
       }
-      // 推断主分类为 Agent 的插件
-      if (inferMainCategory(p.metadata.category) === 'agent') {
+      // 兼容旧数据：检查预定义的 Agent 子分类
+      if (agentToolsCategories.includes(p.metadata.category)) {
         return true
       }
       return false
@@ -2273,8 +2295,13 @@ const uploadPlugin = async () => {
     
     const tags = tagsStr.split(',').map(t => t.trim()).filter(t => t.length > 0)
     
+    // 推断 main_category：agentTools 类别为 agent，其他为 passive
+    const mainCategory = category === 'agentTools' ? 'agent' : 'passive'
+    
     const metadata = {
-      id, name, version, author, category, description,
+      id, name, version, author,
+      main_category: mainCategory, // 添加主分类字段
+      category, description,
       default_severity: defaultSeverity,
       tags
     }
@@ -2567,6 +2594,7 @@ const createNewPlugin = async () => {
       name: newPluginMetadata.value.name,
       version: newPluginMetadata.value.version,
       author: newPluginMetadata.value.author || 'Unknown',
+      main_category: newPluginMetadata.value.mainCategory, // 添加主分类字段
       category: backendCategory,
       description: newPluginMetadata.value.description || '',
       default_severity: newPluginMetadata.value.default_severity,
@@ -3324,6 +3352,7 @@ const approvePlugin = async (plugin: ReviewPlugin) => {
     if (response.success) {
       plugin.status = 'Approved'
       await refreshReviewPlugins()
+      await refreshPlugins() // 同时刷新主插件列表
       showToast(t('plugins.approveSuccess', `插件已批准: ${plugin.plugin_name}`), 'success')
       closeReviewDetailDialog()
     } else {
@@ -3347,6 +3376,7 @@ const rejectPlugin = async (plugin: ReviewPlugin) => {
     if (response.success) {
       plugin.status = 'Rejected'
       await refreshReviewPlugins()
+      await refreshPlugins() // 同时刷新主插件列表
       showToast(t('plugins.rejectSuccess', `插件已拒绝: ${plugin.plugin_name}`), 'success')
       closeReviewDetailDialog()
     } else {
@@ -3369,6 +3399,7 @@ const approveSelected = async () => {
     
     if (response.success) {
       await refreshReviewPlugins()
+      await refreshPlugins() // 同时刷新主插件列表
       selectedReviewPlugins.value = []
       showToast(t('plugins.batchApproveSuccess', `已批准 ${pluginIds.length} 个插件`), 'success')
     } else {
@@ -3392,6 +3423,7 @@ const rejectSelected = async () => {
     
     if (response.success) {
       await refreshReviewPlugins()
+      await refreshPlugins() // 同时刷新主插件列表
       selectedReviewPlugins.value = []
       showToast(t('plugins.batchRejectSuccess', `已拒绝 ${pluginIds.length} 个插件`), 'success')
     } else {
@@ -3413,6 +3445,7 @@ const deleteReviewPlugin = async (plugin: ReviewPlugin) => {
     
     if (response.success) {
       await refreshReviewPlugins()
+      await refreshPlugins() // 同时刷新主插件列表
       showToast(t('plugins.deleteSuccess', `插件已删除: ${plugin.plugin_name}`), 'success')
     } else {
       showToast(t('plugins.deleteFailed', `删除失败: ${response.message || '未知错误'}`), 'error')

@@ -89,7 +89,8 @@ export function useOrchestratorMessage(content: string) {
   })
 
   const stageLabel = computed(() => {
-    const stage = sessionData.value?.stage
+    const stageRaw = sessionData.value?.stage
+    const stage = stageRaw ? String(stageRaw).toLowerCase() : ''
     const labels: Record<string, string> = {
       'recon': '信息收集',
       'login': '登录测试',
@@ -113,7 +114,7 @@ export function useOrchestratorMessage(content: string) {
       'report': '报告生成',
       'completed': '已完成',
     }
-    return stage ? labels[stage] || stage : ''
+    return stage ? labels[stage] || stageRaw || '' : ''
   })
 
   const subAgentLabel = computed(() => {

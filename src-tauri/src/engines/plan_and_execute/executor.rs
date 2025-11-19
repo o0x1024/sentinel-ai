@@ -25,6 +25,7 @@ use tauri::AppHandle;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
+use regex::Regex;
 
 /// 执行器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2773,6 +2774,98 @@ impl Executor {
         Ok(exec_context)
     }
 
+    /// 递归替换参数中的变量引用
+    /// 支持格式：{{步骤X的结果}}、{{步骤X}}、{{step_result_X}}
+    fn substitute_variables<'a>(
+        &'a self,
+        value: &'a serde_json::Value,
+        shared_data: &'a HashMap<String, serde_json::Value>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = serde_json::Value> + Send + 'a>> {
+        Box::pin(async move {
+            self.substitute_variables_impl(value, shared_data).await
+        })
+    }
+
+    /// 实际的递归替换实现
+    fn substitute_variables_impl<'a>(
+        &'a self,
+        value: &'a serde_json::Value,
+        shared_data: &'a HashMap<String, serde_json::Value>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = serde_json::Value> + Send + 'a>> {
+        Box::pin(async move {
+        match value {
+            serde_json::Value::String(s) => {
+                // 处理 {{...}} 格式的变量引用
+                let re = Regex::new(r"\{\{([^}]+)\}\}").unwrap();
+                let mut result = s.clone();
+                
+                for cap in re.captures_iter(s) {
+                    if let Some(var_match) = cap.get(1) {
+                        let var_key = var_match.as_str().trim();
+                        
+                        // 尝试多种可能的键名格式
+                        let possible_keys = vec![
+                            // 1. 直接使用变量名
+                            var_key.to_string(),
+                            // 2. 添加 step_result_ 前缀
+                            format!("step_result_{}", var_key),
+                            // 3. 处理中文格式：步骤X的结果 -> step_result_步骤X
+                            if var_key.contains("的结果") {
+                                let step_name = var_key.replace("的结果", "");
+                                format!("step_result_{}", step_name)
+                            } else {
+                                String::new()
+                            },
+                        ];
+                        
+                        // 查找匹配的值
+                        let mut found = false;
+                        for key in &possible_keys {
+                            if key.is_empty() { continue; }
+                            if let Some(value) = shared_data.get(key) {
+                                // 找到值，进行替换
+                                let replacement = match value {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    serde_json::Value::Null => "null".to_string(),
+                                    _ => serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
+                                };
+                                result = result.replace(&cap[0], &replacement);
+                                log::debug!("替换变量: {} -> {} (键: {})", &cap[0], &replacement, key);
+                                found = true;
+                                break;
+                            }
+                        }
+                        
+                        if !found {
+                            log::warn!("未找到变量引用: {} (尝试的键: {:?})", &cap[0], possible_keys);
+                        }
+                    }
+                }
+                
+                serde_json::Value::String(result)
+            }
+            serde_json::Value::Object(obj) => {
+                // 递归处理对象中的每个值
+                let mut new_obj = serde_json::Map::new();
+                for (k, v) in obj {
+                    new_obj.insert(k.clone(), self.substitute_variables_impl(v, shared_data).await);
+                }
+                serde_json::Value::Object(new_obj)
+            }
+            serde_json::Value::Array(arr) => {
+                // 递归处理数组中的每个元素
+                let mut new_arr = Vec::new();
+                for item in arr {
+                    new_arr.push(self.substitute_variables_impl(item, shared_data).await);
+                }
+                serde_json::Value::Array(new_arr)
+            }
+            // 其他类型直接返回
+            _ => value.clone(),
+        }
+        })
+    }
+
     async fn execute_step_once(
         &self,
         step: &ExecutionStep,
@@ -2901,8 +2994,19 @@ impl Executor {
                 merged_inputs.insert(k.clone(), v.clone());
             }
 
+            // ✅ 替换参数中的变量引用（如 {{步骤5的结果}}）
+            let shared_data = context.shared_data.read().await;
+            let mut substituted_inputs = HashMap::new();
+            for (k, v) in &merged_inputs {
+                let substituted_value = self.substitute_variables(v, &shared_data).await;
+                substituted_inputs.insert(k.clone(), substituted_value);
+            }
+            drop(shared_data);
+            
+            log::info!("工具参数替换完成: {} 个参数", substituted_inputs.len());
+
             let tool_params = ToolExecutionParams {
-                inputs: merged_inputs,
+                inputs: substituted_inputs,
                 context: HashMap::new(),
                 timeout: Some(std::time::Duration::from_secs(
                     tool_config

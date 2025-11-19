@@ -35,8 +35,24 @@ impl<D: RagDatabase> RagService<D> {
         // Initialize LanceDB vector store
         let db_path = config.database_path
             .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "data/lancedb-store".to_string());
+            .map(|p| {
+                // 如果是相对路径，转换为应用数据目录下的绝对路径
+                if p.is_relative() {
+                    let app_data_dir = dirs::data_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join("sentinel-ai");
+                    app_data_dir.join(p).to_string_lossy().to_string()
+                } else {
+                    p.to_string_lossy().to_string()
+                }
+            })
+            .unwrap_or_else(|| {
+                // 默认路径也使用应用数据目录
+                let app_data_dir = dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("sentinel-ai");
+                app_data_dir.join("lancedb").to_string_lossy().to_string()
+            });
         
         // Build embedding config for vector store
         let embedding_config = EmbeddingConfig {
@@ -47,6 +63,8 @@ impl<D: RagDatabase> RagService<D> {
             dimensions: config.embedding_dimensions,
         };
 
+        info!("RAG服务使用LanceDB路径: {}", db_path);
+        
         let vector_store = Arc::new(LanceDbManager::new(db_path, embedding_config));
         vector_store.initialize().await?;
         

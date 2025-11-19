@@ -131,8 +131,56 @@ impl DocumentChunker {
     }
 
     fn chunk_text_semantic(&self, content: &str, file_path: &str, source: &DocumentSource) -> Result<Vec<DocumentChunk>> {
-        warn!("Semantic chunking not fully implemented, falling back to recursive chunking");
-        self.chunk_text_recursive(content, file_path, source)
+        // Semantic chunking: split by semantic boundaries (paragraphs and sentences)
+        debug!("Using semantic chunking strategy");
+        
+        let paragraphs: Vec<&str> = content.split("\n\n").filter(|p| !p.trim().is_empty()).collect();
+        let mut chunks = Vec::new();
+        let mut current_chunk = String::new();
+        let mut chunk_index = 0;
+        
+        for paragraph in paragraphs {
+            let paragraph_len = paragraph.chars().count();
+            let current_len = current_chunk.chars().count();
+            
+            // If adding this paragraph exceeds max size, save current chunk
+            if current_len > 0 && current_len + paragraph_len > self.config.max_chunk_size_chars {
+                if current_chunk.chars().count() >= self.config.min_chunk_size_chars {
+                    let chunk = self.create_chunk(&current_chunk, chunk_index, 0, current_chunk.chars().count(), file_path, source)?;
+                    chunks.push(chunk);
+                    chunk_index += 1;
+                }
+                current_chunk.clear();
+            }
+            
+            // Add paragraph to current chunk
+            if !current_chunk.is_empty() {
+                current_chunk.push_str("\n\n");
+            }
+            current_chunk.push_str(paragraph);
+            
+            // If current chunk is large enough and exceeds preferred size, save it
+            if current_chunk.chars().count() >= self.config.chunk_size_chars {
+                let chunk = self.create_chunk(&current_chunk, chunk_index, 0, current_chunk.chars().count(), file_path, source)?;
+                chunks.push(chunk);
+                chunk_index += 1;
+                current_chunk.clear();
+            }
+        }
+        
+        // Save remaining content
+        if !current_chunk.trim().is_empty() && current_chunk.chars().count() >= self.config.min_chunk_size_chars {
+            let chunk = self.create_chunk(&current_chunk, chunk_index, 0, current_chunk.chars().count(), file_path, source)?;
+            chunks.push(chunk);
+        }
+        
+        // If no chunks were created, fall back to recursive
+        if chunks.is_empty() {
+            debug!("Semantic chunking produced no chunks, falling back to recursive");
+            return self.chunk_text_recursive(content, file_path, source);
+        }
+        
+        Ok(chunks)
     }
 
     fn chunk_text_structure_aware(&self, content: &str, file_path: &str, source: &DocumentSource) -> Result<Vec<DocumentChunk>> {

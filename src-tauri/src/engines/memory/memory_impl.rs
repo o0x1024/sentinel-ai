@@ -7,8 +7,21 @@ use anyhow::{Result, anyhow};
 use serde_json;
 use uuid::Uuid;
 use chrono::Utc;
-use crate::engines::memory::*;
-use crate::engines::types::*;
+use crate::engines::memory::memory::{
+    ExecutionExperience,
+    PlanTemplate,
+    KnowledgeEntity,
+    KnowledgeRelationship,
+    LearningFeedback,
+    VectorEmbedding,
+    MemoryQueryHistory,
+    MemoryQuery,
+    SimilaritySearchResult,
+    Memory,
+    RelationshipType,
+    LearningUpdate,
+    FeedbackType,
+};
 
 /// 记忆配置
 #[derive(Debug, Clone)]
@@ -26,7 +39,7 @@ impl Default for MemoryConfig {
             max_experiences: 10000,
             max_templates: 1000,
             similarity_threshold: 0.7,
-            cleanup_interval_hours: 24,
+            cleanup_interval_hours: 24.0,
             vector_dimensions: 384,
         }
     }
@@ -315,9 +328,9 @@ impl Memory for IntelligentMemory {
             entity_id: None,
             relationship_id: None,
             feedback_type: if update.execution_result.status == crate::engines::types::StepExecutionStatus::Completed {
-                crate::engines::memory::FeedbackType::Success
+                FeedbackType::Success
             } else {
-                crate::engines::memory::FeedbackType::Failure
+                FeedbackType::Failure
             },
             feedback_content: serde_json::json!({
                 "session_id": update.session_id,

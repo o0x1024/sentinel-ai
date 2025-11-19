@@ -237,14 +237,6 @@ pub async fn rag_clear_collection(
     Ok(true)
 }
 
-/// 获取RAG系统状态
-#[tauri::command]
-pub async fn rag_get_status() -> Result<RagStatus, String> {
-    info!("获取RAG系统状态");
-    
-    let rag_service = get_global_rag_service().await?;
-    rag_service.get_status().await.map_err(|e| e.to_string())
-}
 
 /// 初始化RAG服务
 #[tauri::command]
@@ -336,10 +328,9 @@ pub async fn rag_get_supported_file_types() -> Result<Vec<String>, String> {
 /// 获取RAG系统状态 (前端兼容命名)
 #[tauri::command]
 pub async fn get_rag_status() -> Result<RagStatus, String> {
-    info!("获取RAG系统状态 (前端兼容)");
-    
-    // 调用原有的rag_get_status函数
-    rag_get_status().await
+
+    let rag_service = get_global_rag_service().await?;
+    rag_service.get_status().await.map_err(|e| e.to_string())
 }
 
 /// 创建RAG集合

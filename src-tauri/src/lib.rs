@@ -818,7 +818,6 @@ pub fn run() {
             rag_commands::rag_ingest_source,
             rag_commands::rag_query,
             rag_commands::rag_clear_collection,
-            rag_commands::rag_get_status,
             rag_commands::rag_initialize_service,
             rag_commands::rag_shutdown_service,
             rag_commands::rag_get_supported_file_types,

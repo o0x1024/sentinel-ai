@@ -362,7 +362,7 @@ impl ReWOOPlanner {
         // 从runtime_params读取工具白名单/黑名单
         let (allow, allow_present, deny): (HashSet<String>, bool, HashSet<String>) =
             if let Some(params) = &self.runtime_params {
-                log::Debug!("ReWOO Planner: task_parameters = {:?}", params);
+                log::debug!("ReWOO Planner: task_parameters = {:?}", params);
                 let allow_present = params.get("tools_allow").is_some();
                 let allow = params
                     .get("tools_allow")

@@ -574,7 +574,8 @@ impl PassiveDatabaseService {
         plugin: &PluginMetadata, 
         plugin_code: &str
     ) -> Result<()> {
-        self.register_plugin_with_code_and_quality(plugin, plugin_code, None, None).await
+        // 手动创建的插件默认自动批准，不需要审核
+        self.register_plugin_with_code_and_quality(plugin, plugin_code, None, Some("Approved")).await
     }
 
     /// Register plugin with code and optional quality score
@@ -586,9 +587,6 @@ impl PassiveDatabaseService {
         validation_status: Option<&str>
     ) -> Result<()> {
         let tags_json = serde_json::to_string(&plugin.tags).unwrap_or_default();
-        
-        // 从category推断main_category
-        let main_category = if plugin.category == "agentTools" { "agent" } else { "passive" };
 
         sqlx::query(
             r#"
@@ -602,7 +600,7 @@ impl PassiveDatabaseService {
         .bind(&plugin.name)
         .bind(&plugin.version)
         .bind(&plugin.author)
-        .bind(main_category)
+        .bind(&plugin.main_category)
         .bind(&plugin.category)
         .bind(&plugin.description)
         .bind(format!("{}", plugin.default_severity))
@@ -710,10 +708,10 @@ impl PassiveDatabaseService {
                    default_severity, tags, enabled, plugin_code, quality_score, validation_status
             FROM plugin_registry
             WHERE category = ? 
-              AND quality_score >= ?
+              AND (quality_score IS NULL OR quality_score >= ?)
               AND validation_status IN ('Approved', 'Passed')
               AND main_category = 'passive'
-            ORDER BY quality_score DESC, updated_at DESC
+            ORDER BY quality_score DESC NULLS LAST, updated_at DESC
             LIMIT 5
             "#,
         )

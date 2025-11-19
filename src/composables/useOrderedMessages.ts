@@ -68,6 +68,28 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   }
 
   buildContent(messageId: string): string {
+    // 特殊处理：如果消息包含 Orchestrator 事件，返回 bundle 格式
+    const chunks = this.chunks.get(messageId) || []
+    const orchestratorEvents: string[] = []
+    for (const c of chunks) {
+      if (c.chunk_type === 'Meta' && c.content) {
+        try {
+          const obj = JSON.parse(c.content.toString())
+          if (obj?.type === 'orchestrator_session' || obj?.type === 'orchestrator_step') {
+            orchestratorEvents.push(c.content.toString())
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    if (orchestratorEvents.length > 0) {
+      return JSON.stringify({
+        type: 'orchestrator_bundle',
+        events: orchestratorEvents,
+      })
+    }
+    
     return this.buildStepGroupedContent(messageId)
   }
 
@@ -203,7 +225,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       case 'Error':
         return `❌ **错误**\n${chunk.content}`
       case 'Meta':
-        // Meta 事件不直接显示在内容中（步骤信息已通过 parseStepMeta 处理）
+        // Meta 事件不直接显示在内容中（Orchestrator 事件在 buildContent 层面处理）
         return ''
       default:
         return chunk.content
@@ -628,6 +650,31 @@ export const useOrderedMessages = (
       // 检测是否为 ReAct 消息并提取 ToolResult chunks
       const allChunks = processor.chunks.get(canonicalId) || []
       const toolResultChunks = allChunks.filter(c => c.chunk_type === 'ToolResult')
+      // 在清理前，若存在 Orchestrator 的 Meta 事件，持久化为一个聚合对象写回到消息内容中
+      try {
+        const orchestratorEvents: string[] = []
+        for (const c of allChunks) {
+          if (c.chunk_type === 'Meta' && c.content) {
+            try {
+              const obj = JSON.parse(c.content.toString())
+              if (obj?.type === 'orchestrator_session' || obj?.type === 'orchestrator_step') {
+                orchestratorEvents.push(c.content.toString())
+              }
+            } catch {
+              // ignore non-json meta
+            }
+          }
+        }
+        if (orchestratorEvents.length > 0) {
+          // 将聚合后的 orchestrator 事件保存到消息内容，供前端渲染
+          message.content = JSON.stringify({
+            type: 'orchestrator_bundle',
+            events: orchestratorEvents,
+          })
+        }
+      } catch (e) {
+        console.warn('[useOrderedMessages] Failed to persist orchestrator events:', e)
+      }
       
       if (toolResultChunks.length > 0) {
         // 是 ReAct 消息，解析并存储步骤数据

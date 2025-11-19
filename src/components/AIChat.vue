@@ -80,9 +80,13 @@
               : 'bg-base-100 text-base-content border-base-300 hover:border-base-400',
           ]"
         >
-          <!-- Orchestrator 步骤显示 -->
+          <!-- Orchestrator 步骤显示（支持多条Meta事件） -->
           <div v-if="isOrchestratorMessageFn(message)" class="space-y-3">
-            <OrchestratorStepDisplay :content="message.content" />
+            <OrchestratorStepDisplay
+              v-for="(c, idx) in parseOrchestratorMessages(message)"
+              :key="`orch-${message.id}-${idx}`"
+              :content="c"
+            />
           </div>
 
           <!-- Plan-and-Execute 步骤显示 -->
@@ -391,16 +395,69 @@ const parseReWOOMessageData = (message: ChatMessage): ReWOOMessageData => {
   return parseReWOOMessage(content, chunks)
 }
 
-// Orchestrator 消息检测函数
+// Orchestrator 消息检测函数（支持从 Meta chunks 识别）
 const isOrchestratorMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
   const content = message.content || ''
+  // 1) 优先尝试直接解析消息内容（兼容早期单条JSON场景）
   try {
     const parsed = JSON.parse(content)
-    return parsed.type === 'orchestrator_session' || parsed.type === 'orchestrator_step'
+    if (
+      parsed?.type === 'orchestrator_session' ||
+      parsed?.type === 'orchestrator_step' ||
+      parsed?.type === 'orchestrator_bundle'
+    ) {
+      return true
+    }
   } catch {
-    return false
+    // ignore
   }
+  // 2) 回退：从分片队列中查找 Orchestrator 的 Meta 事件
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return chunks.some(c => {
+    if (c.chunk_type !== 'Meta' || !c.content) return false
+    try {
+      const obj = JSON.parse(c.content.toString())
+      return obj?.type === 'orchestrator_session' || obj?.type === 'orchestrator_step'
+    } catch {
+      return false
+    }
+  })
+}
+
+// 解析并返回当前消息内的所有 Orchestrator 事件（保持服务端 sequence 顺序）
+const parseOrchestratorMessages = (message: ChatMessage): string[] => {
+  const out: string[] = []
+  // 若消息内容本身就是一个 Orchestrator 事件，先放入（兼容早期形态）
+  try {
+    const parsed = JSON.parse(message.content || '')
+    if (parsed?.type === 'orchestrator_session' || parsed?.type === 'orchestrator_step') {
+      out.push(JSON.stringify(parsed))
+    } else if (parsed?.type === 'orchestrator_bundle' && Array.isArray(parsed.events)) {
+      // 新增：支持聚合事件类型，直接返回持久化的事件数组
+      return parsed.events.map((e: any) => (typeof e === 'string' ? e : JSON.stringify(e)))
+    }
+  } catch {
+    // ignore
+  }
+  // 从分片中提取 Orchestrator 相关 Meta 事件，按 sequence 排序
+  const chunks = (orderedMessages.processor.chunks.get(message.id) || [])
+    .filter(c => c.chunk_type === 'Meta' && c.content)
+    .slice()
+    .sort((a, b) => a.sequence - b.sequence)
+
+  for (const c of chunks) {
+    try {
+      const obj = JSON.parse(c.content!.toString())
+      if (obj?.type === 'orchestrator_session' || obj?.type === 'orchestrator_step') {
+        // 直接使用服务端原始JSON字符串内容，避免字段丢失
+        out.push(c.content!.toString())
+      }
+    } catch {
+      // 非JSON或与Orchestrator无关，忽略
+    }
+  }
+  return out
 }
 
 interface ReActStepData {
