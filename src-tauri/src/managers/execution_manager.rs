@@ -11,10 +11,11 @@ use crate::agents::traits::{AgentTask, AgentExecutionResult, AgentSession, Execu
 /// 执行引擎类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EngineType {
-    Orchestrator,
+    // Orchestrator, // 已删除,使用Travel替代
     PlanExecute,
     ReWOO,
     LLMCompiler,
+    Travel, // 新增Travel架构
 }
 
 /// 执行上下文
@@ -29,10 +30,11 @@ pub struct ExecutionContext {
 
 /// 存储的引擎实例
 pub enum EngineInstance {
-    Orchestrator(Box<crate::engines::orchestrator::OrchestratorEngineAdapter>),
+    // Orchestrator(Box<crate::engines::orchestrator::OrchestratorEngineAdapter>), // 已删除
     PlanExecute(PlanAndExecuteEngine),
     ReWOO(ReWooEngine),
     LLMCompiler(LlmCompilerEngine),
+    // Travel(crate::engines::travel::TravelEngine), // TODO: 需要实现ExecutionEngine trait
 }
 
 impl EngineInstance {
@@ -42,30 +44,33 @@ impl EngineInstance {
         plan: &AgentExecutionPlan,
     ) -> Result<AgentExecutionResult> {
         match self {
-            EngineInstance::Orchestrator(engine) => engine.execute_plan(plan).await,
+            // EngineInstance::Orchestrator(engine) => engine.execute_plan(plan).await,
             EngineInstance::PlanExecute(engine) => engine.execute_plan(plan).await,
             EngineInstance::ReWOO(engine) => engine.execute_plan(plan).await,
             EngineInstance::LLMCompiler(engine) => engine.execute_plan(plan).await,
+            // EngineInstance::Travel(engine) => engine.execute_plan(plan).await,
         }
     }
 
     /// 获取进度
     pub async fn get_progress(&self, session_id: &str) -> Result<ExecutionProgress> {
         match self {
-            EngineInstance::Orchestrator(engine) => engine.get_progress(session_id).await,
+            // EngineInstance::Orchestrator(engine) => engine.get_progress(session_id).await,
             EngineInstance::PlanExecute(engine) => engine.get_progress(session_id).await,
             EngineInstance::ReWOO(engine) => engine.get_progress(session_id).await,
             EngineInstance::LLMCompiler(engine) => engine.get_progress(session_id).await,
+            // EngineInstance::Travel(engine) => engine.get_progress(session_id).await,
         }
     }
 
     /// 停止执行
     pub async fn stop_execution(&self, session_id: &str) -> Result<()> {
         match self {
-            EngineInstance::Orchestrator(engine) => engine.cancel_execution(session_id).await,
+            // EngineInstance::Orchestrator(engine) => engine.cancel_execution(session_id).await,
             EngineInstance::PlanExecute(engine) => engine.cancel_execution(session_id).await,
             EngineInstance::ReWOO(engine) => engine.cancel_execution(session_id).await,
             EngineInstance::LLMCompiler(engine) => engine.cancel_execution(session_id).await,
+            // EngineInstance::Travel(engine) => engine.cancel_execution(session_id).await,
         }
     }
 }

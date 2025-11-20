@@ -1,3 +1,4 @@
+pub mod global_proxy;
 pub mod ordered_message;
 pub mod prompt_resolver;
 

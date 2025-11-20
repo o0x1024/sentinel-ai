@@ -10,6 +10,7 @@ use crate::engines::rewoo::{
     rewoo_solver::ReWOOSolver,
     rewoo_types::*,
 };
+use crate::engines::memory::get_global_memory;
 use crate::services::ai::AiServiceManager;
 use crate::services::prompt_db::PromptRepository;
 use crate::services::database::DatabaseService;
@@ -334,6 +335,25 @@ impl ReWooEngine {
         ).await?;
         
         state.result = final_answer.clone();
+        
+        // 存储成功的ReWOO规划蓝图到记忆系统
+        let memory = get_global_memory();
+        let mut memory_guard = memory.write().await;
+        let plan_steps_json: Vec<serde_json::Value> = plan.steps.iter().map(|step| {
+            serde_json::json!({
+                "step_id": step.step_id,
+                "tool_name": step.tool_name,
+                "description": step.description,
+                "tool_args": step.tool_args,
+            })
+        }).collect();
+        
+        let _ = memory_guard.store_rewoo_plan_blueprint(
+            task.description.clone(),
+            plan_steps_json,
+            1.0, // 成功执行，成功率为1.0
+        );
+        drop(memory_guard);
         
         let execution_time = start_time.elapsed().unwrap_or_default();
         info!("ReWOO Engine: Execution completed in {:?}", execution_time);

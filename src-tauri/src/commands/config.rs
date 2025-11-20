@@ -1,19 +1,9 @@
 
 use crate::services::database::DatabaseService;
+use crate::utils::global_proxy::GlobalProxyConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GlobalProxyConfig {
-    pub enabled: bool,
-    pub scheme: Option<String>,
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub no_proxy: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigItem {
@@ -70,10 +60,28 @@ pub async fn set_global_proxy_config(
     let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
     db.set_config("network", "global_proxy", &json, Some("Global HTTP proxy settings")).await.map_err(|e| e.to_string())?;
     
-    // 生效到运行时 - ai_adapter removed, proxy functionality disabled
+    // 应用到全局代理配置（包括主 crate 和 sentinel-tools）
     if cfg.enabled {
-        tracing::info!("Global proxy configuration saved but not applied (ai_adapter removed)");
+        // 设置主 crate 的全局代理
+        crate::utils::global_proxy::set_global_proxy(cfg.clone()).await;
+        
+        // 同步设置 sentinel-tools 的全局代理
+        let tools_proxy_config = sentinel_tools::GlobalProxyConfig {
+            enabled: cfg.enabled,
+            scheme: cfg.scheme.clone(),
+            host: cfg.host.clone(),
+            port: cfg.port,
+            username: cfg.username.clone(),
+            password: cfg.password.clone(),
+            no_proxy: cfg.no_proxy.clone(),
+        };
+        sentinel_tools::set_global_proxy(tools_proxy_config).await;
+        
+        tracing::info!("Global proxy configuration applied to runtime");
     } else {
+        // 清除全局代理
+        crate::utils::global_proxy::clear_global_proxy().await;
+        sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
         tracing::info!("Global proxy configuration disabled");
     }
     Ok(())

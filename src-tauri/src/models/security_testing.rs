@@ -102,10 +102,11 @@ pub enum TestStepType {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum SubAgentKind {
-    Orchestrator,
+    Travel,
     ReWOO,
     PlanAndExecute,
     LLMCompiler,
+    Copilot,
     Other,
 }
 

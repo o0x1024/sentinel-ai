@@ -338,8 +338,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 
-type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct' | 'Orchestrator'
-type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Evaluation' | 'Replan'
+type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct' | 'Travel'
+type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Evaluation' | 'Replan' | 'Observe' | 'Orient' | 'Decide' | 'Act'
 type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
 type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'PluginInterface' | 'PluginOutputFormat' | 'AgentPluginOutputFormat'
 
@@ -411,9 +411,11 @@ const groups = [
     { value: 'Planning', label: 'Planning (规划)' },
     { value: 'Execution', label: 'Execution (执行)' },
   ]},
-  { value: 'Orchestrator', label: 'Orchestrator', stages: [
-    { value: 'Planning', label: 'Planning (规划/编排)' },
-    { value: 'Execution', label: 'Execution (执行/协调)' },
+  { value: 'Travel', label: 'Travel (OODA)', stages: [
+    { value: 'Observe', label: 'Observe (侦察)' },
+    { value: 'Orient', label: 'Orient (分析)' },
+    { value: 'Decide', label: 'Decide (决策)' },
+    { value: 'Act', label: 'Act (执行)' },
   ]},
 ]
 
@@ -501,7 +503,7 @@ const stagesOfSelectedArch = computed<StageType[]>(() => {
   if (selected.value.architecture === 'ReWOO') return ['Planner','Solver'] as StageType[]
   if (selected.value.architecture === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
   if (selected.value.architecture === 'ReAct') return ['Planning','Execution'] as StageType[]
-  if (selected.value.architecture === 'Orchestrator') return ['Planning','Execution'] as StageType[]
+  if (selected.value.architecture === 'Travel') return ['Observe','Orient','Decide','Act'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
 })
 
@@ -511,7 +513,7 @@ const stagesOfGroupArch = computed<StageType[]>(() => {
   if (arch === 'ReWOO') return ['Planner','Solver'] as StageType[]
   if (arch === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
   if (arch === 'ReAct') return ['Planning','Execution'] as StageType[]
-  if (arch === 'Orchestrator') return ['Planning','Execution'] as StageType[]
+  if (arch === 'Travel') return ['Observe','Orient','Decide','Act'] as StageType[]
   return ['Planning','Execution','Replan'] as StageType[]
 })
 

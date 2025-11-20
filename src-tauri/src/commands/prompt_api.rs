@@ -229,7 +229,7 @@ fn map_engine_to_arch(engine: &str) -> ArchitectureType {
     match engine {
         "rewoo" => ArchitectureType::ReWOO,
         "llm-compiler" => ArchitectureType::LLMCompiler,
-        "orchestrator" => ArchitectureType::Orchestrator,
+        "travel" => ArchitectureType::Travel,
         "react" => ArchitectureType::ReAct,
         _ => ArchitectureType::PlanExecute,
     }
@@ -413,7 +413,7 @@ pub async fn get_default_prompt_content(
         ArchitectureType::LLMCompiler => "llm_compiler",
         ArchitectureType::PlanExecute => "plan_and_execute",
         ArchitectureType::ReAct => "react",
-        ArchitectureType::Orchestrator => "orchestrator",
+        ArchitectureType::Travel => "travel",
     };
     
     // Get app data directory
@@ -455,7 +455,7 @@ pub async fn initialize_default_prompts() -> Result<String, String> {
         ("llm_compiler", "llm_compiler"),
         ("plan_and_execute", "plan_and_execute"),
         ("react", "react"),
-        ("orchestrator", "orchestrator"),
+        ("travel", "travel"),
     ];
     
     let mut copied_count = 0;

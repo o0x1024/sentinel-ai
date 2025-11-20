@@ -92,7 +92,7 @@
             <label class="label"><span class="label-text">引擎</span></label>
             <select v-model="editingAgent.engine" class="select select-sm select-bordered w-full">
               <option value="auto">auto</option>
-              <option value="orchestrator">orchestrator</option>
+              <option value="travel">travel</option>
               <option value="plan-execute">plan-execute</option>
               <option value="react">react</option>
               <option value="rewoo">rewoo</option>
@@ -581,6 +581,7 @@ const mapArchToEngine = (arch?: string | null): string | null => {
     case 'ReWOO': return 'rewoo'
     case 'LLMCompiler': return 'llm-compiler'
     case 'PlanExecute': return 'plan-execute'
+    case 'Travel': return 'travel'
     default: return null
   }
 }
@@ -732,6 +733,7 @@ const mapEngineToArchitectureType = (engine: string | null | undefined): string 
     case 'react': return 'ReAct'
     case 'rewoo': return 'ReWOO'
     case 'llm-compiler': return 'LLMCompiler'
+    case 'travel': return 'Travel'
     default: return null
   }
 }

@@ -13,9 +13,10 @@ use crate::engines::llm_compiler::types::LlmCompilerConfig;
 use crate::engines::plan_and_execute::types::PlanAndExecuteConfig;
 use crate::engines::rewoo::engine_adapter::ReWooEngine;
 use crate::engines::rewoo::rewoo_types::ReWOOConfig;
-use crate::engines::orchestrator::engine_adapter::OrchestratorEngineAdapter;
+// use crate::engines::orchestrator::engine_adapter::OrchestratorEngineAdapter; // Orchestrator已删除
 // use crate::engines::plan_and_execute::executor::ExecutionMode; // not needed directly
 use crate::agents::traits::{ExecutionEngine, AgentTask, TaskPriority};
+use futures::StreamExt;
 
 /// 创建AI助手会话记录
 async fn create_ai_assistant_session(
@@ -283,7 +284,7 @@ fn default_notification_enabled() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentEngine {
-    Orchestrator,
+    Travel,
     PlanExecute,
     React,
     Rewoo,
@@ -502,7 +503,7 @@ pub async fn dispatch_scenario_task(
 
     // 选架构
     let architecture = match profile.engine {
-        AgentEngine::Orchestrator => "orchestrator",
+        AgentEngine::Travel => "travel",
         AgentEngine::PlanExecute => "plan-execute",
         AgentEngine::React => "react",
         AgentEngine::Rewoo => "rewoo",
@@ -714,8 +715,8 @@ pub async fn dispatch_scenario_task(
                 app_clone.clone(),
             ).await
         }
-        "orchestrator" => {
-            dispatch_with_orchestrator(
+        "travel" => {
+            dispatch_with_travel(
                 execution_id.clone(),
                 dispatch_req,
                 (*ai_service_manager).clone(),
@@ -731,9 +732,10 @@ pub async fn dispatch_scenario_task(
 
     // 如果调度成功，按架构决定是否需要异步开始"真实执行"
     if let Ok(ref dispatch_result) = result {
-        // 仅对需要 register_execution 的架构触发后续执行（如 plan-execute / llm-compiler / orchestrator）
+        // 仅对需要 register_execution 的架构触发后续执行（如 plan-execute / llm-compiler）
+        // 注意：travel 和 react 架构在 dispatch 函数中直接执行，不需要异步执行
         let arch_for_exec = selected_architecture.clone();
-        if matches!(arch_for_exec.as_str(), "plan-execute" | "llm-compiler" | "orchestrator" | "auto") {
+        if matches!(arch_for_exec.as_str(), "plan-execute" | "llm-compiler" | "auto") {
             let execution_id_clone = dispatch_result.execution_id.clone();
             let app_clone = app_handle.clone();
 
@@ -947,7 +949,7 @@ pub struct CustomAgent {
 
 
 /// 停止执行
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn stop_execution(
     execution_id: String,
     app: AppHandle,
@@ -1256,7 +1258,7 @@ async fn dispatch_with_auto(
         "plan-execute" => dispatch_with_plan_execute(execution_id, request, ai_service_manager, db_service, execution_manager, app).await,
         "rewoo" => dispatch_with_rewoo(execution_id, request, ai_service_manager, db_service, execution_manager, app).await,
         "llm-compiler" => dispatch_with_llm_compiler(execution_id, request, ai_service_manager, db_service, execution_manager, app).await,
-        "orchestrator" => dispatch_with_orchestrator(execution_id, request, ai_service_manager, db_service, execution_manager, app).await,
+        "travel" => Err("Travel architecture dispatch not yet implemented".to_string()),
         _ => Err(format!("Unsupported architecture: {}", architecture)),
     }
 }
@@ -1409,12 +1411,26 @@ async fn dispatch_with_react(
                     Arc::new(ai_svc)
                 }
                 _ => {
-                    return Err("Failed to get AI provider config".to_string());
+                    // Provider配置获取失败，尝试使用 "default" 服务
+                    log::warn!("Failed to get provider config for '{}', falling back to 'default' service", provider);
+                    match ai_service_manager.get_service("default") {
+                        Some(service) => Arc::new(service),
+                        None => {
+                            return Err(format!("Failed to get AI provider config for '{}' and no default service available", provider));
+                        }
+                    }
                 }
             }
         }
         _ => {
-            return Err("No default AI model configured".to_string());
+            // 没有配置默认模型，尝试使用 "default" 服务
+            log::warn!("No default chat model configured, trying to use 'default' service");
+            match ai_service_manager.get_service("default") {
+                Some(service) => Arc::new(service),
+                None => {
+                    return Err("No default AI model configured and no default service available".to_string());
+                }
+            }
         }
     };
 
@@ -1687,92 +1703,457 @@ async fn dispatch_with_llm_compiler(
     })
 }
 
-async fn dispatch_with_orchestrator(
+
+/// Travel架构调度
+async fn dispatch_with_travel(
     execution_id: String,
     request: DispatchQueryRequest,
     ai_service_manager: Arc<AiServiceManager>,
     db_service: Arc<DatabaseService>,
-    execution_manager: Arc<crate::managers::ExecutionManager>,
+    _execution_manager: Arc<crate::managers::ExecutionManager>,
     app: AppHandle,
 ) -> Result<DispatchResult, String> {
-    log::info!("Creating Orchestrator dispatch for: {}", request.query);
+    use crate::engines::travel::{TravelEngine, TravelConfig};
+    use std::collections::HashMap;
+    use crate::agents::traits::{AgentTask, TaskPriority};
+    use crate::managers::cancellation_manager;
 
-    // 创建 SecurityTestManager
-    let session_manager = Arc::new(crate::managers::SecurityTestManager::new());
+    info!("Creating Travel dispatch for: {}", request.query);
 
-    // 创建 Orchestrator 引擎 (prompt repository 会在内部创建)
-    let mut engine = OrchestratorEngineAdapter::new(
-        session_manager.clone(), 
-        db_service.clone(),
-        ai_service_manager.clone(),
-        None, // prompt_repo will be created internally if needed
-    );
+    // 注册取消令牌
+    let _cancellation_token = cancellation_manager::register_cancellation_token(execution_id.clone()).await;
 
-    // 确保子代理已注册
-    engine.ensure_sub_agents_registered(
-        ai_service_manager.clone(),
-        db_service.clone(),
-        Some(app.clone()),
-    ).await.map_err(|e| format!("Failed to register sub-agents: {}", e))?;
+    // 从 options 中提取配置
+    let options = request.options.unwrap_or_default();
+    let mut config = TravelConfig::default();
 
-    // 创建 Agent 任务
-    let mut parameters = request.options.unwrap_or_default();
-    
-    // 添加 execution_id, message_id, conversation_id 到 parameters 用于消息发送
-    parameters.insert("execution_id".to_string(), serde_json::json!(execution_id));
-    if let Some(msg_id) = &request.message_id {
-        parameters.insert("message_id".to_string(), serde_json::json!(msg_id));
+    // 提取Travel特定配置
+    if let Some(max_cycles) = options.get("max_ooda_cycles").and_then(|v| v.as_u64()) {
+        config.max_ooda_cycles = max_cycles as u32;
     }
-    if let Some(conv_id) = &request.conversation_id {
-        parameters.insert("conversation_id".to_string(), serde_json::json!(conv_id));
+    if let Some(strict_mode) = options.get("guardrail_strict_mode").and_then(|v| v.as_bool()) {
+        config.guardrail_config.strict_mode = strict_mode;
     }
+    if let Some(enable_rag) = options.get("enable_threat_intel_rag").and_then(|v| v.as_bool()) {
+        config.threat_intel_config.enable_rag = enable_rag;
+    }
+    if let Some(enable_cve) = options.get("enable_threat_intel_cve").and_then(|v| v.as_bool()) {
+        config.threat_intel_config.enable_cve_tool = enable_cve;
+    }
+
+    // 工具白名单/黑名单
+    if let Some(tools_allow) = options.get("tools_allow") {
+        if let Some(arr) = tools_allow.as_array() {
+            let tool_names: Vec<String> = arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            log::info!("Travel dispatch: 设置 allowed_tools = {:?}", tool_names);
+            // Travel的工具白名单将通过task parameters传递
+        }
+    }
+
+    // 获取默认 AI 服务
+    let ai_service = match ai_service_manager.get_default_chat_model().await {
+        Ok(Some((provider, model))) => {
+            match ai_service_manager.get_provider_config(&provider).await {
+                Ok(Some(mut provider_config)) => {
+                    provider_config.model = model;
+                    let mcp_service = ai_service_manager.get_mcp_service();
+                    let ai_svc = crate::services::ai::AiService::new(
+                        provider_config,
+                        db_service.clone(),
+                        Some(app.clone()),
+                        mcp_service.clone(),
+                    );
+                    Arc::new(ai_svc)
+                }
+                _ => {
+                    log::warn!("Failed to get provider config for '{}', falling back to 'default' service", provider);
+                    match ai_service_manager.get_service("default") {
+                        Some(service) => Arc::new(service),
+                        None => {
+                            return Err(format!("Failed to get AI provider config for '{}' and no default service available", provider));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            log::warn!("No default chat model configured, trying to use 'default' service");
+            match ai_service_manager.get_service("default") {
+                Some(service) => Arc::new(service),
+                None => {
+                    return Err("No default AI model configured and no default service available".to_string());
+                }
+            }
+        }
+    };
+
+    // 创建 PromptRepository
+    let prompt_repo = Arc::new(crate::services::prompt_db::PromptRepository::new(
+        db_service.get_pool().map_err(|e| e.to_string())?.clone()
+    ));
     
+    // 创建 TravelEngine 并设置依赖
+    // 注意：FrameworkToolAdapter 将在 engine_dispatcher 中使用全局适配器
+    let engine = TravelEngine::new(config)
+        .with_ai_service(ai_service.clone())
+        .with_prompt_repo(prompt_repo)
+        .with_app_handle(app.clone());
+
+    // 使用 LLM 从 query 中智能提取目标信息和任务类型
+    let (target_info, task_type, target_type) = extract_target_with_llm(&request.query, &ai_service).await;
+    
+    log::info!("Travel dispatch: 任务类型={}, 目标={:?}, 目标类型={}", task_type, target_info, target_type);
+    
+    // 创建 AgentTask
     let task = AgentTask {
         id: execution_id.clone(),
-        user_id: "system".to_string(),
         description: request.query.clone(),
-        priority: TaskPriority::High,
-        target: None,
-        parameters,
-        timeout: Some(1800), // 30分钟超时
+        target: target_info.clone(),
+        parameters: {
+            let mut map = HashMap::new();
+            map.insert("query".to_string(), serde_json::json!(request.query));
+
+            // 透传工具白名单/黑名单
+            if let Some(tools_allow) = options.get("tools_allow") {
+                map.insert("tools_allow".to_string(), tools_allow.clone());
+            }
+            if let Some(tools_deny) = options.get("tools_deny") {
+                map.insert("tools_deny".to_string(), tools_deny.clone());
+            }
+
+            // 添加 conversation_id 和 message_id
+            if let Some(conv_id) = &request.conversation_id {
+                map.insert("conversation_id".to_string(), serde_json::json!(conv_id));
+            }
+            if let Some(msg_id) = &request.message_id {
+                map.insert("message_id".to_string(), serde_json::json!(msg_id));
+            }
+
+            // 添加目标信息和任务类型
+            if let Some(target) = options.get("target") {
+                map.insert("target".to_string(), target.clone());
+            } else if let Some(target) = &target_info {
+                // 如果 options 中没有 target，使用从 query 中提取的目标
+                map.insert("target".to_string(), serde_json::json!(target));
+            }
+            
+            // 添加任务类型和目标类型
+            map.insert("task_type".to_string(), serde_json::json!(task_type));
+            map.insert("target_type".to_string(), serde_json::json!(target_type));
+
+            // 添加授权信息
+            if let Some(authorized) = options.get("authorized") {
+                map.insert("authorized".to_string(), authorized.clone());
+            } else {
+                // 默认授权（用于测试）
+                map.insert("authorized".to_string(), serde_json::json!(true));
+            }
+
+            map
+        },
+        user_id: "default".to_string(),
+        priority: TaskPriority::Normal,
+        timeout: Some(300000), // 5 minutes default timeout
     };
 
-    // 创建执行计划
-    let plan = engine.create_plan(&task).await
-        .map_err(|e| format!("Failed to create Orchestrator plan: {}", e))?;
+    // 创建 dummy session
+    use crate::agents::traits::{AgentSession, AgentSessionStatus, LogLevel, AgentExecutionResult, SessionLog};
+    struct DummySession {
+        task: AgentTask,
+        status: AgentSessionStatus,
+        logs: Vec<SessionLog>,
+        result: Option<AgentExecutionResult>,
+    }
 
-    // 设置 app_handle 用于消息发送
-    engine.set_app_handle(app.clone()).await;
+    #[async_trait::async_trait]
+    impl AgentSession for DummySession {
+        fn get_session_id(&self) -> &str { "dummy" }
+        fn get_task(&self) -> &AgentTask { &self.task }
+        fn get_status(&self) -> AgentSessionStatus { self.status.clone() }
+        async fn update_status(&mut self, status: AgentSessionStatus) -> anyhow::Result<()> {
+            self.status = status;
+            Ok(())
+        }
+        async fn add_log(&mut self, level: LogLevel, message: String) -> anyhow::Result<()> {
+            self.logs.push(SessionLog {
+                level,
+                message,
+                timestamp: chrono::Utc::now(),
+                source: "travel".to_string(),
+            });
+            Ok(())
+        }
+        fn get_logs(&self) -> &[SessionLog] { &self.logs }
+        async fn set_result(&mut self, result: AgentExecutionResult) -> anyhow::Result<()> {
+            self.result = Some(result);
+            Ok(())
+        }
+        fn get_result(&self) -> Option<&AgentExecutionResult> { self.result.as_ref() }
+    }
 
-    // 注册执行上下文和引擎实例到执行管理器
-    let engine_instance = crate::managers::EngineInstance::Orchestrator(Box::new(engine));
-    execution_manager.register_execution(
-        execution_id.clone(),
-        crate::managers::EngineType::Orchestrator,
-        plan.clone(),
+    let mut session = DummySession {
         task,
-        engine_instance,
-    ).await.map_err(|e| format!("Failed to register execution: {}", e))?;
-
-    let execution_plan = ExecutionPlanView {
-        id: plan.id.clone(),
-        name: plan.name.clone(),
-        description: format!("Orchestrator安全测试编排: {}", request.query),
-        steps: plan.steps.iter().map(|step| ExecutionStepView {
-            id: step.id.clone(),
-            name: step.name.clone(),
-            description: step.description.clone(),
-            status: "pending".to_string(),
-            estimated_duration: 60, // Orchestrator步骤可能较长
-        }).collect(),
-        estimated_duration: plan.estimated_duration,
+        status: AgentSessionStatus::Executing,
+        logs: Vec::new(),
+        result: None,
     };
 
-    Ok(DispatchResult {
-        execution_id,
-        initial_response: "已启动Orchestrator安全测试编排引擎，引擎实例已注册，准备真实执行...".to_string(),
-        execution_plan: Some(execution_plan),
-        estimated_duration: plan.estimated_duration,
-        selected_architecture: "Orchestrator".to_string(),
-    })
+    // 执行任务
+    let task_clone = session.task.clone();
+    let start_time = std::time::Instant::now();
+    match engine.execute(&task_clone, &mut session).await {
+        Ok(result) => {
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            
+            // 从 result.data 中提取响应
+            let response = if let Some(data) = &result.data {
+                if let Some(output) = data.get("output") {
+                    serde_json::to_string_pretty(output).unwrap_or_else(|_| "Travel execution completed".to_string())
+                } else {
+                    serde_json::to_string_pretty(data).unwrap_or_else(|_| "Travel execution completed".to_string())
+                }
+            } else {
+                "Travel OODA execution completed".to_string()
+            };
+
+            Ok(DispatchResult {
+                execution_id,
+                initial_response: response,
+                execution_plan: None,
+                estimated_duration: duration_ms,
+                selected_architecture: "Travel".to_string(),
+            })
+        }
+        Err(e) => Err(format!("Travel execution failed: {}", e))
+    }
+}
+
+/// 使用 LLM 从查询文本中提取目标信息和任务类型
+async fn extract_target_with_llm(
+    query: &str,
+    ai_service: &Arc<crate::services::ai::AiService>,
+) -> (Option<String>, String, String) {
+    let prompt = format!(r#"你是一个安全测试任务分析专家。请分析以下用户查询，提取关键信息。
+
+用户查询："{}"
+
+请按照以下JSON格式返回结果（只返回JSON，不要其他文字）：
+{{
+  "task_type": "任务类型",
+  "target": "目标对象",
+  "target_type": "目标类型"
+}}
+
+**任务类型(task_type)选项：**
+- web_pentest: Web渗透测试（网站安全测试、漏洞扫描）
+- api_pentest: API安全测试（REST API、GraphQL测试）
+- code_audit: 代码审计（源码审计、SAST、代码扫描）
+- ctf: CTF夺旗赛（解题、challenge）
+- reverse_engineering: 逆向工程（二进制分析、反编译）
+- forensics: 数字取证（日志分析、事件调查）
+- mobile_security: 移动应用安全（Android/iOS测试）
+- cloud_security: 云安全评估（AWS/Azure/GCP配置审计）
+- iot_security: 物联网/工控安全（智能设备、SCADA）
+- network_pentest: 网络渗透（内网渗透、端口扫描）
+- social_engineering: 社会工程学（钓鱼测试）
+- other: 其他安全测试
+
+**目标类型(target_type)选项：**
+- url: HTTP/HTTPS网址
+- file_path: 文件或目录路径
+- github_repo: GitHub仓库（owner/repo格式）
+- ip_address: IP地址或IP段（CIDR）
+- domain: 域名
+- binary_file: 二进制文件
+- mobile_app: 移动应用（包名或APK/IPA）
+- cloud_resource: 云资源标识
+- none: 无明确目标
+
+**提取规则：**
+1. 识别查询中的关键词，判断任务类型
+2. 提取具体的目标对象（URL、路径、仓库等）
+3. 如果没有明确目标，target设为null
+4. 严格按照JSON格式返回，确保可解析
+
+示例：
+- "对 http://example.com 进行渗透测试" → {{"task_type":"web_pentest","target":"http://example.com","target_type":"url"}}
+- "审计 /path/to/code 的代码" → {{"task_type":"code_audit","target":"/path/to/code","target_type":"file_path"}}
+- "解这道CTF题" → {{"task_type":"ctf","target":null,"target_type":"none"}}
+"#, query);
+
+    // 调用 LLM
+    match ai_service.send_message_stream(
+        Some(&prompt), 
+        None, 
+        None, 
+        None, 
+        false, // stream = false, 直接返回完整响应
+        true,  // is_final = true
+        None   // chunk_type
+    ).await {
+        Ok(response) => {
+            log::debug!("LLM extraction response: {}", response);
+            
+            // 尝试从响应中提取JSON（可能包含markdown代码块）
+            let json_str: String = if response.contains("```json") {
+                // 提取 ```json ... ``` 中的内容
+                if let Some(start) = response.find("```json") {
+                    let json_start = start + 7; // "```json".len()
+                    if let Some(end_pos) = response[json_start..].find("```") {
+                        response[json_start..json_start + end_pos].trim().to_string()
+                    } else {
+                        response.trim().to_string()
+                    }
+                } else {
+                    response.trim().to_string()
+                }
+            } else if response.contains("```") {
+                // 提取 ``` ... ``` 中的内容
+                if let Some(start) = response.find("```") {
+                    let content_start = start + 3;
+                    if let Some(end_pos) = response[content_start..].find("```") {
+                        response[content_start..content_start + end_pos].trim().to_string()
+                    } else {
+                        response.trim().to_string()
+                    }
+                } else {
+                    response.trim().to_string()
+                }
+            } else {
+                response.trim().to_string()
+            };
+            
+            // 解析 JSON
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                let task_type = json.get("task_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("other")
+                    .to_string();
+                
+                let target = json.get("target")
+                    .and_then(|v| {
+                        if v.is_null() {
+                            None
+                        } else {
+                            v.as_str().map(|s| s.to_string())
+                        }
+                    });
+                
+                let target_type = json.get("target_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("none")
+                    .to_string();
+                
+                log::info!("✅ LLM extraction - task_type: {}, target: {:?}, target_type: {}", 
+                    task_type, target, target_type);
+                
+                return (target, task_type, target_type);
+            } else {
+                log::warn!("Failed to parse LLM response as JSON: {}", json_str);
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to call LLM for target extraction: {}", e);
+        }
+    }
+    
+    // 降级：使用简单的正则提取
+    log::info!("⚠️ Falling back to regex-based extraction");
+    fallback_extract_target(query)
+}
+
+/// 降级方案：使用正则表达式提取目标
+fn fallback_extract_target(query: &str) -> (Option<String>, String, String) {
+    let query_lower = query.to_lowercase();
+    
+    // 1. 尝试提取 URL
+    if let Ok(url_regex) = regex::Regex::new(r"https?://[^\s]+") {
+        if let Some(m) = url_regex.find(query) {
+            let url = m.as_str().to_string();
+            let task_type = if query_lower.contains("api") {
+                "api_pentest"
+            } else {
+                "web_pentest"
+            };
+            return (Some(url), task_type.to_string(), "url".to_string());
+        }
+    }
+    
+    // 2. 尝试提取文件路径
+    let path_patterns = vec![
+        r"/[^\s]+",                 // Unix 路径
+        r"[A-Z]:\\[^\s]+",          // Windows 路径
+        r"\./[^\s]+",               // 相对路径
+        r"~/[^\s]+",                // Home 路径
+    ];
+    
+    for pattern in path_patterns {
+        if let Ok(regex) = regex::Regex::new(pattern) {
+            if let Some(m) = regex.find(query) {
+                let path = m.as_str().to_string();
+                let task_type = if query_lower.contains("代码") || query_lower.contains("code") || query_lower.contains("审计") {
+                    "code_audit"
+                } else if query_lower.contains("ctf") || query_lower.contains("题") {
+                    "ctf"
+                } else if query_lower.contains("逆向") || query_lower.contains("reverse") {
+                    "reverse_engineering"
+                } else if query_lower.contains("取证") || query_lower.contains("forensics") || query_lower.contains("日志") {
+                    "forensics"
+                } else {
+                    "other"
+                };
+                return (Some(path), task_type.to_string(), "file_path".to_string());
+            }
+        }
+    }
+    
+    // 3. 尝试提取 GitHub 仓库
+    if let Ok(regex) = regex::Regex::new(r"github\.com/([a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)") {
+        if let Some(captures) = regex.captures(query) {
+            if let Some(repo) = captures.get(1) {
+                return (
+                    Some(repo.as_str().to_string()),
+                    "code_audit".to_string(),
+                    "github_repo".to_string()
+                );
+            }
+        }
+    }
+    
+    // 4. 尝试提取 IP 地址
+    if let Ok(regex) = regex::Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?\b") {
+        if let Some(m) = regex.find(query) {
+            return (
+                Some(m.as_str().to_string()),
+                "network_pentest".to_string(),
+                "ip_address".to_string()
+            );
+        }
+    }
+    
+    // 5. 根据关键词推断任务类型
+    let task_type = if query_lower.contains("代码") || query_lower.contains("code") || query_lower.contains("审计") {
+        "code_audit"
+    } else if query_lower.contains("ctf") || query_lower.contains("夺旗") {
+        "ctf"
+    } else if query_lower.contains("逆向") || query_lower.contains("reverse") {
+        "reverse_engineering"
+    } else if query_lower.contains("取证") || query_lower.contains("forensics") {
+        "forensics"
+    } else if query_lower.contains("api") {
+        "api_pentest"
+    } else if query_lower.contains("移动") || query_lower.contains("mobile") || query_lower.contains("android") || query_lower.contains("ios") {
+        "mobile_security"
+    } else if query_lower.contains("云") || query_lower.contains("cloud") || query_lower.contains("aws") || query_lower.contains("azure") {
+        "cloud_security"
+    } else if query_lower.contains("网络") || query_lower.contains("network") || query_lower.contains("内网") {
+        "network_pentest"
+    } else {
+        "other"
+    };
+    
+    // 没有找到明确目标
+    (None, task_type.to_string(), "none".to_string())
 }

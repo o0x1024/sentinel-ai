@@ -1,5 +1,5 @@
 /// 被动代理 Body 捕获功能测试
-/// 
+///
 /// 验证改进后的代理能够正确捕获请求和响应的 body
 use sentinel_passive::{ProxyConfig, ProxyService};
 use std::time::Duration;
@@ -12,8 +12,9 @@ async fn test_proxy_body_capture() {
         start_port: 4301,
         max_port_attempts: 5,
         mitm_enabled: true,
-        max_request_body_size: 1024 * 1024, // 1MB
-        max_response_body_size: 1024 * 1024, // 1MB
+        max_request_body_size: 1024 * 1024,
+        max_response_body_size: 1024 * 1024,
+        mitm_bypass_fail_threshold: todo!(),
     };
 
     // 创建临时 CA 目录
@@ -22,7 +23,7 @@ async fn test_proxy_body_capture() {
 
     // 创建代理服务（不连接扫描器，仅测试 body 捕获）
     let proxy = ProxyService::with_ca_dir(config.clone(), ca_dir.clone());
-    
+
     // 启动代理
     let port = proxy.start(None).await.expect("Failed to start proxy");
     println!("Proxy started on port {}", port);
@@ -78,7 +79,10 @@ async fn test_proxy_body_capture() {
     // 测试 3: 验证统计信息
     let stats = proxy.get_stats().await;
     println!("Proxy stats: {:?}", stats);
-    assert!(stats.http_requests > 0, "Should have captured HTTP requests");
+    assert!(
+        stats.http_requests > 0,
+        "Should have captured HTTP requests"
+    );
 
     // 停止代理
     proxy.stop().await.expect("Failed to stop proxy");
@@ -96,16 +100,16 @@ async fn test_concurrent_requests() {
     let config = ProxyConfig::default();
     let ca_dir = std::env::temp_dir().join("sentinel-test-ca-concurrent");
     std::fs::create_dir_all(&ca_dir).unwrap();
-    
+
     let proxy = ProxyService::with_ca_dir(config, ca_dir.clone());
     let port = proxy.start(None).await.expect("Failed to start proxy");
-    
+
     println!("Testing concurrent requests on port {}", port);
     sleep(Duration::from_secs(1)).await;
 
     // 创建多个并发请求
     let mut set = JoinSet::new();
-    
+
     for i in 0..5 {
         let proxy_url = format!("http://127.0.0.1:{}", port);
         set.spawn(async move {
@@ -138,7 +142,7 @@ async fn test_concurrent_requests() {
     }
 
     println!("Concurrent test: {}/5 requests successful", success_count);
-    
+
     // 验证统计
     let stats = proxy.get_stats().await;
     println!("Final stats: {:?}", stats);

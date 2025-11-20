@@ -4,7 +4,7 @@ pub mod memory_impl;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 
-use memory_impl::IntelligentMemory;
+pub use memory_impl::IntelligentMemory;
 
 /// 全局智能记忆实例（进程级，仅驻内存）
 static GLOBAL_MEMORY: OnceLock<Arc<RwLock<IntelligentMemory>>> = OnceLock::new();

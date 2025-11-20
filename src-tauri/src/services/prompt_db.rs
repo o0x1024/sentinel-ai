@@ -245,7 +245,7 @@ impl PromptRepository {
 
     fn arch_str(a: &ArchitectureType) -> &'static str {
         match a {
-            ArchitectureType::Orchestrator => "orchestrator",
+            ArchitectureType::Travel => "travel",
             ArchitectureType::ReAct => "react",
             ArchitectureType::ReWOO => "rewoo",
             ArchitectureType::LLMCompiler => "llmcompiler",
@@ -262,12 +262,16 @@ impl PromptRepository {
             StageType::Execution => "execution",
             StageType::Evaluation => "evaluation",
             StageType::Replan => "replan",
+            StageType::Observe => "observe",
+            StageType::Orient => "orient",
+            StageType::Decide => "decide",
+            StageType::Act => "act",
         }
     }
 
     fn parse_arch(s: &str) -> ArchitectureType {
         match s.to_lowercase().as_str() {
-            "orchestrator" => ArchitectureType::Orchestrator,
+            "travel" => ArchitectureType::Travel,
             "rewoo" => ArchitectureType::ReWOO,
             "llmcompiler" => ArchitectureType::LLMCompiler,
             "react" => ArchitectureType::ReAct,
@@ -284,6 +288,10 @@ impl PromptRepository {
             "execution" => StageType::Execution,
             "evaluation" => StageType::Evaluation,
             "replan" => StageType::Replan,
+            "observe" => StageType::Observe,
+            "orient" => StageType::Orient,
+            "decide" => StageType::Decide,
+            "act" => StageType::Act,
             _ => StageType::Replan, // Default to Replan for unknown stages
         }
     }

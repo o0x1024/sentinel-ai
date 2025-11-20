@@ -14,6 +14,7 @@ use crate::engines::plan_and_execute::{
     memory_manager::MemoryManager,
     types::{TaskRequest, TaskStatus, ExecutionPlan, ExecutionStep, StepType, Priority, TaskType, TargetInfo, TargetType, RetryConfig, PlanAndExecuteConfig, PlanAndExecuteError},
 };
+use crate::engines::memory::get_global_memory;
 use crate::services::{AiServiceManager, database::DatabaseService};
 
 use anyhow::Result;
@@ -654,6 +655,35 @@ impl ExecutionEngine for PlanAndExecuteEngine {
         let start = std::time::Instant::now();
         let result = executor.execute_plan(&exec_plan, &task_req).await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        
+        // 存储执行轨迹到记忆系统
+        let memory = get_global_memory();
+        let mut memory_guard = memory.write().await;
+        let steps_json: Vec<serde_json::Value> = exec_plan.steps.iter().map(|step| {
+            serde_json::json!({
+                "id": step.id,
+                "name": step.name,
+                "step_type": format!("{:?}", step.step_type),
+            })
+        }).collect();
+        
+        let success = matches!(result.status, TaskStatus::Completed);
+        let error_info = if !result.errors.is_empty() {
+            Some(serde_json::json!({
+                "errors": result.errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>()
+            }))
+        } else {
+            None
+        };
+        
+        let _ = memory_guard.store_execution_trajectory(
+            plan.name.clone(),
+            steps_json,
+            success,
+            error_info,
+        );
+        drop(memory_guard);
+        
         self.convert_execution_result_to_agent_result(result, start).await
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }

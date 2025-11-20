@@ -1,15 +1,14 @@
 /**
  * 插件 Op 系统单元测试
- * 
+ *
  * 测试范围：
  * 1. PluginContext 状态管理
  * 2. JsFinding → Finding 转换
  * 3. Severity/Confidence 解析
  */
-
 use sentinel_plugins::{
-    plugin_ops::{PluginContext, JsFinding},
-    types::{Finding, Severity, Confidence},
+    plugin_ops::{JsFinding, PluginContext},
+    types::{Confidence, Finding, Severity},
 };
 
 #[test]
@@ -22,7 +21,7 @@ fn test_plugin_context_new() {
 #[test]
 fn test_plugin_context_take_findings_clears_vec() {
     let context = PluginContext::new();
-    
+
     let finding = Finding {
         id: "test-id".to_string(),
         plugin_id: "test-plugin".to_string(),
@@ -39,14 +38,19 @@ fn test_plugin_context_take_findings_clears_vec() {
         owasp: None,
         remediation: None,
         created_at: chrono::Utc::now(),
+        request_headers: todo!(),
+        request_body: todo!(),
+        response_status: todo!(),
+        response_headers: todo!(),
+        response_body: todo!(),
     };
-    
+
     context.findings.lock().unwrap().push(finding);
-    
+
     // 第一次 take
     let findings1 = context.take_findings();
     assert_eq!(findings1.len(), 1);
-    
+
     // 第二次 take 应该为空
     let findings2 = context.take_findings();
     assert_eq!(findings2.len(), 0, "take_findings should clear the vector");
@@ -64,10 +68,16 @@ fn test_js_finding_to_finding_conversion() {
         param_value: "admin' --".to_string(),
         evidence: "SQL comment detected".to_string(),
         description: "SQL injection in login".to_string(),
+        title: todo!(),
+        request: todo!(),
+        response: todo!(),
+        cwe: todo!(),
+        owasp: todo!(),
+        remediation: todo!(),
     };
-    
+
     let finding: Finding = js_finding.into();
-    
+
     assert_eq!(finding.vuln_type, "sqli");
     assert_eq!(finding.severity, Severity::High);
     assert_eq!(finding.confidence, Confidence::Medium);
@@ -87,7 +97,7 @@ fn test_severity_conversion() {
         ("info", Severity::Info),
         ("unknown", Severity::Medium), // 未知值默认 Medium
     ];
-    
+
     for (input, expected) in test_cases {
         let js_finding = JsFinding {
             vuln_type: "test".to_string(),
@@ -99,10 +109,20 @@ fn test_severity_conversion() {
             param_value: "".to_string(),
             evidence: "".to_string(),
             description: "".to_string(),
+            title: todo!(),
+            request: todo!(),
+            response: todo!(),
+            cwe: todo!(),
+            owasp: todo!(),
+            remediation: todo!(),
         };
-        
+
         let finding: Finding = js_finding.into();
-        assert_eq!(finding.severity, expected, "Severity mismatch for '{}'", input);
+        assert_eq!(
+            finding.severity, expected,
+            "Severity mismatch for '{}'",
+            input
+        );
     }
 }
 
@@ -114,7 +134,7 @@ fn test_confidence_conversion() {
         ("low", Confidence::Low),
         ("unknown", Confidence::Medium), // 未知值默认 Medium
     ];
-    
+
     for (input, expected) in test_cases {
         let js_finding = JsFinding {
             vuln_type: "test".to_string(),
@@ -126,10 +146,20 @@ fn test_confidence_conversion() {
             param_value: "".to_string(),
             evidence: "".to_string(),
             description: "".to_string(),
+            title: todo!(),
+            request: todo!(),
+            response: todo!(),
+            cwe: todo!(),
+            owasp: todo!(),
+            remediation: todo!(),
         };
-        
+
         let finding: Finding = js_finding.into();
-        assert_eq!(finding.confidence, expected, "Confidence mismatch for '{}'", input);
+        assert_eq!(
+            finding.confidence, expected,
+            "Confidence mismatch for '{}'",
+            input
+        );
     }
 }
 
@@ -145,14 +175,23 @@ fn test_finding_id_is_unique() {
         param_value: "1".to_string(),
         evidence: "test".to_string(),
         description: "test".to_string(),
+        title: todo!(),
+        request: todo!(),
+        response: todo!(),
+        cwe: todo!(),
+        owasp: todo!(),
+        remediation: todo!(),
     };
-    
+
     let js_finding2 = js_finding1.clone();
-    
+
     let finding1: Finding = js_finding1.into();
     let finding2: Finding = js_finding2.into();
-    
-    assert_ne!(finding1.id, finding2.id, "Each finding should have a unique ID");
+
+    assert_ne!(
+        finding1.id, finding2.id,
+        "Each finding should have a unique ID"
+    );
 }
 
 #[test]
@@ -167,8 +206,14 @@ fn test_location_from_param_name() {
         param_value: "123".to_string(),
         evidence: "".to_string(),
         description: "".to_string(),
+        title: todo!(),
+        request: todo!(),
+        response: todo!(),
+        cwe: todo!(),
+        owasp: todo!(),
+        remediation: todo!(),
     };
-    
+
     let finding: Finding = js_finding.into();
     assert_eq!(finding.location, "param:query_id");
 }
@@ -185,8 +230,14 @@ fn test_evidence_from_param_value() {
         param_value: "malicious_value".to_string(),
         evidence: "".to_string(), // 空 evidence，应使用 param_value
         description: "".to_string(),
+        title: todo!(),
+        request: todo!(),
+        response: todo!(),
+        cwe: todo!(),
+        owasp: todo!(),
+        remediation: todo!(),
     };
-    
+
     let finding: Finding = js_finding.into();
     assert!(finding.evidence.contains("malicious_value"));
 }

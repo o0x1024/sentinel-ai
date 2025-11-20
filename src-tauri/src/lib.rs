@@ -40,22 +40,18 @@ use commands::{
     window, prompt_commands, rewoo_commands, unified_tools,
 };
 
-// Simple proxy configuration structure
-#[derive(Debug, Clone)]
-struct ProxyConfig {
-    enabled: bool,
-    scheme: Option<String>,
-    host: Option<String>,
-    port: Option<u16>,
-    username: Option<String>,
-    password: Option<String>,
-    no_proxy: Option<String>,
-}
+// Re-export global proxy types and functions
+use utils::global_proxy::{GlobalProxyConfig, set_global_proxy as set_proxy_async};
 
-// Placeholder for proxy functions - removed ai_adapter dependency
-fn set_global_proxy(_config: Option<ProxyConfig>) {
-    // Proxy functionality removed with ai_adapter
-    tracing::debug!("Proxy configuration ignored - ai_adapter removed");
+// Synchronous wrapper for setting global proxy
+fn set_global_proxy(config: Option<GlobalProxyConfig>) {
+    tokio::spawn(async move {
+        if let Some(cfg) = config {
+            set_proxy_async(cfg).await;
+        } else {
+            utils::global_proxy::clear_global_proxy().await;
+        }
+    });
 }
 
 
@@ -915,24 +911,29 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
     match db_service.get_config("network", "global_proxy").await {
         Ok(Some(json_str)) => {
             // Parse the JSON configuration
-            match serde_json::from_str::<serde_json::Value>(&json_str) {
-                Ok(config_json) => {
-                    let proxy_config = ProxyConfig {
-                        enabled: config_json["enabled"].as_bool().unwrap_or(false),
-                        scheme: config_json["scheme"].as_str().map(|s| s.to_string()),
-                        host: config_json["host"].as_str().map(|s| s.to_string()),
-                        port: config_json["port"].as_u64().map(|p| p as u16),
-                        username: config_json["username"].as_str().map(|s| s.to_string()),
-                        password: config_json["password"].as_str().map(|s| s.to_string()),
-                        no_proxy: config_json["no_proxy"].as_str().map(|s| s.to_string()),
-                    };
-                    
-                    // Set the global proxy configuration only if enabled
+            match serde_json::from_str::<GlobalProxyConfig>(&json_str) {
+                Ok(proxy_config) => {
+                    // Set the global proxy configuration
                     if proxy_config.enabled {
-                        set_global_proxy(Some(proxy_config));
+                        // 设置主 crate 的全局代理
+                        set_proxy_async(proxy_config.clone()).await;
+                        
+                        // 同步设置 sentinel-tools 的全局代理
+                        let tools_proxy_config = sentinel_tools::GlobalProxyConfig {
+                            enabled: proxy_config.enabled,
+                            scheme: proxy_config.scheme.clone(),
+                            host: proxy_config.host.clone(),
+                            port: proxy_config.port,
+                            username: proxy_config.username.clone(),
+                            password: proxy_config.password.clone(),
+                            no_proxy: proxy_config.no_proxy.clone(),
+                        };
+                        sentinel_tools::set_global_proxy(tools_proxy_config).await;
+                        
                         tracing::debug!("Loaded and enabled proxy configuration from database");
                     } else {
-                        set_global_proxy(None);
+                        utils::global_proxy::clear_global_proxy().await;
+                        sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
                         tracing::info!("Proxy configuration found but disabled, no proxy will be used");
                     }
                 }
@@ -943,11 +944,13 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
         }
         Ok(None) => {
             tracing::debug!("No proxy configuration found in database, using default (no proxy)");
-            set_global_proxy(None);
+            utils::global_proxy::clear_global_proxy().await;
+            sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
         }
         Err(e) => {
             tracing::warn!("Failed to load proxy configuration from database: {}", e);
-            set_global_proxy(None);
+            utils::global_proxy::clear_global_proxy().await;
+            sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
         }
     }
     

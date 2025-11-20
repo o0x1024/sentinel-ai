@@ -255,6 +255,62 @@ pub trait Memory: Send + Sync {
         environment: &str,
         task_type: &str,
     ) -> Result<Vec<String>>;
+    
+    // === 架构特定的记忆增强接口 ===
+    
+    /// Plan-and-Execute: 检索相似的失败轨迹（用于避免重复错误）
+    fn retrieve_failure_trajectories(
+        &self,
+        task_description: &str,
+        error_pattern: &str,
+    ) -> Result<Vec<SimilaritySearchResult<ExecutionExperience>>>;
+    
+    /// Plan-and-Execute: 存储执行轨迹（包含完整的步骤序列）
+    fn store_execution_trajectory(
+        &mut self,
+        task_description: String,
+        steps: Vec<serde_json::Value>,
+        success: bool,
+        error_info: Option<serde_json::Value>,
+    ) -> Result<()>;
+    
+    /// ReWOO: 检索Few-Shot规划示例（用于规划阶段）
+    fn retrieve_few_shot_plans(
+        &self,
+        task_description: &str,
+        max_results: usize,
+    ) -> Result<Vec<SimilaritySearchResult<PlanTemplate>>>;
+    
+    /// ReWOO: 存储成功的规划蓝图
+    fn store_rewoo_plan_blueprint(
+        &mut self,
+        task_description: String,
+        plan_steps: Vec<serde_json::Value>,
+        success_rate: f64,
+    ) -> Result<()>;
+    
+    /// LLM Compiler: 检查工具调用缓存
+    fn check_tool_call_cache(
+        &self,
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+    ) -> Result<Option<serde_json::Value>>;
+    
+    /// LLM Compiler: 存储工具调用结果到缓存
+    fn cache_tool_call_result(
+        &mut self,
+        tool_name: String,
+        tool_args: serde_json::Value,
+        result: serde_json::Value,
+        execution_time_ms: u64,
+    ) -> Result<()>;
+    
+    /// ReAct: 检索相似的推理链（用于提示工程）
+    fn retrieve_reasoning_chains(
+        &self,
+        task_description: &str,
+        max_results: usize,
+    ) -> Result<Vec<SimilaritySearchResult<ExecutionExperience>>>;
 }
 
 /// 智能记忆模块实现
@@ -809,10 +865,312 @@ impl Memory for IntelligentMemory {
         
         Ok(recommendations)
     }
+    
+    // 架构特定的记忆增强接口实现
+    fn retrieve_failure_trajectories(
+        &self,
+        task_description: &str,
+        error_pattern: &str,
+    ) -> Result<Vec<SimilaritySearchResult<ExecutionExperience>>> {
+        self.retrieve_failure_trajectories(task_description, error_pattern)
+    }
+    
+    fn store_execution_trajectory(
+        &mut self,
+        task_description: String,
+        steps: Vec<serde_json::Value>,
+        success: bool,
+        error_info: Option<serde_json::Value>,
+    ) -> Result<()> {
+        self.store_execution_trajectory(task_description, steps, success, error_info)
+    }
+    
+    fn retrieve_few_shot_plans(
+        &self,
+        task_description: &str,
+        max_results: usize,
+    ) -> Result<Vec<SimilaritySearchResult<PlanTemplate>>> {
+        self.retrieve_few_shot_plans(task_description, max_results)
+    }
+    
+    fn store_rewoo_plan_blueprint(
+        &mut self,
+        task_description: String,
+        plan_steps: Vec<serde_json::Value>,
+        success_rate: f64,
+    ) -> Result<()> {
+        self.store_rewoo_plan_blueprint(task_description, plan_steps, success_rate)
+    }
+    
+    fn check_tool_call_cache(
+        &self,
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+    ) -> Result<Option<serde_json::Value>> {
+        self.check_tool_call_cache(tool_name, tool_args)
+    }
+    
+    fn cache_tool_call_result(
+        &mut self,
+        tool_name: String,
+        tool_args: serde_json::Value,
+        result: serde_json::Value,
+        execution_time_ms: u64,
+    ) -> Result<()> {
+        self.cache_tool_call_result(tool_name, tool_args, result, execution_time_ms)
+    }
+    
+    fn retrieve_reasoning_chains(
+        &self,
+        task_description: &str,
+        max_results: usize,
+    ) -> Result<Vec<SimilaritySearchResult<ExecutionExperience>>> {
+        self.retrieve_reasoning_chains(task_description, max_results)
+    }
 }
 
 impl Default for IntelligentMemory {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// 为IntelligentMemory添加架构特定的记忆增强方法
+impl IntelligentMemory {
+    /// Plan-and-Execute: 检索相似的失败轨迹（用于避免重复错误）
+    pub fn retrieve_failure_trajectories(
+        &self,
+        task_description: &str,
+        error_pattern: &str,
+    ) -> Result<Vec<SimilaritySearchResult<ExecutionExperience>>> {
+        let mut results = Vec::new();
+        
+        for experience in self.experiences.values() {
+            // 只检索失败的经验
+            if experience.failure_info.is_none() {
+                continue;
+            }
+            
+            // 计算任务描述相似度
+            let task_sim = self.calculate_text_similarity(&experience.task_type, task_description);
+            
+            // 检查错误模式匹配
+            let error_match = if let Some(failure) = &experience.failure_info {
+                let failure_str = serde_json::to_string(failure).unwrap_or_default();
+                self.calculate_text_similarity(&failure_str, error_pattern) > 0.3
+            } else {
+                false
+            };
+            
+            if task_sim > 0.5 || error_match {
+                let similarity_score = if error_match { task_sim + 0.3 } else { task_sim };
+                results.push(SimilaritySearchResult {
+                    item: experience.clone(),
+                    similarity_score,
+                    relevance_factors: vec!["failure_trajectory".to_string()],
+                });
+            }
+        }
+        
+        results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap());
+        results.truncate(5); // 最多返回5个失败案例
+        
+        Ok(results)
+    }
+    
+    /// Plan-and-Execute: 存储执行轨迹（包含完整的步骤序列）
+    pub fn store_execution_trajectory(
+        &mut self,
+        task_description: String,
+        steps: Vec<serde_json::Value>,
+        success: bool,
+        error_info: Option<serde_json::Value>,
+    ) -> Result<()> {
+        let experience = ExecutionExperience {
+            id: Uuid::new_v4().to_string(),
+            task_type: task_description.clone(),
+            target_description: "trajectory".to_string(),
+            target_hash: format!("{:x}", md5::compute(&task_description)),
+            target_properties: None,
+            environment_context: "plan_and_execute".to_string(),
+            environment_hash: "pae".to_string(),
+            environment_properties: None,
+            successful_steps: if success { steps } else { vec![] },
+            failure_info: error_info,
+            performance_metrics: None,
+            confidence_score: if success { 0.9 } else { 0.3 },
+            usage_count: 0,
+            last_used_at: None,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+        };
+        
+        self.store_experience(experience)
+    }
+    
+    /// ReWOO: 检索Few-Shot规划示例（用于规划阶段）
+    pub fn retrieve_few_shot_plans(
+        &self,
+        task_description: &str,
+        max_results: usize,
+    ) -> Result<Vec<SimilaritySearchResult<PlanTemplate>>> {
+        let mut results = Vec::new();
+        
+        for template in self.templates.values() {
+            // 只检索高成功率的模板
+            if template.success_rate < 0.7 {
+                continue;
+            }
+            
+            let task_sim = self.calculate_text_similarity(&template.task_type, task_description);
+            let domain_sim = self.calculate_text_similarity(&template.domain, task_description);
+            
+            let similarity_score = (task_sim * 0.6 + domain_sim * 0.4) * template.success_rate;
+            
+            if similarity_score > 0.5 {
+                results.push(SimilaritySearchResult {
+                    item: template.clone(),
+                    similarity_score,
+                    relevance_factors: vec!["few_shot_plan".to_string(), "high_success_rate".to_string()],
+                });
+            }
+        }
+        
+        results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap());
+        results.truncate(max_results);
+        
+        Ok(results)
+    }
+    
+    /// ReWOO: 存储成功的规划蓝图
+    pub fn store_rewoo_plan_blueprint(
+        &mut self,
+        task_description: String,
+        plan_steps: Vec<serde_json::Value>,
+        success_rate: f64,
+    ) -> Result<()> {
+        let template = PlanTemplate {
+            id: Uuid::new_v4().to_string(),
+            name: format!("ReWOO Plan: {}", task_description),
+            description: Some(format!("Successful ReWOO plan blueprint")),
+            domain: "rewoo".to_string(),
+            task_type: task_description,
+            template_steps: plan_steps,
+            success_rate,
+            usage_count: 0,
+            effectiveness_score: success_rate,
+            applicability_conditions: None,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+            last_used_at: None,
+        };
+        
+        self.store_template(template)
+    }
+    
+    /// LLM Compiler: 检查工具调用缓存
+    pub fn check_tool_call_cache(
+        &self,
+        tool_name: &str,
+        tool_args: &serde_json::Value,
+    ) -> Result<Option<serde_json::Value>> {
+        // 计算缓存键（工具名+参数哈希）
+        let args_str = serde_json::to_string(tool_args)?;
+        let cache_key = format!("{}:{:x}", tool_name, md5::compute(&args_str));
+        
+        // 在经验中查找匹配的工具调用
+        for experience in self.experiences.values() {
+            for step in &experience.successful_steps {
+                if let Some(step_tool) = step.get("tool_name").and_then(|v| v.as_str()) {
+                    if step_tool == tool_name {
+                        if let Some(step_args) = step.get("parameters") {
+                            let step_args_str = serde_json::to_string(step_args).unwrap_or_default();
+                            let step_cache_key = format!("{}:{:x}", tool_name, md5::compute(&step_args_str));
+                            
+                            if cache_key == step_cache_key {
+                                // 找到缓存命中
+                                if let Some(output) = step.get("output") {
+                                    return Ok(Some(output.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    /// LLM Compiler: 存储工具调用结果到缓存
+    pub fn cache_tool_call_result(
+        &mut self,
+        tool_name: String,
+        tool_args: serde_json::Value,
+        result: serde_json::Value,
+        execution_time_ms: u64,
+    ) -> Result<()> {
+        // 创建一个特殊的经验记录用于缓存
+        let cache_step = serde_json::json!({
+            "tool_name": tool_name,
+            "parameters": tool_args,
+            "output": result,
+            "execution_time_ms": execution_time_ms,
+            "cached_at": chrono::Utc::now().timestamp()
+        });
+        
+        let experience = ExecutionExperience {
+            id: Uuid::new_v4().to_string(),
+            task_type: "tool_cache".to_string(),
+            target_description: tool_name.clone(),
+            target_hash: format!("{:x}", md5::compute(&tool_name)),
+            target_properties: None,
+            environment_context: "llm_compiler".to_string(),
+            environment_hash: "llmc".to_string(),
+            environment_properties: None,
+            successful_steps: vec![cache_step],
+            failure_info: None,
+            performance_metrics: Some(serde_json::json!({
+                "execution_time_ms": execution_time_ms
+            })),
+            confidence_score: 1.0,
+            usage_count: 0,
+            last_used_at: None,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+        };
+        
+        self.store_experience(experience)
+    }
+    
+    /// ReAct: 检索相似的推理链（用于提示工程）
+    pub fn retrieve_reasoning_chains(
+        &self,
+        task_description: &str,
+        max_results: usize,
+    ) -> Result<Vec<SimilaritySearchResult<ExecutionExperience>>> {
+        let mut results = Vec::new();
+        
+        for experience in self.experiences.values() {
+            // 只检索成功的经验
+            if experience.confidence_score < 0.7 {
+                continue;
+            }
+            
+            let task_sim = self.calculate_text_similarity(&experience.task_type, task_description);
+            
+            if task_sim > 0.5 {
+                results.push(SimilaritySearchResult {
+                    item: experience.clone(),
+                    similarity_score: task_sim * experience.confidence_score,
+                    relevance_factors: vec!["reasoning_chain".to_string()],
+                });
+            }
+        }
+        
+        results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap());
+        results.truncate(max_results);
+        
+        Ok(results)
     }
 }

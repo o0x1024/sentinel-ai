@@ -2,6 +2,7 @@ use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::{AiConfig, AiServiceManager, AiToolCall};
 use crate::services::database::{Database, DatabaseService};
 use crate::utils::ordered_message::ChunkType;
+use crate::utils::global_proxy::create_client_with_proxy;
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -1089,7 +1090,8 @@ async fn test_modelscope_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api-inference.modelscope.cn/v1/models".to_string());
@@ -1173,7 +1175,8 @@ pub async fn test_openrouter_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
@@ -1257,7 +1260,8 @@ async fn test_openai_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
@@ -1341,7 +1345,8 @@ async fn test_anthropic_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.anthropic.com".to_string());
@@ -1419,7 +1424,8 @@ async fn test_gemini_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_key = request.api_key.unwrap();
 
     // 使用Gemini API测试连接
@@ -1490,7 +1496,8 @@ async fn test_deepseek_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
@@ -1560,7 +1567,8 @@ async fn test_deepseek_connection(
 async fn test_lm_studio_connection(
     request: TestConnectionRequest,
 ) -> Result<TestConnectionResponse, String> {
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "http://localhost:1234".to_string());
@@ -1639,7 +1647,8 @@ async fn test_ollama_connection(
         .unwrap_or_else(|| "http://localhost:11434".to_string());
 
     // 首先使用原始HTTP方式获取模型列表（更可靠）
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let response = client
         .get(format!("{}/api/tags", api_base))
         .send()
@@ -1742,7 +1751,8 @@ async fn test_moonshot_connection(
         });
     }
 
-    let client = reqwest::Client::new();
+    let client = create_client_with_proxy().await
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
         .unwrap_or_else(|| "https://api.moonshot.cn/v1".to_string());

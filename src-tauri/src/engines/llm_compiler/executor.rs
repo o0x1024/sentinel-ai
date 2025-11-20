@@ -20,6 +20,7 @@ use chrono::Utc;
 use tracing::{info, warn, error};
 
 use crate::tools::{EngineToolAdapter, UnifiedToolCall, UnifiedToolResult, get_global_engine_adapter};
+use crate::engines::memory::get_global_memory;
 use super::types::*;
 
 /// Parallel Executor Pool - 并行执行器池
@@ -84,6 +85,34 @@ impl ParallelExecutorPool {
     pub async fn execute_task(&self, mut task: DagTaskNode) -> TaskExecutionResult {
         let start_time = Utc::now();
         let execution_start = Instant::now();
+        
+        // 检查工具调用缓存
+        let memory = get_global_memory();
+        let memory_guard = memory.read().await;
+        let tool_args_json = serde_json::to_value(&task.inputs).unwrap_or(serde_json::json!({}));
+        
+        if let Ok(Some(cached_result)) = memory_guard.check_tool_call_cache(&task.tool_name, &tool_args_json) {
+            info!("LLM Compiler: Cache hit for tool {} with args {:?}", task.tool_name, task.inputs);
+            drop(memory_guard);
+            
+            let duration_ms = execution_start.elapsed().as_millis() as u64;
+            return TaskExecutionResult {
+                task_id: task.id.clone(),
+                status: TaskStatus::Completed,
+                outputs: if let Some(obj) = cached_result.as_object() {
+                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                } else {
+                    [("result".to_string(), cached_result)].into_iter().collect()
+                },
+                error: None,
+                duration_ms,
+                retry_count: task.retry_count,
+                started_at: start_time,
+                completed_at: Some(Utc::now()),
+                metadata: HashMap::new(),
+            };
+        }
+        drop(memory_guard);
 
         // 获取信号量许可
         let _permit = match timeout(
@@ -190,6 +219,7 @@ impl ParallelExecutorPool {
 
     /// 调用工具
     async fn call_tool(&self, task: &DagTaskNode) -> Result<HashMap<String, Value>> {
+        let call_start = Instant::now();
         info!("调用工具: {} with inputs: {:?}", task.tool_name, task.inputs);
         
         // 工具权限检查（从runtime_params读取）
@@ -248,6 +278,19 @@ impl ParallelExecutorPool {
                     // 添加执行元数据
                     outputs.insert("executed_at".to_string(), json!(Utc::now().to_rfc3339()));
                     outputs.insert("execution_success".to_string(), json!(true));
+                    
+                    // 存储到缓存
+                    let memory = get_global_memory();
+                    let mut memory_guard = memory.write().await;
+                    let result_json = serde_json::to_value(&outputs).unwrap_or(serde_json::json!({}));
+                    let tool_args_json = serde_json::to_value(&task.inputs).unwrap_or(serde_json::json!({}));
+                    let _ = memory_guard.cache_tool_call_result(
+                        task.tool_name.clone(),
+                        tool_args_json,
+                        result_json,
+                        call_start.elapsed().as_millis() as u64,
+                    );
+                    drop(memory_guard);
                     
                     Ok(outputs)
                 } else {

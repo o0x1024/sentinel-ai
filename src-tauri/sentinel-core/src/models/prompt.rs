@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ArchitectureType {
-    Orchestrator,
+    Travel,
     ReWOO,
     LLMCompiler,
     PlanExecute,
@@ -20,6 +20,11 @@ pub enum StageType {
     Execution,
     Evaluation,  // LLMCompiler Joiner/Evaluator stage
     Replan,
+    // Travel OODA stages
+    Observe,
+    Orient,
+    Decide,
+    Act,
 }
 
 /// Prompt category defines the scope and level of the template

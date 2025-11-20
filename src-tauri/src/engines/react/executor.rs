@@ -653,13 +653,6 @@ impl ReactExecutor {
                     // 如果直接命中或前缀命中，则视为命中
                     whitelist_hit = whitelist_hit || prefixed_whitelist_hit;
                     if !whitelist_hit {
-                        log::debug!(
-                            "ReAct executor: 工具 '{}' 未命中白名单 (raw='{}', prefixed='{}'), allow={:?}",
-                            tool_name,
-                            allow.contains(&tool_name),
-                            prefixed_whitelist_hit,
-                            allow
-                        );
                         continue;
                     }
                 }
@@ -830,6 +823,7 @@ mod tests {
             prompt_repo: None,
             framework_adapter: None,
             task_parameters: None,
+            cancellation_token: None,
         };
         let executor = ReactExecutor::new("Test task".to_string(), config);
         let trace = executor.get_trace().await;

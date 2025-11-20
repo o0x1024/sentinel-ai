@@ -8,10 +8,9 @@ use anyhow::Result;
 use chrono::Utc;
 
 use futures::StreamExt;
-use rig::agent::{CancelSignal, MultiTurnStreamItem, PromptHook};
+use rig::agent::{CancelSignal, MultiTurnStreamItem, PromptHook, StreamingPromptHook};
 use rig::client::builder::DynClientBuilder;
-use rig::client::ProviderClient;
-use rig::completion::{CompletionModel, CompletionResponse, Message};
+use rig::completion::{CompletionModel, CompletionResponse, Message, Prompt};
 use rig::message::{AssistantContent, UserContent};
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
@@ -22,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
+use std::future::Future;
 use std::io::Write;
 
 use std::sync::Arc;
@@ -101,32 +101,17 @@ impl LLMLoggingHook {
     }
 }
 
-impl<M: CompletionModel> PromptHook<M> for LLMLoggingHook {
-    async fn on_tool_call(&self, tool_name: &str, args: &str, _cancel_sig: CancelSignal) {
-        let content = format!("TOOL_CALL - Tool: {} | Args: {}", tool_name, args);
-        self.write_to_log("TOOL_CALL", &content);
-    }
 
-    async fn on_tool_result(
-        &self,
-        tool_name: &str,
-        args: &str,
-        result: &str,
-        _cancel_sig: CancelSignal,
-    ) {
-        let content = format!(
-            "TOOL_RESULT - Tool: {} | Args: {} | Result: {}",
-            tool_name, args, result
-        );
-        self.write_to_log("TOOL_RESULT", &content);
-    }
-
-    async fn on_completion_call(
+// 为 LLMLoggingHook 实现 StreamingPromptHook trait
+// 该 trait 可能没有方法或使用默认实现，所以提供一个空实现
+impl<M: CompletionModel> StreamingPromptHook<M> for LLMLoggingHook {
+    fn on_stream_completion_response_finish(
         &self,
         prompt: &Message,
-        history: &[Message],
+        response: &<M as CompletionModel>::StreamingResponse,
         _cancel_sig: CancelSignal,
-    ) {
+    ) -> impl Future<Output = ()> + Send {
+        // 提取 prompt 内容
         let prompt_content = match prompt {
             Message::User { content } => content
                 .iter()
@@ -152,27 +137,8 @@ impl<M: CompletionModel> PromptHook<M> for LLMLoggingHook {
                 .join("\n"),
         };
 
-        let content = format!(
-            "REQUEST - History Length: {} | Prompt: {}",
-            history.len(),
-            prompt_content.chars().take(500).collect::<String>()
-                + if prompt_content.len() > 500 {
-                    "..."
-                } else {
-                    ""
-                }
-        );
-        self.write_to_log("REQUEST", &content);
-    }
-
-    async fn on_completion_response(
-        &self,
-        _prompt: &Message,
-        response: &CompletionResponse<M::Response>,
-        _cancel_sig: CancelSignal,
-    ) {
-        let response_content = if let Ok(resp_json) = serde_json::to_string(&response.raw_response)
-        {
+        // 尝试序列化响应
+        let response_content = if let Ok(resp_json) = serde_json::to_string(&response) {
             format!(
                 "Raw Response: {}",
                 resp_json.chars().take(1000).collect::<String>()
@@ -182,15 +148,73 @@ impl<M: CompletionModel> PromptHook<M> for LLMLoggingHook {
             "Response: <non-serializable>".to_string()
         };
 
-        let content = format!(
-            "RESPONSE - Content: {} | Usage: {:?}",
-            response_content, response.usage
+        let log_content = format!(
+            "STREAM_COMPLETE - Prompt: {} | Response: {}",
+            prompt_content.chars().take(200).collect::<String>()
+                + if prompt_content.len() > 200 { "..." } else { "" },
+            response_content
         );
-        self.write_to_log("RESPONSE", &content);
+
+        // Clone self for async block
+        let hook = self.clone();
+        async move {
+            hook.write_to_log("STREAM_COMPLETE", &log_content);
+        }
+    }
+
+    fn on_completion_call(
+        &self,
+        prompt: &Message,
+        history: &[Message],
+        _cancel_sig: CancelSignal,
+    ) -> impl Future<Output = ()> + Send {
+        // 提取 prompt 内容
+        let prompt_content = match prompt {
+            Message::User { content } => content
+                .iter()
+                .filter_map(|c| {
+                    if let UserContent::Text(text_content) = c {
+                        Some(text_content.text.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Message::Assistant { content, .. } => content
+                .iter()
+                .filter_map(|c| {
+                    if let AssistantContent::Text(text_content) = c {
+                        Some(text_content.text.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+
+        // 构建历史摘要
+        let history_summary = if history.is_empty() {
+            "No history".to_string()
+        } else {
+            format!("{} messages", history.len())
+        };
+
+        let log_content = format!(
+            "STREAM_REQUEST - History: {} | Prompt: {}",
+            history_summary,
+            prompt_content.chars().take(500).collect::<String>()
+                + if prompt_content.len() > 500 { "..." } else { "" }
+        );
+
+        // Clone self for async block
+        let hook = self.clone();
+        async move {
+            hook.write_to_log("STREAM_REQUEST", &log_content);
+        }
     }
 }
-
-// NOTE: rig-core's StreamingPromptHook is private; we only implement PromptHook above.
 
 // 模型配置相关结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1312,22 +1336,21 @@ impl AiService {
         &self.config
     }
 
-    // 统一的流式发送消息方法
+    // 统一的流式发送消息方法（向后兼容版本）
     pub async fn send_message_stream(
         &self,
         user_prompt: Option<&str>,
         system_prompt: Option<&str>,
         conversation_id: Option<String>,
-        message_id: Option<String>, // 新增消息ID参数
+        message_id: Option<String>,
         stream: bool,
         is_final: bool,
         chunk_type: Option<ChunkType>,
     ) -> Result<String> {
-        // 新增参数：skip_save_user_message - 是否跳过保存用户消息到数据库
-        // 默认为false（即默认保存）
+        // 默认：保存和发送的内容一样
         self.send_message_stream_with_save_control(
             user_prompt,
-            user_prompt, // 默认情况下，保存的内容和发送给LLM的内容一样
+            user_prompt,
             system_prompt,
             conversation_id,
             message_id,
@@ -1338,7 +1361,7 @@ impl AiService {
         .await
     }
 
-    // 支持分离"发送给LLM的内容"和"保存到数据库的内容"
+    // 支持分离"发送给LLM的内容"和"保存到数据库的内容"的流式方法
     pub async fn send_message_stream_with_save_control(
         &self,
         user_prompt_for_llm: Option<&str>, // 发送给LLM的完整prompt
@@ -1366,13 +1389,13 @@ impl AiService {
         let mut messages = Vec::new();
 
         // 处理对话历史和系统提示
-        match conversation_id {
-            Some(ref conv_id) => {
-                // 检查对话是否存在，但不自动创建
-                let conversation_exists = match self.db.get_ai_conversation(conv_id).await {
+        let (conv_id, has_conversation) = match conversation_id {
+            Some(ref cid) => {
+                // 检查对话是否存在
+                let exists = match self.db.get_ai_conversation(cid).await {
                     Ok(Some(_)) => true,
                     Ok(None) => {
-                        warn!("会话不存在: {}，不自动创建，需要前端先创建会话", conv_id);
+                        warn!("会话不存在: {}，不自动创建，需要前端先创建会话", cid);
                         false
                     }
                     Err(e) => {
@@ -1382,464 +1405,284 @@ impl AiService {
                 };
 
                 // 获取历史消息
-                messages = self
-                    .get_conversation_history(conv_id)
-                    .await
-                    .unwrap_or_else(|e| {
-                        warn!("获取对话历史失败: {}, 使用空消息列表", e);
-                        Vec::new()
-                    });
+                messages = self.get_conversation_history(cid).await.unwrap_or_else(|e| {
+                    warn!("获取对话历史失败: {}, 使用空消息列表", e);
+                    Vec::new()
+                });
 
-                // 保存用户消息（如果提供了要保存的内容）
-                if let Some(up_to_save) = user_prompt_to_save {
-                    if !up_to_save.trim().is_empty() {
-                        let user_msg = AiMessage {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            conversation_id: conv_id.clone(),
-                            role: "user".to_string(),
-                            content: up_to_save.to_string(), // 保存指定的内容
-                            metadata: None,
-                            token_count: Some(up_to_save.len() as i32),
-                            cost: None,
-                            tool_calls: None,
-                            attachments: None,
-                            timestamp: chrono::Utc::now(),
-                        };
-                        if conversation_exists {
-                            match self.db.create_ai_message(&user_msg).await {
-                                Ok(_) => {
-                                    debug!(
-                                        "用户消息已保存: {}",
-                                        up_to_save.chars().take(50).collect::<String>()
-                                    );
-                                }
-                                Err(e) => {
-                                    warn!("用户消息保存失败: {}, 继续执行但不保存到数据库", e)
-                                }
-                            }
-                        } else {
-                            debug!("跳过用户消息保存：对话记录不存在");
+                (cid.clone(), exists)
+            }
+            None => (execution_id.clone(), false),
+        };
+
+        // 构建和保存用户消息
+        if let Some(up_to_save) = user_prompt_to_save {
+            if !up_to_save.trim().is_empty() {
+                let user_msg = AiMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    conversation_id: conv_id.clone(),
+                    role: "user".to_string(),
+                    content: up_to_save.to_string(),
+                    metadata: None,
+                    token_count: Some(up_to_save.len() as i32),
+                    cost: None,
+                    tool_calls: None,
+                    attachments: None,
+                    timestamp: chrono::Utc::now(),
+                };
+
+                // 只有有会话且会话存在时才保存
+                if has_conversation {
+                    match self.db.create_ai_message(&user_msg).await {
+                        Ok(_) => {
+                            debug!(
+                                "用户消息已保存: {}",
+                                up_to_save.chars().take(50).collect::<String>()
+                            );
                         }
-                        // 注意：messages列表中使用发送给LLM的完整内容
-                        messages.push(AiMessage {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            conversation_id: conv_id.clone(),
-                            role: "user".to_string(),
-                            content: user_prompt_for_llm.unwrap_or("").to_string(),
-                            metadata: None,
-                            token_count: Some(user_prompt_for_llm.unwrap_or("").len() as i32),
-                            cost: None,
-                            tool_calls: None,
-                            attachments: None,
-                            timestamp: chrono::Utc::now(),
-                        });
+                        Err(e) => {
+                            warn!("用户消息保存失败: {}, 继续执行但不保存到数据库", e)
+                        }
                     }
                 } else {
-                    debug!("跳过用户消息保存（user_prompt_to_save 为 None）");
-                    // 即使不保存，也要构建消息用于LLM调用
-                    if let Some(up) = user_prompt_for_llm {
-                        if !up.trim().is_empty() {
-                            messages.push(AiMessage {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                conversation_id: conv_id.clone(),
-                                role: "user".to_string(),
-                                content: up.to_string(),
-                                metadata: None,
-                                token_count: Some(up.len() as i32),
-                                cost: None,
-                                tool_calls: None,
-                                attachments: None,
-                                timestamp: chrono::Utc::now(),
-                            });
-                        }
-                    }
+                    debug!("跳过用户消息保存：对话记录不存在或为无会话模式");
                 }
 
-                // 内联原 send_chat_stream 逻辑：Rig 动态客户端真流式
-                {
-                    use futures::StreamExt;
-                    use rig::agent::MultiTurnStreamItem;
-                    use rig::client::builder::DynClientBuilder;
-                    use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
-
-                    // 生成或获取 message_id / execution_id
-                    let message_id = message_id
-                        .clone()
-                        .or_else(|| messages.last().map(|m| m.id.clone()))
-                        .unwrap_or_else(|| "unknown".to_string());
-                    let exec_id = execution_id.clone();
-
-                    // 校验配置
-                    if self.config.provider == "unconfigured" || self.config.provider == "mock" {
-                        let error_msg =
-                            "AI provider not configured. Please go to Settings > AI Configuration";
-                        error!("{}", error_msg);
-                        return Err(anyhow::anyhow!(error_msg));
-                    }
-                    // 某些本地/自托管提供商不需要 API Key（如 ollama）
-                    let provider_lc = self.config.provider.to_lowercase();
-                    let api_key_required = match provider_lc.as_str() {
-                        "ollama" => false,
-                        _ => true,
-                    };
-                    if api_key_required && self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
-                        let error_msg = format!(
-                            "API key not configured for provider '{}'. Please check your AI configuration settings.",
-                            self.config.provider
-                        );
-                        error!("{}", error_msg);
-                        return Err(anyhow::anyhow!(error_msg));
-                    }
-
-                    // 构造上下文
-                    if messages.is_empty() {
-                        let error_msg = "No messages provided for chat completion";
-                        error!("{}", error_msg);
-                        return Err(anyhow::anyhow!(error_msg));
-                    }
-                    
-                    // ✅ 对于LLMCompiler等架构，只使用最后一条user消息
-                    // 不合并历史消息，避免prompt重复累积
-                    let user_input = messages.last()
-                        .map(|m| m.content.as_str())
-                        .unwrap_or("");
-                    
-                    if user_input.is_empty() {
-                        let error_msg = "Message content is empty after processing";
-                        error!("{}", error_msg);
-                        return Err(anyhow::anyhow!(error_msg));
-                    }
-
-                    // Rig DynClient 真流式
-                    let provider = self.config.provider.to_lowercase();
-                    let model = self.config.model.clone();
-                    // info!(
-                    //     "Starting Rig dyn client streaming: provider={}, model={}, input_len={}",
-                    //     provider,
-                    //     model,
-                    //     user_input.len()
-                    // );
-
-                    // 创建日志记录器
-                    let logger = LLMLoggingHook::new(
-                        exec_id.clone(),
-                        Some(conv_id.clone()),
-                        provider.clone(),
-                        model.clone(),
-                    );
-
-                    // 记录请求开始
-                    // logger.write_to_log(
-                    //     "REQUEST_START",
-                    //     &format!("Input length: {} chars", user_input.len()),
-                    // );
-                    logger.write_to_log(
-                        "REQUEST_START",
-                        &format!(
-                            "\n\n system prompt:\n {}\n\n",
-                            system_prompt.unwrap_or("You are a helpful AI assistant.")
-                        ),
-                    );
-                    logger.write_to_log(
-                        "REQUEST_START",
-                        &format!("\n\n User input:\n {}\n\n", user_input),
-                    );
-
-                    let agent = {
-                        let client = DynClientBuilder::new();
-                        
-                        // 尝试创建 agent，提供详细错误信息
-                        let agent_builder = match client.agent(&provider, &model) {
-                            Ok(builder) => builder,
-                            Err(e) => {
-                                error!(
-                                    "Failed to create agent for provider '{}' with model '{}': {}",
-                                    provider, model, e
-                                );
-                                return Err(anyhow::anyhow!(
-                                    "Failed to create AI agent: Provider '{}' may not be supported or model '{}' is invalid. Error: {}",
-                                    provider, model, e
-                                ));
-                            }
-                        };
-                        
-                        let mut agent_builder = agent_builder
-                            .preamble(system_prompt.unwrap_or("You are a helpful AI assistant."));
-
-                        // 为 Gemini provider 添加必需的 generationConfig
-                        if provider == "gemini" {
-                            let gen_cfg = GenerationConfig::default();
-                            let cfg = AdditionalParameters::default().with_config(gen_cfg);
-                            agent_builder =
-                                agent_builder.additional_params(serde_json::to_value(cfg).unwrap());
-                        }
-                        agent_builder.build()
-                    };
-
-                    let mut content = String::new();
-                    let mut stream_iter = agent.stream_prompt(user_input).multi_turn(100).await;
-                    while let Some(item) = stream_iter.next().await {
-                        match item {
-                            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                                StreamedAssistantContent::Text(t),
-                            )) => {
-                                let piece = t.text;
-                                if piece.is_empty() {
-                                    continue;
-                                }
-                                content.push_str(&piece);
-                                if stream {
-                                    self.emit_message_chunk(
-                                        &exec_id,
-                                        &message_id,
-                                        Some(conv_id),
-                                        chunk_type.clone(),
-                                        &piece,
-                                        false,
-                                        None,
-                                    );
-                                }
-                            }
-                            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                                StreamedAssistantContent::Reasoning(r),
-                            )) => {
-                                let piece = r.reasoning.join("");
-                                if !piece.is_empty() && stream {
-                                    self.emit_message_chunk(
-                                        &exec_id,
-                                        &message_id,
-                                        Some(conv_id),
-                                        Some(ChunkType::Thinking),
-                                        &piece,
-                                        false,
-                                        None,
-                                    );
-                                }
-                            }
-                            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                                StreamedAssistantContent::ToolCall(_),
-                            )) => {}
-                            Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                                break;
-                            }
-                            Ok(_) => { /* ignore other stream items */ }
-                            Err(e) => {
-                                error!("Dyn client stream error: {}", e);
-                                return Err(anyhow::anyhow!(format!("Stream error: {}", e)));
-                            }
-                        }
-                    }
-
-                    // 记录响应完成
-                    logger.write_to_log(
-                        "RESPONSE_COMPLETE",
-                        &format!("Response length: {} chars", content.len()),
-                    );
-                    logger
-                        .write_to_log("RESPONSE_COMPLETE", &format!("Response:\n {}\n\n", content));
-
-                    if is_final {
-                        self.emit_message_chunk(
-                            &exec_id,
-                            &message_id,
-                            Some(conv_id),
-                            Some(ChunkType::Meta),
-                            "",
-                            true,
-                            None,
-                        );
-                    }
-
-                    return Ok(content);
-                }
+                // 构建消息用于LLM调用（使用完整prompt）
+                messages.push(AiMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    conversation_id: conv_id.clone(),
+                    role: "user".to_string(),
+                    content: user_prompt_for_llm.unwrap_or("").to_string(),
+                    metadata: None,
+                    token_count: Some(user_prompt_for_llm.unwrap_or("").len() as i32),
+                    cost: None,
+                    tool_calls: None,
+                    attachments: None,
+                    timestamp: chrono::Utc::now(),
+                });
             }
-            None => {
-                // 无会话：仅进行内部流式调用，不向前端发块、不写入DB
-                let conv_id = &execution_id; // 使用 execution_id 作为临时会话标识
-                
-                // ✅ 修复：不要把system_prompt添加到messages中，因为它会通过.preamble()传递
-                // 如果添加到messages，会导致system内容被合并到user_input中
-                // if let Some(sp) = system_prompt {
-                //     if !sp.is_empty() {
-                //         let sys_msg = AiMessage { ... };
-                //         messages.push(sys_msg);
-                //     }
-                // }
-
-                // 构建用户消息（只包含user_prompt_for_llm）
-                if let Some(up) = user_prompt_for_llm {
-                    if !up.is_empty() {
-                        let user_msg = AiMessage {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            conversation_id: conv_id.to_string(),
-                            role: "user".to_string(),
-                            content: up.to_string(),
-                            metadata: None,
-                            token_count: Some(up.len() as i32),
-                            cost: None,
-                            tool_calls: None,
-                            attachments: None,
-                            timestamp: chrono::Utc::now(),
-                        };
-                        messages.push(user_msg);
-                    }
-                }
-
-                // 不保存到DB，不向前端发块（通过 should_save_to_db=false 抑制发块）
-                let _model_name_owned = self.config.model.clone();
-                // 内联原 send_chat_stream 逻辑（无会话）：Rig 动态客户端真流式
-                {
-                    let conv_id = conv_id; // same binding name
-                    let message_id = message_id
-                        .clone()
-                        .or_else(|| messages.last().map(|m| m.id.clone()))
-                        .unwrap_or_else(|| "unknown".to_string());
-                    let exec_id = execution_id.clone();
-
-                    if messages.is_empty() {
-                        let error_msg = "No messages provided for chat completion";
-                        error!("{}", error_msg);
-                        return Err(anyhow::anyhow!(error_msg));
-                    }
-                    let mut history_buf = String::new();
-                    let take = messages.len().min(12);
-                    for m in messages.iter().rev().take(take).rev() {
-                        history_buf.push_str(&format!("{}\n", m.content));
-                    }
-                    let user_input = history_buf.trim();
-                    if user_input.is_empty() {
-                        let error_msg = "Message content is empty after processing";
-                        error!("{}", error_msg);
-                        return Err(anyhow::anyhow!(error_msg));
-                    }
-
-                    let provider = self.config.provider.to_lowercase();
-                    let model = self.config.model.clone();
-
-                    // 创建日志记录器 (无会话)
-                    let logger = LLMLoggingHook::new(
-                        exec_id.clone(),
-                        None, // 无会话ID
-                        provider.clone(),
-                        model.clone(),
-                    );
-
-                    // 记录请求开始
-                    logger.write_to_log(
-                        "REQUEST_START",
-                        &format!("Input length: {} chars", user_input.len()),
-                    );
-                    logger.write_to_log(
-                        "REQUEST_START",
-                        &format!(
-                            "system prompt:\n {}\n\n",
-                            system_prompt.unwrap_or("You are a helpful AI assistant.")
-                        ),
-                    );
-                    logger.write_to_log(
-                        "REQUEST_START",
-                        &format!("User input:\n {}\n\n", user_input),
-                    );
-
-                    let agent = {
-                        let client = DynClientBuilder::new();
-                        // 尝试创建 agent，提供详细错误信息（无会话分支）
-                        let agent_builder = match client.agent(&provider, &model) {
-                            Ok(builder) => builder,
-                            Err(e) => {
-                                error!(
-                                    "Failed to create agent (no conversation) for provider '{}' with model '{}': {}",
-                                    provider, model, e
-                                );
-                                return Err(anyhow::anyhow!(
-                                    "Failed to create AI agent: Provider '{}' may not be supported or model '{}' is invalid. Error: {}",
-                                    provider, model, e
-                                ));
-                            }
-                        };
-                        
-                        let mut agent_builder = agent_builder
-                            .preamble(system_prompt.unwrap_or("You are a helpful AI assistant."));
-
-                        // 为 Gemini provider 添加必需的 generationConfig
-                        if provider == "gemini" {
-                            let gen_cfg = GenerationConfig {
-                                ..Default::default()
-                            };
-                            let cfg = AdditionalParameters::default().with_config(gen_cfg);
-                            agent_builder =
-                                agent_builder.additional_params(serde_json::to_value(cfg).unwrap());
-                        }
-
-                        agent_builder.build()
-                    };
-
-                    let mut content = String::new();
-                    let mut stream_iter = agent.stream_prompt(user_input).multi_turn(100).await;
-                    while let Some(item) = stream_iter.next().await {
-                        match item {
-                            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                                StreamedAssistantContent::Text(t),
-                            )) => {
-                                let piece = t.text;
-                                if piece.is_empty() {
-                                    continue;
-                                }
-                                content.push_str(&piece);
-                                if stream {
-                                    self.emit_message_chunk(
-                                        &exec_id,
-                                        &message_id,
-                                        Some(conv_id),
-                                        chunk_type.clone(),
-                                        &piece,
-                                        false,
-                                        None,
-                                    );
-                                }
-                            }
-                            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                                StreamedAssistantContent::Reasoning(r),
-                            )) => {
-                                let piece = r.reasoning.join("");
-                                if !piece.is_empty() && stream {
-                                    self.emit_message_chunk(
-                                        &exec_id,
-                                        &message_id,
-                                        Some(conv_id),
-                                        Some(ChunkType::Thinking),
-                                        &piece,
-                                        false,
-                                        None,
-                                    );
-                                }
-                            }
-                            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                                StreamedAssistantContent::ToolCall(_),
-                            )) => {}
-                            Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                                break;
-                            }
-                            Ok(_) => { /* ignore other stream items */ }
-                            Err(e) => return Err(anyhow::anyhow!(format!("Stream error: {}", e))),
-                        }
-                    }
-
-                    // 记录响应完成
-                    logger.write_to_log(
-                        "RESPONSE_COMPLETE",
-                        &format!("Response length: {} chars", content.len()),
-                    );
-                    logger
-                        .write_to_log("RESPONSE_COMPLETE", &format!("Response:\n {}\n\n", content));
-
-                    // 注意：无会话模式仅用于内部调用（如插件生成、规划器等），
-                    // 不应向前端发送任何 chunk，也不应发 is_final 标记。
-
-                    return Ok(content);
+        } else {
+            debug!("跳过用户消息保存（user_prompt_to_save 为 None）");
+            // 即使不保存，也要构建消息用于LLM调用
+            if let Some(up) = user_prompt_for_llm {
+                if !up.trim().is_empty() {
+                    messages.push(AiMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        conversation_id: conv_id.clone(),
+                        role: "user".to_string(),
+                        content: up.to_string(),
+                        metadata: None,
+                        token_count: Some(up.len() as i32),
+                        cost: None,
+                        tool_calls: None,
+                        attachments: None,
+                        timestamp: chrono::Utc::now(),
+                    });
                 }
             }
         }
+
+        // 校验消息
+        if messages.is_empty() {
+            let error_msg = "No messages provided for chat completion";
+            error!("{}", error_msg);
+            return Err(anyhow::anyhow!(error_msg));
+        }
+
+        // 提取用户输入（最后一条消息）
+        let user_input = messages.last().map(|m| m.content.as_str()).unwrap_or("");
+        if user_input.is_empty() {
+            let error_msg = "Message content is empty after processing";
+            error!("{}", error_msg);
+            return Err(anyhow::anyhow!(error_msg));
+        }
+
+        // 生成message_id
+        let message_id = message_id
+            .clone()
+            .or_else(|| messages.last().map(|m| m.id.clone()))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // 创建日志记录器Hook（使用rig官方机制）
+        let logger = LLMLoggingHook::new(
+            execution_id.clone(),
+            if has_conversation {
+                Some(conv_id.clone())
+            } else {
+                None
+            },
+            self.config.provider.to_lowercase(),
+            self.config.model.clone(),
+        );
+
+        // 校验配置并创建Agent
+        if self.config.provider == "unconfigured" || self.config.provider == "mock" {
+            let error_msg = "AI provider not configured. Please go to Settings > AI Configuration";
+            error!("{}", error_msg);
+            return Err(anyhow::anyhow!(error_msg));
+        }
+
+        let provider_lc = self.config.provider.to_lowercase();
+        let api_key_required = match provider_lc.as_str() {
+            "ollama" => false,
+            _ => true,
+        };
+        if api_key_required && self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
+            let error_msg = format!(
+                "API key not configured for provider '{}'. Please check your AI configuration settings.",
+                self.config.provider
+            );
+            error!("{}", error_msg);
+            return Err(anyhow::anyhow!(error_msg));
+        }
+
+        let provider = self.config.provider.to_lowercase();
+        let model = self.config.model.clone();
+
+        // 在独立作用域中构建 agent，确保 client 不会跨越 await 点
+        // info!("Creating agent for provider '{}' with model '{}'", provider, model);
+        // info!("API base URL: {:?}", self.config.api_base);
+        // info!("Has API key: {}", self.config.api_key.is_some());
+        
+        let agent = {
+            let client = DynClientBuilder::new();
+            let agent_builder = match client.agent(&provider, &model) {
+                Ok(builder) => {
+                    builder
+                },
+                Err(e) => {
+                    error!(
+                        "Failed to create agent for provider '{}' with model '{}': {}",
+                        provider, model, e
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Failed to create AI agent: Provider '{}' may not be supported or model '{}' is invalid. Error: {}",
+                        provider, model, e
+                    ));
+                }
+            };
+
+            let mut agent_builder =
+                agent_builder.preamble(system_prompt.unwrap_or("You are a helpful AI assistant."));
+
+            if provider == "gemini" {
+                let gen_cfg = GenerationConfig::default();
+                let cfg = AdditionalParameters::default().with_config(gen_cfg);
+                agent_builder = agent_builder.additional_params(serde_json::to_value(cfg).unwrap());
+            }
+
+            // info!("Building agent...");
+            agent_builder.build()
+        };
+        
+        // info!("Agent built successfully, starting stream request...");
+
+        // 处理流式响应
+        let mut content = String::new();
+        
+        // 添加超时保护，防止请求无限期挂起
+        // 注意：暂时移除 with_hook(logger)，因为它可能导致流阻塞
+        // TODO: 研究 rig 库的正确 hook 用法或使用其他日志记录方式
+        let stream_result = tokio::time::timeout(
+            std::time::Duration::from_secs(120), // 2分钟超时
+            agent
+                .stream_prompt(user_input)
+                // .with_hook(logger)  // 临时禁用，避免阻塞
+                .multi_turn(100)
+        ).await;
+        
+        let mut stream_iter = match stream_result {
+            Ok(iter) => iter,
+            Err(_) => {
+                error!("LLM request timeout after 120 seconds for provider '{}' model '{}'", provider, model);
+                return Err(anyhow::anyhow!(
+                    "LLM request timeout: The AI service did not respond within 120 seconds. Please check your network connection and API configuration."
+                ));
+            }
+        };
+        
+        // 手动记录请求日志（替代 hook）
+        info!("LLM Request - Provider: {}, Model: {}, Input length: {} chars", 
+              provider, model, user_input.len());
+        logger.write_to_log("SYSTEM REQUEST", &format!("\n{}\n", 
+              system_prompt.unwrap_or("").to_string() 
+        ));
+        logger.write_to_log("USER REQUEST", &format!("\n{}\n", 
+            user_input
+        ));
+
+        while let Some(item) = stream_iter.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
+                    let piece = t.text;
+                    if piece.is_empty() {
+                        continue;
+                    }
+                    content.push_str(&piece);
+                    if stream {
+                        self.emit_message_chunk(
+                            &execution_id,
+                            &message_id,
+                            Some(&conv_id),
+                            chunk_type.clone(),
+                            &piece,
+                            false,
+                            None,
+                        );
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Reasoning(r),
+                )) => {
+                    let piece = r.reasoning.join("");
+                    if !piece.is_empty() && stream {
+                        self.emit_message_chunk(
+                            &execution_id,
+                            &message_id,
+                            Some(&conv_id),
+                            Some(ChunkType::Thinking),
+                            &piece,
+                            false,
+                            None,
+                        );
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ToolCall(_),
+                )) => {}
+                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                    break;
+                }
+                Ok(_) => { /* ignore other stream items */ }
+                Err(e) => {
+                    error!("Dyn client stream error: {}", e);
+                    return Err(anyhow::anyhow!(format!("Stream error: {}", e)));
+                }
+            }
+        }
+
+        // 如果是最终消息且有会话，发送完成标记
+        if is_final && has_conversation {
+            self.emit_message_chunk(
+                &execution_id,
+                &message_id,
+                Some(&conv_id),
+                Some(ChunkType::Meta),
+                "",
+                true,
+                None,
+            );
+        }
+
+        // 手动记录响应日志（替代 hook）
+        info!("LLM Response - Provider: {}, Model: {}, Output length: {} chars", 
+              provider, model, content.len());
+        logger.write_to_log("OUTPUT RESPONSE", &format!("\n{}\n", 
+            content
+        ));
+
+        Ok(content)
     }
 
     // 创建新对话

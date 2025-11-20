@@ -10030,6 +10030,7 @@ dependencies = [
  "rand 0.8.5",
  "rcgen 0.13.2",
  "regex",
+ "reqwest 0.12.22",
  "rustls 0.23.31",
  "rustls-pemfile 2.2.0",
  "sentinel-plugins",

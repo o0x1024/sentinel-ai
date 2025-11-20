@@ -91,6 +91,53 @@ pub struct AiMessage {
     pub metadata: Option<serde_json::Value>,
 }
 
+impl AiMessage {
+    /// Create a system message
+    pub fn system(content: String) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: MessageRole::System,
+            content,
+            timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            tokens_used: None,
+            tools_used: None,
+            metadata: None,
+        }
+    }
+
+    /// Create a user message
+    pub fn user(content: String) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: MessageRole::User,
+            content,
+            timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            tokens_used: None,
+            tools_used: None,
+            metadata: None,
+        }
+    }
+
+    /// Create an assistant message
+    pub fn assistant(content: String) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: MessageRole::Assistant,
+            content,
+            timestamp: Utc::now(),
+            model: None,
+            provider: None,
+            tokens_used: None,
+            tools_used: None,
+            metadata: None,
+        }
+    }
+}
+
 /// 消息角色
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

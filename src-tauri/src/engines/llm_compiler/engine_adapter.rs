@@ -12,6 +12,7 @@ use crate::services::ai::{AiService, AiServiceManager};
 use crate::services::database::Database; // trait for DB methods
 use crate::services::database::DatabaseService;
 use crate::services::prompt_db::PromptRepository;
+use crate::engines::memory::get_global_memory;
 use crate::tools::ToolExecutionParams;
 use crate::utils::ordered_message::{emit_message_chunk, ChunkType};
 use anyhow::Result;
