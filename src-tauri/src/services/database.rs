@@ -3,16 +3,18 @@ use async_trait::async_trait;
 use bincode;
 use chrono::Utc;
 use sentinel_rag::config::RagConfig;
-use sentinel_rag::models::{CollectionInfo,ChunkMetadata,DocumentChunk,DocumentSource,IngestionStatusEnum,QueryResult};
+use sentinel_rag::models::{
+    ChunkMetadata, CollectionInfo, DocumentChunk, DocumentSource, IngestionStatusEnum, QueryResult,
+};
 use serde_json::Value;
 use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
-use tracing::info;
 use std::path::PathBuf;
+use tracing::info;
 
 use crate::models::ai::AiRole;
 use crate::models::database::{
-    AiConversation, AiMessage, Configuration, DatabaseStats, McpServerConfig,
-    ScanTask, Vulnerability,
+    AiConversation, AiMessage, Configuration, DatabaseStats, McpServerConfig, ScanTask,
+    Vulnerability,
 };
 
 #[async_trait]
@@ -44,42 +46,104 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn delete_ai_role(&self, role_id: &str) -> Result<()>;
     async fn set_current_ai_role(&self, role_id: Option<&str>) -> Result<()>;
     async fn get_current_ai_role(&self) -> Result<Option<AiRole>>;
-    
+
     // 扫描任务相关方法
     async fn create_scan_task(&self, task: &ScanTask) -> Result<()>;
     async fn get_scan_tasks(&self, project_id: Option<&str>) -> Result<Vec<ScanTask>>;
     async fn get_scan_task(&self, id: &str) -> Result<Option<ScanTask>>;
     async fn get_scan_tasks_by_target(&self, target: &str) -> Result<Vec<ScanTask>>;
-    async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()>;
-    
+    async fn update_scan_task_status(
+        &self,
+        id: &str,
+        status: &str,
+        progress: Option<f64>,
+    ) -> Result<()>;
+
     // Agent任务相关方法
     async fn create_agent_task(&self, task: &crate::agents::traits::AgentTask) -> Result<()>;
     async fn get_agent_task(&self, id: &str) -> Result<Option<crate::agents::traits::AgentTask>>;
-    async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<crate::agents::traits::AgentTask>>;
-    async fn update_agent_task_status(&self, id: &str, status: &str, agent_name: Option<&str>, architecture: Option<&str>) -> Result<()>;
-    async fn update_agent_task_timing(&self, id: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, execution_time_ms: Option<u64>) -> Result<()>;
+    async fn get_agent_tasks(
+        &self,
+        user_id: Option<&str>,
+    ) -> Result<Vec<crate::agents::traits::AgentTask>>;
+    async fn update_agent_task_status(
+        &self,
+        id: &str,
+        status: &str,
+        agent_name: Option<&str>,
+        architecture: Option<&str>,
+    ) -> Result<()>;
+    async fn update_agent_task_timing(
+        &self,
+        id: &str,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        execution_time_ms: Option<u64>,
+    ) -> Result<()>;
     async fn update_agent_task_error(&self, id: &str, error_message: &str) -> Result<()>;
-    
+
     // Agent会话相关方法
-    async fn create_agent_session(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()>;
+    async fn create_agent_session(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        agent_name: &str,
+    ) -> Result<()>;
     async fn update_agent_session_status(&self, session_id: &str, status: &str) -> Result<()>;
-    async fn get_agent_session(&self, session_id: &str) -> Result<Option<crate::agents::session::AgentSessionData>>;
+    async fn get_agent_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::agents::session::AgentSessionData>>;
     async fn list_agent_sessions(&self) -> Result<Vec<crate::agents::session::AgentSessionData>>;
     async fn delete_agent_session(&self, session_id: &str) -> Result<()>;
     async fn delete_agent_execution_steps(&self, session_id: &str) -> Result<()>;
-    
+
     // Agent执行日志相关方法
-    async fn add_agent_session_log(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()>;
-    async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<crate::agents::traits::SessionLog>>;
-    
+    async fn add_agent_session_log(
+        &self,
+        session_id: &str,
+        level: &str,
+        message: &str,
+        source: &str,
+    ) -> Result<()>;
+    async fn get_agent_session_logs(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::agents::traits::SessionLog>>;
+
     // Agent执行结果相关方法
-    async fn save_agent_execution_result(&self, session_id: &str, result: &crate::agents::traits::AgentExecutionResult) -> Result<()>;
-    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<crate::agents::traits::AgentExecutionResult>>;
-    
+    async fn save_agent_execution_result(
+        &self,
+        session_id: &str,
+        result: &crate::agents::traits::AgentExecutionResult,
+    ) -> Result<()>;
+    async fn get_agent_execution_result(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::agents::traits::AgentExecutionResult>>;
+
     // Agent执行步骤相关方法
-    async fn save_agent_execution_step(&self, session_id: &str, step: &crate::commands::agent_commands::WorkflowStepDetail) -> Result<()>;
-    async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>>;
-    async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()>;
+    async fn save_agent_execution_step(
+        &self,
+        session_id: &str,
+        step: &crate::commands::agent_commands::WorkflowStepDetail,
+    ) -> Result<()>;
+    async fn get_agent_execution_steps(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>>;
+    async fn update_agent_execution_step_status(
+        &self,
+        step_id: &str,
+        status: &str,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        duration_ms: Option<u64>,
+        error_message: Option<&str>,
+    ) -> Result<()>;
+
+    // 消息追加更新
+    async fn upsert_ai_message_append(&self, message: &AiMessage) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -156,7 +220,7 @@ impl DatabaseService {
             tracing::info!("New database detected, inserting default data...");
             self.insert_default_data(&pool).await?;
             self.insert_default_prompts(&pool).await?;
-        } 
+        }
 
         self.pool = Some(pool);
         // 初始化数据库客户端
@@ -170,7 +234,7 @@ impl DatabaseService {
     /// 创建数据库表结构
     async fn create_database_schema(&self, pool: &SqlitePool) -> Result<()> {
         tracing::info!("Creating database schema...");
-        
+
         // 使用事务来确保所有表创建成功或全部回滚
         let mut tx = pool.begin().await?;
 
@@ -409,8 +473,6 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
-
-
         // 创建MCP工具表
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS mcp_tools (
@@ -582,6 +644,27 @@ impl DatabaseService {
         )
         .execute(&mut *tx)
         .await?;
+
+        // 添加架构相关字段（兼容已存在的表）
+        let _ = sqlx::query("ALTER TABLE ai_messages ADD COLUMN architecture_type TEXT")
+            .execute(&mut *tx)
+            .await; // 忽略错误（字段可能已存在）
+
+        let _ = sqlx::query("ALTER TABLE ai_messages ADD COLUMN architecture_meta TEXT")
+            .execute(&mut *tx)
+            .await;
+
+        let _ = sqlx::query("ALTER TABLE ai_messages ADD COLUMN structured_data TEXT")
+            .execute(&mut *tx)
+            .await;
+
+        // 创建架构类型索引（提升查询性能）
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_messages_architecture_type 
+             ON ai_messages(architecture_type)",
+        )
+        .execute(&mut *tx)
+        .await;
 
         // 创建AI角色表
         sqlx::query(
@@ -799,9 +882,11 @@ impl DatabaseService {
         // 创建索引
 
         // 插件收藏索引
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_plugin_favorites_user_id ON plugin_favorites(user_id)")
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_plugin_favorites_user_id ON plugin_favorites(user_id)",
+        )
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_plugin_favorites_plugin_id ON plugin_favorites(plugin_id)")
             .execute(&mut *tx)
             .await?;
@@ -813,20 +898,28 @@ impl DatabaseService {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status)")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_created_at ON agent_tasks(created_at)")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent_name ON agent_tasks(agent_name)")
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_agent_tasks_created_at ON agent_tasks(created_at)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent_name ON agent_tasks(agent_name)",
+        )
+        .execute(&mut *tx)
+        .await?;
 
         // Agent会话索引
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_sessions_task_id ON agent_sessions(task_id)")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_sessions_status ON agent_sessions(status)")
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_agent_sessions_task_id ON agent_sessions(task_id)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_agent_sessions_status ON agent_sessions(status)",
+        )
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_sessions_agent_name ON agent_sessions(agent_name)")
             .execute(&mut *tx)
             .await?;
@@ -871,17 +964,23 @@ impl DatabaseService {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_sessions_status ON scan_sessions(status)")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_sessions_created_at ON scan_sessions(created_at)")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_sessions_created_by ON scan_sessions(created_by)")
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_scan_sessions_created_at ON scan_sessions(created_at)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_scan_sessions_created_by ON scan_sessions(created_by)",
+        )
+        .execute(&mut *tx)
+        .await?;
 
         // 扫描阶段索引
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_stages_session_id ON scan_stages(session_id)")
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_scan_stages_session_id ON scan_stages(session_id)",
+        )
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_scan_stages_status ON scan_stages(status)")
             .execute(&mut *tx)
             .await?;
@@ -913,8 +1012,6 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_vulnerabilities_type ON vulnerabilities(vulnerability_type)").execute(&mut *tx).await?;
-
-
 
         // MCP工具索引
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_mcp_tools_category ON mcp_tools(category)")
@@ -952,8 +1049,6 @@ impl DatabaseService {
         )
         .execute(&mut *tx)
         .await?;
-
-
 
         // 配置索引
         sqlx::query(
@@ -1049,16 +1144,16 @@ impl DatabaseService {
         let pragma_rows = sqlx::query("PRAGMA table_info(rag_collections)")
             .fetch_all(&mut *tx)
             .await?;
-        let has_is_active = pragma_rows
-            .iter()
-            .any(|row| {
-                let name: String = row.get("name");
-                name == "is_active"
-            });
+        let has_is_active = pragma_rows.iter().any(|row| {
+            let name: String = row.get("name");
+            name == "is_active"
+        });
         if !has_is_active {
-            let _ = sqlx::query("ALTER TABLE rag_collections ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0")
-                .execute(&mut *tx)
-                .await;
+            let _ = sqlx::query(
+                "ALTER TABLE rag_collections ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&mut *tx)
+            .await;
         }
 
         // 创建RAG文档源表
@@ -1155,18 +1250,36 @@ impl DatabaseService {
         .await?;
 
         // 创建RAG表索引
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_collections_name ON rag_collections(name)").execute(&mut *tx).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_collections_name ON rag_collections(name)")
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_sources_collection_id ON rag_document_sources(collection_id)").execute(&mut *tx).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_sources_file_hash ON rag_document_sources(file_hash)").execute(&mut *tx).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_chunks_collection_id ON rag_document_chunks(collection_id)").execute(&mut *tx).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_chunks_source_id ON rag_document_chunks(source_id)").execute(&mut *tx).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_document_chunks_content_hash ON rag_document_chunks(content_hash)").execute(&mut *tx).await?;
-        
+
         // 新RAG表的索引
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_document_id ON rag_chunks(document_id)").execute(&mut *tx).await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_collection_id ON rag_chunks(collection_id)").execute(&mut *tx).await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_content_hash ON rag_chunks(content_hash)").execute(&mut *tx).await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_chunk_index ON rag_chunks(chunk_index)").execute(&mut *tx).await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_document_id ON rag_chunks(document_id)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_collection_id ON rag_chunks(collection_id)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_content_hash ON rag_chunks(content_hash)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_chunk_index ON rag_chunks(chunk_index)",
+        )
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding_model ON rag_chunks(embedding_model)").execute(&mut *tx).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_query_history_collection_id ON rag_query_history(collection_id)").execute(&mut *tx).await?;
 
@@ -1179,7 +1292,7 @@ impl DatabaseService {
                 profile_json TEXT NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )"
+            )",
         )
         .execute(&mut *tx)
         .await?;
@@ -1260,8 +1373,6 @@ impl DatabaseService {
     pub async fn get_stats(&self) -> Result<DatabaseStats> {
         let pool = self.get_pool()?;
 
-
-
         let scan_tasks_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scan_tasks")
             .fetch_one(pool)
             .await?;
@@ -1273,8 +1384,6 @@ impl DatabaseService {
         let assets_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM assets")
             .fetch_one(pool)
             .await?;
-
-
 
         let conversations_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ai_conversations")
             .fetch_one(pool)
@@ -1326,8 +1435,6 @@ impl DatabaseService {
         tracing::info!("Database restoration completed: {}", backup_path.display());
         Ok(())
     }
-
-
 
     /// 扫描任务相关操作
     pub async fn create_scan_task(&self, task: &ScanTask) -> Result<()> {
@@ -1422,7 +1529,9 @@ impl DatabaseService {
         progress: Option<f64>,
     ) -> Result<()> {
         let pool = self.get_pool()?;
-        self.get_db()?.update_scan_task_status(id, status, progress).await
+        self.get_db()?
+            .update_scan_task_status(id, status, progress)
+            .await
     }
 
     /// 漏洞相关操作
@@ -1661,14 +1770,80 @@ impl DatabaseService {
             tool_calls: message.tool_calls.clone(),
             attachments: message.attachments.clone(),
             timestamp: message.timestamp,
+            architecture_type: message.architecture_type.clone(),
+            architecture_meta: message.architecture_meta.clone(),
+            structured_data: message.structured_data.clone(),
         };
         self.get_db()?.create_ai_message(&m).await
+    }
+
+    /// 插入或追加更新AI消息
+    pub async fn upsert_ai_message_append(&self, message: &AiMessage) -> Result<()> {
+        let pool = self.get_pool()?;
+
+        // 尝试插入
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, tool_calls, attachments, timestamp, architecture_type, architecture_meta, structured_data)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&message.id)
+        .bind(&message.conversation_id)
+        .bind(&message.role)
+        .bind(&message.content)
+        .bind(&message.metadata)
+        .bind(message.token_count)
+        .bind(message.cost)
+        .bind(&message.tool_calls)
+        .bind(&message.attachments)
+        .bind(message.timestamp)
+        .bind(&message.architecture_type)
+        .bind(&message.architecture_meta)
+        .bind(&message.structured_data)
+        .execute(pool)
+        .await?;
+
+        if result.rows_affected() > 0 {
+            // 插入了新消息，更新会话统计
+            sqlx::query("UPDATE ai_conversations SET updated_at = ?, total_messages = total_messages + 1 WHERE id = ?")
+                .bind(Utc::now())
+                .bind(&message.conversation_id)
+                .execute(pool)
+                .await?;
+        } else {
+            // 消息已存在，追加内容
+            // 注意：这里假设 message.content 是要追加的增量内容
+            // 同时累加 token_count
+            sqlx::query(
+                "UPDATE ai_messages SET 
+                 content = content || ?,
+                 token_count = IFNULL(token_count, 0) + IFNULL(?, 0),
+                 timestamp = ?
+                 WHERE id = ?",
+            )
+            .bind(&message.content)
+            .bind(message.token_count)
+            .bind(message.timestamp)
+            .bind(&message.id)
+            .execute(pool)
+            .await?;
+
+            // 仅更新会话时间
+            sqlx::query("UPDATE ai_conversations SET updated_at = ? WHERE id = ?")
+                .bind(Utc::now())
+                .bind(&message.conversation_id)
+                .execute(pool)
+                .await?;
+        }
+        Ok(())
     }
 
     /// 获取对话的消息列表
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {
         let pool = self.get_pool()?;
-        let rows = self.get_db()?.get_ai_messages_by_conversation(conversation_id).await?;
+        let rows = self
+            .get_db()?
+            .get_ai_messages_by_conversation(conversation_id)
+            .await?;
         let mapped = rows
             .into_iter()
             .map(|m| crate::models::database::AiMessage {
@@ -1682,6 +1857,9 @@ impl DatabaseService {
                 tool_calls: m.tool_calls,
                 attachments: m.attachments,
                 timestamp: m.timestamp,
+                architecture_type: m.architecture_type,
+                architecture_meta: m.architecture_meta,
+                structured_data: m.structured_data,
             })
             .collect();
         Ok(mapped)
@@ -1720,18 +1898,23 @@ impl DatabaseService {
         description: Option<&str>,
     ) -> Result<()> {
         let pool = self.get_pool()?;
-        self.get_db()?.set_config(category, key, value, description).await
+        self.get_db()?
+            .set_config(category, key, value, description)
+            .await
     }
 
     /// RAG配置管理方法
     pub async fn get_rag_config(&self) -> Result<Option<RagConfig>> {
         let config_json = self.get_config("rag", "config").await?;
-        
+
         if let Some(json_str) = config_json {
             match serde_json::from_str::<RagConfig>(&json_str) {
                 Ok(config) => Ok(Some(config)),
                 Err(e) => {
-                    log::warn!("Failed to parse RAG config from database: {}, using default", e);
+                    log::warn!(
+                        "Failed to parse RAG config from database: {}, using default",
+                        e
+                    );
                     Ok(None)
                 }
             }
@@ -1743,14 +1926,10 @@ impl DatabaseService {
     pub async fn save_rag_config(&self, config: &RagConfig) -> Result<()> {
         let config_json = serde_json::to_string(config)
             .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize RAG config: {}", e)))?;
-        
-        self.set_config(
-            "rag",
-            "config", 
-            &config_json,
-            Some("RAG系统配置")
-        ).await?;
-        
+
+        self.set_config("rag", "config", &config_json, Some("RAG系统配置"))
+            .await?;
+
         Ok(())
     }
 
@@ -1941,7 +2120,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query_as::<_, ScanTask>(
-            "SELECT * FROM scan_tasks WHERE targets LIKE ? ORDER BY created_at DESC"
+            "SELECT * FROM scan_tasks WHERE targets LIKE ? ORDER BY created_at DESC",
         )
         .bind(format!("%{}%", target))
         .fetch_all(pool)
@@ -1960,7 +2139,6 @@ impl DatabaseService {
 
     /// 根据项目ID获取提交记录
 
-
     // --- MCP Server Configs ---
 
     pub async fn create_mcp_server_config(
@@ -1971,7 +2149,9 @@ impl DatabaseService {
         args: &[String],
     ) -> Result<String> {
         let pool = self.get_pool()?;
-        self.get_db()?.create_mcp_server_config(name, description, command, args).await
+        self.get_db()?
+            .create_mcp_server_config(name, description, command, args)
+            .await
     }
 
     pub async fn get_all_mcp_server_configs(&self) -> Result<Vec<McpServerConfig>> {
@@ -1997,7 +2177,9 @@ impl DatabaseService {
 
     pub async fn update_mcp_server_config_enabled(&self, id: &str, enabled: bool) -> Result<()> {
         let pool = self.get_pool()?;
-        self.get_db()?.update_mcp_server_config_enabled(id, enabled).await
+        self.get_db()?
+            .update_mcp_server_config_enabled(id, enabled)
+            .await
     }
 
     pub async fn delete_mcp_server_config(&self, id: &str) -> Result<()> {
@@ -2035,7 +2217,9 @@ impl DatabaseService {
         enabled: bool,
     ) -> Result<()> {
         let pool = self.get_pool()?;
-        self.get_db()?.update_mcp_server_config(id, name, description, command, args, enabled).await
+        self.get_db()?
+            .update_mcp_server_config(id, name, description, command, args, enabled)
+            .await
     }
 
     #[allow(unused)]
@@ -2118,7 +2302,6 @@ impl DatabaseService {
         Ok(())
     }
 
-
     /// 插入默认配置和数据
     async fn insert_default_data(&self, pool: &SqlitePool) -> Result<()> {
         tracing::info!("Starting to insert default data...");
@@ -2198,7 +2381,7 @@ impl DatabaseService {
             .execute(pool)
             .await?;
         }
-    
+
         // 初始化默认AI角色
         self.initialize_default_roles(pool).await?;
 
@@ -2244,18 +2427,17 @@ impl DatabaseService {
 impl Database for DatabaseService {
     async fn create_ai_conversation(&self, conversation: &AiConversation) -> Result<()> {
         let pool = self.get_pool()?;
-        
+
         // 验证外键约束 - 检查vulnerability_id是否存在
         let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
             if !vuln_id.is_empty() {
                 // 检查vulnerability是否存在
-                let exists: Option<(String,)> = sqlx::query_as(
-                    "SELECT id FROM vulnerabilities WHERE id = ?"
-                )
-                .bind(vuln_id)
-                .fetch_optional(pool)
-                .await?;
-                
+                let exists: Option<(String,)> =
+                    sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
+                        .bind(vuln_id)
+                        .fetch_optional(pool)
+                        .await?;
+
                 if exists.is_some() {
                     Some(vuln_id.clone())
                 } else {
@@ -2267,18 +2449,17 @@ impl Database for DatabaseService {
         } else {
             None
         };
-        
+
         // 验证外键约束 - 检查scan_task_id是否存在
         let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
             if !task_id.is_empty() {
                 // 检查scan_task是否存在
-                let exists: Option<(String,)> = sqlx::query_as(
-                    "SELECT id FROM scan_tasks WHERE id = ?"
-                )
-                .bind(task_id)
-                .fetch_optional(pool)
-                .await?;
-                
+                let exists: Option<(String,)> =
+                    sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
+                        .bind(task_id)
+                        .fetch_optional(pool)
+                        .await?;
+
                 if exists.is_some() {
                     Some(task_id.clone())
                 } else {
@@ -2290,7 +2471,7 @@ impl Database for DatabaseService {
         } else {
             None
         };
-        
+
         sqlx::query(
             r#"
             INSERT INTO ai_conversations (id, title, service_name, model_name, model_provider, context_type, project_id, vulnerability_id, scan_task_id, conversation_data, summary, total_messages, total_tokens, cost, tags, is_archived, created_at, updated_at)
@@ -2342,18 +2523,17 @@ impl Database for DatabaseService {
 
     async fn update_ai_conversation(&self, conversation: &AiConversation) -> Result<()> {
         let pool = self.get_pool()?;
-        
+
         // 验证外键约束 - 检查vulnerability_id是否存在
         let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
             if !vuln_id.is_empty() {
                 // 检查vulnerability是否存在
-                let exists: Option<(String,)> = sqlx::query_as(
-                    "SELECT id FROM vulnerabilities WHERE id = ?"
-                )
-                .bind(vuln_id)
-                .fetch_optional(pool)
-                .await?;
-                
+                let exists: Option<(String,)> =
+                    sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
+                        .bind(vuln_id)
+                        .fetch_optional(pool)
+                        .await?;
+
                 if exists.is_some() {
                     Some(vuln_id.clone())
                 } else {
@@ -2365,18 +2545,17 @@ impl Database for DatabaseService {
         } else {
             None
         };
-        
+
         // 验证外键约束 - 检查scan_task_id是否存在
         let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
             if !task_id.is_empty() {
                 // 检查scan_task是否存在
-                let exists: Option<(String,)> = sqlx::query_as(
-                    "SELECT id FROM scan_tasks WHERE id = ?"
-                )
-                .bind(task_id)
-                .fetch_optional(pool)
-                .await?;
-                
+                let exists: Option<(String,)> =
+                    sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
+                        .bind(task_id)
+                        .fetch_optional(pool)
+                        .await?;
+
                 if exists.is_some() {
                     Some(task_id.clone())
                 } else {
@@ -2388,7 +2567,7 @@ impl Database for DatabaseService {
         } else {
             None
         };
-        
+
         sqlx::query(
             r#"
             UPDATE ai_conversations
@@ -2459,8 +2638,8 @@ impl Database for DatabaseService {
     async fn create_ai_message(&self, message: &AiMessage) -> Result<()> {
         let pool = self.get_pool()?;
         let result = sqlx::query(
-            "INSERT OR IGNORE INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, tool_calls, attachments, timestamp)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT OR IGNORE INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, tool_calls, attachments, timestamp, architecture_type, architecture_meta, structured_data)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&message.id)
         .bind(&message.conversation_id)
@@ -2472,6 +2651,9 @@ impl Database for DatabaseService {
         .bind(&message.tool_calls)
         .bind(&message.attachments)
         .bind(message.timestamp)
+        .bind(&message.architecture_type)
+        .bind(&message.architecture_meta)
+        .bind(&message.structured_data)
         .execute(pool)
         .await?;
 
@@ -2485,6 +2667,11 @@ impl Database for DatabaseService {
         }
 
         Ok(())
+    }
+
+    async fn upsert_ai_message_append(&self, message: &AiMessage) -> Result<()> {
+        // Delegate to the existing implementation
+        self.upsert_ai_message_append(message).await
     }
 
     async fn get_ai_messages_by_conversation(
@@ -2524,10 +2711,10 @@ impl Database for DatabaseService {
         let pool = self.get_pool()?;
         let value: Option<String> =
             sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
-        .bind(category)
-        .bind(key)
-        .fetch_optional(pool)
-        .await?;
+                .bind(category)
+                .bind(key)
+                .fetch_optional(pool)
+                .await?;
         Ok(value)
     }
 
@@ -2630,7 +2817,13 @@ impl Database for DatabaseService {
     async fn set_current_ai_role(&self, role_id: Option<&str>) -> Result<()> {
         match role_id {
             Some(id) => {
-                self.set_config("ai", "current_role_id", id, Some("Current selected AI role ID")).await
+                self.set_config(
+                    "ai",
+                    "current_role_id",
+                    id,
+                    Some("Current selected AI role ID"),
+                )
+                .await
             }
             None => {
                 // 删除当前角色配置，表示使用默认助手
@@ -2774,17 +2967,24 @@ impl Database for DatabaseService {
         Ok(rows)
     }
 
-    async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()> {
+    async fn update_scan_task_status(
+        &self,
+        id: &str,
+        status: &str,
+        progress: Option<f64>,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
-        self.get_db()?.update_scan_task_status(id, status, progress).await
+        self.get_db()?
+            .update_scan_task_status(id, status, progress)
+            .await
     }
-    
+
     // Agent任务相关方法实现
     async fn create_agent_task(&self, task: &crate::agents::traits::AgentTask) -> Result<()> {
         let pool = self.get_pool()?;
         let parameters_json = serde_json::to_string(&task.parameters)?;
         let priority_str = format!("{:?}", task.priority);
-        
+
         sqlx::query(
             "INSERT INTO agent_tasks (id, description, target, parameters, user_id, priority, timeout_seconds, status, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, 'Created', ?)"
@@ -2799,17 +2999,17 @@ impl Database for DatabaseService {
         .bind(chrono::Utc::now())
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     async fn get_agent_task(&self, id: &str) -> Result<Option<crate::agents::traits::AgentTask>> {
         let pool = self.get_pool()?;
         let row = sqlx::query("SELECT id, description, target, parameters, user_id, priority, timeout_seconds FROM agent_tasks WHERE id = ?")
             .bind(id)
             .fetch_optional(pool)
             .await?;
-            
+
         if let Some(row) = row {
             let parameters_json: String = row.get("parameters");
             let parameters = serde_json::from_str(&parameters_json).unwrap_or_default();
@@ -2821,7 +3021,7 @@ impl Database for DatabaseService {
                 _ => crate::agents::traits::TaskPriority::Normal,
             };
             let timeout_seconds: Option<i64> = row.get("timeout_seconds");
-            
+
             Ok(Some(crate::agents::traits::AgentTask {
                 id: row.get("id"),
                 description: row.get("description"),
@@ -2835,8 +3035,11 @@ impl Database for DatabaseService {
             Ok(None)
         }
     }
-    
-    async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<crate::agents::traits::AgentTask>> {
+
+    async fn get_agent_tasks(
+        &self,
+        user_id: Option<&str>,
+    ) -> Result<Vec<crate::agents::traits::AgentTask>> {
         let pool = self.get_pool()?;
         let rows = if let Some(user_id) = user_id {
             sqlx::query("SELECT id, description, target, parameters, user_id, priority, timeout_seconds FROM agent_tasks WHERE user_id = ? ORDER BY created_at DESC")
@@ -2848,7 +3051,7 @@ impl Database for DatabaseService {
                 .fetch_all(pool)
                 .await?
         };
-        
+
         let mut tasks = Vec::new();
         for row in rows {
             let parameters_json: String = row.get("parameters");
@@ -2861,7 +3064,7 @@ impl Database for DatabaseService {
                 _ => crate::agents::traits::TaskPriority::Normal,
             };
             let timeout_seconds: Option<i64> = row.get("timeout_seconds");
-            
+
             tasks.push(crate::agents::traits::AgentTask {
                 id: row.get("id"),
                 description: row.get("description"),
@@ -2872,14 +3075,20 @@ impl Database for DatabaseService {
                 timeout: timeout_seconds.map(|t| t as u64),
             });
         }
-        
+
         Ok(tasks)
     }
-    
-    async fn update_agent_task_status(&self, id: &str, status: &str, agent_name: Option<&str>, architecture: Option<&str>) -> Result<()> {
+
+    async fn update_agent_task_status(
+        &self,
+        id: &str,
+        status: &str,
+        agent_name: Option<&str>,
+        architecture: Option<&str>,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "UPDATE agent_tasks SET status = ?, agent_name = ?, architecture = ? WHERE id = ?"
+            "UPDATE agent_tasks SET status = ?, agent_name = ?, architecture = ? WHERE id = ?",
         )
         .bind(status)
         .bind(agent_name)
@@ -2887,11 +3096,17 @@ impl Database for DatabaseService {
         .bind(id)
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
-    async fn update_agent_task_timing(&self, id: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, execution_time_ms: Option<u64>) -> Result<()> {
+
+    async fn update_agent_task_timing(
+        &self,
+        id: &str,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        execution_time_ms: Option<u64>,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
             "UPDATE agent_tasks SET started_at = ?, completed_at = ?, execution_time_ms = ? WHERE id = ?"
@@ -2902,29 +3117,32 @@ impl Database for DatabaseService {
         .bind(id)
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     async fn update_agent_task_error(&self, id: &str, error_message: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query(
-            "UPDATE agent_tasks SET error_message = ? WHERE id = ?"
-        )
-        .bind(error_message)
-        .bind(id)
-        .execute(pool)
-        .await?;
-        
+        sqlx::query("UPDATE agent_tasks SET error_message = ? WHERE id = ?")
+            .bind(error_message)
+            .bind(id)
+            .execute(pool)
+            .await?;
+
         Ok(())
     }
-    
+
     // Agent会话相关方法实现
-    async fn create_agent_session(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()> {
+    async fn create_agent_session(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        agent_name: &str,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
             "INSERT INTO agent_sessions (id, task_id, status, agent_name, created_at, updated_at)
-             VALUES (?, ?, 'Created', ?, ?, ?)"
+             VALUES (?, ?, 'Created', ?, ?, ?)",
         )
         .bind(session_id)
         .bind(task_id)
@@ -2933,35 +3151,36 @@ impl Database for DatabaseService {
         .bind(chrono::Utc::now())
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     async fn update_agent_session_status(&self, session_id: &str, status: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query(
-            "UPDATE agent_sessions SET status = ?, updated_at = ? WHERE id = ?"
-        )
-        .bind(status)
-        .bind(chrono::Utc::now())
-        .bind(session_id)
-        .execute(pool)
-        .await?;
-        
+        sqlx::query("UPDATE agent_sessions SET status = ?, updated_at = ? WHERE id = ?")
+            .bind(status)
+            .bind(chrono::Utc::now())
+            .bind(session_id)
+            .execute(pool)
+            .await?;
+
         Ok(())
     }
-    
-    async fn get_agent_session(&self, session_id: &str) -> Result<Option<crate::agents::session::AgentSessionData>> {
+
+    async fn get_agent_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::agents::session::AgentSessionData>> {
         let pool = self.get_pool()?;
         let row = sqlx::query("SELECT id, task_id, status, agent_name, created_at, updated_at FROM agent_sessions WHERE id = ?")
             .bind(session_id)
             .fetch_optional(pool)
             .await?;
-            
+
         if let Some(row) = row {
             let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
             let updated_at: chrono::DateTime<chrono::Utc> = row.get("updated_at");
-            
+
             Ok(Some(crate::agents::session::AgentSessionData {
                 session_id: row.get("id"),
                 task_id: row.get("task_id"),
@@ -2974,18 +3193,18 @@ impl Database for DatabaseService {
             Ok(None)
         }
     }
-    
+
     async fn list_agent_sessions(&self) -> Result<Vec<crate::agents::session::AgentSessionData>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT id, task_id, status, agent_name, created_at, updated_at FROM agent_sessions ORDER BY created_at DESC")
             .fetch_all(pool)
             .await?;
-        
+
         let mut sessions = Vec::new();
         for row in rows {
             let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
             let updated_at: chrono::DateTime<chrono::Utc> = row.get("updated_at");
-            
+
             sessions.push(crate::agents::session::AgentSessionData {
                 session_id: row.get("id"),
                 task_id: row.get("task_id"),
@@ -2995,10 +3214,10 @@ impl Database for DatabaseService {
                 updated_at,
             });
         }
-        
+
         Ok(sessions)
     }
-    
+
     async fn delete_agent_session(&self, session_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
@@ -3007,7 +3226,7 @@ impl Database for DatabaseService {
             .await?;
         Ok(())
     }
-    
+
     async fn delete_agent_execution_steps(&self, session_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query("DELETE FROM agent_execution_steps WHERE session_id = ?")
@@ -3016,13 +3235,19 @@ impl Database for DatabaseService {
             .await?;
         Ok(())
     }
-    
+
     // Agent执行日志相关方法实现
-    async fn add_agent_session_log(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()> {
+    async fn add_agent_session_log(
+        &self,
+        session_id: &str,
+        level: &str,
+        message: &str,
+        source: &str,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
             "INSERT INTO agent_session_logs (session_id, level, message, source, timestamp)
-             VALUES (?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(session_id)
         .bind(level)
@@ -3031,17 +3256,20 @@ impl Database for DatabaseService {
         .bind(chrono::Utc::now())
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
-    async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<crate::agents::traits::SessionLog>> {
+
+    async fn get_agent_session_logs(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::agents::traits::SessionLog>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT level, message, source, timestamp FROM agent_session_logs WHERE session_id = ? ORDER BY timestamp ASC")
             .bind(session_id)
             .fetch_all(pool)
             .await?;
-        
+
         let mut logs = Vec::new();
         for row in rows {
             let level_str: String = row.get("level");
@@ -3052,7 +3280,7 @@ impl Database for DatabaseService {
                 "Error" => crate::agents::traits::LogLevel::Error,
                 _ => crate::agents::traits::LogLevel::Info,
             };
-            
+
             logs.push(crate::agents::traits::SessionLog {
                 level,
                 message: row.get("message"),
@@ -3060,17 +3288,21 @@ impl Database for DatabaseService {
                 source: row.get("source"),
             });
         }
-        
+
         Ok(logs)
     }
-    
+
     // Agent执行结果相关方法实现
-    async fn save_agent_execution_result(&self, session_id: &str, result: &crate::agents::traits::AgentExecutionResult) -> Result<()> {
+    async fn save_agent_execution_result(
+        &self,
+        session_id: &str,
+        result: &crate::agents::traits::AgentExecutionResult,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         let data_json = serde_json::to_string(&result.data)?;
         let resources_json = serde_json::to_string(&result.resources_used)?;
         let artifacts_json = serde_json::to_string(&result.artifacts)?;
-        
+
         sqlx::query(
             "INSERT INTO agent_execution_results (id, session_id, success, data, error_message, execution_time_ms, resources_used, artifacts, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -3086,17 +3318,20 @@ impl Database for DatabaseService {
         .bind(chrono::Utc::now())
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
-    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<crate::agents::traits::AgentExecutionResult>> {
+
+    async fn get_agent_execution_result(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::agents::traits::AgentExecutionResult>> {
         let pool = self.get_pool()?;
         let row = sqlx::query("SELECT id, success, data, error_message, execution_time_ms, resources_used, artifacts FROM agent_execution_results WHERE session_id = ?")
             .bind(session_id)
             .fetch_optional(pool)
             .await?;
-            
+
         if let Some(row) = row {
             let data_json: String = row.get("data");
             let data = serde_json::from_str(&data_json).ok();
@@ -3105,7 +3340,7 @@ impl Database for DatabaseService {
             let artifacts_json: String = row.get("artifacts");
             let artifacts = serde_json::from_str(&artifacts_json).unwrap_or_default();
             let execution_time_ms: i64 = row.get("execution_time_ms");
-            
+
             Ok(Some(crate::agents::traits::AgentExecutionResult {
                 id: row.get("id"),
                 success: row.get("success"),
@@ -3119,28 +3354,38 @@ impl Database for DatabaseService {
             Ok(None)
         }
     }
-    
+
     // Agent执行步骤相关方法实现
-    async fn save_agent_execution_step(&self, session_id: &str, step: &crate::commands::agent_commands::WorkflowStepDetail) -> Result<()> {
+    async fn save_agent_execution_step(
+        &self,
+        session_id: &str,
+        step: &crate::commands::agent_commands::WorkflowStepDetail,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         let dependencies_json = serde_json::to_string(&step.dependencies)?;
         let result_data_json = serde_json::to_string(&step.result_data)?;
         let tool_result_json = serde_json::to_string(&step.tool_result)?;
-        
+
         // 从step_id中提取step_order（假设step_id类似于"step_1", "step_2"等）
-        let step_order = step.step_id.trim_start_matches("step_")
+        let step_order = step
+            .step_id
+            .trim_start_matches("step_")
             .parse::<i32>()
             .unwrap_or(0);
-        
-        let started_at = step.started_at.as_ref()
+
+        let started_at = step
+            .started_at
+            .as_ref()
             .and_then(|s| s.parse::<i64>().ok())
             .map(|ts| chrono::DateTime::from_timestamp(ts, 0))
             .flatten();
-        let completed_at = step.completed_at.as_ref()
+        let completed_at = step
+            .completed_at
+            .as_ref()
             .and_then(|s| s.parse::<i64>().ok())
             .map(|ts| chrono::DateTime::from_timestamp(ts, 0))
             .flatten();
-        
+
         sqlx::query(
             "INSERT OR REPLACE INTO agent_execution_steps 
              (id, session_id, step_name, step_order, status, started_at, completed_at, duration_ms, result_data, error_message, retry_count, dependencies, tool_result)
@@ -3161,17 +3406,20 @@ impl Database for DatabaseService {
         .bind(&tool_result_json)
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
-    async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>> {
+
+    async fn get_agent_execution_steps(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT id, step_name, status, started_at, completed_at, duration_ms, result_data, error_message, retry_count, dependencies, tool_result FROM agent_execution_steps WHERE session_id = ? ORDER BY step_order ASC")
             .bind(session_id)
             .fetch_all(pool)
             .await?;
-        
+
         let mut steps = Vec::new();
         for row in rows {
             let dependencies_json: String = row.get("dependencies");
@@ -3180,12 +3428,12 @@ impl Database for DatabaseService {
             let result_data = serde_json::from_str(&result_data_json).ok();
             let tool_result_json: String = row.get("tool_result");
             let tool_result = serde_json::from_str(&tool_result_json).ok();
-            
+
             let started_at: Option<chrono::DateTime<chrono::Utc>> = row.get("started_at");
             let completed_at: Option<chrono::DateTime<chrono::Utc>> = row.get("completed_at");
             let duration_ms: i64 = row.get("duration_ms");
             let retry_count: i64 = row.get("retry_count");
-            
+
             steps.push(crate::commands::agent_commands::WorkflowStepDetail {
                 step_id: row.get("id"),
                 step_name: row.get("step_name"),
@@ -3200,11 +3448,19 @@ impl Database for DatabaseService {
                 tool_result,
             });
         }
-        
+
         Ok(steps)
     }
-    
-    async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()> {
+
+    async fn update_agent_execution_step_status(
+        &self,
+        step_id: &str,
+        status: &str,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        duration_ms: Option<u64>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
             "UPDATE agent_execution_steps SET status = ?, started_at = ?, completed_at = ?, duration_ms = ?, error_message = ? WHERE id = ?"
@@ -3217,16 +3473,22 @@ impl Database for DatabaseService {
         .bind(step_id)
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
 }
 
 impl DatabaseService {
     // RAG-specific methods
-    pub async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> Result<String> {
+    pub async fn create_rag_collection(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<String> {
         let pool = self.get_pool()?;
-        self.get_db()?.create_rag_collection(name, description).await
+        self.get_db()?
+            .create_rag_collection(name, description)
+            .await
     }
 
     pub async fn get_rag_collections(&self) -> Result<Vec<CollectionInfo>> {
@@ -3262,9 +3524,15 @@ impl DatabaseService {
         self.get_db()?.delete_rag_collection(collection_id).await
     }
 
-    pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<CollectionInfo>> {
+    pub async fn get_rag_collection_by_id(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<CollectionInfo>> {
         let pool = self.get_pool()?;
-        let row = self.get_db()?.get_rag_collection_by_id(collection_id).await?;
+        let row = self
+            .get_db()?
+            .get_rag_collection_by_id(collection_id)
+            .await?;
         Ok(row.map(|r| {
             let created_at = chrono::DateTime::parse_from_rfc3339(&r.created_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -3286,9 +3554,15 @@ impl DatabaseService {
         }))
     }
 
-    pub async fn get_rag_collection_by_name(&self, collection_name: &str) -> Result<Option<CollectionInfo>> {
+    pub async fn get_rag_collection_by_name(
+        &self,
+        collection_name: &str,
+    ) -> Result<Option<CollectionInfo>> {
         let pool = self.get_pool()?;
-        let row = self.get_db()?.get_rag_collection_by_name(collection_name).await?;
+        let row = self
+            .get_db()?
+            .get_rag_collection_by_name(collection_name)
+            .await?;
         Ok(row.map(|r| {
             let created_at = chrono::DateTime::parse_from_rfc3339(&r.created_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -3312,7 +3586,9 @@ impl DatabaseService {
 
     pub async fn set_rag_collection_active(&self, collection_id: &str, active: bool) -> Result<()> {
         let pool = self.get_pool()?;
-        self.get_db()?.set_rag_collection_active(collection_id, active).await
+        self.get_db()?
+            .set_rag_collection_active(collection_id, active)
+            .await
     }
 
     /// 向量相似度搜索RAG文档块
@@ -3325,9 +3601,14 @@ impl DatabaseService {
         similarity_threshold: f32,
     ) -> Result<Vec<(f32, DocumentChunk)>> {
         let pool = self.get_pool()?;
-        
-        info!("向量搜索RAG文档块: collection_id={}, embedding_dim={}, limit={}, threshold={}", 
-              collection_id, query_embedding.len(), limit, similarity_threshold);
+
+        info!(
+            "向量搜索RAG文档块: collection_id={}, embedding_dim={}, limit={}, threshold={}",
+            collection_id,
+            query_embedding.len(),
+            limit,
+            similarity_threshold
+        );
 
         // 获取所有有嵌入向量的文档块
         let rows = sqlx::query(
@@ -3338,7 +3619,7 @@ impl DatabaseService {
             FROM rag_chunks 
             WHERE collection_id = ? AND embedding_vector IS NOT NULL AND embedding_model = ?
             ORDER BY created_at DESC
-            "#
+            "#,
         )
         .bind(collection_id)
         .bind(embedding_model)
@@ -3346,10 +3627,10 @@ impl DatabaseService {
         .await?;
 
         let mut scored_chunks = Vec::new();
-        
+
         for row in rows {
             let embedding_bytes: Option<Vec<u8>> = row.get("embedding_vector");
-            
+
             if let Some(bytes) = embedding_bytes {
                 // 将字节转换为f32向量
                 if bytes.len() % 4 == 0 {
@@ -3357,10 +3638,10 @@ impl DatabaseService {
                         .chunks_exact(4)
                         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                         .collect();
-                    
+
                     // 计算余弦相似度
                     let similarity = self.cosine_similarity(query_embedding, &embedding);
-                    
+
                     // 只保留超过阈值的结果
                     if similarity >= similarity_threshold {
                         let chunk = DocumentChunk {
@@ -3392,7 +3673,8 @@ impl DatabaseService {
                                             file_type: "unknown".to_string(),
                                             file_size: 0,
                                             chunk_start_char: 0,
-                                            chunk_end_char: row.get::<i64, _>("char_count") as usize,
+                                            chunk_end_char: row.get::<i64, _>("char_count")
+                                                as usize,
                                             page_number: None,
                                             section_title: None,
                                             custom_fields: std::collections::HashMap::new(),
@@ -3406,7 +3688,7 @@ impl DatabaseService {
                                     .unwrap_or_else(|| chrono::Utc::now())
                             },
                         };
-                        
+
                         scored_chunks.push((similarity, chunk));
                     }
                 }
@@ -3416,7 +3698,7 @@ impl DatabaseService {
         // 按相似度降序排序并限制结果数量
         scored_chunks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         scored_chunks.truncate(limit);
-        
+
         info!("向量搜索完成，找到 {} 个相关文档块", scored_chunks.len());
         Ok(scored_chunks)
     }
@@ -3426,19 +3708,24 @@ impl DatabaseService {
         if a.len() != b.len() || a.is_empty() {
             return 0.0;
         }
-        
+
         let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if norm_a == 0.0 || norm_b == 0.0 {
             return 0.0;
         }
-        
+
         dot_product / (norm_a * norm_b)
     }
 
-    pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<DocumentChunk>> {
+    pub async fn search_rag_chunks_by_id(
+        &self,
+        collection_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
 
         // 朴素文本检索：将查询拆为多个词项（英文/数字/点 与 中文分别为词），以 AND 串联
@@ -3448,7 +3735,9 @@ impl DatabaseService {
         for cap in token_re.captures_iter(query) {
             if let Some(m) = cap.get(0) {
                 let t = m.as_str().trim();
-                if !t.is_empty() { tokens.push(t.to_string()); }
+                if !t.is_empty() {
+                    tokens.push(t.to_string());
+                }
             }
         }
 
@@ -3457,19 +3746,26 @@ impl DatabaseService {
             tokens.push(query.trim().to_string());
         }
 
-        info!("搜索RAG文本块: collection_id={}, tokens={:?}, limit={}", collection_id, tokens, limit);
+        info!(
+            "搜索RAG文本块: collection_id={}, tokens={:?}, limit={}",
+            collection_id, tokens, limit
+        );
 
         // 动态拼装 AND 条件：content LIKE ? AND content LIKE ? ...
         let mut sql = String::from(
             "SELECT id, document_id, content, content_hash, chunk_index, char_count, \
              embedding_vector, embedding_model, embedding_dimension, metadata, \
-             created_at, updated_at FROM rag_chunks WHERE collection_id = ?"
+             created_at, updated_at FROM rag_chunks WHERE collection_id = ?",
         );
-        for _ in &tokens { sql.push_str(" AND content LIKE ?"); }
+        for _ in &tokens {
+            sql.push_str(" AND content LIKE ?");
+        }
         sql.push_str(" ORDER BY created_at DESC LIMIT ?");
 
         let mut q = sqlx::query(&sql).bind(collection_id.to_string());
-        for t in &tokens { q = q.bind(format!("%{}%", t)); }
+        for t in &tokens {
+            q = q.bind(format!("%{}%", t));
+        }
         q = q.bind(limit as i64);
 
         let rows = q.fetch_all(pool).await?;
@@ -3504,15 +3800,36 @@ impl DatabaseService {
                     Ok(meta) => meta,
                     Err(_) => {
                         // 尝试解析为HashMap，然后转换
-                        let meta_map: std::collections::HashMap<String, String> = 
+                        let meta_map: std::collections::HashMap<String, String> =
                             serde_json::from_str(&metadata_json).unwrap_or_default();
                         ChunkMetadata {
-                            file_path: meta_map.get("file_path").unwrap_or(&"unknown".to_string()).clone(),
-                            file_name: meta_map.get("file_name").unwrap_or(&"unknown".to_string()).clone(),
-                            file_type: meta_map.get("file_type").unwrap_or(&"unknown".to_string()).clone(),
-                            file_size: meta_map.get("file_size").unwrap_or(&"0".to_string()).parse().unwrap_or(0),
-                            chunk_start_char: meta_map.get("chunk_start_char").unwrap_or(&"0".to_string()).parse().unwrap_or(0),
-                            chunk_end_char: meta_map.get("chunk_end_char").unwrap_or(&content.chars().count().to_string()).parse().unwrap_or(content.chars().count()),
+                            file_path: meta_map
+                                .get("file_path")
+                                .unwrap_or(&"unknown".to_string())
+                                .clone(),
+                            file_name: meta_map
+                                .get("file_name")
+                                .unwrap_or(&"unknown".to_string())
+                                .clone(),
+                            file_type: meta_map
+                                .get("file_type")
+                                .unwrap_or(&"unknown".to_string())
+                                .clone(),
+                            file_size: meta_map
+                                .get("file_size")
+                                .unwrap_or(&"0".to_string())
+                                .parse()
+                                .unwrap_or(0),
+                            chunk_start_char: meta_map
+                                .get("chunk_start_char")
+                                .unwrap_or(&"0".to_string())
+                                .parse()
+                                .unwrap_or(0),
+                            chunk_end_char: meta_map
+                                .get("chunk_end_char")
+                                .unwrap_or(&content.chars().count().to_string())
+                                .parse()
+                                .unwrap_or(content.chars().count()),
                             page_number: meta_map.get("page_number").and_then(|s| s.parse().ok()),
                             section_title: meta_map.get("section_title").cloned(),
                             custom_fields: meta_map,
@@ -3591,8 +3908,8 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 }
             } else {
-                serde_json::from_str::<ChunkMetadata>(&metadata_json)
-                    .unwrap_or_else(|_| ChunkMetadata {
+                serde_json::from_str::<ChunkMetadata>(&metadata_json).unwrap_or_else(|_| {
+                    ChunkMetadata {
                         file_path: "unknown".to_string(),
                         file_name: "unknown".to_string(),
                         file_type: "unknown".to_string(),
@@ -3602,14 +3919,18 @@ impl DatabaseService {
                         page_number: None,
                         section_title: None,
                         custom_fields: std::collections::HashMap::new(),
-                    })
+                    }
+                })
             };
 
-            let created_at_datetime = chrono::DateTime::from_timestamp(created_at, 0).unwrap_or_else(|| chrono::Utc::now());
+            let created_at_datetime = chrono::DateTime::from_timestamp(created_at, 0)
+                .unwrap_or_else(|| chrono::Utc::now());
 
             let embedding: Option<Vec<f32>> = if let Some(bytes) = embedding_bytes {
                 bincode::deserialize::<Vec<f32>>(&bytes).ok()
-            } else { None };
+            } else {
+                None
+            };
 
             chunks.push(DocumentChunk {
                 id,
@@ -3626,9 +3947,14 @@ impl DatabaseService {
         Ok(chunks)
     }
 
-    pub async fn search_rag_chunks(&self, collection_name: &str, query: &str, limit: usize) -> Result<Vec<DocumentChunk>> {
+    pub async fn search_rag_chunks(
+        &self,
+        collection_name: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
-        
+
         // For now, do a simple text search. In a real implementation, you'd use vector similarity
         let rows = sqlx::query(
             r#"
@@ -3666,14 +3992,21 @@ impl DatabaseService {
                 chunk_index: chunk_index as usize,
                 metadata,
                 embedding: None,
-                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?
+                    .with_timezone(&chrono::Utc),
             });
         }
 
         Ok(chunks)
     }
 
-    pub async fn save_rag_query(&self, collection_name: Option<&str>, query: &str, response: &str, processing_time_ms: u64) -> Result<()> {
+    pub async fn save_rag_query(
+        &self,
+        collection_name: Option<&str>,
+        query: &str,
+        response: &str,
+        processing_time_ms: u64,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
@@ -3706,7 +4039,7 @@ impl DatabaseService {
 
     pub async fn get_rag_chunks(&self, collection_name: &str) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
-        
+
         let rows = sqlx::query(
             r#"
             SELECT c.id, c.source_id, c.content, c.content_hash, c.chunk_index, c.metadata, c.created_at
@@ -3740,17 +4073,22 @@ impl DatabaseService {
                 chunk_index: chunk_index as usize,
                 metadata,
                 embedding: None,
-                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?
+                    .with_timezone(&chrono::Utc),
             });
         }
 
         Ok(chunks)
     }
 
-    pub async fn get_rag_query_history(&self, _collection_name: Option<&str>, limit: Option<i32>) -> Result<Vec<QueryResult>> {
+    pub async fn get_rag_query_history(
+        &self,
+        _collection_name: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<QueryResult>> {
         let _pool = self.get_pool()?;
         let _limit = limit.unwrap_or(50);
-        
+
         // For now, return empty results since we need to implement proper query result storage
         // This is a placeholder implementation to fix compilation
         Ok(Vec::new())
@@ -3758,7 +4096,10 @@ impl DatabaseService {
 
     pub async fn delete_rag_document(&self, document_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        let collection_id = self.get_db()?.get_collection_id_by_document_id(document_id).await?;
+        let collection_id = self
+            .get_db()?
+            .get_collection_id_by_document_id(document_id)
+            .await?;
         self.get_db()?.delete_document_cascade(document_id).await?;
         if let Some(cid) = collection_id.as_deref() {
             let _ = self.update_collection_stats(cid).await;
@@ -3768,10 +4109,14 @@ impl DatabaseService {
 
     pub async fn get_rag_documents(&self, collection_name: &str) -> Result<Vec<DocumentSource>> {
         let pool = self.get_pool()?;
-        let rows = self.get_db()?.get_documents_by_collection_name(collection_name).await?;
+        let rows = self
+            .get_db()?
+            .get_documents_by_collection_name(collection_name)
+            .await?;
         let mut documents = Vec::new();
         for r in rows {
-            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&r.metadata)?;
+            let metadata: std::collections::HashMap<String, String> =
+                serde_json::from_str(&r.metadata)?;
             documents.push(DocumentSource {
                 id: r.id,
                 file_path: r.file_path,
@@ -3781,8 +4126,10 @@ impl DatabaseService {
                 file_hash: r.content_hash,
                 chunk_count: 0,
                 ingestion_status: IngestionStatusEnum::Completed,
-                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)?.with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)?.with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)?
+                    .with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)?
+                    .with_timezone(&chrono::Utc),
                 metadata,
             });
         }
@@ -3790,12 +4137,19 @@ impl DatabaseService {
     }
 
     /// 根据集合ID获取文档列表
-    pub async fn get_rag_documents_by_collection_id(&self, collection_id: &str) -> Result<Vec<DocumentSource>> {
+    pub async fn get_rag_documents_by_collection_id(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<DocumentSource>> {
         let pool = self.get_pool()?;
-        let rows = self.get_db()?.get_documents_by_collection_id(collection_id).await?;
+        let rows = self
+            .get_db()?
+            .get_documents_by_collection_id(collection_id)
+            .await?;
         let mut documents = Vec::new();
         for r in rows {
-            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&r.metadata)?;
+            let metadata: std::collections::HashMap<String, String> =
+                serde_json::from_str(&r.metadata)?;
             documents.push(DocumentSource {
                 id: r.id,
                 file_path: r.file_path,
@@ -3805,8 +4159,10 @@ impl DatabaseService {
                 file_hash: r.content_hash,
                 chunk_count: 0,
                 ingestion_status: IngestionStatusEnum::Completed,
-                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)?.with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)?.with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)?
+                    .with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)?
+                    .with_timezone(&chrono::Utc),
                 metadata,
             });
         }
@@ -3814,7 +4170,10 @@ impl DatabaseService {
     }
 
     /// 根据文档ID获取其所有文本块（来自新表 rag_chunks）
-    pub async fn get_rag_chunks_by_document_id(&self, document_id: &str) -> Result<Vec<DocumentChunk>> {
+    pub async fn get_rag_chunks_by_document_id(
+        &self,
+        document_id: &str,
+    ) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query(
@@ -3823,7 +4182,7 @@ impl DatabaseService {
             FROM rag_chunks
             WHERE document_id = ?
             ORDER BY chunk_index ASC
-            "#
+            "#,
         )
         .bind(document_id)
         .fetch_all(pool)
@@ -3853,8 +4212,8 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 }
             } else {
-                serde_json::from_str::<ChunkMetadata>(&metadata_json)
-                    .unwrap_or_else(|_| ChunkMetadata {
+                serde_json::from_str::<ChunkMetadata>(&metadata_json).unwrap_or_else(|_| {
+                    ChunkMetadata {
                         file_path: "unknown".to_string(),
                         file_name: "unknown".to_string(),
                         file_type: "unknown".to_string(),
@@ -3864,7 +4223,8 @@ impl DatabaseService {
                         page_number: None,
                         section_title: None,
                         custom_fields: std::collections::HashMap::new(),
-                    })
+                    }
+                })
             };
 
             let created_at = chrono::DateTime::from_timestamp(created_at_ts, 0)
@@ -3886,9 +4246,14 @@ impl DatabaseService {
     }
 
     /// 通过文档ID获取其所属集合ID
-    pub async fn get_collection_id_by_document_id(&self, document_id: &str) -> Result<Option<String>> {
+    pub async fn get_collection_id_by_document_id(
+        &self,
+        document_id: &str,
+    ) -> Result<Option<String>> {
         let pool = self.get_pool()?;
-        self.get_db()?.get_collection_id_by_document_id(document_id).await
+        self.get_db()?
+            .get_collection_id_by_document_id(document_id)
+            .await
     }
 
     pub async fn create_rag_document(
@@ -3902,7 +4267,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         let document_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
-        
+
         // Calculate file hash and size based on content string
         // 若content为空（部分旧流程未填充），退化为根据文件路径读取实际大小与内容hash
         let (file_hash, file_size) = if content.is_empty() {
@@ -3918,24 +4283,28 @@ impl DatabaseService {
                 Err(_) => (format!("{:x}", md5::compute(file_path.as_bytes())), 0),
             }
         } else {
-            (format!("{:x}", md5::compute(content.as_bytes())), content.len() as i64)
+            (
+                format!("{:x}", md5::compute(content.as_bytes())),
+                content.len() as i64,
+            )
         };
-        
+
         // DAO insert
-        self.get_db()?.insert_document_source(
-            &document_id,
-            collection_id,
-            file_path,
-            file_name,
-            "text",
-            file_size,
-            &file_hash,
-            &file_hash,
-            metadata,
-            &now.to_rfc3339(),
-            &now.to_rfc3339(),
-        )
-        .await?;
+        self.get_db()?
+            .insert_document_source(
+                &document_id,
+                collection_id,
+                file_path,
+                file_name,
+                "text",
+                file_size,
+                &file_hash,
+                &file_hash,
+                metadata,
+                &now.to_rfc3339(),
+                &now.to_rfc3339(),
+            )
+            .await?;
 
         Ok(document_id)
     }
@@ -3955,35 +4324,36 @@ impl DatabaseService {
         let chunk_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
         let now_timestamp = now.timestamp();
-        
+
         // Convert embedding to bytes if provided
         let embedding_bytes = if let Some(emb) = embedding {
             Some(bincode::serialize(emb)?)
         } else {
             None
         };
-        
+
         // Generate content hash
         let content_hash = format!("{:x}", md5::compute(content.as_bytes()));
         let char_count = content.chars().count() as i32;
-        
+
         // DAO insert
-        self.get_db()?.insert_chunk(
-            &chunk_id,
-            document_id,
-            collection_id,
-            content,
-            &content_hash,
-            chunk_index,
-            char_count,
-            embedding_bytes,
-            embedding_model,
-            embedding_dimension,
-            metadata_json,
-            now_timestamp,
-            now_timestamp,
-        )
-        .await?;
+        self.get_db()?
+            .insert_chunk(
+                &chunk_id,
+                document_id,
+                collection_id,
+                content,
+                &content_hash,
+                chunk_index,
+                char_count,
+                embedding_bytes,
+                embedding_model,
+                embedding_dimension,
+                metadata_json,
+                now_timestamp,
+                now_timestamp,
+            )
+            .await?;
 
         Ok(chunk_id)
     }
@@ -3995,7 +4365,9 @@ impl DatabaseService {
     }
 
     // Scenario agent methods
-    pub async fn list_scenario_agents(&self) -> Result<Vec<crate::commands::ai_commands::ScenarioAgentProfile>> {
+    pub async fn list_scenario_agents(
+        &self,
+    ) -> Result<Vec<crate::commands::ai_commands::ScenarioAgentProfile>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT * FROM scenario_agents ORDER BY name")
             .fetch_all(pool)
@@ -4004,14 +4376,17 @@ impl DatabaseService {
         let mut agents = Vec::new();
         for row in rows {
             let profile_json: String = row.get("profile_json");
-            let profile: crate::commands::ai_commands::ScenarioAgentProfile = 
+            let profile: crate::commands::ai_commands::ScenarioAgentProfile =
                 serde_json::from_str(&profile_json)?;
             agents.push(profile);
         }
         Ok(agents)
     }
 
-    pub async fn upsert_scenario_agent(&self, profile: &crate::commands::ai_commands::ScenarioAgentProfile) -> Result<()> {
+    pub async fn upsert_scenario_agent(
+        &self,
+        profile: &crate::commands::ai_commands::ScenarioAgentProfile,
+    ) -> Result<()> {
         let pool = self.get_pool()?;
         let profile_json = serde_json::to_string(profile)?;
         let now = chrono::Utc::now().to_rfc3339();
@@ -4042,7 +4417,13 @@ impl DatabaseService {
     async fn set_current_ai_role(&self, role_id: Option<&str>) -> Result<()> {
         match role_id {
             Some(id) => {
-                self.set_config("ai", "current_role_id", id, Some("Current selected AI role ID")).await
+                self.set_config(
+                    "ai",
+                    "current_role_id",
+                    id,
+                    Some("Current selected AI role ID"),
+                )
+                .await
             }
             None => {
                 // 删除当前角色配置，表示使用默认助手
@@ -4088,7 +4469,7 @@ impl DatabaseService {
             }
         }
     }
-    
+
     /// Get plugins from plugin_registry with pagination and filters
     pub async fn get_plugins_paginated(
         &self,
@@ -4100,14 +4481,16 @@ impl DatabaseService {
     ) -> Result<serde_json::Value> {
         let pool = self.get_pool()?;
         let offset = (page - 1) * page_size;
-        
+
         // Build WHERE clause
         let mut where_clauses = Vec::new();
         if let Some(status) = status_filter {
             if status != "all" {
                 // Handle NULL values - treat them as PendingReview
                 if status == "PendingReview" {
-                    where_clauses.push(format!("COALESCE(validation_status, 'PendingReview') = 'PendingReview'"));
+                    where_clauses.push(format!(
+                        "COALESCE(validation_status, 'PendingReview') = 'PendingReview'"
+                    ));
                 } else {
                     where_clauses.push(format!("validation_status = '{}'", status));
                 }
@@ -4121,20 +4504,21 @@ impl DatabaseService {
                 ));
             }
         }
-        
+
         let where_clause = if where_clauses.is_empty() {
             String::new()
         } else {
             format!("WHERE {}", where_clauses.join(" AND "))
         };
-        
+
         // Get total count
-        let count_query = format!("SELECT COUNT(*) as count FROM plugin_registry {}", where_clause);
-        let count_row = sqlx::query(&count_query)
-            .fetch_one(pool)
-            .await?;
+        let count_query = format!(
+            "SELECT COUNT(*) as count FROM plugin_registry {}",
+            where_clause
+        );
+        let count_row = sqlx::query(&count_query).fetch_one(pool).await?;
         let total: i64 = count_row.get("count");
-        
+
         // Get paginated data
         let data_query = format!(
             r#"
@@ -4163,27 +4547,31 @@ impl DatabaseService {
             "#,
             where_clause
         );
-        
+
         let rows = sqlx::query(&data_query)
             .bind(user_id.unwrap_or("default"))
             .bind(page_size)
             .bind(offset)
             .fetch_all(pool)
             .await?;
-        
+
         let mut plugins = Vec::new();
         for row in rows {
             let plugin_id: String = row.get("plugin_id");
             let plugin_name: String = row.get("plugin_name");
             let code: Option<String> = row.try_get("code").ok();
             let description: Option<String> = row.try_get("description").ok();
-            let vuln_type: String = row.try_get("vuln_type").unwrap_or_else(|_| "unknown".to_string());
+            let vuln_type: String = row
+                .try_get("vuln_type")
+                .unwrap_or_else(|_| "unknown".to_string());
             let main_category: Option<String> = row.try_get("main_category").ok();
             let quality_score: Option<f64> = row.try_get("quality_score").ok();
             let status: Option<String> = row.try_get("status").ok();
-            let generated_at: String = row.try_get("generated_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+            let generated_at: String = row
+                .try_get("generated_at")
+                .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
             let is_favorited: i64 = row.try_get("is_favorited").unwrap_or(0);
-            
+
             let plugin = serde_json::json!({
                 "plugin_id": plugin_id,
                 "plugin_name": plugin_name,
@@ -4211,10 +4599,10 @@ impl DatabaseService {
                 "model": "AI Generated",
                 "is_favorited": is_favorited == 1
             });
-            
+
             plugins.push(plugin);
         }
-        
+
         Ok(serde_json::json!({
             "data": plugins,
             "total": total,
@@ -4223,11 +4611,11 @@ impl DatabaseService {
             "total_pages": (total + page_size - 1) / page_size
         }))
     }
-    
+
     /// Get all plugins from plugin_registry table for review (deprecated, use get_plugins_paginated)
     pub async fn get_plugins_from_registry(&self) -> Result<Vec<serde_json::Value>> {
         let pool = self.get_pool()?;
-        
+
         let rows = sqlx::query(
             r#"
             SELECT 
@@ -4248,11 +4636,11 @@ impl DatabaseService {
                 updated_at
             FROM plugin_registry
             ORDER BY created_at DESC
-            "#
+            "#,
         )
         .fetch_all(pool)
         .await?;
-        
+
         let mut plugins = Vec::new();
         for row in rows {
             // Extract data from row
@@ -4260,12 +4648,16 @@ impl DatabaseService {
             let plugin_name: String = row.get("plugin_name");
             let code: Option<String> = row.try_get("code").ok();
             let description: Option<String> = row.try_get("description").ok();
-            let vuln_type: String = row.try_get("vuln_type").unwrap_or_else(|_| "unknown".to_string());
+            let vuln_type: String = row
+                .try_get("vuln_type")
+                .unwrap_or_else(|_| "unknown".to_string());
             let main_category: Option<String> = row.try_get("main_category").ok();
             let quality_score: Option<f64> = row.try_get("quality_score").ok();
             let status: Option<String> = row.try_get("status").ok();
-            let generated_at: String = row.try_get("generated_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
-            
+            let generated_at: String = row
+                .try_get("generated_at")
+                .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+
             // Create plugin JSON object
             let plugin = serde_json::json!({
                 "plugin_id": plugin_id,
@@ -4293,161 +4685,161 @@ impl DatabaseService {
                 "generated_at": generated_at,
                 "model": "AI Generated"
             });
-            
+
             plugins.push(plugin);
         }
-        
+
         Ok(plugins)
     }
-    
+
     /// Update plugin status in registry
     pub async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        
+
         sqlx::query(
             r#"
             UPDATE plugin_registry 
             SET validation_status = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(status)
         .bind(plugin_id)
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Update plugin code in registry
     pub async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        
+
         sqlx::query(
             r#"
             UPDATE plugin_registry 
             SET plugin_code = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(code)
         .bind(plugin_id)
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Delete plugin from registry
     pub async fn delete_plugin_from_registry(&self, plugin_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        
+
         sqlx::query(
             r#"
             DELETE FROM plugin_registry 
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(plugin_id)
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Toggle plugin favorite status
-    pub async fn toggle_plugin_favorite(&self, plugin_id: &str, user_id: Option<&str>) -> Result<bool> {
+    pub async fn toggle_plugin_favorite(
+        &self,
+        plugin_id: &str,
+        user_id: Option<&str>,
+    ) -> Result<bool> {
         let pool = self.get_pool()?;
         let uid = user_id.unwrap_or("default");
-        
+
         // Check if already favorited
         let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM plugin_favorites WHERE user_id = ? AND plugin_id = ?"
+            "SELECT COUNT(*) as count FROM plugin_favorites WHERE user_id = ? AND plugin_id = ?",
         )
         .bind(uid)
         .bind(plugin_id)
         .fetch_one(pool)
         .await?;
-        
+
         let count: i64 = row.get("count");
-        
+
         if count > 0 {
             // Remove favorite
-            sqlx::query(
-                "DELETE FROM plugin_favorites WHERE user_id = ? AND plugin_id = ?"
-            )
-            .bind(uid)
-            .bind(plugin_id)
-            .execute(pool)
-            .await?;
+            sqlx::query("DELETE FROM plugin_favorites WHERE user_id = ? AND plugin_id = ?")
+                .bind(uid)
+                .bind(plugin_id)
+                .execute(pool)
+                .await?;
             Ok(false)
         } else {
             // Add favorite
-            sqlx::query(
-                "INSERT INTO plugin_favorites (user_id, plugin_id) VALUES (?, ?)"
-            )
-            .bind(uid)
-            .bind(plugin_id)
-            .execute(pool)
-            .await?;
+            sqlx::query("INSERT INTO plugin_favorites (user_id, plugin_id) VALUES (?, ?)")
+                .bind(uid)
+                .bind(plugin_id)
+                .execute(pool)
+                .await?;
             Ok(true)
         }
     }
-    
+
     /// Get favorited plugins
     pub async fn get_favorited_plugins(&self, user_id: Option<&str>) -> Result<Vec<String>> {
         let pool = self.get_pool()?;
         let uid = user_id.unwrap_or("default");
-        
+
         let rows = sqlx::query(
-            "SELECT plugin_id FROM plugin_favorites WHERE user_id = ? ORDER BY favorited_at DESC"
+            "SELECT plugin_id FROM plugin_favorites WHERE user_id = ? ORDER BY favorited_at DESC",
         )
         .bind(uid)
         .fetch_all(pool)
         .await?;
-        
+
         let plugin_ids: Vec<String> = rows.iter().map(|row| row.get("plugin_id")).collect();
         Ok(plugin_ids)
     }
-    
+
     /// Get plugin review statistics
     pub async fn get_plugin_review_stats(&self) -> Result<serde_json::Value> {
         let pool = self.get_pool()?;
-        
+
         // Get counts for each status (treat NULL as PendingReview)
         let total_row = sqlx::query("SELECT COUNT(*) as count FROM plugin_registry")
             .fetch_one(pool)
             .await?;
         let total: i64 = total_row.get("count");
-        
+
         let pending_row = sqlx::query(
             "SELECT COUNT(*) as count FROM plugin_registry WHERE COALESCE(validation_status, 'PendingReview') = 'PendingReview'"
         )
         .fetch_one(pool)
         .await?;
         let pending: i64 = pending_row.get("count");
-        
+
         let approved_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM plugin_registry WHERE validation_status = 'Approved'"
+            "SELECT COUNT(*) as count FROM plugin_registry WHERE validation_status = 'Approved'",
         )
         .fetch_one(pool)
         .await?;
         let approved: i64 = approved_row.get("count");
-        
+
         let rejected_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM plugin_registry WHERE validation_status = 'Rejected'"
+            "SELECT COUNT(*) as count FROM plugin_registry WHERE validation_status = 'Rejected'",
         )
         .fetch_one(pool)
         .await?;
         let rejected: i64 = rejected_row.get("count");
-        
+
         let failed_row = sqlx::query(
             "SELECT COUNT(*) as count FROM plugin_registry WHERE validation_status = 'ValidationFailed'"
         )
         .fetch_one(pool)
         .await?;
         let failed: i64 = failed_row.get("count");
-        
+
         Ok(serde_json::json!({
             "total": total,
             "pending": pending,
@@ -4456,11 +4848,14 @@ impl DatabaseService {
             "failed": failed
         }))
     }
-    
+
     /// Get plugin by ID from registry
-    pub async fn get_plugin_from_registry(&self, plugin_id: &str) -> Result<Option<serde_json::Value>> {
+    pub async fn get_plugin_from_registry(
+        &self,
+        plugin_id: &str,
+    ) -> Result<Option<serde_json::Value>> {
         let pool = self.get_pool()?;
-        
+
         let row = sqlx::query(
             r#"
             SELECT 
@@ -4481,23 +4876,27 @@ impl DatabaseService {
                 updated_at
             FROM plugin_registry
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(plugin_id)
         .fetch_optional(pool)
         .await?;
-        
+
         if let Some(row) = row {
             let plugin_id: String = row.get("plugin_id");
             let plugin_name: String = row.get("plugin_name");
             let code: Option<String> = row.try_get("code").ok();
             let description: Option<String> = row.try_get("description").ok();
-            let vuln_type: String = row.try_get("vuln_type").unwrap_or_else(|_| "unknown".to_string());
+            let vuln_type: String = row
+                .try_get("vuln_type")
+                .unwrap_or_else(|_| "unknown".to_string());
             let quality_score: Option<f64> = row.try_get("quality_score").ok();
             let status: Option<String> = row.try_get("status").ok();
-            let generated_at: String = row.try_get("generated_at").unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+            let generated_at: String = row
+                .try_get("generated_at")
+                .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
             let main_category: Option<String> = row.try_get("main_category").ok();
-            
+
             let plugin = serde_json::json!({
                 "plugin_id": plugin_id,
                 "plugin_name": plugin_name,
@@ -4517,7 +4916,7 @@ impl DatabaseService {
                 "generated_at": generated_at,
                 "model": "AI Generated"
             });
-            
+
             Ok(Some(plugin))
         } else {
             Ok(None)

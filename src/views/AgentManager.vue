@@ -11,17 +11,115 @@
       </div>
     </div>
 
+    <!-- 搜索和筛选栏 -->
+    <div class="bg-base-200 p-4 rounded-lg space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <!-- 搜索框 -->
+        <div class="form-control">
+          <div class="flex items-center gap-0 border border-base-300 rounded-lg overflow-hidden bg-base-100 hover:border-primary/50 transition-colors h-8">
+            <span class="px-2 h-full flex items-center bg-base-200 text-base-content/70">
+              <i class="fas fa-search text-xs"></i>
+            </span>
+            <input 
+              v-model="searchText" 
+              type="text" 
+              placeholder="搜索Agent名称..." 
+              class="flex-1 px-2 h-full bg-transparent outline-none text-sm"
+            />
+            <button 
+              v-if="searchText" 
+              class="px-2 h-full hover:bg-base-200 transition-colors" 
+              @click="searchText = ''"
+              title="清除搜索"
+            >
+              <i class="fas fa-times text-xs text-base-content/50 hover:text-error"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- 引擎筛选 -->
+        <div class="form-control">
+          <select v-model="selectedEngine" class="select select-sm select-bordered w-full">
+            <option value="">全部引擎</option>
+            <option value="auto">auto</option>
+            <option value="travel">travel</option>
+            <option value="plan-execute">plan-execute</option>
+            <option value="react">react</option>
+            <option value="rewoo">rewoo</option>
+            <option value="llm-compiler">llm-compiler</option>
+          </select>
+        </div>
+
+        <!-- 状态筛选 -->
+        <div class="form-control">
+          <select v-model="selectedStatus" class="select select-sm select-bordered w-full">
+            <option value="">全部状态</option>
+            <option value="enabled">已启用</option>
+            <option value="disabled">已停用</option>
+          </select>
+        </div>
+
+        <!-- 每页显示数量 -->
+        <div class="form-control">
+          <select v-model.number="pageSize" @change="handlePageSizeChange" class="select select-sm select-bordered w-full">
+            <option :value="10">每页 10 条</option>
+            <option :value="20">每页 20 条</option>
+            <option :value="50">每页 50 条</option>
+            <option :value="100">每页 100 条</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 批量操作栏 -->
+      <div v-if="selectedAgentIds.size > 0" class="flex items-center gap-3 p-3 bg-primary/10 rounded border border-primary/30">
+        <span class="text-sm font-medium">
+          <i class="fas fa-check-square mr-1"></i>
+          已选择 {{ selectedAgentIds.size }} 个Agent
+        </span>
+        <div class="flex gap-2 ml-auto">
+          <button class="btn btn-xs btn-success" @click="batchEnableAgents" title="批量启用">
+            <i class="fas fa-check-circle"></i> 启用
+          </button>
+          <button class="btn btn-xs btn-warning" @click="batchDisableAgents" title="批量停用">
+            <i class="fas fa-ban"></i> 停用
+          </button>
+          <button class="btn btn-xs btn-error" @click="batchDeleteAgents" title="批量删除">
+            <i class="fas fa-trash"></i> 删除
+          </button>
+          <button class="btn btn-xs btn-ghost" @click="clearSelection" title="取消选择">
+            <i class="fas fa-times"></i> 取消
+          </button>
+        </div>
+      </div>
+
+      <!-- 统计信息 -->
+      <div class="flex items-center gap-4 text-xs opacity-70">
+        <span><i class="fas fa-list mr-1"></i>共 {{ filteredAgents.length }} 个Agent</span>
+        <span><i class="fas fa-check-circle text-success mr-1"></i>{{ agents.filter(a => a.enabled).length }} 个已启用</span>
+        <span><i class="fas fa-ban text-warning mr-1"></i>{{ agents.filter(a => !a.enabled).length }} 个已停用</span>
+      </div>
+    </div>
+
     <div v-if="loading" class="alert">
       <i class="fas fa-spinner animate-spin"></i>
       正在加载...
     </div>
 
-    <div v-if="agents.length === 0 && !loading" class="text-sm opacity-70">暂无Agent，点击“新增Agent”开始配置。</div>
+    <div v-if="agents.length === 0 && !loading" class="text-sm opacity-70">暂无Agent,点击"新增Agent"开始配置。</div>
 
-    <div class="overflow-y-auto">
+    <div class="flex-1 overflow-y-auto">
       <table class="table table-zebra w-full">
-        <thead>
+        <thead class="sticky top-0 z-10 bg-base-200">
           <tr>
+            <th class="w-8">
+              <input 
+                type="checkbox" 
+                class="checkbox checkbox-sm"
+                :checked="paginatedAgents.length > 0 && paginatedAgents.every(a => selectedAgentIds.has(a.id))"
+                :indeterminate="paginatedAgents.some(a => selectedAgentIds.has(a.id)) && !paginatedAgents.every(a => selectedAgentIds.has(a.id))"
+                @change="toggleSelectAll"
+              />
+            </th>
             <th class="w-28">状态</th>
             <th class="w-56">名称</th>
             <th class="w-40">引擎</th>
@@ -31,7 +129,15 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(agent, idx) in agents" :key="agent.id || idx">
+          <tr v-for="(agent, idx) in paginatedAgents" :key="agent.id || idx" class="hover">
+            <td>
+              <input 
+                type="checkbox" 
+                class="checkbox checkbox-sm"
+                :checked="selectedAgentIds.has(agent.id)"
+                @change="toggleSelectAgent(agent.id)"
+              />
+            </td>
             <td>
               <div class="flex items-center gap-2">
                 <span class="badge" :class="agent.enabled ? 'badge-success' : 'badge-ghost'">{{ agent.enabled ? '启用' : '停用' }}</span>
@@ -60,6 +166,46 @@
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- 分页控件 -->
+    <div v-if="filteredAgents.length > 0" class="flex items-center justify-between bg-base-200 p-3 rounded-lg">
+      <div class="text-sm opacity-70">
+        显示第 {{ (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, filteredAgents.length) }} 条，共 {{ filteredAgents.length }} 条
+      </div>
+      <div class="join">
+        <button 
+          class="join-item btn btn-sm" 
+          :disabled="currentPage === 1"
+          @click="currentPage = 1"
+        >
+          <i class="fas fa-angle-double-left"></i>
+        </button>
+        <button 
+          class="join-item btn btn-sm" 
+          :disabled="currentPage === 1"
+          @click="currentPage--"
+        >
+          <i class="fas fa-angle-left"></i>
+        </button>
+        <button class="join-item btn btn-sm btn-active">
+          {{ currentPage }} / {{ totalPages }}
+        </button>
+        <button 
+          class="join-item btn btn-sm" 
+          :disabled="currentPage === totalPages"
+          @click="currentPage++"
+        >
+          <i class="fas fa-angle-right"></i>
+        </button>
+        <button 
+          class="join-item btn btn-sm" 
+          :disabled="currentPage === totalPages"
+          @click="currentPage = totalPages"
+        >
+          <i class="fas fa-angle-double-right"></i>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -611,10 +757,44 @@ const selectedExecutorTemplateEdit = ref<number | null>(null)
 const loading = ref(false)
 const isRefreshingTools = ref(false)
 
+// 搜索和筛选变量
+const searchText = ref('')
+const selectedEngine = ref('')
+const selectedStatus = ref('')
+const selectedAgentIds = ref<Set<string>>(new Set())
+
+// 分页变量
+const currentPage = ref(1)
+const pageSize = ref(10)
+
 // 统一提示词系统相关数据
 const promptGroups = ref<any[]>([])
 const finalPromptPreview = ref('')
 const showPromptPreview = ref(false)
+
+// 计算属性：筛选后的Agent列表
+const filteredAgents = computed(() => {
+  return agents.value.filter(agent => {
+    const matchesSearch = !searchText.value || 
+      agent.name.toLowerCase().includes(searchText.value.toLowerCase())
+    const matchesEngine = !selectedEngine.value || agent.engine === selectedEngine.value
+    const matchesStatus = !selectedStatus.value || 
+      (selectedStatus.value === 'enabled' ? agent.enabled : !agent.enabled)
+    return matchesSearch && matchesEngine && matchesStatus
+  })
+})
+
+// 计算属性：总页数
+const totalPages = computed(() => {
+  return Math.ceil(filteredAgents.value.length / pageSize.value) || 1
+})
+
+// 计算属性：分页后的Agent列表
+const paginatedAgents = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredAgents.value.slice(start, end)
+})
 
 const newProfile = (): AgentProfile => ({
   id: `agent_${Date.now()}`,
@@ -1053,6 +1233,11 @@ watch(() => editingAgent.value?.engine, async (eng) => {
   await loadPromptGroups(eng ?? undefined)
 })
 
+// 筛选条件改变时重置分页
+watch([searchText, selectedEngine, selectedStatus], () => {
+  currentPage.value = 1
+})
+
 const applyTemplateToEdit = async (kind: 'planner' | 'executor', templateId: number|null) => {
   if (!editingAgent.value || !templateId) return
   
@@ -1158,6 +1343,94 @@ const previewFinalPrompt = async () => {
     finalPromptPreview.value = '预览失败'
     showPromptPreview.value = true
   }
+}
+
+const batchEnableAgents = async () => {
+  if (selectedAgentIds.value.size === 0) return
+  
+  try {
+    const agentIds = Array.from(selectedAgentIds.value)
+    for (const id of agentIds) {
+      const agent = agents.value.find(a => a.id === id)
+      if (agent && !agent.enabled) {
+        agent.enabled = true
+        agent.updated_at = new Date().toISOString()
+        await saveAgent(agent)
+      }
+    }
+    clearSelection()
+  } catch (error) {
+    console.error('Batch enable failed:', error)
+  }
+}
+
+const batchDisableAgents = async () => {
+  if (selectedAgentIds.value.size === 0) return
+  
+  try {
+    const agentIds = Array.from(selectedAgentIds.value)
+    for (const id of agentIds) {
+      const agent = agents.value.find(a => a.id === id)
+      if (agent && agent.enabled) {
+        agent.enabled = false
+        agent.updated_at = new Date().toISOString()
+        await saveAgent(agent)
+      }
+    }
+    clearSelection()
+  } catch (error) {
+    console.error('Batch disable failed:', error)
+  }
+}
+
+const batchDeleteAgents = async () => {
+  if (selectedAgentIds.value.size === 0) return
+  
+  if (!confirm(`确定要删除选中的 ${selectedAgentIds.value.size} 个Agent吗？此操作不可撤销。`)) {
+    return
+  }
+  
+  try {
+    const agentIds = Array.from(selectedAgentIds.value)
+    for (const id of agentIds) {
+      const idx = agents.value.findIndex(a => a.id === id)
+      if (idx !== -1) {
+        await removeAgent(idx)
+      }
+    }
+    clearSelection()
+    currentPage.value = 1
+  } catch (error) {
+    console.error('Batch delete failed:', error)
+  }
+}
+
+const clearSelection = () => {
+  selectedAgentIds.value.clear()
+  selectedAgentIds.value = new Set(selectedAgentIds.value)
+}
+
+const toggleSelectAgent = (agentId: string) => {
+  if (selectedAgentIds.value.has(agentId)) {
+    selectedAgentIds.value.delete(agentId)
+  } else {
+    selectedAgentIds.value.add(agentId)
+  }
+  selectedAgentIds.value = new Set(selectedAgentIds.value)
+}
+
+const toggleSelectAll = (e: Event) => {
+  const checked = (e.target as HTMLInputElement).checked
+  if (checked) {
+    paginatedAgents.value.forEach(agent => selectedAgentIds.value.add(agent.id))
+  } else {
+    paginatedAgents.value.forEach(agent => selectedAgentIds.value.delete(agent.id))
+  }
+  selectedAgentIds.value = new Set(selectedAgentIds.value)
+}
+
+const handlePageSizeChange = () => {
+  currentPage.value = 1
 }
 
 const confirmSaveAgent = async () => {

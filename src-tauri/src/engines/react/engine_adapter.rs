@@ -4,13 +4,15 @@
 
 use super::executor::{ReactExecutor, ReactExecutorConfig};
 use super::types::*;
-use crate::agents::traits::{AgentTask, AgentSession, AgentExecutionResult, PerformanceCharacteristics};
+use crate::agents::traits::{
+    AgentExecutionResult, AgentSession, AgentTask, PerformanceCharacteristics,
+};
 use crate::services::ai::AiService;
 use crate::services::database::DatabaseService;
 use crate::services::mcp::McpService;
 use crate::services::prompt_db::PromptRepository;
 use crate::utils::ordered_message::ChunkType;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -64,7 +66,8 @@ impl ReactEngine {
     ) -> Result<AgentExecutionResult> {
         // 创建 PromptRepository（如果有数据库服务）
         let prompt_repo = if let Some(db_service) = &self.db_service {
-            let pool = db_service.get_pool()
+            let pool = db_service
+                .get_pool()
                 .map_err(|e| anyhow!("DB pool error: {}", e))?;
             Some(Arc::new(PromptRepository::new(pool.clone())))
         } else {
@@ -76,7 +79,8 @@ impl ReactEngine {
             Ok(_adapter_manager) => {
                 let adapter = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
-                        crate::tools::get_framework_adapter(crate::tools::FrameworkType::React).await
+                        crate::tools::get_framework_adapter(crate::tools::FrameworkType::React)
+                            .await
                     })
                 });
                 match adapter {
@@ -110,9 +114,11 @@ impl ReactEngine {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        println!("ReactEngine execute: conversation_id={:?}, message_id={:?}, execution_id={:?}", 
-            conversation_id, message_id, execution_id);
-        
+        println!(
+            "ReactEngine execute: conversation_id={:?}, message_id={:?}, execution_id={:?}",
+            conversation_id, message_id, execution_id
+        );
+
         // ✅ 获取取消令牌（优先从全局管理器获取，如果有execution_id）
         let cancellation_token = if let Some(exec_id) = &execution_id {
             match crate::managers::cancellation_manager::get_token(exec_id).await {
@@ -128,7 +134,7 @@ impl ReactEngine {
         } else {
             None
         };
-        
+
         let executor_config = ReactExecutorConfig {
             react_config: self.config.clone(),
             enable_streaming: true,
@@ -138,23 +144,26 @@ impl ReactEngine {
             app_handle: self.app_handle.clone(),
             prompt_repo,
             framework_adapter,
-            task_parameters: Some(serde_json::to_value(&task.parameters).unwrap_or(serde_json::Value::Object(serde_json::Map::new()))),
-            cancellation_token,  // ✅ 传递取消令牌
+            task_parameters: Some(
+                serde_json::to_value(&task.parameters)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+            ),
+            cancellation_token, // ✅ 传递取消令牌
         };
 
-        let executor = ReactExecutor::new(
-            task.description.clone(),
-            executor_config.clone(),
-        );
+        let executor = ReactExecutor::new(task.description.clone(), executor_config.clone());
 
         // 克隆服务引用和 IDs 供闭包使用
         let ai_service = self.ai_service.clone();
         let mcp_service = self.mcp_service.clone();
         let conv_id_for_llm = conversation_id.clone();
         let msg_id_for_llm = message_id.clone();
-        
+
         // 定义 LLM 调用闭包
-        let llm_call = move |system_prompt: Option<String>, user_prompt: String, skip_save_user_message: bool, original_user_input: String| {
+        let llm_call = move |system_prompt: Option<String>,
+                             user_prompt: String,
+                             skip_save_user_message: bool,
+                             original_user_input: String| {
             let ai_service = ai_service.clone();
             let conv_id = conv_id_for_llm.clone();
             let msg_id = msg_id_for_llm.clone();
@@ -168,25 +177,27 @@ impl ReactEngine {
                     } else {
                         None // 没有原始输入则不保存
                     };
-                    
+
                     // 调用 AI 服务进行 LLM 请求
                     service
                         .send_message_stream_with_save_control(
-                            Some(&user_prompt), // 完整的user_prompt用于LLM推理
-                            user_to_save, // 保存到数据库的用户消息（原始输入或None）
+                            Some(&user_prompt),       // 完整的user_prompt用于LLM推理
+                            user_to_save,             // 保存到数据库的用户消息（原始输入或None）
                             system_prompt.as_deref(), // system_prompt
-                            conv_id, // conversation_id
-                            msg_id, // message_id
-                            true, // stream (启用流式输出)
-                            false, // is_final (由每个chunk自行决定)
+                            conv_id,                  // conversation_id
+                            msg_id,                   // message_id
+                            true,                     // stream (启用流式输出)
+                            false,                    // is_final (由每个chunk自行决定)
                             Some(ChunkType::Content), // chunk_type
+                            Some(crate::utils::ordered_message::ArchitectureType::ReAct), // architecture_type
                         )
                         .await
                         .map_err(|e| anyhow!("LLM call failed: {}", e))
                 } else {
                     Err(anyhow!("AI service not configured"))
                 }
-            }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
+            })
+                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
         };
 
         // 定义工具执行闭包 - 使用框架适配器统一路由工具调用
@@ -197,13 +208,14 @@ impl ReactEngine {
                     // 构造 UnifiedToolCall
                     use sentinel_tools::unified_types::UnifiedToolCall;
                     use std::collections::HashMap;
-                    
-                    let parameters: HashMap<String, serde_json::Value> = if let Some(obj) = tool_call.args.as_object() {
-                        obj.clone().into_iter().collect()
-                    } else {
-                        HashMap::new()
-                    };
-                    
+
+                    let parameters: HashMap<String, serde_json::Value> =
+                        if let Some(obj) = tool_call.args.as_object() {
+                            obj.clone().into_iter().collect()
+                        } else {
+                            HashMap::new()
+                        };
+
                     let unified_call = UnifiedToolCall {
                         id: uuid::Uuid::new_v4().to_string(),
                         tool_name: tool_call.tool.clone(),
@@ -212,14 +224,17 @@ impl ReactEngine {
                         context: HashMap::new(),
                         retry_count: 0,
                     };
-                    
+
                     // 通过框架适配器执行工具（统一路由内置工具和MCP工具）
                     match adapter.execute_tool(unified_call).await {
                         Ok(result) => {
                             if result.success {
                                 Ok(result.output)
                             } else {
-                                Err(anyhow!("Tool execution failed: {}", result.error.unwrap_or_else(|| "Unknown error".to_string())))
+                                Err(anyhow!(
+                                    "Tool execution failed: {}",
+                                    result.error.unwrap_or_else(|| "Unknown error".to_string())
+                                ))
                             }
                         }
                         Err(e) => Err(anyhow!("Tool execution failed: {}", e)),
@@ -229,15 +244,112 @@ impl ReactEngine {
                     tracing::error!("Framework adapter not available for tool execution");
                     Err(anyhow!("Tool does not exist: {}", tool_call.tool))
                 }
-            }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>>
+            })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>,
+                >
         };
 
         // 执行循环
         let trace = executor.run(llm_call, tool_executor).await?;
-        
+
         // ✅ 清理取消令牌
         if let Some(exec_id) = &execution_id {
             crate::managers::cancellation_manager::cleanup_token(exec_id).await;
+        }
+
+        // 保存完整的AI响应消息到数据库
+        if let (Some(db), Some(conv_id), Some(msg_id)) =
+            (&self.db_service, &conversation_id, &message_id)
+        {
+            use crate::models::database::AiMessage;
+            use chrono::Utc;
+
+            // 提取最终答案
+            let final_answer = trace
+                .steps
+                .iter()
+                .rev()
+                .find(|step| matches!(step.step_type, ReactStepType::Final { .. }))
+                .and_then(|step| {
+                    if let ReactStepType::Final { answer, .. } = &step.step_type {
+                        Some(answer.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "No final answer".to_string());
+
+            // 构建结构化数据
+            let structured_data = serde_json::json!({
+                "reactSteps": trace.steps.iter().map(|step| {
+                    match &step.step_type {
+                        ReactStepType::Thought { content, .. } => serde_json::json!({
+                            "thought": content,
+                        }),
+                        ReactStepType::Action { tool_call } => serde_json::json!({
+                            "action": {
+                                "tool": tool_call.tool,
+                                "args": tool_call.args,
+                                "status": "completed",
+                            }
+                        }),
+                        ReactStepType::Observation { tool_name, result, success, .. } => serde_json::json!({
+                            "observation": result,
+                            "action": {
+                                "tool": tool_name,
+                                "status": if *success { "success" } else { "failed" },
+                            }
+                        }),
+                        ReactStepType::Final { answer, citations } => serde_json::json!({
+                            "finalAnswer": answer,
+                            "citations": citations,
+                        }),
+                        ReactStepType::Error { error_type, message, retryable } => serde_json::json!({
+                            "error": {
+                                "type": error_type,
+                                "message": message,
+                                "retryable": retryable,
+                            }
+                        }),
+                    }
+                }).collect::<Vec<_>>(),
+            });
+
+            let ai_msg = AiMessage {
+                id: msg_id.clone(),
+                conversation_id: conv_id.clone(),
+                role: "assistant".to_string(),
+                content: final_answer,
+                metadata: None,
+                token_count: Some(trace.metrics.total_tokens as i32),
+                cost: None,
+                tool_calls: None,
+                attachments: None,
+                timestamp: Utc::now(),
+                architecture_type: Some("ReAct".to_string()),
+                architecture_meta: Some(
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "ReAct",
+                        "statistics": {
+                            "total_iterations": trace.metrics.total_iterations,
+                            "tool_calls_count": trace.metrics.tool_calls_count,
+                            "successful_tool_calls": trace.metrics.successful_tool_calls,
+                            "failed_tool_calls": trace.metrics.failed_tool_calls,
+                            "total_duration_ms": trace.metrics.total_duration_ms,
+                            "status": format!("{:?}", trace.status),
+                        }
+                    }))
+                    .unwrap_or_default(),
+                ),
+                structured_data: Some(serde_json::to_string(&structured_data).unwrap_or_default()),
+            };
+
+            if let Err(e) = db.upsert_ai_message_append(&ai_msg).await {
+                log::warn!("Failed to save ReAct message to database: {}", e);
+            } else {
+                log::info!("ReAct message saved to database: {}", msg_id);
+            }
         }
 
         // 转换为 AgentExecutionResult
@@ -247,9 +359,11 @@ impl ReactEngine {
     /// 将 ReactTrace 转换为 AgentExecutionResult
     fn trace_to_result(&self, trace: ReactTrace) -> Result<AgentExecutionResult> {
         // 提取最终答案
-        let final_step = trace.steps.iter().rev().find(|step| {
-            matches!(step.step_type, ReactStepType::Final { .. })
-        });
+        let final_step = trace
+            .steps
+            .iter()
+            .rev()
+            .find(|step| matches!(step.step_type, ReactStepType::Final { .. }));
 
         let output = match final_step {
             Some(step) => {
@@ -318,11 +432,11 @@ impl crate::engines::traits::BaseExecutionEngine for ReactEngine {
 
     fn get_performance_characteristics(&self) -> PerformanceCharacteristics {
         PerformanceCharacteristics {
-            token_efficiency: 60, // 中等，因为需要多轮交互
-            execution_speed: 50, // 中等，迭代执行较慢
-            resource_usage: 50, // 中等资源消耗
+            token_efficiency: 60,       // 中等，因为需要多轮交互
+            execution_speed: 50,        // 中等，迭代执行较慢
+            resource_usage: 50,         // 中等资源消耗
             concurrency_capability: 70, // 良好的并发能力
-            complexity_handling: 80, // 高复杂度处理能力
+            complexity_handling: 80,    // 高复杂度处理能力
         }
     }
 }
@@ -338,11 +452,7 @@ pub trait ReactEngineExt: crate::engines::traits::BaseExecutionEngine {
     ) -> Result<AgentExecutionResult>;
 
     /// 流式执行（可选）
-    async fn stream_react(
-        &self,
-        task: &AgentTask,
-        session: &mut dyn AgentSession,
-    ) -> Result<()>;
+    async fn stream_react(&self, task: &AgentTask, session: &mut dyn AgentSession) -> Result<()>;
 }
 
 #[async_trait]
@@ -355,11 +465,7 @@ impl ReactEngineExt for ReactEngine {
         self.execute(task, session).await
     }
 
-    async fn stream_react(
-        &self,
-        _task: &AgentTask,
-        _session: &mut dyn AgentSession,
-    ) -> Result<()> {
+    async fn stream_react(&self, _task: &AgentTask, _session: &mut dyn AgentSession) -> Result<()> {
         // TODO: 实现流式版本
         Err(anyhow!("Streaming not yet implemented"))
     }

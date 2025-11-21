@@ -1,15 +1,21 @@
-use crate::services::database::{Database, DatabaseService};
+use crate::models::database::AiMessage;
 use crate::services::ai::AiServiceManager;
+use crate::services::database::{Database, DatabaseService};
+use chrono::Utc;
 use log::{info, warn};
+use sentinel_rag::config::RagConfig;
+use sentinel_rag::db::RagDatabase;
+use sentinel_rag::models::{
+    AssistantRagRequest, AssistantRagResponse, CollectionInfo, DocumentChunk, DocumentSource,
+    IngestRequest, IngestResponse, QueryResult, RagQueryRequest, RagQueryResponse, RagStatus,
+};
+use sentinel_rag::service::RagService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
-use tauri::{State, AppHandle, Emitter, Manager};
-use sentinel_rag::models::{AssistantRagRequest,AssistantRagResponse,IngestRequest, IngestResponse, RagQueryRequest, RagQueryResponse, RagStatus,DocumentSource,DocumentChunk, QueryResult, CollectionInfo};
-use sentinel_rag::service::RagService;
-use sentinel_rag::db::RagDatabase;
-use sentinel_rag::config::RagConfig;
+use uuid::Uuid;
 
 // ============================================================================
 // 全局RAG服务管理器
@@ -22,7 +28,11 @@ static GLOBAL_RAG_SERVICE: OnceLock<Arc<RwLock<Option<Arc<AppRagService>>>>> = O
 
 #[async_trait::async_trait]
 impl RagDatabase for DatabaseService {
-    async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> anyhow::Result<String> {
+    async fn create_rag_collection(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> anyhow::Result<String> {
         self.create_rag_collection(name, description).await
     }
 
@@ -34,7 +44,10 @@ impl RagDatabase for DatabaseService {
         self.get_rag_collection_by_id(id).await
     }
 
-    async fn get_rag_collection_by_name(&self, name: &str) -> anyhow::Result<Option<CollectionInfo>> {
+    async fn get_rag_collection_by_name(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<Option<CollectionInfo>> {
         self.get_rag_collection_by_name(name).await
     }
 
@@ -50,7 +63,8 @@ impl RagDatabase for DatabaseService {
         content: &str,
         metadata: &str,
     ) -> anyhow::Result<String> {
-        self.create_rag_document(collection_id, file_path, file_name, content, metadata).await
+        self.create_rag_document(collection_id, file_path, file_name, content, metadata)
+            .await
     }
 
     async fn create_rag_chunk(
@@ -101,7 +115,8 @@ impl RagDatabase for DatabaseService {
         processing_time_ms: u64,
     ) -> anyhow::Result<()> {
         // Stored against provided id/name; current implementation treats param as name
-        self.save_rag_query(collection_id, query, response, processing_time_ms).await
+        self.save_rag_query(collection_id, query, response, processing_time_ms)
+            .await
     }
 
     async fn get_rag_query_history(
@@ -131,7 +146,8 @@ pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Re
         }
     };
 
-    let rag_service = RagService::new(config, database).await
+    let rag_service = RagService::new(config, database)
+        .await
         .map_err(|e| format!("Failed to create RAG service: {}", e))?;
 
     // 如果全局实例已存在，则直接替换内部的服务引用；否则初始化一次
@@ -152,13 +168,13 @@ pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Re
 
 /// 获取全局RAG服务实例
 pub async fn get_global_rag_service() -> Result<Arc<AppRagService>, String> {
-    let service_wrapper = GLOBAL_RAG_SERVICE.get()
+    let service_wrapper = GLOBAL_RAG_SERVICE
+        .get()
         .ok_or("Global RAG service not initialized")?;
-    
+
     let service_guard = service_wrapper.read().await;
-    let service = service_guard.as_ref()
-        .ok_or("RAG service not available")?;
-    
+    let service = service_guard.as_ref().ok_or("RAG service not available")?;
+
     // 返回Arc的克隆
     Ok(Arc::clone(service))
 }
@@ -196,15 +212,18 @@ pub async fn rag_ingest_source(
     metadata: Option<HashMap<String, String>>,
 ) -> Result<IngestResponse, String> {
     info!("开始导入数据源: {}", file_path);
-    
+
     let request = IngestRequest {
         file_path: file_path.clone(),
         collection_id,
         metadata,
     };
-    
+
     let rag_service = get_global_rag_service().await?;
-    rag_service.ingest_source(request).await.map_err(|e| e.to_string())
+    rag_service
+        .ingest_source(request)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 查询RAG系统
@@ -218,25 +237,34 @@ pub async fn rag_query(
     filters: Option<HashMap<String, String>>,
 ) -> Result<RagQueryResponse, String> {
     info!("RAG查询: {}", query);
-    
-    let request = RagQueryRequest {query:query.clone(),collection_id,top_k,use_mmr,mmr_lambda,filters, use_embedding: Some(true), reranking_enabled: Some(true) };
-    
-    let rag_service = get_global_rag_service().await?;  
+
+    let request = RagQueryRequest {
+        query: query.clone(),
+        collection_id,
+        top_k,
+        use_mmr,
+        mmr_lambda,
+        filters,
+        use_embedding: Some(true),
+        reranking_enabled: Some(true),
+    };
+
+    let rag_service = get_global_rag_service().await?;
     rag_service.query(request).await.map_err(|e| e.to_string())
 }
 
 /// 清空RAG集合
 #[tauri::command]
-pub async fn rag_clear_collection(
-    collection_id: String,
-) -> Result<bool, String> {
+pub async fn rag_clear_collection(collection_id: String) -> Result<bool, String> {
     info!("清空RAG集合: {}", collection_id);
-    
+
     let rag_service = get_global_rag_service().await?;
-    rag_service.clear_collection(&collection_id).await.map_err(|e| e.to_string())?;
+    rag_service
+        .clear_collection(&collection_id)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(true)
 }
-
 
 /// 初始化RAG服务
 #[tauri::command]
@@ -244,7 +272,7 @@ pub async fn rag_initialize_service(
     database: State<'_, Arc<DatabaseService>>,
 ) -> Result<bool, String> {
     info!("初始化RAG服务");
-    
+
     initialize_global_rag_service(database.inner().clone()).await?;
     Ok(true)
 }
@@ -253,7 +281,7 @@ pub async fn rag_initialize_service(
 #[tauri::command]
 pub async fn rag_shutdown_service() -> Result<bool, String> {
     info!("关闭RAG服务");
-    
+
     shutdown_global_rag_service().await?;
     Ok(true)
 }
@@ -314,21 +342,20 @@ pub async fn delete_rag_document(
 #[tauri::command]
 pub async fn rag_get_supported_file_types() -> Result<Vec<String>, String> {
     info!("获取支持的文件类型");
-    
+
     let supported_types = vec![
         "txt".to_string(),
         "md".to_string(),
         "docx".to_string(),
         "pdf".to_string(),
     ];
-    
+
     Ok(supported_types)
 }
 
 /// 获取RAG系统状态 (前端兼容命名)
 #[tauri::command]
 pub async fn get_rag_status() -> Result<RagStatus, String> {
-
     let rag_service = get_global_rag_service().await?;
     rag_service.get_status().await.map_err(|e| e.to_string())
 }
@@ -340,33 +367,36 @@ pub async fn create_rag_collection(
     description: Option<String>,
 ) -> Result<bool, String> {
     info!("创建RAG集合: {}", name);
-    
+
     let rag_service = get_global_rag_service().await?;
-    let _collection_id = rag_service.create_collection(&name, description.as_deref(), "default").await.map_err(|e| e.to_string())?;
+    let _collection_id = rag_service
+        .create_collection(&name, description.as_deref(), "default")
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(true)
 }
 
 /// 前端兼容的查询命令
 #[tauri::command]
-pub async fn query_rag(
-    request: RagQueryRequest,
-) -> Result<RagQueryResponse, String> {
+pub async fn query_rag(request: RagQueryRequest) -> Result<RagQueryResponse, String> {
     let service = get_global_rag_service().await?;
-    
-    service.query(request).await
+
+    service
+        .query(request)
+        .await
         .map_err(|e| format!("Query failed: {}", e))
 }
 
 /// 前端兼容的删除集合命令
 #[tauri::command]
-pub async fn delete_rag_collection(
-    collection_id: String,
-) -> Result<bool, String> {
+pub async fn delete_rag_collection(collection_id: String) -> Result<bool, String> {
     let service = get_global_rag_service().await?;
-    
-    service.clear_collection(&collection_id).await
+
+    service
+        .clear_collection(&collection_id)
+        .await
         .map_err(|e| format!("Failed to delete collection: {}", e))?;
-    
+
     Ok(true)
 }
 
@@ -376,7 +406,7 @@ pub async fn get_rag_config(
     database: State<'_, Arc<DatabaseService>>,
 ) -> Result<RagConfig, String> {
     info!("获取RAG配置");
-    
+
     match database.get_rag_config().await {
         Ok(Some(config)) => {
             info!("成功从数据库加载RAG配置");
@@ -402,7 +432,7 @@ pub async fn save_rag_config(
     app: AppHandle,
 ) -> Result<bool, String> {
     info!("保存RAG配置: {:?}", config);
-    
+
     match database.save_rag_config(&config).await {
         Ok(_) => {
             info!("RAG配置已成功保存到数据库");
@@ -430,9 +460,9 @@ pub async fn reset_rag_config(
     database: State<'_, Arc<DatabaseService>>,
 ) -> Result<RagConfig, String> {
     info!("重置RAG配置为默认值");
-    
+
     let default_config = RagConfig::default();
-    
+
     match database.save_rag_config(&default_config).await {
         Ok(_) => {
             info!("RAG配置已重置并保存到数据库");
@@ -457,15 +487,15 @@ pub async fn get_folder_files(
 
     let mut files = Vec::new();
     let folder = Path::new(&folder_path);
-    
+
     if !folder.exists() || !folder.is_dir() {
         return Err("指定的路径不存在或不是文件夹".to_string());
     }
-    
+
     // 遍历文件夹中的所有文件
     for entry in WalkDir::new(folder).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
-        
+
         // 只处理文件，跳过目录
         if path.is_file() {
             if let Some(extension) = path.extension() {
@@ -480,7 +510,7 @@ pub async fn get_folder_files(
             }
         }
     }
-    
+
     info!("在文件夹 {} 中找到 {} 个文档文件", folder_path, files.len());
     Ok(files)
 }
@@ -489,12 +519,16 @@ pub async fn get_folder_files(
 #[tauri::command]
 pub async fn assistant_rag_answer(
     request: AssistantRagRequest,
+    collection_ids: Option<Vec<String>>,
+    conversation_id: Option<String>,
+    message_id: Option<String>,
+    user_message_id: Option<String>,
     database: State<'_, Arc<DatabaseService>>,
     ai_manager: State<'_, Arc<AiServiceManager>>,
     app: AppHandle,
 ) -> Result<AssistantRagResponse, String> {
     use AssistantRagResponse;
-    
+
     let start_time = std::time::Instant::now();
     info!("AI助手RAG查询: {}", request.query);
 
@@ -540,35 +574,70 @@ pub async fn assistant_rag_answer(
         }
         _ => {}
     }
-    
+
     // 获取RAG服务实例
-    let rag_service = get_global_rag_service().await
+    let rag_service = get_global_rag_service()
+        .await
         .map_err(|e| format!("Failed to get RAG service: {}", e))?;
-    
-    // 执行RAG检索
-    let (context, citations) = match rag_service.query_for_assistant(&request).await {
-        Ok(result) => result,
-        Err(e) => {
-            warn!("RAG检索失败: {}, 将返回无上下文回答", e);
-            return Ok(AssistantRagResponse {
-                answer: "抱歉，无法检索到相关知识来回答您的问题。".to_string(),
-                citations: vec![],
-                context_used: String::new(),
-                total_tokens_used: 0,
-                rag_tokens: 0,
-                llm_tokens: 0,
-                processing_time_ms: start_time.elapsed().as_millis() as u64,
-                fallback_reason: Some(format!("RAG检索失败: {}", e)),
-            });
+
+    // 执行RAG检索 (支持多集合)
+    let (context, citations) = if let Some(ids) = &collection_ids {
+        if !ids.is_empty() {
+            let mut combined_context = String::new();
+            let mut combined_citations = Vec::new();
+
+            for cid in ids {
+                let mut sub_req = request.clone();
+                sub_req.collection_id = Some(cid.clone());
+
+                match rag_service.query_for_assistant(&sub_req).await {
+                    Ok((ctx, cits)) => {
+                        if !ctx.is_empty() {
+                            if !combined_context.is_empty() {
+                                combined_context.push_str("\n\n");
+                            }
+                            combined_context.push_str(&ctx);
+                        }
+                        combined_citations.extend(cits);
+                    }
+                    Err(e) => {
+                        warn!("集合 {} 检索失败: {}", cid, e);
+                    }
+                }
+            }
+            (combined_context, combined_citations)
+        } else {
+            // 空列表，尝试使用 request.collection_id 或默认
+            match rag_service.query_for_assistant(&request).await {
+                Ok(result) => result,
+                Err(e) => {
+                    warn!("RAG检索失败: {}, 将返回无上下文回答", e);
+                    (String::new(), Vec::new())
+                }
+            }
+        }
+    } else {
+        // 未提供列表，使用 request.collection_id
+        match rag_service.query_for_assistant(&request).await {
+            Ok(result) => result,
+            Err(e) => {
+                warn!("RAG检索失败: {}, 将返回无上下文回答", e);
+                (String::new(), Vec::new())
+            }
         }
     };
-    
+
+    // 如果检索失败且无上下文，但不是因为禁用，则继续尝试回答
+    if context.is_empty() && citations.is_empty() {
+        // 这里的逻辑保持原样，允许无上下文回答
+    }
+
     // 记录是否找到了相关上下文，但不提前返回，继续调用LLM
     let has_context = !context.is_empty();
     if !has_context {
         info!("未找到相关上下文，但将继续调用LLM处理用户查询");
     }
-    
+
     // 获取当前角色提示词
     let mut role_prompt = String::new();
     if let Ok(Some(current_role)) = database.get_current_ai_role().await {
@@ -583,9 +652,15 @@ pub async fn assistant_rag_answer(
         let history = request
             .conversation_history
             .as_ref()
-            .map(|h| if h.is_empty() { String::new() } else { format!("\n[CONVERSATION HISTORY]\n{}\n", h.join("\n")) })
+            .map(|h| {
+                if h.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n[CONVERSATION HISTORY]\n{}\n", h.join("\n"))
+                }
+            })
             .unwrap_or_default();
-        
+
         // 基础系统提示词（角色提示词优先）
         let base_system = if !role_prompt.is_empty() {
             role_prompt
@@ -598,7 +673,7 @@ pub async fn assistant_rag_answer(
         } else {
             "你是一个有用的AI助手。".to_string()
         };
-        
+
         if has_context {
             let policy = "你必须严格基于证据回答问题。在回答中引用证据时，使用 [SOURCE n] 格式。如果证据不足，请直接回答并避免编造。";
             format!(
@@ -614,36 +689,42 @@ pub async fn assistant_rag_answer(
     };
 
     // 选择模型：优先请求体中的 provider/model，其次默认聊天模型
-    let (provider, model) = if let (Some(p), Some(m)) = (request.model_provider.clone(), request.model_name.clone()) {
-        (p, m)
-    } else {
-        match ai_manager.get_default_chat_model().await.map_err(|e| e.to_string())? {
-            Some((p, m)) => (p, m),
-            None => {
-                let msg = "No default chat model configured".to_string();
-                log::error!("{}", msg);
-                return Err(msg);
+    let (provider, model) =
+        if let (Some(p), Some(m)) = (request.model_provider.clone(), request.model_name.clone()) {
+            (p, m)
+        } else {
+            match ai_manager
+                .get_default_chat_model()
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                Some((p, m)) => (p, m),
+                None => {
+                    let msg = "No default chat model configured".to_string();
+                    log::error!("{}", msg);
+                    return Err(msg);
+                }
             }
-        }
-    };
+        };
 
     // 直接基于配置构建AI服务
-    let mut service = if let Ok(Some(provider_config)) = ai_manager.get_provider_config(&provider).await {
-        let mut dynamic_config = provider_config;
-        dynamic_config.model = model.clone();
-        let db_service = app.state::<Arc<crate::services::database::DatabaseService>>();
-        let mcp_service = ai_manager.get_mcp_service();
-        crate::services::ai::AiService::new(
-            dynamic_config,
-            db_service.inner().clone(),
-            Some(app.clone()),
-            mcp_service,
-        )
-    } else {
-        let msg = format!("Provider config not found for: {}", provider);
-        log::error!("{}", msg);
-        return Err(msg);
-    };
+    let mut service =
+        if let Ok(Some(provider_config)) = ai_manager.get_provider_config(&provider).await {
+            let mut dynamic_config = provider_config;
+            dynamic_config.model = model.clone();
+            let db_service = app.state::<Arc<crate::services::database::DatabaseService>>();
+            let mcp_service = ai_manager.get_mcp_service();
+            crate::services::ai::AiService::new(
+                dynamic_config,
+                db_service.inner().clone(),
+                Some(app.clone()),
+                mcp_service,
+            )
+        } else {
+            let msg = format!("Provider config not found for: {}", provider);
+            log::error!("{}", msg);
+            return Err(msg);
+        };
     // 绑定 AppHandle（尽管本次非流式，不强制要求）
     service.set_app_handle(app);
 
@@ -675,16 +756,69 @@ pub async fn assistant_rag_answer(
             });
         }
     };
-    
+
     let processing_time = start_time.elapsed().as_millis() as u64;
-    
+
     // 简单 token 估算（长度近似）
     let rag_tokens = context.len();
     let llm_tokens = answer.len();
     let total_tokens = rag_tokens + llm_tokens;
-    
-    info!("AI助手RAG回答生成完成，耗时: {}ms, tokens: {}", processing_time, total_tokens);
-    
+
+    info!(
+        "AI助手RAG回答生成完成，耗时: {}ms, tokens: {}",
+        processing_time, total_tokens
+    );
+
+    // 持久化消息到数据库
+    if let Some(conv_id) = conversation_id {
+        // 1. 保存用户消息 (如果提供了ID)
+        if let Some(user_msg_id) = user_message_id {
+            let user_msg = AiMessage {
+                id: user_msg_id,
+                conversation_id: conv_id.clone(),
+                role: "user".to_string(),
+                content: request.query.clone(),
+                metadata: None,
+                token_count: Some(request.query.len() as i32),
+                cost: None,
+                tool_calls: None,
+                attachments: None,
+                timestamp: Utc::now(),
+                architecture_type: None,
+                architecture_meta: None,
+                structured_data: None,
+            };
+            if let Err(e) = database.upsert_ai_message_append(&user_msg).await {
+                warn!("Failed to save user message in RAG flow: {}", e);
+            }
+        }
+
+        // 2. 保存助手消息 (如果提供了ID)
+        if let Some(asst_msg_id) = message_id {
+            let asst_msg = AiMessage {
+                id: asst_msg_id,
+                conversation_id: conv_id,
+                role: "assistant".to_string(),
+                content: answer.clone(),
+                metadata: Some(
+                    serde_json::to_string(&serde_json::json!({ "citations": citations }))
+                        .unwrap_or_default(),
+                ),
+                token_count: Some(total_tokens as i32),
+                cost: None,
+                tool_calls: None,
+                attachments: None,
+                timestamp: Utc::now(),
+                architecture_type: None, // RAG is standard architecture for now
+                architecture_meta: None,
+                structured_data: None,
+            };
+            if let Err(e) = database.upsert_ai_message_append(&asst_msg).await {
+                warn!("Failed to save assistant message in RAG flow: {}", e);
+            }
+        }
+    }
+
     Ok(AssistantRagResponse {
         answer,
         citations,
@@ -693,7 +827,11 @@ pub async fn assistant_rag_answer(
         rag_tokens,
         llm_tokens,
         processing_time_ms: processing_time,
-        fallback_reason: if !has_context { Some("No relevant context found, using general AI knowledge".to_string()) } else { None },
+        fallback_reason: if !has_context {
+            Some("No relevant context found, using general AI knowledge".to_string())
+        } else {
+            None
+        },
     })
 }
 
@@ -701,11 +839,11 @@ pub async fn assistant_rag_answer(
 #[tauri::command]
 pub async fn ensure_default_rag_collection() -> Result<String, String> {
     info!("确保默认RAG集合存在");
-    
+
     let rag_service = get_global_rag_service().await?;
-    
+
     const DEFAULT_COLLECTION_NAME: &str = "default";
-    
+
     match rag_service.ensure_default_collection_public().await {
         Ok(collection_id) => {
             info!("默认RAG集合准备就绪: {}", collection_id);
@@ -721,18 +859,16 @@ pub async fn ensure_default_rag_collection() -> Result<String, String> {
 
 /// 重载RAG服务配置
 #[tauri::command]
-pub async fn reload_rag_service(
-    database: State<'_, Arc<DatabaseService>>,
-) -> Result<bool, String> {
+pub async fn reload_rag_service(database: State<'_, Arc<DatabaseService>>) -> Result<bool, String> {
     info!("重载RAG服务配置");
-    
+
     // 获取最新配置
     let _config = match database.get_rag_config().await {
         Ok(Some(config)) => config,
         Ok(None) => RagConfig::default(),
         Err(e) => return Err(format!("加载配置失败: {}", e)),
     };
-    
+
     // 重新初始化全局RAG服务
     match initialize_global_rag_service(database.inner().clone()).await {
         Ok(_) => {
@@ -770,7 +906,11 @@ pub async fn get_active_rag_collections(
         .get_rag_collections()
         .await
         .map_err(|e| format!("获取集合失败: {}", e))?;
-    Ok(cols.into_iter().filter(|c| c.is_active).map(|c| c.id).collect())
+    Ok(cols
+        .into_iter()
+        .filter(|c| c.is_active)
+        .map(|c| c.id)
+        .collect())
 }
 
 /// 测试嵌入连接
@@ -780,20 +920,20 @@ pub async fn test_embedding_connection(
 ) -> Result<serde_json::Value, String> {
     use sentinel_rag::config::EmbeddingConfig;
     use sentinel_rag::embeddings::create_embedding_provider;
-    
+
     info!("测试嵌入连接");
-    
+
     // 解析配置
-    let embedding_config: EmbeddingConfig = serde_json::from_value(config)
-        .map_err(|e| format!("解析嵌入配置失败: {}", e))?;
-    
+    let embedding_config: EmbeddingConfig =
+        serde_json::from_value(config).map_err(|e| format!("解析嵌入配置失败: {}", e))?;
+
     // 创建嵌入提供商
     let provider = create_embedding_provider(&embedding_config)
         .map_err(|e| format!("创建嵌入提供商失败: {}", e))?;
-    
+
     // 测试嵌入生成
     let test_texts = vec!["Hello world".to_string(), "Test embedding".to_string()];
-    
+
     match provider.embed_texts(&test_texts).await {
         Ok(embeddings) => {
             let dimension = provider.get_embedding_dimension().await.unwrap_or(0);
@@ -804,7 +944,7 @@ pub async fn test_embedding_connection(
                 dimension,
                 embeddings.len()
             );
-            
+
             Ok(serde_json::json!({
                 "success": true,
                 "message": format!(
@@ -823,7 +963,7 @@ pub async fn test_embedding_connection(
         Err(e) => {
             let error_msg = format!("嵌入连接测试失败: {}", e);
             warn!("{}", error_msg);
-            
+
             Ok(serde_json::json!({
                 "success": false,
                 "message": error_msg,

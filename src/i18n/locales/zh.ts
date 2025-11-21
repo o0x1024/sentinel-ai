@@ -1199,6 +1199,7 @@ export default {
     scanTasks: '扫描任务',
     vulnerabilities: '漏洞管理',
     assets: '资产管理',
+    passive: '被动扫描',
     passiveScan: '被动扫描',
     dictionary: '字典管理',
     projects: '赏金项目',
@@ -1241,6 +1242,7 @@ export default {
   dictionary: {
     title: '字典管理',
     newDictionary: '新建字典',
+    default: '默认',
     initializing: '初始化中...',
     searchPlaceholder: '搜索词条...',
     entry: '词条',
@@ -1633,6 +1635,9 @@ export default {
     selectAgent:"选择Agent",
     selectRole: '选择角色',
     manageRoles: '管理角色',
+    availableRoles: '可用角色',
+    defaultRole: '默认助手',
+    noRoles: '暂无自定义角色',
     sessionManagement: '会话管理',
     title: 'AI智能助手',
     tool: {

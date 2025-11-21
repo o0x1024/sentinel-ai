@@ -7,20 +7,20 @@
 //! - 上下文感知：考虑历史执行结果
 //! - 自适应学习：根据执行效果调整决策
 //! - 结果聚合：整合多轮执行结果
+use anyhow::Result;
+use chrono::Utc;
 use sentinel_rag::models::AssistantRagRequest;
 use sentinel_rag::query_utils::build_rag_query_pair;
-use anyhow::Result;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use chrono::Utc;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
+use super::types::EfficiencyMetrics;
+use super::types::*;
+use crate::models::prompt::{ArchitectureType, StageType};
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
-use crate::models::prompt::{ArchitectureType, StageType};
 use crate::utils::ordered_message::ChunkType;
-use super::types::*;
-use super::types::EfficiencyMetrics;
 
 /// Intelligent Joiner - 智能决策器
 pub struct IntelligentJoiner {
@@ -99,7 +99,11 @@ struct DecisionAnalysis {
 }
 
 impl IntelligentJoiner {
-    pub fn new(ai_service: AiService, config: LlmCompilerConfig, prompt_repo: Option<PromptRepository>) -> Self {
+    pub fn new(
+        ai_service: AiService,
+        config: LlmCompilerConfig,
+        prompt_repo: Option<PromptRepository>,
+    ) -> Self {
         Self {
             ai_service,
             config,
@@ -126,38 +130,44 @@ impl IntelligentJoiner {
         round: usize,
     ) -> Result<JoinerDecision> {
         info!("开始分析执行结果，轮次: {}", round);
-        
+
         // 更新执行上下文
         self.update_execution_context(original_query, execution_results, round);
-        
+
         // 执行多层次分析
-        let analysis = self.perform_comprehensive_analysis(
-            original_query,
-            execution_plan,
-            execution_results,
-            round,
-        ).await?;
-        
+        let analysis = self
+            .perform_comprehensive_analysis(
+                original_query,
+                execution_plan,
+                execution_results,
+                round,
+            )
+            .await?;
+
         // 记录决策
         let decision_record = JoinerDecisionRecord {
             timestamp: Utc::now(),
             decision: analysis.recommended_decision.clone(),
             reason: analysis.reasoning.clone(),
             round,
-            completed_tasks: execution_results.iter().filter(|r| r.status == TaskStatus::Completed).count(),
-            failed_tasks: execution_results.iter().filter(|r| r.status == TaskStatus::Failed).count(),
+            completed_tasks: execution_results
+                .iter()
+                .filter(|r| r.status == TaskStatus::Completed)
+                .count(),
+            failed_tasks: execution_results
+                .iter()
+                .filter(|r| r.status == TaskStatus::Failed)
+                .count(),
             confidence: analysis.confidence,
         };
-        
+
         self.decision_history.push(decision_record);
-        
+
         info!(
             "决策完成: {:?} (置信度: {:.2}, 原因: {})",
-            analysis.recommended_decision,
-            analysis.confidence,
-            analysis.reasoning
+            analysis.recommended_decision, analysis.confidence, analysis.reasoning
         );
-        
+
         Ok(analysis.recommended_decision)
     }
 
@@ -171,24 +181,23 @@ impl IntelligentJoiner {
     ) -> Result<DecisionAnalysis> {
         // 1. 基础指标分析
         let basic_metrics = self.analyze_basic_metrics(execution_results);
-        
+
         // 2. 目标完成度分析
-        let goal_completion = self.analyze_goal_completion(original_query, execution_results).await?;
-        
+        let goal_completion = self
+            .analyze_goal_completion(original_query, execution_results)
+            .await?;
+
         // 3. 执行效率分析
         let efficiency_analysis = self.analyze_execution_efficiency(execution_results, round);
-        
+
         // 4. 风险评估
         let risk_assessment = self.assess_continuation_risks(round, execution_results);
-        
+
         // 5. AI辅助决策
-        let ai_decision = self.get_ai_decision(
-            original_query,
-            execution_plan,
-            execution_results,
-            round,
-        ).await?;
-        
+        let ai_decision = self
+            .get_ai_decision(original_query, execution_plan, execution_results, round)
+            .await?;
+
         // 6. 综合决策
         let final_analysis = self.synthesize_decision(
             basic_metrics,
@@ -198,29 +207,46 @@ impl IntelligentJoiner {
             ai_decision,
             round,
         );
-        
+
         Ok(final_analysis)
     }
 
     /// 分析基础指标
-    fn analyze_basic_metrics(&self, execution_results: &[TaskExecutionResult]) -> HashMap<String, Value> {
+    fn analyze_basic_metrics(
+        &self,
+        execution_results: &[TaskExecutionResult],
+    ) -> HashMap<String, Value> {
         let mut metrics = HashMap::new();
-        
+
         let total_tasks = execution_results.len();
-        let completed_tasks = execution_results.iter().filter(|r| r.status == TaskStatus::Completed).count();
-        let failed_tasks = execution_results.iter().filter(|r| r.status == TaskStatus::Failed).count();
-        let success_rate = if total_tasks > 0 { completed_tasks as f64 / total_tasks as f64 } else { 0.0 };
-        
+        let completed_tasks = execution_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Completed)
+            .count();
+        let failed_tasks = execution_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Failed)
+            .count();
+        let success_rate = if total_tasks > 0 {
+            completed_tasks as f64 / total_tasks as f64
+        } else {
+            0.0
+        };
+
         let total_duration: u64 = execution_results.iter().map(|r| r.duration_ms).sum();
-        let avg_duration = if total_tasks > 0 { total_duration as f64 / total_tasks as f64 } else { 0.0 };
-        
+        let avg_duration = if total_tasks > 0 {
+            total_duration as f64 / total_tasks as f64
+        } else {
+            0.0
+        };
+
         metrics.insert("total_tasks".to_string(), json!(total_tasks));
         metrics.insert("completed_tasks".to_string(), json!(completed_tasks));
         metrics.insert("failed_tasks".to_string(), json!(failed_tasks));
         metrics.insert("success_rate".to_string(), json!(success_rate));
         metrics.insert("total_duration_ms".to_string(), json!(total_duration));
         metrics.insert("avg_duration_ms".to_string(), json!(avg_duration));
-        
+
         metrics
     }
 
@@ -236,11 +262,11 @@ impl IntelligentJoiner {
             .filter(|r| r.status == TaskStatus::Completed)
             .map(|r| &r.outputs)
             .collect();
-        
+
         if successful_outputs.is_empty() {
             return Ok(0.0);
         }
-        
+
         // 构建目标完成度分析的 system/user 提示
         let (system_prompt, user_prompt) = self
             .build_goal_completion_prompts(original_query, &successful_outputs)
@@ -258,6 +284,7 @@ impl IntelligentJoiner {
                 true,
                 false,
                 Some(ChunkType::Thinking),
+                Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
             )
             .await
         {
@@ -280,20 +307,30 @@ impl IntelligentJoiner {
         round: usize,
     ) -> HashMap<String, Value> {
         let mut efficiency = HashMap::new();
-        
+
         let total_time: u64 = execution_results.iter().map(|r| r.duration_ms).sum();
-        let completed_count = execution_results.iter().filter(|r| r.status == TaskStatus::Completed).count();
-        
+        let completed_count = execution_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Completed)
+            .count();
+
         let efficiency_score = if round > 0 && total_time > 0 {
             (completed_count as f64) / (round as f64 * total_time as f64 / 1000.0)
         } else {
             0.0
         };
-        
+
         efficiency.insert("efficiency_score".to_string(), json!(efficiency_score));
-        efficiency.insert("time_per_task_ms".to_string(), json!(if completed_count > 0 { total_time / completed_count as u64 } else { 0 }));
+        efficiency.insert(
+            "time_per_task_ms".to_string(),
+            json!(if completed_count > 0 {
+                total_time / completed_count as u64
+            } else {
+                0
+            }),
+        );
         efficiency.insert("round_number".to_string(), json!(round));
-        
+
         efficiency
     }
 
@@ -304,39 +341,43 @@ impl IntelligentJoiner {
         execution_results: &[TaskExecutionResult],
     ) -> HashMap<String, Value> {
         let mut risks = HashMap::new();
-        
+
         // 轮次风险
         let round_risk = if round >= self.config.max_iterations {
             1.0
         } else {
             round as f64 / self.config.max_iterations as f64
         };
-        
+
         // 失败率风险
-        let failed_count = execution_results.iter().filter(|r| r.status == TaskStatus::Failed).count();
+        let failed_count = execution_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Failed)
+            .count();
         let total_count = execution_results.len();
         let failure_risk = if total_count > 0 {
             failed_count as f64 / total_count as f64
         } else {
             0.0
         };
-        
+
         // 时间风险
         let total_time: u64 = self.execution_context.total_execution_time_ms;
-        let time_risk = if total_time > 300000 { // 5分钟
+        let time_risk = if total_time > 300000 {
+            // 5分钟
             1.0
         } else {
             total_time as f64 / 300000.0
         };
-        
+
         // 综合风险评分
         let overall_risk = (round_risk * 0.4 + failure_risk * 0.3 + time_risk * 0.3).min(1.0);
-        
+
         risks.insert("round_risk".to_string(), json!(round_risk));
         risks.insert("failure_risk".to_string(), json!(failure_risk));
         risks.insert("time_risk".to_string(), json!(time_risk));
         risks.insert("overall_risk".to_string(), json!(overall_risk));
-        
+
         risks
     }
 
@@ -349,13 +390,10 @@ impl IntelligentJoiner {
         round: usize,
     ) -> Result<JoinerDecision> {
         // ✅ 构建拟人化的system_prompt和user_prompt
-        let (mut system_prompt, mut user_prompt) = self.build_ai_decision_prompts(
-            original_query,
-            execution_plan,
-            execution_results,
-            round,
-        ).await?;
-        
+        let (mut system_prompt, mut user_prompt) = self
+            .build_ai_decision_prompts(original_query, execution_plan, execution_results, round)
+            .await?;
+
         // RAG augmentation for joiner decision
         if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
             if rag_service.get_config().augmentation_enabled {
@@ -401,7 +439,12 @@ impl IntelligentJoiner {
                             temperature: None,
                             system_prompt: None,
                         };
-                        if let Ok(Ok((kb2, _))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&fallback_req)).await {
+                        if let Ok(Ok((kb2, _))) = timeout(
+                            Duration::from_millis(1200),
+                            rag_service.query_for_assistant(&fallback_req),
+                        )
+                        .await
+                        {
                             if !kb2.trim().is_empty() {
                                 system_prompt.push_str("\n\n[KNOWLEDGE CONTEXT]\n");
                                 system_prompt.push_str(&kb2);
@@ -411,21 +454,24 @@ impl IntelligentJoiner {
                 }
             }
         }
-        
+
         // ✅ 使用拟人化的消息格式调用LLM
-        match self.ai_service.send_message_stream_with_save_control(
-            Some(&user_prompt),  // user_prompt: 具体的分析请求
-            None,  // 不保存user消息(已在上层保存)
-            Some(&system_prompt),  // system_prompt: 拟人化的决策助手提示词
-            self.conversation_id.clone(), 
-            self.message_id.clone(),
-            true,  // 流式输出
-            false,  // 不是最终消息
-            Some(ChunkType::Thinking)  // 标记为Thinking类型
-        ).await {
-            Ok(response) => {
-                self.parse_ai_decision(&response)
-            }
+        match self
+            .ai_service
+            .send_message_stream_with_save_control(
+                Some(&user_prompt),   // user_prompt: 具体的分析请求
+                None,                 // 不保存user消息(已在上层保存)
+                Some(&system_prompt), // system_prompt: 拟人化的决策助手提示词
+                self.conversation_id.clone(),
+                self.message_id.clone(),
+                true,                      // 流式输出
+                false,                     // 不是最终消息
+                Some(ChunkType::Thinking), // 标记为Thinking类型
+                Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
+            )
+            .await
+        {
+            Ok(response) => self.parse_ai_decision(&response),
             Err(e) => {
                 warn!("AI决策分析失败: {}", e);
                 // 使用默认决策逻辑
@@ -444,14 +490,16 @@ impl IntelligentJoiner {
         ai_decision: JoinerDecision,
         round: usize,
     ) -> DecisionAnalysis {
-        let success_rate = basic_metrics.get("success_rate")
+        let success_rate = basic_metrics
+            .get("success_rate")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
-        
-        let overall_risk = risk_assessment.get("overall_risk")
+
+        let overall_risk = risk_assessment
+            .get("overall_risk")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
-        
+
         // 决策逻辑 - 改进判断条件
         let should_complete = goal_completion >= 0.7 || // 目标完成度高（降低阈值）
                              (goal_completion >= 0.5 && round >= 3) || // 中等完成度且已执行多轮
@@ -459,7 +507,7 @@ impl IntelligentJoiner {
                              overall_risk > 0.8 || // 风险太高
                              (success_rate >= 0.9 && round >= 2) || // 高成功率且已执行2轮以上
                              round >= self.config.max_iterations; // 达到最大轮次
-        
+
         let recommended_decision = if should_complete {
             JoinerDecision::Complete {
                 response: "基于分析建议完成执行".to_string(),
@@ -473,7 +521,7 @@ impl IntelligentJoiner {
                 confidence: 0.8,
             }
         };
-        
+
         // 计算置信度
         let confidence = self.calculate_decision_confidence(
             goal_completion,
@@ -482,7 +530,7 @@ impl IntelligentJoiner {
             &ai_decision,
             &recommended_decision,
         );
-        
+
         // 生成决策原因
         let reasoning = self.generate_decision_reasoning(
             goal_completion,
@@ -491,14 +539,11 @@ impl IntelligentJoiner {
             round,
             &recommended_decision,
         );
-        
+
         // 建议的下一步行动
-        let suggested_actions = self.generate_suggested_actions(
-            &recommended_decision,
-            goal_completion,
-            success_rate,
-        );
-        
+        let suggested_actions =
+            self.generate_suggested_actions(&recommended_decision, goal_completion, success_rate);
+
         DecisionAnalysis {
             recommended_decision,
             confidence,
@@ -515,13 +560,25 @@ impl IntelligentJoiner {
         successful_outputs: &[&HashMap<String, Value>],
     ) -> Result<String> {
         if let Some(repo) = &self.prompt_repo {
-            if let Ok(Some(dynamic)) = repo.get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution).await {
-                let replaced = Self::apply_placeholders(&dynamic, vec![
-                    ("{{USER_QUERY}}", original_query),
-                    ("{original_query}", original_query),
-                    ("{{RESULTS}}", &self.format_outputs_for_analysis(successful_outputs)),
-                    ("{results}", &self.format_outputs_for_analysis(successful_outputs)),
-                ]);
+            if let Ok(Some(dynamic)) = repo
+                .get_active_prompt(ArchitectureType::LLMCompiler, StageType::Execution)
+                .await
+            {
+                let replaced = Self::apply_placeholders(
+                    &dynamic,
+                    vec![
+                        ("{{USER_QUERY}}", original_query),
+                        ("{original_query}", original_query),
+                        (
+                            "{{RESULTS}}",
+                            &self.format_outputs_for_analysis(successful_outputs),
+                        ),
+                        (
+                            "{results}",
+                            &self.format_outputs_for_analysis(successful_outputs),
+                        ),
+                    ],
+                );
                 return Ok(replaced);
             }
         }
@@ -548,7 +605,7 @@ impl IntelligentJoiner {
         original_query: &str,
         successful_outputs: &[&HashMap<String, Value>],
     ) -> Result<(String, String)> {
-        use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
+        use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
 
         // user_prompt：仅包含数据上下文，避免把系统说明塞到user里
         let user_prompt = format!(
@@ -577,7 +634,8 @@ impl IntelligentJoiner {
         // 后备 system_prompt：轻量、稳定，且不含数据
         let fallback_system = r#"你是一名严格的结果评估助手。
 你的任务是根据提供的执行结果，判断这些信息是否足以回答原始问题。
-请先在心里完成推理，然后只输出一个0到1之间的小数分数，表示完成度（不要输出其他任何文本）。"#.to_string();
+请先在心里完成推理，然后只输出一个0到1之间的小数分数，表示完成度（不要输出其他任何文本）。"#
+            .to_string();
 
         Ok((fallback_system, user_prompt))
     }
@@ -590,13 +648,13 @@ impl IntelligentJoiner {
         execution_results: &[TaskExecutionResult],
         round: usize,
     ) -> Result<(String, String)> {
-        use crate::utils::prompt_resolver::{PromptResolver, CanonicalStage, AgentPromptConfig};
-        
+        use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
+
         let execution_summary = self.format_execution_summary(execution_results);
         let plan_summary = self.format_plan_summary(execution_plan);
         let decision_history = self.format_decision_history();
         let error_info = self.format_error_info(execution_results);
-        
+
         // ✅ 从数据库读取拟人化的system模板（Execution阶段用于Joiner）
         let system_template = if let Some(repo) = &self.prompt_repo {
             let resolver = PromptResolver::new(repo.clone());
@@ -606,7 +664,7 @@ impl IntelligentJoiner {
                 .resolve_prompt(
                     &agent_config,
                     ArchitectureType::LLMCompiler,
-                    CanonicalStage::Executor,  // Joiner使用Executor阶段(映射到Execution)
+                    CanonicalStage::Executor, // Joiner使用Executor阶段(映射到Execution)
                     Some(&"".to_string()),
                 )
                 .await
@@ -614,10 +672,10 @@ impl IntelligentJoiner {
         } else {
             self.get_default_joiner_template()
         };
-        
+
         // ✅ system_prompt就是模板本身
         let system_prompt = system_template;
-        
+
         // ✅ user_prompt包含具体的分析上下文
         let user_prompt = format!(
             r#"请分析以下任务执行情况并做出决策:
@@ -655,10 +713,10 @@ impl IntelligentJoiner {
                 decision_history
             }
         );
-        
+
         Ok((system_prompt, user_prompt))
     }
-    
+
     /// 获取默认的Joiner模板
     fn get_default_joiner_template(&self) -> String {
         r#"你是一个善于分析和总结的AI助手。你的工作是分析任务执行的结果,并决定下一步该怎么做。
@@ -679,7 +737,8 @@ impl IntelligentJoiner {
   "suggested_tasks": [],
   "confidence": 0.9
 }
-```"#.to_string()
+```"#
+            .to_string()
     }
 
     fn apply_placeholders(template: &str, pairs: Vec<(&str, &str)>) -> String {
@@ -699,20 +758,26 @@ impl IntelligentJoiner {
     ) {
         self.execution_context.original_query = original_query.to_string();
         self.execution_context.total_rounds = round;
-        
+
         let round_duration: u64 = execution_results.iter().map(|r| r.duration_ms).sum();
         self.execution_context.total_execution_time_ms += round_duration;
-        
-        let completed_count = execution_results.iter().filter(|r| r.status == TaskStatus::Completed).count();
-        let failed_count = execution_results.iter().filter(|r| r.status == TaskStatus::Failed).count();
-        
+
+        let completed_count = execution_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Completed)
+            .count();
+        let failed_count = execution_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Failed)
+            .count();
+
         self.execution_context.total_completed_tasks += completed_count;
         self.execution_context.total_failed_tasks += failed_count;
-        
+
         // 提取关键发现
         let findings = self.extract_key_findings(execution_results);
         self.execution_context.key_findings.extend(findings);
-        
+
         // 生成轮次摘要
         let summary = format!(
             "轮次{}: 完成{}个任务，失败{}个任务，耗时{}ms",
@@ -724,7 +789,7 @@ impl IntelligentJoiner {
     /// 提取关键发现
     fn extract_key_findings(&self, execution_results: &[TaskExecutionResult]) -> Vec<String> {
         let mut findings = Vec::new();
-        
+
         for result in execution_results {
             if result.status == TaskStatus::Completed {
                 // 从输出中提取关键信息
@@ -735,13 +800,13 @@ impl IntelligentJoiner {
                         }
                     }
                 }
-                
+
                 if let Some(open_ports) = result.outputs.get("open_ports") {
                     if let Some(ports) = open_ports.as_array() {
                         findings.push(format!("发现{}个开放端口", ports.len()));
                     }
                 }
-                
+
                 if let Some(subdomains) = result.outputs.get("subdomains") {
                     if let Some(subs) = subdomains.as_array() {
                         findings.push(format!("发现{}个子域名", subs.len()));
@@ -749,7 +814,7 @@ impl IntelligentJoiner {
                 }
             }
         }
-        
+
         findings
     }
 
@@ -763,31 +828,32 @@ impl IntelligentJoiner {
         recommended_decision: &JoinerDecision,
     ) -> f64 {
         let mut confidence = 0.5; // 基础置信度
-        
+
         // 目标完成度影响
         if goal_completion > 0.8 {
             confidence += 0.3;
         } else if goal_completion < 0.3 {
             confidence += 0.2; // 明确知道未完成也是一种确定性
         }
-        
+
         // 成功率影响
         if success_rate > 0.8 || success_rate < 0.2 {
             confidence += 0.2; // 极高或极低成功率都增加确定性
         }
-        
+
         // 风险评估影响
         if overall_risk > 0.8 {
             confidence += 0.2; // 高风险时决策更确定
         }
-        
+
         // AI决策一致性 - 比较决策类型
         let ai_is_complete = matches!(ai_decision, JoinerDecision::Complete { .. });
-        let recommended_is_complete = matches!(recommended_decision, JoinerDecision::Complete { .. });
+        let recommended_is_complete =
+            matches!(recommended_decision, JoinerDecision::Complete { .. });
         if ai_is_complete == recommended_is_complete {
             confidence += 0.1;
         }
-        
+
         (confidence as f64).min(1.0)
     }
 
@@ -803,7 +869,7 @@ impl IntelligentJoiner {
         match decision {
             JoinerDecision::Complete { .. } => {
                 let mut reasons = Vec::new();
-                
+
                 if goal_completion >= 0.8 {
                     reasons.push(format!("目标完成度高({:.1}%)", goal_completion * 100.0));
                 }
@@ -816,7 +882,7 @@ impl IntelligentJoiner {
                 if round >= self.config.max_iterations {
                     reasons.push("已达到最大执行轮次".to_string());
                 }
-                
+
                 if reasons.is_empty() {
                     "基于综合分析决定完成执行".to_string()
                 } else {
@@ -844,7 +910,7 @@ impl IntelligentJoiner {
         success_rate: f64,
     ) -> Vec<String> {
         let mut actions = Vec::new();
-        
+
         match decision {
             JoinerDecision::Complete { .. } => {
                 actions.push("整理和汇总执行结果".to_string());
@@ -865,7 +931,7 @@ impl IntelligentJoiner {
                 actions.push("继续执行下一轮任务".to_string());
             }
         }
-        
+
         actions
     }
 
@@ -873,7 +939,7 @@ impl IntelligentJoiner {
     /// 清理 Markdown 代码块标记（如 ```json...```）
     fn strip_markdown_fences(content: &str) -> String {
         let content = content.trim();
-        
+
         // 移除开头的 ```json 或 ```
         let content = if content.starts_with("```json") {
             content.strip_prefix("```json").unwrap_or(content)
@@ -882,29 +948,29 @@ impl IntelligentJoiner {
         } else {
             content
         };
-        
+
         // 移除结尾的 ```
         let content = if content.ends_with("```") {
             content.strip_suffix("```").unwrap_or(content)
         } else {
             content
         };
-        
+
         content.trim().to_string()
     }
 
     fn parse_completion_score(&self, response: &str) -> Result<f64> {
         // ✅ 清理markdown标记
         let cleaned = Self::strip_markdown_fences(response);
-        
+
         // 尝试从响应中解析数字
         let score_str = cleaned.trim();
-        
+
         // 尝试直接解析数字
         if let Ok(score) = score_str.parse::<f64>() {
             return Ok(score.max(0.0).min(1.0));
         }
-        
+
         // 尝试从文本中提取数字（第一行或第一个数字）
         for line in cleaned.lines() {
             let line = line.trim();
@@ -912,12 +978,12 @@ impl IntelligentJoiner {
             if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
                 continue;
             }
-            
+
             // 尝试直接解析
             if let Ok(score) = line.parse::<f64>() {
                 return Ok(score.max(0.0).min(1.0));
             }
-            
+
             // 尝试提取第一个数字（支持 "0.8", "分数: 0.8" 等格式）
             let words: Vec<&str> = line.split_whitespace().collect();
             for word in words {
@@ -927,7 +993,7 @@ impl IntelligentJoiner {
                 }
             }
         }
-        
+
         // 如果无法解析，返回默认值
         warn!("无法解析完成度分数: {}", response);
         Ok(0.5)
@@ -935,41 +1001,46 @@ impl IntelligentJoiner {
 
     fn parse_ai_decision(&self, response: &str) -> Result<JoinerDecision> {
         // ✅ 首先尝试从拟人化格式中提取[DECISION]部分
-        let decision_json = if let Some(json_str) = self.extract_decision_from_humanized_response(response) {
-            debug!("从拟人化响应中提取到DECISION部分");
-            json_str
-        } else {
-            // 否则清理markdown标记
-            Self::strip_markdown_fences(response)
-        };
-        
+        let decision_json =
+            if let Some(json_str) = self.extract_decision_from_humanized_response(response) {
+                debug!("从拟人化响应中提取到DECISION部分");
+                json_str
+            } else {
+                // 否则清理markdown标记
+                Self::strip_markdown_fences(response)
+            };
+
         // 尝试解析JSON响应
         if let Ok(json_value) = serde_json::from_str::<Value>(&decision_json) {
             if let Some(decision_str) = json_value.get("decision").and_then(|v| v.as_str()) {
-                let confidence = json_value.get("confidence")
+                let confidence = json_value
+                    .get("confidence")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.8) as f32;
-                
+
                 return match decision_str.to_uppercase().as_str() {
                     "COMPLETE" => {
-                        let response_text = json_value.get("response")
+                        let response_text = json_value
+                            .get("response")
                             .and_then(|v| v.as_str())
                             .unwrap_or("任务执行完成")
                             .to_string();
                         Ok(JoinerDecision::Complete {
                             response: response_text,
                             confidence,
-                        summary: self.get_execution_stats(),
+                            summary: self.get_execution_stats(),
                         })
-                    },
+                    }
                     "CONTINUE" => {
-                        let feedback = json_value.get("feedback")
+                        let feedback = json_value
+                            .get("feedback")
                             .and_then(|v| v.as_str())
                             .unwrap_or("需要继续执行以获取更多信息")
                             .to_string();
-                        
+
                         // 解析suggested_tasks(如果有)
-                        let suggested_tasks = json_value.get("suggested_tasks")
+                        let suggested_tasks = json_value
+                            .get("suggested_tasks")
                             .and_then(|v| v.as_array())
                             .map(|arr| {
                                 arr.iter()
@@ -977,13 +1048,13 @@ impl IntelligentJoiner {
                                     .collect()
                             })
                             .unwrap_or_default();
-                        
+
                         Ok(JoinerDecision::Continue {
                             feedback,
                             suggested_tasks,
                             confidence,
                         })
-                    },
+                    }
                     _ => Ok(JoinerDecision::Continue {
                         feedback: "默认决策: 继续执行".to_string(),
                         suggested_tasks: Vec::new(),
@@ -992,7 +1063,7 @@ impl IntelligentJoiner {
                 };
             }
         }
-        
+
         // 如果JSON解析失败，尝试文本解析
         let response_upper = decision_json.to_uppercase();
         if response_upper.contains("COMPLETE") {
@@ -1016,29 +1087,29 @@ impl IntelligentJoiner {
             })
         }
     }
-    
+
     /// 从拟人化响应中提取[DECISION]部分的JSON
     fn extract_decision_from_humanized_response(&self, response: &str) -> Option<String> {
         // 查找 [DECISION] 标记
         if let Some(decision_start) = response.find("[DECISION]") {
             let content_after_decision = &response[decision_start + 10..]; // 跳过 "[DECISION]"
-            
+
             // 提取 DECISION 后的JSON内容（可能在代码块中或直接是JSON）
             let json_candidates = vec![
                 Self::extract_json_from_code_block(content_after_decision),
                 Self::extract_json_by_braces(content_after_decision),
             ];
-            
+
             for candidate in json_candidates {
                 if serde_json::from_str::<Value>(&candidate).is_ok() {
                     return Some(candidate);
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// 从代码块中提取JSON
     fn extract_json_from_code_block(text: &str) -> String {
         let patterns = ["```json\n", "```\n", "```json", "```"];
@@ -1046,13 +1117,15 @@ impl IntelligentJoiner {
             if let Some(start_pos) = text.find(pattern) {
                 let content_start = start_pos + pattern.len();
                 if let Some(end_pos) = text[content_start..].find("```") {
-                    return text[content_start..content_start + end_pos].trim().to_string();
+                    return text[content_start..content_start + end_pos]
+                        .trim()
+                        .to_string();
                 }
             }
         }
         text.trim().to_string()
     }
-    
+
     /// 通过大括号提取JSON
     fn extract_json_by_braces(text: &str) -> String {
         let mut brace_count = 0;
@@ -1084,30 +1157,36 @@ impl IntelligentJoiner {
             text.to_string()
         }
     }
-    
+
     /// 解析建议的任务
     fn parse_suggested_task(&self, task_val: &Value) -> Option<DagTaskNode> {
         let id = task_val.get("id")?.as_str()?.to_string();
         let name = task_val.get("name")?.as_str()?.to_string();
         let tool_name = task_val.get("tool")?.as_str()?.to_string();
-        
-        let inputs: HashMap<String, Value> = task_val.get("inputs")
+
+        let inputs: HashMap<String, Value> = task_val
+            .get("inputs")
             .and_then(|v| v.as_object())
             .map(|obj| obj.clone().into_iter().collect())
             .unwrap_or_default();
-        
-        let dependencies: Vec<String> = task_val.get("dependencies")
+
+        let dependencies: Vec<String> = task_val
+            .get("dependencies")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
-        
+
         let mut task = DagTaskNode::new(id, name, tool_name, inputs);
         task.dependencies = dependencies;
-        
+
         if let Some(desc) = task_val.get("description").and_then(|v| v.as_str()) {
             task.description = desc.to_string();
         }
-        
+
         Some(task)
     }
 
@@ -1116,14 +1195,24 @@ impl IntelligentJoiner {
         execution_results: &[TaskExecutionResult],
         round: usize,
     ) -> JoinerDecision {
-        let completed_count = execution_results.iter().filter(|r| r.status == TaskStatus::Completed).count();
+        let completed_count = execution_results
+            .iter()
+            .filter(|r| r.status == TaskStatus::Completed)
+            .count();
         let total_count = execution_results.len();
-        let success_rate = if total_count > 0 { completed_count as f64 / total_count as f64 } else { 0.0 };
-        
+        let success_rate = if total_count > 0 {
+            completed_count as f64 / total_count as f64
+        } else {
+            0.0
+        };
+
         // 简单的默认逻辑
         if round >= self.config.max_iterations || success_rate < 0.2 {
             JoinerDecision::Complete {
-                response: format!("默认逻辑: 达到最大轮次({})或成功率过低({:.2})", round, success_rate),
+                response: format!(
+                    "默认逻辑: 达到最大轮次({})或成功率过低({:.2})",
+                    round, success_rate
+                ),
                 confidence: 0.6,
                 summary: ExecutionSummary {
                     total_tasks: execution_results.len(),
@@ -1153,39 +1242,48 @@ impl IntelligentJoiner {
         if successful_outputs.is_empty() {
             return 0.0;
         }
-        
+
         let mut score = 0.0;
         let mut factors = 0;
-        
+
         for output in successful_outputs {
             // 检查是否有实质性结果
-            if output.contains_key("vulnerabilities") ||
-               output.contains_key("open_ports") ||
-               output.contains_key("subdomains") ||
-               output.contains_key("urls_found") {
+            if output.contains_key("vulnerabilities")
+                || output.contains_key("open_ports")
+                || output.contains_key("subdomains")
+                || output.contains_key("urls_found")
+            {
                 score += 0.3;
                 factors += 1;
             }
-            
+
             // 对于扫描类任务，即使没有发现问题也算完成
             // 检查是否有扫描相关的输出
-            if output.contains_key("scan_results") || 
-               output.contains_key("scanned_ports") ||
-               output.contains_key("closed_ports") ||
-               output.contains_key("scan_summary") ||
-               output.contains_key("execution_success") {
+            if output.contains_key("scan_results")
+                || output.contains_key("scanned_ports")
+                || output.contains_key("closed_ports")
+                || output.contains_key("scan_summary")
+                || output.contains_key("execution_success")
+            {
                 score += 0.4; // 扫描完成本身就是一个有价值的结果
                 factors += 1;
             }
-            
+
             // 检查结果质量
-            if output.get("success").and_then(|v| v.as_bool()).unwrap_or(false) ||
-               output.get("execution_success").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if output
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                || output
+                    .get("execution_success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            {
                 score += 0.3;
                 factors += 1;
             }
         }
-        
+
         if factors > 0 {
             (score / factors as f64).min(1.0)
         } else {
@@ -1194,15 +1292,24 @@ impl IntelligentJoiner {
     }
 
     fn format_outputs_for_analysis(&self, outputs: &[&HashMap<String, Value>]) -> String {
-        outputs.iter()
+        outputs
+            .iter()
             .enumerate()
-            .map(|(i, output)| format!("结果{}: {}", i + 1, serde_json::to_string_pretty(output).unwrap_or_else(|_| "无法序列化".to_string())))
+            .map(|(i, output)| {
+                format!(
+                    "结果{}: {}",
+                    i + 1,
+                    serde_json::to_string_pretty(output)
+                        .unwrap_or_else(|_| "无法序列化".to_string())
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
 
     fn format_execution_summary(&self, execution_results: &[TaskExecutionResult]) -> String {
-        execution_results.iter()
+        execution_results
+            .iter()
             .map(|result| {
                 format!(
                     "任务{}: {} - {} ({}ms)",
@@ -1233,33 +1340,31 @@ impl IntelligentJoiner {
         if self.decision_history.is_empty() {
             "无历史决策".to_string()
         } else {
-            self.decision_history.iter()
+            self.decision_history
+                .iter()
                 .take(3) // 只显示最近3个决策
                 .map(|record| {
                     format!(
                         "轮次{}: {:?} (置信度: {:.2}) - {}",
-                        record.round,
-                        record.decision,
-                        record.confidence,
-                        record.reason
+                        record.round, record.decision, record.confidence, record.reason
                     )
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
         }
     }
-    
+
     /// 格式化错误信息
     fn format_error_info(&self, execution_results: &[TaskExecutionResult]) -> String {
         let failed: Vec<&TaskExecutionResult> = execution_results
             .iter()
             .filter(|r| r.status == TaskStatus::Failed)
             .collect();
-        
+
         if failed.is_empty() {
             return "无错误".to_string();
         }
-        
+
         let mut error_info = String::new();
         for result in failed {
             if let Some(error) = &result.error {
@@ -1268,7 +1373,7 @@ impl IntelligentJoiner {
         }
         error_info
     }
-    
+
     /// 格式化执行上下文
     fn format_execution_context(&self) -> String {
         format!(
@@ -1300,7 +1405,8 @@ impl IntelligentJoiner {
     /// 获取执行统计
     pub fn get_execution_stats(&self) -> ExecutionSummary {
         ExecutionSummary {
-            total_tasks: self.execution_context.total_completed_tasks + self.execution_context.total_failed_tasks,
+            total_tasks: self.execution_context.total_completed_tasks
+                + self.execution_context.total_failed_tasks,
             successful_tasks: self.execution_context.total_completed_tasks,
             failed_tasks: self.execution_context.total_failed_tasks,
             total_duration_ms: self.execution_context.total_execution_time_ms,
@@ -1309,8 +1415,14 @@ impl IntelligentJoiner {
             efficiency_metrics: EfficiencyMetrics {
                 average_parallelism: 0.0,
                 resource_utilization: 0.0,
-                task_success_rate: if self.execution_context.total_completed_tasks + self.execution_context.total_failed_tasks > 0 {
-                    self.execution_context.total_completed_tasks as f32 / (self.execution_context.total_completed_tasks + self.execution_context.total_failed_tasks) as f32
+                task_success_rate: if self.execution_context.total_completed_tasks
+                    + self.execution_context.total_failed_tasks
+                    > 0
+                {
+                    self.execution_context.total_completed_tasks as f32
+                        / (self.execution_context.total_completed_tasks
+                            + self.execution_context.total_failed_tasks)
+                            as f32
                 } else {
                     0.0
                 },

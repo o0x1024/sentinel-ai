@@ -80,17 +80,10 @@
               : 'bg-base-100 text-base-content border-base-300 hover:border-base-400',
           ]"
         >
-          <!-- Orchestrator 步骤显示（支持多条Meta事件） -->
-          <div v-if="isOrchestratorMessageFn(message)" class="space-y-3">
-            <OrchestratorStepDisplay
-              v-for="(c, idx) in parseOrchestratorMessages(message)"
-              :key="`orch-${message.id}-${idx}`"
-              :content="c"
-            />
-          </div>
+         
 
           <!-- Plan-and-Execute 步骤显示 -->
-          <div v-else-if="isPlanAndExecuteMessageFn(message)" class="space-y-3">
+          <div v-if="isPlanAndExecuteMessageFn(message)" class="space-y-3">
             <PlanAndExecuteStepDisplay
               v-bind="parsePlanAndExecuteMessageData(message)"
             />
@@ -110,13 +103,17 @@
             />
           </div>
 
+          <!-- Travel 步骤显示 -->
+          <div v-else-if="isTravelMessageFn(message)" class="space-y-3">
+            <TravelStepDisplay
+              :message="message"
+              :stepData="parseTravelMessageData(message)"
+            />
+          </div>
+
           <!-- ReAct 步骤显示 -->
           <div v-else-if="isReActMessage(message)" class="space-y-3">
-            <ReActStepDisplay
-              v-for="(step, index) in parseReActSteps(message.content, message.id)"
-              :key="`react-step-${index}`"
-              :step-data="step"
-            />
+            <ReActStepDisplay :message="message" />
 
             <!-- ReAct 工具运行中提示 -->
             <div
@@ -289,6 +286,9 @@ import ReActStepDisplay from './MessageParts/ReActStepDisplay.vue'
 import ReWOOStepDisplay from './MessageParts/ReWOOStepDisplay.vue'
 import LLMCompilerStepDisplay from './MessageParts/LLMCompilerStepDisplay.vue'
 import PlanAndExecuteStepDisplay from './MessageParts/PlanAndExecuteStepDisplay.vue'
+import TravelStepDisplay from './MessageParts/TravelStepDisplay.vue'
+import { isTravelMessage, parseTravelMessage } from '../composables/useTravelMessage'
+import type { TravelMessageData } from '../composables/useTravelMessage'
 import OrchestratorStepDisplay from './MessageParts/OrchestratorStepDisplay.vue'
 
 // Types
@@ -341,18 +341,46 @@ const messages = ref<ChatMessage[]>([])
 
 const { formatTime, renderMarkdown } = useMessageUtils()
 
-// ReAct 消息解析函数
+// 新增：从架构元数据判断架构类型
+const getMessageArchitecture = (message: ChatMessage): string => {
+  // 优先使用message对象中的architectureType
+  if (message.architectureType) {
+    return message.architectureType
+  }
+  
+  // 回退到processor（仅用于streaming消息）
+  if (message.isStreaming) {
+    const archInfo = orderedMessages.processor.getArchitectureInfo?.(message.id)
+    if (archInfo?.type) {
+      return archInfo.type
+    }
+  }
+  
+  return 'Unknown'
+}
+
+// ReAct 消息解析函数（增强版：优先使用架构元数据）
 const isReActMessage = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
-  const content = message.content || ''
   
-  // 检测 ReAct 特征：Thought:, Action:, Observation:
+  // 优先检查架构元数据
+  const archType = getMessageArchitecture(message)
+  if (archType === 'ReAct') return true
+  
+  // 回退到内容匹配（向后兼容）
+  const content = message.content || ''
   return /(?:Thought:|Action:|Observation:|Final Answer:)/i.test(content)
 }
 
-// Plan-and-Execute 消息检测函数
+// Plan-and-Execute 消息检测函数（增强版：优先使用架构元数据）
 const isPlanAndExecuteMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
+  
+  // 优先检查架构元数据
+  const archType = getMessageArchitecture(message)
+  if (archType === 'PlanAndExecute') return true
+  
+  // 回退到内容匹配（向后兼容）
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return isPlanAndExecuteMessage(content, chunks)
@@ -360,14 +388,24 @@ const isPlanAndExecuteMessageFn = (message: ChatMessage) => {
 
 // Plan-and-Execute 消息解析函数
 const parsePlanAndExecuteMessageData = (message: ChatMessage): PlanAndExecuteMessageData => {
+  // 优先使用预解析的数据
+  if ((message as any).planAndExecuteData) {
+    return (message as any).planAndExecuteData
+  }
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return parsePlanAndExecuteMessage(content, chunks)
 }
 
-// LLM Compiler 消息检测函数
+// LLM Compiler 消息检测函数（增强版：优先使用架构元数据）
 const isLLMCompilerMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
+  
+  // 优先检查架构元数据
+  const archType = getMessageArchitecture(message)
+  if (archType === 'LLMCompiler') return true
+  
+  // 回退到内容匹配（向后兼容）
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return isLLMCompilerMessage(content, chunks)
@@ -375,14 +413,24 @@ const isLLMCompilerMessageFn = (message: ChatMessage) => {
 
 // LLM Compiler 消息解析函数
 const parseLLMCompilerMessageData = (message: ChatMessage): LLMCompilerMessageData => {
+  // 优先使用预解析的数据
+  if ((message as any).llmCompilerData) {
+    return (message as any).llmCompilerData
+  }
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return parseLLMCompilerMessage(content, chunks)
 }
 
-// ReWOO 消息检测函数
+// ReWOO 消息检测函数（增强版：优先使用架构元数据）
 const isReWOOMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
+  
+  // 优先检查架构元数据
+  const archType = getMessageArchitecture(message)
+  if (archType === 'ReWOO') return true
+  
+  // 回退到内容匹配（向后兼容）
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return isReWOOMessage(content, chunks)
@@ -390,14 +438,49 @@ const isReWOOMessageFn = (message: ChatMessage) => {
 
 // ReWOO 消息解析函数
 const parseReWOOMessageData = (message: ChatMessage): ReWOOMessageData => {
+  // 优先使用预解析的数据
+  if ((message as any).rewooData) {
+    return (message as any).rewooData
+  }
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return parseReWOOMessage(content, chunks)
 }
 
-// Orchestrator 消息检测函数（支持从 Meta chunks 识别）
+// Travel 消息检测函数（增强版：优先使用架构元数据）
+const isTravelMessageFn = (message: ChatMessage) => {
+  if (message.role !== 'assistant') return false
+  
+  // 优先检查架构元数据
+  const archType = getMessageArchitecture(message)
+  if (archType === 'Travel') return true
+  
+  // 回退到内容匹配（向后兼容）
+  const content = message.content || ''
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return isTravelMessage(content, chunks)
+}
+
+// Travel 消息解析函数
+const parseTravelMessageData = (message: ChatMessage): TravelMessageData => {
+  // 优先使用预解析的数据
+  if ((message as any).travelData) {
+    return (message as any).travelData
+  }
+  const content = message.content || ''
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  return parseTravelMessage(content, chunks)
+}
+
+// Orchestrator 消息检测函数（增强版：优先使用架构元数据）
 const isOrchestratorMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
+  
+  // 优先检查架构元数据
+  const archType = getMessageArchitecture(message)
+  if (archType === 'Travel') return false // Travel now handled by isTravelMessageFn
+  
+  // 回退到内容匹配（向后兼容）
   const content = message.content || ''
   // 1) 优先尝试直接解析消息内容（兼容早期单条JSON场景）
   try {
@@ -423,41 +506,6 @@ const isOrchestratorMessageFn = (message: ChatMessage) => {
       return false
     }
   })
-}
-
-// 解析并返回当前消息内的所有 Orchestrator 事件（保持服务端 sequence 顺序）
-const parseOrchestratorMessages = (message: ChatMessage): string[] => {
-  const out: string[] = []
-  // 若消息内容本身就是一个 Orchestrator 事件，先放入（兼容早期形态）
-  try {
-    const parsed = JSON.parse(message.content || '')
-    if (parsed?.type === 'orchestrator_session' || parsed?.type === 'orchestrator_step') {
-      out.push(JSON.stringify(parsed))
-    } else if (parsed?.type === 'orchestrator_bundle' && Array.isArray(parsed.events)) {
-      // 新增：支持聚合事件类型，直接返回持久化的事件数组
-      return parsed.events.map((e: any) => (typeof e === 'string' ? e : JSON.stringify(e)))
-    }
-  } catch {
-    // ignore
-  }
-  // 从分片中提取 Orchestrator 相关 Meta 事件，按 sequence 排序
-  const chunks = (orderedMessages.processor.chunks.get(message.id) || [])
-    .filter(c => c.chunk_type === 'Meta' && c.content)
-    .slice()
-    .sort((a, b) => a.sequence - b.sequence)
-
-  for (const c of chunks) {
-    try {
-      const obj = JSON.parse(c.content!.toString())
-      if (obj?.type === 'orchestrator_session' || obj?.type === 'orchestrator_step') {
-        // 直接使用服务端原始JSON字符串内容，避免字段丢失
-        out.push(c.content!.toString())
-      }
-    } catch {
-      // 非JSON或与Orchestrator无关，忽略
-    }
-  }
-  return out
 }
 
 interface ReActStepData {
@@ -802,13 +850,9 @@ const scrollToBottom = (force = false) => {
 
 // 使用简化的有序消息处理
 // 仅由有序消息处理完成时触发一次保存（避免与其它路径重复）
-const orderedMessages = useOrderedMessages(messages, async (msgs) => {
-  try {
-    await saveMessagesToConversation(msgs as any)
-  } catch (error) {
-    console.error('保存消息失败:', error)
-  }
-})
+// 使用简化的有序消息处理
+// 仅由有序消息处理完成时触发一次保存（避免与其它路径重复）
+const orderedMessages = useOrderedMessages(messages)
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || isLoading.value) return
 
@@ -938,32 +982,22 @@ const sendMessage = async () => {
           let combinedCitations: any[] = []
           let fallbackReason: string | undefined
 
-          if (activeIds.length > 0) {
-            // 针对每个激活集合检索并合并
-            for (const cid of activeIds) {
-              try {
-                const resp = await invoke('assistant_rag_answer', {
-                  request: { ...baseReq, collection_id: cid }
-                }) as any
-                if (resp?.answer) {
-                  combinedAnswer += (combinedAnswer ? '\n\n' : '') + resp.answer
-                }
-                if (Array.isArray(resp?.citations)) {
-                  combinedCitations.push(...resp.citations)
-                }
-              } catch (e) {
-                console.warn('集合检索失败', cid, e)
-                fallbackReason = '部分集合检索失败'
-              }
-            }
-          } else {
-            // 无激活集合：使用默认集合
+          // 调用后端 RAG 回答接口（支持多集合与自动持久化）
+          try {
             const resp = await invoke('assistant_rag_answer', {
-              request: { ...baseReq, collection_id: null }
+              request: { ...baseReq, collection_id: null }, // collection_id in request is ignored if collection_ids is provided
+              collection_ids: activeIds.length > 0 ? activeIds : null,
+              conversation_id: currentConversationId.value,
+              message_id: assistantMessage.id,
+              user_message_id: userMessage.id,
             }) as any
+
             combinedAnswer = resp?.answer || ''
             combinedCitations = resp?.citations || []
             fallbackReason = resp?.fallback_reason
+          } catch (e) {
+            console.warn('RAG回答生成失败', e)
+            fallbackReason = 'RAG服务调用失败'
           }
 
           // 更新助手消息内容和引用
@@ -976,7 +1010,7 @@ const sendMessage = async () => {
             console.warn('RAG降级原因:', fallbackReason)
             if (fallbackReason.includes('未找到相关上下文')) {
               assistantMessage.content += '\n\n💡 **提示**: 您可以尝试：\n• 重新表述问题\n• 添加更多相关文档到知识库\n• 关闭RAG模式使用普通聊天'
-            } else if (fallbackReason.includes('RAG检索失败')) {
+            } else if (fallbackReason.includes('RAG检索失败') || fallbackReason.includes('RAG服务调用失败')) {
               assistantMessage.content += '\n\n⚠️ **系统提示**: 知识检索服务暂时不可用，已切换到普通聊天模式'
             }
           }
@@ -995,12 +1029,7 @@ const sendMessage = async () => {
           streamStartTime.value = null
           streamCharCount.value = 0
 
-          // 非流式路径下：只保存本次新增的用户消息和助手消息
-          try {
-            await saveMessagesToConversation([userMessage, assistantMessage] as any)
-          } catch (e) {
-            console.error('保存消息失败:', e)
-          }
+          // 消息已由后端持久化，前端无需再次保存
         } else {
           // 传统模式：流式聊天或网页搜索
           const useSearch = webSearchEnabled.value

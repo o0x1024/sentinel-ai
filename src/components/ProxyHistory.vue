@@ -1238,6 +1238,6 @@ watch(selectedRequest, async () => {
 // 监听父组件的刷新触发器
 watch(refreshTrigger, async () => {
   console.log('[ProxyHistory] Refresh triggered by parent');
-  await loadHistory();
+  await refreshRequests();
 });
 </script>

@@ -48,6 +48,10 @@ export interface ChatMessage {
   selectedArchitecture?: string
   execution_id?: string
   citations?: Citation[]
+  // 架构类型标识
+  architectureType?: string
+  // 架构元数据
+  architectureMeta?: any
   // 存储解析后的 ReAct 步骤数据（包含从 chunks 提取的 observation）
   reactSteps?: Array<{
     thought?: string
@@ -56,6 +60,28 @@ export interface ChatMessage {
     error?: string
     finalAnswer?: string
   }>
+  // LLMCompiler架构数据
+  llmCompilerData?: {
+    planningData?: any
+    executionData?: any
+    joinerData?: any
+    summaryData?: any
+  }
+  // PlanAndExecute架构数据
+  planAndExecuteData?: {
+    planningData?: any
+    executionData?: any
+    replanningData?: any
+    summaryData?: any
+  }
+  // ReWOO架构数据
+  rewooData?: {
+    planningData?: any
+    solvingData?: any
+    answeringData?: any
+  }
+  // Travel架构数据
+  travelData?: any
   segments?: Array<{
     id: string
     type: 'reasoning' | 'plan' | 'tool' | 'content' | 'error' | 'meta'

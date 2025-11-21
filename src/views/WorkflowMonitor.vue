@@ -27,7 +27,7 @@
 
     <!-- 操作按钮 -->
     <div class="flex items-center justify-between gap-4 mb-6">
-      <div class="flex gap-2">
+      <div class="flex gap-2 items-center">
         <button class="btn btn-primary" @click="() => refreshExecutions()">
           <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -40,6 +40,27 @@
           </svg>
           更新统计
         </button>
+        <button class="btn btn-error btn-outline" @click="deleteAllExecutions">
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          全部删除
+        </button>
+        
+        <!-- 每页显示数量选择器 -->
+        <div class="flex items-center gap-2 ml-4">
+          <label class="text-sm text-gray-600">每页显示:</label>
+          <select 
+            v-model="pageSize" 
+            @change="handlePageSizeChange"
+            class="select select-bordered select-sm w-24"
+          >
+            <option :value="10">10</option>
+            <option :value="20">20</option>
+            <option :value="50">50</option>
+            <option :value="100">100</option>
+          </select>
+        </div>
       </div>
       
       <!-- 批量操作按钮 -->
@@ -888,15 +909,12 @@ const clearSelection = () => {
 const batchDeleteExecutions = async () => {
   if (selectedExecutionIds.value.size === 0) return
   
-  const confirmed = confirm(`确定要删除选中的 ${selectedExecutionIds.value.size} 条执行记录吗？此操作不可恢复。`)
-  if (!confirmed) return
-  
+
   try {
     const ids = Array.from(selectedExecutionIds.value)
     const result = await invoke<any>('batch_delete_workflow_executions', { executionIds: ids })
     
     if (result.success_count > 0) {
-      alert(`成功删除 ${result.success_count} 条记录${result.failed_count > 0 ? `，失败 ${result.failed_count} 条` : ''}`)
       clearSelection()
       await refreshExecutions()
       await refreshStatistics()
@@ -931,6 +949,35 @@ const batchCancelExecutions = async () => {
     console.error('批量取消失败:', error)
     alert('批量取消失败: ' + error)
   }
+}
+
+// 全部删除
+const deleteAllExecutions = async () => {
+  if (totalExecutions.value === 0) {
+    alert('没有可删除的记录')
+    return
+  }
+  
+  const confirmed = confirm(`确定要删除全部 ${totalExecutions.value} 条工作流执行记录吗？此操作不可恢复！`)
+  if (!confirmed) return
+  
+  try {
+    await invoke('delete_all_workflow_executions')
+    clearSelection()
+    await refreshExecutions()
+    await refreshStatistics()
+    alert('成功删除所有记录')
+  } catch (error) {
+    console.error('删除所有记录失败:', error)
+    alert('删除失败: ' + error)
+  }
+}
+
+// 处理每页显示数量变化
+const handlePageSizeChange = () => {
+  // 重置到第一页
+  currentPage.value = 1
+  refreshExecutions(1)
 }
 
 // 生成页码数组（智能显示）

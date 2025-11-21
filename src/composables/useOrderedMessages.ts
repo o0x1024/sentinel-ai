@@ -5,6 +5,11 @@ import { ref, Ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import type { OrderedMessageChunk, ChunkType, MessageChunkProcessor } from '../types/ordered-chat'
 import type { ChatMessage } from '../types/chat'
+import { parseLLMCompilerMessage } from './useLLMCompilerMessage'
+import { parsePlanAndExecuteMessage } from './usePlanAndExecuteMessage'
+import { parseReWOOMessage } from './useReWOOMessage'
+import { parseTravelMessage } from './useTravelMessage'
+import { ReActMessageProcessor } from './processors/ReActMessageProcessor'
 
 class MessageChunkProcessorImpl implements MessageChunkProcessor {
   chunks = new Map<string, OrderedMessageChunk[]>()
@@ -13,6 +18,14 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   // 到达顺序跟踪（按消息ID维度），用于不同 execution_id 的chunk建立稳定全局顺序
   private arrivalCounterByMessageId = new Map<string, number>()
   private chunkArrivalOrder = new Map<string, Map<string, number>>()
+  // 新增：持久化架构元数据（不随cleanup清除）
+  private architectureInfo = new Map<string, {
+    type: string
+    planSummary?: any
+    statistics?: any
+  }>()
+  // 新增：流完成状态跟踪
+  private streamCompleteFlags = new Map<string, boolean>()
 
   addChunk(chunk: OrderedMessageChunk): void {
     const messageId = chunk.message_id
@@ -21,6 +34,27 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       this.stepsByMessageId.set(messageId, new Map())
       this.arrivalCounterByMessageId.set(messageId, 0)
       this.chunkArrivalOrder.set(messageId, new Map())
+    }
+
+    // 记录架构类型
+    if (chunk.architecture && !this.architectureInfo.has(messageId)) {
+      this.architectureInfo.set(messageId, {
+        type: chunk.architecture,
+        ...(chunk.structured_data || {})
+      })
+    }
+
+    // 检测StreamComplete
+    if (chunk.chunk_type === 'StreamComplete') {
+      this.streamCompleteFlags.set(messageId, true)
+      // 如果有summary数据，更新到架构信息
+      if (chunk.structured_data) {
+        const existing = this.architectureInfo.get(messageId) || { type: 'Unknown' }
+        this.architectureInfo.set(messageId, {
+          ...existing,
+          statistics: chunk.structured_data
+        })
+      }
     }
 
     const chunks = this.chunks.get(messageId)!
@@ -89,7 +123,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         events: orchestratorEvents,
       })
     }
-    
+
     return this.buildStepGroupedContent(messageId)
   }
 
@@ -98,9 +132,13 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     const chunks = this.chunks.get(messageId) || []
     const steps = this.stepsByMessageId.get(messageId) || new Map()
 
+    // 通用的 chunk 过滤：只过滤掉 Meta 块（用于内部追踪）
+    // 架构特定的渲染逻辑应在对应的处理器和组件中处理
+    let filteredChunks = chunks.filter(chunk => chunk.chunk_type !== 'Meta')
+
     if (steps.size === 0) {
       // 如果没有步骤信息，直接按sequence顺序渲染所有chunks
-      const sorted = chunks.sort((a, b) => a.sequence - b.sequence)
+      const sorted = filteredChunks.sort((a, b) => a.sequence - b.sequence)
       const parts: string[] = []
       const usedChunks = new Set<number>()
       this.renderChunksInSequenceOrder(sorted, parts, usedChunks)
@@ -112,7 +150,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     const usedChunks = new Set<number>()
 
     // 添加步骤开始前的内容
-    const preStepChunks = chunks.filter(chunk => {
+    const preStepChunks = filteredChunks.filter(chunk => {
       const minStepSequence = Math.min(
         ...Array.from(steps.values()).map(s => s.start_sequence || Infinity)
       )
@@ -140,7 +178,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
 
       // 获取该步骤的所有chunks，严格按sequence顺序渲染
       const stepChunks = this.getStepChunksWithLogicalOrder(
-        chunks,
+        filteredChunks,
         stepInfo,
         sortedSteps,
         stepIndex,
@@ -150,7 +188,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     }
 
     // 添加步骤后的剩余内容
-    const remainingChunks = chunks.filter(chunk => !usedChunks.has(chunk.sequence))
+    const remainingChunks = filteredChunks.filter(chunk => !usedChunks.has(chunk.sequence))
     this.renderChunksInSequenceOrder(remainingChunks, parts, usedChunks)
 
     return parts.join('')
@@ -195,7 +233,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
           parts.push(textBuffer)
           textBuffer = ''
         }
-        const formatted = this.formatChunkWithSpecialHandling(chunk)
+        const formatted = this.formatChunkWithSpecialHandling(chunk, chunk.message_id)
         if (formatted.trim()) {
           parts.push(formatted)
         }
@@ -209,21 +247,20 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   }
 
   // 特殊处理不同类型的chunk格式化
-  private formatChunkWithSpecialHandling(chunk: OrderedMessageChunk): string {
+  private formatChunkWithSpecialHandling(chunk: OrderedMessageChunk, messageId: string): string {
     switch (chunk.chunk_type) {
       case 'ToolResult':
         return this.formatToolResult(chunk)
       case 'PlanInfo':
         return this.formatPlanInfo(chunk)
       case 'Content':
-        // 智能过滤Content中的Action声明（ReAct架构）
         return chunk.content?.toString() || ''
       case 'Thinking':
-        // return this.formatThinking(chunk)
-        //  return chunk.content?.toString() || ''
-        return ''
+        return this.formatThinking(chunk)
       case 'Error':
         return `❌ **错误**\n${chunk.content}`
+      case 'StreamComplete':
+        return ''
       case 'Meta':
         // Meta 事件不直接显示在内容中（Orchestrator 事件在 buildContent 层面处理）
         return ''
@@ -239,11 +276,12 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         .toString()
         .replace(/^Thought:\s*/i, '')
         .trim()
+
       // 直接以明文形式显示思考过程
-      return `🤔 **思考过程**\n${contentStr}\n`
+      return `\n🤔 **思考过程**\n${contentStr}\n`
     } catch (err) {
       console.error('格式化思考过程失败:', err)
-      return `🤔 **思考过程**\n${chunk.content}`
+      return `\n🤔 **思考过程**\n${chunk.content}`
     }
   }
 
@@ -444,6 +482,11 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   }
 
   isComplete(messageId: string): boolean {
+    // 优先检查StreamComplete标志
+    if (this.streamCompleteFlags.get(messageId) === true) {
+      return true
+    }
+    // 回退到检查is_final标志（兼容旧架构）
     const chunks = this.chunks.get(messageId) || []
     return chunks.some(chunk => chunk.is_final)
   }
@@ -456,6 +499,12 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   cleanup(messageId: string): void {
     this.chunks.delete(messageId)
     this.stepsByMessageId.delete(messageId)
+    // 注意：不清理architectureInfo和streamCompleteFlags，保持持久化
+  }
+
+  // 新增：获取架构信息（持久化，不随cleanup清除）
+  getArchitectureInfo(messageId: string) {
+    return this.architectureInfo.get(messageId)
   }
 
   // 解析步骤 Meta 事件
@@ -476,6 +525,16 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         if (existing) {
           existing.status = meta.status
           existing.end_sequence = chunk.sequence
+        }
+      } else if (meta.type === 'step_update') {
+        // ReAct 架构发送 step_update
+        if (meta.status === 'executing') {
+          steps.set(meta.step_index, {
+            step_name: meta.step_name,
+            step_type: 'ToolCall', // ReAct steps are usually tool calls
+            start_sequence: chunk.sequence,
+            status: 'InProgress',
+          })
         }
       }
     } catch (e) {
@@ -578,7 +637,14 @@ export const useOrderedMessages = (
   }
 
   const handleMessageChunk = (chunk: OrderedMessageChunk) => {
-    console.log('Received chunk:', chunk)
+    console.log('[handleMessageChunk] Received chunk:', {
+      type: chunk.chunk_type,
+      architecture: chunk.architecture,
+      stage: chunk.stage,
+      sequence: chunk.sequence,
+      message_id: chunk.message_id
+    })
+    
     // 规范化 message_id：优先将新ID映射到当前streaming消息，避免产生新消息或覆盖旧消息
     let canonicalId = resolveCanonicalId(chunk.message_id)
     if (!idAlias.has(chunk.message_id)) {
@@ -615,7 +681,7 @@ export const useOrderedMessages = (
         const obj = JSON.parse(chunk.content?.toString() || '{}')
         if (obj && obj.type === 'rag_citations' && Array.isArray(obj.citations)) {
           // 直接更新消息的引用数组
-          ;(message as any).citations = obj.citations
+          ; (message as any).citations = obj.citations
         }
       } catch (e) {
         console.warn('解析Meta块失败:', e)
@@ -645,13 +711,127 @@ export const useOrderedMessages = (
     }
     message.hasError = processor.hasError(canonicalId)
 
-    // 如果完成，先解析并保存 ReAct 步骤数据，再清理 processor 中的数据
+    // 如果完成，先解析并保存架构数据，再清理 processor 中的数据
     if (!message.isStreaming) {
-      // 检测是否为 ReAct 消息并提取 ToolResult chunks
       const allChunks = processor.chunks.get(canonicalId) || []
-      const toolResultChunks = allChunks.filter(c => c.chunk_type === 'ToolResult')
-      // 在清理前，若存在 Orchestrator 的 Meta 事件，持久化为一个聚合对象写回到消息内容中
-      try {
+
+      // 保存架构元数据（不清理）
+      const archInfo = processor.getArchitectureInfo(canonicalId)
+      if (archInfo) {
+        ; (message as any).architectureType = archInfo.type
+          ; (message as any).architectureMeta = archInfo
+      }
+
+      // 根据架构类型保存特定数据
+      // 优先从 chunk 中获取明确的 architecture 标识
+      const archType = allChunks.find(c => c.architecture)?.architecture || archInfo?.type || 'Unknown'
+
+      if (archType === 'ReAct') {
+        // ReAct架构：使用 ReActMessageProcessor 进行处理
+        // 架构元数据已在 handleMessageChunk 中保存
+        // 必须从 chunks 提取步骤，否则前端无法显示过程
+        const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
+        ;(message as any).reactSteps = steps
+      } else if (archType === 'Travel') {
+        // Travel架构：解析 OODA 执行数据
+        try {
+          const parsedData = parseTravelMessage(message.content, allChunks)
+          ; (message as any).travelData = parsedData
+          console.log('[useOrderedMessages] Travel data saved:', parsedData)
+        } catch (e) {
+          console.warn('[useOrderedMessages] Failed to parse Travel data:', e)
+        }
+      } else if (archType === 'Unknown') {
+        // Unknown架构：尝试解析 Orchestrator 事件（旧版 Travel）
+        try {
+          const orchestratorEvents: string[] = []
+          for (const c of allChunks) {
+            if (c.chunk_type === 'Meta' && c.content) {
+              try {
+                const obj = JSON.parse(c.content.toString())
+                if (obj?.type === 'orchestrator_session' || obj?.type === 'orchestrator_step') {
+                  orchestratorEvents.push(c.content.toString())
+                }
+              } catch {
+                // ignore non-json meta
+              }
+            }
+          }
+          if (orchestratorEvents.length > 0) {
+            message.content = JSON.stringify({
+              type: 'orchestrator_bundle',
+              events: orchestratorEvents,
+            })
+            // 解析并保存 Travel 数据
+            try {
+              const parsedData = parseTravelMessage(message.content, allChunks)
+                ; (message as any).travelData = parsedData
+            } catch (e) {
+              console.warn('[useOrderedMessages] Failed to parse Travel data:', e)
+            }
+          }
+        } catch (e) {
+          console.warn('[useOrderedMessages] Failed to persist orchestrator events:', e)
+        }
+      } else if (archType === 'LLMCompiler') {
+        // LLMCompiler架构
+        try {
+          const parsedData = parseLLMCompilerMessage(message.content, allChunks)
+            ; (message as any).llmCompilerData = parsedData
+        } catch (e) {
+          console.warn('[useOrderedMessages] Failed to parse LLMCompiler data:', e)
+        }
+      } else if (archType === 'PlanAndExecute') {
+        // PlanAndExecute架构
+        try {
+          const parsedData = parsePlanAndExecuteMessage(message.content, allChunks)
+            ; (message as any).planAndExecuteData = parsedData
+        } catch (e) {
+          console.warn('[useOrderedMessages] Failed to parse PlanAndExecute data:', e)
+        }
+      } else if (archType === 'ReWOO') {
+        // ReWOO架构
+        try {
+          const parsedData = parseReWOOMessage(message.content, allChunks)
+            ; (message as any).rewooData = parsedData
+        } catch (e) {
+          console.warn('[useOrderedMessages] Failed to parse ReWOO data:', e)
+        }
+      }
+
+      processor.cleanup(canonicalId)
+
+      // 仅在助手消息完成时持久化该条消息，避免重复保存用户消息
+      if (saveMessagesToConversation && message.role === 'assistant') {
+        saveMessagesToConversation([message]).catch(err => {
+          console.error('保存消息失败:', err)
+        })
+      }
+    } else {
+      // 🔥 新增：在流式过程中也实时解析架构数据
+      const allChunks = processor.chunks.get(canonicalId) || []
+      const archInfo = processor.getArchitectureInfo(canonicalId)
+      // 优先从 chunk 中获取明确的 architecture 标识
+      const archType = allChunks.find(c => c.architecture)?.architecture || archInfo?.type || 'Unknown'
+
+      if (archType === 'ReAct') {
+        // ReAct架构在流式过程中：由 ReActStepDisplay 组件处理步骤展示
+        // 必须从 chunks 提取步骤，否则前端无法显示过程
+        const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
+        ;(message as any).reactSteps = steps
+      } else if (archType === 'Travel') {
+        // Travel架构：实时解析 OODA 执行数据
+        const allChunks = processor.chunks.get(canonicalId) || []
+        try {
+          const parsedData = parseTravelMessage(message.content, allChunks)
+          ; (message as any).travelData = parsedData
+          console.log('[useOrderedMessages] Travel data parsed:', parsedData)
+        } catch (e) {
+          console.warn('[useOrderedMessages] Failed to parse Travel data during streaming:', e)
+        }
+      } else if (archType === 'Unknown') {
+        // Unknown架构：尝试解析 Orchestrator 事件（旧版 Travel）
+        const allChunks = processor.chunks.get(canonicalId) || []
         const orchestratorEvents: string[] = []
         for (const c of allChunks) {
           if (c.chunk_type === 'Meta' && c.content) {
@@ -666,158 +846,50 @@ export const useOrderedMessages = (
           }
         }
         if (orchestratorEvents.length > 0) {
-          // 将聚合后的 orchestrator 事件保存到消息内容，供前端渲染
           message.content = JSON.stringify({
             type: 'orchestrator_bundle',
             events: orchestratorEvents,
           })
-        }
-      } catch (e) {
-        console.warn('[useOrderedMessages] Failed to persist orchestrator events:', e)
-      }
-      
-      if (toolResultChunks.length > 0) {
-        // 是 ReAct 消息，解析并存储步骤数据
-        console.log('[useOrderedMessages] Parsing ReAct steps before cleanup, found', toolResultChunks.length, 'ToolResult chunks')
-        
-        const parsedSteps = parseReActStepsFromContent(message.content, canonicalId, allChunks)
-        ;(message as any).reactSteps = parsedSteps
-        console.log('[useOrderedMessages] Stored', parsedSteps.length, 'parsed ReAct steps in message')
-      }
-      
-      processor.cleanup(canonicalId)
-
-      // 仅在助手消息完成时持久化该条消息，避免重复保存用户消息
-      if (saveMessagesToConversation && message.role === 'assistant') {
-        saveMessagesToConversation([message]).catch(err => {
-          console.error('保存消息失败:', err)
-        })
-      }
-    }
-  }
-
-  // 从内容和 chunks 中解析 ReAct 步骤
-  const parseReActStepsFromContent = (content: string, messageId: string, chunks: OrderedMessageChunk[]) => {
-    const steps: any[] = []
-    const toolResultChunks = chunks.filter(c => c.chunk_type === 'ToolResult')
-    
-    const lines = content.split('\n')
-    let currentStep: any = {}
-    let inObservation = false
-    let observationLines: string[] = []
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim()
-      
-      // 检测 Thought
-      if (line.startsWith('Thought:')) {
-        if (Object.keys(currentStep).length > 0) {
-          if (observationLines.length > 0) {
-            currentStep.observation = observationLines.join('\n')
-            observationLines = []
-            inObservation = false
-          }
-          steps.push(currentStep)
-        }
-        currentStep = {}
-        currentStep.thought = line.substring('Thought:'.length).trim()
-      }
-      // 检测 Action
-      else if (line.startsWith('Action:')) {
-        if (inObservation && observationLines.length > 0) {
-          currentStep.observation = observationLines.join('\n')
-          observationLines = []
-          inObservation = false
-        }
-        
-        const actionContent = line.substring('Action:'.length).trim()
-        
-        // 检查下一行是否有 Action Input
-        let actionInput = null
-        if (i + 1 < lines.length && lines[i + 1].trim().startsWith('Action Input:')) {
-          i++
-          const inputLine = lines[i].substring(lines[i].indexOf('Action Input:') + 'Action Input:'.length).trim()
+          // 实时解析 Travel 数据
           try {
-            actionInput = JSON.parse(inputLine)
-          } catch {
-            actionInput = inputLine
-          }
-        }
-        
-        currentStep.action = {
-          tool: actionContent,
-          args: actionInput,
-          status: 'completed'
-        }
-        
-        // 从 ToolResult chunks 中查找对应的 Observation
-        const matchingToolResult = toolResultChunks.find(chunk => 
-          chunk.tool_name === actionContent
-        )
-        
-        if (matchingToolResult) {
-          try {
-            const obsData = JSON.parse(matchingToolResult.content.toString())
-            currentStep.observation = obsData
-            
-            if (obsData.success === false || obsData.error) {
-              currentStep.action.status = 'failed'
-            }
+            const parsedData = parseTravelMessage(message.content, allChunks)
+              ; (message as any).travelData = parsedData
           } catch (e) {
-            currentStep.observation = matchingToolResult.content.toString()
+            // ignore parsing errors during streaming
           }
         }
-      }
-      // 检测 Observation (保留旧逻辑作为后备)
-      else if (line.startsWith('Observation:')) {
-        inObservation = true
-        const obsContent = line.substring('Observation:'.length).trim()
-        if (obsContent) {
-          observationLines.push(obsContent)
+      } else if (archType === 'LLMCompiler') {
+        // LLMCompiler架构实时解析
+        const allChunks = processor.chunks.get(canonicalId) || []
+        try {
+          const parsedData = parseLLMCompilerMessage(message.content, allChunks)
+            ; (message as any).llmCompilerData = parsedData
+        } catch (e) {
+          // ignore parsing errors during streaming
         }
-      }
-      // 检测 Final Answer
-      else if (line.match(/^Final\s+Answer:/i)) {
-        if (inObservation && observationLines.length > 0) {
-          currentStep.observation = observationLines.join('\n')
-          observationLines = []
-          inObservation = false
+      } else if (archType === 'PlanAndExecute') {
+        // PlanAndExecute架构实时解析
+        const allChunks = processor.chunks.get(canonicalId) || []
+        try {
+          const parsedData = parsePlanAndExecuteMessage(message.content, allChunks)
+            ; (message as any).planAndExecuteData = parsedData
+        } catch (e) {
+          // ignore parsing errors during streaming
         }
-        
-        const finalContent = line.substring(line.indexOf(':') + 1).trim()
-        currentStep.finalAnswer = finalContent
-        
-        // 收集后续所有行
-        for (let j = i + 1; j < lines.length; j++) {
-          const nextLine = lines[j]
-          if (currentStep.finalAnswer) {
-            currentStep.finalAnswer += '\n' + nextLine
-          } else if (nextLine.trim()) {
-            currentStep.finalAnswer = nextLine
-          }
+      } else if (archType === 'ReWOO') {
+        // ReWOO架构实时解析
+        const allChunks = processor.chunks.get(canonicalId) || []
+        try {
+          const parsedData = parseReWOOMessage(message.content, allChunks)
+            ; (message as any).rewooData = parsedData
+        } catch (e) {
+          // ignore parsing errors during streaming
         }
-        break
-      }
-      // 继续收集 observation 内容
-      else if (inObservation && line) {
-        observationLines.push(line)
-      }
-      // 继续收集 thought 内容
-      else if (!inObservation && line && !currentStep.action && currentStep.thought) {
-        currentStep.thought += '\n' + line
       }
     }
-    
-    // 保存最后一个步骤
-    if (Object.keys(currentStep).length > 0) {
-      if (observationLines.length > 0) {
-        currentStep.observation = observationLines.join('\n')
-      }
-      steps.push(currentStep)
-    }
-    
-    return steps
   }
+
+  // ReAct 步骤解析已移至 ReActMessageProcessor，这里无需处理
 
   const setupEventListeners = async () => {
     // 如果已经设置了监听器，先清理

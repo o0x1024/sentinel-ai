@@ -976,6 +976,7 @@ export default {
     dashboard: 'Dashboard',
     scanTasks: 'Scan Tasks',
     vulnerabilities: 'Vulnerabilities',
+    passive: 'Passive Scan',
     passiveScan: 'Passive Scan',
     dictionary: 'Dictionary Management',
     mcpTools: 'MCP Tools',
@@ -1015,6 +1016,7 @@ export default {
   dictionary: {
     title: 'Dictionary Management',
     newDictionary: 'New Dictionary',
+    default: 'Default',
     initializing: 'Initializing...',
     searchPlaceholder: 'Search entries...',
     entry: 'Entry',
@@ -1501,6 +1503,9 @@ export default {
   aiAssistant: {
     selectRole: 'Select Role',
     manageRoles: 'Manage Roles',
+    availableRoles: 'Available Roles',
+    defaultRole: 'Default Assistant',
+    noRoles: 'No custom roles',
   },
   
   plugins: {

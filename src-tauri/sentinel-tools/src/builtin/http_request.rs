@@ -236,14 +236,16 @@ impl HttpRequestTool {
             .danger_accept_invalid_certs(!config.verify_ssl);
         
         // Configure passive scanning proxy if requested (优先级最高)
-        if config.use_passive_proxy {
-            client_builder = client_builder
-                .proxy(reqwest::Proxy::http("http://127.0.0.1:4201")?)
-                .proxy(reqwest::Proxy::https("http://127.0.0.1:4201")?);
-        } else {
-            // 如果未使用被动代理，则应用全局代理配置
-            client_builder = crate::global_proxy::apply_proxy_to_client(client_builder).await;
-        }
+        // if config.use_passive_proxy {
+        //     client_builder = client_builder
+        //         .proxy(reqwest::Proxy::http("http://127.0.0.1:4201")?)
+        //         .proxy(reqwest::Proxy::https("http://127.0.0.1:4201")?);
+        // } else {
+        //     // 如果未使用被动代理，则应用全局代理配置
+        //     client_builder = crate::global_proxy::apply_proxy_to_client(client_builder).await;
+        // }
+        client_builder = crate::global_proxy::apply_proxy_to_client(client_builder).await;
+
         
         let client = client_builder.build()?;
 

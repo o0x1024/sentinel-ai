@@ -7,6 +7,7 @@ use super::react_executor::TravelReactExecutor;
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
 use crate::tools::FrameworkToolAdapter;
+use crate::utils::ordered_message::{emit_message_chunk_arc, ChunkType, ArchitectureType};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,6 +25,8 @@ pub struct EngineDispatcher {
     pub(crate) conversation_id: Option<String>,
     pub(crate) message_id: Option<String>,
     pub(crate) cancellation_token: Option<CancellationToken>,
+    // 消息发送相关
+    pub(crate) execution_id: Option<String>,
 }
 
 impl EngineDispatcher {
@@ -37,6 +40,7 @@ impl EngineDispatcher {
             conversation_id: None,
             message_id: None,
             cancellation_token: None,
+            execution_id: None,
         }
     }
 
@@ -89,6 +93,32 @@ impl EngineDispatcher {
         self
     }
 
+    /// 设置执行ID（用于消息发送）
+    pub fn with_execution_id(mut self, id: String) -> Self {
+        self.execution_id = Some(id);
+        self
+    }
+
+    /// 发送消息到前端
+    fn emit_message(&self, chunk_type: ChunkType, content: &str, structured_data: Option<serde_json::Value>) {
+        if let (Some(app_handle), Some(execution_id), Some(message_id)) = (&self.app_handle, &self.execution_id, &self.message_id) {
+            let app_handle = Arc::new(app_handle.clone());
+            emit_message_chunk_arc(
+                &app_handle,
+                execution_id,
+                message_id,
+                self.conversation_id.as_deref(),
+                chunk_type,
+                content,
+                false,
+                Some("Act"),
+                None,
+                Some(ArchitectureType::Travel),
+                structured_data,
+            );
+        }
+    }
+
     /// 调度任务执行
     pub async fn dispatch(
         &self,
@@ -102,15 +132,45 @@ impl EngineDispatcher {
             action_plan.name
         );
 
+        // 从context中提取消息ID信息
+        let mut dispatcher = Self {
+            ai_service: self.ai_service.clone(),
+            prompt_repo: self.prompt_repo.clone(),
+            framework_adapter: self.framework_adapter.clone(),
+            app_handle: self.app_handle.clone(),
+            max_react_iterations: self.max_react_iterations,
+            conversation_id: self.conversation_id.clone(),
+            message_id: self.message_id.clone(),
+            cancellation_token: self.cancellation_token.clone(),
+            execution_id: self.execution_id.clone(),
+        };
+
+        // 尝试从context中提取消息ID
+        if let Some(exec_id) = context.get("_execution_id").and_then(|v| v.as_str()) {
+            dispatcher.execution_id = Some(exec_id.to_string());
+        }
+        if let Some(msg_id) = context.get("_message_id").and_then(|v| v.as_str()) {
+            dispatcher.message_id = Some(msg_id.to_string());
+        }
+        if let Some(conv_id) = context.get("_conversation_id").and_then(|v| v.as_str()) {
+            dispatcher.conversation_id = Some(conv_id.to_string());
+        }
+
+        dispatcher.emit_message(
+            ChunkType::Content,
+            &format!("📊 Dispatching with complexity: {:?}", complexity),
+            None
+        );
+
         match complexity {
             TaskComplexity::Simple => {
-                self.dispatch_simple_task(action_plan, context).await
+                dispatcher.dispatch_simple_task(action_plan, context).await
             }
             TaskComplexity::Medium => {
-                self.dispatch_medium_task(action_plan, context).await
+                dispatcher.dispatch_medium_task(action_plan, context).await
             }
             TaskComplexity::Complex => {
-                self.dispatch_complex_task(action_plan, context).await
+                dispatcher.dispatch_complex_task(action_plan, context).await
             }
         }
     }
@@ -122,20 +182,55 @@ impl EngineDispatcher {
         context: &HashMap<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
         log::info!("Dispatching simple task: direct tool execution");
+        self.emit_message(
+            ChunkType::Content,
+            "🔧 Simple task: Direct tool execution",
+            None
+        );
 
         let mut results = Vec::new();
 
-        for step in &action_plan.steps {
+        for (idx, step) in action_plan.steps.iter().enumerate() {
+            self.emit_message(
+                ChunkType::Content,
+                &format!("📍 Executing step {}/{}: {}", idx + 1, action_plan.steps.len(), step.name),
+                None
+            );
+
             match &step.step_type {
                 ActionStepType::DirectToolCall => {
                     if let Some(tool_name) = &step.tool_name {
-                        let result = self.execute_tool(tool_name, &step.tool_args, context).await?;
-                        results.push(serde_json::json!({
-                            "step_id": step.id,
-                            "step_name": step.name,
-                            "tool": tool_name,
-                            "result": result,
-                        }));
+                        match self.execute_tool(tool_name, &step.tool_args, context).await {
+                            Ok(result) => {
+                                self.emit_message(
+                                    ChunkType::ToolResult,
+                                    &format!("✅ Step {} completed: {}", idx + 1, step.name),
+                                    Some(serde_json::json!({
+                                        "step_id": step.id,
+                                        "tool": tool_name
+                                    }))
+                                );
+                                results.push(serde_json::json!({
+                                    "step_id": step.id,
+                                    "step_name": step.name,
+                                    "tool": tool_name,
+                                    "result": result,
+                                }));
+                            }
+                            Err(e) => {
+                                self.emit_message(
+                                    ChunkType::Error,
+                                    &format!("❌ Step {} failed: {}", idx + 1, e),
+                                    None
+                                );
+                                results.push(serde_json::json!({
+                                    "step_id": step.id,
+                                    "step_name": step.name,
+                                    "tool": tool_name,
+                                    "error": e.to_string(),
+                                }));
+                            }
+                        }
                     }
                 }
                 _ => {
@@ -143,6 +238,12 @@ impl EngineDispatcher {
                 }
             }
         }
+
+        self.emit_message(
+            ChunkType::Content,
+            &format!("📊 Simple task completed with {} steps", results.len()),
+            None
+        );
 
         Ok(serde_json::json!({
             "execution_type": "simple",
@@ -157,11 +258,24 @@ impl EngineDispatcher {
         context: &HashMap<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
         log::info!("Dispatching medium task: sequential tool execution");
+        self.emit_message(
+            ChunkType::Content,
+            "🔧 Medium task: Sequential tool execution",
+            Some(serde_json::json!({
+                "total_steps": action_plan.steps.len()
+            }))
+        );
 
         let mut results = Vec::new();
         let mut shared_context = context.clone();
 
-        for step in &action_plan.steps {
+        for (idx, step) in action_plan.steps.iter().enumerate() {
+            self.emit_message(
+                ChunkType::Content,
+                &format!("📍 Executing step {}/{}: {}", idx + 1, action_plan.steps.len(), step.name),
+                None
+            );
+
             match &step.step_type {
                 ActionStepType::DirectToolCall => {
                     if let Some(tool_name) = &step.tool_name {
@@ -171,6 +285,15 @@ impl EngineDispatcher {
                                 shared_context.insert(
                                     format!("step_{}_result", step.id),
                                     result.clone(),
+                                );
+
+                                self.emit_message(
+                                    ChunkType::ToolResult,
+                                    &format!("✅ Step {} completed: {}", idx + 1, step.name),
+                                    Some(serde_json::json!({
+                                        "step_id": step.id,
+                                        "tool": tool_name
+                                    }))
                                 );
 
                                 results.push(serde_json::json!({
@@ -183,6 +306,11 @@ impl EngineDispatcher {
                             }
                             Err(e) => {
                                 log::error!("Tool {} execution failed: {}", tool_name, e);
+                                self.emit_message(
+                                    ChunkType::Error,
+                                    &format!("❌ Step {} failed: {}", idx + 1, e),
+                                    None
+                                );
                                 results.push(serde_json::json!({
                                     "step_id": step.id,
                                     "step_name": step.name,
@@ -220,11 +348,18 @@ impl EngineDispatcher {
             }
         }
 
+        let successful_count = results.iter().filter(|r| r.get("status").and_then(|s| s.as_str()) == Some("success")).count();
+        self.emit_message(
+            ChunkType::Content,
+            &format!("📊 Medium task completed: {}/{} steps successful", successful_count, action_plan.steps.len()),
+            None
+        );
+
         Ok(serde_json::json!({
             "execution_type": "medium",
             "results": results,
             "total_steps": action_plan.steps.len(),
-            "successful_steps": results.iter().filter(|r| r.get("status").and_then(|s| s.as_str()) == Some("success")).count(),
+            "successful_steps": successful_count,
         }))
     }
     
@@ -306,12 +441,22 @@ impl EngineDispatcher {
         context: &HashMap<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
         log::info!("Dispatching complex task: using embedded ReAct executor");
+        self.emit_message(
+            ChunkType::Content,
+            "🤖 Complex task: Using ReAct executor for intelligent reasoning",
+            None
+        );
 
         // 检查必要的服务
         let ai_service = match &self.ai_service {
             Some(service) => service,
             None => {
                 log::warn!("AI service not available, falling back to sequential execution");
+                self.emit_message(
+                    ChunkType::Error,
+                    "⚠️ AI service unavailable, falling back to sequential execution",
+                    None
+                );
                 return self.dispatch_medium_task(action_plan, context).await;
             }
         };
@@ -324,6 +469,12 @@ impl EngineDispatcher {
             .unwrap_or_else(|_| "{}".to_string());
 
         log::info!("ReAct task description: {}", task_description);
+
+        self.emit_message(
+            ChunkType::Content,
+            "🧠 Initializing ReAct executor...",
+            None
+        );
 
         // 获取 framework_adapter（如果没有，使用全局适配器）
         let framework_adapter = if let Some(adapter) = &self.framework_adapter {
@@ -361,6 +512,11 @@ impl EngineDispatcher {
             self.cancellation_token.clone(),
         );
         
+        // 设置execution_id用于消息发送
+        if let Some(exec_id) = &self.execution_id {
+            react_executor = react_executor.with_execution_id(exec_id.clone());
+        }
+        
         // 设置工具权限
         if !allowed_tools.is_empty() {
             react_executor = react_executor.with_allowed_tools(allowed_tools);
@@ -369,10 +525,21 @@ impl EngineDispatcher {
             react_executor = react_executor.with_denied_tools(denied_tools);
         }
 
+        self.emit_message(
+            ChunkType::Content,
+            "🚀 Starting ReAct reasoning loop...",
+            None
+        );
+
         // 执行ReAct循环
         match react_executor.execute(&task_description, &context_str).await {
             Ok(final_answer) => {
                 log::info!("ReAct execution completed successfully");
+                self.emit_message(
+                    ChunkType::Content,
+                    "✅ ReAct execution completed successfully",
+                    None
+                );
                 Ok(serde_json::json!({
                     "execution_type": "complex",
                     "engine": "ReAct",
@@ -382,6 +549,11 @@ impl EngineDispatcher {
             }
             Err(e) => {
                 log::error!("ReAct execution failed: {}, falling back to sequential", e);
+                self.emit_message(
+                    ChunkType::Error,
+                    &format!("⚠️ ReAct execution failed: {}, falling back to sequential", e),
+                    None
+                );
                 self.dispatch_medium_task(action_plan, context).await
             }
         }

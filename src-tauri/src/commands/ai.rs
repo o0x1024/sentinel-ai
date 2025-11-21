@@ -100,6 +100,9 @@ pub struct SaveMessageRequest {
     pub role: String,
     pub content: String,
     pub metadata: Option<serde_json::Value>,
+    pub architecture_type: Option<String>,
+    pub architecture_meta: Option<String>,
+    pub structured_data: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -920,6 +923,9 @@ pub async fn save_ai_message(
         tool_calls: None,
         attachments: None,
         timestamp: Utc::now(),
+        architecture_type: request.architecture_type,
+        architecture_meta: request.architecture_meta,
+        structured_data: request.structured_data,
     };
 
     db.create_ai_message(&message)

@@ -795,13 +795,17 @@ async function activateTemplate() {
   toast.success(t('promptMgmt.activatedToast') as unknown as string)
 }
 
+// Define variables outside onMounted for cleanup
+let onKey: (e: KeyboardEvent) => void
+let onBeforeUnload: (e: BeforeUnloadEvent) => void
+
 onMounted(async () => {
   await refresh()
   // 初始加载时也显示默认分组的默认提示词
   if (selectedCategory.value === 'LlmArchitecture') {
     await loadDefaultStagePrompt()
   }
-  const onKey = (e: KeyboardEvent) => {
+  onKey = (e: KeyboardEvent) => {
     const isMac = navigator.platform.toLowerCase().includes('mac')
     const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey
     if (ctrlOrCmd && e.key.toLowerCase() === 's') {
@@ -818,18 +822,19 @@ onMounted(async () => {
     }
   }
   window.addEventListener('keydown', onKey)
-  const onBeforeUnload = (e: BeforeUnloadEvent) => {
+  onBeforeUnload = (e: BeforeUnloadEvent) => {
     if (isDirty.value) {
       e.preventDefault()
       e.returnValue = ''
     }
   }
   window.addEventListener('beforeunload', onBeforeUnload)
-  // cleanup
-  onBeforeUnmount(() => {
-    window.removeEventListener('keydown', onKey)
-    window.removeEventListener('beforeunload', onBeforeUnload)
-  })
+})
+
+// cleanup - moved outside async onMounted
+onBeforeUnmount(() => {
+  if (onKey) window.removeEventListener('keydown', onKey)
+  if (onBeforeUnload) window.removeEventListener('beforeunload', onBeforeUnload)
 })
 
 watch(editingTemplate, () => {

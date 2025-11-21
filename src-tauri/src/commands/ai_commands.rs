@@ -802,6 +802,8 @@ pub async fn dispatch_scenario_task(
                         false,
                         Some("planner"),
                         None,
+                        None,
+                        None,
                     );
                 }
 
@@ -889,6 +891,8 @@ pub async fn dispatch_scenario_task(
                             true, // 确保标记为最终消息
                             None,
                             None,
+                            None,
+                            None,
                         );
 
                         // 确保发送一个内容块来正式结束会话
@@ -901,6 +905,8 @@ pub async fn dispatch_scenario_task(
                             "", // 空内容，仅用于结束流
                             true, // 最终消息
                             Some("error_termination"),
+                            None,
+                            None,
                             None,
                         );
                     }

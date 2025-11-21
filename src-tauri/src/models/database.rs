@@ -337,6 +337,9 @@ pub struct AiMessage {
     pub tool_calls: Option<String>,  // JSON数组
     pub attachments: Option<String>, // JSON数组
     pub timestamp: DateTime<Utc>,
+    pub architecture_type: Option<String>,
+    pub architecture_meta: Option<String>,
+    pub structured_data: Option<String>,
 }
 
 

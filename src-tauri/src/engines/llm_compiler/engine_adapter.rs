@@ -14,7 +14,7 @@ use crate::services::database::DatabaseService;
 use crate::services::prompt_db::PromptRepository;
 use crate::engines::memory::get_global_memory;
 use crate::tools::ToolExecutionParams;
-use crate::utils::ordered_message::{emit_message_chunk, ChunkType};
+use crate::utils::ordered_message::{emit_message_chunk, ChunkType, ArchitectureType as ArchType};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -199,7 +199,7 @@ impl LlmCompilerEngine {
                 "LLMCompiler引擎执行失败: {}\n\n如需帮助，请检查执行配置或联系技术支持。",
                 error_msg
             );
-            emit_message_chunk(
+            crate::utils::ordered_message::emit_message_chunk_with_arch(
                 app_handle,
                 execution_id,
                 message_id,
@@ -208,6 +208,8 @@ impl LlmCompilerEngine {
                 &error_message,
                 true,
                 Some("llm_compiler"),
+                None,
+                Some(ArchType::LLMCompiler),
                 None,
             );
         }
@@ -548,13 +550,18 @@ impl LlmCompilerEngine {
                 
                 // 发送Planning阶段开始消息
                 if let Some(app) = &self.app_handle {
-                    crate::utils::ordered_message::emit_thinking_chunk(
+                    crate::utils::ordered_message::emit_message_chunk_with_arch(
                         app,
                         execution_id.as_deref().unwrap_or("unknown"),
                         message_id.as_deref().unwrap_or("unknown"),
                         conversation_id.as_deref(),
+                        ChunkType::Thinking,
                         "开始生成DAG执行计划...",
+                        false,
                         Some("llm_compiler_planning"),
+                        None,
+                        Some(ArchType::LLMCompiler),
+                        None,
                     );
                 }
                 
@@ -647,13 +654,18 @@ impl LlmCompilerEngine {
                     
                     // 发送Joiner阶段开始消息
                     if let Some(app) = &self.app_handle {
-                        crate::utils::ordered_message::emit_thinking_chunk(
+                        crate::utils::ordered_message::emit_message_chunk_with_arch(
                             app,
                             execution_id.as_deref().unwrap_or("unknown"),
                             message_id.as_deref().unwrap_or("unknown"),
                             conversation_id.as_deref(),
+                            ChunkType::Thinking,
                             "开始智能决策分析...",
+                            false,
                             Some("llm_compiler_joiner"),
+                            None,
+                            Some(ArchType::LLMCompiler),
+                            None,
                         );
                     }
                     
@@ -776,6 +788,23 @@ impl LlmCompilerEngine {
             )
             .await?;
 
+        // 发送StreamComplete信号
+        if let Some(app) = &self.app_handle {
+            crate::utils::ordered_message::emit_message_chunk_with_arch(
+                app,
+                execution_id.as_deref().unwrap_or("unknown"),
+                message_id.as_deref().unwrap_or("unknown"),
+                conversation_id.as_deref(),
+                ChunkType::StreamComplete,
+                "",
+                true,
+                None,
+                None,
+                Some(ArchType::LLMCompiler),
+                Some(serde_json::json!({"stream_complete": true})),
+            );
+        }
+
         // 转换为AgentExecutionResult
         Ok(AgentExecutionResult {
             id: uuid::Uuid::new_v4().to_string(),
@@ -875,7 +904,7 @@ impl LlmCompilerEngine {
                                     }).to_string()
                                 };
                                 
-                                emit_message_chunk(
+                                crate::utils::ordered_message::emit_message_chunk_with_arch(
                                     app,
                                     execution_id.unwrap_or(&result.task_id),
                                     message_id.unwrap_or(&result.task_id),
@@ -885,6 +914,8 @@ impl LlmCompilerEngine {
                                     false,
                                     Some("llm_compiler"),
                                     None,  // 工具名称可以从result中提取，但这里暂时为None
+                                    Some(ArchType::LLMCompiler),
+                                    None,
                                 );
                                 
                                 info!("📤 LLMCompiler: Tool result sent to frontend: task={}, status={:?}", 
@@ -1081,6 +1112,7 @@ impl LlmCompilerEngine {
                     true,
                     false,
                     Some(ChunkType::Content),
+                    Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
                 )
                 .await
             {

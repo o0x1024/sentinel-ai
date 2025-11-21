@@ -399,7 +399,79 @@
             </button>
           </div>
           
-          <!-- Plugin List -->
+          <!-- Search and Filter Bar -->
+        <div class="flex gap-2 mb-4 flex-wrap items-center">
+          <input 
+            v-model="pluginSearchText"
+            type="text"
+            :placeholder="$t('plugins.searchPlugins', '搜索插件...')"
+            class="input input-bordered input-sm flex-1 min-w-48"
+          />
+          
+          <!-- Category Filter Dropdown -->
+          <select 
+            v-if="selectedCategory !== 'all'"
+            v-model="selectedSubCategory"
+            class="select select-bordered select-sm"
+          >
+            <option value="">全部子分类</option>
+            <option 
+              v-for="subCat in getAvailableSubCategories()"
+              :key="subCat"
+              :value="subCat"
+            >
+              {{ subCat }}
+            </option>
+          </select>
+          
+          <!-- Tag Filter Dropdown -->
+          <select 
+            v-model="selectedTag"
+            class="select select-bordered select-sm"
+          >
+            <option value="">全部标签</option>
+            <option 
+              v-for="tag in getAvailableTags()"
+              :key="tag"
+              :value="tag"
+            >
+              {{ tag }}
+            </option>
+          </select>
+          
+          <!-- Clear Filters Button -->
+          <button 
+            v-if="pluginSearchText || selectedSubCategory || selectedTag"
+            class="btn btn-sm btn-ghost"
+            @click="clearFilters"
+          >
+            <i class="fas fa-times mr-1"></i>
+            清除筛选
+          </button>
+        </div>
+
+        <!-- Pagination and Page Size Control -->
+        <div v-if="filteredPlugins.length > 0" class="flex justify-between items-center mb-4">
+          <div class="text-sm text-base-content/70">
+            {{ $t('plugins.showing', '显示') }} {{ pluginPaginationInfo.start }}-{{ pluginPaginationInfo.end }} 
+            {{ $t('plugins.of', '共') }} {{ pluginPaginationInfo.total }} {{ $t('plugins.items', '条') }}
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-sm">{{ $t('plugins.pageSize', '每页') }}:</span>
+            <select 
+              v-model.number="pluginPageSize"
+              @change="changePluginPageSize(pluginPageSize)"
+              class="select select-bordered select-sm"
+            >
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+              <option :value="100">100</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Plugin List -->
           <div v-if="filteredPlugins.length === 0" class="alert alert-info">
             <i class="fas fa-info-circle"></i>
             <span>{{ $t('plugins.noPlugins', '暂无插件，请上传或扫描插件目录') }}</span>
@@ -419,7 +491,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="plugin in filteredPlugins" :key="plugin.metadata.id">
+              <tr v-for="plugin in paginatedPlugins" :key="plugin.metadata.id">
                 <!-- Status Indicator -->
                 <td>
                   <div class="flex items-center gap-2">
@@ -1562,6 +1634,8 @@ const pluginPageSize = ref(10)
 const pluginTotalCount = ref(0)
 const pluginTotalPagesCount = ref(0)
 const pluginSearchText = ref('')
+const selectedSubCategory = ref('')
+const selectedTag = ref('')
 
 const selectedFile = ref<File | null>(null)
 const uploading = ref(false)
@@ -1804,8 +1878,90 @@ const filteredPlugins = computed(() => {
     filtered = filtered.filter(p => isPluginFavorited(p))
   }
   
+  // 搜索筛选
+  if (pluginSearchText.value.trim()) {
+    const query = pluginSearchText.value.toLowerCase()
+    filtered = filtered.filter(p => 
+      p.metadata.name.toLowerCase().includes(query) ||
+      p.metadata.id.toLowerCase().includes(query) ||
+      p.metadata.description?.toLowerCase().includes(query) ||
+      p.metadata.author?.toLowerCase().includes(query)
+    )
+  }
+  
+  // 子分类筛选
+  if (selectedSubCategory.value) {
+    filtered = filtered.filter(p => p.metadata.category === selectedSubCategory.value)
+  }
+  
+  // 标签筛选
+  if (selectedTag.value) {
+    filtered = filtered.filter(p => p.metadata.tags.includes(selectedTag.value))
+  }
+  
   return filtered
 })
+
+// 分页计算
+const pluginPaginationInfo = computed(() => {
+  const start = (pluginCurrentPage.value - 1) * pluginPageSize.value + 1
+  const end = Math.min(pluginCurrentPage.value * pluginPageSize.value, filteredPlugins.value.length)
+  const total = filteredPlugins.value.length
+  return { start, end, total }
+})
+
+const pluginTotalPages = computed(() => {
+  return Math.ceil(filteredPlugins.value.length / pluginPageSize.value) || 1
+})
+
+const paginatedPlugins = computed(() => {
+  const start = (pluginCurrentPage.value - 1) * pluginPageSize.value
+  const end = start + pluginPageSize.value
+  return filteredPlugins.value.slice(start, end)
+})
+
+// 获取可用的子分类
+const getAvailableSubCategories = (): string[] => {
+  if (selectedCategory.value === 'passiveScan') {
+    const categories = new Set(
+      filteredPlugins.value
+        .filter(p => !selectedSubCategory.value || p.metadata.category === selectedSubCategory.value)
+        .map(p => p.metadata.category)
+    )
+    return Array.from(categories).sort()
+  } else if (selectedCategory.value === 'agentTools') {
+    const categories = new Set(
+      filteredPlugins.value
+        .filter(p => !selectedSubCategory.value || p.metadata.category === selectedSubCategory.value)
+        .map(p => p.metadata.category)
+    )
+    return Array.from(categories).sort()
+  }
+  return []
+}
+
+// 获取可用的标签
+const getAvailableTags = (): string[] => {
+  const tags = new Set<string>()
+  filteredPlugins.value.forEach(p => {
+    p.metadata.tags.forEach(tag => tags.add(tag))
+  })
+  return Array.from(tags).sort()
+}
+
+// 清除所有筛选
+const clearFilters = () => {
+  pluginSearchText.value = ''
+  selectedSubCategory.value = ''
+  selectedTag.value = ''
+  pluginCurrentPage.value = 1
+}
+
+// 改变插件每页数量
+const changePluginPageSize = (size: number) => {
+  pluginPageSize.value = size
+  pluginCurrentPage.value = 1 // 重置到第一页
+}
 
 // Review Plugins Computed (使用后端统计数据)
 const reviewStats = computed(() => reviewStatsData.value)

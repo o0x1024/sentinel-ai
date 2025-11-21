@@ -55,7 +55,7 @@
               </div>
               <div class="bg-base-200/50 rounded-lg p-3 border border-base-300/30">
                 <div
-                  v-for="(value, key) in formatParams(action.args)"
+                  v-for="(value, key) in action.args"
                   :key="key"
                   class="flex items-start gap-2 py-1"
                 >
@@ -122,76 +122,68 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useMessageUtils } from '../../composables/useMessageUtils'
-
-interface ReActAction {
-  tool: string
-  args?: any
-  status?: string
-}
-
-interface ReActStepData {
-  thought?: string
-  action?: ReActAction | string
-  observation?: any
-  error?: string
-  finalAnswer?: string
-}
+import { ReActMessageProcessor } from '../../composables/processors/ReActMessageProcessor'
+import type { ChatMessage } from '../../types/chat'
+import type { ReActStepDisplay } from '../../types/react'
 
 const props = defineProps<{
-  stepData: ReActStepData
+  message?: ChatMessage
+  stepData?: {
+    thought?: string
+    action?: any
+    observation?: any
+    error?: string
+    finalAnswer?: string
+  }
 }>()
 
 const { renderMarkdown } = useMessageUtils()
 
-const thought = computed(() => props.stepData.thought)
-const action = computed(() => {
-  const act = props.stepData.action
-  if (typeof act === 'string') {
-    try {
-      return JSON.parse(act)
-    } catch {
-      return { tool: act }
-    }
+/**
+ * 构建 ReAct 步骤显示数据
+ * 优先从 message.architectureMeta 中读取结构化数据
+ * 其次从 message.reactSteps 中读取遗留格式
+ * 最后使用 stepData 进行向后兼容
+ */
+const steps = computed(() => {
+  if (props.message) {
+    return ReActMessageProcessor.buildReActStepsFromMessage(props.message)
   }
-  return act
+
+  // 向后兼容：从 stepData 构造单步数组
+  if (props.stepData) {
+    return [{
+      index: 0,
+      thought: props.stepData.thought,
+      action: props.stepData.action,
+      observation: props.stepData.observation,
+      error: props.stepData.error,
+      finalAnswer: props.stepData.finalAnswer,
+    } as ReActStepDisplay]
+  }
+
+  return []
 })
-const observation = computed(() => props.stepData.observation)
-const error = computed(() => props.stepData.error)
-const finalAnswer = computed(() => props.stepData.finalAnswer)
 
-const formatJson = (obj: any) => {
-  try {
-    return JSON.stringify(obj, null, 2)
-  } catch {
-    return String(obj)
-  }
-}
+// 获取当前步骤（如果有多个步骤，取第一个用于显示；否则返回 null）
+const currentStep = computed(() => {
+  return steps.value.length > 0 ? steps.value[0] : null
+})
 
-const formatParams = (args: any) => {
-  if (!args) return {}
-  if (typeof args === 'object') {
-    return args
-  }
-  try {
-    return JSON.parse(args)
-  } catch {
-    return { value: args }
-  }
-}
+const thought = computed(() => currentStep.value?.thought)
+const action = computed(() => currentStep.value?.action)
+const observation = computed(() => currentStep.value?.observation)
+const error = computed(() => currentStep.value?.error)
+const finalAnswer = computed(() => currentStep.value?.finalAnswer)
 
-const formatObservation = (obs: any) => {
-  if (typeof obs === 'string') return obs
-  try {
-    return JSON.stringify(obs, null, 2)
-  } catch {
-    return String(obs)
-  }
-}
+const formatJson = (obj: any) => ReActMessageProcessor.formatJson(obj)
+
+const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(obs)
 
 const isToolCallInProgress = () => {
   if (!action.value) return false
   const status = action.value.status
-  // 只有在运行中时才展开，完成、成功、失败或错误时都折叠
+  // 只有在运行中或待处理时才展开，完成、成功、失败或错误时都折叠
   return status === 'running' || status === 'pending'
 }
 
@@ -241,20 +233,7 @@ const getActionStatusText = (status: string) => {
   return textMap[status.toLowerCase()] || status
 }
 
-const hasObservationError = (obs: any) => {
-  if (typeof obs === 'string') {
-    const lowerObs = obs.toLowerCase()
-    return lowerObs.includes('error') || 
-           lowerObs.includes('failed') || 
-           lowerObs.includes('失败') ||
-           lowerObs.includes('"success":false') ||
-           lowerObs.includes('"success": false')
-  }
-  if (typeof obs === 'object' && obs !== null) {
-    return obs.success === false || obs.error
-  }
-  return false
-}
+const hasObservationError = (obs: any) => ReActMessageProcessor.hasObservationError(obs)
 </script>
 
 <style scoped>

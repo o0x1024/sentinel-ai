@@ -8,6 +8,17 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tauri::{AppHandle, Emitter};
 
+/// 架构类型标识
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ArchitectureType {
+    ReAct,
+    ReWOO,
+    LLMCompiler,
+    PlanAndExecute,
+    Travel,
+    Unknown,
+}
+
 /// 消息块类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChunkType {
@@ -23,6 +34,8 @@ pub enum ChunkType {
     Error,
     /// 元数据信息
     Meta,
+    /// 流完成信号
+    StreamComplete,
 }
 
 /// 有序消息块
@@ -48,6 +61,10 @@ pub struct OrderedMessageChunk {
     pub stage: Option<String>,
     /// 工具名称
     pub tool_name: Option<String>,
+    /// 架构类型标识
+    pub architecture: Option<ArchitectureType>,
+    /// 架构特定的结构化数据
+    pub structured_data: Option<serde_json::Value>,
 }
 
 /// 每个执行的序号分配器
@@ -86,6 +103,35 @@ pub fn emit_message_chunk(
     stage: Option<&str>,
     tool_name: Option<&str>,
 ) {
+    emit_message_chunk_with_arch(
+        app_handle,
+        execution_id,
+        message_id,
+        conversation_id,
+        chunk_type,
+        content,
+        is_final,
+        stage,
+        tool_name,
+        None,
+        None,
+    );
+}
+
+/// 带架构信息的消息块发送函数
+pub fn emit_message_chunk_with_arch(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    message_id: &str,
+    conversation_id: Option<&str>,
+    chunk_type: ChunkType,
+    content: &str,
+    is_final: bool,
+    stage: Option<&str>,
+    tool_name: Option<&str>,
+    architecture: Option<ArchitectureType>,
+    structured_data: Option<serde_json::Value>,
+) {
     // 使用 message_id 作为序号计数的键，确保同一条前端消息的所有来源（LLM流、工具结果、Meta）
     // 共享一个严格递增的序列，从根本上消除跨 execution_id 的交错问题
     let sequence_key = format!("msg:{}", message_id);
@@ -102,11 +148,13 @@ pub fn emit_message_chunk(
         is_final,
         stage: stage.map(|s| s.to_string()),
         tool_name: tool_name.map(|s| s.to_string()),
+        architecture,
+        structured_data,
     };
 
     log::debug!(
-        "Emitting message chunk: execution_id={}, message_id={}, sequence={}, type={:?}, content_len={}, is_final={}",
-        execution_id, message_id, sequence, chunk.chunk_type, content.len(), is_final
+        "Emitting message chunk: execution_id={}, message_id={}, sequence={}, type={:?}, content_len={}, is_final={}, arch={:?}",
+        execution_id, message_id, sequence, chunk.chunk_type, content.len(), is_final, chunk.architecture
     );
 
     if let Err(e) = app_handle.emit("message_chunk", &chunk) {
@@ -125,8 +173,10 @@ pub fn emit_message_chunk_arc(
     is_final: bool,
     stage: Option<&str>,
     tool_name: Option<&str>,
+    architecture: Option<ArchitectureType>,
+    structured_data: Option<serde_json::Value>,
 ) {
-    emit_message_chunk(
+    emit_message_chunk_with_arch(
         app_handle.as_ref(),
         execution_id,
         message_id,
@@ -136,6 +186,8 @@ pub fn emit_message_chunk_arc(
         is_final,
         stage,
         tool_name,
+        architecture,
+        structured_data,
     );
 }
 
@@ -308,6 +360,7 @@ impl ChunkType {
             ChunkType::PlanInfo => "📋 **执行计划**",
             ChunkType::Error => "❌ **错误**",
             ChunkType::Meta => "ℹ️ **元数据**",
+            ChunkType::StreamComplete => "✅ **完成**",
         }
     }
 
@@ -385,6 +438,8 @@ mod tests {
             is_final: false,
             stage: None,
             tool_name: None,
+            architecture: todo!(),
+            structured_data: todo!(),
         };
         
         let thinking_chunk = OrderedMessageChunk {
@@ -398,6 +453,8 @@ mod tests {
             is_final: false,
             stage: None,
             tool_name: None,
+            architecture: todo!(),
+            structured_data: todo!(),
         };
         
         assert_eq!(content_chunk.to_markdown(), "Hello world");

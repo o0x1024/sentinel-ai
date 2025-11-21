@@ -59,7 +59,8 @@
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="font-medium text-sm">Ran</span>
-                    <code class="text-xs bg-base-200 px-2 py-0.5 rounded font-mono">{{ step.toolName }}</code>
+                    <span v-if="step.description" class="text-sm font-medium">{{ step.description }}</span>
+                    <code class="text-xs bg-base-200 px-2 py-0.5 rounded font-mono" :class="{ 'opacity-70': step.description }">{{ step.toolName }}</code>
                     <span v-if="step.status" class="badge badge-xs" :class="getActionStatusClass(step.status)">
                       {{ getActionStatusText(step.status) }}
                     </span>
@@ -161,6 +162,7 @@ interface PlanningData {
 
 interface ExecutionStep {
   toolName: string
+  description?: string
   args?: any
   thinking?: string
   result?: any

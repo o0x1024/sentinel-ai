@@ -15,7 +15,8 @@ use crate::tools::{
     get_global_tool_system, ExecutionStatus, ToolExecutionParams, ToolExecutionResult,
     UnifiedToolManager,
 };
-use crate::utils::ordered_message::{emit_message_chunk_arc, ChunkType};
+use crate::utils::ordered_message::{emit_message_chunk_arc, ChunkType, ArchitectureType as ArchType};
+use crate::utils::message_emitter::StandardMessageEmitter;
 use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -512,6 +513,8 @@ impl Executor {
                 is_final,
                 stage,
                 tool_name,
+                Some(ArchType::PlanAndExecute),
+                None,
             );
         }
     }
@@ -566,6 +569,8 @@ impl Executor {
                 false,
                 Some("executor"),
                 tool_name,
+                Some(ArchType::PlanAndExecute),
+                None,
             );
         }
     }
@@ -857,10 +862,26 @@ impl Executor {
                             conversation_id.as_deref(),
                             ChunkType::Meta,
                             "任务执行完成",
-                            true,
+                            false,
                             Some("executor"),
                             None,
                         );
+                        // 发送StreamComplete信号
+                        if let Some(app) = &self.app_handle {
+                            emit_message_chunk_arc(
+                                app,
+                                &execution_id,
+                                &message_id,
+                                conversation_id.as_deref(),
+                                ChunkType::StreamComplete,
+                                "",
+                                true,
+                                None,
+                                None,
+                                Some(ArchType::PlanAndExecute),
+                                Some(serde_json::json!({"stream_complete": true})),
+                            );
+                        }
                     }
                     return Ok(final_result);
                 }
@@ -1187,6 +1208,28 @@ impl Executor {
         // 最终记忆更新
         self.update_memory_with_execution_results(task, &current_plan, &final_result)
             .await;
+
+        // 发送StreamComplete信号
+        if let Some(ctx) = self.context.lock().await.as_ref() {
+            let execution_id = self.resolve_execution_id(ctx).await;
+            let (message_id, conversation_id) =
+                self.resolve_message_and_conversation_ids(ctx).await;
+            if let Some(app) = &self.app_handle {
+                emit_message_chunk_arc(
+                    app,
+                    &execution_id,
+                    &message_id,
+                    conversation_id.as_deref(),
+                    ChunkType::StreamComplete,
+                    "",
+                    true,
+                    None,
+                    None,
+                    Some(ArchType::PlanAndExecute),
+                    Some(serde_json::json!({"stream_complete": true})),
+                );
+            }
+        }
 
         Ok(final_result)
     }
@@ -3196,6 +3239,8 @@ impl Executor {
                                     &meta_str,
                                     false,
                                     Some("executor"),
+                                    None,
+                                    Some(ArchType::PlanAndExecute),
                                     None,
                                 );
                             }

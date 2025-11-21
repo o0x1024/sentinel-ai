@@ -144,6 +144,18 @@ const routes = [
     meta: { title: '被动扫描' }
   },
   { 
+    path: '/scan-tasks', 
+    name: 'ScanTasks', 
+    component: SecurityCenter,
+    meta: { title: '扫描任务' }
+  },
+  { 
+    path: '/vulnerabilities', 
+    name: 'Vulnerabilities', 
+    component: SecurityCenter,
+    meta: { title: '漏洞管理' }
+  },
+  { 
     path: '/plugins', 
     name: 'PluginManagement', 
     component: PluginManagement,

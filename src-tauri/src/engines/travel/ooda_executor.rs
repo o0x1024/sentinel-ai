@@ -7,6 +7,7 @@ use super::guardrails::GuardrailManager;
 use super::threat_intel::ThreatIntelManager;
 use super::engine_dispatcher::EngineDispatcher;
 use super::memory_integration::TravelMemoryIntegration;
+use crate::utils::ordered_message::{emit_message_chunk_arc, ChunkType, ArchitectureType};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,6 +21,11 @@ pub struct OodaExecutor {
     threat_intel_manager: ThreatIntelManager,
     engine_dispatcher: EngineDispatcher,
     memory_integration: Option<TravelMemoryIntegration>,
+    // 消息发送相关字段
+    app_handle: Option<Arc<tauri::AppHandle>>,
+    execution_id: Option<String>,
+    message_id: Option<String>,
+    conversation_id: Option<String>,
 }
 
 impl OodaExecutor {
@@ -34,6 +40,10 @@ impl OodaExecutor {
             threat_intel_manager,
             engine_dispatcher,
             memory_integration: None,
+            app_handle: None,
+            execution_id: None,
+            message_id: None,
+            conversation_id: None,
         }
     }
 
@@ -47,6 +57,81 @@ impl OodaExecutor {
     pub fn with_engine_dispatcher(mut self, dispatcher: EngineDispatcher) -> Self {
         self.engine_dispatcher = dispatcher;
         self
+    }
+
+    /// 设置AppHandle用于消息发送
+    pub fn with_app_handle(mut self, app_handle: Arc<tauri::AppHandle>) -> Self {
+        self.app_handle = Some(app_handle);
+        self
+    }
+
+    /// 设置执行ID、消息ID和会话ID
+    pub fn with_message_ids(mut self, execution_id: String, message_id: String, conversation_id: Option<String>) -> Self {
+        self.execution_id = Some(execution_id);
+        self.message_id = Some(message_id);
+        self.conversation_id = conversation_id;
+        self
+    }
+
+    /// 发送消息到前端
+    fn emit_phase_message(&self, stage: &str, chunk_type: ChunkType, content: &str, structured_data: Option<serde_json::Value>) {
+        if let (Some(app_handle), Some(execution_id), Some(message_id)) = (&self.app_handle, &self.execution_id, &self.message_id) {
+            emit_message_chunk_arc(
+                app_handle,
+                execution_id,
+                message_id,
+                self.conversation_id.as_deref(),
+                chunk_type,
+                content,
+                false,
+                Some(stage),
+                None,
+                Some(ArchitectureType::Travel),
+                structured_data,
+            );
+        }
+    }
+
+    /// 发送阶段开始消息
+    fn emit_phase_start(&self, phase_name: &str) {
+        self.emit_phase_message(
+            phase_name,
+            ChunkType::Thinking,
+            &format!("🔄 Starting {} phase...", phase_name),
+            Some(serde_json::json!({
+                "phase": phase_name,
+                "status": "started"
+            }))
+        );
+    }
+
+    /// 发送阶段完成消息
+    fn emit_phase_complete(&self, phase_name: &str, output: Option<&serde_json::Value>) {
+        let content = format!("✅ {} phase completed", phase_name);
+        self.emit_phase_message(
+            phase_name,
+            ChunkType::Thinking,
+            &content,
+            Some(serde_json::json!({
+                "phase": phase_name,
+                "status": "completed",
+                "output": output
+            }))
+        );
+    }
+
+    /// 发送阶段错误消息
+    fn emit_phase_error(&self, phase_name: &str, error: &str) {
+        self.emit_phase_message(
+            phase_name,
+            ChunkType::Error,
+            &format!("❌ {} phase error: {}", phase_name, error),
+            Some(serde_json::json!({
+                "phase": phase_name,
+                "status": "error",
+                "error": error
+            }))
+        );
     }
 
     /// 执行单次OODA循环
@@ -138,6 +223,7 @@ impl OodaExecutor {
         context: &mut HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         log::info!("Executing Observe phase");
+        self.emit_phase_start("Observe");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Observe;
@@ -157,6 +243,12 @@ impl OodaExecutor {
             {
                 Ok(experiences) => {
                     log::info!("Found {} similar experiences from memory", experiences.len());
+                    self.emit_phase_message(
+                        "Observe",
+                        ChunkType::Content,
+                        &format!("📚 Found {} similar experiences from memory", experiences.len()),
+                        None
+                    );
                     context.insert(
                         "memory_experiences".to_string(),
                         serde_json::to_value(&experiences).unwrap_or(serde_json::json!([]))
@@ -164,6 +256,12 @@ impl OodaExecutor {
                 }
                 Err(e) => {
                     log::warn!("Failed to query memory experiences: {}", e);
+                    self.emit_phase_message(
+                        "Observe",
+                        ChunkType::Content,
+                        &format!("⚠️ Memory query failed: {}", e),
+                        None
+                    );
                 }
             }
         }
@@ -175,8 +273,21 @@ impl OodaExecutor {
             .check_observe_phase(&target_info)
             .await?;
 
+        self.emit_phase_message(
+            "Observe",
+            ChunkType::Content,
+            &format!("🛡️ Guardrail checks: {} items checked", guardrail_checks.len()),
+            None
+        );
+
         // 3. 收集目标信息
         let observations = self.collect_observations(context).await?;
+        self.emit_phase_message(
+            "Observe",
+            ChunkType::Content,
+            "🔍 Target observations collected",
+            None
+        );
 
         // 4. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
@@ -196,6 +307,7 @@ impl OodaExecutor {
         // 5. 更新上下文
         context.insert("observations".to_string(), serde_json::to_value(&observations)?);
 
+        self.emit_phase_complete("Observe", None);
         Ok(())
     }
 
@@ -206,6 +318,7 @@ impl OodaExecutor {
         context: &mut HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         log::info!("Executing Orient phase");
+        self.emit_phase_start("Orient");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Orient;
@@ -220,6 +333,12 @@ impl OodaExecutor {
             match memory_integration.query_knowledge_graph(&entities).await {
                 Ok(knowledge_entities) => {
                     log::info!("Found {} knowledge entities from memory", knowledge_entities.len());
+                    self.emit_phase_message(
+                        "Orient",
+                        ChunkType::Content,
+                        &format!("🧠 Found {} knowledge entities", knowledge_entities.len()),
+                        None
+                    );
                     context.insert(
                         "memory_knowledge".to_string(),
                         serde_json::to_value(&knowledge_entities).unwrap_or(serde_json::json!([]))
@@ -227,12 +346,24 @@ impl OodaExecutor {
                 }
                 Err(e) => {
                     log::warn!("Failed to query knowledge graph: {}", e);
+                    self.emit_phase_message(
+                        "Orient",
+                        ChunkType::Content,
+                        &format!("⚠️ Knowledge graph query failed: {}", e),
+                        None
+                    );
                 }
             }
         }
 
         // 2. 查询威胁情报
         let threat_query = self.build_threat_query(&observations);
+        self.emit_phase_message(
+            "Orient",
+            ChunkType::Content,
+            "🔍 Querying threat intelligence...",
+            None
+        );
         
         let mut threat_context = HashMap::new();
         if let Some(tech) = observations.get("technology").and_then(|v| v.as_str()) {
@@ -246,6 +377,13 @@ impl OodaExecutor {
 
         // 3. 分析威胁
         let vulnerabilities = self.identify_vulnerabilities(&observations, &threats);
+        self.emit_phase_message(
+            "Orient",
+            ChunkType::Content,
+            &format!("⚠️ Identified {} vulnerabilities", vulnerabilities.len()),
+            None
+        );
+
         let analysis = self
             .threat_intel_manager
             .analyze_threats(threats, vulnerabilities)
@@ -256,6 +394,13 @@ impl OodaExecutor {
             .guardrail_manager
             .check_orient_phase(&analysis)
             .await?;
+
+        self.emit_phase_message(
+            "Orient",
+            ChunkType::Content,
+            &format!("🛡️ Guardrail checks: {} items checked", guardrail_checks.len()),
+            None
+        );
 
         // 4. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
@@ -275,6 +420,7 @@ impl OodaExecutor {
         // 5. 更新上下文
         context.insert("threat_analysis".to_string(), serde_json::to_value(&analysis)?);
 
+        self.emit_phase_complete("Orient", None);
         Ok(())
     }
 
@@ -286,6 +432,7 @@ impl OodaExecutor {
         context: &mut HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         log::info!("Executing Decide phase");
+        self.emit_phase_start("Decide");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Decide;
@@ -299,6 +446,12 @@ impl OodaExecutor {
             match memory_integration.get_plan_templates(task_type).await {
                 Ok(templates) => {
                     log::info!("Found {} plan templates from memory", templates.len());
+                    self.emit_phase_message(
+                        "Decide",
+                        ChunkType::PlanInfo,
+                        &format!("📋 Found {} plan templates", templates.len()),
+                        None
+                    );
                     context.insert(
                         "memory_plan_templates".to_string(),
                         serde_json::to_value(&templates).unwrap_or(serde_json::json!([]))
@@ -306,6 +459,12 @@ impl OodaExecutor {
                 }
                 Err(e) => {
                     log::warn!("Failed to query plan templates: {}", e);
+                    self.emit_phase_message(
+                        "Decide",
+                        ChunkType::Content,
+                        &format!("⚠️ Plan template query failed: {}", e),
+                        None
+                    );
                 }
             }
         }
@@ -316,12 +475,29 @@ impl OodaExecutor {
 
         // 3. 生成行动计划
         let action_plan = self.generate_action_plan(&analysis, task_complexity, context)?;
+        self.emit_phase_message(
+            "Decide",
+            ChunkType::PlanInfo,
+            &format!("📝 Generated action plan with {} steps", action_plan.steps.len()),
+            Some(serde_json::json!({
+                "plan_name": action_plan.name,
+                "steps_count": action_plan.steps.len(),
+                "estimated_duration": action_plan.estimated_duration
+            }))
+        );
 
         // 4. 护栏检查
         let guardrail_checks = self
             .guardrail_manager
             .check_decide_phase(&action_plan)
             .await?;
+
+        self.emit_phase_message(
+            "Decide",
+            ChunkType::Content,
+            &format!("🛡️ Guardrail checks: {} items checked", guardrail_checks.len()),
+            None
+        );
 
         // 5. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
@@ -341,6 +517,7 @@ impl OodaExecutor {
         // 5. 更新上下文
         context.insert("action_plan".to_string(), serde_json::to_value(&action_plan)?);
 
+        self.emit_phase_complete("Decide", None);
         Ok(())
     }
 
@@ -352,6 +529,7 @@ impl OodaExecutor {
         context: &mut HashMap<String, serde_json::Value>,
     ) -> Result<()> {
         log::info!("Executing Act phase");
+        self.emit_phase_start("Act");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Act;
@@ -359,6 +537,16 @@ impl OodaExecutor {
         // 1. 获取行动计划
         let plan_value = context.get("action_plan").cloned().unwrap_or(serde_json::json!({}));
         let action_plan: ActionPlan = serde_json::from_value(plan_value.clone())?;
+
+        self.emit_phase_message(
+            "Act",
+            ChunkType::Content,
+            &format!("⚙️ Starting execution of action plan: {}", action_plan.name),
+            Some(serde_json::json!({
+                "plan_name": action_plan.name,
+                "steps_count": action_plan.steps.len()
+            }))
+        );
 
         // 2. 最终护栏检查
         let execution_context = serde_json::json!({
@@ -369,16 +557,51 @@ impl OodaExecutor {
             .check_act_phase(&action_plan, &execution_context)
             .await?;
 
+        self.emit_phase_message(
+            "Act",
+            ChunkType::Content,
+            &format!("🛡️ Final guardrail checks: {} items checked", guardrail_checks.len()),
+            None
+        );
+
         // 3. 调度执行
         let mut exec_context = HashMap::new();
         for (k, v) in context.iter() {
             exec_context.insert(k.clone(), v.clone());
         }
 
+        // 传递消息相关ID到dispatcher
+        if let Some(app_handle) = &self.app_handle {
+            exec_context.insert("_app_handle".to_string(), serde_json::json!({}));
+        }
+        if let Some(execution_id) = &self.execution_id {
+            exec_context.insert("_execution_id".to_string(), serde_json::Value::String(execution_id.clone()));
+        }
+        if let Some(message_id) = &self.message_id {
+            exec_context.insert("_message_id".to_string(), serde_json::Value::String(message_id.clone()));
+        }
+        if let Some(conversation_id) = &self.conversation_id {
+            exec_context.insert("_conversation_id".to_string(), serde_json::Value::String(conversation_id.clone()));
+        }
+
+        self.emit_phase_message(
+            "Act",
+            ChunkType::Content,
+            "🚀 Dispatching execution to appropriate engine...",
+            None
+        );
+
         let execution_result = self
             .engine_dispatcher
             .dispatch(task_complexity, &action_plan, &exec_context)
             .await?;
+
+        self.emit_phase_message(
+            "Act",
+            ChunkType::Content,
+            "✅ Execution completed",
+            None
+        );
 
         // 4. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
@@ -551,6 +774,19 @@ impl OodaExecutor {
                 None,
             )
             .await?;
+
+        // 将 LLM 的规划思考以 Travel 架构的 Thinking chunk 发送到前端，便于前端在 "思考过程" 区块中展示
+        // 注意：这里只发送高层 reasoning，避免把完整 JSON 结果再次输出
+        if let Ok(plan_preview) = serde_json::from_str::<serde_json::Value>(&response) {
+            if let Some(reasoning) = plan_preview.get("reasoning").and_then(|v| v.as_str()) {
+                self.emit_phase_message(
+                    "Observe",
+                    ChunkType::Thinking,
+                    &format!("Thought: {}", reasoning),
+                    None,
+                );
+            }
+        }
 
         // 解析 LLM 响应
         let plan: serde_json::Value = self.parse_llm_observation_plan(&response)?;

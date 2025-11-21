@@ -1,12 +1,14 @@
 // 简化的有序聊天消息类型定义
 // 用于替代复杂的segments和toolExecutions处理
 
-export type ChunkType = 'Content' | 'Thinking' | 'ToolResult' | 'PlanInfo' | 'Error' | 'Meta'
+export type ChunkType = 'Content' | 'Thinking' | 'ToolResult' | 'PlanInfo' | 'Error' | 'Meta' | 'StreamComplete'
+
+export type ArchitectureType = 'ReAct' | 'ReWOO' | 'LLMCompiler' | 'PlanAndExecute' | 'Travel' | 'Unknown'
 
 export interface OrderedMessageChunk {
   execution_id: string
   message_id: string
-  conversation_id?: string  
+  conversation_id?: string
   sequence: number
   chunk_type: ChunkType
   content: string
@@ -14,6 +16,8 @@ export interface OrderedMessageChunk {
   is_final: boolean
   stage?: string
   tool_name?: string
+  architecture?: ArchitectureType
+  structured_data?: any
 }
 
 export interface SimplifiedChatMessage {
@@ -23,14 +27,14 @@ export interface SimplifiedChatMessage {
   timestamp: Date
   isStreaming: boolean
   hasError: boolean
-  
+
   // 移除复杂的segments, toolExecutions, executionPlan等
   // 所有内容都合并到content中，按sequence顺序显示
 }
 
 export interface MessageChunkProcessor {
   chunks: Map<string, OrderedMessageChunk[]>
-  
+
   addChunk(chunk: OrderedMessageChunk): void
   buildContent(messageId: string): string
   isComplete(messageId: string): boolean
@@ -46,9 +50,10 @@ export const CHUNK_TYPE_LABELS: Record<ChunkType, string> = {
   PlanInfo: '📋 **执行计划**',
   Error: '❌ **错误**',
   Meta: 'ℹ️ **元数据**',
+  StreamComplete: '',
 }
 
-// 检查chunk类型是否需要标签
+// 检查chunk类型是否需要标签  
 export function needsLabel(chunkType: ChunkType): boolean {
   return chunkType !== 'Content'
 }
@@ -58,4 +63,5 @@ export function formatChunk(chunk: OrderedMessageChunk): string {
   if (needsLabel(chunk.chunk_type)) {
     return `${CHUNK_TYPE_LABELS[chunk.chunk_type]}\n${chunk.content}`
   }
-  return chunk.content}
+  return chunk.content
+}

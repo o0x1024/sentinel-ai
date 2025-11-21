@@ -1,5 +1,6 @@
 pub mod global_proxy;
 pub mod ordered_message;
+pub mod message_emitter;
 pub mod prompt_resolver;
 
 use std::sync::{Arc, Mutex};

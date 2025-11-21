@@ -64,8 +64,15 @@ export const useConversation = () => {
       const historyMessages = (history as any[])
         .map((msg: any) => {
           let citations = undefined
+          let architectureType = undefined
+          let architectureMeta = undefined
           let reactSteps = undefined
+          let llmCompilerData = undefined
+          let planAndExecuteData = undefined
+          let rewooData = undefined
+          let travelData = undefined
           
+          // 解析metadata
           try {
             if (msg.metadata) {
               const meta = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata
@@ -73,14 +80,49 @@ export const useConversation = () => {
                 if (Array.isArray(meta.citations)) {
                   citations = meta.citations
                 }
-                if (Array.isArray(meta.reactSteps)) {
-                  reactSteps = meta.reactSteps
-                  console.log('[useConversation] Restored reactSteps for message:', msg.id, 'steps:', reactSteps.length)
-                }
               }
             }
           } catch (e) {
             console.warn('[useConversation] Failed to parse metadata:', e)
+          }
+          
+          // 恢复架构类型
+          if (msg.architecture_type) {
+            architectureType = msg.architecture_type
+          }
+          
+          // 恢复架构元数据
+          if (msg.architecture_meta) {
+            try {
+              architectureMeta = typeof msg.architecture_meta === 'string' 
+                ? JSON.parse(msg.architecture_meta) 
+                : msg.architecture_meta
+            } catch (e) {
+              console.warn('[useConversation] Failed to parse architecture_meta:', e)
+            }
+          }
+          
+          // 恢复结构化数据
+          if (msg.structured_data) {
+            try {
+              const data = typeof msg.structured_data === 'string' 
+                ? JSON.parse(msg.structured_data) 
+                : msg.structured_data
+              
+              if (data) {
+                reactSteps = data.reactSteps
+                llmCompilerData = data.llmCompilerData
+                planAndExecuteData = data.planAndExecuteData
+                rewooData = data.rewooData
+                travelData = data.travelData
+                
+                if (reactSteps) {
+                  console.log('[useConversation] Restored reactSteps for message:', msg.id, 'steps:', reactSteps.length)
+                }
+              }
+            } catch (e) {
+              console.warn('[useConversation] Failed to parse structured_data:', e)
+            }
           }
           
           return {
@@ -90,7 +132,13 @@ export const useConversation = () => {
             timestamp: new Date(msg.timestamp),
             isStreaming: false,
             citations,
-            reactSteps
+            architectureType,
+            architectureMeta,
+            reactSteps,
+            llmCompilerData,
+            planAndExecuteData,
+            rewooData,
+            travelData,
           }
         })
         // Ensure messages are in ascending time order so newest appears at bottom
@@ -156,15 +204,35 @@ export const useConversation = () => {
         const content = (message as any)?.content
         if (!id || savedSet.has(id)) continue
 
-        // 将 citations 和 reactSteps（若存在）嵌入 metadata 保存
+        // 提取架构相关数据
+        const architectureType = (message as any)?.architectureType
+        const architectureMeta = (message as any)?.architectureMeta
+        
+        // 提取结构化数据（各架构特定数据）
+        const structuredData: any = {}
+        if ((message as any)?.reactSteps) {
+          structuredData.reactSteps = (message as any).reactSteps
+        }
+        if ((message as any)?.llmCompilerData) {
+          structuredData.llmCompilerData = (message as any).llmCompilerData
+        }
+        if ((message as any)?.planAndExecuteData) {
+          structuredData.planAndExecuteData = (message as any).planAndExecuteData
+        }
+        if ((message as any)?.rewooData) {
+          structuredData.rewooData = (message as any).rewooData
+        }
+        if ((message as any)?.travelData) {
+          structuredData.travelData = (message as any).travelData
+        }
+
+        // 将 citations 等其他数据嵌入 metadata
         const metadata: any = {}
         if ((message as any)?.citations) {
           metadata.citations = (message as any).citations
         }
-        if ((message as any)?.reactSteps) {
-          metadata.reactSteps = (message as any).reactSteps
-          console.log('[useConversation] Saving reactSteps to metadata for message:', id, 'steps:', metadata.reactSteps.length)
-        }
+        
+        console.log('[useConversation] Saving message with architecture:', architectureType, 'message_id:', id)
         
         await invoke('save_ai_message', {
           request: {
@@ -172,7 +240,10 @@ export const useConversation = () => {
             conversation_id: convId,
             role,
             content,
-            metadata: Object.keys(metadata).length > 0 ? metadata : undefined
+            metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+            architecture_type: architectureType,
+            architecture_meta: architectureMeta ? JSON.stringify(architectureMeta) : undefined,
+            structured_data: Object.keys(structuredData).length > 0 ? JSON.stringify(structuredData) : undefined,
           }
         })
 

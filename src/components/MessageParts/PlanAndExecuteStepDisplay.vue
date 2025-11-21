@@ -135,7 +135,7 @@
                   <div class="bg-base-200/50 rounded-lg p-3 border border-base-300/30">
                     <div class="text-xs">
                       <div class="font-medium mb-1">{{ step.tool_config.tool_name }}</div>
-                      <div v-if="step.tool_config.parameters" class="mt-2">
+                      <div v-if="step.tool_config.parameters && Object.keys(formatParams(step.tool_config.parameters)).length > 0" class="mt-2">
                         <div class="font-semibold mb-1">参数：</div>
                         <div
                           v-for="(value, key) in formatParams(step.tool_config.parameters)"
@@ -160,7 +160,23 @@
                     <i class="fas fa-arrow-left text-xs"></i>
                     RESULT
                   </div>
+                  
+                  <!-- Markdown Result for AiReasoning -->
                   <div 
+                    v-if="step.step_type === 'AiReasoning'"
+                    :class="[
+                      'rounded-lg p-3 border',
+                      hasResultError(step.result)
+                        ? 'bg-error/5 border-error/20'
+                        : 'bg-success/5 border-success/20'
+                    ]"
+                  >
+                    <div class="prose prose-sm max-w-none text-xs" v-html="renderMarkdown(step.result)"></div>
+                  </div>
+
+                  <!-- Preformatted Result for others (ToolCall) -->
+                  <div 
+                    v-else
                     :class="[
                       'rounded-lg p-3 border',
                       hasResultError(step.result)

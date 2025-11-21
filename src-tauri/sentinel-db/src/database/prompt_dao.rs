@@ -225,8 +225,8 @@ pub async fn get_template_by_arch_stage(pool: &SqlitePool, arch: ArchitectureTyp
     let r = sqlx::query(
         r#"SELECT id, name, description, architecture, stage, content, is_default, is_active, created_at, updated_at,
            category, template_type, target_architecture, is_system, priority, tags, variables, version
-           FROM prompt_templates WHERE architecture = ? AND stage = ? AND is_active = 1
-           ORDER BY is_default DESC, priority DESC, updated_at DESC LIMIT 1"#
+           FROM prompt_templates WHERE architecture = ? AND stage = ?
+           ORDER BY is_active DESC, is_default DESC, priority DESC, updated_at DESC LIMIT 1"#
     ).bind(arch_s).bind(stage_s).fetch_optional(pool).await?;
     Ok(r.map(row_to_template))
 }

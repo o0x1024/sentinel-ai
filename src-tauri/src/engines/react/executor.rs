@@ -5,7 +5,8 @@
 use super::parser::ActionParser;
 use super::types::*;
 use crate::services::prompt_db::PromptRepository;
-use crate::utils::ordered_message::{emit_message_chunk, ChunkType};
+use crate::utils::ordered_message::ArchitectureType as ArchType;
+use crate::utils::message_emitter::StandardMessageEmitter;
 use anyhow::{anyhow, Context, Result};
 use sentinel_core::models::prompt::{ArchitectureType, StageType};
 use std::sync::Arc;
@@ -86,6 +87,30 @@ impl ReactExecutor {
             let trace = self.trace.read().await;
             trace.task.clone()
         };
+
+        // 创建标准消息发送器
+        let emitter = if self.config.enable_streaming && self.config.app_handle.is_some() {
+            let trace = self.trace.read().await;
+            let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+            let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
+            Some(StandardMessageEmitter::new(
+                Arc::new(self.config.app_handle.as_ref().unwrap().clone()),
+                execution_id,
+                message_id,
+                self.config.conversation_id.clone(),
+                ArchType::ReAct,
+            ))
+        } else {
+            None
+        };
+
+        // 发送架构开始信号
+        if let Some(ref emitter) = emitter {
+            emitter.emit_start(Some(serde_json::json!({
+                "max_iterations": self.config.react_config.max_iterations,
+                "enable_rag": self.config.react_config.enable_rag,
+            })));
+        }
 
         // 可选：首次思考前注入 RAG 证据
         let mut rag_context = String::new();
@@ -175,23 +200,8 @@ impl ReactExecutor {
             }
 
             // 发送流式消息（Thought）
-            if self.config.enable_streaming {
-                if let Some(app) = &self.config.app_handle {
-                    let trace = self.trace.read().await;
-                    let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                    let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                    emit_message_chunk(
-                        app,
-                        &execution_id,  // 使用统一的 execution_id
-                        &message_id,
-                        self.config.conversation_id.as_deref(),
-                        ChunkType::Thinking,
-                        &llm_output,
-                        false,
-                        Some("react"),
-                        None,
-                    );
-                }
+            if let Some(ref emitter) = emitter {
+                emitter.emit_thinking(&llm_output);
             }
 
             // === 步骤 2: 解析 Action ===
@@ -233,27 +243,6 @@ impl ReactExecutor {
                         (msg_id, exec_id, trace.trace_id.clone(), self.config.conversation_id.clone())
                     };
 
-                    // 发送最终完成标记（不发送内容，因为内容已经通过 LLM 流式输出发送过了）
-                    if self.config.enable_streaming {
-                        if let Some(app) = &self.config.app_handle {
-                            tracing::info!(
-                                "📤 ReAct: Emitting Final completion marker with is_final=true, execution_id={}, message_id={}", 
-                                execution_id, message_id
-                            );
-                            emit_message_chunk(
-                                app,
-                                &execution_id,  // 使用统一的 execution_id
-                                &message_id,
-                                conversation_id.as_deref(),
-                                ChunkType::Meta,  // 改为 Meta 类型，表示这是元数据标记
-                                "",  // 空内容，不重复发送
-                                true, // 这是最终消息标记
-                                Some("react"),
-                                None,
-                            );
-                        }
-                    }
-
                     // 更新 trace 状态
                     let mut trace = self.trace.write().await;
                     trace.add_step(ReactStep {
@@ -273,6 +262,19 @@ impl ReactExecutor {
                         .elapsed()
                         .unwrap_or(Duration::from_secs(0))
                         .as_millis() as u64;
+
+                    // 发送final answer内容到前端
+                    if let Some(ref emitter) = emitter {
+                        emitter.emit_content(&final_answer.answer, false);
+                        
+                        // 发送完成信号
+                        emitter.emit_complete(Some(serde_json::json!({
+                            "total_iterations": iteration,
+                            "total_duration_ms": trace.metrics.total_duration_ms,
+                            "status": "Completed",
+                            "final_answer": final_answer.answer,
+                        })));
+                    }
 
                     return Ok(trace.clone());
                 }
@@ -296,29 +298,9 @@ impl ReactExecutor {
                         trace.metrics.tool_calls_count += 1;
                     }
 
-                    // 发送工具调用流式消息
-                    if self.config.enable_streaming {
-                        if let Some(app) = &self.config.app_handle {
-                            let trace = self.trace.read().await;
-                            let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                            let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                            let tool_info = serde_json::json!({
-                                "tool": action.tool,
-                                "args": action.args,
-                                "status": "executing"
-                            });
-                            emit_message_chunk(
-                                app,
-                                &execution_id,  // 使用统一的 execution_id
-                                &message_id,
-                                self.config.conversation_id.as_deref(),
-                                ChunkType::Meta,
-                                &serde_json::to_string(&tool_info).unwrap_or_default(),
-                                false,
-                                Some("react"),
-                                Some(&action.tool),
-                            );
-                        }
+                    // 发送工具调用开始信号
+                    if let Some(ref emitter) = emitter {
+                        emitter.emit_step_update(iteration as usize, &action.tool, "executing");
                     }
 
                     // 执行工具
@@ -362,35 +344,9 @@ impl ReactExecutor {
                                 trace.metrics.successful_tool_calls += 1;
                             }
 
-                            // 🔧 修复：立即一次性发送完整的 Observation 结果
-                            // 不要等待下一次迭代的 LLM 流式输出
-                            if self.config.enable_streaming {
-                                if let Some(app) = &self.config.app_handle {
-                                    let trace: tokio::sync::RwLockReadGuard<'_, ReactTrace> =
-                                        self.trace.read().await;
-                                    let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                                    let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                                    
-                                    // 一次性发送完整的工具结果，不进行流式分块
-                                    let observation_content = serde_json::to_string(&result).unwrap_or_default();
-                                    emit_message_chunk(
-                                        app,
-                                        &execution_id,  // 使用统一的 execution_id
-                                        &message_id,
-                                        self.config.conversation_id.as_deref(),
-                                        ChunkType::ToolResult,
-                                        &observation_content,
-                                        false,
-                                        Some("react"),
-                                        Some(&action.tool),
-                                    );
-                                    
-                                    tracing::info!(
-                                        "📤 Observation sent as ToolResult chunk: tool={}, length={}",
-                                        action.tool,
-                                        observation_content.len()
-                                    );
-                                }
+                            // 发送工具执行结果
+                            if let Some(ref emitter) = emitter {
+                                emitter.emit_tool_result(&action.tool, &result);
                             }
 
                             // 添加到上下文历史（但不会在 LLM 流式输出中重复显示）
@@ -420,37 +376,13 @@ impl ReactExecutor {
                                 trace.metrics.failed_tool_calls += 1;
                             }
 
-                            // 🔧 修复：失败时也一次性发送完整的错误信息
-                            if self.config.enable_streaming {
-                                if let Some(app) = &self.config.app_handle {
-                                    let trace: tokio::sync::RwLockReadGuard<'_, ReactTrace> =
-                                        self.trace.read().await;
-                                    let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                                    let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                                    
-                                    let error_content = serde_json::json!({
-                                        "error": e.to_string(),
-                                        "success": false
-                                    }).to_string();
-                                    
-                                    emit_message_chunk(
-                                        app,
-                                        &execution_id,
-                                        &message_id,
-                                        self.config.conversation_id.as_deref(),
-                                        ChunkType::ToolResult,
-                                        &error_content,
-                                        false,
-                                        Some("react"),
-                                        Some(&action.tool),
-                                    );
-                                    
-                                    tracing::warn!(
-                                        "📤 Observation error sent as ToolResult chunk: tool={}, error={}",
-                                        action.tool,
-                                        e
-                                    );
-                                }
+                            // 发送工具执行错误
+                            if let Some(ref emitter) = emitter {
+                                let error_result = serde_json::json!({
+                                    "error": e.to_string(),
+                                    "success": false
+                                });
+                                emitter.emit_tool_result(&action.tool, &error_result);
                             }
 
                             context_history.push(format!(

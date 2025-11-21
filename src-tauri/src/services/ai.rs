@@ -101,7 +101,6 @@ impl LLMLoggingHook {
     }
 }
 
-
 // 为 LLMLoggingHook 实现 StreamingPromptHook trait
 // 该 trait 可能没有方法或使用默认实现，所以提供一个空实现
 impl<M: CompletionModel> StreamingPromptHook<M> for LLMLoggingHook {
@@ -151,7 +150,11 @@ impl<M: CompletionModel> StreamingPromptHook<M> for LLMLoggingHook {
         let log_content = format!(
             "STREAM_COMPLETE - Prompt: {} | Response: {}",
             prompt_content.chars().take(200).collect::<String>()
-                + if prompt_content.len() > 200 { "..." } else { "" },
+                + if prompt_content.len() > 200 {
+                    "..."
+                } else {
+                    ""
+                },
             response_content
         );
 
@@ -205,7 +208,11 @@ impl<M: CompletionModel> StreamingPromptHook<M> for LLMLoggingHook {
             "STREAM_REQUEST - History: {} | Prompt: {}",
             history_summary,
             prompt_content.chars().take(500).collect::<String>()
-                + if prompt_content.len() > 500 { "..." } else { "" }
+                + if prompt_content.len() > 500 {
+                    "..."
+                } else {
+                    ""
+                }
         );
 
         // Clone self for async block
@@ -1357,6 +1364,7 @@ impl AiService {
             stream,
             is_final,
             chunk_type,
+            None, // architecture_type
         )
         .await
     }
@@ -1372,6 +1380,7 @@ impl AiService {
         stream: bool,
         is_final: bool,
         chunk_type: Option<ChunkType>,
+        architecture_type: Option<crate::utils::ordered_message::ArchitectureType>,
     ) -> Result<String> {
         info!("发送流式消息请求 - 模型: {}", self.config.model);
 
@@ -1405,10 +1414,13 @@ impl AiService {
                 };
 
                 // 获取历史消息
-                messages = self.get_conversation_history(cid).await.unwrap_or_else(|e| {
-                    warn!("获取对话历史失败: {}, 使用空消息列表", e);
-                    Vec::new()
-                });
+                messages = self
+                    .get_conversation_history(cid)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("获取对话历史失败: {}, 使用空消息列表", e);
+                        Vec::new()
+                    });
 
                 (cid.clone(), exists)
             }
@@ -1429,6 +1441,9 @@ impl AiService {
                     tool_calls: None,
                     attachments: None,
                     timestamp: chrono::Utc::now(),
+                    architecture_type: None,
+                    architecture_meta: None,
+                    structured_data: None,
                 };
 
                 // 只有有会话且会话存在时才保存
@@ -1460,6 +1475,9 @@ impl AiService {
                     tool_calls: None,
                     attachments: None,
                     timestamp: chrono::Utc::now(),
+                    architecture_type: None,
+                    architecture_meta: None,
+                    structured_data: None,
                 });
             }
         } else {
@@ -1478,6 +1496,9 @@ impl AiService {
                         tool_calls: None,
                         attachments: None,
                         timestamp: chrono::Utc::now(),
+                        architecture_type: None,
+                        architecture_meta: None,
+                        structured_data: None,
                     });
                 }
             }
@@ -1501,8 +1522,7 @@ impl AiService {
         // 生成message_id
         let message_id = message_id
             .clone()
-            .or_else(|| messages.last().map(|m| m.id.clone()))
-            .unwrap_or_else(|| "unknown".to_string());
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
 
         // 创建日志记录器Hook（使用rig官方机制）
         let logger = LLMLoggingHook::new(
@@ -1544,13 +1564,11 @@ impl AiService {
         // info!("Creating agent for provider '{}' with model '{}'", provider, model);
         // info!("API base URL: {:?}", self.config.api_base);
         // info!("Has API key: {}", self.config.api_key.is_some());
-        
+
         let agent = {
             let client = DynClientBuilder::new();
             let agent_builder = match client.agent(&provider, &model) {
-                Ok(builder) => {
-                    builder
-                },
+                Ok(builder) => builder,
                 Err(e) => {
                     error!(
                         "Failed to create agent for provider '{}' with model '{}': {}",
@@ -1575,12 +1593,12 @@ impl AiService {
             // info!("Building agent...");
             agent_builder.build()
         };
-        
+
         // info!("Agent built successfully, starting stream request...");
 
         // 处理流式响应
         let mut content = String::new();
-        
+
         // 添加超时保护，防止请求无限期挂起
         // 注意：暂时移除 with_hook(logger)，因为它可能导致流阻塞
         // TODO: 研究 rig 库的正确 hook 用法或使用其他日志记录方式
@@ -1589,28 +1607,35 @@ impl AiService {
             agent
                 .stream_prompt(user_input)
                 // .with_hook(logger)  // 临时禁用，避免阻塞
-                .multi_turn(100)
-        ).await;
-        
+                .multi_turn(100),
+        )
+        .await;
+
         let mut stream_iter = match stream_result {
             Ok(iter) => iter,
             Err(_) => {
-                error!("LLM request timeout after 120 seconds for provider '{}' model '{}'", provider, model);
+                error!(
+                    "LLM request timeout after 120 seconds for provider '{}' model '{}'",
+                    provider, model
+                );
                 return Err(anyhow::anyhow!(
                     "LLM request timeout: The AI service did not respond within 120 seconds. Please check your network connection and API configuration."
                 ));
             }
         };
-        
+
         // 手动记录请求日志（替代 hook）
-        info!("LLM Request - Provider: {}, Model: {}, Input length: {} chars", 
-              provider, model, user_input.len());
-        logger.write_to_log("SYSTEM REQUEST", &format!("\n{}\n", 
-              system_prompt.unwrap_or("").to_string() 
-        ));
-        logger.write_to_log("USER REQUEST", &format!("\n{}\n", 
-            user_input
-        ));
+        info!(
+            "LLM Request - Provider: {}, Model: {}, Input length: {} chars",
+            provider,
+            model,
+            user_input.len()
+        );
+        logger.write_to_log(
+            "SYSTEM REQUEST",
+            &format!("\n{}\n", system_prompt.unwrap_or("").to_string()),
+        );
+        logger.write_to_log("USER REQUEST", &format!("\n{}\n", user_input));
 
         while let Some(item) = stream_iter.next().await {
             match item {
@@ -1629,6 +1654,7 @@ impl AiService {
                             &piece,
                             false,
                             None,
+                            architecture_type.clone(),
                         );
                     }
                 }
@@ -1645,6 +1671,7 @@ impl AiService {
                             &piece,
                             false,
                             None,
+                            architecture_type.clone(),
                         );
                     }
                 }
@@ -1672,15 +1699,43 @@ impl AiService {
                 "",
                 true,
                 None,
+                architecture_type.clone(),
             );
         }
 
         // 手动记录响应日志（替代 hook）
-        info!("LLM Response - Provider: {}, Model: {}, Output length: {} chars", 
-              provider, model, content.len());
-        logger.write_to_log("OUTPUT RESPONSE", &format!("\n{}\n", 
-            content
-        ));
+        info!(
+            "LLM Response - Provider: {}, Model: {}, Output length: {} chars",
+            provider,
+            model,
+            content.len()
+        );
+        logger.write_to_log("OUTPUT RESPONSE", &format!("\n{}\n", content));
+
+        // 保存助手消息到数据库
+        if has_conversation && !content.is_empty() {
+            let msg = AiMessage {
+                id: message_id.clone(),
+                conversation_id: conv_id.clone(),
+                role: "assistant".to_string(),
+                content: content.clone(),
+                metadata: None,
+                token_count: Some(content.len() as i32),
+                cost: None,
+                tool_calls: None,
+                attachments: None,
+                timestamp: chrono::Utc::now(),
+                architecture_type: architecture_type.as_ref().map(|a| format!("{:?}", a)),
+                architecture_meta: None,
+                structured_data: None,
+            };
+
+            if let Err(e) = self.db.upsert_ai_message_append(&msg).await {
+                warn!("Failed to save assistant message: {}", e);
+            } else {
+                debug!("Assistant message saved/appended to DB");
+            }
+        }
 
         Ok(content)
     }
@@ -1719,6 +1774,9 @@ impl AiService {
             tool_calls: None,
             attachments: None,
             timestamp: Utc::now(),
+            architecture_type: None,
+            architecture_meta: None,
+            structured_data: None,
         };
 
         self.db.create_ai_message(&message).await?;
@@ -1747,6 +1805,9 @@ impl AiService {
             tool_calls: Some(tool_calls_json),
             attachments: None,
             timestamp: Utc::now(),
+            architecture_type: None,
+            architecture_meta: None,
+            structured_data: None,
         };
 
         self.db.create_ai_message(&message).await?;
@@ -1792,9 +1853,10 @@ impl AiService {
         content: &str,
         is_final: bool,
         stage: Option<&str>,
+        architecture: Option<crate::utils::ordered_message::ArchitectureType>,
     ) {
         if let Some(app_handle) = &self.app_handle {
-            crate::utils::ordered_message::emit_message_chunk(
+            crate::utils::ordered_message::emit_message_chunk_with_arch(
                 app_handle,
                 execution_id,
                 message_id,
@@ -1803,6 +1865,8 @@ impl AiService {
                 content,
                 is_final,
                 stage,
+                None,
+                architecture,
                 None,
             );
         }

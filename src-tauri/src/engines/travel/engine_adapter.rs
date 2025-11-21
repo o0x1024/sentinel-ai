@@ -15,6 +15,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Travel引擎
 pub struct TravelEngine {
@@ -129,7 +130,49 @@ impl TravelEngine {
         // 3. 准备执行上下文
         let mut context = self.prepare_context(task)?;
 
-        // 4. 执行OODA循环
+        // 4. 提取消息相关的ID
+        let execution_id = task.parameters.get("execution_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        
+        let message_id = task.parameters.get("message_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        
+        let conversation_id = task.parameters.get("conversation_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // 5. 为OodaExecutor配置消息发送
+        let mut executor = OodaExecutor::new(self.config.clone());
+        
+        if let Some(app_handle) = &self.app_handle {
+            executor = executor.with_app_handle(Arc::new(app_handle.clone()));
+        }
+        
+        executor = executor
+            .with_message_ids(execution_id.clone(), message_id.clone(), conversation_id.clone());
+        
+        // 也设置dispatcher和其他依赖
+        let mut dispatcher = EngineDispatcher::new();
+        if let Some(ai_service) = &self.ai_service {
+            dispatcher = dispatcher.with_ai_service(ai_service.clone());
+        }
+        if let Some(repo) = &self.prompt_repo {
+            dispatcher = dispatcher.with_prompt_repo(repo.clone());
+        }
+        if let Some(adapter) = &self.framework_adapter {
+            dispatcher = dispatcher.with_framework_adapter(adapter.clone());
+        }
+        if let Some(app) = &self.app_handle {
+            dispatcher = dispatcher.with_app_handle(app.clone());
+        }
+        
+        executor = executor.with_engine_dispatcher(dispatcher);
+
+        // 6. 执行OODA循环
         for cycle_num in 1..=self.config.max_ooda_cycles {
             log::info!("Starting OODA cycle {}/{}", cycle_num, self.config.max_ooda_cycles);
 
@@ -140,8 +183,7 @@ impl TravelEngine {
             }
 
             // 执行单次OODA循环
-            match self
-                .ooda_executor
+            match executor
                 .execute_cycle(cycle_num, &task.description, task_complexity.clone(), &mut context)
                 .await
             {
@@ -166,7 +208,7 @@ impl TravelEngine {
             }
         }
 
-        // 5. 完成轨迹
+        // 7. 完成轨迹
         if trace.status == TravelStatus::Running {
             if trace.ooda_cycles.len() >= self.config.max_ooda_cycles as usize {
                 trace.status = TravelStatus::MaxCyclesReached;
@@ -179,7 +221,7 @@ impl TravelEngine {
             }
         }
 
-        // 6. 转换为AgentExecutionResult
+        // 8. 转换为AgentExecutionResult
         self.trace_to_result(trace)
     }
 
