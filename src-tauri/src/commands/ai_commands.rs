@@ -918,7 +918,7 @@ pub async fn dispatch_scenario_task(
             });
         } else {
             // ReAct 等架构已在调度阶段完成执行，这里不再重复触发
-            info!("Architecture '{}' completes within dispatch; skipping real engine execution.", arch_for_exec);
+            info!("Architecture '{}' completes within dispatch; ", arch_for_exec);
         }
     }
 

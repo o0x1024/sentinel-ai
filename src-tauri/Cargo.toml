@@ -50,21 +50,7 @@ rsubdomain = "1.2.6"
 rustscan = "2.4.1"
 
 # MCP协议支持 - 使用官方Rust SDK，启用所有新特性
-rmcp = { version = "0.8.3", features = [
-    "client", 
-    "server", 
-    "macros", 
-    "transport-async-rw", 
-    "transport-child-process", 
-    "transport-sse-client", 
-    "transport-sse-server",
-    "transport-streamable-http-client",
-    "transport-streamable-http-server",
-    "reqwest",
-    "auth",
-    "uuid",
-    "base64"
-] }
+rmcp = { workspace = true }
 
 # RAG and Vector Database
 lancedb = "0.22.3"
@@ -185,9 +171,6 @@ tauri-plugin-fs = "2"
 notify = "6.1"
 fastrand = "2.3.0"
 
-# 信号处理
-signal-hook = "0.3"
-signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 rig-core = { version = "0.24.0", features = ["derive"] }
 rig-lancedb = "0.2.27"
 arrow-array = "55.2.0"
@@ -196,6 +179,9 @@ arrow-schema = "55.2.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# 信号处理 (仅限Unix)
+signal-hook = "0.3"
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 
 [profile.dev]
 # 开发环境优化 
@@ -234,3 +220,19 @@ resolver = "2"
 
 [workspace.dependencies]
 tempfile = "3.8"
+rmcp = { version = "0.9.0", features = [
+    "client", 
+    "server", 
+    "macros", 
+    "transport-async-rw", 
+    "transport-child-process", 
+    "transport-sse-client", 
+    "transport-sse-server",
+    "transport-streamable-http-client",
+    "transport-streamable-http-server",
+    "reqwest",
+    "auth",
+    "uuid",
+    "base64"
+] }
+rig-core = { version = "0.24.0", features = ["derive"] }

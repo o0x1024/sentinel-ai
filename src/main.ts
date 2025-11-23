@@ -52,7 +52,9 @@ const applyStartupSettings = () => {
         // i18n 在下方 app.use(i18n) 前，这里直接设置全局值可能无效；
         // 但我们先把本地值存起来，i18n 初始化会读取。
         localStorage.setItem('sentinel-language', langCode)
-      } catch {}
+      } catch {
+        console.warn('Failed to set language in localStorage')
+      }
     }
   } catch (e) {
     console.warn('applyStartupSettings failed', e)

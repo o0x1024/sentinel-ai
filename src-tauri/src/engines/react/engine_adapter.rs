@@ -331,6 +331,39 @@ impl ReactEngine {
                 architecture_meta: Some(
                     serde_json::to_string(&serde_json::json!({
                         "type": "ReAct",
+                        "steps": trace.steps.iter().map(|step| {
+                            match &step.step_type {
+                                ReactStepType::Thought { content, .. } => serde_json::json!({
+                                    "thought": content,
+                                }),
+                                ReactStepType::Action { tool_call } => serde_json::json!({
+                                    "action": {
+                                        "tool": tool_call.tool,
+                                        "args": tool_call.args,
+                                        "status": "pending",
+                                    }
+                                }),
+                                ReactStepType::Observation { tool_name, result, success, .. } => serde_json::json!({
+                                    "observation": result,
+                                    "action": {
+                                        "tool": tool_name,
+                                        "args": {},
+                                        "status": if *success { "success" } else { "failed" },
+                                    }
+                                }),
+                                ReactStepType::Final { answer, citations } => serde_json::json!({
+                                    "finalAnswer": answer,
+                                    "citations": citations,
+                                }),
+                                ReactStepType::Error { error_type, message, retryable } => serde_json::json!({
+                                    "error": {
+                                        "type": error_type,
+                                        "message": message,
+                                        "retryable": retryable,
+                                    }
+                                }),
+                            }
+                        }).collect::<Vec<_>>(),
                         "statistics": {
                             "total_iterations": trace.metrics.total_iterations,
                             "tool_calls_count": trace.metrics.tool_calls_count,

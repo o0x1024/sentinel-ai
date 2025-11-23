@@ -939,7 +939,7 @@ const editableServer = reactive({
 const editableServerJson = ref('');
 const serverTools = ref<FrontendTool[]>([]);
 const isLoadingTools = ref(false);
-const statusUpdateInterval = ref<NodeJS.Timeout | null>(null);
+// const statusUpdateInterval = ref<NodeJS.Timeout | null>(null);
 
 const quickCreateForm = reactive({
   enabled: true,
@@ -1468,25 +1468,25 @@ ${plugin.last_error ? `错误: ${plugin.last_error}` : ''}
 }
 
 // 启动状态更新定时器
-function startStatusUpdates() {
-  if (statusUpdateInterval.value) {
-    clearInterval(statusUpdateInterval.value);
-  }
+// function startStatusUpdates() {
+//   if (statusUpdateInterval.value) {
+//     clearInterval(statusUpdateInterval.value);
+//   }
   
-  statusUpdateInterval.value = setInterval(async () => {
-    if (activeTab.value === 'my_servers') {
-      await updateConnectionStatus();
-    }
-  }, 2000); // 每2秒更新一次状态
-}
+//   statusUpdateInterval.value = setInterval(async () => {
+//     if (activeTab.value === 'my_servers') {
+//       await updateConnectionStatus();
+//     }
+//   }, 2000); // 每2秒更新一次状态
+// }
 
-// 停止状态更新定时器
-function stopStatusUpdates() {
-  if (statusUpdateInterval.value) {
-    clearInterval(statusUpdateInterval.value);
-    statusUpdateInterval.value = null;
-  }
-}
+// // 停止状态更新定时器
+// function stopStatusUpdates() {
+//   if (statusUpdateInterval.value) {
+//     clearInterval(statusUpdateInterval.value);
+//     statusUpdateInterval.value = null;
+//   }
+// }
 
 // --- 生命周期钩子 ---
 onMounted(async () => {
@@ -1494,7 +1494,7 @@ onMounted(async () => {
   fetchBuiltinTools();
   // 移除内置服务器列表
   marketplaceServers.value = [];
-  startStatusUpdates();
+  // startStatusUpdates();
   
   // 加载被动扫描插件
   await fetchPassivePlugins();
@@ -1513,9 +1513,9 @@ onMounted(async () => {
   });
 });
 
-onUnmounted(() => {
-  stopStatusUpdates();
-});
+// onUnmounted(() => {
+//   stopStatusUpdates();
+// });
 </script>
 
 <style scoped>

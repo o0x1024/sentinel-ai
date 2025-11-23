@@ -660,11 +660,8 @@ pub async fn connect_to_mcp_server(
 ) -> Result<String, String> {
     // let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    match client_manager
-        .connect_to_server(&name)
-        .await
-    {
-        Ok(connection_id) => Ok(format!("Connected: {:?}", connection_id)),
+    match client_manager.connect_to_server(&name).await {
+        Ok(_session) => Ok(format!("Connected to {}", name)),
         Err(e) => Err(format!("Failed to connect to MCP server: {}", e)),
     }
 }

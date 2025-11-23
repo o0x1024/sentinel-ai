@@ -11,12 +11,13 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use rmcp::{
     model::{
-        CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, Implementation,
-        InitializeResult, ListToolsResult, PaginatedRequestParam, Tool,
+        CallToolRequestParam, CallToolResult, InitializeResult, ListToolsResult, PaginatedRequestParam, Tool,
     },
     service::{RoleClient, RunningService, ServiceExt},
-    transport::{ConfigureCommandExt, SseClientTransport, StreamableHttpClientTransport, TokioChildProcess},
+    transport::{ConfigureCommandExt, TokioChildProcess},
 };
+// TODO: 注释掉rig-core导入，考虑是否需要替代实现
+// use rig_core::mcp::client::Client as RigMcpClient;
 
 // 移除未使用的导入
 use serde::{Deserialize, Serialize};
@@ -106,6 +107,11 @@ pub trait McpSession: Send + Sync {
     /// 获取连接状态
     async fn get_connection_status(&self) -> ConnectionStatus;
 
+    /// 健康检查（默认实现为始终 true，旧实现可覆盖）
+    async fn check_connection_health(&self) -> bool {
+        true
+    }
+
     /// 重新连接
     async fn reconnect(&self) -> Result<()>;
 
@@ -113,7 +119,7 @@ pub trait McpSession: Send + Sync {
     async fn shutdown(&self) -> Result<()>;
 }
 
-/// 增强型MCP会话实现
+/// 基于 rmcp 的旧 MCP 会话实现（保留一段时间以便兼容）
 pub struct McpSessionImpl {
     config: McpClientConfig,
     service: Arc<RwLock<Option<Box<dyn std::any::Any + Send + Sync>>>>,
@@ -672,6 +678,22 @@ impl McpSessionImpl {
             .map_err(|e| anyhow!("Failed to check command existence: {}", e))?;
 
         if !output.status.success() {
+            // 在Windows上，如果查找 npx 失败，尝试查找 npx.cmd
+            if cfg!(target_os = "windows") && (command == "npx" || command.contains("npx")) {
+                debug!("Trying alternative command with .cmd extension: {}.cmd", command);
+                let alt_cmd = format!("{}.cmd", command);
+                let alt_output = tokio::process::Command::new(check_cmd)
+                    .args([&alt_cmd])
+                    .output()
+                    .await
+                    .map_err(|e| anyhow!("Failed to check alternative command existence: {}", e))?;
+                
+                if alt_output.status.success() {
+                    debug!("Found alternative command: {}", alt_cmd);
+                    return Ok(());
+                }
+            }
+            
             return Err(anyhow!(
                 "Command '{}' not found. Please ensure it's installed and in your PATH.",
                 command
@@ -684,47 +706,49 @@ impl McpSessionImpl {
 
     /// 验证NPM包可用性
     async fn validate_npm_package_availability(&self) -> Result<()> {
-        // 检查网络连接
-        debug!("Checking network connectivity for npm registry...");
+        debug!("Validating npm package availability for tool: {}", self.config.name);
         
-        // 简单的网络检查 - ping npm registry
-        let ping_result = if cfg!(target_os = "windows") {
-            tokio::process::Command::new("ping")
-                .args(["-n", "1", "registry.npmjs.org"])
-                .output()
-                .await
+        // 对于 npx 命令，尽可能宽松地处理验证
+        // 因为 npx 会在需要时动态下载包，所以不必预先验证包的可用性
+        
+        // 只做最基本的检查：npx 命令本身是否存在
+        let npx_commands = if cfg!(target_os = "windows") {
+            vec!["npx.cmd", "npx"]
         } else {
-            tokio::process::Command::new("ping")
-                .args(["-c", "1", "registry.npmjs.org"])
-                .output()
-                .await
+            vec!["npx"]
         };
 
-        match ping_result {
-            Ok(output) if output.status.success() => {
-                // info!("Network connectivity to npm registry confirmed");
-            }
-            _ => {
-                warn!("Network connectivity check failed, but continuing with connection attempt");
-                // 不返回错误，只是警告，因为ping可能被防火墙阻止
-            }
-        }
-
-        // 检查npm是否可用
-        let npm_check = tokio::process::Command::new("npm")
-            .args(["--version"])
-            .output()
-            .await;
-
-        match npm_check {
-            Ok(output) if output.status.success() => {
-                // info!("npm is available and functional");
-            }
-            _ => {
-                return Err(anyhow!("npm is not available. Please ensure Node.js and npm are installed."));
+        let mut npx_found = false;
+        for npx_cmd in npx_commands {
+            match tokio::process::Command::new(npx_cmd)
+                .args(["--version"])
+                .output()
+                .await
+            {
+                Ok(output) if output.status.success() => {
+                    debug!("npx is available via command: {}", npx_cmd);
+                    npx_found = true;
+                    break;
+                }
+                _ => {
+                    debug!("npx command '{}' check skipped", npx_cmd);
+                }
             }
         }
 
+        if !npx_found {
+            // 即使 npx 验证失败，也只发出警告而不是错误
+            // 因为实际执行工具时会有更详细的错误处理
+            warn!(
+                "npx command not found for tool '{}', but attempting connection anyway. \
+                If the tool fails, ensure Node.js and npm are installed and accessible in PATH.",
+                self.config.name
+            );
+        } else {
+            debug!("npx validation passed for tool: {}", self.config.name);
+        }
+
+        // 不返回错误 - 让实际的工具执行来发现问题
         Ok(())
     }
 
@@ -1141,10 +1165,11 @@ impl McpSession for McpSessionImpl {
     }
 }
 
+
 /// 增强型MCP客户端管理器
 #[derive(Clone)]
 pub struct McpClientManager {
-    sessions: Arc<RwLock<HashMap<String, Arc<McpSessionImpl>>>>,
+    sessions: Arc<RwLock<HashMap<String, Arc<dyn McpSession + Send + Sync>>>>,
     configs: Arc<RwLock<HashMap<String, McpClientConfig>>>,
     db_service: Option<Arc<crate::services::database::DatabaseService>>,
 }
@@ -1173,7 +1198,7 @@ impl McpClientManager {
     }
 
     /// 连接到MCP服务器
-    pub async fn connect_to_server(&self, name: &str) -> Result<Arc<McpSessionImpl>> {
+    pub async fn connect_to_server(&self, name: &str) -> Result<Arc<dyn McpSession + Send + Sync>> {
         let config = self
             .configs
             .read()
@@ -1182,7 +1207,10 @@ impl McpClientManager {
             .cloned()
             .ok_or_else(|| anyhow!("Server config not found: {}", name))?;
 
-        let session = Arc::new(McpSessionImpl::new(config).await?);
+        // 使用原有的 McpSessionImpl 实现而不是 RigMcpSessionImpl
+        // TODO: 如果需要 rig-core 支持，需要确保 rig-core crate 正确添加
+        let session: Arc<dyn McpSession + Send + Sync> =
+            Arc::new(McpSessionImpl::new(config).await?);
         self.sessions
             .write()
             .await
@@ -1192,7 +1220,7 @@ impl McpClientManager {
     }
 
     /// 获取会话
-    pub async fn get_session(&self, name: &str) -> Option<Arc<McpSessionImpl>> {
+    pub async fn get_session(&self, name: &str) -> Option<Arc<dyn McpSession + Send + Sync>> {
         self.sessions.read().await.get(name).cloned()
     }
 
@@ -1400,14 +1428,12 @@ impl McpClientManager {
         for (name, session) in sessions.iter() {
             if !session.check_connection_health().await {
                 warn!("Connection unhealthy for server: {}", name);
-                // 可以选择自动重连
-                if session.config.session_recovery_enabled {
-                    info!("Attempting automatic recovery for server: {}", name);
-                    if let Err(e) = session.reconnect().await {
-                        error!("Failed to reconnect to {}: {}", name, e);
-                    } else {
-                        info!("Successfully recovered connection to server: {}", name);
-                    }
+                // 尝试自动重连
+                info!("Attempting automatic recovery for server: {}", name);
+                if let Err(e) = session.reconnect().await {
+                    error!("Failed to reconnect to {}: {}", name, e);
+                } else {
+                    info!("Successfully recovered connection to server: {}", name);
                 }
             }
         }
@@ -1525,14 +1551,12 @@ impl McpClientManager {
                     if !session.check_connection_health().await {
                         warn!("Health check failed for server: {}", name);
                         
-                        // 如果启用了会话恢复，尝试重连
-                        if session.config.session_recovery_enabled {
-                            info!("Attempting automatic recovery for server: {}", name);
-                            if let Err(e) = session.reconnect().await {
-                                error!("Automatic recovery failed for {}: {}", name, e);
-                            } else {
-                                info!("Automatic recovery successful for server: {}", name);
-                            }
+                        // 尝试自动恢复连接
+                        info!("Attempting automatic recovery for server: {}", name);
+                        if let Err(e) = session.reconnect().await {
+                            error!("Automatic recovery failed for {}: {}", name, e);
+                        } else {
+                            info!("Automatic recovery successful for server: {}", name);
                         }
                     }
                 }

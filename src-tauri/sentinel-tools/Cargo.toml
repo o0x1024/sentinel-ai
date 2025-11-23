@@ -18,7 +18,7 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
-rmcp = { version = "0.8.3", features = ["client", "server", "macros", "transport-async-rw", "transport-child-process", "transport-sse-client", "transport-sse-server", "transport-streamable-http-client", "transport-streamable-http-server", "reqwest", "auth", "uuid", "base64"] }
+rmcp = { workspace = true }
 reqwest = { version = "0.12.0", features = ["json"] }
 futures = "0.3"
 futures-util = "0.3"
