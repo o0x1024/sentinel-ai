@@ -9,14 +9,20 @@
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label class="label"><span class="label-text">{{ t('settings.network.scheme', '协议')
-                            }}</span></label>
+                    <label class="label">
+                        <span class="label-text">{{ t('settings.network.scheme', '协议') }}</span>
+                    </label>
                     <select v-model="network.proxy.scheme" class="select select-bordered w-full" @change="saveProxy">
-                        <option value="http">http</option>
-                        <option value="https">https</option>
-                        <option value="socks5">socks5</option>
-                        <option value="socks5h">socks5h</option>
+                        <option value="http">HTTP - 标准HTTP代理</option>
+                        <option value="https">HTTPS - HTTPS代理</option>
+                        <option value="socks5">SOCKS5 - 本地DNS解析</option>
+                        <option value="socks5h">SOCKS5H - 远程DNS解析(推荐)</option>
                     </select>
+                    <label class="label">
+                        <span class="label-text-alt text-gray-500">
+                            提示: SOCKS5H更安全，DNS请求也通过代理
+                        </span>
+                    </label>
                 </div>
                 <div>
                     <label class="label"><span class="label-text">{{ t('settings.network.host', '主机') }}</span></label>

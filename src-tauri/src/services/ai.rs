@@ -1353,6 +1353,7 @@ impl AiService {
         stream: bool,
         is_final: bool,
         chunk_type: Option<ChunkType>,
+        attachments: Option<serde_json::Value>,
     ) -> Result<String> {
         // 默认：保存和发送的内容一样
         self.send_message_stream_with_save_control(
@@ -1365,6 +1366,7 @@ impl AiService {
             is_final,
             chunk_type,
             None, // architecture_type
+            attachments,
         )
         .await
     }
@@ -1381,6 +1383,7 @@ impl AiService {
         is_final: bool,
         chunk_type: Option<ChunkType>,
         architecture_type: Option<crate::utils::ordered_message::ArchitectureType>,
+        attachments: Option<serde_json::Value>,
     ) -> Result<String> {
         info!("发送流式消息请求 - 模型: {}", self.config.model);
 
@@ -1439,7 +1442,10 @@ impl AiService {
                     token_count: Some(up_to_save.len() as i32),
                     cost: None,
                     tool_calls: None,
-                    attachments: None,
+                    // 将原始附件JSON序列化后保存到数据库，便于后续历史加载和调试
+                    attachments: attachments
+                        .as_ref()
+                        .and_then(|v| serde_json::to_string(v).ok()),
                     timestamp: chrono::Utc::now(),
                     architecture_type: None,
                     architecture_meta: None,
@@ -1463,13 +1469,23 @@ impl AiService {
                     debug!("跳过用户消息保存：对话记录不存在或为无会话模式");
                 }
 
-                // 构建消息用于LLM调用（使用完整prompt）
-                messages.push(AiMessage {
+                // 构建消息用于LLM调用（使用完整prompt），并在metadata中挂载附件信息
+                let metadata_with_attachments = if let Some(att) = attachments.clone() {
+                    let mut meta = serde_json::json!({});
+                    if let Some(obj) = meta.as_object_mut() {
+                        obj.insert("attachments".to_string(), att.clone());
+                    }
+                    serde_json::to_string(&meta).ok()
+                } else {
+                    None
+                };
+
+                let llm_msg = AiMessage {
                     id: uuid::Uuid::new_v4().to_string(),
                     conversation_id: conv_id.clone(),
                     role: "user".to_string(),
                     content: user_prompt_for_llm.unwrap_or("").to_string(),
-                    metadata: None,
+                    metadata: metadata_with_attachments,
                     token_count: Some(user_prompt_for_llm.unwrap_or("").len() as i32),
                     cost: None,
                     tool_calls: None,
@@ -1478,19 +1494,31 @@ impl AiService {
                     architecture_type: None,
                     architecture_meta: None,
                     structured_data: None,
-                });
+                };
+
+                messages.push(llm_msg);
             }
         } else {
             debug!("跳过用户消息保存（user_prompt_to_save 为 None）");
             // 即使不保存，也要构建消息用于LLM调用
             if let Some(up) = user_prompt_for_llm {
                 if !up.trim().is_empty() {
-                    messages.push(AiMessage {
+                    let metadata_with_attachments = if let Some(att) = attachments.clone() {
+                        let mut meta = serde_json::json!({});
+                        if let Some(obj) = meta.as_object_mut() {
+                            obj.insert("attachments".to_string(), att.clone());
+                        }
+                        serde_json::to_string(&meta).ok()
+                    } else {
+                        None
+                    };
+
+                    let llm_msg = AiMessage {
                         id: uuid::Uuid::new_v4().to_string(),
                         conversation_id: conv_id.clone(),
                         role: "user".to_string(),
                         content: up.to_string(),
-                        metadata: None,
+                        metadata: metadata_with_attachments,
                         token_count: Some(up.len() as i32),
                         cost: None,
                         tool_calls: None,
@@ -1499,7 +1527,9 @@ impl AiService {
                         architecture_type: None,
                         architecture_meta: None,
                         structured_data: None,
-                    });
+                    };
+
+                    messages.push(llm_msg);
                 }
             }
         }
@@ -1560,11 +1590,52 @@ impl AiService {
         let provider = self.config.provider.to_lowercase();
         let model = self.config.model.clone();
 
-        // 在独立作用域中构建 agent，确保 client 不会跨越 await 点
-        // info!("Creating agent for provider '{}' with model '{}'", provider, model);
-        // info!("API base URL: {:?}", self.config.api_base);
-        // info!("Has API key: {}", self.config.api_key.is_some());
+        // 为 rig 库设置必需的环境变量
+        // rig 的各个 provider 客户端会从环境变量中读取 API key 和 base URL
+        // 必须在创建 DynClientBuilder 之前设置这些变量
+        if let Some(api_key) = &self.config.api_key {
+            match provider.as_str() {
+                "gemini" | "google" => {
+                    std::env::set_var("GEMINI_API_KEY", api_key);
+                    if let Some(base) = &self.config.api_base {
+                        std::env::set_var("GEMINI_API_BASE", base);
+                    }
+                }
+                "openai" => {
+                    std::env::set_var("OPENAI_API_KEY", api_key);
+                    if let Some(base) = &self.config.api_base {
+                        std::env::set_var("OPENAI_API_BASE", base);
+                    }
+                }
+                "anthropic" => {
+                    std::env::set_var("ANTHROPIC_API_KEY", api_key);
+                    if let Some(base) = &self.config.api_base {
+                        std::env::set_var("ANTHROPIC_API_BASE", base);
+                    }
+                }
+                "deepseek" => {
+                    std::env::set_var("OPENAI_API_KEY", api_key);  // DeepSeek 使用 OpenAI 兼容接口
+                    if let Some(base) = &self.config.api_base {
+                        std::env::set_var("OPENAI_API_BASE", base);
+                    }
+                }
+                _ => {
+                    debug!("Provider {} may need custom environment variable setup", provider);
+                }
+            }
+        }
 
+        // 确保全局代理配置已应用到环境变量
+        // 注意：reqwest 客户端默认不会自动读取环境变量代理！
+        // 但某些 rig provider 实现可能会在内部手动配置代理
+        // 为了最大化兼容性，我们确保所有标准代理环境变量都已设置
+        let proxy_config = crate::utils::global_proxy::get_global_proxy().await;
+        if proxy_config.enabled {
+            debug!("Global proxy is enabled for this request: {:?}:{:?}", 
+                proxy_config.host, proxy_config.port);
+        }
+
+        // 在独立作用域中构建 agent
         let agent = {
             let client = DynClientBuilder::new();
             let agent_builder = match client.agent(&provider, &model) {

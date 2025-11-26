@@ -125,13 +125,12 @@
             </div>
           </div>
 
-          <!-- 普通消息显示 - 统一使用 Markdown 渲染 -->
-          <div v-else
-            :class="[
-              'prose prose-sm max-w-none leading-relaxed',
-              message.role === 'user' ? 'prose-invert ' : 'prose-neutral'
-            ]"
-            v-html="renderMarkdown(message.content)"
+          <!-- 普通消息显示 - 使用统一组件渲染文本 + 附件图片 -->
+          <MessageContentDisplay
+            v-else
+            :message="message"
+            :render-markdown="renderMarkdown"
+            :is-user="message.role === 'user'"
           />
 
           <!-- 流式指示器 -->
@@ -224,13 +223,16 @@
       :is-loading="isLoading"
       :show-debug-info="showDebugInfo"
       :rag-enabled="ragEnabled"
+      :pending-attachments="pendingAttachments"
       @send-message="sendMessage"
       @stop-execution="stopExecution"
-        @toggle-debug="showDebugInfo = !showDebugInfo"
+      @toggle-debug="showDebugInfo = !showDebugInfo"
       @create-new-conversation="handleCreateNewConversation"
       @clear-conversation="handleClearConversation"
       @toggle-task-mode="handleToggleTaskMode"
       @toggle-rag="handleToggleRAG"
+      @add-attachments="handleAddAttachments"
+      @remove-attachment="handleRemoveAttachment"
     />
 
     <!-- Citation Detail Modal -->
@@ -287,6 +289,7 @@ import ReWOOStepDisplay from './MessageParts/ReWOOStepDisplay.vue'
 import LLMCompilerStepDisplay from './MessageParts/LLMCompilerStepDisplay.vue'
 import PlanAndExecuteStepDisplay from './MessageParts/PlanAndExecuteStepDisplay.vue'
 import TravelStepDisplay from './MessageParts/TravelStepDisplay.vue'
+import MessageContentDisplay from './MessageParts/MessageContentDisplay.vue'
 import { isTravelMessage, parseTravelMessage } from '../composables/useTravelMessage'
 import type { TravelMessageData } from '../composables/useTravelMessage'
 import OrchestratorStepDisplay from './MessageParts/OrchestratorStepDisplay.vue'
@@ -339,7 +342,34 @@ const {
 // 使用简化的消息状态
 const messages = ref<ChatMessage[]>([])
 
+// 待发送的附件（上传完成后存为后端返回的Attachment JSON）
+const pendingAttachments = ref<any[]>([])
+
 const { formatTime, renderMarkdown } = useMessageUtils()
+
+// 处理来自输入区的附件选择（默认按 Tauri 环境处理）
+const handleAddAttachments = async (filePaths: string[]) => {
+  if (!filePaths || filePaths.length === 0) return
+
+  console.log('[AIChat] 接收到附件路径:', filePaths)
+  try {
+    const attachments = await invoke<any[]>('upload_multiple_images', { filePaths })
+    if (attachments && attachments.length > 0) {
+      pendingAttachments.value.push(...attachments)
+      console.log('[AIChat] 成功上传', attachments.length, '个图片附件:', attachments)
+    }
+  } catch (error) {
+    console.error('[AIChat] 批量上传图片附件失败:', error)
+  }
+}
+
+// 移除待发附件
+const handleRemoveAttachment = (index: number) => {
+  if (index >= 0 && index < pendingAttachments.value.length) {
+    pendingAttachments.value.splice(index, 1)
+    console.log('[AIChat] 已移除附件，剩余:', pendingAttachments.value.length)
+  }
+}
 
 // 新增：从架构元数据判断架构类型
 const getMessageArchitecture = (message: ChatMessage): string => {
@@ -877,6 +907,9 @@ const sendMessage = async () => {
       userInput,
       new Date()
     )
+    if (pendingAttachments.value.length > 0) {
+      ;(userMessage as any).attachments = [...pendingAttachments.value]
+    }
     messages.value.push(userMessage)
 
     // 创建助手消息
@@ -1043,17 +1076,21 @@ const sendMessage = async () => {
               auto: webSearchEngine.value === 'auto',
               limit: 5,
               message_id: assistantMessage.id,
+              attachments: pendingAttachments.value.length ? pendingAttachments.value : undefined,
             } : {
               conversation_id: currentConversationId.value,
               message: userInput,
               service_name: 'default',
               message_id: assistantMessage.id,
+              attachments: pendingAttachments.value.length ? pendingAttachments.value : undefined,
             },
             }) as string
           // Align local ids with server-acknowledged id to ensure consistency
           if (returnedMessageId && typeof returnedMessageId === 'string') {
             assistantMessage.id = returnedMessageId
           }
+          // 清空待发送附件；本轮已提交给后端
+          pendingAttachments.value = []
           // Note: Don't reset isLoading here - let the stream events handle it
         }
       } catch (streamError) {

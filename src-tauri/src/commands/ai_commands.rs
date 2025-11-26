@@ -1997,7 +1997,8 @@ async fn extract_target_with_llm(
         None, 
         false, // stream = false, 直接返回完整响应
         true,  // is_final = true
-        None   // chunk_type
+        None,  // chunk_type
+        None,  // attachments
     ).await {
         Ok(response) => {
             log::debug!("LLM extraction response: {}", response);

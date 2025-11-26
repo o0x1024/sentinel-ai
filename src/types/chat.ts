@@ -94,6 +94,8 @@ export interface ChatMessage {
     collapsed?: boolean
   }>
   taskProgress?: TaskProgress
+  // 附件数组（图片等）
+  attachments?: any[]
 }
 
 export interface Conversation {

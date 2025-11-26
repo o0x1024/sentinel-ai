@@ -285,6 +285,7 @@ impl IntelligentJoiner {
                 false,
                 Some(ChunkType::Thinking),
                 Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
+                None, // attachments
             )
             .await
         {
@@ -468,6 +469,7 @@ impl IntelligentJoiner {
                 false,                     // 不是最终消息
                 Some(ChunkType::Thinking), // 标记为Thinking类型
                 Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
+                None, // attachments
             )
             .await
         {

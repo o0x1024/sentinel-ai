@@ -1113,6 +1113,7 @@ impl LlmCompilerEngine {
                     false,
                     Some(ChunkType::Content),
                     Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
+                    None, // attachments
                 )
                 .await
             {

@@ -3535,6 +3535,7 @@ impl Executor {
                 true,
                 false,
                 Some(ChunkType::Content),
+                None, // attachments
             )
             .await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;

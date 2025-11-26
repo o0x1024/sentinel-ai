@@ -94,6 +94,7 @@ impl LlmCompilerPlanner {
                 false,                     // 不是最终消息
                 Some(ChunkType::Thinking), // ✅ 标记为Thinking类型,前端显示思考过程
                 Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler), // architecture_type
+                None, // attachments
             )
             .await
         {
@@ -480,6 +481,7 @@ impl LlmCompilerPlanner {
                 false, // 不使用流式输出
                 false,
                 None, // 不发送PlanInfo chunk到前端
+                None, // attachments
             )
             .await?;
 

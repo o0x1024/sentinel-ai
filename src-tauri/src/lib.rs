@@ -484,6 +484,9 @@ pub fn run() {
             ai::print_ai_conversations,
             ai::set_default_chat_model,
             ai::set_default_provider,
+            // 图片附件相关命令
+            ai::upload_image_attachment,
+            ai::upload_multiple_images,
             // LM Studio相关命令
             ai::refresh_lm_studio_models,
             ai::get_lm_studio_status,
@@ -570,6 +573,7 @@ pub fn run() {
             mcp_commands::auto_restore_mcp_server_state,
             mcp_commands::get_mcp_server_saved_states,
             mcp_commands::save_mcp_server_state,
+            mcp_commands::mcp_test_tool,
             mcp_commands::mcp_connect_server,
             mcp_commands::mcp_disconnect_server,
             mcp_commands::mcp_delete_server_config,
@@ -591,6 +595,7 @@ pub fn run() {
             commands::mcp::mcp_get_connection_status,
             commands::mcp::mcp_update_server_config,
             commands::mcp::retry_mcp_connection,
+            commands::mcp::mcp_test_server_tool,
             commands::mcp::retry_mcp_connection_new,
             commands::mcp::toggle_builtin_tool,
             commands::mcp::get_builtin_tools_with_status,
@@ -800,8 +805,12 @@ pub fn run() {
             commands::react_commands::execute_react_task,
             commands::react_commands::get_react_config,
             commands::react_commands::update_react_config,
-            // 代理测试命令 - DISABLED (ai_adapter removed)
+            // 代理测试命令
             commands::test_proxy::test_proxy_dynamic_update,
+            commands::test_proxy::test_proxy_persistence,
+            commands::test_proxy::test_http_client_proxy_update,
+            commands::test_proxy::test_proxy_connection,
+            commands::test_proxy::get_current_proxy_config,
             
             // Agent流程测试命令
             commands::test_agent_flow::test_complete_agent_flow,

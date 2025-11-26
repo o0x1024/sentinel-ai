@@ -183,7 +183,8 @@ impl ReWOOSolver {
                 Some(execution_id.to_string()),
                 stream_to_frontend, // 根据emitter决定是否流式发送
                 false,              // 不是最终消息(最终消息由engine_adapter发送)
-                None,
+                None,  // chunk_type
+                None,  // attachments
             )
             .await?;
 

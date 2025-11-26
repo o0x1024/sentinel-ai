@@ -215,7 +215,8 @@ impl ReWOOPlanner {
                 Some(execution_id.to_string()),
                 false, // 不流式发送到前端
                 false, // 不是最终消息
-                None,
+                None,  // chunk_type
+                None,  // attachments
             )
             .await?;
         

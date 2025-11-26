@@ -163,6 +163,7 @@ impl ComplexityAnalyzer {
                     false, // stream
                     false, // is_final
                     None, // chunk_type
+                    None, // attachments
                 )
                 .await
             {

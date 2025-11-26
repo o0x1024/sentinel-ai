@@ -772,6 +772,7 @@ impl OodaExecutor {
                 false, // 不流式发送到前端
                 false, // 不是最终消息
                 None,
+                None, // attachments
             )
             .await?;
 

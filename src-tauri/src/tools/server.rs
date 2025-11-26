@@ -123,6 +123,7 @@ impl ServerHandler for SentinelServerHandler {
                         ),
                         annotations: None,
                         output_schema: None,
+                        meta: None,
                     });
                 }
             }
@@ -520,6 +521,7 @@ impl SentinelMcpServer {
                 input_schema: std::sync::Arc::new(serde_json::Map::new()),
                 output_schema: None,
                 annotations: None,
+                meta: None,
             };
             rmcp_tools.push(rmcp_tool);
         }

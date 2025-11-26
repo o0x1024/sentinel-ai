@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::services::database::DatabaseService;
 use crate::services::mcp::McpConnectionInfo;
 use chrono::Utc;
-use rmcp::model::Tool as RmcpTool;
+use rmcp::model::{Tool as RmcpTool, CallToolRequestParam};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1221,6 +1221,77 @@ pub async fn mcp_get_connection_tools(
     Ok(frontend_tools)
 }
 
+/// 测试指定服务器下的某个工具
+#[tauri::command]
+pub async fn mcp_test_server_tool(
+    client_manager: State<'_, Arc<McpClientManager>>,
+    connection_id: String,
+    tool_name: String,
+    args: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    info!("Testing MCP server tool: connection_id={}, tool_name={}", connection_id, tool_name);
+
+    let client = client_manager.get_client();
+
+    // 1. 找到对应的会话（优先使用 connection_id 作为名称）
+    let session = if let Some(session) = client.get_session(&connection_id).await {
+        session
+    } else {
+        // 回退：在所有连接里查找已连接会话
+        let status_map = client.get_all_connection_status().await;
+        let mut found: Option<Arc<dyn McpSession + Send + Sync>> = None;
+        for (name, status) in status_map.iter() {
+            if matches!(status, ConnectionStatus::Connected) && name == &connection_id {
+                if let Some(s) = client.get_session(name).await {
+                    found = Some(s);
+                    break;
+                }
+            }
+        }
+        match found {
+            Some(s) => s,
+            None => {
+                let msg = format!("No active MCP session found for connection_id='{}'", connection_id);
+                warn!("{}", msg);
+                return Err(msg);
+            }
+        }
+    };
+
+    // 2. 构造调用参数
+    // arguments 字段期望 Option<Map<String, Value>>，需要将 JSON Value 转换为 Map
+    let arguments = args.and_then(|v| {
+        if let serde_json::Value::Object(map) = v {
+            Some(map)
+        } else {
+            None
+        }
+    });
+    
+    let param = CallToolRequestParam {
+        name: tool_name.clone().into(),
+        arguments,
+    };
+
+    // 3. 调用工具
+    match session.call_tool_with_progress(param).await {
+        Ok(result) => {
+            // 将 CallToolResult 转成 JSON，方便前端展示
+            let value = serde_json::to_value(&result).unwrap_or_else(|e| {
+                warn!("Failed to serialize CallToolResult for tool {}: {}", tool_name, e);
+                serde_json::json!({
+                    "raw": "<unserializable CallToolResult>",
+                })
+            });
+            Ok(value)
+        }
+        Err(e) => {
+            error!("Failed to test tool '{}' on connection '{}': {}", tool_name, connection_id, e);
+            Err(format!("Tool test failed: {}", e))
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn quick_create_mcp_server(
     config: QuickCreateServerConfig,
@@ -1901,6 +1972,32 @@ pub async fn diagnose_mcp_connection(
     info!("MCP connection diagnostics completed for: {}", server_name);
     
     Ok(serde_json::Value::Object(diagnostics))
+}
+
+/// 测试指定连接上的单个MCP工具（用于前端“测试工具”按钮）
+#[tauri::command]
+pub async fn mcp_test_tool(
+    mcp_service: tauri::State<'_, Arc<McpService>>,
+    connection_id: String,
+    tool_name: String,
+    params: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let args = params.unwrap_or_else(|| serde_json::json!({}));
+
+    match mcp_service
+        .execute_client_tool(&connection_id, &tool_name, args)
+        .await
+    {
+        Ok(result) => Ok(serde_json::json!({
+            "success": true,
+            "message": "Tool executed successfully",
+            "result": result,
+        })),
+        Err(e) => Err(format!(
+            "Failed to execute MCP tool {} on {}: {}",
+            tool_name, connection_id, e
+        )),
+    }
 }
 
 /// 强制自动连接所有启用的MCP服务器

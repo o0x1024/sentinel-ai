@@ -707,6 +707,7 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
                 false,
                 Some(ChunkType::Content),
                 Some(crate::utils::ordered_message::ArchitectureType::Travel),
+                None, // attachments
             )
             .await
             .map_err(|e| anyhow!("LLM call failed: {}", e))

@@ -100,7 +100,7 @@
                 <select class="select select-bordered w-full"
                         v-model="defaultProviderLocal"
                         @change="onChangeDefaultProvider">
-                  <option v-for="provider in Object.keys(aiConfig.providers)" :key="provider" :value="provider">
+                  <option v-for="provider in getEnabledProviders()" :key="provider" :value="provider">
                     {{ provider }}
                   </option>
                 </select>
@@ -639,6 +639,18 @@ const onChangeDefaultChatModel = async () => {
   } catch (e) {
     console.error('Failed to set default chat model', e)
   }
+}
+
+// 获取已启用的提供商列表
+const getEnabledProviders = () => {
+  if (!props.aiConfig.providers) {
+    return []
+  }
+  
+  return Object.keys(props.aiConfig.providers).filter(providerKey => {
+    const provider = props.aiConfig.providers[providerKey]
+    return provider && provider.enabled === true
+  })
 }
 
 // 获取指定提供商的模型列表

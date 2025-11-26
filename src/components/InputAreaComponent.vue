@@ -4,6 +4,28 @@
 
     <!-- Input area (refactored) -->
     <div class="px-4 pb-3 pt-2">
+      <!-- 附件预览区（如果有待发附件） -->
+      <div v-if="pendingAttachments && pendingAttachments.length > 0" class="mb-2 flex flex-wrap gap-2">
+        <div
+          v-for="(att, idx) in pendingAttachments"
+          :key="idx"
+          class="relative group"
+        >
+          <img
+            :src="getAttachmentPreview(att)"
+            class="h-16 w-16 object-cover rounded border border-base-300 bg-base-200"
+            :alt="att.image?.filename || 'attachment'"
+          />
+          <button
+            @click="removeAttachment(idx)"
+            class="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-error text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs"
+            title="移除"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+
       <div ref="containerRef" class="chat-input rounded-2xl bg-base-200/60 border border-base-300/60 backdrop-blur-sm flex flex-col gap-2 px-3 py-2 shadow-sm focus-within:border-primary transition-colors">
         <!-- Text input (auto-resize textarea) -->
         <div class="flex-1 min-w-0">
@@ -23,7 +45,7 @@
         <div class="flex items-center justify-between gap-2">
           <!-- Leading action icons -->
           <div class="flex items-center gap-2 text-base-content/60 shrink-0">
-            <button class="icon-btn" title="附件"><i class="fas fa-paperclip"></i></button>
+            <button class="icon-btn" title="附件" @click="triggerFileSelect"><i class="fas fa-paperclip"></i></button>
             <button class="icon-btn" :class="{ active: searchEnabled }" title="联网搜索" @click="toggleWebSearch"><i class="fas fa-globe"></i></button>
             <button class="icon-btn" :class="{ active: ragEnabled }" title="知识检索增强" @click="toggleRAG"><i class="fas fa-brain"></i></button>
             <button class="icon-btn" :class="{ active: taskModeEnabled }" title="任务模式" @click="toggleTaskMode"><i class="fas fa-tasks"></i></button>
@@ -58,6 +80,15 @@
           </div>
         </div>
       </div>
+      <!-- Hidden file input for attachments -->
+      <input
+        ref="fileInputRef"
+        type="file"
+        class="hidden"
+        multiple
+        accept="image/*"
+        @change="onFilesSelected"
+      />
       
     </div>
   </div>
@@ -65,13 +96,13 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
-import { sendMessageWithSearch } from '../services/search'
 
 const props = defineProps<{
   inputMessage: string
   isLoading: boolean
   showDebugInfo: boolean
   ragEnabled?: boolean
+  pendingAttachments?: any[]
 }>()
 
 const emit = defineEmits([
@@ -82,7 +113,9 @@ const emit = defineEmits([
   'create-new-conversation',
   'clear-conversation',
   'toggle-task-mode',
-  'toggle-rag'
+  'toggle-rag',
+  'add-attachments',
+  'remove-attachment'
 ])
 
 // removed architecture utilities
@@ -90,6 +123,7 @@ const emit = defineEmits([
 // --- New input logic ---
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // --- Persistence helpers ---
 const STORAGE_KEYS = {
@@ -228,6 +262,71 @@ const toggleTaskMode = () => {
 // 点击外部区域关闭弹层
 const handleClickOutside = (_e: MouseEvent) => {}
 
+const triggerFileSelect = async () => {
+  // 直接按 Tauri 环境处理：使用原生文件选择对话框
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      multiple: true,
+      filters: [
+        {
+          name: 'Images',
+          extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+        },
+      ],
+    })
+
+    if (selected) {
+      const filePaths = Array.isArray(selected) ? selected : [selected]
+      emit('add-attachments', filePaths)
+    }
+  } catch (error) {
+    console.error('[InputArea] Tauri 文件选择失败:', error)
+  }
+}
+
+// 保留 onFilesSelected 仅作为兜底（理论上不会触发）
+const onFilesSelected = (e: Event) => {
+  const input = e.target as HTMLInputElement
+  if (!input.files || input.files.length === 0) return
+  const files = Array.from(input.files)
+  console.warn('[InputArea] 收到 File 对象，当前默认按 Tauri 模式运行，建议通过对话框选择文件')
+  // 重置 input
+  input.value = ''
+}
+
+// 获取附件预览图
+const getAttachmentPreview = (att: any): string => {
+  try {
+    // 兼容两种结构：MessageAttachment::Image{ image } 或直接 { data, media_type, filename }
+    const img = att.image ?? att
+    const mediaTypeRaw: string | undefined = img?.media_type
+    const mime = toMimeType(mediaTypeRaw)
+    const dataField = img?.data
+    const base64 = typeof dataField === 'string' ? dataField : dataField?.data
+    if (!base64) return ''
+    return `data:${mime};base64,${base64}`
+  } catch (e) {
+    console.error('[InputArea] 构造图片预览失败:', e, att)
+    return ''
+  }
+}
+
+// 将枚举/简写媒体类型转换为标准MIME
+const toMimeType = (mediaType?: string): string => {
+  if (!mediaType) return 'image/jpeg'
+  const t = mediaType.toLowerCase()
+  if (t === 'jpeg' || t === 'jpg') return 'image/jpeg'
+  if (t === 'png') return 'image/png'
+  if (t === 'gif') return 'image/gif'
+  if (t === 'webp') return 'image/webp'
+  return t.startsWith('image/') ? t : `image/${t}`
+}
+
+// 移除附件
+const removeAttachment = (index: number) => {
+  emit('remove-attachment', index)
+}
 
 onMounted(() => {
   autoResize()

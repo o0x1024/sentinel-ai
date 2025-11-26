@@ -65,7 +65,13 @@ walkdir = "2.5.0"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 
 # HTTP客户端
-reqwest = { version = "0.12.0", features = ["json", "stream"] }
+# 关键features:
+# - rustls-tls: 启用 HTTPS 支持（使用 Rustls 作为 TLS 后端）
+# - rustls-tls-native-roots: 使用系统根证书（避免证书验证问题）
+# - socks: 支持 SOCKS5 代理
+# - cookies: 支持 Cookie 管理
+# 注意：reqwest 默认不会自动读取环境变量代理，需要手动应用 Proxy::all()
+reqwest = { version = "0.12.0", features = ["json", "stream", "socks", "rustls-tls", "rustls-tls-native-roots", "cookies"] }
 http = "1"
 
 # SSE客户端支持

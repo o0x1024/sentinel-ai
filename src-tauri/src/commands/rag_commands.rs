@@ -737,7 +737,8 @@ pub async fn assistant_rag_answer(
             None,
             false, // stream
             false, // is_final
-            None,
+            None,  // chunk_type
+            None,  // attachments
         )
         .await
     {

@@ -241,6 +241,14 @@
                     <i class="fas fa-unlink"></i>
                   </button>
                   <button 
+                    v-if="connection.status === 'Connected' && connection.id"
+                    @click="openTestServerModal(connection)" 
+                    class="btn btn-xs btn-outline btn-info" 
+                    :title="'测试服务器工具'"
+                  >
+                    <i class="fas fa-vial"></i>
+                  </button>
+                  <button 
                     v-else-if="connection.status !== 'Connected'"
                     @click="connectMcpServer(connection)" 
                     class="btn btn-xs btn-outline btn-success" 
@@ -319,6 +327,14 @@
                 :title="'断开连接'"
               >
                 <i class="fas fa-unlink"></i>
+              </button>
+              <button 
+                v-if="connection.status === 'Connected' && connection.id"
+                @click="openTestServerModal(connection)" 
+                class="btn btn-xs btn-outline btn-info" 
+                :title="'测试服务器工具'"
+              >
+                <i class="fas fa-vial"></i>
               </button>
               <button 
                 v-else-if="connection.status !== 'Connected'"
@@ -851,11 +867,111 @@
         </div>
       </div>
     </dialog>
+
+    <!-- 服务器工具测试模态框 -->
+    <dialog :class="['modal', { 'modal-open': showTestServerModal }]">
+      <div v-if="showTestServerModal" class="modal-box w-11/12 max-w-5xl">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="font-bold text-lg">
+            测试服务器工具: {{ testingServer?.name }}
+          </h3>
+          <button @click="closeTestServerModal" class="btn btn-sm btn-ghost">✕</button>
+        </div>
+
+        <div v-if="isLoadingTestTools" class="text-center p-8">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+          <p class="mt-2">正在加载服务器工具列表...</p>
+        </div>
+
+        <div v-else class="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+          <div class="alert alert-info">
+            <i class="fas fa-info-circle"></i>
+            <span>选择一个工具进行测试，可以使用默认参数或自定义参数。</span>
+          </div>
+
+          <div class="form-control">
+            <label class="label"><span class="label-text">选择工具</span></label>
+            <select v-model="selectedTestToolName" class="select select-bordered">
+              <option v-for="tool in testServerTools" :key="tool.name" :value="tool.name">
+                {{ tool.name }} - {{ tool.description }}
+              </option>
+            </select>
+          </div>
+
+          <div v-if="selectedTestTool" class="space-y-3">
+            <div class="collapse collapse-arrow border border-base-300 bg-base-100">
+              <input type="checkbox" />
+              <div class="collapse-title text-md font-medium">
+                输入参数说明
+              </div>
+              <div class="collapse-content">
+                <div v-if="selectedTestTool.input_schema && selectedTestTool.input_schema.properties" class="overflow-x-auto">
+                  <table class="table table-sm w-full">
+                    <thead>
+                      <tr>
+                        <th>参数名</th>
+                        <th>类型</th>
+                        <th>必填</th>
+                        <th>描述</th>
+                        <th>约束</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="prop in getToolProperties(selectedTestTool.input_schema)" :key="prop.name">
+                        <td class="font-mono text-primary">{{ prop.name }}</td>
+                        <td><span class="badge badge-outline">{{ prop.type }}</span></td>
+                        <td>
+                          <span v-if="prop.required" class="badge badge-error badge-sm">必填</span>
+                        </td>
+                        <td>{{ prop.description }}</td>
+                        <td class="font-mono text-xs">{{ prop.constraints }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <pre v-else class="text-xs p-4 rounded-md bg-black/50 text-white font-mono whitespace-pre-wrap"><code>{{ JSON.stringify(selectedTestTool.input_schema, null, 2) }}</code></pre>
+              </div>
+            </div>
+
+            <div class="form-control">
+              <label class="label"><span class="label-text">测试参数 (JSON，可选)</span></label>
+              <textarea
+                v-model="testToolParamsJson"
+                class="textarea textarea-bordered font-mono text-sm"
+                placeholder="留空使用默认参数，或输入 JSON 对象覆盖默认参数"
+                rows="6"
+                spellcheck="false"
+              ></textarea>
+            </div>
+
+            <div class="form-control">
+              <label class="label"><span class="label-text">测试结果</span></label>
+              <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-40 bg-base-200">
+{{ testToolResult }}
+              </pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button @click="closeTestServerModal" class="btn">{{ $t('common.cancel') }}</button>
+          <button 
+            class="btn btn-primary"
+            :disabled="!selectedTestToolName || isTestingTool"
+            @click="runTestTool"
+          >
+            <i v-if="isTestingTool" class="fas fa-spinner fa-spin mr-1"></i>
+            <i v-else class="fas fa-play mr-1"></i>
+            运行测试
+          </button>
+        </div>
+      </div>
+    </dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive, computed } from 'vue';
+import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -939,6 +1055,14 @@ const editableServer = reactive({
 const editableServerJson = ref('');
 const serverTools = ref<FrontendTool[]>([]);
 const isLoadingTools = ref(false);
+const showTestServerModal = ref(false);
+const testingServer = ref<McpConnection | null>(null);
+const testServerTools = ref<FrontendTool[]>([]);
+const isLoadingTestTools = ref(false);
+const selectedTestToolName = ref('');
+const testToolParamsJson = ref('');
+const testToolResult = ref('');
+const isTestingTool = ref(false);
 // const statusUpdateInterval = ref<NodeJS.Timeout | null>(null);
 
 const quickCreateForm = reactive({
@@ -961,7 +1085,59 @@ const isServerAdded = (server: MarketplaceServer) => {
   return mcpConnections.value.some(conn => conn.name === server.name);
 };
 
+// 测试模态框选中的工具
+const selectedTestTool = computed(() => {
+  if (!selectedTestToolName.value) return null;
+  return testServerTools.value.find(t => t.name === selectedTestToolName.value) || null;
+});
+
+// 监听工具选择变化，自动填充默认参数
+watch(selectedTestTool, (newTool) => {
+  if (newTool && newTool.input_schema) {
+    testToolParamsJson.value = generateDefaultParams(newTool.input_schema);
+  } else {
+    testToolParamsJson.value = '{}';
+  }
+});
+
 // --- 方法 ---
+
+function generateDefaultParams(schema: any): string {
+  if (!schema || !schema.properties) {
+    return '{}';
+  }
+
+  const params: any = {};
+  for (const name in schema.properties) {
+    const prop = schema.properties[name];
+    if (prop.default !== undefined) {
+      params[name] = prop.default;
+    } else {
+      // 根据类型设置空值
+      switch (prop.type) {
+        case 'string':
+          params[name] = '';
+          break;
+        case 'number':
+        case 'integer':
+          params[name] = prop.minimum !== undefined ? prop.minimum : 0;
+          break;
+        case 'boolean':
+          params[name] = false;
+          break;
+        case 'array':
+          params[name] = [];
+          break;
+        case 'object':
+          params[name] = {};
+          break;
+        default:
+          params[name] = null;
+      }
+    }
+  }
+  return JSON.stringify(params, null, 2);
+}
 
 const getStatusBadgeClass = (status: string) => {
   switch (status) {
@@ -1073,6 +1249,87 @@ async function fetchServerTools() {
     serverTools.value = [];
   } finally {
     isLoadingTools.value = false;
+  }
+}
+
+async function openTestServerModal(connection: McpConnection) {
+  testingServer.value = { ...connection };
+  showTestServerModal.value = true;
+  testServerTools.value = [];
+  selectedTestToolName.value = '';
+  testToolParamsJson.value = '';
+  testToolResult.value = '';
+
+  if (!connection.id) {
+    dialog.toast.error('当前服务器未处于连接状态，无法测试工具');
+    return;
+  }
+
+  isLoadingTestTools.value = true;
+  try {
+    const tools = await invoke<FrontendTool[]>('mcp_get_connection_tools', { connectionId: connection.id });
+    testServerTools.value = tools || [];
+    if (testServerTools.value.length > 0) {
+      selectedTestToolName.value = testServerTools.value[0].name;
+      // 自动填充第一个工具的默认参数
+      if (testServerTools.value[0].input_schema) {
+        testToolParamsJson.value = generateDefaultParams(testServerTools.value[0].input_schema);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to fetch tools for testing:', error);
+    dialog.toast.error('加载服务器工具列表失败');
+  } finally {
+    isLoadingTestTools.value = false;
+  }
+}
+
+function closeTestServerModal() {
+  showTestServerModal.value = false;
+  setTimeout(() => {
+    testingServer.value = null;
+    testServerTools.value = [];
+    selectedTestToolName.value = '';
+    testToolParamsJson.value = '';
+    testToolResult.value = '';
+  }, 300);
+}
+
+async function runTestTool() {
+  if (!testingServer.value || !testingServer.value.id || !selectedTestToolName.value) {
+    dialog.toast.error('请选择要测试的工具');
+    return;
+  }
+
+  let args: any = {};
+  if (testToolParamsJson.value.trim()) {
+    try {
+      args = JSON.parse(testToolParamsJson.value);
+    } catch (e) {
+      dialog.toast.error('参数 JSON 格式错误，请检查');
+      return;
+    }
+  }
+
+  isTestingTool.value = true;
+  testToolResult.value = '正在执行测试...';
+  try {
+    const result = await invoke<any>('mcp_test_server_tool', {
+      connectionId: testingServer.value.id,
+      toolName: selectedTestToolName.value,
+      args,
+    });
+
+    testToolResult.value = typeof result === 'string'
+      ? result
+      : JSON.stringify(result, null, 2);
+    dialog.toast.success('工具测试完成');
+  } catch (error: any) {
+    console.error('Failed to test server tool:', error);
+    testToolResult.value = `测试失败: ${error?.message || String(error)}`;
+    dialog.toast.error('工具测试失败');
+  } finally {
+    isTestingTool.value = false;
   }
 }
 

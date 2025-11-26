@@ -1,6 +1,12 @@
 //! 全局代理配置（用于 sentinel-tools crate）
 //! 
 //! 由于 sentinel-tools 是独立的 crate，需要自己的全局代理配置存储
+//!
+//! 支持的代理协议：
+//! - http: 标准HTTP代理
+//! - https: HTTPS代理
+//! - socks5: SOCKS5代理（本地DNS解析）
+//! - socks5h: SOCKS5代理（远程DNS解析，更安全）
 
 use once_cell::sync::Lazy;
 use reqwest::Proxy;
@@ -10,14 +16,23 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 /// 全局代理配置
+/// 
+/// 支持多种代理协议：HTTP、HTTPS、SOCKS5、SOCKS5H
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalProxyConfig {
+    /// 是否启用代理
     pub enabled: bool,
+    /// 代理协议 (http/https/socks5/socks5h)
     pub scheme: Option<String>,
+    /// 代理主机地址
     pub host: Option<String>,
+    /// 代理端口
     pub port: Option<u16>,
+    /// 用户名（可选）
     pub username: Option<String>,
+    /// 密码（可选）
     pub password: Option<String>,
+    /// 不使用代理的地址列表（逗号分隔）
     pub no_proxy: Option<String>,
 }
 
@@ -56,6 +71,12 @@ pub async fn get_global_proxy() -> GlobalProxyConfig {
 }
 
 /// 为 reqwest ClientBuilder 应用全局代理配置
+/// 
+/// 支持的代理协议：
+/// - http: 标准HTTP代理
+/// - https: HTTPS代理  
+/// - socks5: SOCKS5代理（本地DNS解析）
+/// - socks5h: SOCKS5代理（远程DNS解析，更安全）
 pub async fn apply_proxy_to_client(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let config = get_global_proxy().await;
     
@@ -65,16 +86,18 @@ pub async fn apply_proxy_to_client(builder: reqwest::ClientBuilder) -> reqwest::
     }
 
     if let Some(proxy_url) = config.build_proxy_url() {
+        let scheme = config.scheme.as_deref().unwrap_or("http");
+        
         match Proxy::all(&proxy_url) {
             Ok(proxy) => {
-                debug!("Applying global proxy to reqwest client: {}://{}:{}", 
-                    config.scheme.as_deref().unwrap_or("http"),
+                debug!("Applying {} proxy to reqwest client: {}:{}", 
+                    scheme,
                     config.host.as_deref().unwrap_or("unknown"),
                     config.port.unwrap_or(0));
                 builder.proxy(proxy)
             }
             Err(e) => {
-                warn!("Failed to create proxy for reqwest client: {}, using direct connection", e);
+                warn!("Failed to create {} proxy for reqwest client: {}, using direct connection", scheme, e);
                 builder
             }
         }

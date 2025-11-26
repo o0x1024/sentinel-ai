@@ -116,6 +116,7 @@ pub struct SendStreamMessageRequest {
     pub max_tokens: Option<u32>,
     pub system_prompt: Option<String>,
     pub message_id: Option<String>, // 前端传递的消息ID
+    pub attachments: Option<serde_json::Value>, // 前端传递的附件数组(JSON)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -272,6 +273,7 @@ pub async fn send_ai_stream_message(
     // 在后台执行流式聊天，直接使用AI服务的流式响应
     let conversation_id = request.conversation_id.clone();
     let message = request.message.clone();
+    let attachments = request.attachments.clone();
     let service_clone = service.clone();
     let mut system_prompt = request.system_prompt.clone();
     let message_id_clone = message_id.clone();
@@ -420,6 +422,7 @@ pub async fn send_ai_stream_message(
                 true,
                 true,
                 Some(ChunkType::Content),
+                attachments,
             )
             .await
         {
@@ -475,10 +478,14 @@ pub async fn send_ai_stream_with_search(
         .ok_or_else(|| "TAVILY_API_KEY not configured".to_string())?;
 
     // 使用全局代理构建客户端
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+    // 重要：reqwest 不会自动读取环境变量代理，必须手动应用
+    let client = {
+        let builder = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30));
+        let builder = crate::utils::global_proxy::apply_proxy_to_client(builder).await;
+        builder.build()
+            .map_err(|e| format!("Failed to build HTTP client: {}", e))?
+    };
     let tavily_url = "https://api.tavily.com/search";
     let payload = serde_json::json!({
         "query": request.message,
@@ -665,6 +672,7 @@ pub async fn send_ai_stream_with_search(
                 true,
                 false,
                 Some(ChunkType::Content),
+                None, // attachments not supported in search mode yet
             )
             .await
         {
@@ -2500,4 +2508,61 @@ pub async fn test_lm_studio_provider_connection(
     _api_key: Option<String>,
 ) -> Result<TestConnectionResponse, String> {
     Err("LM Studio provider test disabled - ai_adapter removed, use Rig instead".to_string())
+}
+
+/// 上传图片文件并转换为 base64
+#[tauri::command]
+pub async fn upload_image_attachment(file_path: String) -> Result<serde_json::Value, String> {
+    use crate::models::attachment::{load_image_from_path, MessageAttachment};
+    
+    tracing::info!("上传图片附件: {}", file_path);
+    
+    match load_image_from_path(&file_path).await {
+        Ok(image_attachment) => {
+            let attachment = MessageAttachment::Image(image_attachment);
+            serde_json::to_value(&attachment)
+                .map_err(|e| format!("序列化图片附件失败: {}", e))
+        }
+        Err(e) => {
+            tracing::error!("加载图片失败: {}", e);
+            Err(format!("加载图片失败: {}", e))
+        }
+    }
+}
+
+/// 批量上传图片文件
+#[tauri::command]
+pub async fn upload_multiple_images(file_paths: Vec<String>) -> Result<Vec<serde_json::Value>, String> {
+    use crate::models::attachment::{load_image_from_path, MessageAttachment};
+    
+    tracing::info!("批量上传 {} 个图片", file_paths.len());
+    
+    let mut attachments = Vec::new();
+    let mut errors = Vec::new();
+    
+    for file_path in file_paths {
+        match load_image_from_path(&file_path).await {
+            Ok(image_attachment) => {
+                let attachment = MessageAttachment::Image(image_attachment);
+                if let Ok(value) = serde_json::to_value(&attachment) {
+                    attachments.push(value);
+                } else {
+                    errors.push(format!("序列化失败: {}", file_path));
+                }
+            }
+            Err(e) => {
+                errors.push(format!("{}: {}", file_path, e));
+            }
+        }
+    }
+    
+    if !errors.is_empty() {
+        tracing::warn!("部分图片上传失败: {:?}", errors);
+    }
+    
+    if attachments.is_empty() {
+        Err(format!("所有图片上传失败: {:?}", errors))
+    } else {
+        Ok(attachments)
+    }
 }

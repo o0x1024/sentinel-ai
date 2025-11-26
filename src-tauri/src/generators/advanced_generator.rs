@@ -562,6 +562,7 @@ impl AdvancedPluginGenerator {
                 false,              // stream (non-streaming)
                 true,               // is_final
                 None,               // chunk_type
+                None,               // attachments
             )
             .await
             .context("Failed to call LLM service")?;

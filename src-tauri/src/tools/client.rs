@@ -284,7 +284,7 @@ impl McpSessionImpl {
             child_cmd_builder
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::inherit()) // Use inherit to see errors in terminal
                 .kill_on_drop(true);
             child_cmd_builder.env("NO_COLOR", "1");
             child_cmd_builder.env("FORCE_COLOR", "0");
@@ -292,6 +292,7 @@ impl McpSessionImpl {
             child_cmd_builder.env("CLICOLOR_FORCE", "0");
             child_cmd_builder.env("LOG_TO_STDERR", "1");
             child_cmd_builder.env("RUST_LOG_STYLE", "never");
+            child_cmd_builder.env("PYTHONUNBUFFERED", "1");
         }
 
         // 直接创建传输层，TokioChildProcess::new是同步函数
@@ -378,13 +379,14 @@ impl McpSessionImpl {
                 child_cmd
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
+                    .stderr(Stdio::inherit()); // Use inherit to see errors in terminal
                 child_cmd.env("NO_COLOR", "1");
                 child_cmd.env("FORCE_COLOR", "0");
                 child_cmd.env("CLICOLOR", "0");
                 child_cmd.env("CLICOLOR_FORCE", "0");
                 child_cmd.env("LOG_TO_STDERR", "1");
                 child_cmd.env("RUST_LOG_STYLE", "never");
+                child_cmd.env("PYTHONUNBUFFERED", "1");
             }
         }))?;
         let client = ().serve(transport).await?;
@@ -581,42 +583,11 @@ impl McpSessionImpl {
         
         // 对于子进程类型，进行更深入的健康检查
         if matches!(self.config.transport_type, TransportType::ChildProcess | TransportType::Stdio) {
-            // 尝试调用一个简单的API来验证连接
-            let service = self.service.read().await;
-            if let Some(service_any) = service.as_ref() {
-                // 检查服务是否还活着
-                if let Some(client) = service_any.downcast_ref::<RunningService<RoleClient, ()>>() {
-                    // 尝试调用list_tools来测试连接
-                    let test_params = rmcp::model::PaginatedRequestParam {
-                        cursor: None,
-                    };
-                    
-                    match tokio::time::timeout(
-                        Duration::from_secs(5),
-                        client.list_tools(Some(test_params))
-                    ).await {
-                        Ok(Ok(_)) => {
-                            // 更新心跳时间
-                            *self.last_heartbeat.write().await = std::time::Instant::now();
-                            true
-                        }
-                        Ok(Err(e)) => {
-                            warn!("Health check failed for {}: {}", self.config.name, e);
-                            false
-                        }
-                        Err(_) => {
-                            warn!("Health check timeout for: {}", self.config.name);
-                            false
-                        }
-                    }
-                } else {
-                    warn!("Service type mismatch during health check for: {}", self.config.name);
-                    false
-                }
-            } else {
-                warn!("No service available during health check for: {}", self.config.name);
-                false
-            }
+            // 之前尝试调用 list_tools 来验证连接，但这可能会导致某些一次性或状态敏感的 MCP 服务器
+            // 出现问题（例如消耗了 stdout 流，导致后续调用失败）。
+            // 既然我们在 call_tool 时有完善的错误处理和重连机制，这里只做最基本的存活检查即可。
+            // 目前直接返回 true，依靠实际调用来发现问题。
+            true
         } else {
             // 对于HTTP类型的连接，检查心跳时间
             let last_heartbeat = *self.last_heartbeat.read().await;
@@ -853,7 +824,15 @@ impl McpSession for McpSessionImpl {
                             
                             debug!("Error classified as {:?} with strategy {:?}", error_category, recovery_strategy);
                             
-                            let should_reconnect = !matches!(error_category, ErrorCategory::NonRecoverable);
+                            // EOF / 传输关闭通常表示子进程已经正常退出或输出为空，
+                            // 在这种情况下重连往往无效，还会让上层拿不到真实错误信息。
+                            let err_str = e.to_string();
+                            let looks_like_eof = err_str.contains("EOF while parsing an object")
+                                || err_str.contains("serde error EOF")
+                                || err_str.contains("Transport closed");
+
+                            let should_reconnect = !looks_like_eof
+                                && !matches!(error_category, ErrorCategory::NonRecoverable);
                             
                             if should_reconnect {
                                 warn!("Detected recoverable error (category: {:?}), attempting recovery for: {}", error_category, self.config.name);
@@ -1018,10 +997,15 @@ impl McpSession for McpSessionImpl {
 
         // 返回结果或错误
         match call_result {
-            Some(Ok(result)) => return Ok(result),
+            Some(Ok(result)) => Ok(result),
             Some(Err(e)) => {
-                error!("Tool call failed for '{}' on server '{}': {}", params.name, self.config.name, e);
-                return Err(e);
+                error!(
+                    "Tool call failed for '{}' on server '{}': {}",
+                    params.name,
+                    self.config.name,
+                    e
+                );
+                Err(e)
             }
             None => {
                 let error_msg = format!(
@@ -1030,7 +1014,7 @@ impl McpSession for McpSessionImpl {
                     self.config.name
                 );
                 error!("{}", error_msg);
-                return Err(anyhow!(error_msg));
+                Err(anyhow!(error_msg))
             }
         }
     }

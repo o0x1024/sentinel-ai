@@ -190,6 +190,7 @@ impl ReactEngine {
                             false,                    // is_final (由每个chunk自行决定)
                             Some(ChunkType::Content), // chunk_type
                             Some(crate::utils::ordered_message::ArchitectureType::ReAct), // architecture_type
+                            None, // attachments
                         )
                         .await
                         .map_err(|e| anyhow!("LLM call failed: {}", e))

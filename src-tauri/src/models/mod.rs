@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod asset;
+pub mod attachment;
 pub mod database;
 pub mod dictionary;
 pub mod mcp;

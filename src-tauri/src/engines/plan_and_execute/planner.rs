@@ -752,6 +752,7 @@ impl Planner {
                 false,
                 false,
                 Some(ChunkType::PlanInfo),
+                None, // attachments
             )
             .await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
