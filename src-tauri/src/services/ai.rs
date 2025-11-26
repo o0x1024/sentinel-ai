@@ -10,12 +10,15 @@ use chrono::Utc;
 use futures::StreamExt;
 use rig::agent::{CancelSignal, MultiTurnStreamItem, PromptHook, StreamingPromptHook};
 use rig::client::builder::DynClientBuilder;
-use rig::completion::{CompletionModel, CompletionResponse, Message, Prompt};
-use rig::message::{AssistantContent, UserContent};
+use rig::completion::{message::Image, CompletionModel, CompletionResponse, Message};
+use rig::message::{AssistantContent, DocumentSourceKind, ImageMediaType, UserContent};
+use rig::one_or_many::OneOrMany;
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
+
+use base64::Engine as _;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1549,6 +1552,68 @@ impl AiService {
             return Err(anyhow::anyhow!(error_msg));
         }
 
+        // === 多模态：从附件构造 Image 内容（按 rig 官方 image.rs 示例） ===
+        // 日志示例结构：
+        // Some(Array [Object {
+        //   "type": "image",
+        //   "data": { "type": "base64", "data": "iVBORw0..." },
+        //   "media_type": "png",
+        //   "filename": "11.png"
+        // }])
+        let mut maybe_image: Option<Image> = None;
+        // info!("Attachments debug: {:?}", attachments);
+        if let Some(att_json) = attachments.as_ref() {
+            if let Some(arr) = att_json.as_array() {
+                if let Some(first) = arr.first() {
+                    // 只处理 type == "image" 的附件
+                    let is_image = first
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .map(|t| t.eq_ignore_ascii_case("image"))
+                        .unwrap_or(false);
+
+                    if is_image {
+                        // media_type: "png" / "jpeg" / "webp" ...
+                        let media_type_str = first
+                            .get("media_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        // data: { type: "base64", data: "..." }
+                        let base64_data = first
+                            .get("data")
+                            .and_then(|v| v.as_object())
+                            .and_then(|obj| obj.get("data"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        if !base64_data.is_empty() {
+                            let media_type = if media_type_str.eq_ignore_ascii_case("png") {
+                                Some(ImageMediaType::PNG)
+                            } else if media_type_str.eq_ignore_ascii_case("webp") {
+                                Some(ImageMediaType::WEBP)
+                            } else if media_type_str.eq_ignore_ascii_case("jpeg")
+                                || media_type_str.eq_ignore_ascii_case("jpg")
+                            {
+                                Some(ImageMediaType::JPEG)
+                            } else {
+                                // 默认按 JPEG 处理
+                                Some(ImageMediaType::JPEG)
+                            };
+
+                            let image = Image {
+                                data: DocumentSourceKind::base64(base64_data),
+                                media_type,
+                                ..Default::default()
+                            };
+
+                            maybe_image = Some(image);
+                        }
+                    }
+                }
+            }
+        }
+
         // 生成message_id
         let message_id = message_id
             .clone()
@@ -1670,13 +1735,24 @@ impl AiService {
         // 处理流式响应
         let mut content = String::new();
 
+        // 构造多模态 Message：若有图片则使用 Image，否则回退到纯文本
+        let user_message: Message = if let Some(image) = maybe_image {
+            Message::User {
+                content: OneOrMany::one(UserContent::Image(image)),
+            }
+        } else {
+            Message::User {
+                content: OneOrMany::one(UserContent::text(user_input.to_string())),
+            }
+        };
+
         // 添加超时保护，防止请求无限期挂起
         // 注意：暂时移除 with_hook(logger)，因为它可能导致流阻塞
         // TODO: 研究 rig 库的正确 hook 用法或使用其他日志记录方式
         let stream_result = tokio::time::timeout(
             std::time::Duration::from_secs(120), // 2分钟超时
             agent
-                .stream_prompt(user_input)
+                .stream_prompt(user_message)
                 // .with_hook(logger)  // 临时禁用，避免阻塞
                 .multi_turn(100),
         )

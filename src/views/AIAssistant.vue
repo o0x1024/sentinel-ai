@@ -460,12 +460,12 @@ onMounted(async () => {
   try {
     // 加载设置
     const settings = await invoke<AiAssistantSettings>('get_ai_assistant_settings')
-    if (settings) {
+    // if (settings) {
 
-    }
+    // }
     
-    // 加载Agent状态
-    await refreshAgentStatistics()
+    // // 加载Agent状态
+    // await refreshAgentStatistics()
 
     // 加载场景Agent
     await loadScenarioAgents()

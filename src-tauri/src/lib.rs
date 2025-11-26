@@ -241,10 +241,10 @@ pub fn run() {
 
             tauri::async_runtime::block_on(async move {
                 let mut db_service = DatabaseService::new();
-                db_service
-                    .initialize()
-                    .await
-                    .expect("Failed to initialize database");
+                if let Err(e) = db_service.initialize().await {
+                    tracing::error!("Database initialize failed: {:#}", e);
+                    panic!("Failed to initialize database: {}", e);
+                }
                 let db_service = Arc::new(db_service);
 
                 // 初始化全局工具系统（会自动注册内置工具提供者）

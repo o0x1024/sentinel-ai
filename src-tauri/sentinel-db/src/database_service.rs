@@ -155,7 +155,7 @@ impl DatabaseService {
         } 
 
         self.pool = Some(pool);
-
+        tracing::info!("Database initialized, pool is set: {:?}", self.db_path);
         Ok(())
     }
 

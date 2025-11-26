@@ -325,9 +325,9 @@ onMounted(() => {
   loadPendingPlugins()
   
   // 定期更新任务统计信息
-  setInterval(() => {
-    loadTaskStats()
-  }, 10000) // 每10秒更新一次
+  // setInterval(() => {
+  //   loadTaskStats()
+  // }, 10000) // 每10秒更新一次
   
   // 模拟任务进度更新
   setInterval(() => {
