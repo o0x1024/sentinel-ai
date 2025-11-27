@@ -43,7 +43,7 @@ mod tests {
         let tools = provider.get_tools().await.unwrap();
         
         if tools.is_empty() {
-            println!("No agentTools plugins found, skipping parameter test");
+            println!("No agents plugins found, skipping parameter test");
             return;
         }
         
@@ -74,7 +74,7 @@ mod tests {
         let tools = provider.get_tools().await.unwrap();
         
         if tools.is_empty() {
-            println!("No agentTools plugins found, skipping name lookup test");
+            println!("No agents plugins found, skipping name lookup test");
             return;
         }
         

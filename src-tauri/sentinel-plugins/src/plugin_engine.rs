@@ -640,6 +640,32 @@ impl PluginEngine {
         Ok(findings)
     }
 
+    /// 执行Agent工具（调用插件的 analyze/run/execute）
+    pub async fn execute_agent(&mut self, input: &serde_json::Value) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
+        // 依次尝试常见的Agent入口函数名称: analyze -> run -> execute
+        if let Err(e1) = self.call_plugin_function("analyze", input).await {
+            if let Err(e2) = self.call_plugin_function("run", input).await {
+                self
+                    .call_plugin_function("execute", input)
+                    .await
+                    .map_err(|e3| PluginError::Execution(format!(
+                        "Failed to call agent entrypoint (analyze/run/execute): analyze_err={:?}, run_err={:?}, execute_err={:?}",
+                        e1, e2, e3
+                    )))?;
+            }
+        }
+
+        // 收集插件通过 Sentinel.emitFinding() 发送的漏洞
+        let (findings, last_result) = {
+            let op_state = self.runtime.op_state();
+            let op_state_borrow = op_state.borrow();
+            let plugin_ctx = op_state_borrow.borrow::<crate::plugin_ops::PluginContext>();
+            (plugin_ctx.take_findings(), plugin_ctx.take_last_result())
+        };
+
+        Ok((findings, last_result))
+    }
+
     /// 调用插件函数（通用）
     ///
     /// 插件通过 Sentinel.emitFinding() 发送漏洞，而不是返回值
@@ -670,7 +696,10 @@ impl PluginEngine {
                 // 调用函数（支持同步和异步）
                 const result = fn(args);
                 if (result instanceof Promise) {{
-                    await result;
+                    const resolved = await result;
+                    try {{ Deno.core.ops.op_plugin_return(resolved); }} catch (_e) {{}}
+                }} else {{
+                    try {{ Deno.core.ops.op_plugin_return(result); }} catch (_e) {{}}
                 }}
                 return true;
             }})();

@@ -352,13 +352,30 @@ const props = defineProps<{
   summaryData?: SummaryData
 }>()
 
-const renderMarkdown = (content: string): string => {
-  if (!content) return ''
+const renderMarkdown = (content: any): string => {
+  if (content === null || content === undefined) return ''
+  let text: string
+  if (typeof content === 'string') {
+    text = content
+  } else if (typeof content === 'object') {
+    if (typeof content.text === 'string') {
+      text = content.text
+    } else if (typeof content.content === 'string') {
+      text = content.content
+    } else {
+      try {
+        text = JSON.stringify(content, null, 2)
+      } catch {
+        text = String(content)
+      }
+    }
+  } else {
+    text = String(content)
+  }
   try {
-    return marked.parse(content) as string
-  } catch (e) {
-    console.error('Markdown parse error:', e)
-    return content
+    return marked.parse(text) as string
+  } catch {
+    return text
   }
 }
 
@@ -621,4 +638,3 @@ const hasResultError = (result: any) => {
   padding: 0;
 }
 </style>
-

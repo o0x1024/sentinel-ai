@@ -846,9 +846,9 @@ impl Executor {
                         completed_steps: execution_result.completed_steps,
                         failed_steps: execution_result.failed_steps,
                         skipped_steps: execution_result.skipped_steps,
-                        step_results: overall_step_results,
+                        step_results: overall_step_results.clone(),
                         metrics: execution_result.metrics,
-                        errors: overall_errors,
+                        errors: overall_errors.clone(),
                         enhanced_feedback: execution_result.enhanced_feedback,
                     };
                     // 统一发送一次最终块，通知前端结束会话
@@ -882,8 +882,98 @@ impl Executor {
                                 Some(serde_json::json!({"stream_complete": true})),
                             );
                         }
+
+                        if let Some(conv_id) = conversation_id {
+                            let planning_steps: Vec<serde_json::Value> = current_plan
+                                .steps
+                                .iter()
+                                .map(|s| {
+                                    serde_json::json!({
+                                        "name": s.name,
+                                        "description": s.description,
+                                        "step_type": format!("{:?}", s.step_type),
+                                        "tool_config": s.tool_config.as_ref().map(|tc| serde_json::json!({
+                                            "tool_name": tc.tool_name,
+                                            "parameters": tc.tool_args,
+                                        }))
+                                    })
+                                })
+                                .collect();
+
+                            let execution_steps: Vec<serde_json::Value> = current_plan
+                                .steps
+                                .iter()
+                                .map(|s| {
+                                    let res = overall_step_results.get(&s.id);
+                                    let (status, duration_ms, retry_count, error, result) = if let Some(r) = res {
+                                        let result_val = if let Some(td) = &r.tool_result {
+                                            serde_json::json!({
+                                                "tool_name": td.tool_name.clone(),
+                                                "output": td.output.clone(),
+                                                "status": format!("{:?}", td.status),
+                                            })
+                                        } else {
+                                            r.result_data.clone().unwrap_or(serde_json::Value::Null)
+                                        };
+                                        (
+                                            format!("{:?}", r.status),
+                                            r.duration_ms,
+                                            r.retry_count,
+                                            r.error.clone(),
+                                            result_val,
+                                        )
+                                    } else {
+                                        ("Pending".to_string(), 0, 0, None, serde_json::Value::Null)
+                                    };
+                                    serde_json::json!({
+                                        "name": s.name,
+                                        "description": s.description,
+                                        "step_type": format!("{:?}", s.step_type),
+                                        "tool_config": s.tool_config.as_ref().map(|tc| serde_json::json!({
+                                            "tool_name": tc.tool_name,
+                                            "parameters": tc.tool_args,
+                                        })),
+                                        "result": result,
+                                        "error": error,
+                                        "status": status,
+                                        "duration_ms": duration_ms,
+                                        "retry_count": retry_count,
+                                    })
+                                })
+                                .collect();
+
+                            let summary_data = serde_json::json!({
+                                "response": "",
+                                "total_steps": current_plan.steps.len(),
+                                "completed_steps": final_result.metrics.successful_steps,
+                                "failed_steps": final_result.metrics.failed_steps,
+                                "total_duration_ms": final_result.metrics.total_duration_ms,
+                            });
+
+                            let structured = serde_json::json!({
+                                "planAndExecuteData": {
+                                    "planningData": {
+                                        "summary": current_plan.description,
+                                        "steps": planning_steps,
+                                    },
+                                    "executionData": {
+                                        "steps": execution_steps,
+                                    },
+                                    "summaryData": summary_data,
+                                }
+                            });
+
+                            if let Ok(existing) = self.db_service.get_messages(&conv_id).await {
+                                if let Some(found) = existing.into_iter().find(|m| m.id == message_id) {
+                                    let mut updated = found.clone();
+                                    updated.architecture_type = Some("PlanAndExecute".to_string());
+                                    updated.structured_data = serde_json::to_string(&structured).ok();
+                                    let _ = self.db_service.upsert_ai_message_append(&updated).await;
+                                }
+                            }
+                        }
                     }
-                    return Ok(final_result);
+                    break;
                 }
                 TaskStatus::Failed => {
                     consecutive_failures += 1;
@@ -1197,12 +1287,126 @@ impl Executor {
             total_execution_time
         );
 
+        let planning_steps: Vec<serde_json::Value> = current_plan
+            .steps
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "step_type": format!("{:?}", s.step_type),
+                    "tool_config": s.tool_config.as_ref().map(|tc| serde_json::json!({
+                        "tool_name": tc.tool_name,
+                        "parameters": tc.tool_args,
+                    }))
+                })
+            })
+            .collect();
+
+        let execution_steps: Vec<serde_json::Value> = current_plan
+            .steps
+            .iter()
+            .map(|s| {
+                let res = overall_step_results.get(&s.id);
+                let (status, duration_ms, retry_count, error, result) = if let Some(r) = res {
+                    let result_val = if let Some(td) = &r.tool_result {
+                        serde_json::json!({
+                            "tool_name": td.tool_name.clone(),
+                            "output": td.output.clone(),
+                            "status": format!("{:?}", td.status),
+                        })
+                    } else {
+                        r.result_data.clone().unwrap_or(serde_json::Value::Null)
+                    };
+                    (
+                        format!("{:?}", r.status),
+                        r.duration_ms,
+                        r.retry_count,
+                        r.error.clone(),
+                        result_val,
+                    )
+                } else {
+                    ("Pending".to_string(), 0, 0, None, serde_json::Value::Null)
+                };
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "step_type": format!("{:?}", s.step_type),
+                    "tool_config": s.tool_config.as_ref().map(|tc| serde_json::json!({
+                        "tool_name": tc.tool_name,
+                        "parameters": tc.tool_args,
+                    })),
+                    "result": result,
+                    "error": error,
+                    "status": status,
+                    "duration_ms": duration_ms,
+                    "retry_count": retry_count,
+                })
+            })
+            .collect();
+
+        let summary_data = serde_json::json!({
+            "response": "",
+            "total_steps": current_plan.steps.len(),
+            "completed_steps": final_result.metrics.successful_steps,
+            "failed_steps": final_result.metrics.failed_steps,
+            "total_duration_ms": final_result.metrics.total_duration_ms,
+        });
+
         // 保存执行结果到数据库
         if let Err(e) = self
             .save_execution_to_database(plan, task, &final_result)
             .await
         {
             log::error!("保存执行结果到数据库失败: {}", e);
+        }
+
+        if let Some(ctx) = self.context.lock().await.as_ref() {
+            let (message_id, conversation_id) =
+                self.resolve_message_and_conversation_ids(ctx).await;
+            if let Some(conv_id) = conversation_id {
+                let structured = serde_json::json!({
+                    "planAndExecuteData": {
+                        "planningData": {
+                            "summary": current_plan.description,
+                            "steps": planning_steps.clone(),
+                        },
+                        "executionData": {
+                            "steps": execution_steps.clone(),
+                        },
+                        "summaryData": summary_data.clone(),
+                    }
+                });
+
+                if let Ok(existing) = self.db_service.get_messages(&conv_id).await {
+                    if let Some(found) = existing.into_iter().find(|m| m.id == message_id) {
+                        let mut updated = found.clone();
+                        updated.architecture_type = Some("PlanAndExecute".to_string());
+                        updated.structured_data = serde_json::to_string(&structured).ok();
+                        if let Err(e) = self.db_service.upsert_ai_message_append(&updated).await {
+                            log::warn!("更新助手消息结构化数据失败: {}", e);
+                        }
+                    } else {
+                        use crate::models::database::AiMessage;
+                        let updated = AiMessage {
+                            id: message_id.clone(),
+                            conversation_id: conv_id.clone(),
+                            role: "assistant".to_string(),
+                            content: String::new(),
+                            metadata: None,
+                            token_count: Some(0),
+                            cost: None,
+                            tool_calls: None,
+                            attachments: None,
+                            timestamp: chrono::Utc::now(),
+                            architecture_type: Some("PlanAndExecute".to_string()),
+                            architecture_meta: None,
+                            structured_data: serde_json::to_string(&structured).ok(),
+                        };
+                        let _ = self.db_service.upsert_ai_message_append(&updated).await;
+                    }
+                }
+            }
         }
 
         // 最终记忆更新
@@ -1226,7 +1430,21 @@ impl Executor {
                     None,
                     None,
                     Some(ArchType::PlanAndExecute),
-                    Some(serde_json::json!({"stream_complete": true})),
+                    Some(serde_json::json!({
+                        "stream_complete": true,
+                        "structured_data": {
+                            "planAndExecuteData": {
+                                "planningData": {
+                                    "summary": current_plan.description,
+                                    "steps": planning_steps.clone(),
+                                },
+                                "executionData": {
+                                    "steps": execution_steps.clone(),
+                                },
+                                "summaryData": summary_data.clone(),
+                            }
+                        }
+                    })),
                 );
             }
         }
@@ -3524,18 +3742,20 @@ impl Executor {
 
         // 使用流式消息API发送请求
         // 绑定到前端该次助手消息ID，确保chunk落到正确消息上
-        let (bound_message_id, _conv_id_opt) =
+        let (bound_message_id, conv_id_opt) =
             self.resolve_message_and_conversation_ids(context).await;
         let content = ai_service
-            .send_message_stream(
+            .send_message_stream_with_save_control(
                 Some(&user_prompt),
-                Some(system_prompt.as_str()),           // 系统提示
-                None,                           // 不指定会话ID，保持无状态
-                Some(bound_message_id.clone()), // 消息ID用于前端显示
+                None,
+                Some(system_prompt.as_str()),
+                conv_id_opt,
+                Some(bound_message_id.clone()),
                 true,
                 false,
                 Some(ChunkType::Content),
-                None, // attachments
+                Some(ArchType::PlanAndExecute),
+                None,
             )
             .await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;

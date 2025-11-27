@@ -11,7 +11,7 @@
 CREATE TABLE passive_plugin_registry (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    category TEXT NOT NULL,  -- 单层分类: agentTools/vulnerability/injection/xss
+    category TEXT NOT NULL,  -- 单层分类: agents/vulnerability/injection/xss
     ...
 );
 ```
@@ -44,7 +44,7 @@ CREATE TABLE plugin_registry (
 
 | 旧 category | 新 main_category | 新 category | 说明 |
 |------------|-----------------|------------|------|
-| agentTools | agent | scanner | Agent插件默认为扫描器 |
+| agents | agent | scanner | Agent插件默认为扫描器 |
 | passiveScan | passive | vulnerability | 被动扫描默认为漏洞检测 |
 | vulnerability | passive | vulnerability | 保持不变 |
 | injection | passive | injection | 保持不变 |
@@ -61,7 +61,7 @@ CREATE VIEW passive_plugin_registry AS
 SELECT 
     id, name, version, author,
     CASE 
-        WHEN main_category = 'agent' THEN 'agentTools'
+        WHEN main_category = 'agent' THEN 'agents'
         ELSE category
     END as category,
     ...
@@ -71,7 +71,7 @@ FROM plugin_registry;
 ### INSTEAD OF 触发器
 为视图创建了 INSERT/UPDATE/DELETE 触发器，自动处理分类转换：
 
-- **INSERT**: 自动将 `agentTools` 转换为 `main_category='agent', category='scanner'`
+- **INSERT**: 自动将 `agents` 转换为 `main_category='agent', category='scanner'`
 - **UPDATE**: 自动更新分类映射
 - **DELETE**: 直接删除底层数据
 
@@ -92,7 +92,7 @@ sqlx::query("UPDATE passive_plugin_registry SET enabled = ? WHERE id = ?")
 // src-tauri/src/tools/agent_plugin_provider.rs
 for plugin in plugins {
     if plugin.status == Enabled 
-        && plugin.metadata.category == "agentTools" {  // 视图会返回 "agentTools"
+        && plugin.metadata.category == "agents" {  // 视图会返回 "agents"
         tools.push(AgentPluginTool::new(...));
     }
 }
@@ -141,18 +141,18 @@ WHERE main_category = 'passive';
 ```typescript
 // 推断主分类
 function inferMainCategory(category: string): 'passive' | 'agent' {
-  return category === 'agentTools' ? 'agent' : 'passive'
+  return category === 'agents' ? 'agent' : 'passive'
 }
 
 // 转换子分类
 function convertToSubCategory(category: string): string {
-  if (category === 'agentTools') return 'scanner'
+  if (category === 'agents') return 'scanner'
   if (category === 'passiveScan') return 'vulnerability'
   return category
 }
 
 // 保存时映射回后端
-const backendCategory = mainCategory === 'agent' ? 'agentTools' : category
+const backendCategory = mainCategory === 'agent' ? 'agents' : category
 ```
 
 ## 测试清单
@@ -171,7 +171,7 @@ const backendCategory = mainCategory === 'agent' ? 'agentTools' : category
 1. **主分类是必需的**: 所有插件必须有 `main_category`（默认为 'passive'）
 2. **视图限制**: 通过视图修改数据时，触发器会自动处理分类转换
 3. **索引优化**: 新增了 `(main_category, category)` 联合索引
-4. **Agent工具识别**: 基于视图返回的 `category = 'agentTools'` 进行识别
+4. **Agent工具识别**: 基于视图返回的 `category = 'agents'` 进行识别
 5. **数据一致性**: 迁移过程中保持 plugin_id 不变，保证外键引用有效
 
 ## 回滚方案
@@ -190,7 +190,7 @@ CREATE TABLE passive_plugin_registry AS
 SELECT 
     id, name, version, author,
     CASE 
-        WHEN main_category = 'agent' THEN 'agentTools'
+        WHEN main_category = 'agent' THEN 'agents'
         ELSE category
     END as category,
     description, default_severity, tags, file_path, file_hash,

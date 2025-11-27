@@ -217,7 +217,7 @@ function parsePlanningData(content: string, chunks: any[] = []): PlanAndExecuteP
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
     if (lines.length > 0) {
       const steps: PlanAndExecutePlanningStep[] = []
-      let summaryLine = lines[0]
+      const summaryLine = lines[0]
 
       // 提取步骤
       const stepRegex = /^(?:步骤\s*)?(\d+)[.、:：]\s*(.+)$/

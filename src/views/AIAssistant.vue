@@ -8,7 +8,7 @@
           {{ t('aiAssistant.title', 'AI智能助手') }}
         </h1>
       </div>
-      <div class="navbar-center">
+      <!-- <div class="navbar-center">
         <div class="stats shadow">
           <div class="stat place-items-center py-2 px-4">
             <div class="stat-title text-xs">{{ t('aiAssistant.activeAgents', '活跃Agent') }}</div>
@@ -19,7 +19,7 @@
             <div class="stat-value text-sm text-secondary">{{ totalTasksCount }}</div>
           </div>
         </div>
-      </div>
+      </div> -->
       <div class="navbar-end">
         <div class="flex items-center gap-2">
           <!-- 角色选择器 -->
@@ -491,7 +491,7 @@ onMounted(async () => {
     })
 
     // 启动定时刷新（每5秒刷新一次统计数据）
-    statsRefreshTimer = window.setInterval(refreshAgentStatistics, 5000)
+    // statsRefreshTimer = window.setInterval(refreshAgentStatistics, 5000)
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
   }

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tauri::{command, State};
 use tokio::sync::RwLock;
 use log::warn;
+use sentinel_core::models::workflow::WorkflowStepDetail;
 
 /// 全局Agent管理器
 pub type GlobalAgentManager = Arc<RwLock<Option<AgentManager>>>;
@@ -664,21 +665,6 @@ pub async fn batch_cancel_workflow_executions(
     })
 }
 
-/// 工作流步骤详情
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowStepDetail {
-    pub step_id: String,
-    pub step_name: String,
-    pub status: String,
-    pub started_at: Option<String>,
-    pub completed_at: Option<String>,
-    pub duration_ms: u64,
-    pub result_data: Option<serde_json::Value>,
-    pub error: Option<String>,
-    pub retry_count: u32,
-    pub dependencies: Vec<String>,
-    pub tool_result: Option<serde_json::Value>,
-}
 
 /// 工作流执行计划
 #[derive(Debug, Clone, Serialize, Deserialize)]

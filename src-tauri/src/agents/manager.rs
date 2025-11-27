@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use log::{info, warn, error};
 use crate::services::database::{Database, DatabaseService};
+use sentinel_core::models::agent::{AgentTask as CoreAgentTask, TaskPriority as CoreTaskPriority, AgentExecutionResult as CoreAgentExecutionResult};
 
 /// Agent管理器 - 负责Agent的注册、调度和管理
 pub struct AgentManager {
@@ -280,7 +281,21 @@ impl AgentManager {
         };
 
         // 保存任务到数据库
-        if let Err(e) = self.database.create_agent_task(&task).await {
+        let db_task = CoreAgentTask {
+            id: task.id.clone(),
+            description: task.description.clone(),
+            target: task.target.clone(),
+            parameters: task.parameters.clone(),
+            user_id: task.user_id.clone(),
+            priority: match task.priority {
+                TaskPriority::Low => CoreTaskPriority::Low,
+                TaskPriority::Normal => CoreTaskPriority::Normal,
+                TaskPriority::High => CoreTaskPriority::High,
+                TaskPriority::Critical => CoreTaskPriority::Critical,
+            },
+            timeout: task.timeout,
+        };
+        if let Err(e) = self.database.create_agent_task(&db_task).await {
             warn!("Failed to save task to database: {}", e);
         }
 
@@ -367,11 +382,30 @@ impl AgentManager {
                         }
                     };
 
-                    if let Some(session_result) = session_result_opt {
-                        if let Err(e) = manager.database.save_agent_execution_result(&session_id_clone, &session_result).await {
+                        if let Some(session_result) = session_result_opt {
+                        let resources_used = session_result
+                            .resources_used
+                            .iter()
+                            .map(|(k, v)| format!("{}={}", k, v))
+                            .collect::<Vec<String>>();
+                        let artifacts = session_result
+                            .artifacts
+                            .iter()
+                            .map(|a| serde_json::to_value(a).unwrap_or(serde_json::json!({})))
+                            .collect::<Vec<serde_json::Value>>();
+                        let db_result = CoreAgentExecutionResult {
+                            id: session_result.id,
+                            success: session_result.success,
+                            data: session_result.data,
+                            error: session_result.error,
+                            execution_time_ms: session_result.execution_time_ms,
+                            resources_used,
+                            artifacts,
+                        };
+                        if let Err(e) = manager.database.save_agent_execution_result(&session_id_clone, &db_result).await {
                             warn!("Failed to save execution result: {}", e);
                         }
-                    }
+                        }
                 }
 
                 // 更新统计信息
@@ -621,13 +655,13 @@ impl AgentManager {
     }
 
     /// 保存执行步骤到数据库
-    pub async fn save_execution_step(&self, session_id: &str, step: &crate::commands::agent_commands::WorkflowStepDetail) -> Result<()> {
+    pub async fn save_execution_step(&self, session_id: &str, step: &sentinel_core::models::workflow::WorkflowStepDetail) -> Result<()> {
         self.database.save_agent_execution_step(session_id, step).await
             .map_err(|e| anyhow!("Failed to save execution step: {}", e))
     }
 
     /// 获取执行步骤
-    pub async fn get_execution_steps(&self, session_id: &str) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>> {
+    pub async fn get_execution_steps(&self, session_id: &str) -> Result<Vec<sentinel_core::models::workflow::WorkflowStepDetail>> {
         self.database.get_agent_execution_steps(session_id).await
             .map_err(|e| anyhow!("Failed to get execution steps: {}", e))
     }

@@ -129,8 +129,8 @@
           <MessageContentDisplay
             v-else
             :message="message"
-            :render-markdown="renderMarkdown"
-            :is-user="message.role === 'user'"
+            :is-typing="message.isStreaming"
+            :stream-char-count="streamCharCount"
           />
 
           <!-- 流式指示器 -->
@@ -190,6 +190,9 @@
               打开AI设置
             </button>
           </div>
+
+          <!-- Assistant Actions - Inside bubble bottom -->
+          
         </div>
 
         <!-- User Message Actions - Outside the bubble -->
@@ -198,15 +201,22 @@
           class="flex gap-2 justify-end mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
         >
           <button 
-            @click="copyMessage(message.content)" 
-            class="btn btn-xs btn-ghost gap-1 text-base-content/60 hover:text-base-content"
-            title="复制消息"
+            @click="copyMessage(message)" 
+            :class="[
+              'btn btn-xs gap-1 transition-colors',
+              copiedMessageId === message.id 
+                ? 'btn-success text-success'
+                : 'btn-ghost text-base-content/60 hover:text-base-content'
+            ]"
+            :title="copiedMessageId === message.id ? '已复制' : '复制消息'"
           >
-            <i class="fas fa-copy text-xs"></i>
-            <span class="text-xs">复制</span>
+            <i v-if="copiedMessageId !== message.id" class="fas fa-copy text-xs"></i>
+            <i v-else class="fas fa-check text-xs"></i>
+            <span class="text-xs" v-if="copiedMessageId !== message.id">复制</span>
+            <span class="text-xs" v-else>已复制</span>
           </button>
           <button 
-            @click="resendMessage(message.content)" 
+            @click="resendMessage(message)" 
             class="btn btn-xs btn-ghost gap-1 text-base-content/60 hover:text-base-content"
             title="重新发送"
           >
@@ -214,6 +224,31 @@
             <span class="text-xs">重发</span>
           </button>
         </div>
+
+        <div
+          v-if="message.role === 'assistant'"
+          class="chat-footer mt-2 opacity-0 group-hover:opacity-100"
+        >
+          <div class="flex gap-2">
+            <button 
+              @click="copyMessage(message)" 
+              :class="[
+                'btn btn-xs gap-1 transition-colors',
+                copiedMessageId === message.id 
+                  ? 'btn-success text-success'
+                  : 'btn-ghost text-base-content/60 hover:text-base-content'
+              ]"
+              :title="copiedMessageId === message.id ? '已复制' : '复制回复'"
+            >
+              <i v-if="copiedMessageId !== message.id" class="fas fa-copy text-xs"></i>
+              <i v-else class="fas fa-check text-xs"></i>
+              <span class="text-xs" v-if="copiedMessageId !== message.id">复制</span>
+              <span class="text-xs" v-else>已复制</span>
+            </button>
+          </div>
+        </div>
+
+        
       </div>
     </div>
 
@@ -275,6 +310,7 @@ import { getRagConfig, saveRagConfig } from '../services/rag_config'
 import { useConversation } from '../composables/useConversation'
 import { useMessageUtils } from '../composables/useMessageUtils'
 import { useOrderedMessages } from '../composables/useOrderedMessages'
+import { ReActMessageProcessor } from '../composables/processors/ReActMessageProcessor'
 import { isReWOOMessage, parseReWOOMessage } from '../composables/useReWOOMessage'
 import type { ReWOOMessageData } from '../composables/useReWOOMessage'
 import { isLLMCompilerMessage, parseLLMCompilerMessage } from '../composables/useLLMCompilerMessage'
@@ -737,11 +773,8 @@ const parseReActSteps = (content: string, messageId?: string): ReActStepData[] =
 // 判断指定消息中是否存在仍在运行中的工具调用
 const hasRunningTool = (message: ChatMessage): boolean => {
   if (!isReActMessage(message)) return false
-  const steps = parseReActSteps(message.content || '', message.id)
-  return steps.some(step => {
-    const action: any = step.action
-    return action && typeof action === 'object' && action.status === 'running'
-  })
+  const steps = ReActMessageProcessor.buildReActStepsFromMessage(message)
+  return steps.some(s => s.action && (s.action.status === 'running' || s.action.status === 'pending'))
 }
 
 // 持久化状态的key
@@ -907,8 +940,9 @@ const sendMessage = async () => {
       userInput,
       new Date()
     )
+    ;(userMessage as any).is_task_mode = isTaskMode.value
     if (pendingAttachments.value.length > 0) {
-      ;(userMessage as any).attachments = [...pendingAttachments.value]
+      (userMessage as any).attachments = [...pendingAttachments.value]
     }
     messages.value.push(userMessage)
 
@@ -1220,30 +1254,51 @@ const jumpToRagSource = (citation: Citation) => {
   router.push(`/rag-management?file=${file}&start=${start}&end=${end}`)
 }
 
-const copyMessage = async (content: string) => {
+const copiedMessageId = ref<string | null>(null)
+let copyTimer: number | null = null
+const copyMessage = async (msg: ChatMessage) => {
+  const content = msg.content
   try {
     await navigator.clipboard.writeText(content)
-    console.log('Message copied to clipboard')
-    // TODO: 可以添加一个toast提示
+    copiedMessageId.value = msg.id
+    if (copyTimer) { clearTimeout(copyTimer) }
+    copyTimer = window.setTimeout(() => { copiedMessageId.value = null }, 1500)
   } catch (error) {
-    console.error('Failed to copy message:', error)
-    // 降级方案：使用传统的复制方法
     const textArea = document.createElement('textarea')
     textArea.value = content
     document.body.appendChild(textArea)
     textArea.select()
     document.execCommand('copy')
     document.body.removeChild(textArea)
+    copiedMessageId.value = msg.id
+    if (copyTimer) { clearTimeout(copyTimer) }
+    copyTimer = window.setTimeout(() => { copiedMessageId.value = null }, 1500)
   }
 }
 
-const resendMessage = (content: string) => {
-  if (isLoading.value) {
-    console.warn('Cannot resend message while loading')
-    return
-  }
-  inputMessage.value = content
-  sendMessage()
+const resendMessage = async (userMessage: ChatMessage) => {
+  if (isLoading.value) return
+
+  // Remove previous assistant response if exists
+  try {
+    const idx = messages.value.findIndex(m => m.id === userMessage.id)
+    if (idx !== -1) {
+      const next = messages.value[idx + 1]
+      if (next && next.role === 'assistant') {
+        const assistantId = next.id
+        messages.value.splice(idx + 1, 1)
+        try { orderedMessages.processor.cleanup(assistantId) } catch {}
+        try { await invoke('delete_ai_message', { message_id: assistantId }) } catch {}
+      }
+      const userId = userMessage.id
+      messages.value.splice(idx, 1)
+      try { orderedMessages.processor.cleanup(userId) } catch {}
+      try { await invoke('delete_ai_message', { message_id: userId }) } catch {}
+    }
+  } catch {}
+
+  inputMessage.value = userMessage.content
+  await sendMessage()
 }
 
 const getStreamSpeed = () => {

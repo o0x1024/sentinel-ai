@@ -38,6 +38,7 @@ export interface ChatMessage {
   timestamp: Date
   isStreaming?: boolean
   hasError?: boolean
+  is_task_mode?: boolean
   executionPlan?: any
   toolExecutions?: any[]
   executionResult?: any

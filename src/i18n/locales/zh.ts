@@ -1766,7 +1766,7 @@ export default {
     categories: {
       all: '全部',
       passiveScan: '被动扫描插件',
-      agentTools: 'Agent工具插件',
+      agents: 'Agent工具插件',
       builtinTools: '内置工具插件',
       mcpTools: 'MCP工具插件',
       vulnerability: '漏洞检测',

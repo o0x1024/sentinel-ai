@@ -445,6 +445,7 @@ pub async fn send_ai_stream_message(
     Ok(message_id)
 }
 
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SendStreamWithSearchRequest {
     pub conversation_id: String,
@@ -1029,6 +1030,18 @@ pub async fn get_ai_conversation_history(
         "AI service '{}' not found for getting conversation history.",
         service_name
     ))
+}
+
+// 删除单条AI消息（按消息ID）
+#[tauri::command]
+pub async fn delete_ai_message(
+    message_id: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    db_service
+        .delete_message(&message_id)
+        .await
+        .map_err(|e| format!("Failed to delete AI message {}: {}", message_id, e))
 }
 
 

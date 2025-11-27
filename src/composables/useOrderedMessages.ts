@@ -36,23 +36,23 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       this.chunkArrivalOrder.set(messageId, new Map())
     }
 
-    // 记录架构类型
     if (chunk.architecture && !this.architectureInfo.has(messageId)) {
-      this.architectureInfo.set(messageId, {
-        type: chunk.architecture,
-        ...(chunk.structured_data || {})
-      })
+      const info: any = { type: chunk.architecture }
+      const sd = chunk.structured_data as any
+      if (sd && sd.plan_summary) {
+        info.planSummary = sd.plan_summary
+      }
+      this.architectureInfo.set(messageId, info)
     }
 
-    // 检测StreamComplete
     if (chunk.chunk_type === 'StreamComplete') {
       this.streamCompleteFlags.set(messageId, true)
-      // 如果有summary数据，更新到架构信息
       if (chunk.structured_data) {
         const existing = this.architectureInfo.get(messageId) || { type: 'Unknown' }
+        const sd = chunk.structured_data as any
         this.architectureInfo.set(messageId, {
           ...existing,
-          statistics: chunk.structured_data
+          statistics: (sd && sd.summary) ? sd.summary : sd
         })
       }
     }
@@ -134,7 +134,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
 
     // 通用的 chunk 过滤：只过滤掉 Meta 块（用于内部追踪）
     // 架构特定的渲染逻辑应在对应的处理器和组件中处理
-    let filteredChunks = chunks.filter(chunk => chunk.chunk_type !== 'Meta')
+    const filteredChunks = chunks.filter(chunk => chunk.chunk_type !== 'Meta')
 
     if (steps.size === 0) {
       // 如果没有步骤信息，直接按sequence顺序渲染所有chunks
@@ -681,7 +681,7 @@ export const useOrderedMessages = (
         const obj = JSON.parse(chunk.content?.toString() || '{}')
         if (obj && obj.type === 'rag_citations' && Array.isArray(obj.citations)) {
           // 直接更新消息的引用数组
-          ; (message as any).citations = obj.citations
+           (message as any).citations = obj.citations
         }
       } catch (e) {
         console.warn('解析Meta块失败:', e)
@@ -718,7 +718,7 @@ export const useOrderedMessages = (
       // 保存架构元数据（不清理）
       const archInfo = processor.getArchitectureInfo(canonicalId)
       if (archInfo) {
-        ; (message as any).architectureType = archInfo.type
+         (message as any).architectureType = archInfo.type
           ; (message as any).architectureMeta = archInfo
       }
 

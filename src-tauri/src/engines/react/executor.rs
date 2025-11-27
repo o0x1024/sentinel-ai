@@ -544,7 +544,7 @@ impl ReactExecutor {
             return "No tools available".to_string();
         }
 
-        log::info!(
+        log::debug!(
             "ReAct executor: 工具过滤配置 - 白名单: {:?}, 黑名单: {:?}",
             if allow_present && allow.is_empty() {
                 "空(禁用所有)".to_string()

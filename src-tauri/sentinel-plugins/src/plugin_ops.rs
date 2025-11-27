@@ -14,20 +14,26 @@ use crate::types::{Confidence, Finding, Severity};
 /// 插件执行上下文（用于收集插件发现的漏洞）
 #[derive(Clone, Default)]
 pub struct PluginContext {
-    /// 收集到的漏洞列表
     pub findings: Arc<Mutex<Vec<Finding>>>,
+    pub last_result: Arc<Mutex<Option<serde_json::Value>>>,
 }
 
 impl PluginContext {
     pub fn new() -> Self {
         Self {
             findings: Arc::new(Mutex::new(Vec::new())),
+            last_result: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn take_findings(&self) -> Vec<Finding> {
         let mut findings = self.findings.lock().unwrap();
         std::mem::take(&mut *findings)
+    }
+
+    pub fn take_last_result(&self) -> Option<serde_json::Value> {
+        let mut last = self.last_result.lock().unwrap();
+        std::mem::take(&mut *last)
     }
 }
 
@@ -181,7 +187,7 @@ fn parse_confidence(s: &str) -> Confidence {
 
 extension!(
     sentinel_plugin_ext,
-    ops = [op_emit_finding, op_plugin_log, op_fetch],
+    ops = [op_emit_finding, op_plugin_log, op_fetch, op_plugin_return],
     state = |state| {
         state.put(PluginContext::new());
     }
@@ -224,6 +230,14 @@ fn op_plugin_log(
         _ => debug!("[Plugin] {}", message),
     }
 }
+
+    #[op2]
+    fn op_plugin_return(state: &mut OpState, #[serde] value: serde_json::Value) -> bool {
+        let ctx = state.borrow::<PluginContext>().clone();
+        let mut last = ctx.last_result.lock().unwrap();
+        *last = Some(value);
+        true
+    }
 
 /// Fetch request options from JavaScript
 #[derive(Debug, Clone, Serialize, Deserialize)]

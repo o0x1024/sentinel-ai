@@ -7,6 +7,11 @@ pub mod scan_session;
 pub mod scan;
 pub mod vulnerability;
 pub mod prompt;
+pub mod agent;
+pub mod rag;
+pub mod workflow;
+pub mod rag_config;
+pub mod scenario_agent;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -52,5 +57,3 @@ pub struct PaginatedResponse<T> {
     pub data: Vec<T>,
     pub pagination: Pagination,
 }
-
-

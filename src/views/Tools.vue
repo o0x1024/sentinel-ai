@@ -1013,6 +1013,7 @@ interface PluginMetadata {
   version: string;
   description: string;
   author: string;
+  main_category: string;
   category: string;
   permissions: string[];
 }
@@ -1652,9 +1653,9 @@ async function fetchPassivePlugins() {
   try {
     const response = await invoke<any>('list_plugins');
     if (response.success && response.data) {
-      // 只加载 agentTools 类型的插件
+      // 只加载 agents 类型的插件
       passivePlugins.value = response.data.filter((plugin: PluginRecord) => 
-        plugin.metadata.category === 'agentTools'
+        plugin.metadata.main_category === 'agent'
       );
     }
   } catch (error) {

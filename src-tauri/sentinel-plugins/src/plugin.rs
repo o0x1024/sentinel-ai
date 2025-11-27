@@ -455,4 +455,52 @@ impl PluginManager {
 
         Ok(findings)
     }
+
+    /// 执行 Agent 插件通用入口
+    pub async fn execute_agent(
+        &self,
+        plugin_id: &str,
+        input: &serde_json::Value,
+    ) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
+        // 验证插件是否存在且已启用，并获取代码与元数据
+        let (metadata, code) = {
+            let registry = self.registry.read().await;
+            let record = registry
+                .get(plugin_id)
+                .ok_or_else(|| PluginError::NotFound(format!("Plugin not found: {}", plugin_id)))?;
+
+            if record.status != PluginStatus::Enabled {
+                return Err(PluginError::Execution(format!(
+                    "Plugin '{}' is not enabled (status: {:?})",
+                    plugin_id, record.status
+                )));
+            }
+
+            let metadata = record.metadata.clone();
+            drop(registry);
+
+            // 获取插件代码
+            let code = self.get_plugin_code(plugin_id).await?;
+            (metadata, code)
+        };
+
+        // 使用 PluginEngine 执行 agent 入口
+        let input_clone = input.clone();
+        let result_pair = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
+
+            rt.block_on(async move {
+                let mut engine = PluginEngine::new()?;
+                engine.load_plugin_with_metadata(&code, metadata).await?;
+                engine.execute_agent(&input_clone).await
+            })
+        })
+        .await
+        .map_err(|e| PluginError::Execution(format!("Task join error: {}", e)))??;
+
+        Ok(result_pair)
+    }
 }

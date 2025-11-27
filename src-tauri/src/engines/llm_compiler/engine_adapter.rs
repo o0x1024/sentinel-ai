@@ -6,7 +6,7 @@ use super::planner::LlmCompilerPlanner;
 use super::task_fetcher::TaskFetchingUnit;
 use super::types::*;
 use crate::agents::traits::*;
-use crate::commands::agent_commands::WorkflowStepDetail;
+use sentinel_core::models::workflow::WorkflowStepDetail;
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::services::ai::{AiService, AiServiceManager};
 use crate::services::database::Database; // trait for DB methods

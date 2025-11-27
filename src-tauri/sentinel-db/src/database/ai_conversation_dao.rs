@@ -169,8 +169,8 @@ pub async fn create_ai_message(pool: &SqlitePool, message: &AiMessage) -> Result
         r#"
         INSERT INTO ai_messages (
             id, conversation_id, role, content, metadata, token_count, cost, tool_calls,
-            attachments, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            attachments, timestamp, architecture_type, architecture_meta, structured_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&message.id)
@@ -183,6 +183,9 @@ pub async fn create_ai_message(pool: &SqlitePool, message: &AiMessage) -> Result
     .bind(&message.tool_calls)
     .bind(&message.attachments)
     .bind(message.timestamp)
+    .bind(&message.architecture_type)
+    .bind(&message.architecture_meta)
+    .bind(&message.structured_data)
     .execute(pool)
     .await?;
 
@@ -204,5 +207,4 @@ pub async fn get_ai_messages_by_conversation(pool: &SqlitePool, conversation_id:
     .await?;
     Ok(messages)
 }
-
 

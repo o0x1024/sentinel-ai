@@ -722,6 +722,173 @@ pub struct CaCertPath {
     pub path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchToggleResult {
+    pub enabled_count: usize,
+    pub disabled_count: usize,
+    pub failed_ids: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn batch_enable_plugins(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+    plugin_ids: Vec<String>,
+) -> Result<CommandResponse<BatchToggleResult>, String> {
+    let db = state.get_db_service().await?;
+
+    let mut enabled_count: usize = 0;
+    let mut failed_ids: Vec<String> = Vec::new();
+    let mut agent_toggled: bool = false;
+
+    for plugin_id in plugin_ids.iter() {
+        let main_category: Option<String> = sqlx::query_scalar(
+            "SELECT main_category FROM plugin_registry WHERE id = ?",
+        )
+        .bind(plugin_id)
+        .fetch_optional(db.pool())
+        .await
+        .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+
+        let result = sqlx::query(
+            "UPDATE plugin_registry SET enabled = ? WHERE id = ?",
+        )
+        .bind(true)
+        .bind(plugin_id)
+        .execute(db.pool())
+        .await;
+
+        match result {
+            Ok(exec) => {
+                if exec.rows_affected() > 0 {
+                    enabled_count += 1;
+                    let plugin_name = sqlx::query_scalar::<_, String>(
+                        "SELECT name FROM plugin_registry WHERE id = ?",
+                    )
+                    .bind(plugin_id)
+                    .fetch_optional(db.pool())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| plugin_id.clone());
+
+                    emit_plugin_changed(
+                        &app,
+                        PluginChangedEvent {
+                            plugin_id: plugin_id.clone(),
+                            enabled: true,
+                            name: plugin_name,
+                        },
+                    );
+
+                    if let Some(cat) = main_category.as_ref() {
+                        if cat == "agent" {
+                            agent_toggled = true;
+                        }
+                    }
+                } else {
+                    failed_ids.push(plugin_id.clone());
+                }
+            }
+            Err(_) => {
+                failed_ids.push(plugin_id.clone());
+            }
+        }
+    }
+
+    if agent_toggled {
+        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+            let _ = tool_system.refresh_all().await;
+        }
+    }
+
+    Ok(CommandResponse::ok(BatchToggleResult {
+        enabled_count,
+        disabled_count: 0,
+        failed_ids,
+    }))
+}
+
+#[tauri::command]
+pub async fn batch_disable_plugins(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+    plugin_ids: Vec<String>,
+) -> Result<CommandResponse<BatchToggleResult>, String> {
+    let db = state.get_db_service().await?;
+
+    let mut disabled_count: usize = 0;
+    let mut failed_ids: Vec<String> = Vec::new();
+    let mut agent_toggled: bool = false;
+
+    for plugin_id in plugin_ids.iter() {
+        let main_category: Option<String> = sqlx::query_scalar(
+            "SELECT main_category FROM plugin_registry WHERE id = ?",
+        )
+        .bind(plugin_id)
+        .fetch_optional(db.pool())
+        .await
+        .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+
+        let result = sqlx::query(
+            "UPDATE plugin_registry SET enabled = ? WHERE id = ?",
+        )
+        .bind(false)
+        .bind(plugin_id)
+        .execute(db.pool())
+        .await;
+
+        match result {
+            Ok(exec) => {
+                if exec.rows_affected() > 0 {
+                    disabled_count += 1;
+                    let plugin_name = sqlx::query_scalar::<_, String>(
+                        "SELECT name FROM plugin_registry WHERE id = ?",
+                    )
+                    .bind(plugin_id)
+                    .fetch_optional(db.pool())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| plugin_id.clone());
+
+                    emit_plugin_changed(
+                        &app,
+                        PluginChangedEvent {
+                            plugin_id: plugin_id.clone(),
+                            enabled: false,
+                            name: plugin_name,
+                        },
+                    );
+
+                    if let Some(cat) = main_category.as_ref() {
+                        if cat == "agent" {
+                            agent_toggled = true;
+                        }
+                    }
+                } else {
+                    failed_ids.push(plugin_id.clone());
+                }
+            }
+            Err(_) => {
+                failed_ids.push(plugin_id.clone());
+            }
+        }
+    }
+
+    if agent_toggled {
+        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+            let _ = tool_system.refresh_all().await;
+        }
+    }
+
+    Ok(CommandResponse::ok(BatchToggleResult {
+        enabled_count: 0,
+        disabled_count,
+        failed_ids,
+    }))
+}
+
 /// 下载 CA 证书（前端友好接口）
 #[tauri::command]
 pub async fn download_ca_cert(
@@ -1350,11 +1517,11 @@ pub async fn test_plugin(
     let db = state.get_db_service().await?;
 
     let row: Option<(
-        String, String, String, Option<String>, String, Option<String>,
+        String, String, String, Option<String>, String, String, Option<String>,
         String, Option<String>, bool
     )> = sqlx::query_as(
         r#"
-        SELECT id, name, version, author, category, description,
+        SELECT id, name, version, author, main_category, category, description,
                default_severity, tags, enabled
         FROM plugin_registry
         WHERE id = ?
@@ -1365,7 +1532,16 @@ pub async fn test_plugin(
     .await
     .map_err(|e| format!("Failed to query plugin: {}", e))?;
 
-    if let Some((id, name, version, author, category, description, _sev, _tags, enabled)) = row {
+    if let Some((id, name, version, author, main_category, category, description, _sev, _tags, enabled)) = row {
+        // 如果是 Agent 插件，提示使用 Agent 测试入口
+        if main_category == "agent" {
+            return Ok(CommandResponse::ok(TestPluginResult {
+                success: false,
+                message: Some("该插件属于 Agent 工具类别，请使用 Agent 测试入口".to_string()),
+                findings: None,
+                error: Some("WrongTestEndpoint".to_string()),
+            }));
+        }
         if !enabled {
             return Ok(CommandResponse::ok(TestPluginResult {
                 success: false,
@@ -1531,6 +1707,7 @@ pub struct AdvancedTestResult {
     pub runs: Vec<AdvancedRunStat>,
     pub message: Option<String>,
     pub error: Option<String>,
+    pub outputs: Option<Vec<serde_json::Value>>,
 }
 
 /// 高级并发测试插件：可自定义请求参数 + 并发 + 重复运行
@@ -1571,6 +1748,7 @@ pub async fn test_plugin_advanced(
             runs: vec![],
             message: Some("插件未启用或不存在".to_string()),
             error: Some("PluginDisabled".to_string()),
+            outputs: None,
         }));
     }
 
@@ -1674,6 +1852,7 @@ pub async fn test_plugin_advanced(
         runs: run_stats,
         message: Some("高级测试完成".to_string()),
         error: None,
+        outputs: None,
     }))
 }
 

@@ -12,6 +12,13 @@ use crate::core::models::database::{
     AiConversation, AiMessage, Configuration, DatabaseStats, McpServerConfig,
     ScanTask, Vulnerability,
 };
+use crate::core::models::agent::{
+    AgentTask, AgentSessionData, AgentExecutionResult, SessionLog, TaskPriority, LogLevel,
+};
+use crate::core::models::workflow::WorkflowStepDetail;
+use crate::core::models::scenario_agent::ScenarioAgentProfile;
+use crate::core::models::rag::{DocumentChunk, ChunkMetadata, DocumentSource, QueryResult, CollectionInfo, IngestionStatusEnum};
+use crate::core::models::rag_config::RagConfig;
 
 #[async_trait]
 pub trait Database: Send + Sync + std::fmt::Debug {
@@ -23,6 +30,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn update_ai_conversation_title(&self, id: &str, title: &str) -> Result<()>;
     async fn archive_ai_conversation(&self, id: &str) -> Result<()>;
     async fn create_ai_message(&self, message: &AiMessage) -> Result<()>;
+    async fn upsert_ai_message_append(&self, message: &AiMessage) -> Result<()>;
     async fn get_ai_messages_by_conversation(
         &self,
         conversation_id: &str,
@@ -51,9 +59,9 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()>;
     
     // Agent任务相关方法
-    async fn create_agent_task(&self, task: &crate::agents::traits::AgentTask) -> Result<()>;
-    async fn get_agent_task(&self, id: &str) -> Result<Option<crate::agents::traits::AgentTask>>;
-    async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<crate::agents::traits::AgentTask>>;
+    async fn create_agent_task(&self, task: &AgentTask) -> Result<()>;
+    async fn get_agent_task(&self, id: &str) -> Result<Option<AgentTask>>;
+    async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<AgentTask>>;
     async fn update_agent_task_status(&self, id: &str, status: &str, agent_name: Option<&str>, architecture: Option<&str>) -> Result<()>;
     async fn update_agent_task_timing(&self, id: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, execution_time_ms: Option<u64>) -> Result<()>;
     async fn update_agent_task_error(&self, id: &str, error_message: &str) -> Result<()>;
@@ -61,23 +69,40 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     // Agent会话相关方法
     async fn create_agent_session(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()>;
     async fn update_agent_session_status(&self, session_id: &str, status: &str) -> Result<()>;
-    async fn get_agent_session(&self, session_id: &str) -> Result<Option<crate::agents::session::AgentSessionData>>;
-    async fn list_agent_sessions(&self) -> Result<Vec<crate::agents::session::AgentSessionData>>;
+    async fn get_agent_session(&self, session_id: &str) -> Result<Option<AgentSessionData>>;
+    async fn list_agent_sessions(&self) -> Result<Vec<AgentSessionData>>;
     async fn delete_agent_session(&self, session_id: &str) -> Result<()>;
     async fn delete_agent_execution_steps(&self, session_id: &str) -> Result<()>;
     
     // Agent执行日志相关方法
     async fn add_agent_session_log(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()>;
-    async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<crate::agents::traits::SessionLog>>;
+    async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<SessionLog>>;
     
     // Agent执行结果相关方法
-    async fn save_agent_execution_result(&self, session_id: &str, result: &crate::agents::traits::AgentExecutionResult) -> Result<()>;
-    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<crate::agents::traits::AgentExecutionResult>>;
+    async fn save_agent_execution_result(&self, session_id: &str, result: &AgentExecutionResult) -> Result<()>;
+    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<AgentExecutionResult>>;
     
     // Agent执行步骤相关方法
-    async fn save_agent_execution_step(&self, session_id: &str, step: &crate::commands::agent_commands::WorkflowStepDetail) -> Result<()>;
-    async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>>;
+    async fn save_agent_execution_step(&self, session_id: &str, step: &WorkflowStepDetail) -> Result<()>;
+    async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<WorkflowStepDetail>>;
     async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()>;
+
+    async fn get_plugins_from_registry(&self) -> Result<Vec<serde_json::Value>>;
+    async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()>;
+    async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()>;
+    async fn get_plugin_from_registry(&self, plugin_id: &str) -> Result<Option<serde_json::Value>>;
+    async fn delete_plugin_from_registry(&self, plugin_id: &str) -> Result<()>;
+    async fn get_plugins_paginated(
+        &self,
+        page: i64,
+        page_size: i64,
+        status_filter: Option<&str>,
+        search_text: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<serde_json::Value>;
+    async fn toggle_plugin_favorite(&self, plugin_id: &str, user_id: Option<&str>) -> Result<bool>;
+    async fn get_favorited_plugins(&self, user_id: Option<&str>) -> Result<Vec<String>>;
+    async fn get_plugin_review_stats(&self) -> Result<serde_json::Value>;
 }
 
 #[derive(Debug)]
@@ -576,11 +601,36 @@ impl DatabaseService {
                 tool_calls TEXT,
                 attachments TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                architecture_type TEXT,
+                architecture_meta TEXT,
+                structured_data TEXT,
                 FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE
             )",
         )
         .execute(&mut *tx)
         .await?;
+
+        let col_names: Vec<String> = sqlx::query("PRAGMA table_info(ai_messages)")
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|r| r.get::<String, _>(1))
+            .collect();
+        if !col_names.iter().any(|c| c == "architecture_type") {
+            sqlx::query("ALTER TABLE ai_messages ADD COLUMN architecture_type TEXT")
+                .execute(&mut *tx)
+                .await?;
+        }
+        if !col_names.iter().any(|c| c == "architecture_meta") {
+            sqlx::query("ALTER TABLE ai_messages ADD COLUMN architecture_meta TEXT")
+                .execute(&mut *tx)
+                .await?;
+        }
+        if !col_names.iter().any(|c| c == "structured_data") {
+            sqlx::query("ALTER TABLE ai_messages ADD COLUMN structured_data TEXT")
+                .execute(&mut *tx)
+                .await?;
+        }
 
         // 创建AI角色表
         sqlx::query(
@@ -1050,7 +1100,7 @@ impl DatabaseService {
                 started_at INTEGER,
                 completed_at INTEGER,
                 current_step INTEGER,
-                progress INTEGER NOT NULL DEFAULT 0,
+                progress REAL NOT NULL DEFAULT 0,
                 context TEXT,
                 metadata TEXT,
                 FOREIGN KEY (plan_id) REFERENCES execution_plans(id) ON DELETE CASCADE
@@ -1250,7 +1300,7 @@ impl DatabaseService {
         .bind("Task overview and guiding principles for plugin generation")
         .bind("rewoo")
         .bind("planner")
-        .bind(include_str!("../../../src/generators/templates/plugin_generation.txt"))
+        .bind(include_str!("../../src/generators/templates/plugin_generation.txt"))
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1275,7 +1325,7 @@ impl DatabaseService {
         .bind("Template for fixing broken plugin code")
         .bind("rewoo")
         .bind("planner")
-        .bind(include_str!("../../../src/generators/templates/plugin_fix.txt"))
+        .bind(include_str!("../../src/generators/templates/plugin_fix.txt"))
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1300,7 +1350,7 @@ impl DatabaseService {
         .bind("Template describing the plugin interface and API")
         .bind("rewoo")
         .bind("planner")
-        .bind(include_str!("../../../src/generators/templates/plugin_interface.txt"))
+        .bind(include_str!("../../src/generators/templates/plugin_interface.txt"))
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1325,7 +1375,7 @@ impl DatabaseService {
         .bind("Template describing the expected output format")
         .bind("rewoo")
         .bind("planner")
-        .bind(include_str!("../../../src/generators/templates/plugin_output_format.txt"))
+        .bind(include_str!("../../src/generators/templates/plugin_output_format.txt"))
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1350,7 +1400,7 @@ impl DatabaseService {
         .bind("Task overview and guiding principles for Agent tool plugin generation")
         .bind("rewoo")
         .bind("planner")
-        .bind(include_str!("../../../src/generators/templates/agent_plugin_generation.txt"))
+        .bind(include_str!("../../src/generators/templates/agent_plugin_generation.txt"))
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1375,7 +1425,7 @@ impl DatabaseService {
         .bind("Template describing the Agent tool plugin interface and API")
         .bind("rewoo")
         .bind("planner")
-        .bind(include_str!("../../../src/generators/templates/agent_plugin_interface.txt"))
+        .bind(include_str!("../../src/generators/templates/agent_plugin_interface.txt"))
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1400,7 +1450,7 @@ impl DatabaseService {
         .bind("Template for fixing broken Agent tool plugin code")
         .bind("rewoo")
         .bind("planner")
-        .bind(include_str!("../../../src/generators/templates/agent_plugin_fix.txt"))
+        .bind(include_str!("../../src/generators/templates/agent_plugin_fix.txt"))
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1425,7 +1475,7 @@ impl DatabaseService {
         .bind("Template describing the expected Agent plugin output format")
         .bind("rewoo")
         .bind("planner")
-        .bind(include_str!("../../../src/generators/templates/agent_plugin_output_format.txt"))
+        .bind(include_str!("../../src/generators/templates/agent_plugin_output_format.txt"))
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1446,6 +1496,203 @@ impl DatabaseService {
         self.pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))
+    }
+
+    pub fn get_db(&self) -> Result<crate::client::DatabaseClient> {
+        let pool = self.get_pool()?.clone();
+        Ok(crate::client::DatabaseClient::new(pool))
+    }
+
+    pub async fn get_plugins_from_registry(&self) -> Result<Vec<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        let rows: Vec<(
+            String, String, String, Option<String>, String, String, Option<String>,
+            String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
+        )> = sqlx::query_as(
+            r#"SELECT id, name, version, author, main_category, category, description,
+                default_severity, tags, enabled, plugin_code, quality_score, validation_status
+                FROM plugin_registry ORDER BY updated_at DESC"#,
+        )
+        .fetch_all(pool)
+        .await?;
+        let mut plugins = Vec::new();
+        for (id, name, version, author, main_category, category, description,
+            default_severity, tags, enabled, plugin_code, quality_score, validation_status) in rows
+        {
+            let tags_array: Vec<String> = tags.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            plugins.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "version": version,
+                "author": author,
+                "main_category": main_category,
+                "category": category,
+                "description": description,
+                "default_severity": default_severity,
+                "tags": tags_array,
+                "enabled": enabled,
+                "plugin_code": plugin_code,
+                "quality_score": quality_score,
+                "validation_status": validation_status,
+            }));
+        }
+        Ok(plugins)
+    }
+
+    pub async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"UPDATE plugin_registry SET validation_status = ?, updated_at = ? WHERE id = ?"#,
+        )
+        .bind(status)
+        .bind(chrono::Utc::now())
+        .bind(plugin_id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"UPDATE plugin_registry SET plugin_code = ?, updated_at = ? WHERE id = ?"#,
+        )
+        .bind(code)
+        .bind(chrono::Utc::now())
+        .bind(plugin_id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_plugin_from_registry(&self, plugin_id: &str) -> Result<Option<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        let row: Option<(
+            String, String, String, Option<String>, String, String, Option<String>,
+            String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
+        )> = sqlx::query_as(
+            r#"SELECT id, name, version, author, main_category, category, description,
+                default_severity, tags, enabled, plugin_code, quality_score, validation_status
+                FROM plugin_registry WHERE id = ?"#,
+        )
+        .bind(plugin_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some((id, name, version, author, main_category, category, description,
+            default_severity, tags, enabled, plugin_code, quality_score, validation_status)) = row
+        {
+            let tags_array: Vec<String> = tags.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            Ok(Some(serde_json::json!({
+                "id": id,
+                "name": name,
+                "version": version,
+                "author": author,
+                "main_category": main_category,
+                "category": category,
+                "description": description,
+                "default_severity": default_severity,
+                "tags": tags_array,
+                "enabled": enabled,
+                "plugin_code": plugin_code,
+                "quality_score": quality_score,
+                "validation_status": validation_status,
+            })))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn delete_plugin_from_registry(&self, plugin_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(r#"DELETE FROM plugin_registry WHERE id = ?"#)
+            .bind(plugin_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_plugins_paginated(&self, page: i64, page_size: i64, status_filter: Option<&str>, search_text: Option<&str>, user_id: Option<&str>) -> Result<serde_json::Value> {
+        let pool = self.get_pool()?;
+        let offset = (page.max(1) - 1) * page_size.max(1);
+        let mut base = String::from(
+            r#"SELECT id, name, version, author, main_category, category, description,
+               default_severity, tags, enabled, plugin_code, quality_score, validation_status
+               FROM plugin_registry WHERE 1=1"#,
+        );
+        if let Some(status) = status_filter { base.push_str(&format!(" AND validation_status = '{}'", status)); }
+        if let Some(query) = search_text { base.push_str(&format!(" AND (name LIKE '%{}%' OR description LIKE '%{}%')", query, query)); }
+        base.push_str(" ORDER BY updated_at DESC");
+        base.push_str(&format!(" LIMIT {} OFFSET {}", page_size.max(1), offset));
+
+        let rows: Vec<(
+            String, String, String, Option<String>, String, String, Option<String>,
+            String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
+        )> = sqlx::query_as(&base)
+            .fetch_all(pool)
+            .await?;
+
+        let mut plugins = Vec::new();
+        for (id, name, version, author, main_category, category, description,
+            default_severity, tags, enabled, plugin_code, quality_score, validation_status) in rows
+        {
+            let tags_array: Vec<String> = tags.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            plugins.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "version": version,
+                "author": author,
+                "main_category": main_category,
+                "category": category,
+                "description": description,
+                "default_severity": default_severity,
+                "tags": tags_array,
+                "enabled": enabled,
+                "plugin_code": plugin_code,
+                "quality_score": quality_score,
+                "validation_status": validation_status,
+            }));
+        }
+
+        let mut count_query = String::from("SELECT COUNT(*) FROM plugin_registry WHERE 1=1");
+        if let Some(status) = status_filter { count_query.push_str(&format!(" AND validation_status = '{}'", status)); }
+        if let Some(query) = search_text { count_query.push_str(&format!(" AND (name LIKE '%{}%' OR description LIKE '%{}%')", query, query)); }
+        let total: i64 = sqlx::query_scalar(&count_query)
+            .fetch_one(pool)
+            .await?;
+
+        Ok(serde_json::json!({
+            "plugins": plugins,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }))
+    }
+
+    pub async fn toggle_plugin_favorite(&self, _plugin_id: &str, _user_id: Option<&str>) -> Result<bool> {
+        Ok(false)
+    }
+
+    pub async fn get_favorited_plugins(&self, _user_id: Option<&str>) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    pub async fn get_plugin_review_stats(&self) -> Result<serde_json::Value> {
+        let pool = self.get_pool()?;
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry").fetch_one(pool).await?;
+        let pending: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry WHERE validation_status = 'Pending'").fetch_one(pool).await.unwrap_or((0,));
+        let approved: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry WHERE validation_status = 'Approved'").fetch_one(pool).await.unwrap_or((0,));
+        let rejected: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry WHERE validation_status = 'Rejected'").fetch_one(pool).await.unwrap_or((0,));
+        let passed: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry WHERE validation_status = 'Passed'").fetch_one(pool).await.unwrap_or((0,));
+        let avg_quality: (Option<f64>,) = sqlx::query_as("SELECT AVG(quality_score) FROM plugin_registry WHERE quality_score IS NOT NULL").fetch_one(pool).await.unwrap_or((None,));
+        Ok(serde_json::json!({
+            "total": total.0,
+            "pending_review": pending.0,
+            "approved": approved.0,
+            "rejected": rejected.0,
+            "passed": passed.0,
+            "average_quality": avg_quality.0.unwrap_or(0.0),
+        }))
     }
 
     /// 执行自定义查询
@@ -1882,8 +2129,9 @@ impl DatabaseService {
             r#"
             INSERT INTO ai_messages (
                 id, conversation_id, role, content, metadata,
-                token_count, cost, tool_calls, attachments, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                token_count, cost, tool_calls, attachments, timestamp,
+                architecture_type, architecture_meta, structured_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         )
         .bind(&message.id)
@@ -1896,6 +2144,9 @@ impl DatabaseService {
         .bind(&message.tool_calls)
         .bind(&message.attachments)
         .bind(message.timestamp)
+        .bind(&message.architecture_type)
+        .bind(&message.architecture_meta)
+        .bind(&message.structured_data)
         .execute(pool)
         .await?;
 
@@ -1906,6 +2157,111 @@ impl DatabaseService {
             .execute(pool)
             .await?;
 
+        Ok(())
+    }
+
+    pub async fn upsert_ai_message_append(&self, message: &AiMessage) -> Result<()> {
+        let pool = self.get_pool()?;
+        let mut tx = pool.begin().await?;
+
+        let exists: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM ai_messages WHERE id = ?",
+        )
+        .bind(&message.id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if exists.is_some() {
+            sqlx::query(
+                r#"UPDATE ai_messages
+                   SET conversation_id = ?, role = ?, content = ?, metadata = ?, token_count = ?, cost = ?, tool_calls = ?, attachments = ?, timestamp = ?, architecture_type = ?, architecture_meta = ?, structured_data = ?
+                   WHERE id = ?"#,
+            )
+            .bind(&message.conversation_id)
+            .bind(&message.role)
+            .bind(&message.content)
+            .bind(&message.metadata)
+            .bind(message.token_count)
+            .bind(message.cost)
+            .bind(&message.tool_calls)
+            .bind(&message.attachments)
+            .bind(message.timestamp)
+            .bind(&message.architecture_type)
+            .bind(&message.architecture_meta)
+            .bind(&message.structured_data)
+            .bind(&message.id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query(
+                r#"INSERT INTO ai_messages (
+                        id, conversation_id, role, content, metadata,
+                        token_count, cost, tool_calls, attachments, timestamp,
+                        architecture_type, architecture_meta, structured_data
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            )
+            .bind(&message.id)
+            .bind(&message.conversation_id)
+            .bind(&message.role)
+            .bind(&message.content)
+            .bind(&message.metadata)
+            .bind(message.token_count)
+            .bind(message.cost)
+            .bind(&message.tool_calls)
+            .bind(&message.attachments)
+            .bind(message.timestamp)
+            .bind(&message.architecture_type)
+            .bind(&message.architecture_meta)
+            .bind(&message.structured_data)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        let current: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT conversation_data FROM ai_conversations WHERE id = ?",
+        )
+        .bind(&message.conversation_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let mut history: Vec<serde_json::Value> = match current.and_then(|(v,)| v) {
+            Some(json_str) => serde_json::from_str(&json_str).unwrap_or_default(),
+            None => Vec::new(),
+        };
+
+        history.retain(|item| item.get("id").and_then(|v| v.as_str()) != Some(message.id.as_str()));
+
+        let entry = serde_json::json!({
+            "id": message.id,
+            "role": message.role,
+            "content": message.content,
+            "timestamp": message.timestamp.to_rfc3339(),
+        });
+        history.push(entry);
+        let history_json = serde_json::to_string(&history).unwrap_or_default();
+
+        let incr_messages: i32 = if exists.is_some() { 0 } else { 1 };
+        let incr_tokens: i32 = message.token_count.unwrap_or(0);
+        let incr_cost: f64 = message.cost.unwrap_or(0.0);
+
+        sqlx::query(
+            r#"UPDATE ai_conversations
+               SET conversation_data = ?, updated_at = ?,
+                   total_messages = total_messages + ?,
+                   total_tokens = total_tokens + ?,
+                   cost = cost + ?
+               WHERE id = ?"#,
+        )
+        .bind(history_json)
+        .bind(Utc::now())
+        .bind(incr_messages)
+        .bind(incr_tokens)
+        .bind(incr_cost)
+        .bind(&message.conversation_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1921,6 +2277,51 @@ impl DatabaseService {
         .await?;
 
         Ok(rows)
+    }
+
+    /// 删除单条消息并回调更新会话统计
+    pub async fn delete_message(&self, id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+
+        // 先读取消息以便更新会话统计
+        if let Some(row) = sqlx::query("SELECT conversation_id, token_count, cost FROM ai_messages WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+        {
+            let conversation_id: String = row.get("conversation_id");
+            let token_count: Option<i32> = row.get("token_count");
+            let cost: Option<f64> = row.get("cost");
+
+            // 删除消息
+            sqlx::query("DELETE FROM ai_messages WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await?;
+
+            // 回写统计，避免负数
+            sqlx::query(
+                r#"
+                UPDATE ai_conversations
+                SET total_messages = CASE WHEN total_messages > 0 THEN total_messages - 1 ELSE 0 END,
+                    total_tokens = COALESCE(total_tokens, 0) - COALESCE(?, 0),
+                    cost = COALESCE(cost, 0.0) - COALESCE(?, 0.0),
+                    updated_at = ?
+                WHERE id = ?
+                "#,
+            )
+            .bind(token_count.unwrap_or(0))
+            .bind(cost.unwrap_or(0.0))
+            .bind(Utc::now())
+            .bind(conversation_id)
+            .execute(pool)
+            .await?;
+        } else {
+            // 不存在则直接返回Ok
+            return Ok(());
+        }
+
+        Ok(())
     }
 
     /// 配置相关操作
@@ -1972,11 +2373,11 @@ impl DatabaseService {
     }
 
     /// RAG配置管理方法
-    pub async fn get_rag_config(&self) -> Result<Option<crate::rag::config::RagConfig>> {
+    pub async fn get_rag_config(&self) -> Result<Option<RagConfig>> {
         let config_json = self.get_config("rag", "config").await?;
         
         if let Some(json_str) = config_json {
-            match serde_json::from_str::<crate::rag::config::RagConfig>(&json_str) {
+            match serde_json::from_str::<RagConfig>(&json_str) {
                 Ok(config) => Ok(Some(config)),
                 Err(e) => {
                     log::warn!("Failed to parse RAG config from database: {}, using default", e);
@@ -1988,7 +2389,7 @@ impl DatabaseService {
         }
     }
 
-    pub async fn save_rag_config(&self, config: &crate::rag::config::RagConfig) -> Result<()> {
+    pub async fn save_rag_config(&self, config: &RagConfig) -> Result<()> {
         let config_json = serde_json::to_string(config)
             .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize RAG config: {}", e)))?;
         
@@ -2750,8 +3151,8 @@ impl Database for DatabaseService {
     async fn create_ai_message(&self, message: &AiMessage) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, tool_calls, attachments, timestamp)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, tool_calls, attachments, timestamp, architecture_type, architecture_meta, structured_data)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&message.id)
         .bind(&message.conversation_id)
@@ -2763,6 +3164,9 @@ impl Database for DatabaseService {
         .bind(&message.tool_calls)
         .bind(&message.attachments)
         .bind(message.timestamp)
+        .bind(&message.architecture_type)
+        .bind(&message.architecture_meta)
+        .bind(&message.structured_data)
         .execute(pool)
         .await?;
 
@@ -2774,6 +3178,10 @@ impl Database for DatabaseService {
             .await?;
 
         Ok(())
+    }
+
+    async fn upsert_ai_message_append(&self, message: &AiMessage) -> Result<()> {
+        DatabaseService::upsert_ai_message_append(self, message).await
     }
 
     async fn get_ai_messages_by_conversation(
@@ -2980,7 +3388,7 @@ impl Database for DatabaseService {
     }
     
     // Agent任务相关方法实现
-    async fn create_agent_task(&self, task: &crate::agents::traits::AgentTask) -> Result<()> {
+    async fn create_agent_task(&self, task: &AgentTask) -> Result<()> {
         let pool = self.get_pool()?;
         let parameters_json = serde_json::to_string(&task.parameters)?;
         let priority_str = format!("{:?}", task.priority);
@@ -3003,7 +3411,7 @@ impl Database for DatabaseService {
         Ok(())
     }
     
-    async fn get_agent_task(&self, id: &str) -> Result<Option<crate::agents::traits::AgentTask>> {
+    async fn get_agent_task(&self, id: &str) -> Result<Option<AgentTask>> {
         let pool = self.get_pool()?;
         let row = sqlx::query("SELECT id, description, target, parameters, user_id, priority, timeout_seconds FROM agent_tasks WHERE id = ?")
             .bind(id)
@@ -3015,14 +3423,14 @@ impl Database for DatabaseService {
             let parameters = serde_json::from_str(&parameters_json).unwrap_or_default();
             let priority_str: String = row.get("priority");
             let priority = match priority_str.as_str() {
-                "Low" => crate::agents::traits::TaskPriority::Low,
-                "High" => crate::agents::traits::TaskPriority::High,
-                "Critical" => crate::agents::traits::TaskPriority::Critical,
-                _ => crate::agents::traits::TaskPriority::Normal,
+                "Low" => TaskPriority::Low,
+                "High" => TaskPriority::High,
+                "Critical" => TaskPriority::Critical,
+                _ => TaskPriority::Normal,
             };
             let timeout_seconds: Option<i64> = row.get("timeout_seconds");
             
-            Ok(Some(crate::agents::traits::AgentTask {
+            Ok(Some(AgentTask {
                 id: row.get("id"),
                 description: row.get("description"),
                 target: row.get("target"),
@@ -3036,7 +3444,7 @@ impl Database for DatabaseService {
         }
     }
     
-    async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<crate::agents::traits::AgentTask>> {
+    async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<AgentTask>> {
         let pool = self.get_pool()?;
         let rows = if let Some(user_id) = user_id {
             sqlx::query("SELECT id, description, target, parameters, user_id, priority, timeout_seconds FROM agent_tasks WHERE user_id = ? ORDER BY created_at DESC")
@@ -3055,14 +3463,14 @@ impl Database for DatabaseService {
             let parameters = serde_json::from_str(&parameters_json).unwrap_or_default();
             let priority_str: String = row.get("priority");
             let priority = match priority_str.as_str() {
-                "Low" => crate::agents::traits::TaskPriority::Low,
-                "High" => crate::agents::traits::TaskPriority::High,
-                "Critical" => crate::agents::traits::TaskPriority::Critical,
-                _ => crate::agents::traits::TaskPriority::Normal,
+                "Low" => TaskPriority::Low,
+                "High" => TaskPriority::High,
+                "Critical" => TaskPriority::Critical,
+                _ => TaskPriority::Normal,
             };
             let timeout_seconds: Option<i64> = row.get("timeout_seconds");
             
-            tasks.push(crate::agents::traits::AgentTask {
+            tasks.push(AgentTask {
                 id: row.get("id"),
                 description: row.get("description"),
                 target: row.get("target"),
@@ -3151,7 +3559,7 @@ impl Database for DatabaseService {
         Ok(())
     }
     
-    async fn get_agent_session(&self, session_id: &str) -> Result<Option<crate::agents::session::AgentSessionData>> {
+    async fn get_agent_session(&self, session_id: &str) -> Result<Option<AgentSessionData>> {
         let pool = self.get_pool()?;
         let row = sqlx::query("SELECT id, task_id, status, agent_name, created_at, updated_at FROM agent_sessions WHERE id = ?")
             .bind(session_id)
@@ -3162,7 +3570,7 @@ impl Database for DatabaseService {
             let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
             let updated_at: chrono::DateTime<chrono::Utc> = row.get("updated_at");
             
-            Ok(Some(crate::agents::session::AgentSessionData {
+            Ok(Some(AgentSessionData {
                 session_id: row.get("id"),
                 task_id: row.get("task_id"),
                 status: row.get("status"),
@@ -3175,7 +3583,7 @@ impl Database for DatabaseService {
         }
     }
     
-    async fn list_agent_sessions(&self) -> Result<Vec<crate::agents::session::AgentSessionData>> {
+    async fn list_agent_sessions(&self) -> Result<Vec<AgentSessionData>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT id, task_id, status, agent_name, created_at, updated_at FROM agent_sessions ORDER BY created_at DESC")
             .fetch_all(pool)
@@ -3186,7 +3594,7 @@ impl Database for DatabaseService {
             let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
             let updated_at: chrono::DateTime<chrono::Utc> = row.get("updated_at");
             
-            sessions.push(crate::agents::session::AgentSessionData {
+            sessions.push(AgentSessionData {
                 session_id: row.get("id"),
                 task_id: row.get("task_id"),
                 status: row.get("status"),
@@ -3235,7 +3643,7 @@ impl Database for DatabaseService {
         Ok(())
     }
     
-    async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<crate::agents::traits::SessionLog>> {
+    async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<SessionLog>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT level, message, source, timestamp FROM agent_session_logs WHERE session_id = ? ORDER BY timestamp ASC")
             .bind(session_id)
@@ -3246,14 +3654,14 @@ impl Database for DatabaseService {
         for row in rows {
             let level_str: String = row.get("level");
             let level = match level_str.as_str() {
-                "Debug" => crate::agents::traits::LogLevel::Debug,
-                "Info" => crate::agents::traits::LogLevel::Info,
-                "Warn" => crate::agents::traits::LogLevel::Warn,
-                "Error" => crate::agents::traits::LogLevel::Error,
-                _ => crate::agents::traits::LogLevel::Info,
+                "Debug" => LogLevel::Debug,
+                "Info" => LogLevel::Info,
+                "Warn" => LogLevel::Warn,
+                "Error" => LogLevel::Error,
+                _ => LogLevel::Info,
             };
             
-            logs.push(crate::agents::traits::SessionLog {
+            logs.push(SessionLog {
                 level,
                 message: row.get("message"),
                 timestamp: row.get("timestamp"),
@@ -3265,7 +3673,7 @@ impl Database for DatabaseService {
     }
     
     // Agent执行结果相关方法实现
-    async fn save_agent_execution_result(&self, session_id: &str, result: &crate::agents::traits::AgentExecutionResult) -> Result<()> {
+    async fn save_agent_execution_result(&self, session_id: &str, result: &AgentExecutionResult) -> Result<()> {
         let pool = self.get_pool()?;
         let data_json = serde_json::to_string(&result.data)?;
         let resources_json = serde_json::to_string(&result.resources_used)?;
@@ -3290,7 +3698,7 @@ impl Database for DatabaseService {
         Ok(())
     }
     
-    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<crate::agents::traits::AgentExecutionResult>> {
+    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<AgentExecutionResult>> {
         let pool = self.get_pool()?;
         let row = sqlx::query("SELECT id, success, data, error_message, execution_time_ms, resources_used, artifacts FROM agent_execution_results WHERE session_id = ?")
             .bind(session_id)
@@ -3306,7 +3714,7 @@ impl Database for DatabaseService {
             let artifacts = serde_json::from_str(&artifacts_json).unwrap_or_default();
             let execution_time_ms: i64 = row.get("execution_time_ms");
             
-            Ok(Some(crate::agents::traits::AgentExecutionResult {
+            Ok(Some(AgentExecutionResult {
                 id: row.get("id"),
                 success: row.get("success"),
                 data,
@@ -3321,7 +3729,7 @@ impl Database for DatabaseService {
     }
     
     // Agent执行步骤相关方法实现
-    async fn save_agent_execution_step(&self, session_id: &str, step: &crate::commands::agent_commands::WorkflowStepDetail) -> Result<()> {
+    async fn save_agent_execution_step(&self, session_id: &str, step: &WorkflowStepDetail) -> Result<()> {
         let pool = self.get_pool()?;
         let dependencies_json = serde_json::to_string(&step.dependencies)?;
         let result_data_json = serde_json::to_string(&step.result_data)?;
@@ -3365,7 +3773,7 @@ impl Database for DatabaseService {
         Ok(())
     }
     
-    async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<crate::commands::agent_commands::WorkflowStepDetail>> {
+    async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<WorkflowStepDetail>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT id, step_name, status, started_at, completed_at, duration_ms, result_data, error_message, retry_count, dependencies, tool_result FROM agent_execution_steps WHERE session_id = ? ORDER BY step_order ASC")
             .bind(session_id)
@@ -3386,7 +3794,7 @@ impl Database for DatabaseService {
             let duration_ms: i64 = row.get("duration_ms");
             let retry_count: i64 = row.get("retry_count");
             
-            steps.push(crate::commands::agent_commands::WorkflowStepDetail {
+            steps.push(WorkflowStepDetail {
                 step_id: row.get("id"),
                 step_name: row.get("step_name"),
                 status: row.get("status"),
@@ -3420,7 +3828,200 @@ impl Database for DatabaseService {
         
         Ok(())
     }
+
+    async fn get_plugins_from_registry(&self) -> Result<Vec<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        let rows: Vec<(
+            String, String, String, Option<String>, String, String, Option<String>,
+            String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
+        )> = sqlx::query_as(
+            r#"SELECT id, name, version, author, main_category, category, description,
+                default_severity, tags, enabled, plugin_code, quality_score, validation_status
+                FROM plugin_registry ORDER BY updated_at DESC"#,
+        )
+        .fetch_all(pool)
+        .await?;
+        let mut plugins = Vec::new();
+        for (id, name, version, author, main_category, category, description,
+            default_severity, tags, enabled, plugin_code, quality_score, validation_status) in rows
+        {
+            let tags_array: Vec<String> = tags.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            plugins.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "version": version,
+                "author": author,
+                "main_category": main_category,
+                "category": category,
+                "description": description,
+                "default_severity": default_severity,
+                "tags": tags_array,
+                "enabled": enabled,
+                "plugin_code": plugin_code,
+                "quality_score": quality_score,
+                "validation_status": validation_status,
+            }));
+        }
+        Ok(plugins)
+    }
+
+    async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"UPDATE plugin_registry SET validation_status = ?, updated_at = ? WHERE id = ?"#,
+        )
+        .bind(status)
+        .bind(chrono::Utc::now())
+        .bind(plugin_id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"UPDATE plugin_registry SET plugin_code = ?, updated_at = ? WHERE id = ?"#,
+        )
+        .bind(code)
+        .bind(chrono::Utc::now())
+        .bind(plugin_id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn get_plugin_from_registry(&self, plugin_id: &str) -> Result<Option<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        let row: Option<(
+            String, String, String, Option<String>, String, String, Option<String>,
+            String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
+        )> = sqlx::query_as(
+            r#"SELECT id, name, version, author, main_category, category, description,
+                default_severity, tags, enabled, plugin_code, quality_score, validation_status
+                FROM plugin_registry WHERE id = ?"#,
+        )
+        .bind(plugin_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some((id, name, version, author, main_category, category, description,
+            default_severity, tags, enabled, plugin_code, quality_score, validation_status)) = row
+        {
+            let tags_array: Vec<String> = tags.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            Ok(Some(serde_json::json!({
+                "id": id,
+                "name": name,
+                "version": version,
+                "author": author,
+                "main_category": main_category,
+                "category": category,
+                "description": description,
+                "default_severity": default_severity,
+                "tags": tags_array,
+                "enabled": enabled,
+                "plugin_code": plugin_code,
+                "quality_score": quality_score,
+                "validation_status": validation_status,
+            })))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn delete_plugin_from_registry(&self, plugin_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(r#"DELETE FROM plugin_registry WHERE id = ?"#)
+            .bind(plugin_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_plugins_paginated(&self, page: i64, page_size: i64, status_filter: Option<&str>, search_text: Option<&str>, user_id: Option<&str>) -> Result<serde_json::Value> {
+        let pool = self.get_pool()?;
+        let offset = (page.max(1) - 1) * page_size.max(1);
+        let mut base = String::from(
+            r#"SELECT id, name, version, author, main_category, category, description,
+               default_severity, tags, enabled, plugin_code, quality_score, validation_status
+               FROM plugin_registry WHERE 1=1"#,
+        );
+        if let Some(status) = status_filter { base.push_str(&format!(" AND validation_status = '{}'", status)); }
+        if let Some(query) = search_text { base.push_str(&format!(" AND (name LIKE '%{}%' OR description LIKE '%{}%')", query, query)); }
+        base.push_str(" ORDER BY updated_at DESC");
+        base.push_str(&format!(" LIMIT {} OFFSET {}", page_size.max(1), offset));
+
+        let rows: Vec<(
+            String, String, String, Option<String>, String, String, Option<String>,
+            String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
+        )> = sqlx::query_as(&base)
+            .fetch_all(pool)
+            .await?;
+
+        let mut plugins = Vec::new();
+        for (id, name, version, author, main_category, category, description,
+            default_severity, tags, enabled, plugin_code, quality_score, validation_status) in rows
+        {
+            let tags_array: Vec<String> = tags.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            plugins.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "version": version,
+                "author": author,
+                "main_category": main_category,
+                "category": category,
+                "description": description,
+                "default_severity": default_severity,
+                "tags": tags_array,
+                "enabled": enabled,
+                "plugin_code": plugin_code,
+                "quality_score": quality_score,
+                "validation_status": validation_status,
+            }));
+        }
+
+        let mut count_query = String::from("SELECT COUNT(*) FROM plugin_registry WHERE 1=1");
+        if let Some(status) = status_filter { count_query.push_str(&format!(" AND validation_status = '{}'", status)); }
+        if let Some(query) = search_text { count_query.push_str(&format!(" AND (name LIKE '%{}%' OR description LIKE '%{}%')", query, query)); }
+        let total: i64 = sqlx::query_scalar(&count_query)
+            .fetch_one(pool)
+            .await?;
+
+        Ok(serde_json::json!({
+            "plugins": plugins,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }))
+    }
+
+    async fn toggle_plugin_favorite(&self, _plugin_id: &str, _user_id: Option<&str>) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn get_favorited_plugins(&self, _user_id: Option<&str>) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_plugin_review_stats(&self) -> Result<serde_json::Value> {
+        let pool = self.get_pool()?;
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry").fetch_one(pool).await?;
+        let pending: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry WHERE validation_status = 'Pending'").fetch_one(pool).await.unwrap_or((0,));
+        let approved: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry WHERE validation_status = 'Approved'").fetch_one(pool).await.unwrap_or((0,));
+        let rejected: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry WHERE validation_status = 'Rejected'").fetch_one(pool).await.unwrap_or((0,));
+        let passed: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM plugin_registry WHERE validation_status = 'Passed'").fetch_one(pool).await.unwrap_or((0,));
+        let avg_quality: (Option<f64>,) = sqlx::query_as("SELECT AVG(quality_score) FROM plugin_registry WHERE quality_score IS NOT NULL").fetch_one(pool).await.unwrap_or((None,));
+        Ok(serde_json::json!({
+            "total": total.0,
+            "pending_review": pending.0,
+            "approved": approved.0,
+            "rejected": rejected.0,
+            "passed": passed.0,
+            "average_quality": avg_quality.0.unwrap_or(0.0),
+        }))
+    }
 }
+
 
 impl DatabaseService {
     // RAG-specific methods
@@ -3443,7 +4044,7 @@ impl DatabaseService {
         Ok(id)
     }
 
-    pub async fn get_rag_collections(&self) -> Result<Vec<crate::rag::models::CollectionInfo>> {
+    pub async fn get_rag_collections(&self) -> Result<Vec<CollectionInfo>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query(
             "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections ORDER BY created_at DESC"
@@ -3462,7 +4063,7 @@ impl DatabaseService {
             let created_at: String = row.get("created_at");
             let updated_at: String = row.get("updated_at");
 
-            collections.push(crate::rag::models::CollectionInfo {
+            collections.push(CollectionInfo {
                 id,
                 name,
                 description,
@@ -3487,7 +4088,7 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
+    pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<CollectionInfo>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
             "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE id = ?"
@@ -3506,7 +4107,7 @@ impl DatabaseService {
             let created_at: String = row.get("created_at");
             let updated_at: String = row.get("updated_at");
 
-            Ok(Some(crate::rag::models::CollectionInfo {
+            Ok(Some(CollectionInfo {
                 id,
                 name,
                 description,
@@ -3522,7 +4123,7 @@ impl DatabaseService {
         }
     }
 
-    pub async fn get_rag_collection_by_name(&self, collection_name: &str) -> Result<Option<crate::rag::models::CollectionInfo>> {
+    pub async fn get_rag_collection_by_name(&self, collection_name: &str) -> Result<Option<CollectionInfo>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
             "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE name = ?"
@@ -3541,7 +4142,7 @@ impl DatabaseService {
             let created_at: String = row.get("created_at");
             let updated_at: String = row.get("updated_at");
 
-            Ok(Some(crate::rag::models::CollectionInfo {
+            Ok(Some(CollectionInfo {
                 id,
                 name,
                 description,
@@ -3576,7 +4177,7 @@ impl DatabaseService {
         embedding_model: &str,
         limit: usize,
         similarity_threshold: f32,
-    ) -> Result<Vec<(f32, crate::rag::models::DocumentChunk)>> {
+    ) -> Result<Vec<(f32, DocumentChunk)>> {
         let pool = self.get_pool()?;
         
         info!("向量搜索RAG文档块: collection_id={}, embedding_dim={}, limit={}, threshold={}", 
@@ -3616,7 +4217,7 @@ impl DatabaseService {
                     
                     // 只保留超过阈值的结果
                     if similarity >= similarity_threshold {
-                        let chunk = crate::rag::models::DocumentChunk {
+                        let chunk = DocumentChunk {
                             id: row.get("id"),
                             source_id: row.get("document_id"),
                             content: row.get("content"),
@@ -3626,7 +4227,7 @@ impl DatabaseService {
                             metadata: {
                                 let metadata_json: String = row.get("metadata");
                                 if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
-                                    crate::rag::models::ChunkMetadata {
+                                    ChunkMetadata {
                                         file_path: "unknown".to_string(),
                                         file_name: "unknown".to_string(),
                                         file_type: "unknown".to_string(),
@@ -3639,7 +4240,7 @@ impl DatabaseService {
                                     }
                                 } else {
                                     serde_json::from_str(&metadata_json).unwrap_or_else(|_| {
-                                        crate::rag::models::ChunkMetadata {
+                                        ChunkMetadata {
                                             file_path: "unknown".to_string(),
                                             file_name: "unknown".to_string(),
                                             file_type: "unknown".to_string(),
@@ -3691,7 +4292,7 @@ impl DatabaseService {
         dot_product / (norm_a * norm_b)
     }
 
-    pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    pub async fn search_rag_chunks_by_id(&self, collection_id: &str, query: &str, limit: usize) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
 
         // 朴素文本检索：将查询拆为多个词项（英文/数字/点 与 中文分别为词），以 AND 串联
@@ -3741,7 +4342,7 @@ impl DatabaseService {
 
             // 解析metadata - 如果是空JSON，创建默认的ChunkMetadata
             let metadata = if metadata_json.trim() == "{}" {
-                crate::rag::models::ChunkMetadata {
+                ChunkMetadata {
                     file_path: "unknown".to_string(),
                     file_name: "unknown".to_string(),
                     file_type: "unknown".to_string(),
@@ -3753,13 +4354,13 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 }
             } else {
-                match serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json) {
+                match serde_json::from_str::<ChunkMetadata>(&metadata_json) {
                     Ok(meta) => meta,
                     Err(_) => {
                         // 尝试解析为HashMap，然后转换
                         let meta_map: std::collections::HashMap<String, String> = 
                             serde_json::from_str(&metadata_json).unwrap_or_default();
-                        crate::rag::models::ChunkMetadata {
+                        ChunkMetadata {
                             file_path: meta_map.get("file_path").unwrap_or(&"unknown".to_string()).clone(),
                             file_name: meta_map.get("file_name").unwrap_or(&"unknown".to_string()).clone(),
                             file_type: meta_map.get("file_type").unwrap_or(&"unknown".to_string()).clone(),
@@ -3777,7 +4378,7 @@ impl DatabaseService {
             let created_at_datetime = chrono::DateTime::from_timestamp(created_at, 0)
                 .unwrap_or_else(|| chrono::Utc::now());
 
-            chunks.push(crate::rag::models::DocumentChunk {
+            chunks.push(DocumentChunk {
                 id,
                 source_id: document_id, // document_id acts as source_id
                 content,
@@ -3801,7 +4402,7 @@ impl DatabaseService {
         embedding_model: &str,
         embedding_dimension: i32,
         limit: usize,
-    ) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    ) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query(
@@ -3832,7 +4433,7 @@ impl DatabaseService {
             let embedding_bytes: Option<Vec<u8>> = row.get("embedding_vector");
 
             let metadata = if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
-                crate::rag::models::ChunkMetadata {
+                ChunkMetadata {
                     file_path: "unknown".to_string(),
                     file_name: "unknown".to_string(),
                     file_type: "unknown".to_string(),
@@ -3844,8 +4445,8 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 }
             } else {
-                serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json)
-                    .unwrap_or_else(|_| crate::rag::models::ChunkMetadata {
+                serde_json::from_str::<ChunkMetadata>(&metadata_json)
+                    .unwrap_or_else(|_| ChunkMetadata {
                         file_path: "unknown".to_string(),
                         file_name: "unknown".to_string(),
                         file_type: "unknown".to_string(),
@@ -3864,7 +4465,7 @@ impl DatabaseService {
                 bincode::deserialize::<Vec<f32>>(&bytes).ok()
             } else { None };
 
-            chunks.push(crate::rag::models::DocumentChunk {
+            chunks.push(DocumentChunk {
                 id,
                 source_id: document_id,
                 content,
@@ -3879,7 +4480,7 @@ impl DatabaseService {
         Ok(chunks)
     }
 
-    pub async fn search_rag_chunks(&self, collection_name: &str, query: &str, limit: usize) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    pub async fn search_rag_chunks(&self, collection_name: &str, query: &str, limit: usize) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
         
         // For now, do a simple text search. In a real implementation, you'd use vector similarity
@@ -3909,9 +4510,8 @@ impl DatabaseService {
             let metadata_json: String = row.get("metadata");
             let created_at: String = row.get("created_at");
 
-            let metadata: crate::rag::models::ChunkMetadata = serde_json::from_str(&metadata_json)?;
-
-            chunks.push(crate::rag::models::DocumentChunk {
+            let metadata: ChunkMetadata = serde_json::from_str(&metadata_json)?;
+            chunks.push(DocumentChunk {
                 id,
                 source_id,
                 content,
@@ -3957,7 +4557,7 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_rag_chunks(&self, collection_name: &str) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    pub async fn get_rag_chunks(&self, collection_name: &str) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
         
         let rows = sqlx::query(
@@ -3983,9 +4583,8 @@ impl DatabaseService {
             let metadata_json: String = row.get("metadata");
             let created_at: String = row.get("created_at");
 
-            let metadata: crate::rag::models::ChunkMetadata = serde_json::from_str(&metadata_json)?;
-
-            chunks.push(crate::rag::models::DocumentChunk {
+            let metadata: ChunkMetadata = serde_json::from_str(&metadata_json)?;
+            chunks.push(DocumentChunk {
                 id,
                 source_id,
                 content,
@@ -4000,7 +4599,7 @@ impl DatabaseService {
         Ok(chunks)
     }
 
-    pub async fn get_rag_query_history(&self, _collection_name: Option<&str>, limit: Option<i32>) -> Result<Vec<crate::rag::models::QueryResult>> {
+    pub async fn get_rag_query_history(&self, _collection_name: Option<&str>, limit: Option<i32>) -> Result<Vec<QueryResult>> {
         let _pool = self.get_pool()?;
         let _limit = limit.unwrap_or(50);
         
@@ -4047,7 +4646,7 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_rag_documents(&self, collection_name: &str) -> Result<Vec<crate::rag::models::DocumentSource>> {
+    pub async fn get_rag_documents(&self, collection_name: &str) -> Result<Vec<DocumentSource>> {
         let pool = self.get_pool()?;
         
         let rows = sqlx::query(
@@ -4078,7 +4677,7 @@ impl DatabaseService {
 
             let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&metadata_json)?;
 
-            documents.push(crate::rag::models::DocumentSource {
+            documents.push(DocumentSource {
                 id,
                 file_path,
                 file_name,
@@ -4086,7 +4685,7 @@ impl DatabaseService {
                 file_size: file_size as u64,
                 file_hash: content_hash,
                 chunk_count: 0, // TODO: Calculate actual chunk count
-                ingestion_status: crate::rag::models::IngestionStatusEnum::Completed,
+                ingestion_status: IngestionStatusEnum::Completed,
                 created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
                 updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
                 metadata,
@@ -4097,7 +4696,7 @@ impl DatabaseService {
     }
 
     /// 根据集合ID获取文档列表
-    pub async fn get_rag_documents_by_collection_id(&self, collection_id: &str) -> Result<Vec<crate::rag::models::DocumentSource>> {
+    pub async fn get_rag_documents_by_collection_id(&self, collection_id: &str) -> Result<Vec<DocumentSource>> {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query(
@@ -4126,7 +4725,7 @@ impl DatabaseService {
 
             let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&metadata_json)?;
 
-            documents.push(crate::rag::models::DocumentSource {
+            documents.push(DocumentSource {
                 id,
                 file_path,
                 file_name,
@@ -4134,7 +4733,7 @@ impl DatabaseService {
                 file_size: file_size as u64,
                 file_hash: content_hash,
                 chunk_count: 0,
-                ingestion_status: crate::rag::models::IngestionStatusEnum::Completed,
+                ingestion_status: IngestionStatusEnum::Completed,
                 created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&chrono::Utc),
                 updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&chrono::Utc),
                 metadata,
@@ -4145,7 +4744,7 @@ impl DatabaseService {
     }
 
     /// 根据文档ID获取其所有文本块（来自新表 rag_chunks）
-    pub async fn get_rag_chunks_by_document_id(&self, document_id: &str) -> Result<Vec<crate::rag::models::DocumentChunk>> {
+    pub async fn get_rag_chunks_by_document_id(&self, document_id: &str) -> Result<Vec<DocumentChunk>> {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query(
@@ -4172,7 +4771,7 @@ impl DatabaseService {
 
             // 解析metadata，容错空/无效JSON
             let metadata = if metadata_json.trim().is_empty() || metadata_json.trim() == "{}" {
-                crate::rag::models::ChunkMetadata {
+                ChunkMetadata {
                     file_path: "unknown".to_string(),
                     file_name: "unknown".to_string(),
                     file_type: "unknown".to_string(),
@@ -4184,8 +4783,8 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 }
             } else {
-                serde_json::from_str::<crate::rag::models::ChunkMetadata>(&metadata_json)
-                    .unwrap_or_else(|_| crate::rag::models::ChunkMetadata {
+                serde_json::from_str::<ChunkMetadata>(&metadata_json)
+                    .unwrap_or_else(|_| ChunkMetadata {
                         file_path: "unknown".to_string(),
                         file_name: "unknown".to_string(),
                         file_type: "unknown".to_string(),
@@ -4201,7 +4800,7 @@ impl DatabaseService {
             let created_at = chrono::DateTime::from_timestamp(created_at_ts, 0)
                 .unwrap_or_else(|| chrono::Utc::now());
 
-            chunks.push(crate::rag::models::DocumentChunk {
+            chunks.push(DocumentChunk {
                 id,
                 source_id: document_id_val,
                 content,
@@ -4364,7 +4963,7 @@ impl DatabaseService {
     }
 
     // Scenario agent methods
-    pub async fn list_scenario_agents(&self) -> Result<Vec<crate::commands::ai_commands::ScenarioAgentProfile>> {
+    pub async fn list_scenario_agents(&self) -> Result<Vec<ScenarioAgentProfile>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query("SELECT * FROM scenario_agents ORDER BY name")
             .fetch_all(pool)
@@ -4373,14 +4972,13 @@ impl DatabaseService {
         let mut agents = Vec::new();
         for row in rows {
             let profile_json: String = row.get("profile_json");
-            let profile: crate::commands::ai_commands::ScenarioAgentProfile = 
-                serde_json::from_str(&profile_json)?;
+            let profile: ScenarioAgentProfile = serde_json::from_str(&profile_json)?;
             agents.push(profile);
         }
         Ok(agents)
     }
 
-    pub async fn upsert_scenario_agent(&self, profile: &crate::commands::ai_commands::ScenarioAgentProfile) -> Result<()> {
+    pub async fn upsert_scenario_agent(&self, profile: &ScenarioAgentProfile) -> Result<()> {
         let pool = self.get_pool()?;
         let profile_json = serde_json::to_string(profile)?;
         let now = chrono::Utc::now().to_rfc3339();
@@ -4462,5 +5060,78 @@ impl DatabaseService {
 impl Default for DatabaseService {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[async_trait]
+impl sentinel_rag::db::RagDatabase for DatabaseService {
+    async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> Result<String> {
+        self.create_rag_collection(name, description).await
+    }
+
+    async fn get_rag_collections(&self) -> Result<Vec<sentinel_rag::models::CollectionInfo>> {
+        self.get_rag_collections().await
+    }
+
+    async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<sentinel_rag::models::CollectionInfo>> {
+        self.get_rag_collection_by_id(collection_id).await
+    }
+
+    async fn get_rag_collection_by_name(&self, name: &str) -> Result<Option<sentinel_rag::models::CollectionInfo>> {
+        self.get_rag_collection_by_name(name).await
+    }
+
+    async fn delete_rag_collection(&self, collection_id: &str) -> Result<()> {
+        self.delete_rag_collection(collection_id).await
+    }
+
+    async fn create_rag_document(&self, collection_id: &str, file_path: &str, file_name: &str, content: &str, metadata: &str) -> Result<String> {
+        self.create_rag_document(collection_id, file_path, file_name, content, metadata).await
+    }
+
+    async fn create_rag_chunk(
+        &self,
+        document_id: &str,
+        collection_id: &str,
+        content: &str,
+        chunk_index: i32,
+        embedding: Option<&[f32]>,
+        embedding_model: &str,
+        embedding_dimension: i32,
+        metadata_json: &str,
+    ) -> Result<String> {
+        self.create_rag_chunk(
+            document_id,
+            collection_id,
+            content,
+            chunk_index,
+            embedding,
+            embedding_model,
+            embedding_dimension,
+            metadata_json,
+        ).await
+    }
+
+    async fn update_collection_stats(&self, collection_id: &str) -> Result<()> {
+        self.update_collection_stats(collection_id).await
+    }
+
+    async fn get_rag_documents(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
+        self.get_rag_documents_by_collection_id(collection_id).await
+    }
+
+    async fn get_rag_chunks(&self, document_id: &str) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
+        self.get_rag_chunks_by_document_id(document_id).await
+    }
+
+    async fn delete_rag_document(&self, document_id: &str) -> Result<()> {
+        self.delete_rag_document(document_id).await
+    }
+
+    async fn save_rag_query(&self, collection_id: Option<&str>, query: &str, response: &str, processing_time_ms: u64) -> Result<()> {
+        self.save_rag_query(collection_id, query, response, processing_time_ms).await
+    }
+
+    async fn get_rag_query_history(&self, collection_id: Option<&str>, limit: Option<i32>) -> Result<Vec<sentinel_rag::models::QueryResult>> {
+        self.get_rag_query_history(collection_id, limit).await
     }
 }

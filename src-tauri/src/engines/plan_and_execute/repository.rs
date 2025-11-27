@@ -153,7 +153,7 @@ impl PlanExecuteRepository {
     /// 获取执行会话
     pub async fn get_execution_session(&self, session_id: &str) -> Result<Option<ExecutionSession>, RepositoryError> {
         let row = sqlx::query(
-            "SELECT id, plan_id, status, started_at, completed_at, current_step, progress, context, metadata 
+            "SELECT id, plan_id, status, started_at, completed_at, CAST(current_step AS INTEGER) AS current_step, progress, context, metadata 
              FROM execution_sessions WHERE id = ?1"
         )
         .bind(session_id)
@@ -210,7 +210,7 @@ impl PlanExecuteRepository {
     /// 列出所有执行会话
     pub async fn list_execution_sessions(&self) -> Result<Vec<ExecutionSession>, RepositoryError> {
         let rows = sqlx::query(
-            "SELECT id, plan_id, status, started_at, completed_at, current_step, progress, context, metadata 
+            "SELECT id, plan_id, status, started_at, completed_at, CAST(current_step AS INTEGER) AS current_step, progress, context, metadata 
              FROM execution_sessions ORDER BY started_at DESC"
         )
         .fetch_all(&self.pool)
@@ -296,15 +296,15 @@ impl PlanExecuteRepository {
             
         // 计算平均执行时间（仅针对已完成的会话）
         let avg_time = if completed_sessions > 0 {
-            sqlx::query_scalar::<_, Option<u64>>(
+            let avg_time_f64 = sqlx::query_scalar::<_, Option<f64>>(
                 "SELECT AVG(CAST((julianday(datetime(completed_at, 'unixepoch')) - julianday(datetime(started_at, 'unixepoch'))) * 86400 AS REAL)) 
                  FROM execution_sessions 
                  WHERE status = 'Completed' AND completed_at IS NOT NULL"
             )
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| RepositoryError::DatabaseError(format!("查询平均执行时间失败: {}", e)))?
-            .unwrap_or(0)
+            .map_err(|e| RepositoryError::DatabaseError(format!("查询平均执行时间失败: {}", e)))?;
+            avg_time_f64.unwrap_or(0.0).round() as u64
         } else {
             0
         };

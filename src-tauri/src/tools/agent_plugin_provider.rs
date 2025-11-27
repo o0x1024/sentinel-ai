@@ -328,6 +328,111 @@ impl UnifiedTool for AgentPluginTool {
         // 获取插件管理器
         let plugin_manager = self.state.get_plugin_manager();
 
+        // 确保插件已在内存注册并且代码已缓存
+        let db_service = self
+            .state
+            .get_db_service()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get database service: {}", e))?;
+
+        if plugin_manager.get_plugin(&self.plugin_id).await.is_none() {
+            let plugin = db_service
+                .get_plugin_by_id(&self.plugin_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get plugin: {}", e))?;
+
+            if let Some(p) = plugin {
+                let name = p
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&self.plugin_id)
+                    .to_string();
+                let version = p
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1.0.0")
+                    .to_string();
+                let author = p.get("author").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let main_category = p
+                    .get("main_category")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("agent")
+                    .to_string();
+                let category = p
+                    .get("category")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("custom")
+                    .to_string();
+                let description = p.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let default_severity = p
+                    .get("default_severity")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("medium")
+                    .to_string();
+                let tags: Vec<String> = p
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let plugin_code = p
+                    .get("plugin_code")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Plugin code not found: {}", self.plugin_id))?
+                    .to_string();
+                let enabled = p
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let severity = match default_severity.to_lowercase().as_str() {
+                    "critical" => sentinel_passive::types::Severity::Critical,
+                    "high" => sentinel_passive::types::Severity::High,
+                    "medium" => sentinel_passive::types::Severity::Medium,
+                    "low" => sentinel_passive::types::Severity::Low,
+                    "info" => sentinel_passive::types::Severity::Info,
+                    _ => sentinel_passive::types::Severity::Medium,
+                };
+
+                let metadata = sentinel_passive::PluginMetadata {
+                    id: self.plugin_id.clone(),
+                    name,
+                    version,
+                    author,
+                    main_category,
+                    category,
+                    description,
+                    default_severity: severity,
+                    tags,
+                };
+
+                let _ = plugin_manager
+                    .register_plugin(self.plugin_id.clone(), metadata, enabled)
+                    .await;
+                let _ = plugin_manager
+                    .set_plugin_code(self.plugin_id.clone(), plugin_code)
+                    .await;
+            } else {
+                let end_time = chrono::Utc::now();
+                return Ok(ToolExecutionResult {
+                    execution_id: params.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4()),
+                    tool_name: format!("plugin::{}", self.plugin_id),
+                    tool_id: format!("agent_plugin.{}", self.plugin_id),
+                    success: false,
+                    output: serde_json::json!({"error": "Plugin not found"}),
+                    error: Some(format!("Plugin not found: {}", self.plugin_id)),
+                    execution_time_ms: (end_time - start_time).num_milliseconds() as u64,
+                    metadata: HashMap::new(),
+                    started_at: start_time,
+                    completed_at: Some(end_time),
+                    status: ExecutionStatus::Failed,
+                });
+            }
+        }
+
         // 获取输入参数
         // 如果有 input 字段，使用它；否则使用整个 inputs 对象
         let plugin_input = if let Some(input_obj) = params.inputs.get("input") {
@@ -337,31 +442,10 @@ impl UnifiedTool for AgentPluginTool {
             json!(params.inputs)
         };
 
-        // 将参数传递给插件
-        // 注意：这里需要根据插件的实际接口设计调整
-        // 目前假设插件支持通过RequestContext执行
-        use sentinel_passive::RequestContext;
-        use std::collections::HashMap;
-
-        let request_ctx = RequestContext {
-            id: uuid::Uuid::new_v4().to_string(),
-            method: "AGENT_CALL".to_string(),
-            url: "agent://plugin-execution".to_string(),
-            headers: {
-                let mut h = HashMap::new();
-                h.insert("X-Agent-Plugin".to_string(), "true".to_string());
-                h.insert("X-Plugin-Id".to_string(), self.plugin_id.clone());
-                h
-            },
-            body: serde_json::to_vec(&plugin_input).unwrap_or_default(),
-            content_type: Some("application/json".to_string()),
-            query_params: HashMap::new(),
-            is_https: false,
-            timestamp: chrono::Utc::now(),
-        };
-
-        // 执行插件
-        let findings = plugin_manager.scan_request(&self.plugin_id, &request_ctx).await
+        // 执行 Agent 插件通用入口（优先 analyze / run / execute）
+        let (findings, last_result) = plugin_manager
+            .execute_agent(&self.plugin_id, &plugin_input)
+            .await
             .map_err(|e| anyhow::anyhow!("Plugin execution failed: {}", e))?;
 
         let end_time = chrono::Utc::now();
@@ -375,6 +459,7 @@ impl UnifiedTool for AgentPluginTool {
             "findings": findings,
             "count": findings.len(),
             "success": true,
+            "result": last_result,
         });
 
         Ok(ToolExecutionResult {

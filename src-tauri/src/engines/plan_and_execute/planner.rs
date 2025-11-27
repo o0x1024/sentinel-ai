@@ -744,15 +744,17 @@ impl Planner {
         
         // 使用流式消息API发送请求（分别传递 system 与 user 提示），并显式传入前端提供的 IDs
         let result = ai_service
-            .send_message_stream(
-                Some(user_prompt),       // 用户提示
-                Some(system_prompt),     // 系统提示
-                conversation_id,         // 前端会话ID
-                message_id,              // 前端消息ID
+            .send_message_stream_with_save_control(
+                Some(user_prompt),
+                None,
+                Some(system_prompt),
+                conversation_id,
+                message_id,
                 false,
                 false,
                 Some(ChunkType::PlanInfo),
-                None, // attachments
+                Some(crate::utils::ordered_message::ArchitectureType::PlanAndExecute),
+                None,
             )
             .await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;

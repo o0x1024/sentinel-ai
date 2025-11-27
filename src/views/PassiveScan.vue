@@ -31,7 +31,7 @@
         </div>
 
 
-        <PassiveScanControl v-if="activeTab === 'control'" />
+        <passiveControl v-if="activeTab === 'control'" />
         <ProxyHistory v-if="activeTab === 'proxyhistory'" />
         <ProxyConfiguration v-if="activeTab === 'proxyconfig'" />
     </div>
@@ -40,7 +40,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onActivated, onDeactivated, onErrorCaptured, watch, provide } from 'vue'
-import PassiveScanControl from '../components/ProxyIntercept.vue'
+import passiveControl from '../components/ProxyIntercept.vue'
 import ProxyHistory from '../components/ProxyHistory.vue'
 import ProxyConfiguration from '../components/ProxyConfiguration.vue'
 
@@ -53,18 +53,18 @@ const refreshTrigger = ref(0)
 provide('refreshTrigger', refreshTrigger)
 
 onMounted(() => {
-    console.log('PassiveScan view mounted, activeTab:', activeTab.value)
+    console.log('passive view mounted, activeTab:', activeTab.value)
 })
 
 // 当组件从缓存中激活时，触发刷新
 onActivated(() => {
-    console.log('PassiveScan view activated, triggering refresh')
+    console.log('passive view activated, triggering refresh')
     refreshTrigger.value++
 })
 
 // 当组件被缓存时
 onDeactivated(() => {
-    console.log('PassiveScan view deactivated')
+    console.log('passive view deactivated')
 })
 
 // 捕获子组件错误
@@ -77,7 +77,7 @@ onErrorCaptured((err, instance, info) => {
 
 // 调试：监听 tab 切换
 watch(activeTab, (v) => {
-    console.log('[PassiveScan] activeTab ->', v)
+    console.log('[passive] activeTab ->', v)
 })
 </script>
 

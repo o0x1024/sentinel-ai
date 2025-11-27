@@ -1593,7 +1593,7 @@ export default {
     categories: {
       all: 'All',
       passiveScan: 'Passive Scan Plugins',
-      agentTools: 'Agent Tool Plugins',
+      agents: 'Agent Tool Plugins',
       builtinTools: 'Built-in Tool Plugins',
       mcpTools: 'MCP Tool Plugins',
       vulnerability: 'Vulnerability Detection',

@@ -61,39 +61,45 @@ export class ReActMessageProcessor {
     }>
   ): ReActStepDisplay[] {
     const steps: ReActStepDisplay[] = []
+    let current: ReActStepDisplay = { index: 0 }
+    let idx = 0
 
-    structuredSteps.forEach((step, index) => {
-      const display: ReActStepDisplay = {
-        index,
-        id: `react-step-${index}`,
+    for (const s of structuredSteps) {
+      if (s.thought) {
+        if (current.action || current.observation || current.finalAnswer) {
+          current.id = `react-step-${idx}`
+          steps.push(current)
+          idx += 1
+          current = { index: idx }
+        }
+        current.thought = (current.thought || '') + s.thought
       }
 
-      if (step.thought) {
-        display.thought = step.thought
-      }
-
-      if (step.action) {
-        display.action = {
-          tool: step.action.tool,
-          args: step.action.args,
-          status: this.normalizeActionStatus(step.action.status),
+      if (s.action) {
+        current.action = {
+          tool: s.action.tool,
+          args: s.action.args,
+          status: this.normalizeActionStatus(s.action.status),
         }
       }
 
-      if (step.observation !== undefined) {
-        display.observation = step.observation
+      if (s.observation !== undefined) {
+        current.observation = s.observation
       }
 
-      if (step.finalAnswer) {
-        display.finalAnswer = step.finalAnswer
+      if (s.finalAnswer) {
+        current.finalAnswer = (current.finalAnswer || '') + s.finalAnswer
       }
 
-      if (step.error) {
-        display.error = step.error.message
+      if (s.error) {
+        current.error = s.error.message
       }
+    }
 
-      steps.push(display)
-    })
+    if (Object.keys(current).length > 1 || current.thought || current.finalAnswer) {
+      current.id = `react-step-${idx}`
+      steps.push(current)
+    }
 
     return steps
   }
@@ -310,10 +316,8 @@ export class ReActMessageProcessor {
    */
   static extractStepsFromChunks(chunks: OrderedMessageChunk[]): ReActStepDisplay[] {
     const steps: ReActStepDisplay[] = []
-    
-    // 过滤并按 sequence 排序
     const validChunks = chunks
-      .filter(c => ['Thinking', 'ToolResult', 'Content'].includes(c.chunk_type))
+      .filter(c => ['Thinking', 'ToolResult', 'Content', 'Meta'].includes(c.chunk_type))
       .sort((a, b) => a.sequence - b.sequence)
 
     let currentStep: ReActStepDisplay = { index: 0 }
@@ -321,57 +325,81 @@ export class ReActMessageProcessor {
 
     for (const chunk of validChunks) {
       if (chunk.chunk_type === 'Thinking') {
-        // 如果当前步骤已经有 Action 或 Observation，说明这是新的一轮思考 -> 新步骤
         if (currentStep.action || currentStep.observation) {
           currentStep.id = `react-step-${stepIndex}`
           steps.push(currentStep)
-          stepIndex++
+          stepIndex += 1
           currentStep = { index: stepIndex }
         }
-        
-        // 累加思考内容（支持流式）
-        const text = chunk.content.toString().replace(/^Thought:\s*/i, '')
+        const raw = chunk.content.toString()
+        const text = raw.replace(/^Thought:\s*/i, '')
         currentStep.thought = (currentStep.thought || '') + text
-        
+
+        const actionMatch = raw.match(/Action\s*:\s*([^\n]+)/i)
+        const inputMatch = raw.match(/Action\s*Input\s*:\s*([\s\S]+?)(?:\n\n|$)/i)
+        if (actionMatch) {
+          const tool = actionMatch[1].trim()
+          let args: any = {}
+          if (inputMatch) {
+            const inputStr = inputMatch[1].trim()
+            try {
+              args = JSON.parse(inputStr)
+            } catch {
+              args = { query: inputStr }
+            }
+          }
+          currentStep.action = {
+            tool,
+            args,
+            status: currentStep.action?.status || 'pending',
+          }
+        }
+      } else if (chunk.chunk_type === 'Meta') {
+        const sd: any = chunk.structured_data
+        if (sd && sd.type === 'step_update' && sd.status === 'executing') {
+          const tool = sd.step_name || 'Unknown'
+          currentStep.action = {
+            tool,
+            args: currentStep.action?.args || {},
+            status: 'running',
+          }
+        }
       } else if (chunk.chunk_type === 'ToolResult') {
         const toolName = chunk.tool_name || 'Unknown'
-        
-        // 如果当前步骤已经有 Observation 且不是同一个工具的流式输出 -> 新步骤
         if (currentStep.observation && currentStep.action?.tool !== toolName) {
           currentStep.id = `react-step-${stepIndex}`
           steps.push(currentStep)
-          stepIndex++
+          stepIndex += 1
           currentStep = { index: stepIndex }
         }
-
-        // 构造或更新 Action
-        if (!currentStep.action) {
-          currentStep.action = {
-            tool: toolName,
-            args: {},
-            status: 'success'
+        const sd: any = chunk.structured_data
+        let status: any = 'success'
+        if (sd && (sd.success === false || sd.error)) {
+          status = 'failed'
+        } else {
+          const contentLower = (chunk.content || '').toString().toLowerCase()
+          if (contentLower.includes('"success":false') || contentLower.includes('error')) {
+            status = 'failed'
           }
         }
-
-        // 累加或设置 Observation
-        if (currentStep.observation && typeof currentStep.observation === 'string') {
+        currentStep.action = {
+          tool: toolName,
+          args: currentStep.action?.args || {},
+          status,
+        }
+        if (sd && (sd.result || sd.output)) {
+          currentStep.observation = sd.result || sd.output
+        } else if (typeof currentStep.observation === 'string') {
           currentStep.observation += chunk.content.toString()
         } else {
           currentStep.observation = chunk.content
         }
-
       } else if (chunk.chunk_type === 'Content') {
-        // Final Answer 累加
         const contentStr = chunk.content.toString()
-        // 简单的过滤：如果包含 "Final Answer:" 前缀则去除
-        // 注意：这里可能会误伤正文中的 "Final Answer:"，但通常它是作为标记出现的
-        // 为了安全起见，我们只在开头去除，或者不去除（由 UI 渲染处理）
-        // 这里直接累加，让 UI 决定是否渲染 Markdown
         currentStep.finalAnswer = (currentStep.finalAnswer || '') + contentStr
       }
     }
 
-    // 保存最后一个步骤
     if (Object.keys(currentStep).length > 1 || currentStep.thought || currentStep.finalAnswer) {
       currentStep.id = `react-step-${stepIndex}`
       steps.push(currentStep)

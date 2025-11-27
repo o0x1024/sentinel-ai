@@ -3,7 +3,8 @@ use crate::services::ai::AiServiceManager;
 use crate::services::database::{Database, DatabaseService};
 use chrono::Utc;
 use log::{info, warn};
-use sentinel_rag::config::RagConfig;
+use sentinel_rag::config::RagConfig as RagConfigRag;
+use sentinel_core::models::rag_config::RagConfig as RagConfigCore;
 use sentinel_rag::db::RagDatabase;
 use sentinel_rag::models::{
     AssistantRagRequest, AssistantRagResponse, CollectionInfo, DocumentChunk, DocumentSource,
@@ -26,105 +27,66 @@ use uuid::Uuid;
 type AppRagService = RagService<DatabaseService>;
 static GLOBAL_RAG_SERVICE: OnceLock<Arc<RwLock<Option<Arc<AppRagService>>>>> = OnceLock::new();
 
-#[async_trait::async_trait]
-impl RagDatabase for DatabaseService {
-    async fn create_rag_collection(
-        &self,
-        name: &str,
-        description: Option<&str>,
-    ) -> anyhow::Result<String> {
-        self.create_rag_collection(name, description).await
-    }
 
-    async fn get_rag_collections(&self) -> anyhow::Result<Vec<CollectionInfo>> {
-        self.get_rag_collections().await
+fn convert_core_to_rag(core: RagConfigCore) -> RagConfigRag {
+    RagConfigRag {
+        database_path: core.database_path,
+        chunk_size_chars: core.chunk_size_chars,
+        chunk_overlap_chars: core.chunk_overlap_chars,
+        top_k: core.top_k,
+        mmr_lambda: core.mmr_lambda,
+        batch_size: core.batch_size,
+        max_concurrent: core.max_concurrent,
+        embedding_provider: core.embedding_provider,
+        embedding_model: core.embedding_model,
+        embedding_dimensions: core.embedding_dimensions,
+        embedding_api_key: core.embedding_api_key,
+        embedding_base_url: core.embedding_base_url,
+        reranking_provider: core.reranking_provider,
+        reranking_model: core.reranking_model,
+        reranking_enabled: core.reranking_enabled,
+        similarity_threshold: core.similarity_threshold,
+        augmentation_enabled: core.augmentation_enabled,
+        context_window_size: core.context_window_size,
+        chunking_strategy: match core.chunking_strategy {
+            sentinel_core::models::rag_config::ChunkingStrategy::FixedSize => sentinel_rag::config::ChunkingStrategy::FixedSize,
+            sentinel_core::models::rag_config::ChunkingStrategy::RecursiveCharacter => sentinel_rag::config::ChunkingStrategy::RecursiveCharacter,
+            sentinel_core::models::rag_config::ChunkingStrategy::Semantic => sentinel_rag::config::ChunkingStrategy::Semantic,
+            sentinel_core::models::rag_config::ChunkingStrategy::StructureAware => sentinel_rag::config::ChunkingStrategy::StructureAware,
+        },
+        min_chunk_size_chars: core.min_chunk_size_chars,
+        max_chunk_size_chars: core.max_chunk_size_chars,
     }
+}
 
-    async fn get_rag_collection_by_id(&self, id: &str) -> anyhow::Result<Option<CollectionInfo>> {
-        self.get_rag_collection_by_id(id).await
-    }
-
-    async fn get_rag_collection_by_name(
-        &self,
-        name: &str,
-    ) -> anyhow::Result<Option<CollectionInfo>> {
-        self.get_rag_collection_by_name(name).await
-    }
-
-    async fn delete_rag_collection(&self, id: &str) -> anyhow::Result<()> {
-        self.delete_rag_collection(id).await
-    }
-
-    async fn create_rag_document(
-        &self,
-        collection_id: &str,
-        file_path: &str,
-        file_name: &str,
-        content: &str,
-        metadata: &str,
-    ) -> anyhow::Result<String> {
-        self.create_rag_document(collection_id, file_path, file_name, content, metadata)
-            .await
-    }
-
-    async fn create_rag_chunk(
-        &self,
-        document_id: &str,
-        collection_id: &str,
-        content: &str,
-        chunk_index: i32,
-        embedding: Option<&[f32]>,
-        embedding_model: &str,
-        embedding_dimension: i32,
-        metadata_json: &str,
-    ) -> anyhow::Result<String> {
-        self.create_rag_chunk(
-            document_id,
-            collection_id,
-            content,
-            chunk_index,
-            embedding,
-            embedding_model,
-            embedding_dimension,
-            metadata_json,
-        )
-        .await
-    }
-
-    async fn update_collection_stats(&self, collection_id: &str) -> anyhow::Result<()> {
-        self.update_collection_stats(collection_id).await
-    }
-
-    async fn get_rag_documents(&self, collection_id: &str) -> anyhow::Result<Vec<DocumentSource>> {
-        self.get_rag_documents_by_collection_id(collection_id).await
-    }
-
-    async fn get_rag_chunks(&self, document_id: &str) -> anyhow::Result<Vec<DocumentChunk>> {
-        self.get_rag_chunks_by_document_id(document_id).await
-    }
-
-    async fn delete_rag_document(&self, document_id: &str) -> anyhow::Result<()> {
-        self.delete_rag_document(document_id).await
-    }
-
-    async fn save_rag_query(
-        &self,
-        collection_id: Option<&str>,
-        query: &str,
-        response: &str,
-        processing_time_ms: u64,
-    ) -> anyhow::Result<()> {
-        // Stored against provided id/name; current implementation treats param as name
-        self.save_rag_query(collection_id, query, response, processing_time_ms)
-            .await
-    }
-
-    async fn get_rag_query_history(
-        &self,
-        collection_id: Option<&str>,
-        limit: Option<i32>,
-    ) -> anyhow::Result<Vec<QueryResult>> {
-        self.get_rag_query_history(collection_id, limit).await
+fn convert_rag_to_core(rag: RagConfigRag) -> RagConfigCore {
+    RagConfigCore {
+        database_path: rag.database_path,
+        chunk_size_chars: rag.chunk_size_chars,
+        chunk_overlap_chars: rag.chunk_overlap_chars,
+        top_k: rag.top_k,
+        mmr_lambda: rag.mmr_lambda,
+        batch_size: rag.batch_size,
+        max_concurrent: rag.max_concurrent,
+        embedding_provider: rag.embedding_provider,
+        embedding_model: rag.embedding_model,
+        embedding_dimensions: rag.embedding_dimensions,
+        embedding_api_key: rag.embedding_api_key,
+        embedding_base_url: rag.embedding_base_url,
+        reranking_provider: rag.reranking_provider,
+        reranking_model: rag.reranking_model,
+        reranking_enabled: rag.reranking_enabled,
+        similarity_threshold: rag.similarity_threshold,
+        augmentation_enabled: rag.augmentation_enabled,
+        context_window_size: rag.context_window_size,
+        chunking_strategy: match rag.chunking_strategy {
+            sentinel_rag::config::ChunkingStrategy::FixedSize => sentinel_core::models::rag_config::ChunkingStrategy::FixedSize,
+            sentinel_rag::config::ChunkingStrategy::RecursiveCharacter => sentinel_core::models::rag_config::ChunkingStrategy::RecursiveCharacter,
+            sentinel_rag::config::ChunkingStrategy::Semantic => sentinel_core::models::rag_config::ChunkingStrategy::Semantic,
+            sentinel_rag::config::ChunkingStrategy::StructureAware => sentinel_core::models::rag_config::ChunkingStrategy::StructureAware,
+        },
+        min_chunk_size_chars: rag.min_chunk_size_chars,
+        max_chunk_size_chars: rag.max_chunk_size_chars,
     }
 }
 
@@ -132,17 +94,17 @@ impl RagDatabase for DatabaseService {
 pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Result<(), String> {
     // 尝试从数据库加载配置，失败则使用默认配置
     let config = match database.get_rag_config().await {
-        Ok(Some(config)) => {
+        Ok(Some(config_core)) => {
             info!("使用数据库中的RAG配置");
-            config
+            convert_core_to_rag(config_core)
         }
         Ok(None) => {
             info!("数据库中未找到RAG配置，使用默认配置");
-            RagConfig::default()
+            RagConfigRag::default()
         }
         Err(e) => {
             log::warn!("加载数据库RAG配置失败: {}，使用默认配置", e);
-            RagConfig::default()
+            RagConfigRag::default()
         }
     };
 
@@ -404,17 +366,17 @@ pub async fn delete_rag_collection(collection_id: String) -> Result<bool, String
 #[tauri::command]
 pub async fn get_rag_config(
     database: State<'_, Arc<DatabaseService>>,
-) -> Result<RagConfig, String> {
+) -> Result<RagConfigRag, String> {
     info!("获取RAG配置");
 
-    match database.get_rag_config().await {
-        Ok(Some(config)) => {
+    match database.inner().get_rag_config().await {
+        Ok(Some(config_core)) => {
             info!("成功从数据库加载RAG配置");
-            Ok(config)
+            Ok(convert_core_to_rag(config_core))
         }
         Ok(None) => {
             info!("数据库中未找到RAG配置，返回默认配置");
-            Ok(RagConfig::default())
+            Ok(RagConfigRag::default())
         }
         Err(e) => {
             let error_msg = format!("获取RAG配置失败: {}", e);
@@ -427,13 +389,14 @@ pub async fn get_rag_config(
 /// 保存RAG配置
 #[tauri::command]
 pub async fn save_rag_config(
-    config: RagConfig,
+    config: RagConfigRag,
     database: State<'_, Arc<DatabaseService>>,
     app: AppHandle,
 ) -> Result<bool, String> {
     info!("保存RAG配置: {:?}", config);
 
-    match database.save_rag_config(&config).await {
+    let core_config = convert_rag_to_core(config.clone());
+    match database.inner().save_rag_config(&core_config).await {
         Ok(_) => {
             info!("RAG配置已成功保存到数据库");
             // 立即重载RAG服务以应用最新配置（嵌入模型与分块策略生效）
@@ -441,7 +404,7 @@ pub async fn save_rag_config(
                 warn!("重载RAG服务失败: {}", e);
             }
             // 向前端广播配置变更事件
-            if let Err(e) = app.emit("rag_config_updated", &config) {
+            if let Err(e) = app.emit("rag_config_updated", &core_config) {
                 log::warn!("Failed to emit rag_config_updated: {}", e);
             }
             Ok(true)
@@ -458,12 +421,13 @@ pub async fn save_rag_config(
 #[tauri::command]
 pub async fn reset_rag_config(
     database: State<'_, Arc<DatabaseService>>,
-) -> Result<RagConfig, String> {
+) -> Result<RagConfigRag, String> {
     info!("重置RAG配置为默认值");
 
-    let default_config = RagConfig::default();
+    let default_config = RagConfigRag::default();
 
-    match database.save_rag_config(&default_config).await {
+    let core_config = convert_rag_to_core(default_config.clone());
+    match database.inner().save_rag_config(&core_config).await {
         Ok(_) => {
             info!("RAG配置已重置并保存到数据库");
             Ok(default_config)
@@ -864,9 +828,9 @@ pub async fn reload_rag_service(database: State<'_, Arc<DatabaseService>>) -> Re
     info!("重载RAG服务配置");
 
     // 获取最新配置
-    let _config = match database.get_rag_config().await {
-        Ok(Some(config)) => config,
-        Ok(None) => RagConfig::default(),
+    let _config = match database.inner().get_rag_config().await {
+        Ok(Some(config_core)) => convert_core_to_rag(config_core),
+        Ok(None) => RagConfigRag::default(),
         Err(e) => return Err(format!("加载配置失败: {}", e)),
     };
 

@@ -1,7 +1,10 @@
 pub mod ai;
 pub mod asset_service;
-pub mod database;
 pub mod mcp;
+pub mod database {
+    pub use sentinel_db::DatabaseService;
+    pub use sentinel_db::Database;
+}
 pub mod prompt_db;
 pub mod scan;
 pub mod scan_session;
@@ -43,6 +46,8 @@ pub use vulnerability::VulnerabilityService;
 use crate::models::database::{AiConversation, AiMessage};
 use anyhow::Result;
 use std::sync::Arc;
+use sentinel_core::models::database as core_db;
+use serde_json;
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -60,11 +65,20 @@ impl Database {
 
     // AI相关方法
     pub async fn create_ai_conversation(&self, conversation: &AiConversation) -> Result<()> {
-        self.service.create_conversation(conversation).await
+        let v = serde_json::to_value(conversation)?;
+        let core: core_db::AiConversation = serde_json::from_value(v)?;
+        self.service.create_conversation(&core).await
     }
 
     pub async fn get_ai_conversations(&self) -> Result<Vec<AiConversation>> {
-        self.service.get_conversations().await
+        let data: Vec<core_db::AiConversation> = self.service.get_conversations().await?;
+        let mut out = Vec::with_capacity(data.len());
+        for x in data {
+            let v = serde_json::to_value(x)?;
+            let local: AiConversation = serde_json::from_value(v)?;
+            out.push(local);
+        }
+        Ok(out)
     }
 
     pub async fn delete_ai_conversation(&self, id: &str) -> Result<()> {
@@ -83,14 +97,23 @@ impl Database {
     }
 
     pub async fn create_ai_message(&self, message: &AiMessage) -> Result<()> {
-        self.service.create_message(message).await
+        let v = serde_json::to_value(message)?;
+        let core: core_db::AiMessage = serde_json::from_value(v)?;
+        self.service.create_message(&core).await
     }
 
     pub async fn get_ai_messages_by_conversation(
         &self,
         conversation_id: &str,
     ) -> Result<Vec<AiMessage>> {
-        self.service.get_messages(conversation_id).await
+        let data: Vec<core_db::AiMessage> = self.service.get_messages(conversation_id).await?;
+        let mut out = Vec::with_capacity(data.len());
+        for x in data {
+            let v = serde_json::to_value(x)?;
+            let local: AiMessage = serde_json::from_value(v)?;
+            out.push(local);
+        }
+        Ok(out)
     }
 
     // 配置相关方法
@@ -102,7 +125,14 @@ impl Database {
         &self,
         category: &str,
     ) -> Result<Vec<crate::models::database::Configuration>> {
-        self.service.get_configs_by_category(category).await
+        let data: Vec<core_db::Configuration> = self.service.get_configs_by_category(category).await?;
+        let mut out = Vec::with_capacity(data.len());
+        for x in data {
+            let v = serde_json::to_value(x)?;
+            let local: crate::models::database::Configuration = serde_json::from_value(v)?;
+            out.push(local);
+        }
+        Ok(out)
     }
 
     pub async fn set_config(

@@ -9,7 +9,6 @@ path = "src/lib.rs"
 
 [dependencies]
 sentinel-core = { path = "../sentinel-core" }
-sentinel-db = { path = "../sentinel-db" }
 
 anyhow = "1.0"
 async-trait = "0.1"

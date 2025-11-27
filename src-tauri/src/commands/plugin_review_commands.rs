@@ -24,7 +24,7 @@ pub async fn get_plugins_for_review(
     log::info!("Getting plugins for review from plugin_registry");
     
     // Query from plugin_registry table
-    match db.get_plugins_from_registry().await {
+    match db.inner().get_plugins_from_registry().await {
         Ok(plugins) => {
             log::info!("Found {} plugins in registry", plugins.len());
             Ok(PluginReviewResponse {
@@ -81,7 +81,7 @@ pub async fn approve_plugin(
     log::info!("Approving plugin: {}", plugin_id);
     
     // Update plugin status in database
-    match db.update_plugin_status(&plugin_id, "Approved").await {
+    match db.inner().update_plugin_status(&plugin_id, "Approved").await {
         Ok(_) => {
             log::info!("Plugin {} approved successfully", plugin_id);
             Ok(PluginReviewResponse {
@@ -115,7 +115,7 @@ pub async fn reject_plugin(
     log::info!("Rejecting plugin: {} (reason: {})", plugin_id, reason);
     
     // Update plugin status in database
-    match db.update_plugin_status(&plugin_id, "Rejected").await {
+    match db.inner().update_plugin_status(&plugin_id, "Rejected").await {
         Ok(_) => {
             log::info!("Plugin {} rejected successfully", plugin_id);
             Ok(PluginReviewResponse {
@@ -150,7 +150,7 @@ pub async fn review_update_plugin_code(
     log::info!("Updating plugin code: {}", plugin_id);
     
     // Update plugin code in database
-    match db.update_plugin_code(&plugin_id, &code).await {
+    match db.inner().update_plugin_code(&plugin_id, &code).await {
         Ok(_) => {
             log::info!("Plugin {} code updated successfully", plugin_id);
             Ok(PluginReviewResponse {
@@ -186,7 +186,7 @@ pub async fn batch_approve_plugins(
     let mut failed_ids: Vec<String> = vec![];
     
     for plugin_id in plugin_ids {
-        match db.update_plugin_status(&plugin_id, "Approved").await {
+        match db.inner().update_plugin_status(&plugin_id, "Approved").await {
             Ok(_) => {
                 approved_count += 1;
                 log::info!("Plugin {} approved", plugin_id);
@@ -221,7 +221,7 @@ pub async fn batch_reject_plugins(
     let mut failed_ids: Vec<String> = vec![];
     
     for plugin_id in plugin_ids {
-        match db.update_plugin_status(&plugin_id, "Rejected").await {
+        match db.inner().update_plugin_status(&plugin_id, "Rejected").await {
             Ok(_) => {
                 rejected_count += 1;
                 log::info!("Plugin {} rejected", plugin_id);
@@ -298,7 +298,7 @@ pub async fn export_plugin(
     log::info!("Exporting plugin: {} as {}", plugin_id, format);
     
     // Get plugin from database
-    match db.get_plugin_from_registry(&plugin_id).await {
+    match db.inner().get_plugin_from_registry(&plugin_id).await {
         Ok(plugin) => {
             log::info!("Plugin {} found for export", plugin_id);
             Ok(PluginReviewResponse {
@@ -327,7 +327,7 @@ pub async fn review_delete_plugin(
     log::info!("Deleting plugin: {}", plugin_id);
     
     // Delete from database
-    match db.delete_plugin_from_registry(&plugin_id).await {
+    match db.inner().delete_plugin_from_registry(&plugin_id).await {
         Ok(_) => {
             log::info!("Plugin {} deleted successfully", plugin_id);
             Ok(PluginReviewResponse {
@@ -363,7 +363,7 @@ pub async fn get_plugins_paginated(
     log::info!("Getting plugins paginated: page={}, page_size={}, status={:?}, search={:?}", 
         page, page_size, status_filter, search_text);
     
-    match db.get_plugins_paginated(
+    match db.inner().get_plugins_paginated(
         page,
         page_size,
         status_filter.as_deref(),
@@ -397,7 +397,7 @@ pub async fn toggle_plugin_favorite(
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Toggling favorite for plugin: {}", plugin_id);
     
-    match db.toggle_plugin_favorite(&plugin_id, user_id.as_deref()).await {
+    match db.inner().toggle_plugin_favorite(&plugin_id, user_id.as_deref()).await {
         Ok(is_favorited) => {
             log::info!("Plugin {} favorite status: {}", plugin_id, is_favorited);
             Ok(PluginReviewResponse {
@@ -428,7 +428,7 @@ pub async fn get_favorited_plugins(
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting favorited plugins");
     
-    match db.get_favorited_plugins(user_id.as_deref()).await {
+    match db.inner().get_favorited_plugins(user_id.as_deref()).await {
         Ok(plugin_ids) => {
             Ok(PluginReviewResponse {
                 success: true,
@@ -456,7 +456,7 @@ pub async fn get_plugin_review_statistics(
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting plugin review statistics");
     
-    match db.get_plugin_review_stats().await {
+    match db.inner().get_plugin_review_stats().await {
         Ok(stats) => {
             Ok(PluginReviewResponse {
                 success: true,
@@ -474,4 +474,3 @@ pub async fn get_plugin_review_statistics(
         }
     }
 }
-

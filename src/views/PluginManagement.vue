@@ -4,7 +4,7 @@
       <h1 class="text-3xl font-bold">{{ $t('plugins.title', '插件管理') }}</h1>
       <p class="text-base-content/70 mt-2">{{ $t('plugins.description', '管理和配置安全测试插件') }}</p>
     </div>
-    
+
     <!-- Operation Bar -->
     <div class="flex gap-2 mb-6 flex-wrap">
       <button class="btn btn-primary" @click="openCreateDialog">
@@ -28,29 +28,20 @@
         {{ $t('plugins.scanDirectory', '扫描目录') }}
       </button> -->
     </div>
-    
+
     <!-- Category Filter -->
     <div class="tabs tabs-boxed mb-6 flex-wrap gap-2">
-      <button 
-        v-for="cat in categories" 
-        :key="cat.value"
-        class="tab"
-        :class="{ 'tab-active': selectedCategory === cat.value }"
-        @click="selectedCategory = cat.value"
-      >
+      <button v-for="cat in categories" :key="cat.value" class="tab"
+        :class="{ 'tab-active': selectedCategory === cat.value }" @click="selectedCategory = cat.value">
         <i :class="cat.icon" class="mr-2"></i>
         {{ cat.label }}
         <span v-if="getCategoryCount(cat.value) > 0" class="ml-2 badge badge-sm">
           {{ getCategoryCount(cat.value) }}
         </span>
       </button>
-      
+
       <!-- 插件审核 Tab -->
-      <button 
-        class="tab"
-        :class="{ 'tab-active': selectedCategory === 'review' }"
-        @click="selectedCategory = 'review'"
-      >
+      <button class="tab" :class="{ 'tab-active': selectedCategory === 'review' }" @click="selectedCategory = 'review'">
         <i class="fas fa-check-double mr-2"></i>
         {{ $t('plugins.pluginReview', '插件审核') }}
         <span v-if="reviewStats.pending > 0" class="ml-2 badge badge-sm badge-warning">
@@ -58,11 +49,11 @@
         </span>
       </button>
     </div>
-    
+
     <!-- Plugin Manager Content (Merged) -->
     <div class="card bg-base-100 shadow-xl">
       <div class="card-body">
-        
+
         <!-- Plugin Review Section -->
         <div v-if="selectedCategory === 'review'">
           <!-- Stats Cards -->
@@ -104,59 +95,40 @@
               </div>
             </div>
           </div>
-          
+
           <!-- Status Filter Buttons -->
           <div class="flex gap-2 mb-4 flex-wrap">
-            <button 
-              class="btn btn-sm"
-              :class="reviewStatusFilter === 'all' ? 'btn-primary' : 'btn-ghost'"
-              @click="changeReviewStatusFilter('all')"
-            >
+            <button class="btn btn-sm" :class="reviewStatusFilter === 'all' ? 'btn-primary' : 'btn-ghost'"
+              @click="changeReviewStatusFilter('all')">
               <i class="fas fa-list mr-1"></i>
               {{ $t('plugins.allStatus', '全部') }} ({{ reviewStats.total }})
             </button>
-            <button 
-              class="btn btn-sm"
-              :class="reviewStatusFilter === 'PendingReview' ? 'btn-warning' : 'btn-ghost'"
-              @click="changeReviewStatusFilter('PendingReview')"
-            >
+            <button class="btn btn-sm" :class="reviewStatusFilter === 'PendingReview' ? 'btn-warning' : 'btn-ghost'"
+              @click="changeReviewStatusFilter('PendingReview')">
               <i class="fas fa-clock mr-1"></i>
               {{ $t('plugins.review.pending', '待审核') }} ({{ reviewStats.pending }})
             </button>
-            <button 
-              class="btn btn-sm"
-              :class="reviewStatusFilter === 'Approved' ? 'btn-success' : 'btn-ghost'"
-              @click="changeReviewStatusFilter('Approved')"
-            >
+            <button class="btn btn-sm" :class="reviewStatusFilter === 'Approved' ? 'btn-success' : 'btn-ghost'"
+              @click="changeReviewStatusFilter('Approved')">
               <i class="fas fa-check-circle mr-1"></i>
               {{ $t('plugins.review.approved', '已批准') }} ({{ reviewStats.approved }})
             </button>
-            <button 
-              class="btn btn-sm"
-              :class="reviewStatusFilter === 'Rejected' ? 'btn-error' : 'btn-ghost'"
-              @click="changeReviewStatusFilter('Rejected')"
-            >
+            <button class="btn btn-sm" :class="reviewStatusFilter === 'Rejected' ? 'btn-error' : 'btn-ghost'"
+              @click="changeReviewStatusFilter('Rejected')">
               <i class="fas fa-times-circle mr-1"></i>
               {{ $t('plugins.review.rejected', '已拒绝') }} ({{ reviewStats.rejected }})
             </button>
-            <button 
-              class="btn btn-sm"
-              :class="reviewStatusFilter === 'ValidationFailed' ? 'btn-ghost' : 'btn-ghost'"
-              @click="changeReviewStatusFilter('ValidationFailed')"
-            >
+            <button class="btn btn-sm" :class="reviewStatusFilter === 'ValidationFailed' ? 'btn-ghost' : 'btn-ghost'"
+              @click="changeReviewStatusFilter('ValidationFailed')">
               <i class="fas fa-exclamation-triangle mr-1"></i>
               {{ $t('plugins.review.failed', '验证失败') }} ({{ reviewStats.failed }})
             </button>
           </div>
-          
+
           <!-- Review Actions -->
           <div class="flex gap-2 mb-4 flex-wrap">
-            <input 
-              v-model="reviewSearchText" 
-              type="text" 
-              :placeholder="$t('plugins.searchPlugins', '搜索插件...')" 
-              class="input input-bordered flex-1"
-            />
+            <input v-model="reviewSearchText" type="text" :placeholder="$t('plugins.searchPlugins', '搜索插件...')"
+              class="input input-bordered flex-1" />
             <button class="btn btn-success" @click="approveSelected" :disabled="selectedReviewPlugins.length === 0">
               <i class="fas fa-check mr-2"></i>
               {{ $t('plugins.batchApprove', '批量批准') }} ({{ selectedReviewPlugins.length }})
@@ -166,27 +138,24 @@
               {{ $t('plugins.batchReject', '批量拒绝') }} ({{ selectedReviewPlugins.length }})
             </button>
           </div>
-          
+
           <!-- Review Plugins Table -->
           <div v-if="filteredReviewPlugins.length === 0" class="alert alert-info">
             <i class="fas fa-info-circle"></i>
             <span>{{ $t('plugins.noReviewPlugins', '暂无待审核的插件') }}</span>
           </div>
-          
+
           <div v-else>
             <!-- Pagination Info -->
             <div class="flex justify-between items-center mb-4">
               <div class="text-sm text-base-content/70">
-                {{ $t('plugins.showing', '显示') }} {{ reviewPaginationInfo.start }}-{{ reviewPaginationInfo.end }} 
+                {{ $t('plugins.showing', '显示') }} {{ reviewPaginationInfo.start }}-{{ reviewPaginationInfo.end }}
                 {{ $t('plugins.of', '共') }} {{ reviewPaginationInfo.total }} {{ $t('plugins.items', '条') }}
               </div>
               <div class="flex items-center gap-2">
                 <span class="text-sm">{{ $t('plugins.pageSize', '每页') }}:</span>
-                <select 
-                  v-model.number="reviewPageSize" 
-                  @change="changeReviewPageSize(reviewPageSize)"
-                  class="select select-bordered select-sm"
-                >
+                <select v-model.number="reviewPageSize" @change="changeReviewPageSize(reviewPageSize)"
+                  class="select select-bordered select-sm">
                   <option :value="5">5</option>
                   <option :value="10">10</option>
                   <option :value="20">20</option>
@@ -194,18 +163,14 @@
                 </select>
               </div>
             </div>
-            
+
             <div class="overflow-x-auto">
               <table class="table table-zebra w-full">
                 <thead>
                   <tr>
                     <th class="w-12">
-                      <input 
-                        type="checkbox" 
-                        class="checkbox checkbox-sm" 
-                        @change="toggleSelectAll"
-                        :checked="isAllSelected"
-                      />
+                      <input type="checkbox" class="checkbox checkbox-sm" @change="toggleSelectAll"
+                        :checked="isAllSelected" />
                     </th>
                     <th>{{ $t('plugins.pluginName', '插件名称') }}</th>
                     <th class="w-32">{{ $t('plugins.qualityScore', '质量评分') }}</th>
@@ -217,20 +182,14 @@
                 </thead>
                 <tbody>
                   <tr v-for="plugin in paginatedReviewPlugins" :key="plugin.plugin_id" class="hover">
-                  <td>
-                    <input 
-                      type="checkbox" 
-                      class="checkbox checkbox-sm" 
-                      :checked="isPluginSelected(plugin)"
-                      @change="togglePluginSelection(plugin)"
-                    />
-                  </td>
-                  <td>
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <span 
-                          class="badge badge-sm"
-                          :class="{
+                    <td>
+                      <input type="checkbox" class="checkbox checkbox-sm" :checked="isPluginSelected(plugin)"
+                        @change="togglePluginSelection(plugin)" />
+                    </td>
+                    <td>
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <span class="badge badge-sm" :class="{
                             // Injection / command execution
                             'badge-error': plugin.vuln_type === 'sqli' || plugin.vuln_type === 'command_injection',
                             // XSS
@@ -247,75 +206,289 @@
                             'badge-accent': plugin.vuln_type === 'path_traversal',
                             // XXE / SSRF / other server-side issues
                             'badge-neutral': plugin.vuln_type === 'xxe' || plugin.vuln_type === 'ssrf'
-                          }"
-                        >
-                          {{ plugin.vuln_type.toUpperCase() }}
-                        </span>
-                        <span class="font-bold">{{ plugin.plugin_name }}</span>
+                          }">
+                            {{ plugin.vuln_type.toUpperCase() }}
+                          </span>
+                          <span class="font-bold">{{ plugin.plugin_name }}</span>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-1">{{ plugin.plugin_id }}</div>
                       </div>
-                      <div class="text-xs text-gray-500 mt-1">{{ plugin.plugin_id }}</div>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="flex items-center gap-2">
-                      <progress 
-                        class="progress w-20" 
-                        :class="{
+                    </td>
+                    <td>
+                      <div class="flex items-center gap-2">
+                        <progress class="progress w-20" :class="{
                           'progress-success': plugin.quality_score >= 80,
                           'progress-warning': plugin.quality_score >= 60 && plugin.quality_score < 80,
                           'progress-error': plugin.quality_score < 60
-                        }"
-                        :value="plugin.quality_score" 
-                        max="100"
-                      ></progress>
-                      <span class="text-sm font-semibold">{{ plugin.quality_score }}%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <span 
-                      class="badge badge-sm"
-                      :class="{
+                        }" :value="plugin.quality_score" max="100"></progress>
+                        <span class="text-sm font-semibold">{{ plugin.quality_score }}%</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span class="badge badge-sm" :class="{
                         'badge-warning': plugin.status === 'PendingReview',
                         'badge-success': plugin.status === 'Approved',
                         'badge-error': plugin.status === 'Rejected',
                         'badge-ghost': plugin.status === 'ValidationFailed'
-                      }"
-                    >
-                      {{ getReviewStatusText(plugin.status) }}
-                    </span>
-                  </td>
+                      }">
+                        {{ getReviewStatusText(plugin.status) }}
+                      </span>
+                    </td>
+                    <td>
+                      <span class="text-xs">{{ plugin.model }}</span>
+                    </td>
+                    <td>
+                      <span class="text-xs">{{ formatDate(plugin.generated_at) }}</span>
+                    </td>
+                    <td>
+                      <div class="flex gap-1">
+                        <button class="btn btn-sm btn-info" @click="viewReviewPluginDetail(plugin)">
+                          <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-sm btn-success" @click="approvePlugin(plugin)"
+                          :disabled="plugin.status === 'Approved'">
+                          <i class="fas fa-check"></i>
+                        </button>
+                        <button class="btn btn-sm btn-error" @click="rejectPlugin(plugin)"
+                          :disabled="plugin.status === 'Rejected'">
+                          <i class="fas fa-times"></i>
+                        </button>
+                        <button class="btn btn-sm btn-ghost" @click="deleteReviewPlugin(plugin)">
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Pagination Controls -->
+            <div class="flex justify-center items-center gap-2 mt-4">
+              <button class="btn btn-sm" :disabled="reviewCurrentPage === 1" @click="goToReviewPage(1)">
+                <i class="fas fa-angle-double-left"></i>
+              </button>
+              <button class="btn btn-sm" :disabled="reviewCurrentPage === 1"
+                @click="goToReviewPage(reviewCurrentPage - 1)">
+                <i class="fas fa-angle-left"></i>
+              </button>
+
+              <template v-for="page in reviewTotalPages" :key="page">
+                <button v-if="Math.abs(page - reviewCurrentPage) <= 2 || page === 1 || page === reviewTotalPages"
+                  class="btn btn-sm" :class="{ 'btn-primary': page === reviewCurrentPage }"
+                  @click="goToReviewPage(page)">
+                  {{ page }}
+                </button>
+                <span
+                  v-else-if="(page === reviewCurrentPage - 3 || page === reviewCurrentPage + 3) && reviewTotalPages > 7"
+                  class="px-2">
+                  ...
+                </span>
+              </template>
+
+              <button class="btn btn-sm" :disabled="reviewCurrentPage === reviewTotalPages"
+                @click="goToReviewPage(reviewCurrentPage + 1)">
+                <i class="fas fa-angle-right"></i>
+              </button>
+              <button class="btn btn-sm" :disabled="reviewCurrentPage === reviewTotalPages"
+                @click="goToReviewPage(reviewTotalPages)">
+                <i class="fas fa-angle-double-right"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Regular Plugin List -->
+        <div v-else>
+          <!-- View Mode Toggle for Passive Scan Plugins -->
+          <div v-if="selectedCategory === 'passive'" class="flex gap-2 mb-4">
+            <button class="btn btn-sm" :class="pluginViewMode === 'favorited' ? 'btn-primary' : 'btn-ghost'"
+              @click="pluginViewMode = 'favorited'">
+              <i class="fas fa-star mr-1"></i>
+              {{ $t('plugins.favorited', '已收藏') }}
+            </button>
+            <button class="btn btn-sm" :class="pluginViewMode === 'all' ? 'btn-primary' : 'btn-ghost'"
+              @click="pluginViewMode = 'all'">
+              <i class="fas fa-list mr-1"></i>
+              {{ $t('plugins.allPlugins', '全部插件') }}
+            </button>
+          </div>
+
+          <!-- Search and Filter Bar -->
+          <div class="flex gap-2 mb-4 flex-wrap items-center">
+            <input v-model="pluginSearchText" type="text" :placeholder="$t('plugins.searchPlugins', '搜索插件...')"
+              class="input input-bordered input-sm flex-1 min-w-48" />
+
+            <!-- Category Filter Dropdown -->
+            <select v-if="selectedCategory !== 'all'" v-model="selectedSubCategory"
+              class="select select-bordered select-sm">
+              <option value="">全部子分类</option>
+              <option v-for="subCat in getAvailableSubCategories()" :key="subCat" :value="subCat">
+                {{ subCat }}
+              </option>
+            </select>
+
+            <!-- Tag Filter Dropdown -->
+            <select v-model="selectedTag" class="select select-bordered select-sm">
+              <option value="">全部标签</option>
+              <option v-for="tag in getAvailableTags()" :key="tag" :value="tag">
+                {{ tag }}
+              </option>
+            </select>
+
+            <!-- Clear Filters Button -->
+            <button v-if="pluginSearchText || selectedSubCategory || selectedTag" class="btn btn-sm btn-ghost"
+              @click="clearFilters">
+              <i class="fas fa-times mr-1"></i>
+              清除筛选
+            </button>
+
+            <!-- Batch Toggle Buttons -->
+            <div v-if="['all', 'passive', 'agents'].includes(selectedCategory)" class="ml-auto flex gap-2">
+              <button class="btn btn-sm btn-success" :disabled="filteredPlugins.length === 0 || batchToggling"
+                @click="batchEnableCurrent">
+                <span v-if="batchToggling" class="loading loading-spinner"></span>
+                全部开启
+              </button>
+              <button class="btn btn-sm btn-warning" :disabled="filteredPlugins.length === 0 || batchToggling"
+                @click="batchDisableCurrent">
+                <span v-if="batchToggling" class="loading loading-spinner"></span>
+                全部停止
+              </button>
+            </div>
+          </div>
+
+          <!-- Pagination and Page Size Control -->
+          <div v-if="filteredPlugins.length > 0" class="flex justify-between items-center mb-4">
+            <div class="text-sm text-base-content/70">
+              {{ $t('plugins.showing', '显示') }} {{ pluginPaginationInfo.start }}-{{ pluginPaginationInfo.end }}
+              {{ $t('plugins.of', '共') }} {{ pluginPaginationInfo.total }} {{ $t('plugins.items', '条') }}
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-sm">{{ $t('plugins.pageSize', '每页') }}:</span>
+              <select v-model.number="pluginPageSize" @change="changePluginPageSize(pluginPageSize)"
+                class="select select-bordered select-sm">
+                <option :value="10">10</option>
+                <option :value="20">20</option>
+                <option :value="50">50</option>
+                <option :value="100">100</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Plugin List -->
+          <div v-if="filteredPlugins.length === 0" class="alert alert-info">
+            <i class="fas fa-info-circle"></i>
+            <span>{{ $t('plugins.noPlugins', '暂无插件，请上传或扫描插件目录') }}</span>
+          </div>
+
+          <div v-else class="overflow-x-auto">
+            <table class="table table-zebra w-full">
+              <thead>
+                <tr>
+                  <th class="w-12">{{ $t('common.status', '状态') }}</th>
+                  <th class="w-40">{{ $t('plugins.pluginName', '插件名称') }}</th>
+                  <th class="w-24">{{ $t('plugins.version', '版本') }}</th>
+                  <th class="w-16 text-center">{{ $t('plugins.category', '分类') }}</th>
+                  <th class="w-32">{{ $t('plugins.author', '作者') }}</th>
+                  <th class="w-48">{{ $t('plugins.tags', '标签') }}</th>
+                  <th class="w-80">{{ $t('common.actions', '操作') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="plugin in paginatedPlugins" :key="plugin.metadata.id">
+                  <!-- Status Indicator -->
                   <td>
-                    <span class="text-xs">{{ plugin.model }}</span>
+                    <div class="flex items-center gap-2">
+                      <div class="tooltip" :data-tip="getStatusText(plugin.status)">
+                        <div class="w-3 h-3 rounded-full" :class="{
+                          'bg-success': plugin.status === 'Enabled',
+                          'bg-warning': plugin.status === 'Disabled',
+                          'bg-error': plugin.status === 'Error'
+                        }"></div>
+                      </div>
+                    </div>
                   </td>
+
+                  <!-- Plugin Name -->
                   <td>
-                    <span class="text-xs">{{ formatDate(plugin.generated_at) }}</span>
+                    <div class="font-bold">{{ plugin.metadata.name }}</div>
+                    <div class="text-sm text-gray-500">{{ plugin.metadata.id }}</div>
+                    <div v-if="plugin.metadata.description" class="text-xs text-gray-400 mt-1">
+                      {{ plugin.metadata.description }}
+                    </div>
                   </td>
+
+                  <!-- Version -->
                   <td>
-                    <div class="flex gap-1">
-                      <button 
-                        class="btn btn-sm btn-info"
-                        @click="viewReviewPluginDetail(plugin)"
-                      >
-                        <i class="fas fa-eye"></i>
+                    <span class="badge badge-outline">{{ plugin.metadata.version }}</span>
+                  </td>
+
+                  <!-- Category -->
+                  <td class="text-center">
+                    <div class="tooltip" :data-tip="getCategoryLabel(plugin.metadata.category)">
+                      <i :class="getCategoryIcon(plugin.metadata.category)" class="text-primary text-lg"></i>
+                    </div>
+                  </td>
+
+                  <!-- Author -->
+                  <td>{{ plugin.metadata.author || '-' }}</td>
+
+                  <!-- Tags -->
+                  <td>
+                    <div class="flex flex-wrap gap-1 max-w-xs">
+                      <span v-for="tag in plugin.metadata.tags.slice(0, 3)" :key="tag"
+                        class="badge badge-sm badge-ghost whitespace-nowrap">
+                        {{ tag }}
+                      </span>
+                      <span v-if="plugin.metadata.tags.length > 3" class="badge badge-sm badge-outline tooltip"
+                        :data-tip="plugin.metadata.tags.slice(3).join(', ')">
+                        +{{ plugin.metadata.tags.length - 3 }}
+                      </span>
+                    </div>
+                  </td>
+
+                  <!-- Action Buttons -->
+                  <td>
+                    <div class="flex gap-1 flex-wrap">
+                      <!-- Favorite Button (仅被动扫描插件显示) -->
+                      <div v-if="ispassivePluginType(plugin)" class="tooltip"
+                        :data-tip="isPluginFavorited(plugin) ? '取消收藏' : '收藏插件'">
+                        <button class="btn btn-sm btn-ghost" @click="togglePluginFavorite(plugin)">
+                          <i :class="isPluginFavorited(plugin) ? 'fas fa-star text-yellow-500' : 'far fa-star'"></i>
+                        </button>
+                      </div>
+
+                      <!-- Test Plugin - 显示不同的提示信息 -->
+                      <div class="tooltip"
+                        :data-tip="isAgentPluginType(plugin) ? '测试 Agent 工具 (analyze)' : '测试被动扫描 (scan_request/scan_response)'">
+                        <button class="btn btn-sm btn-outline" @click="testPlugin(plugin)"
+                          :disabled="plugin.status !== 'Enabled'">
+                          <i class="fas fa-vial mr-1"></i>
+                        </button>
+                      </div>
+
+                      <!-- Advanced Test - 支持被动扫描与 Agent 插件 -->
+                      <div class="tooltip" :data-tip="isAgentPluginType(plugin) ? 'Agent 高级测试' : '被动扫描高级测试'">
+                        <button class="btn btn-sm btn-outline" @click="openAdvancedDialog(plugin)"
+                          :disabled="plugin.status !== 'Enabled'">
+                          <i class="fas fa-gauge-high mr-1"></i>
+                        </button>
+                      </div>
+
+                      <!-- Enable/Disable Toggle -->
+                      <button class="btn btn-sm" :class="plugin.status === 'Enabled' ? 'btn-warning' : 'btn-success'"
+                        @click="togglePlugin(plugin)">
+                        <i :class="plugin.status === 'Enabled' ? 'fas fa-pause' : 'fas fa-play'" class="mr-1"></i>
                       </button>
-                      <button 
-                        class="btn btn-sm btn-success"
-                        @click="approvePlugin(plugin)"
-                        :disabled="plugin.status === 'Approved'"
-                      >
-                        <i class="fas fa-check"></i>
+
+                      <!-- View/Edit Code -->
+                      <button class="btn btn-sm btn-info" @click="viewPluginCode(plugin)">
+                        <i class="fas fa-code mr-1"></i>
                       </button>
-                      <button 
-                        class="btn btn-sm btn-error"
-                        @click="rejectPlugin(plugin)"
-                        :disabled="plugin.status === 'Rejected'"
-                      >
-                        <i class="fas fa-times"></i>
-                      </button>
-                      <button 
-                        class="btn btn-sm btn-ghost"
-                        @click="deleteReviewPlugin(plugin)"
-                      >
+
+                      <!-- Delete -->
+                      <button class="btn btn-sm btn-error" @click="confirmDeletePlugin(plugin)">
                         <i class="fas fa-trash"></i>
                       </button>
                     </div>
@@ -323,339 +496,50 @@
                 </tr>
               </tbody>
             </table>
-          </div>
-          
-          <!-- Pagination Controls -->
-          <div class="flex justify-center items-center gap-2 mt-4">
-            <button 
-              class="btn btn-sm"
-              :disabled="reviewCurrentPage === 1"
-              @click="goToReviewPage(1)"
-            >
-              <i class="fas fa-angle-double-left"></i>
-            </button>
-            <button 
-              class="btn btn-sm"
-              :disabled="reviewCurrentPage === 1"
-              @click="goToReviewPage(reviewCurrentPage - 1)"
-            >
-              <i class="fas fa-angle-left"></i>
-            </button>
-            
-            <template v-for="page in reviewTotalPages" :key="page">
-              <button 
-                v-if="Math.abs(page - reviewCurrentPage) <= 2 || page === 1 || page === reviewTotalPages"
-                class="btn btn-sm"
-                :class="{ 'btn-primary': page === reviewCurrentPage }"
-                @click="goToReviewPage(page)"
-              >
-                {{ page }}
+
+            <!-- Pagination Controls -->
+            <div class="flex justify-center items-center gap-2 mt-4">
+              <button class="btn btn-sm" :disabled="pluginCurrentPage === 1" @click="goToPluginPage(1)">
+                <i class="fas fa-angle-double-left"></i>
               </button>
-              <span 
-                v-else-if="(page === reviewCurrentPage - 3 || page === reviewCurrentPage + 3) && reviewTotalPages > 7"
-                class="px-2"
-              >
-                ...
-              </span>
-            </template>
-            
-            <button 
-              class="btn btn-sm"
-              :disabled="reviewCurrentPage === reviewTotalPages"
-              @click="goToReviewPage(reviewCurrentPage + 1)"
-            >
-              <i class="fas fa-angle-right"></i>
-            </button>
-            <button 
-              class="btn btn-sm"
-              :disabled="reviewCurrentPage === reviewTotalPages"
-              @click="goToReviewPage(reviewTotalPages)"
-            >
-              <i class="fas fa-angle-double-right"></i>
-            </button>
-          </div>
-        </div>
-        </div>
-        
-        <!-- Regular Plugin List -->
-        <div v-else>
-          <!-- View Mode Toggle for Passive Scan Plugins -->
-          <div v-if="selectedCategory === 'passive'" class="flex gap-2 mb-4">
-            <button 
-              class="btn btn-sm"
-              :class="pluginViewMode === 'favorited' ? 'btn-primary' : 'btn-ghost'"
-              @click="pluginViewMode = 'favorited'"
-            >
-              <i class="fas fa-star mr-1"></i>
-              {{ $t('plugins.favorited', '已收藏') }}
-            </button>
-            <button 
-              class="btn btn-sm"
-              :class="pluginViewMode === 'all' ? 'btn-primary' : 'btn-ghost'"
-              @click="pluginViewMode = 'all'"
-            >
-              <i class="fas fa-list mr-1"></i>
-              {{ $t('plugins.allPlugins', '全部插件') }}
-            </button>
-          </div>
-          
-          <!-- Search and Filter Bar -->
-        <div class="flex gap-2 mb-4 flex-wrap items-center">
-          <input 
-            v-model="pluginSearchText"
-            type="text"
-            :placeholder="$t('plugins.searchPlugins', '搜索插件...')"
-            class="input input-bordered input-sm flex-1 min-w-48"
-          />
-          
-          <!-- Category Filter Dropdown -->
-          <select 
-            v-if="selectedCategory !== 'all'"
-            v-model="selectedSubCategory"
-            class="select select-bordered select-sm"
-          >
-            <option value="">全部子分类</option>
-            <option 
-              v-for="subCat in getAvailableSubCategories()"
-              :key="subCat"
-              :value="subCat"
-            >
-              {{ subCat }}
-            </option>
-          </select>
-          
-          <!-- Tag Filter Dropdown -->
-          <select 
-            v-model="selectedTag"
-            class="select select-bordered select-sm"
-          >
-            <option value="">全部标签</option>
-            <option 
-              v-for="tag in getAvailableTags()"
-              :key="tag"
-              :value="tag"
-            >
-              {{ tag }}
-            </option>
-          </select>
-          
-          <!-- Clear Filters Button -->
-          <button 
-            v-if="pluginSearchText || selectedSubCategory || selectedTag"
-            class="btn btn-sm btn-ghost"
-            @click="clearFilters"
-          >
-            <i class="fas fa-times mr-1"></i>
-            清除筛选
-          </button>
-        </div>
+              <button class="btn btn-sm" :disabled="pluginCurrentPage === 1" @click="goToPluginPage(pluginCurrentPage - 1)">
+                <i class="fas fa-angle-left"></i>
+              </button>
 
-        <!-- Pagination and Page Size Control -->
-        <div v-if="filteredPlugins.length > 0" class="flex justify-between items-center mb-4">
-          <div class="text-sm text-base-content/70">
-            {{ $t('plugins.showing', '显示') }} {{ pluginPaginationInfo.start }}-{{ pluginPaginationInfo.end }} 
-            {{ $t('plugins.of', '共') }} {{ pluginPaginationInfo.total }} {{ $t('plugins.items', '条') }}
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="text-sm">{{ $t('plugins.pageSize', '每页') }}:</span>
-            <select 
-              v-model.number="pluginPageSize"
-              @change="changePluginPageSize(pluginPageSize)"
-              class="select select-bordered select-sm"
-            >
-              <option :value="10">10</option>
-              <option :value="20">20</option>
-              <option :value="50">50</option>
-              <option :value="100">100</option>
-            </select>
-          </div>
-        </div>
+              <template v-for="page in pluginTotalPages" :key="page">
+                <button v-if="Math.abs(page - pluginCurrentPage) <= 2 || page === 1 || page === pluginTotalPages"
+                  class="btn btn-sm" :class="{ 'btn-primary': page === pluginCurrentPage }" @click="goToPluginPage(page)">
+                  {{ page }}
+                </button>
+                <span v-else-if="(page === pluginCurrentPage - 3 || page === pluginCurrentPage + 3) && pluginTotalPages > 7" class="px-2">
+                  ...
+                </span>
+              </template>
 
-        <!-- Plugin List -->
-          <div v-if="filteredPlugins.length === 0" class="alert alert-info">
-            <i class="fas fa-info-circle"></i>
-            <span>{{ $t('plugins.noPlugins', '暂无插件，请上传或扫描插件目录') }}</span>
+              <button class="btn btn-sm" :disabled="pluginCurrentPage === pluginTotalPages" @click="goToPluginPage(pluginCurrentPage + 1)">
+                <i class="fas fa-angle-right"></i>
+              </button>
+              <button class="btn btn-sm" :disabled="pluginCurrentPage === pluginTotalPages" @click="goToPluginPage(pluginTotalPages)">
+                <i class="fas fa-angle-double-right"></i>
+              </button>
+            </div>
           </div>
-        
-        <div v-else class="overflow-x-auto">
-          <table class="table table-zebra w-full">
-            <thead>
-              <tr>
-                <th class="w-12">{{ $t('common.status', '状态') }}</th>
-                <th>{{ $t('plugins.pluginName', '插件名称') }}</th>
-                <th class="w-24">{{ $t('plugins.version', '版本') }}</th>
-                <th class="w-16 text-center">{{ $t('plugins.category', '分类') }}</th>
-                <th class="w-32">{{ $t('plugins.author', '作者') }}</th>
-                <th class="w-48">{{ $t('plugins.tags', '标签') }}</th>
-                <th class="w-64">{{ $t('common.actions', '操作') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="plugin in paginatedPlugins" :key="plugin.metadata.id">
-                <!-- Status Indicator -->
-                <td>
-                  <div class="flex items-center gap-2">
-                    <div 
-                      class="tooltip" 
-                      :data-tip="getStatusText(plugin.status)"
-                    >
-                      <div
-                        class="w-3 h-3 rounded-full"
-                        :class="{
-                          'bg-success': plugin.status === 'Enabled',
-                          'bg-warning': plugin.status === 'Disabled',
-                          'bg-error': plugin.status === 'Error'
-                        }"
-                      ></div>
-                    </div>
-                  </div>
-                </td>
-                
-                <!-- Plugin Name -->
-                <td>
-                  <div class="font-bold">{{ plugin.metadata.name }}</div>
-                  <div class="text-sm text-gray-500">{{ plugin.metadata.id }}</div>
-                  <div v-if="plugin.metadata.description" class="text-xs text-gray-400 mt-1">
-                    {{ plugin.metadata.description }}
-                  </div>
-                </td>
-                
-                <!-- Version -->
-                <td>
-                  <span class="badge badge-outline">{{ plugin.metadata.version }}</span>
-                </td>
-                
-                <!-- Category -->
-                <td class="text-center">
-                  <div class="tooltip" :data-tip="getCategoryLabel(plugin.metadata.category)">
-                    <i 
-                      :class="getCategoryIcon(plugin.metadata.category)"
-                      class="text-primary text-lg"
-                    ></i>
-                  </div>
-                </td>
-                
-                <!-- Author -->
-                <td>{{ plugin.metadata.author || '-' }}</td>
-                
-                <!-- Tags -->
-                <td>
-                  <div class="flex flex-wrap gap-1 max-w-xs">
-                    <span 
-                      v-for="(tag, idx) in plugin.metadata.tags.slice(0, 3)" 
-                      :key="tag" 
-                      class="badge badge-sm badge-ghost whitespace-nowrap"
-                    >
-                      {{ tag }}
-                    </span>
-                    <span 
-                      v-if="plugin.metadata.tags.length > 3"
-                      class="badge badge-sm badge-outline tooltip"
-                      :data-tip="plugin.metadata.tags.slice(3).join(', ')"
-                    >
-                      +{{ plugin.metadata.tags.length - 3 }}
-                    </span>
-                  </div>
-                </td>
-                
-                <!-- Action Buttons -->
-                <td>
-                  <div class="flex gap-1 flex-wrap">
-                    <!-- Favorite Button (仅被动扫描插件显示) -->
-                    <div 
-                      v-if="isPassiveScanPluginType(plugin)"
-                      class="tooltip" 
-                      :data-tip="isPluginFavorited(plugin) ? '取消收藏' : '收藏插件'"
-                    >
-                      <button
-                        class="btn btn-sm btn-ghost"
-                        @click="togglePluginFavorite(plugin)"
-                      >
-                        <i 
-                          :class="isPluginFavorited(plugin) ? 'fas fa-star text-yellow-500' : 'far fa-star'"
-                        ></i>
-                      </button>
-                    </div>
-                    
-                    <!-- Test Plugin - 显示不同的提示信息 -->
-                    <div class="tooltip" :data-tip="isAgentPluginType(plugin) ? '测试 Agent 工具 (analyze)' : '测试被动扫描 (scan_request/scan_response)'">
-                      <button
-                        class="btn btn-sm btn-outline"
-                        @click="testPlugin(plugin)"
-                        :disabled="plugin.status !== 'Enabled'"
-                      >
-                        <i class="fas fa-vial mr-1"></i>
-                        {{ $t('plugins.test', '测试') }}
-                      </button>
-                    </div>
-
-                    <!-- Advanced Test - 仅对被动扫描插件显示 -->
-                    <div 
-                      v-if="isPassiveScanPluginType(plugin)"
-                      class="tooltip" 
-                      data-tip="高级并发测试 (仅被动扫描)"
-                    >
-                      <button
-                        class="btn btn-sm btn-outline"
-                        @click="openAdvancedDialog(plugin)"
-                        :disabled="plugin.status !== 'Enabled'"
-                      >
-                        <i class="fas fa-gauge-high mr-1"></i>
-                        {{ $t('plugins.advancedTest', '高级') }}
-                      </button>
-                    </div>
-                    
-                    <!-- Enable/Disable Toggle -->
-                    <button
-                      class="btn btn-sm"
-                      :class="plugin.status === 'Enabled' ? 'btn-warning' : 'btn-success'"
-                      @click="togglePlugin(plugin)"
-                    >
-                      <i 
-                        :class="plugin.status === 'Enabled' ? 'fas fa-pause' : 'fas fa-play'"
-                        class="mr-1"
-                      ></i>
-                      {{ plugin.status === 'Enabled' ? $t('plugins.disable', '禁用') : $t('plugins.enable', '启用') }}
-                    </button>
-                    
-                    <!-- View/Edit Code -->
-                    <button 
-                      class="btn btn-sm btn-info"
-                      @click="viewPluginCode(plugin)"
-                    >
-                      <i class="fas fa-code mr-1"></i>
-                      {{ $t('plugins.code', '代码') }}
-                    </button>
-                    
-                    <!-- Delete -->
-                    <button 
-                      class="btn btn-sm btn-error"
-                      @click="confirmDeletePlugin(plugin)"
-                    >
-                      <i class="fas fa-trash"></i>
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
         </div>
       </div>
     </div>
-    
+
     <!-- Review Plugin Detail Dialog -->
     <dialog ref="reviewDetailDialog" class="modal">
       <div class="modal-box w-11/12 max-w-6xl max-h-[90vh] overflow-y-auto">
         <!-- Fixed Header -->
         <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
           <h3 class="font-bold text-lg">
-          <i class="fas fa-eye mr-2"></i>
-          {{ $t('plugins.pluginDetail', '插件详情') }}
-        </h3>
+            <i class="fas fa-eye mr-2"></i>
+            {{ $t('plugins.pluginDetail', '插件详情') }}
+          </h3>
           <button @click="closeReviewDetailDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
         </div>
-        
+
         <div v-if="selectedReviewPlugin" class="space-y-4">
           <!-- Basic Info -->
           <div class="card bg-base-200">
@@ -672,19 +556,16 @@
                 </div>
                 <div>
                   <span class="text-gray-500">{{ $t('plugins.vulnType', '漏洞类型') }}:</span>
-                  <span 
-                    class="ml-2 badge badge-sm"
-                    :class="{
-                      'badge-error': selectedReviewPlugin.vuln_type === 'sqli' || selectedReviewPlugin.vuln_type === 'command_injection',
-                      'badge-warning': selectedReviewPlugin.vuln_type === 'xss',
-                      'badge-info': selectedReviewPlugin.vuln_type === 'idor' || selectedReviewPlugin.vuln_type === 'auth_bypass',
-                      'badge-primary': selectedReviewPlugin.vuln_type === 'csrf',
-                      'badge-success': selectedReviewPlugin.vuln_type === 'info_leak',
-                      'badge-secondary': selectedReviewPlugin.vuln_type === 'file_upload' || selectedReviewPlugin.vuln_type === 'file_inclusion',
-                      'badge-accent': selectedReviewPlugin.vuln_type === 'path_traversal',
-                      'badge-neutral': selectedReviewPlugin.vuln_type === 'xxe' || selectedReviewPlugin.vuln_type === 'ssrf'
-                    }"
-                  >
+                  <span class="ml-2 badge badge-sm" :class="{
+                    'badge-error': selectedReviewPlugin.vuln_type === 'sqli' || selectedReviewPlugin.vuln_type === 'command_injection',
+                    'badge-warning': selectedReviewPlugin.vuln_type === 'xss',
+                    'badge-info': selectedReviewPlugin.vuln_type === 'idor' || selectedReviewPlugin.vuln_type === 'auth_bypass',
+                    'badge-primary': selectedReviewPlugin.vuln_type === 'csrf',
+                    'badge-success': selectedReviewPlugin.vuln_type === 'info_leak',
+                    'badge-secondary': selectedReviewPlugin.vuln_type === 'file_upload' || selectedReviewPlugin.vuln_type === 'file_inclusion',
+                    'badge-accent': selectedReviewPlugin.vuln_type === 'path_traversal',
+                    'badge-neutral': selectedReviewPlugin.vuln_type === 'xxe' || selectedReviewPlugin.vuln_type === 'ssrf'
+                  }">
                     {{ selectedReviewPlugin.vuln_type.toUpperCase() }}
                   </span>
                 </div>
@@ -695,23 +576,18 @@
                 <div class="col-span-2">
                   <span class="text-gray-500">{{ $t('plugins.qualityScore', '质量评分') }}:</span>
                   <div class="flex items-center gap-2 mt-1">
-                    <progress 
-                      class="progress w-full" 
-                      :class="{
-                        'progress-success': selectedReviewPlugin.quality_score >= 80,
-                        'progress-warning': selectedReviewPlugin.quality_score >= 60 && selectedReviewPlugin.quality_score < 80,
-                        'progress-error': selectedReviewPlugin.quality_score < 60
-                      }"
-                      :value="selectedReviewPlugin.quality_score" 
-                      max="100"
-                    ></progress>
+                    <progress class="progress w-full" :class="{
+                      'progress-success': selectedReviewPlugin.quality_score >= 80,
+                      'progress-warning': selectedReviewPlugin.quality_score >= 60 && selectedReviewPlugin.quality_score < 80,
+                      'progress-error': selectedReviewPlugin.quality_score < 60
+                    }" :value="selectedReviewPlugin.quality_score" max="100"></progress>
                     <span class="font-semibold">{{ selectedReviewPlugin.quality_score }}%</span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-          
+
           <!-- Quality Breakdown -->
           <div v-if="selectedReviewPlugin.quality_breakdown" class="card bg-base-200">
             <div class="card-body p-4">
@@ -719,76 +595,64 @@
               <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="text-center">
                   <div class="text-xs text-gray-500 mb-2">{{ $t('plugins.syntaxScore', '语法正确性') }}</div>
-                  <div 
-                    class="radial-progress" 
-                    :style="`--value:${selectedReviewPlugin.quality_breakdown.syntax_score}; --size:4rem;`"
-                    :class="{
+                  <div class="radial-progress"
+                    :style="`--value:${selectedReviewPlugin.quality_breakdown.syntax_score}; --size:4rem;`" :class="{
                       'text-success': selectedReviewPlugin.quality_breakdown.syntax_score >= 80,
                       'text-warning': selectedReviewPlugin.quality_breakdown.syntax_score >= 60 && selectedReviewPlugin.quality_breakdown.syntax_score < 80,
                       'text-error': selectedReviewPlugin.quality_breakdown.syntax_score < 60
-                    }"
-                  >
+                    }">
                     {{ selectedReviewPlugin.quality_breakdown.syntax_score }}%
                   </div>
                 </div>
                 <div class="text-center">
                   <div class="text-xs text-gray-500 mb-2">{{ $t('plugins.logicScore', '逻辑完整性') }}</div>
-                  <div 
-                    class="radial-progress" 
-                    :style="`--value:${selectedReviewPlugin.quality_breakdown.logic_score}; --size:4rem;`"
-                    :class="{
+                  <div class="radial-progress"
+                    :style="`--value:${selectedReviewPlugin.quality_breakdown.logic_score}; --size:4rem;`" :class="{
                       'text-success': selectedReviewPlugin.quality_breakdown.logic_score >= 80,
                       'text-warning': selectedReviewPlugin.quality_breakdown.logic_score >= 60 && selectedReviewPlugin.quality_breakdown.logic_score < 80,
                       'text-error': selectedReviewPlugin.quality_breakdown.logic_score < 60
-                    }"
-                  >
+                    }">
                     {{ selectedReviewPlugin.quality_breakdown.logic_score }}%
                   </div>
                 </div>
                 <div class="text-center">
                   <div class="text-xs text-gray-500 mb-2">{{ $t('plugins.securityScore', '安全性') }}</div>
-                  <div 
-                    class="radial-progress" 
-                    :style="`--value:${selectedReviewPlugin.quality_breakdown.security_score}; --size:4rem;`"
-                    :class="{
+                  <div class="radial-progress"
+                    :style="`--value:${selectedReviewPlugin.quality_breakdown.security_score}; --size:4rem;`" :class="{
                       'text-success': selectedReviewPlugin.quality_breakdown.security_score >= 80,
                       'text-warning': selectedReviewPlugin.quality_breakdown.security_score >= 60 && selectedReviewPlugin.quality_breakdown.security_score < 80,
                       'text-error': selectedReviewPlugin.quality_breakdown.security_score < 60
-                    }"
-                  >
+                    }">
                     {{ selectedReviewPlugin.quality_breakdown.security_score }}%
                   </div>
                 </div>
                 <div class="text-center">
                   <div class="text-xs text-gray-500 mb-2">{{ $t('plugins.codeQuality', '代码质量') }}</div>
-                  <div 
-                    class="radial-progress" 
+                  <div class="radial-progress"
                     :style="`--value:${selectedReviewPlugin.quality_breakdown.code_quality_score}; --size:4rem;`"
                     :class="{
                       'text-success': selectedReviewPlugin.quality_breakdown.code_quality_score >= 80,
                       'text-warning': selectedReviewPlugin.quality_breakdown.code_quality_score >= 60 && selectedReviewPlugin.quality_breakdown.code_quality_score < 80,
                       'text-error': selectedReviewPlugin.quality_breakdown.code_quality_score < 60
-                    }"
-                  >
+                    }">
                     {{ selectedReviewPlugin.quality_breakdown.code_quality_score }}%
                   </div>
                 </div>
               </div>
             </div>
           </div>
-          
+
           <!-- Validation Result -->
           <div v-if="selectedReviewPlugin.validation" class="card bg-base-200">
             <div class="card-body p-4">
               <h4 class="font-semibold mb-3">{{ $t('plugins.validationResult', '验证结果') }}</h4>
-              <div 
-                class="alert" 
-                :class="selectedReviewPlugin.validation.is_valid ? 'alert-success' : 'alert-error'"
-              >
-                <i :class="selectedReviewPlugin.validation.is_valid ? 'fas fa-check-circle' : 'fas fa-exclamation-circle'"></i>
+              <div class="alert" :class="selectedReviewPlugin.validation.is_valid ? 'alert-success' : 'alert-error'">
+                <i
+                  :class="selectedReviewPlugin.validation.is_valid ? 'fas fa-check-circle' : 'fas fa-exclamation-circle'"></i>
                 <div>
                   <div class="font-semibold">
-                    {{ selectedReviewPlugin.validation.is_valid ? $t('plugins.validationPassed', '验证通过') : $t('plugins.validationFailed', '验证失败') }}
+                    {{ selectedReviewPlugin.validation.is_valid ? $t('plugins.validationPassed', '验证通过') :
+                      $t('plugins.validationFailed', '验证失败') }}
                   </div>
                   <div v-if="selectedReviewPlugin.validation.errors.length > 0" class="mt-2">
                     <strong>{{ $t('plugins.errors', '错误') }}:</strong>
@@ -801,7 +665,8 @@
                   <div v-if="selectedReviewPlugin.validation.warnings.length > 0" class="mt-2">
                     <strong>{{ $t('plugins.warnings', '警告') }}:</strong>
                     <ul class="list-disc list-inside mt-1">
-                      <li v-for="(warning, index) in selectedReviewPlugin.validation.warnings" :key="index" class="text-sm">
+                      <li v-for="(warning, index) in selectedReviewPlugin.validation.warnings" :key="index"
+                        class="text-sm">
                         {{ warning }}
                       </li>
                     </ul>
@@ -810,7 +675,7 @@
               </div>
             </div>
           </div>
-          
+
           <!-- Code Editor -->
           <div class="card bg-base-200">
             <div class="card-body p-4">
@@ -827,36 +692,26 @@
                   </button>
                 </div>
               </div>
-              <div ref="reviewCodeEditorContainer" class="border border-base-300 rounded-lg overflow-hidden min-h-96"></div>
+              <div ref="reviewCodeEditorContainer" class="border border-base-300 rounded-lg overflow-hidden min-h-96">
+              </div>
             </div>
           </div>
         </div>
-        
+
         <!-- Fixed Footer -->
         <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
           <button class="btn btn-sm" @click="closeReviewDetailDialog">{{ $t('common.close', '关闭') }}</button>
-          <button 
-            v-if="reviewEditMode" 
-            class="btn btn-primary btn-sm" 
-            @click="saveReviewEdit"
-            :disabled="savingReview"
-          >
+          <button v-if="reviewEditMode" class="btn btn-primary btn-sm" @click="saveReviewEdit" :disabled="savingReview">
             <span v-if="savingReview" class="loading loading-spinner"></span>
             {{ savingReview ? $t('common.saving', '保存中...') : $t('common.save', '保存') }}
           </button>
-          <button 
-            class="btn btn-success btn-sm"
-            @click="approvePlugin(selectedReviewPlugin)"
-            :disabled="selectedReviewPlugin?.status === 'Approved'"
-          >
+          <button class="btn btn-success btn-sm" @click="approvePlugin(selectedReviewPlugin)"
+            :disabled="selectedReviewPlugin?.status === 'Approved'">
             <i class="fas fa-check mr-1"></i>
             {{ $t('plugins.approve', '批准') }}
           </button>
-          <button 
-            class="btn btn-error btn-sm"
-            @click="rejectPlugin(selectedReviewPlugin)"
-            :disabled="selectedReviewPlugin?.status === 'Rejected'"
-          >
+          <button class="btn btn-error btn-sm" @click="rejectPlugin(selectedReviewPlugin)"
+            :disabled="selectedReviewPlugin?.status === 'Rejected'">
             <i class="fas fa-times mr-1"></i>
             {{ $t('plugins.reject', '拒绝') }}
           </button>
@@ -866,7 +721,7 @@
         <button @click="closeReviewDetailDialog">close</button>
       </form>
     </dialog>
-    
+
     <!-- Upload Plugin Dialog -->
     <dialog ref="uploadDialog" class="modal">
       <div class="modal-box max-h-[90vh] overflow-y-auto">
@@ -875,33 +730,24 @@
           <h3 class="font-bold text-lg">{{ $t('plugins.uploadPlugin', '上传插件') }}</h3>
           <button @click="closeUploadDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
         </div>
-        
+
         <div class="form-control w-full">
           <label class="label">
             <span class="label-text">{{ $t('plugins.selectFile', '选择插件文件 (.ts / .js)') }}</span>
           </label>
-          <input 
-            type="file" 
-            class="file-input file-input-bordered w-full"
-            accept=".ts,.js"
-            @change="handleFileSelect"
-            ref="fileInput"
-          />
+          <input type="file" class="file-input file-input-bordered w-full" accept=".ts,.js" @change="handleFileSelect"
+            ref="fileInput" />
         </div>
-        
+
         <div v-if="uploadError" class="alert alert-error mt-4">
           <i class="fas fa-exclamation-circle"></i>
           <span>{{ uploadError }}</span>
         </div>
-        
+
         <!-- Fixed Footer -->
         <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
           <button class="btn btn-sm" @click="closeUploadDialog">{{ $t('common.cancel', '取消') }}</button>
-          <button 
-            class="btn btn-primary btn-sm" 
-            :disabled="!selectedFile || uploading"
-            @click="uploadPlugin"
-          >
+          <button class="btn btn-primary btn-sm" :disabled="!selectedFile || uploading" @click="uploadPlugin">
             <span v-if="uploading" class="loading loading-spinner"></span>
             {{ uploading ? $t('plugins.uploading', '上传中...') : $t('plugins.upload', '上传') }}
           </button>
@@ -911,122 +757,87 @@
         <button @click="closeUploadDialog">close</button>
       </form>
     </dialog>
-    
+
     <!-- Code Editor Dialog -->
     <dialog ref="codeEditorDialog" class="modal">
       <div class="modal-box w-11/12 max-w-5xl max-h-[90vh] overflow-y-auto">
         <!-- Fixed Header -->
         <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
           <h3 class="font-bold text-lg">
-          {{ editingPlugin ? $t('plugins.codeEditor', '插件代码编辑器') : $t('plugins.newPlugin', '新增插件') }}
-          <span v-if="editingPlugin" class="text-sm font-normal text-gray-500 ml-2">
-            {{ editingPlugin.metadata.name }} ({{ editingPlugin.metadata.id }})
-          </span>
-        </h3>
+            {{ editingPlugin ? $t('plugins.codeEditor', '插件代码编辑器') : $t('plugins.newPlugin', '新增插件') }}
+            <span v-if="editingPlugin" class="text-sm font-normal text-gray-500 ml-2">
+              {{ editingPlugin.metadata.name }} ({{ editingPlugin.metadata.id }})
+            </span>
+          </h3>
           <button @click="closeCodeEditorDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
         </div>
-        
+
         <!-- Plugin Metadata Form (for both new and editing) -->
         <div class="grid grid-cols-2 gap-4 mb-4">
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.pluginId', '插件ID') }} <span class="text-error">*</span></span>
             </label>
-            <input 
-              v-model="newPluginMetadata.id"
-              type="text" 
+            <input v-model="newPluginMetadata.id" type="text"
               :placeholder="$t('plugins.pluginIdPlaceholder', '例如: sql_injection_scanner')"
-              class="input input-bordered input-sm"
-              :disabled="!!editingPlugin"
-            />
+              class="input input-bordered input-sm" :disabled="!!editingPlugin" />
           </div>
-          
+
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.pluginName', '插件名称') }} <span class="text-error">*</span></span>
             </label>
-            <input 
-              v-model="newPluginMetadata.name"
-              type="text" 
-              :placeholder="$t('plugins.pluginNamePlaceholder', '例如: SQL注入扫描器')"
-              class="input input-bordered input-sm"
-              :disabled="editingPlugin && !isEditing"
-            />
+            <input v-model="newPluginMetadata.name" type="text"
+              :placeholder="$t('plugins.pluginNamePlaceholder', '例如: SQL注入扫描器')" class="input input-bordered input-sm"
+              :disabled="editingPlugin && !isEditing" />
           </div>
-          
+
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.version', '版本') }}</span>
             </label>
-            <input 
-              v-model="newPluginMetadata.version"
-              type="text" 
-              placeholder="1.0.0"
-              class="input input-bordered input-sm"
-              :disabled="editingPlugin && !isEditing"
-            />
+            <input v-model="newPluginMetadata.version" type="text" placeholder="1.0.0"
+              class="input input-bordered input-sm" :disabled="editingPlugin && !isEditing" />
           </div>
-          
+
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.author', '作者') }}</span>
             </label>
-            <input 
-              v-model="newPluginMetadata.author"
-              type="text" 
-              :placeholder="$t('plugins.authorPlaceholder', '作者名称')"
-              class="input input-bordered input-sm"
-              :disabled="editingPlugin && !isEditing"
-            />
+            <input v-model="newPluginMetadata.author" type="text" :placeholder="$t('plugins.authorPlaceholder', '作者名称')"
+              class="input input-bordered input-sm" :disabled="editingPlugin && !isEditing" />
           </div>
-          
+
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.mainCategory', '主分类') }} <span class="text-error">*</span></span>
             </label>
-            <select 
-              v-model="newPluginMetadata.mainCategory" 
-              class="select select-bordered select-sm"
-              :disabled="editingPlugin && !isEditing"
-            >
-              <option 
-                v-for="cat in mainCategories" 
-                :key="cat.value" 
-                :value="cat.value"
-              >
+            <select v-model="newPluginMetadata.mainCategory" class="select select-bordered select-sm"
+              :disabled="editingPlugin && !isEditing">
+              <option v-for="cat in mainCategories" :key="cat.value" :value="cat.value">
                 {{ cat.label }}
               </option>
             </select>
           </div>
-          
+
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.subCategory', '子分类') }} <span class="text-error">*</span></span>
             </label>
-            <select 
-              v-model="newPluginMetadata.category" 
-              class="select select-bordered select-sm"
-              :disabled="editingPlugin && !isEditing"
-            >
-              <option 
-                v-for="cat in subCategories" 
-                :key="cat.value" 
-                :value="cat.value"
-              >
+            <select v-model="newPluginMetadata.category" class="select select-bordered select-sm"
+              :disabled="editingPlugin && !isEditing">
+              <option v-for="cat in subCategories" :key="cat.value" :value="cat.value">
                 {{ cat.label }}
               </option>
             </select>
           </div>
-          
+
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.defaultSeverity', '默认严重程度') }}</span>
             </label>
-            <select 
-              v-model="newPluginMetadata.default_severity" 
-              class="select select-bordered select-sm"
-              :disabled="editingPlugin && !isEditing"
-            >
+            <select v-model="newPluginMetadata.default_severity" class="select select-bordered select-sm"
+              :disabled="editingPlugin && !isEditing">
               <option value="info">{{ $t('common.info', '信息') }}</option>
               <option value="low">{{ $t('common.low', '低危') }}</option>
               <option value="medium">{{ $t('common.medium', '中危') }}</option>
@@ -1034,34 +845,27 @@
               <option value="critical">{{ $t('common.critical', '严重') }}</option>
             </select>
           </div>
-          
+
           <div class="form-control col-span-2">
             <label class="label">
               <span class="label-text">{{ $t('common.description', '描述') }}</span>
             </label>
-            <input 
-              v-model="newPluginMetadata.description"
-              type="text" 
-              :placeholder="$t('plugins.descriptionPlaceholder', '插件功能描述')"
-              class="input input-bordered input-sm"
-              :disabled="editingPlugin && !isEditing"
-            />
+            <input v-model="newPluginMetadata.description" type="text"
+              :placeholder="$t('plugins.descriptionPlaceholder', '插件功能描述')" class="input input-bordered input-sm"
+              :disabled="editingPlugin && !isEditing" />
           </div>
-          
+
           <div class="form-control col-span-2">
             <label class="label">
-              <span class="label-text">{{ $t('plugins.tags', '标签') }} ({{ $t('plugins.commaSeparated', '逗号分隔') }})</span>
+              <span class="label-text">{{ $t('plugins.tags', '标签') }} ({{ $t('plugins.commaSeparated', '逗号分隔')
+                }})</span>
             </label>
-            <input 
-              v-model="newPluginMetadata.tagsString"
-              type="text" 
+            <input v-model="newPluginMetadata.tagsString" type="text"
               :placeholder="$t('plugins.tagsPlaceholder', '例如: security, scanner, sql')"
-              class="input input-bordered input-sm"
-              :disabled="editingPlugin && !isEditing"
-            />
+              class="input input-bordered input-sm" :disabled="editingPlugin && !isEditing" />
           </div>
         </div>
-        
+
         <!-- Code Editor -->
         <div class="form-control w-full">
           <div class="flex justify-between items-center mb-2">
@@ -1069,65 +873,66 @@
               <span class="label-text">{{ $t('plugins.pluginCode', '插件代码') }}</span>
             </label>
             <div class="flex gap-2">
-              <button 
-                v-if="!editingPlugin"
-                class="btn btn-xs btn-outline"
-                @click="insertTemplate"
-              >
+              <button v-if="!editingPlugin" class="btn btn-xs btn-outline" @click="insertTemplate">
                 <i class="fas fa-file-code mr-1"></i>
                 {{ $t('plugins.insertTemplate', '插入模板') }}
               </button>
-              <button 
-                class="btn btn-xs btn-outline"
-                @click="formatCode"
-              >
+              <button class="btn btn-xs btn-outline" @click="formatCode">
                 <i class="fas fa-indent mr-1"></i>
                 {{ $t('plugins.format', '格式化') }}
               </button>
+              <button class="btn btn-xs btn-outline" @click="toggleFullscreenEditor">
+                <i :class="isFullscreenEditor ? 'fas fa-compress mr-1' : 'fas fa-expand mr-1'"></i>
+                {{ isFullscreenEditor ? '退出全屏' : '全屏' }}
+              </button>
             </div>
           </div>
-          <div ref="codeEditorContainer" class="border border-base-300 rounded-lg overflow-hidden min-h-96"></div>
+          <div :class="['relative border border-base-300 rounded-lg overflow-hidden', isFullscreenEditor ? 'editor-fullscreen' : 'min-h-96']">
+            <div ref="codeEditorContainer"></div>
+            <div v-if="isFullscreenEditor" class="absolute top-3 right-3 z-[10002] flex gap-2">
+              <button class="btn btn-xs" @click="toggleFullscreenEditor">
+                <i class="fas fa-compress mr-1"></i>
+                退出全屏
+              </button>
+              <button v-if="editingPlugin && !isEditing" class="btn btn-xs btn-primary" @click="enableEditing">
+                <i class="fas fa-edit mr-1"></i>
+                编辑
+              </button>
+              <button v-else-if="editingPlugin && isEditing" class="btn btn-xs btn-outline" @click="cancelEditing">
+                只读
+              </button>
+            </div>
+          </div>
         </div>
-        
+
         <div v-if="codeError" class="alert alert-error mt-4">
           <i class="fas fa-exclamation-circle"></i>
           <span>{{ codeError }}</span>
         </div>
-        
+
         <!-- Fixed Footer -->
         <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
           <button class="btn btn-sm" @click="closeCodeEditorDialog">{{ $t('common.close', '关闭') }}</button>
-          
+
           <!-- Edit Mode Buttons -->
           <template v-if="editingPlugin">
-            <button 
-              v-if="!isEditing"
-              class="btn btn-primary btn-sm"
-              @click="enableEditing"
-            >
+            <button v-if="!isEditing" class="btn btn-primary btn-sm" @click="enableEditing">
               <i class="fas fa-edit mr-2"></i>
               {{ $t('common.edit', '编辑') }}
             </button>
             <template v-else>
-              <button class="btn btn-warning btn-sm" @click="cancelEditing">{{ $t('plugins.cancelEdit', '取消编辑') }}</button>
-              <button 
-                class="btn btn-success btn-sm"
-                :disabled="saving"
-                @click="savePluginCode"
-              >
+              <button class="btn btn-warning btn-sm" @click="cancelEditing">{{ $t('plugins.cancelEdit', '取消编辑')
+                }}</button>
+              <button class="btn btn-success btn-sm" :disabled="saving" @click="savePluginCode">
                 <span v-if="saving" class="loading loading-spinner"></span>
                 {{ saving ? $t('common.saving', '保存中...') : $t('common.save', '保存') }}
               </button>
             </template>
           </template>
-          
+
           <!-- New Plugin Mode Buttons -->
           <template v-else>
-            <button 
-              class="btn btn-success btn-sm"
-              :disabled="saving || !isNewPluginValid"
-              @click="createNewPlugin"
-            >
+            <button class="btn btn-success btn-sm" :disabled="saving || !isNewPluginValid" @click="createNewPlugin">
               <span v-if="saving" class="loading loading-spinner"></span>
               {{ saving ? $t('plugins.creating', '创建中...') : $t('plugins.createPlugin', '创建插件') }}
             </button>
@@ -1138,7 +943,7 @@
         <button @click="closeCodeEditorDialog">close</button>
       </form>
     </dialog>
-    
+
     <!-- Delete Confirmation Dialog -->
     <dialog ref="deleteDialog" class="modal">
       <div class="modal-box max-h-[90vh] overflow-y-auto">
@@ -1147,19 +952,16 @@
           <h3 class="font-bold text-lg">{{ $t('plugins.confirmDelete', '确认删除') }}</h3>
           <button @click="closeDeleteDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
         </div>
-        
+
         <p class="py-4">
-          {{ $t('plugins.deleteConfirmText', '确定要删除插件') }} <strong>{{ deletingPlugin?.metadata.name }}</strong> {{ $t('plugins.deleteWarning', '吗？此操作不可撤销。') }}
+          {{ $t('plugins.deleteConfirmText', '确定要删除插件') }} <strong>{{ deletingPlugin?.metadata.name }}</strong> {{
+            $t('plugins.deleteWarning', '吗？此操作不可撤销。') }}
         </p>
-        
+
         <!-- Fixed Footer -->
         <div class="modal-action sticky bottom-0 bg-base-100 pt-4">
           <button class="btn btn-sm" @click="closeDeleteDialog">{{ $t('common.cancel', '取消') }}</button>
-          <button 
-            class="btn btn-error btn-sm"
-            :disabled="deleting"
-            @click="deletePlugin"
-          >
+          <button class="btn btn-error btn-sm" :disabled="deleting" @click="deletePlugin">
             <span v-if="deleting" class="loading loading-spinner"></span>
             {{ deleting ? $t('plugins.deleting', '删除中...') : $t('common.delete', '删除') }}
           </button>
@@ -1169,7 +971,7 @@
         <button @click="closeDeleteDialog">close</button>
       </form>
     </dialog>
-    
+
     <!-- AI Generate Plugin Dialog -->
     <dialog ref="aiGenerateDialog" class="modal">
       <div class="modal-box w-11/12 max-w-3xl">
@@ -1177,30 +979,27 @@
           <i class="fas fa-magic mr-2"></i>
           {{ $t('plugins.aiGenerate', 'AI生成插件') }}
         </h3>
-        
+
         <div class="space-y-4">
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.aiPrompt', '描述你想要的插件功能') }}</span>
             </label>
-            <textarea 
-              v-model="aiPrompt"
-              class="textarea textarea-bordered h-32"
-              :placeholder="$t('plugins.aiPromptPlaceholder', '例如：我需要一个检测SQL注入漏洞的插件，能够分析HTTP请求中的参数，识别潜在的SQL注入模式...')"
-            ></textarea>
+            <textarea v-model="aiPrompt" class="textarea textarea-bordered h-32"
+              :placeholder="$t('plugins.aiPromptPlaceholder', '例如：我需要一个检测SQL注入漏洞的插件，能够分析HTTP请求中的参数，识别潜在的SQL注入模式...')"></textarea>
           </div>
-          
+
           <div class="grid grid-cols-2 gap-4">
             <div class="form-control">
               <label class="label">
                 <span class="label-text">{{ $t('plugins.pluginType', '插件类型') }}</span>
               </label>
               <select v-model="aiPluginType" class="select select-bordered select-sm">
-                <option value="passiveScan">{{ $t('plugins.categories.passiveScan', '被动扫描插件') }}</option>
-                <option value="agentTools">{{ $t('plugins.categories.agentTools', 'Agent工具插件') }}</option>
+                <option value="passive">{{ $t('plugins.categories.passive', '被动扫描插件') }}</option>
+                <option value="agent">{{ $t('plugins.categories.agents', 'Agent工具插件') }}</option>
               </select>
             </div>
-            
+
             <div class="form-control">
               <label class="label">
                 <span class="label-text">{{ $t('plugins.severity', '严重程度') }}</span>
@@ -1214,25 +1013,21 @@
               </select>
             </div>
           </div>
-          
+
           <div v-if="aiGenerating" class="alert alert-info">
             <span class="loading loading-spinner"></span>
             <span>{{ $t('plugins.aiGenerating', 'AI正在生成插件代码，请稍候...') }}</span>
           </div>
-          
+
           <div v-if="aiGenerateError" class="alert alert-error">
             <i class="fas fa-exclamation-circle"></i>
             <span>{{ aiGenerateError }}</span>
           </div>
         </div>
-        
+
         <div class="modal-action">
           <button class="btn" @click="closeAIGenerateDialog">{{ $t('common.cancel', '取消') }}</button>
-          <button 
-            class="btn btn-primary"
-            :disabled="!aiPrompt.trim() || aiGenerating"
-            @click="generatePluginWithAI"
-          >
+          <button class="btn btn-primary" :disabled="!aiPrompt.trim() || aiGenerating" @click="generatePluginWithAI">
             <i class="fas fa-magic mr-2"></i>
             {{ $t('plugins.generatePlugin', '生成插件') }}
           </button>
@@ -1242,7 +1037,7 @@
         <button @click="closeAIGenerateDialog">close</button>
       </form>
     </dialog>
-    
+
     <!-- Test Result Dialog -->
     <dialog ref="testResultDialog" class="modal">
       <div class="modal-box w-11/12 max-w-3xl">
@@ -1253,12 +1048,12 @@
             ({{ getTestTypeLabel() }})
           </span>
         </h3>
-        
+
         <div v-if="testing" class="alert alert-info">
           <span class="loading loading-spinner"></span>
           <span>{{ $t('plugins.testing', '正在测试插件...') }}</span>
         </div>
-        
+
         <div v-else-if="testResult" class="space-y-4">
           <div class="alert" :class="{
             'alert-success': testResult.success,
@@ -1267,17 +1062,18 @@
             <i :class="testResult.success ? 'fas fa-check-circle' : 'fas fa-times-circle'"></i>
             <span>{{ testResult.success ? $t('plugins.testPassed', '测试通过') : $t('plugins.testFailed', '测试失败') }}</span>
           </div>
-          
+
           <div v-if="testResult.message" class="card bg-base-200">
             <div class="card-body">
               <h4 class="font-semibold mb-2">{{ $t('plugins.testMessage', '测试消息') }}</h4>
               <pre class="text-sm whitespace-pre-wrap">{{ testResult.message }}</pre>
             </div>
           </div>
-          
+
           <div v-if="testResult.findings && testResult.findings.length > 0" class="card bg-base-200">
             <div class="card-body">
-              <h4 class="font-semibold mb-2">{{ $t('plugins.findings', '发现的问题') }} ({{ testResult.findings.length }})</h4>
+              <h4 class="font-semibold mb-2">{{ $t('plugins.findings', '发现的问题') }} ({{ testResult.findings.length }})
+              </h4>
               <div class="space-y-2">
                 <div v-for="(finding, idx) in testResult.findings" :key="idx" class="card bg-base-100">
                   <div class="card-body p-3">
@@ -1295,13 +1091,13 @@
               </div>
             </div>
           </div>
-          
+
           <div v-if="testResult.error" class="alert alert-error">
             <i class="fas fa-exclamation-circle"></i>
             <span>{{ testResult.error }}</span>
           </div>
         </div>
-        
+
         <div class="modal-action">
           <button class="btn" @click="closeTestResultDialog">{{ $t('common.close', '关闭') }}</button>
         </div>
@@ -1323,57 +1119,78 @@
         </h3>
 
         <div class="grid grid-cols-2 gap-4">
-          <div class="form-control col-span-2">
+          <!-- Agent 插件：仅显示插件入参 JSON -->
+          <div v-if="isAdvancedAgent" class="form-control col-span-2">
             <label class="label">
-              <span class="label-text">{{ $t('plugins.requestUrl', '请求 URL') }}</span>
+              <span class="label-text">{{ $t('plugins.agentInputs', '插件入参 (JSON)') }}</span>
             </label>
-            <input v-model="advancedForm.url" type="text" class="input input-bordered input-sm w-full" placeholder="https://example.com/test" />
+            <textarea v-model="advancedForm.agent_inputs_text" class="textarea textarea-bordered font-mono text-xs h-32"
+              placeholder='{"target":"https://example.com","context":{"test_mode":true}}'></textarea>
+            <label class="label">
+              <span class="label-text-alt">{{ $t('plugins.inputsMustJson', '必须是有效 JSON；按插件需求填写入参。') }}</span>
+            </label>
           </div>
 
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ $t('plugins.httpMethod', 'HTTP 方法') }}</span>
-            </label>
-            <select v-model="advancedForm.method" class="select select-bordered select-sm w-full">
-              <option>GET</option>
-              <option>POST</option>
-              <option>PUT</option>
-              <option>DELETE</option>
-              <option>PATCH</option>
-              <option>HEAD</option>
-              <option>OPTIONS</option>
-            </select>
+          <!-- 被动扫描插件：请求 URL/Method/Headers/Body -->
+          <div v-else class="contents">
+            <div class="form-control col-span-2">
+              <label class="label">
+                <span class="label-text">{{ $t('plugins.requestUrl', '请求 URL') }}</span>
+              </label>
+              <input v-model="advancedForm.url" type="text" class="input input-bordered input-sm w-full"
+                placeholder="https://example.com/test" />
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ $t('plugins.httpMethod', 'HTTP 方法') }}</span>
+              </label>
+              <select v-model="advancedForm.method" class="select select-bordered select-sm w-full">
+                <option>GET</option>
+                <option>POST</option>
+                <option>PUT</option>
+                <option>DELETE</option>
+                <option>PATCH</option>
+                <option>HEAD</option>
+                <option>OPTIONS</option>
+              </select>
+            </div>
+
+            <div class="form-control col-span-2">
+              <label class="label">
+                <span class="label-text">{{ $t('plugins.headersJson', '请求头 (JSON)') }}</span>
+              </label>
+              <textarea v-model="advancedForm.headersText" class="textarea textarea-bordered font-mono text-xs h-24"
+                placeholder='{"User-Agent":"Sentinel-AdvTest/1.0"}'></textarea>
+              <label class="label">
+                <span class="label-text-alt">{{ $t('plugins.headersHint', '留空则使用默认 UA。必须是有效 JSON。') }}</span>
+              </label>
+            </div>
+
+            <div class="form-control col-span-2">
+              <label class="label">
+                <span class="label-text">{{ $t('plugins.body', '请求体') }}</span>
+              </label>
+              <textarea v-model="advancedForm.bodyText" class="textarea textarea-bordered font-mono text-xs h-24"
+                placeholder=""></textarea>
+            </div>
           </div>
 
+          <!-- 通用：运行次数与并发数 -->
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.runs', '运行次数') }}</span>
             </label>
-            <input v-model.number="advancedForm.runs" type="number" min="1" class="input input-bordered input-sm w-full" />
+            <input v-model.number="advancedForm.runs" type="number" min="1"
+              class="input input-bordered input-sm w-full" />
           </div>
 
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ $t('plugins.concurrency', '并发数') }}</span>
             </label>
-            <input v-model.number="advancedForm.concurrency" type="number" min="1" class="input input-bordered input-sm w-full" />
-          </div>
-
-          <div class="form-control col-span-2">
-            <label class="label">
-              <span class="label-text">{{ $t('plugins.headersJson', '请求头 (JSON)') }}</span>
-            </label>
-            <textarea v-model="advancedForm.headersText" class="textarea textarea-bordered font-mono text-xs h-24" placeholder='{"User-Agent":"Sentinel-AdvTest/1.0"}'></textarea>
-            <label class="label">
-              <span class="label-text-alt">{{ $t('plugins.headersHint', '留空则使用默认 UA。必须是有效 JSON。') }}</span>
-            </label>
-          </div>
-
-          <div class="form-control col-span-2">
-            <label class="label">
-              <span class="label-text">{{ $t('plugins.body', '请求体') }}</span>
-            </label>
-            <textarea v-model="advancedForm.bodyText" class="textarea textarea-bordered font-mono text-xs h-24" placeholder=""></textarea>
+            <input v-model.number="advancedForm.concurrency" type="number" min="1"
+              class="input input-bordered input-sm w-full" />
           </div>
         </div>
 
@@ -1405,7 +1222,9 @@
             <div class="stat">
               <div class="stat-title">{{ $t('plugins.totalDuration', '总耗时(ms)') }}</div>
               <div class="stat-value">{{ advancedResult.total_duration_ms }}</div>
-              <div class="stat-desc">{{ $t('plugins.avgPerRun', '平均/次(ms)') }}: {{ advancedResult.avg_duration_ms.toFixed(1) }}</div>
+              <div class="stat-desc">{{ $t('plugins.avgPerRun', '平均/次(ms)') }}: {{
+                advancedResult.avg_duration_ms.toFixed(1)
+                }}</div>
             </div>
             <div class="stat">
               <div class="stat-title">{{ $t('plugins.findingsTotal', '发现数') }}</div>
@@ -1447,7 +1266,9 @@
           <!-- Unique Findings List -->
           <div v-if="advancedResult.findings && advancedResult.findings.length > 0" class="card bg-base-200">
             <div class="card-body">
-              <h4 class="font-semibold mb-2">{{ $t('plugins.uniqueFindings', '唯一发现') }} ({{ advancedResult.findings.length }})</h4>
+              <h4 class="font-semibold mb-2">{{ $t('plugins.uniqueFindings', '唯一发现') }} ({{
+                advancedResult.findings.length
+              }})</h4>
               <div class="space-y-2">
                 <div v-for="(finding, idx) in advancedResult.findings" :key="idx" class="card bg-base-100">
                   <div class="card-body p-3">
@@ -1460,6 +1281,24 @@
                       }">{{ finding.severity }}</span>
                     </div>
                     <p class="text-sm text-base-content/70 mt-1">{{ finding.description }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent 输出数据 -->
+          <div v-if="advancedResult.outputs && advancedResult.outputs.length > 0" class="card bg-base-200">
+            <div class="card-body">
+              <h4 class="font-semibold mb-2">{{ $t('plugins.agentOutputs', '返回数据') }} ({{ advancedResult.outputs.length }})</h4>
+              <div class="space-y-2">
+                <div v-for="(out, idx) in advancedResult.outputs" :key="idx" class="card bg-base-100">
+                  <div class="card-body p-3">
+                    <div class="flex justify-between items-center mb-2">
+                      <span class="font-medium">Run #{{ idx }}</span>
+                      <span class="badge badge-ghost">JSON</span>
+                    </div>
+                    <pre class="text-xs whitespace-pre-wrap">{{ JSON.stringify(out, null, 2) }}</pre>
                   </div>
                 </div>
               </div>
@@ -1565,6 +1404,12 @@ interface AdvancedRunStat {
   error?: string | null
 }
 
+interface BatchToggleResult {
+  enabled_count: number
+  disabled_count: number
+  failed_ids: string[]
+}
+
 interface AdvancedTestResult {
   plugin_id: string
   success: boolean
@@ -1578,6 +1423,7 @@ interface AdvancedTestResult {
   runs: AdvancedRunStat[]
   message?: string
   error?: string
+  outputs?: any[]
 }
 
 // Component State
@@ -1636,6 +1482,7 @@ const pluginTotalPagesCount = ref(0)
 const pluginSearchText = ref('')
 const selectedSubCategory = ref('')
 const selectedTag = ref('')
+const batchToggling = ref(false)
 
 const selectedFile = ref<File | null>(null)
 const uploading = ref(false)
@@ -1647,6 +1494,8 @@ const originalCode = ref('')
 const isEditing = ref(false)
 const saving = ref(false)
 const codeError = ref('')
+
+const isFullscreenEditor = ref(false)
 
 const deletingPlugin = ref<PluginRecord | null>(null)
 const deleting = ref(false)
@@ -1671,15 +1520,15 @@ const mainCategories = [
 ]
 
 // 被动扫描插件的所有子分类
-const passiveScanCategories = [
-  'sqli', 'command_injection', 'xss', 'idor', 'auth_bypass', 'csrf', 
-  'info_leak', 'file_upload', 'file_inclusion', 'path_traversal', 
+const passiveCategories = [
+  'sqli', 'command_injection', 'xss', 'idor', 'auth_bypass', 'csrf',
+  'info_leak', 'file_upload', 'file_inclusion', 'path_traversal',
   'xxe', 'ssrf', 'report', 'custom'
 ]
 
 // Agent 插件的所有子分类
-const agentToolsCategories = [
-  'scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility', 'custom', 'agentTools'
+const agentsCategories = [
+  'scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility', 'custom', 
 ]
 
 // 子分类定义（根据大分类动态变化）
@@ -1722,38 +1571,6 @@ const subCategories = computed(() => {
   return []
 })
 
-// 根据旧的category值推断mainCategory（用于向后兼容）
-const inferMainCategory = (category: string): string => {
-  // agentTools 相关
-  if (category === 'agentTools' || category === 'scanner' || category === 'analyzer' || 
-      category === 'reporter' || category === 'recon' || category === 'exploit' || category === 'utility') {
-    return 'agent'
-  }
-  
-  // 根据分类名称推断（更宽松的匹配）
-  const lowerCategory = category.toLowerCase()
-  
-  // Agent 相关关键词
-  if (lowerCategory.includes('agent') || lowerCategory.includes('tool') || 
-      lowerCategory.includes('scanner') || lowerCategory.includes('analyzer') ||
-      lowerCategory.includes('reporter') || lowerCategory.includes('recon') ||
-      lowerCategory.includes('exploit') || lowerCategory.includes('utility')) {
-    return 'agent'
-  }
-  
-  // 被动扫描相关（默认）
-  return 'passive'
-}
-
-// 将旧的category值转换为新的子分类
-const convertToSubCategory = (category: string): string => {
-  // 如果是agentTools，转为scanner
-  if (category === 'agentTools') return 'scanner'
-  // 如果是passiveScan，转为vulnerability  
-  if (category === 'passiveScan') return 'vulnerability'
-  // 其他保持不变
-  return category
-}
 
 // AI Generation Related State
 const aiPrompt = ref('')
@@ -1772,14 +1589,46 @@ const advancedTesting = ref(false)
 const advancedError = ref('')
 const advancedResult = ref<AdvancedTestResult | null>(null)
 const advancedForm = ref({
+  // 被动扫描用
   url: 'https://example.com/test',
   method: 'GET',
   headersText: '{"User-Agent":"Sentinel-AdvTest/1.0"}',
   bodyText: '',
-  runs: 3,
-  concurrency: 2,
+  // Agent 用
+  agent_inputs_text: '{}',
+  // 通用
+  runs: 1,
+  concurrency: 1,
 })
 
+const buildSkeletonFromSchema = (schema: any): any => {
+  const t = String(schema?.type || '').toLowerCase()
+  if (t === 'object' || (!t && schema?.properties)) {
+    const props = schema?.properties || {}
+    const result: Record<string, any> = {}
+    for (const key of Object.keys(props)) {
+      const propSchema = props[key]
+      if (propSchema && propSchema.default !== undefined) {
+        result[key] = propSchema.default
+      } else {
+        result[key] = buildSkeletonFromSchema(propSchema)
+      }
+    }
+    return result
+  }
+  if (t === 'array') {
+    const items = schema?.items
+    if (items) {
+      const value = buildSkeletonFromSchema(items)
+      return [value]
+    }
+    return []
+  }
+  if (t === 'string') return ''
+  if (t === 'number' || t === 'integer') return 0
+  if (t === 'boolean') return false
+  return {}
+}
 let pluginChangedUnlisten: UnlistenFn | null = null
 
 // Categories Definition
@@ -1790,55 +1639,25 @@ const categories = computed(() => [
     icon: 'fas fa-th'
   },
   {
-    value: 'passiveScan',
-    label: t('plugins.categories.passiveScan', '被动扫描插件'),
+    value: 'passive',
+    label: t('plugins.categories.passive', '被动扫描插件'),
     icon: 'fas fa-shield-alt'
   },
   {
-    value: 'agentTools',
-    label: t('plugins.categories.agentTools', 'Agent工具插件'),
+    value: 'agents',
+    label: t('plugins.categories.agents', 'Agent工具插件'),
     icon: 'fas fa-robot'
   },
-//   {
-//     value: 'builtinTools',
-//     label: t('plugins.categories.builtinTools', '内置工具插件'),
-//     icon: 'fas fa-toolbox'
-//   },
-//   {
-//     value: 'mcpTools',
-//     label: t('plugins.categories.mcpTools', 'MCP工具插件'),
-//     icon: 'fas fa-plug'
-//   },
-//   {
-//     value: 'vulnerability',
-//     label: t('plugins.categories.vulnerability', '漏洞扫描'),
-//     icon: 'fas fa-bug'
-//   },
-//   {
-//     value: 'injection',
-//     label: t('plugins.categories.injection', '注入检测'),
-//     icon: 'fas fa-syringe'
-//   },
-//   {
-//     value: 'xss',
-//     label: t('plugins.categories.xss', '跨站脚本'),
-//     icon: 'fas fa-code'
-//   },
-  // {
-  //   value: 'custom',
-  //   label: t('plugins.categories.custom', '自定义'),
-  //   icon: 'fas fa-wrench'
-  // }
 ])
 
 // Filtered Plugins
 const filteredPlugins = computed(() => {
   let filtered = plugins.value
-  
+
   // 分类筛选
   if (selectedCategory.value === 'all') {
     filtered = plugins.value
-  } else if (selectedCategory.value === 'passiveScan') {
+  } else if (selectedCategory.value === 'passive') {
     // 被动扫描插件：直接使用 main_category 字段
     filtered = plugins.value.filter(p => {
       // 优先使用 main_category 字段（后端已提供）
@@ -1846,16 +1665,16 @@ const filteredPlugins = computed(() => {
         return true
       }
       // 兼容旧数据：检查预定义的被动扫描子分类
-      if (passiveScanCategories.includes(p.metadata.category)) {
+      if (passiveCategories.includes(p.metadata.category)) {
         return true
       }
-      // 兼容旧的 passiveScan 分类
-      if (p.metadata.category === 'passiveScan') {
+      // 兼容旧的 passive 分类
+      if (p.metadata.category === 'passive') {
         return true
       }
       return false
     })
-  } else if (selectedCategory.value === 'agentTools') {
+  } else if (selectedCategory.value === 'agents') {
     // Agent 工具插件：直接使用 main_category 字段
     filtered = plugins.value.filter(p => {
       // 优先使用 main_category 字段（后端已提供）
@@ -1863,7 +1682,7 @@ const filteredPlugins = computed(() => {
         return true
       }
       // 兼容旧数据：检查预定义的 Agent 子分类
-      if (agentToolsCategories.includes(p.metadata.category)) {
+      if (agentsCategories.includes(p.metadata.category)) {
         return true
       }
       return false
@@ -1872,33 +1691,33 @@ const filteredPlugins = computed(() => {
     // 其他：精确匹配
     filtered = plugins.value.filter(p => p.metadata.category === selectedCategory.value)
   }
-  
+
   // 被动扫描插件的收藏筛选
-  if (selectedCategory.value === 'passiveScan' && pluginViewMode.value === 'favorited') {
+  if (selectedCategory.value === 'passive' && pluginViewMode.value === 'favorited') {
     filtered = filtered.filter(p => isPluginFavorited(p))
   }
-  
+
   // 搜索筛选
   if (pluginSearchText.value.trim()) {
     const query = pluginSearchText.value.toLowerCase()
-    filtered = filtered.filter(p => 
+    filtered = filtered.filter(p =>
       p.metadata.name.toLowerCase().includes(query) ||
       p.metadata.id.toLowerCase().includes(query) ||
       p.metadata.description?.toLowerCase().includes(query) ||
       p.metadata.author?.toLowerCase().includes(query)
     )
   }
-  
+
   // 子分类筛选
   if (selectedSubCategory.value) {
     filtered = filtered.filter(p => p.metadata.category === selectedSubCategory.value)
   }
-  
+
   // 标签筛选
   if (selectedTag.value) {
     filtered = filtered.filter(p => p.metadata.tags.includes(selectedTag.value))
   }
-  
+
   return filtered
 })
 
@@ -1922,14 +1741,14 @@ const paginatedPlugins = computed(() => {
 
 // 获取可用的子分类
 const getAvailableSubCategories = (): string[] => {
-  if (selectedCategory.value === 'passiveScan') {
+  if (selectedCategory.value === 'passive') {
     const categories = new Set(
       filteredPlugins.value
         .filter(p => !selectedSubCategory.value || p.metadata.category === selectedSubCategory.value)
         .map(p => p.metadata.category)
     )
     return Array.from(categories).sort()
-  } else if (selectedCategory.value === 'agentTools') {
+  } else if (selectedCategory.value === 'agents') {
     const categories = new Set(
       filteredPlugins.value
         .filter(p => !selectedSubCategory.value || p.metadata.category === selectedSubCategory.value)
@@ -1963,6 +1782,64 @@ const changePluginPageSize = (size: number) => {
   pluginCurrentPage.value = 1 // 重置到第一页
 }
 
+const goToPluginPage = (page: number) => {
+  if (page >= 1 && page <= pluginTotalPages.value) {
+    pluginCurrentPage.value = page
+  }
+}
+
+const getCurrentPluginIds = (): string[] => {
+  return filteredPlugins.value.map(p => p.metadata.id)
+}
+
+const batchEnableCurrent = async () => {
+  const ids = getCurrentPluginIds()
+  if (ids.length === 0) return
+  batchToggling.value = true
+  try {
+    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_enable_plugins', {
+      pluginIds: ids
+    })
+    if (resp.success) {
+      await refreshPlugins()
+      const data = resp.data!
+      const total = ids.length
+      const msg = `已启用 ${data.enabled_count}/${total}，失败 ${data.failed_ids.length}`
+      showToast(msg, 'success')
+    } else {
+      showToast(resp.error || '批量开启失败', 'error')
+    }
+  } catch (e: any) {
+    showToast(e?.message || '批量开启操作异常', 'error')
+  } finally {
+    batchToggling.value = false
+  }
+}
+
+const batchDisableCurrent = async () => {
+  const ids = getCurrentPluginIds()
+  if (ids.length === 0) return
+  batchToggling.value = true
+  try {
+    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_disable_plugins', {
+      pluginIds: ids
+    })
+    if (resp.success) {
+      await refreshPlugins()
+      const data = resp.data!
+      const total = ids.length
+      const msg = `已禁用 ${data.disabled_count}/${total}，失败 ${data.failed_ids.length}`
+      showToast(msg, 'success')
+    } else {
+      showToast(resp.error || '批量停止失败', 'error')
+    }
+  } catch (e: any) {
+    showToast(e?.message || '批量停止操作异常', 'error')
+  } finally {
+    batchToggling.value = false
+  }
+}
+
 // Review Plugins Computed (使用后端统计数据)
 const reviewStats = computed(() => reviewStatsData.value)
 
@@ -1982,8 +1859,8 @@ const reviewPaginationInfo = computed(() => {
 })
 
 const isAllSelected = computed(() => {
-  return paginatedReviewPlugins.value.length > 0 && 
-         paginatedReviewPlugins.value.every(p => isPluginSelected(p))
+  return paginatedReviewPlugins.value.length > 0 &&
+    paginatedReviewPlugins.value.every(p => isPluginSelected(p))
 })
 
 // 分页控制方法
@@ -2011,32 +1888,32 @@ const changeReviewStatusFilter = (status: string) => {
 const getCategoryCount = (category: string) => {
   if (category === 'all') return plugins.value.length
   // 被动扫描插件：统计所有被动扫描相关插件
-  if (category === 'passiveScan') {
+  if (category === 'passive') {
     return plugins.value.filter(p => {
       // 优先使用 main_category 字段
       if (p.metadata.main_category === 'passive') {
         return true
       }
       // 兼容旧数据：检查预定义的被动扫描子分类
-      if (passiveScanCategories.includes(p.metadata.category)) {
+      if (passiveCategories.includes(p.metadata.category)) {
         return true
       }
-      // 兼容旧的 passiveScan 分类
-      if (p.metadata.category === 'passiveScan') {
+      // 兼容旧的 passive 分类
+      if (p.metadata.category === 'passive') {
         return true
       }
       return false
     }).length
   }
   // Agent 工具插件：统计所有 Agent 相关插件
-  if (category === 'agentTools') {
+  if (category === 'agents') {
     return plugins.value.filter(p => {
       // 优先使用 main_category 字段
       if (p.metadata.main_category === 'agent') {
         return true
       }
       // 兼容旧数据：检查预定义的 Agent 子分类
-      if (agentToolsCategories.includes(p.metadata.category)) {
+      if (agentsCategories.includes(p.metadata.category)) {
         return true
       }
       return false
@@ -2063,7 +1940,7 @@ const getCategoryIcon = (category: string) => {
   // 先尝试从主分类中查找
   const cat = categories.value.find(c => c.value === category)
   if (cat) return cat.icon
-  
+
   // 再从子分类中查找（被动扫描和Agent工具）
   const allSubCategories = [
     ...subCategories.value,
@@ -2075,28 +1952,30 @@ const getCategoryIcon = (category: string) => {
     { value: 'exploit', icon: 'fas fa-bomb' },
     { value: 'utility', icon: 'fas fa-toolbox' }
   ]
-  
+
   const subCat = allSubCategories.find(c => c.value === category)
   return subCat ? subCat.icon : 'fas fa-wrench'
 }
 
 // Check if plugin is Agent type
 const isAgentPluginType = (plugin: PluginRecord): boolean => {
-  return plugin.metadata.category === 'agentTools' || 
-         ['scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility'].includes(plugin.metadata.category)
+  if (plugin.metadata.main_category === 'agent') return true
+  return plugin.metadata.category === 'agents' ||
+    ['scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility'].includes(plugin.metadata.category)
 }
 
 // Check if plugin is Passive Scan type
-const isPassiveScanPluginType = (plugin: PluginRecord): boolean => {
-  return passiveScanCategories.includes(plugin.metadata.category)
+const ispassivePluginType = (plugin: PluginRecord): boolean => {
+  if (plugin.metadata.main_category === 'passive') return true
+  return passiveCategories.includes(plugin.metadata.category)
 }
 
 // Validate New Plugin
 const isNewPluginValid = computed(() => {
   return newPluginMetadata.value.id.trim() !== '' &&
-         newPluginMetadata.value.name.trim() !== '' &&
-         newPluginMetadata.value.category.trim() !== '' &&
-         pluginCode.value.trim() !== ''
+    newPluginMetadata.value.name.trim() !== '' &&
+    newPluginMetadata.value.category.trim() !== '' &&
+    pluginCode.value.trim() !== ''
 })
 
 // Get Status Text
@@ -2113,18 +1992,18 @@ const getStatusText = (status: string): string => {
 const initCodeEditor = async () => {
   await nextTick()
   if (!codeEditorContainer.value) return
-  
+
   // Destroy existing editor if any
   if (codeEditorView) {
     codeEditorView.destroy()
     codeEditorView = null
   }
-  
+
   // Clear container
   codeEditorContainer.value.innerHTML = ''
-  
+
   const readonly = editingPlugin.value && !isEditing.value
-  
+
   const state = EditorState.create({
     doc: pluginCode.value,
     extensions: [
@@ -2140,7 +2019,7 @@ const initCodeEditor = async () => {
       codeEditorReadOnly.of(EditorView.editable.of(!readonly)),
     ],
   })
-  
+
   codeEditorView = new EditorView({
     state,
     parent: codeEditorContainer.value,
@@ -2151,16 +2030,16 @@ const initCodeEditor = async () => {
 const initReviewCodeEditor = async () => {
   await nextTick()
   if (!reviewCodeEditorContainer.value) return
-  
+
   // Destroy existing editor if any
   if (reviewCodeEditorView) {
     reviewCodeEditorView.destroy()
     reviewCodeEditorView = null
   }
-  
+
   // Clear container
   reviewCodeEditorContainer.value.innerHTML = ''
-  
+
   const state = EditorState.create({
     doc: editedReviewCode.value,
     extensions: [
@@ -2176,7 +2055,7 @@ const initReviewCodeEditor = async () => {
       reviewCodeEditorReadOnly.of(EditorView.editable.of(reviewEditMode.value)),
     ],
   })
-  
+
   reviewCodeEditorView = new EditorView({
     state,
     parent: reviewCodeEditorContainer.value,
@@ -2220,21 +2099,21 @@ const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warnin
   const toast = document.createElement('div')
   toast.className = 'toast toast-top toast-end z-50'
   toast.style.top = '5rem'
-  
+
   const alertClass = {
     success: 'alert-success',
     error: 'alert-error',
     info: 'alert-info',
     warning: 'alert-warning'
   }[type]
-  
+
   const icon = {
     success: 'fa-check-circle',
     error: 'fa-times-circle',
     info: 'fa-info-circle',
     warning: 'fa-exclamation-triangle'
   }[type]
-  
+
   toast.innerHTML = `
     <div class="alert ${alertClass} shadow-lg">
       <i class="fas ${icon}"></i>
@@ -2266,7 +2145,7 @@ const togglePluginFavorite = async (plugin: PluginRecord) => {
       pluginId: plugin.metadata.id,
       userId: null
     })
-    
+
     if (response.success) {
       const isFavorited = response.data?.is_favorited || false
       showToast(
@@ -2311,11 +2190,11 @@ const togglePlugin = async (plugin: PluginRecord) => {
   try {
     const command = plugin.status === 'Enabled' ? 'disable_plugin' : 'enable_plugin'
     const actionText = plugin.status === 'Enabled' ? t('plugins.disable', '禁用') : t('plugins.enable', '启用')
-    
+
     const response = await invoke<CommandResponse<void>>(command, {
       pluginId: plugin.metadata.id
     })
-    
+
     if (response.success) {
       await refreshPlugins()
       showToast(t('plugins.toggleSuccess', `插件已${actionText}: ${plugin.metadata.name}`), 'success')
@@ -2360,26 +2239,50 @@ const openUploadDialog = () => {
 }
 
 // Advanced Test Dialog Controls
-const openAdvancedDialog = (plugin: PluginRecord) => {
+const openAdvancedDialog = async (plugin: PluginRecord) => {
   advancedPlugin.value = plugin
   advancedError.value = ''
   advancedResult.value = null
-  
-  // 检查是否为 Agent 插件
-  const isAgentPlugin = plugin.metadata.category === 'agentTools' || 
-                        ['scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility'].includes(plugin.metadata.category)
-  
-  if (isAgentPlugin) {
-    // Agent 插件显示提示信息
-    advancedError.value = 'Agent 插件暂不支持高级并发测试功能。Agent 插件测试通过调用 analyze 函数进行，请使用普通测试按钮。'
+
+  if (!advancedForm.value.url) advancedForm.value.url = 'https://example.com/test'
+  if (!advancedForm.value.method) advancedForm.value.method = 'GET'
+  if (!advancedForm.value.runs || advancedForm.value.runs < 1) advancedForm.value.runs = 3
+  if (!advancedForm.value.concurrency || advancedForm.value.concurrency < 1) advancedForm.value.concurrency = 2
+
+  if (isAdvancedAgent.value) {
+    try {
+      const info: any = await invoke('get_plugin_tool_info', { pluginId: plugin.metadata.id })
+      const params: any[] = Array.isArray(info?.parameters) ? info.parameters : []
+      const defaults: Record<string, any> = {}
+      for (const p of params) {
+        if (p && p.default !== null && p.default !== undefined) {
+          defaults[p.name] = p.default
+        }
+      }
+      if (Object.keys(defaults).length > 0) {
+        advancedForm.value.agent_inputs_text = JSON.stringify(defaults, null, 2)
+      } else if (info?.schema) {
+        const skeleton_obj = buildSkeletonFromSchema(info.schema)
+        advancedForm.value.agent_inputs_text = JSON.stringify(skeleton_obj, null, 2)
+      } else {
+        const skeleton: Record<string, any> = {}
+        for (const p of params) {
+          const t = String(p?.type || '').toLowerCase()
+          if (t === 'string') skeleton[p.name] = ''
+          else if (t === 'number' || t === 'integer') skeleton[p.name] = 0
+          else if (t === 'boolean') skeleton[p.name] = false
+          else if (t === 'array') skeleton[p.name] = []
+          else skeleton[p.name] = {}
+        }
+        advancedForm.value.agent_inputs_text = JSON.stringify(skeleton, null, 2)
+      }
+    } catch (e) {
+      advancedForm.value.agent_inputs_text = advancedForm.value.agent_inputs_text || '{}'
+    }
   } else {
-    // 被动扫描插件初始化测试参数
-    if (!advancedForm.value.url) advancedForm.value.url = 'https://example.com/test'
-    if (!advancedForm.value.method) advancedForm.value.method = 'GET'
-    if (!advancedForm.value.runs || advancedForm.value.runs < 1) advancedForm.value.runs = 3
-    if (!advancedForm.value.concurrency || advancedForm.value.concurrency < 1) advancedForm.value.concurrency = 2
+    if (!advancedForm.value.agent_inputs_text) advancedForm.value.agent_inputs_text = '{}'
   }
-  
+
   advancedDialog.value?.showModal()
 }
 
@@ -2393,6 +2296,11 @@ const closeAdvancedDialog = () => {
   advancedTesting.value = false
   // do not reset form to preserve inputs between opens
 }
+
+// 高级测试面板的插件类型识别（兼容旧 category 值）
+const isAdvancedAgent = computed(() => {
+  return advancedPlugin.value ? isAgentPluginType(advancedPlugin.value) : false
+})
 
 // Close Upload Dialog
 const closeUploadDialog = () => {
@@ -2413,13 +2321,13 @@ const handleFileSelect = (event: Event) => {
 // Upload Plugin
 const uploadPlugin = async () => {
   if (!selectedFile.value) return
-  
+
   uploading.value = true
   uploadError.value = ''
-  
+
   try {
     const fileContent = await selectedFile.value.text()
-    
+
     // Parse plugin metadata from comments
     const metadataMatch = fileContent.match(/\/\*\*\s*([\s\S]*?)\s*\*\//)
     if (!metadataMatch) {
@@ -2427,13 +2335,13 @@ const uploadPlugin = async () => {
       uploading.value = false
       return
     }
-    
+
     const metadataText = metadataMatch[1]
     const extractField = (field: string): string => {
       const match = metadataText.match(new RegExp(`@${field}\\s+(.+)`, 'i'))
       return match ? match[1].trim() : ''
     }
-    
+
     const id = extractField('plugin')
     const name = extractField('name')
     const version = extractField('version')
@@ -2442,18 +2350,18 @@ const uploadPlugin = async () => {
     const defaultSeverity = extractField('default_severity')
     const tagsStr = extractField('tags')
     const description = extractField('description')
-    
+
     if (!id || !name || !version || !category || !defaultSeverity) {
       uploadError.value = t('plugins.incompleteMetadata', '插件元数据不完整')
       uploading.value = false
       return
     }
-    
+
     const tags = tagsStr.split(',').map(t => t.trim()).filter(t => t.length > 0)
-    
-    // 推断 main_category：agentTools 类别为 agent，其他为 passive
-    const mainCategory = category === 'agentTools' ? 'agent' : 'passive'
-    
+
+    // 推断 main_category：agents 类别为 agent，其他为 passive
+    const mainCategory = category === 'agents' ? 'agent' : 'passive'
+
     const metadata = {
       id, name, version, author,
       main_category: mainCategory, // 添加主分类字段
@@ -2461,12 +2369,12 @@ const uploadPlugin = async () => {
       default_severity: defaultSeverity,
       tags
     }
-    
+
     const response = await invoke<CommandResponse<string>>('create_plugin_in_db', {
       metadata,
       pluginCode: fileContent
     })
-    
+
     if (response.success) {
       closeUploadDialog()
       await refreshPlugins()
@@ -2488,27 +2396,26 @@ const viewPluginCode = async (plugin: PluginRecord) => {
     const response = await invoke<CommandResponse<string | null>>('get_plugin_code', {
       pluginId: plugin.metadata.id
     })
-    
+
     if (response.success && response.data) {
       // Successfully got code from backend
       pluginCode.value = response.data
       originalCode.value = pluginCode.value
       editingPlugin.value = plugin
-      
+
       // Load plugin metadata into form
-      const oldCategory = plugin.metadata.category
       newPluginMetadata.value = {
         id: plugin.metadata.id,
         name: plugin.metadata.name,
         version: plugin.metadata.version,
         author: plugin.metadata.author || '',
-        mainCategory: inferMainCategory(oldCategory),
-        category: convertToSubCategory(oldCategory),
+        mainCategory: plugin.metadata.main_category,
+        category: plugin.metadata.category,
         default_severity: plugin.metadata.default_severity,
         description: plugin.metadata.description || '',
         tagsString: plugin.metadata.tags.join(', ')
       }
-      
+
       isEditing.value = false
       codeError.value = ''
       codeEditorDialog.value?.showModal()
@@ -2521,21 +2428,20 @@ const viewPluginCode = async (plugin: PluginRecord) => {
         pluginCode.value = decoder.decode(content)
         originalCode.value = pluginCode.value
         editingPlugin.value = plugin
-        
+
         // Load plugin metadata into form
-        const oldCategory = plugin.metadata.category
         newPluginMetadata.value = {
           id: plugin.metadata.id,
           name: plugin.metadata.name,
           version: plugin.metadata.version,
           author: plugin.metadata.author || '',
-          mainCategory: inferMainCategory(oldCategory),
-          category: convertToSubCategory(oldCategory),
+          mainCategory: plugin.metadata.main_category,
+          category: plugin.metadata.category,
           default_severity: plugin.metadata.default_severity,
           description: plugin.metadata.description || '',
           tagsString: plugin.metadata.tags.join(', ')
         }
-        
+
         isEditing.value = false
         codeError.value = ''
         codeEditorDialog.value?.showModal()
@@ -2568,6 +2474,7 @@ const closeCodeEditorDialog = () => {
   originalCode.value = ''
   isEditing.value = false
   codeError.value = ''
+  isFullscreenEditor.value = false
 }
 
 // Enable Editing
@@ -2583,7 +2490,7 @@ const cancelEditing = () => {
   isEditing.value = false
   codeError.value = ''
   updateCodeEditorReadonly(true)
-  
+
   // Restore original metadata if editing existing plugin
   if (editingPlugin.value) {
     const oldCategory = editingPlugin.value.metadata.category
@@ -2592,8 +2499,8 @@ const cancelEditing = () => {
       name: editingPlugin.value.metadata.name,
       version: editingPlugin.value.metadata.version,
       author: editingPlugin.value.metadata.author || '',
-      mainCategory: inferMainCategory(oldCategory),
-      category: convertToSubCategory(oldCategory),
+      mainCategory: editingPlugin.value.metadata.main_category,
+      category: editingPlugin.value.metadata.category,
       default_severity: editingPlugin.value.metadata.default_severity,
       description: editingPlugin.value.metadata.description || '',
       tagsString: editingPlugin.value.metadata.tags.join(', ')
@@ -2601,26 +2508,42 @@ const cancelEditing = () => {
   }
 }
 
+const toggleFullscreenEditor = () => {
+  isFullscreenEditor.value = !isFullscreenEditor.value
+  nextTick(() => {
+    if (codeEditorView && typeof (codeEditorView as any).requestMeasure === 'function') {
+      (codeEditorView as any).requestMeasure()
+    }
+  })
+}
+
+const onFullscreenKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && isFullscreenEditor.value) {
+    isFullscreenEditor.value = false
+    if (codeEditorView && typeof (codeEditorView as any).requestMeasure === 'function') {
+      (codeEditorView as any).requestMeasure()
+    }
+  }
+}
+
 // Save Plugin Code
 const savePluginCode = async () => {
   if (!editingPlugin.value) return
-  
+
   saving.value = true
   codeError.value = ''
-  
+
   try {
     // Parse tags
     const tags = newPluginMetadata.value.tagsString
       .split(',')
       .map(t => t.trim())
       .filter(t => t.length > 0)
-    
+
     // Map hierarchical category to backend category
-    // Agent插件统一映射为 agentTools，被动扫描插件保留子分类
-    const backendCategory = newPluginMetadata.value.mainCategory === 'agent' 
-      ? 'agentTools' 
-      : newPluginMetadata.value.category
-    
+    // Agent插件统一映射为 agents，被动扫描插件保留子分类
+    const backendCategory = newPluginMetadata.value.category
+
     // Build metadata comment
     const metadataComment = `/**
  * @plugin ${newPluginMetadata.value.id}
@@ -2633,47 +2556,50 @@ const savePluginCode = async () => {
  * @description ${newPluginMetadata.value.description || ''}
  */
 `
-    
+
     // Remove old metadata comment if exists
     let codeWithoutMetadata = pluginCode.value
     const metadataMatch = codeWithoutMetadata.match(/\/\*\*\s*[\s\S]*?\*\/\s*/)
     if (metadataMatch) {
       codeWithoutMetadata = codeWithoutMetadata.substring(metadataMatch[0].length)
     }
-    
+
     // Combine new metadata with code
     const fullCode = metadataComment + '\n' + codeWithoutMetadata
-    
+
     // 判断是更新还是创建
     // 如果有 editingPlugin，说明是编辑现有插件，使用 update_plugin_code
     // 如果元数据被修改了，需要使用 create_plugin_in_db 来更新完整信息
-    const metadataChanged = 
+    const metadataChanged =
       editingPlugin.value.metadata.name !== newPluginMetadata.value.name ||
       editingPlugin.value.metadata.version !== newPluginMetadata.value.version ||
       editingPlugin.value.metadata.author !== (newPluginMetadata.value.author || 'Unknown') ||
       editingPlugin.value.metadata.description !== (newPluginMetadata.value.description || '') ||
       editingPlugin.value.metadata.default_severity !== newPluginMetadata.value.default_severity ||
-      editingPlugin.value.metadata.tags.join(', ') !== tags.join(', ')
-    
+      editingPlugin.value.metadata.tags.join(', ') !== tags.join(', ') ||
+      editingPlugin.value.metadata.main_category !== newPluginMetadata.value.mainCategory ||
+      editingPlugin.value.metadata.category !== backendCategory
+
     let response: CommandResponse<string> | CommandResponse<void>
-    
+
     if (metadataChanged) {
       // 元数据有变化，使用 create_plugin_in_db 完整更新
-    const metadata = {
-      id: newPluginMetadata.value.id,
-      name: newPluginMetadata.value.name,
-      version: newPluginMetadata.value.version,
-      author: newPluginMetadata.value.author || 'Unknown',
-      category: backendCategory,
-      description: newPluginMetadata.value.description || '',
-      default_severity: newPluginMetadata.value.default_severity,
-      tags: tags
-    }
-    
+      const metadata = {
+        id: newPluginMetadata.value.id,
+        name: newPluginMetadata.value.name,
+        version: newPluginMetadata.value.version,
+        author: newPluginMetadata.value.author || 'Unknown',
+        main_category: newPluginMetadata.value.mainCategory,
+        category: backendCategory,
+        description: newPluginMetadata.value.description || '',
+        default_severity: newPluginMetadata.value.default_severity,
+        tags: tags
+      }
+
       response = await invoke<CommandResponse<string>>('create_plugin_in_db', {
-      metadata: metadata,
-      pluginCode: fullCode
-    })
+        metadata: metadata,
+        pluginCode: fullCode
+      })
     } else {
       // 仅代码有变化，使用 update_plugin_code
       response = await invoke<CommandResponse<void>>('update_plugin_code', {
@@ -2681,14 +2607,14 @@ const savePluginCode = async () => {
         pluginCode: fullCode
       })
     }
-    
+
     if (response.success) {
       originalCode.value = fullCode
       pluginCode.value = fullCode
       isEditing.value = false
       await refreshPlugins()
       showToast(t('plugins.saveSuccess', '插件保存成功'), 'success')
-      
+
       // 如果被动扫描正在运行，重载插件
       try {
         const reloadResponse = await invoke<CommandResponse<string>>('reload_plugin_in_pipeline', {
@@ -2718,19 +2644,17 @@ const savePluginCode = async () => {
 const createNewPlugin = async () => {
   saving.value = true
   codeError.value = ''
-  
+
   try {
     const tags = newPluginMetadata.value.tagsString
       .split(',')
       .map(t => t.trim())
       .filter(t => t.length > 0)
-    
+
     // Map hierarchical category to backend category
-    // Agent插件统一映射为 agentTools，被动扫描插件保留子分类
-    const backendCategory = newPluginMetadata.value.mainCategory === 'agent' 
-      ? 'agentTools' 
-      : newPluginMetadata.value.category
-    
+    // Agent插件统一映射为 agents，被动扫描插件保留子分类
+    const backendCategory = newPluginMetadata.value.category
+
     const metadataComment = `/**
  * @plugin ${newPluginMetadata.value.id}
  * @name ${newPluginMetadata.value.name}
@@ -2742,9 +2666,9 @@ const createNewPlugin = async () => {
  * @description ${newPluginMetadata.value.description || ''}
  */
 `
-    
+
     const fullCode = metadataComment + '\n' + pluginCode.value
-    
+
     const metadata = {
       id: newPluginMetadata.value.id,
       name: newPluginMetadata.value.name,
@@ -2756,12 +2680,12 @@ const createNewPlugin = async () => {
       default_severity: newPluginMetadata.value.default_severity,
       tags: tags
     }
-    
+
     const response = await invoke<CommandResponse<string>>('create_plugin_in_db', {
       metadata,
       pluginCode: fullCode
     })
-    
+
     if (response.success) {
       closeCodeEditorDialog()
       await refreshPlugins()
@@ -2780,26 +2704,26 @@ const createNewPlugin = async () => {
 // Insert Code Template - 从后端获取模板
 const insertTemplate = async () => {
   const isAgentPlugin = newPluginMetadata.value.mainCategory === 'agent'
-  
+
   try {
     // 从后端获取组合模板（包含接口定义和输出格式）
     const templateType = isAgentPlugin ? 'agent' : 'passive'
-    
+
     // 使用 get_combined_plugin_prompt_api 获取完整的模板内容
     const combinedTemplate = await invoke<string>('get_combined_plugin_prompt_api', {
       pluginType: templateType,
       vulnType: newPluginMetadata.value.category || 'custom',
       severity: newPluginMetadata.value.default_severity || 'medium'
     })
-    
+
     console.log('[Insert Template] Loaded template from backend:', {
       type: templateType,
       length: combinedTemplate.length
     })
-    
+
     // 提取代码示例（如果模板中包含代码块）
     let codeTemplate = ''
-    
+
     // 尝试从模板中提取 TypeScript 代码块（支持多种格式）
     const codeBlockPatterns = [
       /```typescript\n([\s\S]*?)\n```/,
@@ -2807,7 +2731,7 @@ const insertTemplate = async () => {
       /```javascript\n([\s\S]*?)\n```/,
       /```js\n([\s\S]*?)\n```/
     ]
-    
+
     for (const pattern of codeBlockPatterns) {
       const match = combinedTemplate.match(pattern)
       if (match) {
@@ -2815,7 +2739,7 @@ const insertTemplate = async () => {
         break
       }
     }
-    
+
     // 如果没有找到代码块，使用回退模板
     if (!codeTemplate) {
       console.warn('[Insert Template] No code block found in template, using fallback')
@@ -2825,7 +2749,7 @@ const insertTemplate = async () => {
         codeTemplate = getPassiveFallbackTemplate()
       }
     }
-    
+
     pluginCode.value = codeTemplate
     updateCodeEditorContent(codeTemplate)
     showToast('已插入模板代码', 'success')
@@ -2937,20 +2861,20 @@ const formatCode = () => {
     let indentLevel = 0
     const formatted = lines.map(line => {
       const trimmed = line.trim()
-      
+
       if (trimmed.startsWith('}') || trimmed.startsWith(']')) {
         indentLevel = Math.max(0, indentLevel - 1)
       }
-      
+
       const indented = '  '.repeat(indentLevel) + trimmed
-      
+
       if (trimmed.endsWith('{') || trimmed.endsWith('[')) {
         indentLevel++
       }
-      
+
       return indented
     })
-    
+
     pluginCode.value = formatted.join('\n')
   } catch (error) {
     console.error('Error formatting code:', error)
@@ -2960,7 +2884,7 @@ const formatCode = () => {
 // Open AI Generate Dialog
 const openAIGenerateDialog = () => {
   aiPrompt.value = ''
-  aiPluginType.value = 'vulnerability'
+  aiPluginType.value = 'agent'
   aiSeverity.value = 'medium'
   aiGenerateError.value = ''
   aiGenerateDialog.value?.showModal()
@@ -3014,14 +2938,14 @@ const getFallbackPassiveTemplate = () => {
 const generatePluginWithAI = async () => {
   aiGenerating.value = true
   aiGenerateError.value = ''
-  
+
   try {
     // 判断插件类型
-    const isAgentPlugin = aiPluginType.value === 'agentTools' || 
-                          ['scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility'].includes(aiPluginType.value)
-    
+    const isAgentPlugin = aiPluginType.value === 'agent' ||
+      ['scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility'].includes(aiPluginType.value)
+
     let systemPrompt = ''
-    
+
     // 从数据库获取模板
     try {
       const templateType = isAgentPlugin ? 'agent' : 'passive'
@@ -3030,7 +2954,7 @@ const generatePluginWithAI = async () => {
         vulnType: aiPluginType.value,
         severity: aiSeverity.value
       })
-      
+
       console.log('[Plugin Gen] Loaded template from database:', {
         type: templateType,
         length: systemPrompt.length
@@ -3044,14 +2968,14 @@ const generatePluginWithAI = async () => {
         systemPrompt = getFallbackPassiveTemplate()
       }
     }
-    
+
     const tempConversationId = `plugin_gen_${Date.now()}`
-    const userPrompt = `${systemPrompt}\n\n用户需求：${aiPrompt.value}`
-    
+    const userPrompt = `用户需求：${aiPrompt.value}`
+
     let generatedCode = ''
     let streamCompleted = false
     let streamError: string | null = null
-    
+
     const unlisten = await listen('message_chunk', (event: any) => {
       const payload = event.payload
       console.log('[Plugin Gen] Received chunk:', {
@@ -3060,7 +2984,7 @@ const generatePluginWithAI = async () => {
         is_final: payload.is_final,
         content_length: payload.content?.length || 0
       })
-      
+
       if (payload.conversation_id === tempConversationId) {
         if (payload.chunk_type === 'Content' && payload.content) {
           generatedCode += payload.content
@@ -3071,7 +2995,7 @@ const generatePluginWithAI = async () => {
         }
       }
     })
-    
+
     const unlistenError = await listen('ai_stream_error', (event: any) => {
       const payload = event.payload
       if (payload.conversation_id === tempConversationId) {
@@ -3079,29 +3003,30 @@ const generatePluginWithAI = async () => {
         streamCompleted = true
       }
     })
-    
+
     try {
       console.log('[Plugin Gen] Starting AI generation with conversation_id:', tempConversationId)
-      
+
       await invoke('send_ai_stream_message', {
         request: {
           conversation_id: tempConversationId,
           message: userPrompt,
           service_name: 'default',
+          system_prompt: systemPrompt,
         }
       })
-      
+
       console.log('[Plugin Gen] Waiting for stream to complete...')
       const maxWaitTime = 120000 // 增加到 120 秒
       const startTime = Date.now()
       while (!streamCompleted && (Date.now() - startTime < maxWaitTime)) {
         await new Promise(resolve => setTimeout(resolve, 100))
       }
-      
+
       if (streamError) {
         throw new Error(streamError)
       }
-      
+
       if (!streamCompleted) {
         // 如果有生成的代码，即使超时也继续处理
         if (generatedCode.trim()) {
@@ -3123,7 +3048,7 @@ const generatePluginWithAI = async () => {
           elapsed: Date.now() - startTime
         })
       }
-      
+
       // Clean AI response
       generatedCode = generatedCode.trim()
       generatedCode = generatedCode.replace(/```typescript\n?/g, '')
@@ -3132,43 +3057,42 @@ const generatePluginWithAI = async () => {
       generatedCode = generatedCode.replace(/```js\n?/g, '')
       generatedCode = generatedCode.replace(/```\n?/g, '')
       generatedCode = generatedCode.trim()
-      
+
       if (!generatedCode) {
         throw new Error(t('plugins.aiNoCode', 'AI未返回任何代码'))
       }
-      
+
       const pluginId = aiPrompt.value
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '')
         .substring(0, 50) || 'ai_generated_plugin'
-      
+
       // 根据插件类型设置元数据
       const mainCategory = isAgentPlugin ? 'agent' : 'passive'
-      const category = isAgentPlugin ? convertToSubCategory(aiPluginType.value) : aiPluginType.value
-      
+
       newPluginMetadata.value = {
         id: pluginId,
         name: aiPrompt.value.substring(0, 50),
         version: '1.0.0',
         author: 'AI Generated',
         mainCategory: mainCategory,
-        category: category,
+        category: "",
         default_severity: aiSeverity.value,
         description: aiPrompt.value,
         tagsString: `ai-generated, ${aiPluginType.value}`
       }
-      
+
       pluginCode.value = generatedCode
       editingPlugin.value = null
-      
+
       closeAIGenerateDialog()
       codeEditorDialog.value?.showModal()
       await initCodeEditor()
     } finally {
       unlisten()
       unlistenError()
-      
+
       try {
         await invoke('delete_ai_conversation', { conversationId: tempConversationId })
       } catch (e) {
@@ -3186,21 +3110,20 @@ const generatePluginWithAI = async () => {
 // Test Plugin - 根据插件类型选择不同的测试方式
 const testPlugin = async (plugin: PluginRecord) => {
   if (!plugin || !plugin.metadata?.id) return
-  
-  // 判断插件类型
-  const isAgentPlugin = plugin.metadata.category === 'agentTools' || 
-                        ['scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility'].includes(plugin.metadata.category)
-  
+
+  // 判断插件类型（以 main_category 为准）
+  const isAgentPlugin = plugin.metadata.main_category === 'agent'
+
   testing.value = true
   testResult.value = null
-  
+
   try {
     if (isAgentPlugin) {
       // Agent 插件测试：调用 analyze 函数
       await testAgentPlugin(plugin)
     } else {
       // 被动扫描插件测试：调用 scan_request/scan_response
-      await testPassiveScanPlugin(plugin)
+      await testpassivePlugin(plugin)
     }
   } catch (e) {
     console.error('Error testing plugin:', e)
@@ -3214,11 +3137,11 @@ const testPlugin = async (plugin: PluginRecord) => {
 }
 
 // 测试被动扫描插件（HTTP请求/响应分析）
-const testPassiveScanPlugin = async (plugin: PluginRecord) => {
+const testpassivePlugin = async (plugin: PluginRecord) => {
   const resp = await invoke<CommandResponse<TestResult>>('test_plugin', {
     pluginId: plugin.metadata.id
   })
-  
+
   if (resp.success && resp.data) {
     testResult.value = resp.data
     testResultDialog.value?.showModal()
@@ -3250,58 +3173,68 @@ const testAgentPlugin = async (plugin: PluginRecord) => {
       sample_key: 'sample_value'
     }
   }
-  
-  const resp = await invoke<CommandResponse<any>>('test_execute_plugin_tool', {
-    request: testInput
-  })
-  
-  if (resp.success && resp.data) {
-    const result = resp.data
-    testResult.value = {
-      success: result.success,
-      message: `插件 '${result.tool_name}' 执行完成\n执行时间: ${result.execution_time_ms}ms`,
-      findings: result.output ? [{
-        title: 'Agent 工具执行结果',
-        description: JSON.stringify(result.output, null, 2),
-        severity: result.success ? 'info' : 'error'
-      }] : undefined,
-      error: result.error
-    }
-    testResultDialog.value?.showModal()
-    
-    if (result.success) {
-      showToast(t('plugins.testSuccess', `Agent 插件测试完成 (${result.execution_time_ms}ms)`), 'success')
-    } else {
-      showToast(t('plugins.testFailed', result.error || '测试失败'), 'error')
-    }
+
+  const result = await invoke<any>('test_execute_plugin_tool', { request: testInput })
+  testResult.value = {
+    success: !!result?.success,
+    message: result ? `插件 '${result.tool_name}' 执行完成\n执行时间: ${result.execution_time_ms}ms` : 'Agent 插件测试命令执行失败',
+    findings: [{
+      title: 'Agent 工具执行结果',
+      description: JSON.stringify(result?.output ?? { error: result?.error || 'Agent 插件测试命令执行失败' }, null, 2),
+      severity: result?.success ? 'info' : 'error'
+    }],
+    error: result?.error || null
+  }
+  testResultDialog.value?.showModal()
+  if (result?.success) {
+    showToast(t('plugins.testSuccess', `Agent 插件测试完成 (${result.execution_time_ms}ms)`), 'success')
   } else {
-    const msg = resp.error || 'Agent 插件测试命令执行失败'
-    showToast(t('plugins.testError', msg), 'error')
-    testResult.value = { success: false, message: msg, error: msg }
-    testResultDialog.value?.showModal()
+    const msg = result?.error || 'Agent 插件测试命令执行失败'
+    showToast(t('plugins.testFailed', msg), 'error')
   }
 }
 
 // Run Advanced Test - 根据插件类型选择不同的测试方式
 const runAdvancedTest = async () => {
   if (!advancedPlugin.value) return
-  
-  // 判断插件类型
-  const isAgentPlugin = advancedPlugin.value.metadata.category === 'agentTools' || 
-                        ['scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility'].includes(advancedPlugin.value.metadata.category)
-  
+
+  // 使用统一的 Agent 类型判断（兼容旧数据）
+  const isAgentPlugin = isAdvancedAgent.value
+
   advancedTesting.value = true
   advancedError.value = ''
   advancedResult.value = null
-  
+
   try {
     if (isAgentPlugin) {
-      // Agent 插件不支持高级测试（多次并发测试），使用单次测试
-      advancedError.value = 'Agent 插件暂不支持高级并发测试，请使用普通测试功能'
-      showToast('Agent 插件暂不支持高级并发测试', 'warning')
+      const inputsStr = (advancedForm.value.agent_inputs_text || '').trim()
+      let inputs: any = {}
+      if (inputsStr.length > 0) {
+        try { inputs = JSON.parse(inputsStr) } catch (e) { inputs = {} }
+      }
+
+      const resp = await invoke<CommandResponse<AdvancedTestResult>>('test_agent_plugin_advanced', {
+        plugin_id: advancedPlugin.value.metadata.id,
+        inputs,
+        runs: Number(advancedForm.value.runs) || 1,
+        concurrency: Number(advancedForm.value.concurrency) || 1,
+      } as any)
+
+      if (resp.success && resp.data) {
+        advancedResult.value = resp.data
+        if (resp.data.success) {
+          showToast(t('plugins.testSuccess', `Agent 高级测试完成，唯一发现 ${resp.data.unique_findings} 条`), 'success')
+        } else {
+          showToast(t('plugins.testFailed', resp.data.message || '测试失败'), 'error')
+        }
+      } else {
+        const msg = resp.error || 'Agent 高级测试命令执行失败'
+        advancedError.value = msg
+        showToast(t('plugins.testError', msg), 'error')
+      }
       return
     }
-    
+
     // 被动扫描插件的高级测试
     const headersStr = (advancedForm.value.headersText || '').trim()
     if (headersStr.length > 0) {
@@ -3311,7 +3244,7 @@ const runAdvancedTest = async () => {
     }
 
     const resp = await invoke<CommandResponse<AdvancedTestResult>>('test_plugin_advanced', {
-      pluginId: advancedPlugin.value.metadata.id,
+      plugin_id: advancedPlugin.value.metadata.id,
       url: advancedForm.value.url || undefined,
       method: advancedForm.value.method || undefined,
       headers: headersStr || undefined,
@@ -3375,15 +3308,15 @@ const closeDeleteDialog = () => {
 // Delete Plugin
 const deletePlugin = async () => {
   if (!deletingPlugin.value) return
-  
+
   deleting.value = true
-  
+
   try {
     // 调用后端删除插件命令
     const response = await invoke<CommandResponse<void>>('delete_plugin', {
       pluginId: deletingPlugin.value.metadata.id
     })
-    
+
     if (response.success) {
       const pluginName = deletingPlugin.value.metadata.name
       closeDeleteDialog()
@@ -3445,7 +3378,7 @@ const refreshReviewPlugins = async () => {
       reviewTotalCount.value = 0
       reviewTotalPagesCount.value = 0
     }
-    
+
     // 同时刷新统计数据
     await refreshReviewStats()
   } catch (error) {
@@ -3499,12 +3432,12 @@ const isPluginSelected = (plugin: ReviewPlugin) => {
 
 const approvePlugin = async (plugin: ReviewPlugin) => {
   if (!plugin) return
-  
+
   try {
     const response: any = await invoke('approve_plugin', {
       pluginId: plugin.plugin_id
     })
-    
+
     if (response.success) {
       plugin.status = 'Approved'
       await refreshReviewPlugins()
@@ -3522,13 +3455,13 @@ const approvePlugin = async (plugin: ReviewPlugin) => {
 
 const rejectPlugin = async (plugin: ReviewPlugin) => {
   if (!plugin) return
-  
+
   try {
     const response: any = await invoke('reject_plugin', {
       pluginId: plugin.plugin_id,
       reason: 'Manual rejection'
     })
-    
+
     if (response.success) {
       plugin.status = 'Rejected'
       await refreshReviewPlugins()
@@ -3546,13 +3479,13 @@ const rejectPlugin = async (plugin: ReviewPlugin) => {
 
 const approveSelected = async () => {
   if (selectedReviewPlugins.value.length === 0) return
-  
+
   try {
     const pluginIds = selectedReviewPlugins.value.map(p => p.plugin_id)
     const response: any = await invoke('batch_approve_plugins', {
       pluginIds
     })
-    
+
     if (response.success) {
       await refreshReviewPlugins()
       await refreshPlugins() // 同时刷新主插件列表
@@ -3569,14 +3502,14 @@ const approveSelected = async () => {
 
 const rejectSelected = async () => {
   if (selectedReviewPlugins.value.length === 0) return
-  
+
   try {
     const pluginIds = selectedReviewPlugins.value.map(p => p.plugin_id)
     const response: any = await invoke('batch_reject_plugins', {
       pluginIds,
       reason: 'Batch rejection'
     })
-    
+
     if (response.success) {
       await refreshReviewPlugins()
       await refreshPlugins() // 同时刷新主插件列表
@@ -3593,12 +3526,12 @@ const rejectSelected = async () => {
 
 const deleteReviewPlugin = async (plugin: ReviewPlugin) => {
   if (!plugin) return
-  
+
   try {
     const response: any = await invoke('review_delete_plugin', {
       pluginId: plugin.plugin_id
     })
-    
+
     if (response.success) {
       await refreshReviewPlugins()
       await refreshPlugins() // 同时刷新主插件列表
@@ -3621,15 +3554,15 @@ const copyReviewCode = () => {
 
 const saveReviewEdit = async () => {
   if (!selectedReviewPlugin.value) return
-  
+
   savingReview.value = true
-  
+
   try {
     const response: any = await invoke('review_update_plugin_code', {
       pluginId: selectedReviewPlugin.value.plugin_id,
       code: editedReviewCode.value
     })
-    
+
     if (response.success) {
       selectedReviewPlugin.value.code = editedReviewCode.value
       reviewEditMode.value = false
@@ -3660,6 +3593,20 @@ const getReviewStatusText = (status: string): string => {
 watch(reviewEditMode, (newValue) => {
   updateReviewCodeEditorReadonly(!newValue)
 })
+ 
+watch(isFullscreenEditor, (enabled) => {
+  if (enabled) {
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onFullscreenKeydown)
+  } else {
+    window.removeEventListener('keydown', onFullscreenKeydown)
+    document.body.style.overflow = ''
+  }
+})
+
+watch(selectedCategory, () => {
+  pluginCurrentPage.value = 1
+})
 
 // Component Lifecycle
 onMounted(async () => {
@@ -3680,6 +3627,8 @@ onUnmounted(() => {
     reviewCodeEditorView.destroy()
     reviewCodeEditorView = null
   }
+  window.removeEventListener('keydown', onFullscreenKeydown)
+  document.body.style.overflow = ''
 })
 </script>
 
@@ -3737,5 +3686,21 @@ textarea.textarea {
 
 :deep(.cm-activeLine) {
   background-color: #2c313c;
+}
+
+.editor-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 99999;
+  background-color: hsl(var(--b1));
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.editor-fullscreen :deep(.cm-editor) {
+  height: 100vh;
 }
 </style>

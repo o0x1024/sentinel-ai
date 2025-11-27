@@ -16,7 +16,9 @@ use crate::engines::rewoo::rewoo_types::ReWOOConfig;
 // use crate::engines::orchestrator::engine_adapter::OrchestratorEngineAdapter; // Orchestrator已删除
 // use crate::engines::plan_and_execute::executor::ExecutionMode; // not needed directly
 use crate::agents::traits::{ExecutionEngine, AgentTask, TaskPriority};
+use sentinel_core::models::agent::{AgentTask as CoreAgentTask, TaskPriority as CoreTaskPriority, AgentExecutionResult as CoreAgentExecutionResult, SessionLog as CoreSessionLog};
 use futures::StreamExt;
+use sentinel_core::models::scenario_agent::{ScenarioAgentProfile, AgentEngine};
 
 /// 创建AI助手会话记录
 async fn create_ai_assistant_session(
@@ -41,7 +43,22 @@ async fn create_ai_assistant_session(
         timeout: Some(300),
     };
 
-    db_service.create_agent_task(&agent_task).await
+    let db_task = CoreAgentTask {
+        id: agent_task.id.clone(),
+        description: agent_task.description.clone(),
+        target: agent_task.target.clone(),
+        parameters: agent_task.parameters.clone(),
+        user_id: agent_task.user_id.clone(),
+        priority: match agent_task.priority {
+            TaskPriority::Low => CoreTaskPriority::Low,
+            TaskPriority::Normal => CoreTaskPriority::Normal,
+            TaskPriority::High => CoreTaskPriority::High,
+            TaskPriority::Critical => CoreTaskPriority::Critical,
+        },
+        timeout: agent_task.timeout,
+    };
+
+    db_service.create_agent_task(&db_task).await
         .map_err(|e| format!("Failed to create agent task: {}", e))?;
 
     // 然后创建agent_session记录
@@ -65,7 +82,7 @@ async fn save_ai_assistant_execution(
     duration_ms: u64,
 ) -> Result<(), String> {
     use crate::services::database::Database;
-    use crate::commands::agent_commands::WorkflowStepDetail;
+use sentinel_core::models::workflow::WorkflowStepDetail;
 
     // 保存执行步骤到 agent_execution_steps 表
     let step_detail = WorkflowStepDetail {
@@ -281,80 +298,6 @@ fn default_notification_enabled() -> bool {
 
 // ===== 场景 Agent Profile（最小可用版本）=====
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AgentEngine {
-    Travel,
-    PlanExecute,
-    React,
-    Rewoo,
-    LlmCompiler,
-    Auto
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmId { pub provider: String, pub model: String, pub temperature: Option<f32>, pub max_tokens: Option<u32> }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmConfigBundle { pub default: LlmId }
-
-// Optional extended configs for scenario agents
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerStageLlm { pub planner: Option<LlmId>, pub executor: Option<LlmId>, pub replanner: Option<LlmId>, pub evaluator: Option<LlmId> }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromptBundle { pub system: Option<String>, pub planner: Option<String>, pub executor: Option<String>, pub replanner: Option<String>, pub evaluator: Option<String> }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolPolicy { pub allow: Vec<String>, pub deny: Option<Vec<String>> }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetryPolicy { pub max_retries: u32, pub backoff: String, pub interval_ms: Option<f64> }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionPolicy { pub timeout_sec: Option<f64>, pub retry: Option<RetryPolicy>, pub concurrency: Option<u32>, pub strict_mode: Option<bool> }
-
-// Prompt template IDs bound to agent (from PromptManagement)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromptIds {
-    pub system: Option<i64>,
-    pub planner: Option<i64>,
-    pub executor: Option<i64>,
-    pub replanner: Option<i64>,
-    pub evaluator: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScenarioAgentProfile {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub enabled: bool,
-    pub version: Option<String>,
-    pub engine: AgentEngine,
-    pub llm: LlmConfigBundle,
-    #[serde(default)]
-    pub prompts: Option<PromptBundle>,
-    #[serde(default)]
-    pub tools: Option<ToolPolicy>,
-    #[serde(default)]
-    pub execution: Option<ExecutionPolicy>,
-    #[serde(default)]
-    pub prompt_ids: Option<PromptIds>,
-    // Unified prompt system fields
-    #[serde(default)]
-    pub prompt_strategy: Option<String>,
-    #[serde(default)]
-    pub group_id: Option<i64>,
-    #[serde(default)]
-    pub pinned_versions: Option<std::collections::HashMap<i64, String>>,
-    #[serde(default)]
-    pub pre_hooks: Option<Vec<String>>,
-    #[serde(default)]
-    pub post_hooks: Option<Vec<String>>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-}
 
 // Expose tools catalog for agent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -520,6 +463,27 @@ pub async fn dispatch_scenario_task(
     let message_id = request.message_id.clone()
         .or_else(|| options.get("message_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
 
+    if let Some(conv_id) = conversation_id.as_ref() {
+        if !conv_id.is_empty() {
+            let user_msg = sentinel_core::models::database::AiMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                conversation_id: conv_id.clone(),
+                role: "user".to_string(),
+                content: request.query.clone(),
+                metadata: None,
+                token_count: Some(request.query.len() as i32),
+                cost: None,
+                tool_calls: None,
+                attachments: None,
+                timestamp: chrono::Utc::now(),
+                architecture_type: None,
+                architecture_meta: None,
+                structured_data: None,
+            };
+            let _ = db_service.create_message(&user_msg).await;
+        }
+    }
+
     // 获取当前角色提示词并添加到options中
     if let Ok(Some(current_role)) = db_service.get_current_ai_role().await {
         if !current_role.prompt.trim().is_empty() {
@@ -545,7 +509,8 @@ pub async fn dispatch_scenario_task(
     if let Some(gid) = profile.group_id {
         options.insert("group_id".to_string(), serde_json::json!(gid));
     }
-    if let Some(prompts) = &profile.prompts {
+    {
+        let prompts = &profile.prompts;
         options.insert("prompts".to_string(), serde_json::json!({
             "system": prompts.system,
             "planner": prompts.planner,
@@ -564,33 +529,28 @@ pub async fn dispatch_scenario_task(
     // - 若前端配置存在（profile.tools 有值）：按 allow/deny 透传；
     // - 若前端未配置（profile.tools 为 None）：也要显式传入空白名单，表示“未选择任何工具 ⇒ 禁用所有工具”。
     //   这样 ReAct/Planner 在构建工具清单时不会退回到“允许所有”。
-    if let Some(tool_policy) = &profile.tools {
+    {
+        let tool_policy = &profile.tools;
         log::info!("Agent tools policy - allow: {:?}, deny: {:?}", tool_policy.allow, tool_policy.deny);
-        // 允许列表（可能为空，但键一定存在）
         options.insert(
             "tools_allow".to_string(),
             serde_json::json!(tool_policy.allow.clone())
         );
-        // 禁止列表（可空）
         if let Some(deny) = &tool_policy.deny {
             options.insert("tools_deny".to_string(), serde_json::json!(deny.clone()));
         }
-    } else {
-        // 显式设置空白名单：与前端“未选择任何工具”一致，防止引擎回退到“全量可用”。
-        log::warn!("Agent has no tools policy configured! Falling back to strict: tools_allow = []");
-        options.insert("tools_allow".to_string(), serde_json::json!([] as [String; 0]));
     }
 
     // 执行策略（超时/重试/严格模式/并发）
-    if let Some(exec) = &profile.execution {
+    {
+        let exec = &profile.execution;
         if let Some(timeout) = exec.timeout_sec {
             options.insert("execution_timeout_sec".to_string(), serde_json::json!(timeout));
         }
-        if let Some(retry) = &exec.retry {
-            options.insert("execution_retry_max".to_string(), serde_json::json!(retry.max_retries));
-            options.insert("execution_retry_backoff".to_string(), serde_json::json!(retry.backoff.clone()));
-            if let Some(iv) = retry.interval_ms { options.insert("execution_retry_interval_ms".to_string(), serde_json::json!(iv)); }
-        }
+        let retry = &exec.retry;
+        options.insert("execution_retry_max".to_string(), serde_json::json!(retry.max_retries));
+        options.insert("execution_retry_backoff".to_string(), serde_json::json!(retry.backoff.clone()));
+        if let Some(iv) = retry.interval_ms { options.insert("execution_retry_interval_ms".to_string(), serde_json::json!(iv)); }
         if let Some(conc) = exec.concurrency { options.insert("execution_concurrency".to_string(), serde_json::json!(conc)); }
         if let Some(strict) = exec.strict_mode { options.insert("execution_strict_mode".to_string(), serde_json::json!(strict)); }
     }

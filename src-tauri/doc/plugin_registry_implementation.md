@@ -90,7 +90,7 @@ fn default_main_category() -> String {
 ```rust
 // 注册插件时自动推断 main_category
 pub async fn register_plugin_with_code(&self, plugin: &PluginMetadata, plugin_code: &str) {
-    let main_category = if plugin.category == "agentTools" { "agent" } else { "passive" };
+    let main_category = if plugin.category == "agents" { "agent" } else { "passive" };
     
     sqlx::query(r#"
         INSERT OR REPLACE INTO plugin_registry (
@@ -186,12 +186,12 @@ async fn get_tools(&self) -> anyhow::Result<Vec<Arc<dyn UnifiedTool>>> {
 ```typescript
 // 保存时映射到后端
 const backendCategory = newPluginMetadata.value.mainCategory === 'agent' 
-    ? 'agentTools'  // Agent插件统一使用 agentTools
+    ? 'agents'  // Agent插件统一使用 agents
     : newPluginMetadata.value.category  // 被动扫描插件保留子分类
 
 // 查询时从数据库 main_category 推断前端主分类
 function inferMainCategory(category: string): 'passive' | 'agent' {
-    return category === 'agentTools' ? 'agent' : 'passive'
+    return category === 'agents' ? 'agent' : 'passive'
 }
 ```
 
@@ -213,11 +213,11 @@ function inferMainCategory(category: string): 'passive' | 'agent' {
 INSERT INTO plugin_registry (main_category, category, ...)
 SELECT 
     CASE 
-        WHEN category = 'agentTools' THEN 'agent'
+        WHEN category = 'agents' THEN 'agent'
         ELSE 'passive'
     END as main_category,
     CASE 
-        WHEN category = 'agentTools' THEN 'scanner'
+        WHEN category = 'agents' THEN 'scanner'
         WHEN category = 'passiveScan' THEN 'vulnerability'
         ELSE category
     END as category,
@@ -229,8 +229,8 @@ FROM passive_plugin_registry;
 
 ### 创建Agent插件
 1. 前端选择：主分类=Agent, 子分类=扫描器
-2. 前端保存：`category='agentTools'`（向后兼容）
-3. 后端处理：识别 `category='agentTools'`，设置 `main_category='agent', category='scanner'`
+2. 前端保存：`category='agents'`（向后兼容）
+3. 后端处理：识别 `category='agents'`，设置 `main_category='agent', category='scanner'`
 4. 数据库存储：`main_category='agent', category='scanner'`
 5. Agent加载：`AgentPluginProvider` 查询 `WHERE main_category='agent' AND enabled=1`
 6. 工具注册：`plugin::<plugin_id>`
@@ -286,8 +286,8 @@ FROM passive_plugin_registry;
 
 1. **不再使用视图方案**：直接使用 `plugin_registry` 表，更清晰直接
 2. **main_category必需**：所有新插件必须设置 main_category（默认为 'passive'）
-3. **Agent识别变更**：从 `category='agentTools'` 改为 `main_category='agent'`
-4. **前端兼容**：保存时仍然使用 `agentTools` 以保持向后兼容
+3. **Agent识别变更**：从 `category='agents'` 改为 `main_category='agent'`
+4. **前端兼容**：保存时仍然使用 `agents` 以保持向后兼容
 5. **索引性能**：针对 Agent 插件查询添加了部分索引
 
 ## 相关文件

@@ -48,12 +48,23 @@ fn extract_custom_interface(code: &str) -> Option<Vec<PluginParameter>> {
     let _param_name = captures.get(1)?.as_str();
     let param_type = captures.get(2)?.as_str();
 
-
-    // 查找对应的接口定义
-    let interface_pattern = format!(r"(?s)export\s+interface\s+{}\s*\{{([^}}]+)\}}", regex::escape(param_type));
+    let interface_pattern = format!(
+        r"(?s)(?:export\s+)?interface\s+{}\s*\{{([^}}]+)\}}",
+        regex::escape(param_type)
+    );
+    let type_pattern = format!(
+        r"(?s)(?:export\s+)?type\s+{}\s*=\s*\{{([^}}]+)\}}",
+        regex::escape(param_type)
+    );
     let interface_regex = Regex::new(&interface_pattern).ok()?;
-    let interface_captures = interface_regex.captures(code)?;
-    let interface_body = interface_captures.get(1)?.as_str();
+    let type_regex = Regex::new(&type_pattern).ok()?;
+    let interface_body = if let Some(caps) = interface_regex.captures(code) {
+        caps.get(1)?.as_str()
+    } else if let Some(caps) = type_regex.captures(code) {
+        caps.get(1)?.as_str()
+    } else {
+        return None;
+    };
 
     // 解析接口属性
     let mut parameters = Vec::new();

@@ -881,14 +881,14 @@ const loadTools = async () => {
   }
 }
 
-// 加载插件工具（仅 agentTools 类型）
+// 加载插件工具（仅 agents 类型）
 const loadPluginTools = async () => {
   try {
     const response = await invoke<any>('list_plugins')
     if (response.success && response.data) {
-      // 只加载 agentTools 类型的已启用插件
+      // 只加载 agents 类型的已启用插件
       pluginTools.value = response.data.filter((plugin: any) => 
-        plugin.metadata.category === 'agentTools' && plugin.status === 'Enabled'
+        plugin.metadata.category === 'agents' && plugin.status === 'Enabled'
       )
     } else {
       pluginTools.value = []

@@ -152,6 +152,7 @@ pub fn run() {
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("sentinel_ai=info".parse().unwrap())
+                .add_directive("sentinel_plugins=info".parse().unwrap())
                 // 屏蔽 rig crate 的 "Agent multi-turn stream finished" 日志
                 .add_directive("rig::agent::prompt_request::streaming=warn".parse().unwrap())
         )
@@ -477,6 +478,7 @@ pub fn run() {
             ai::delete_ai_conversation,
             ai::update_ai_conversation_title,
             ai::archive_ai_conversation,
+            ai::delete_ai_message,
             ai::test_ai_connection,
             ai::get_provider_models,
             ai::save_ai_config,
@@ -559,6 +561,7 @@ pub fn run() {
             commands::agent_plugin_commands::list_agent_plugin_tools,
             commands::agent_plugin_commands::search_agent_plugin_tools,
             commands::agent_plugin_commands::test_execute_plugin_tool,
+            commands::agent_plugin_commands::test_agent_plugin_advanced,
             commands::agent_plugin_commands::get_plugin_tool_info,
             // MCP服务器管理命令（保留）
             mcp_commands::get_mcp_tools,
@@ -857,6 +860,8 @@ pub fn run() {
             passive_scan_commands::count_findings,
             passive_scan_commands::enable_plugin,
             passive_scan_commands::disable_plugin,
+            passive_scan_commands::batch_enable_plugins,
+            passive_scan_commands::batch_disable_plugins,
             passive_scan_commands::list_plugins,
             passive_scan_commands::download_ca_cert,
             passive_scan_commands::get_ca_cert_path,

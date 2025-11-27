@@ -1,4 +1,4 @@
-use crate::models::ai::AiRole;
+use sentinel_core::models::ai::AiRole;
 use crate::services::database::{Database, DatabaseService};
 use chrono::Utc;
 use std::sync::Arc;
@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 #[tauri::command]
 pub async fn get_ai_roles(db: State<'_, Arc<DatabaseService>>) -> Result<Vec<AiRole>, String> {
-    db.get_ai_roles().await.map_err(|e| e.to_string())
+    db.inner().get_ai_roles().await.map_err(|e| e.to_string())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -32,7 +32,7 @@ pub async fn create_ai_role(
         created_at: now,
         updated_at: now,
     };
-    db.create_ai_role(&role).await.map_err(|e| e.to_string())?;
+    db.inner().create_ai_role(&role).await.map_err(|e| e.to_string())?;
     Ok(role)
 }
 
@@ -50,7 +50,7 @@ pub async fn update_ai_role(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     // 首先获取角色以保留 is_system 属性
-    let roles = db.get_ai_roles().await.map_err(|e| {
+    let roles = db.inner().get_ai_roles().await.map_err(|e| {
         let err_msg = format!("Failed to get AI roles: {}", e);
         tracing::error!("{}", err_msg);
         err_msg
@@ -71,7 +71,7 @@ pub async fn update_ai_role(
         updated_at: Utc::now(),
     };
 
-    db.update_ai_role(&role).await.map_err(|e| e.to_string())
+    db.inner().update_ai_role(&role).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -79,7 +79,7 @@ pub async fn delete_ai_role(id: String, db: State<'_, Arc<DatabaseService>>) -> 
     tracing::info!("Attempting to delete AI role with ID: {}", id);
 
     // 首先检查角色是否存在
-    let roles = db.get_ai_roles().await.map_err(|e| {
+    let roles = db.inner().get_ai_roles().await.map_err(|e| {
         let err_msg = format!("Failed to get AI roles: {}", e);
         tracing::error!("{}", err_msg);
         err_msg
@@ -90,13 +90,13 @@ pub async fn delete_ai_role(id: String, db: State<'_, Arc<DatabaseService>>) -> 
         tracing::info!("Deleting role: {} ({})", role.title, id);
         
         // 如果删除的是当前选中的角色，清除选择
-        if let Ok(Some(current_role)) = db.get_current_ai_role().await {
+        if let Ok(Some(current_role)) = db.inner().get_current_ai_role().await {
             if current_role.id == id {
-                let _ = db.set_current_ai_role(None).await;
+                let _ = db.inner().set_current_ai_role(None).await;
             }
         }
         
-        match db.delete_ai_role(&id).await {
+        match db.inner().delete_ai_role(&id).await {
             Ok(_) => {
                 tracing::info!("Successfully deleted role: {}", id);
                 Ok(())
@@ -124,7 +124,7 @@ pub async fn set_current_ai_role(
     match role_id.as_deref() {
         Some(id) => {
             // 验证角色是否存在
-            let roles = db.get_ai_roles().await.map_err(|e| {
+            let roles = db.inner().get_ai_roles().await.map_err(|e| {
                 let err_msg = format!("Failed to get AI roles: {}", e);
                 tracing::error!("{}", err_msg);
                 err_msg
@@ -136,14 +136,14 @@ pub async fn set_current_ai_role(
                 return Err(err_msg);
             }
             
-            db.set_current_ai_role(Some(id)).await.map_err(|e| {
+            db.inner().set_current_ai_role(Some(id)).await.map_err(|e| {
                 let err_msg = format!("Failed to set current AI role: {}", e);
                 tracing::error!("{}", err_msg);
                 err_msg
             })
         }
         None => {
-            db.set_current_ai_role(None).await.map_err(|e| {
+            db.inner().set_current_ai_role(None).await.map_err(|e| {
                 let err_msg = format!("Failed to clear current AI role: {}", e);
                 tracing::error!("{}", err_msg);
                 err_msg
@@ -156,7 +156,7 @@ pub async fn set_current_ai_role(
 pub async fn get_current_ai_role(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<Option<AiRole>, String> {
-    db.get_current_ai_role().await.map_err(|e| {
+    db.inner().get_current_ai_role().await.map_err(|e| {
         let err_msg = format!("Failed to get current AI role: {}", e);
         tracing::error!("{}", err_msg);
         err_msg

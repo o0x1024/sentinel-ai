@@ -804,10 +804,8 @@ impl McpServerManager {
             cmd.arg(arg);
         }
         let transport = rmcp::transport::TokioChildProcess::new(cmd)?;
-        // 使用新的传输层API，需要将transport转换为适当的类型
         let (reader, writer) = transport.split();
-        let service = server_clone.serve((reader, writer));
-        service.await?;
+        server_clone.serve((reader, writer)).await?;
         Ok(())
     }
 
