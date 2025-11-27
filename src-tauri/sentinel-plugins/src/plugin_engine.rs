@@ -524,26 +524,54 @@ impl PluginEngine {
 
                 // Fetch API polyfill using Deno.core.ops.op_fetch
                 if (typeof fetch === "undefined") {
+                    class SimpleHeaders {
+                        constructor(map) {
+                            this._map = map || {};
+                        }
+                        get(name) {
+                            const target = String(name).toLowerCase();
+                            for (const [k, v] of Object.entries(this._map)) {
+                                if (String(k).toLowerCase() === target) return String(v);
+                            }
+                            return undefined;
+                        }
+                        forEach(callback, thisArg) {
+                            for (const [k, v] of Object.entries(this._map)) {
+                                callback.call(thisArg, String(v), k, this);
+                            }
+                        }
+                        entries() { return Object.entries(this._map)[Symbol.iterator](); }
+                        keys() { return Object.keys(this._map)[Symbol.iterator](); }
+                        values() { return Object.values(this._map)[Symbol.iterator](); }
+                        [Symbol.iterator]() { return Object.entries(this._map)[Symbol.iterator](); }
+                    }
+
                     globalThis.fetch = async function(url, options = {}) {
+                        let headersObj = {};
+                        const h = options.headers;
+                        if (h && typeof h.forEach === "function") {
+                            h.forEach((value, key) => { headersObj[String(key)] = String(value); });
+                        } else if (h && typeof h === "object") {
+                            headersObj = h;
+                        }
+
                         const fetchOptions = {
                             method: options.method || "GET",
-                            headers: options.headers || {},
+                            headers: headersObj,
                             body: options.body || null,
                             timeout: options.timeout || 30000,
                         };
-                        
+
                         const response = await Deno.core.ops.op_fetch(url, fetchOptions);
-                        
-                        // Check for errors
+
                         if (!response.success || response.error) {
                             throw new Error(`Fetch failed: ${response.error || 'Unknown error'}`);
                         }
-                        
-                        // Return a Response-like object
+
                         return {
                             ok: response.ok,
                             status: response.status,
-                            headers: response.headers,
+                            headers: new SimpleHeaders(response.headers || {}),
                             text: async () => response.body,
                             json: async () => JSON.parse(response.body),
                             body: response.body,

@@ -323,6 +323,9 @@ pub async fn get_combined_plugin_prompt_api(
     let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
     let repo = PromptRepository::new(pool);
     
+    println!("plugin_type: {}", plugin_type);
+    println!("vuln_type: {}", vuln_type);
+    println!("severity: {}", severity);
     // 根据插件类型选择对应的模板类型
     let (generation_template_type, interface_template_type, output_template_type) = match plugin_type.as_str() {
         "passive" => (
