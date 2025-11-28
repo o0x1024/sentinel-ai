@@ -485,7 +485,7 @@ const paginatedAssets = computed(() => {
 })
 
 // 防抖搜索
-let searchTimeout: NodeJS.Timeout | null = null
+let searchTimeout: ReturnType<typeof setTimeout> | null = null
 const debouncedSearch = () => {
   if (searchTimeout) clearTimeout(searchTimeout)
   searchTimeout = setTimeout(() => {

@@ -1207,7 +1207,6 @@ export default {
     Tools: 'MCP&内置工具',
     plugins: '插件管理',
     pluginReview: '插件审核',
-    workflowMonitor: '工作流监控',
     ragManagement: '知识库管理',
     
     smartAgent: '智能Agent控制台',

@@ -398,6 +398,16 @@ pub fn run() {
                 } else {
                     tracing::error!("Global tool system not available to manage in Tauri state");
                 }
+                // 初始化并注册统一工具管理器供工作流使用
+                let unified_manager = Arc::new(tokio::sync::RwLock::new(sentinel_tools::UnifiedToolManager::new(sentinel_tools::unified_types::ToolManagerConfig::default())));
+                {
+                    let mgr = unified_manager.clone();
+                    let _ = tauri::async_runtime::spawn(async move {
+                        let mut guard = mgr.write().await;
+                        let _ = guard.register_provider(Box::new(sentinel_tools::builtin::BuiltinToolProvider::new())).await;
+                    });
+                }
+                handle.manage(unified_manager);
                 handle.manage(ai_manager);
                 // AI adapter manager removed - using Rig directly
                 handle.manage(scan_session_service);
@@ -776,15 +786,6 @@ pub fn run() {
             agent_commands::get_agent_system_stats,
             agent_commands::get_dispatch_statistics,
             
-            // 工作流监控相关命令
-            agent_commands::list_workflow_executions,
-            agent_commands::get_workflow_statistics,
-            agent_commands::get_workflow_execution,
-            agent_commands::get_workflow_execution_details,
-            agent_commands::cancel_workflow_execution,
-            agent_commands::delete_workflow_execution,
-            agent_commands::batch_delete_workflow_executions,
-            agent_commands::batch_cancel_workflow_executions,
             agent_commands::get_agent_task_logs,
             agent_commands::add_test_session_data,
             
@@ -827,9 +828,15 @@ pub fn run() {
             // 工作流节点目录
             commands::workflow_catalog::list_node_catalog,
             // 工作流运行相关命令
-            commands::workflow_run::start_workflow_run,
-            commands::workflow_run::get_workflow_run_status,
-            commands::workflow_run::list_workflow_runs,
+            sentinel_workflow::commands::start_workflow_run,
+            sentinel_workflow::commands::get_workflow_run_status,
+            sentinel_workflow::commands::list_workflow_runs,
+            // 工作流定义相关命令
+            sentinel_workflow::commands::save_workflow_definition,
+            sentinel_workflow::commands::get_workflow_definition,
+            sentinel_workflow::commands::list_workflow_definitions,
+            sentinel_workflow::commands::delete_workflow_definition,
+            sentinel_workflow::commands::validate_workflow_graph,
             
             // RAG相关命令
             rag_commands::rag_ingest_source,

@@ -10232,9 +10232,16 @@ dependencies = [
  "anyhow",
  "chrono",
  "log",
+ "sentinel-db",
+ "sentinel-notify",
+ "sentinel-prompt",
+ "sentinel-rag",
+ "sentinel-tools",
  "serde",
  "serde_json",
+ "tauri",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

@@ -214,6 +214,18 @@ impl PassiveScanState {
 
         Ok(records)
     }
+
+    /// 执行Agent插件（用于工作流）
+    pub async fn execute_agent_plugin(
+        &self,
+        plugin_id: &str,
+        inputs: &serde_json::Value,
+    ) -> Result<(Vec<sentinel_passive::types::Finding>, Option<serde_json::Value>), String> {
+        self.plugin_manager
+            .execute_agent(plugin_id, inputs)
+            .await
+            .map_err(|e| format!("Failed to execute agent plugin '{}': {}", plugin_id, e))
+    }
 }
 
 /// 命令响应

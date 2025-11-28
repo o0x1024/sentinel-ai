@@ -48,7 +48,7 @@ interface Toast {
 
 const { t } = useI18n()
 const toasts = ref<Toast[]>([])
-const timeouts = new Map<string, NodeJS.Timeout>()
+const timeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
 const getWidthClass = (width: string) => {
    const widths = {
@@ -201,12 +201,14 @@ const handleToastEvent = (event: CustomEvent) => {
   })
 }
 
+const onShowToast = (e: Event) => handleToastEvent(e as CustomEvent)
+
 onMounted(() => {
-  window.addEventListener('show-toast', handleToastEvent as EventListener)
+  window.addEventListener('show-toast', onShowToast)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('show-toast', handleToastEvent as EventListener)
+  window.removeEventListener('show-toast', onShowToast)
   clearToasts()
 })
 

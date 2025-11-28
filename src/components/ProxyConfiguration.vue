@@ -928,7 +928,7 @@ const refreshTrigger = inject<any>('refreshTrigger', ref(0))
 
 // 保存状态
 const isSaving = ref(false)
-const saveTimeout = ref<NodeJS.Timeout | null>(null)
+const saveTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
 const isInitialLoad = ref(true) // 标记是否是初始加载，避免初始加载时触发保存
 
 // Proxy configuration

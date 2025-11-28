@@ -1,4 +1,4 @@
-export type PortType = 'string' | 'integer' | 'float' | 'boolean' | 'json' | 'array' | 'object' | 'artifact'
+export type PortType = 'String' | 'Integer' | 'Float' | 'Boolean' | 'Json' | 'Array' | 'Object' | 'Artifact'
 
 export interface JsonSchema {
   type?: string

@@ -1640,7 +1640,7 @@ impl AiService {
 
         let provider_lc = self.config.provider.to_lowercase();
         let api_key_required = match provider_lc.as_str() {
-            "ollama" => false,
+            "ollama" | "lm studio" | "lmstudio" | "lm_studio" => false,
             _ => true,
         };
         if api_key_required && self.config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
@@ -1653,6 +1653,10 @@ impl AiService {
         }
 
         let provider = self.config.provider.to_lowercase();
+        let provider_for_agent = match provider.as_str() {
+            "lm studio" | "lmstudio" | "lm_studio" => "openai".to_string(),
+            _ => provider.clone(),
+        };
         let model = self.config.model.clone();
 
         // 为 rig 库设置必需的环境变量
@@ -1670,6 +1674,8 @@ impl AiService {
                     std::env::set_var("OPENAI_API_KEY", api_key);
                     if let Some(base) = &self.config.api_base {
                         std::env::set_var("OPENAI_API_BASE", base);
+                        std::env::set_var("OPENAI_BASE_URL", base);
+                        std::env::set_var("OPENAI_BASE", base);
                     }
                 }
                 "anthropic" => {
@@ -1678,15 +1684,49 @@ impl AiService {
                         std::env::set_var("ANTHROPIC_API_BASE", base);
                     }
                 }
-                "deepseek" => {
-                    std::env::set_var("OPENAI_API_KEY", api_key);  // DeepSeek 使用 OpenAI 兼容接口
-                    if let Some(base) = &self.config.api_base {
-                        std::env::set_var("OPENAI_API_BASE", base);
-                    }
-                }
                 _ => {
                     debug!("Provider {} may need custom environment variable setup", provider);
                 }
+            }
+        }
+
+        if let Some(base) = &self.config.api_base {
+            match provider.as_str() {
+                "openai" => {
+                    std::env::set_var("OPENAI_API_BASE", base);
+                    std::env::set_var("OPENAI_BASE_URL", base);
+                    std::env::set_var("OPENAI_BASE", base);
+                }
+                "deepseek" => {
+                    std::env::set_var("OPENAI_API_BASE", base);
+                    std::env::set_var("OPENAI_BASE_URL", base);
+                    std::env::set_var("OPENAI_BASE", base);
+                }
+                _ => {}
+            }
+        }
+
+        if matches!(provider.as_str(), "lm studio" | "lmstudio" | "lm_studio") {
+            let mut base = self
+                .config
+                .api_base
+                .clone()
+                .unwrap_or_else(|| "http://localhost:1234".to_string());
+            if !base.ends_with("/v1") {
+                base = format!("{}/v1", base.trim_end_matches('/'));
+            }
+            std::env::set_var("OPENAI_API_BASE", base.clone());
+            std::env::set_var("OPENAI_BASE_URL", base.clone());
+            std::env::set_var("OPENAI_BASE", base.clone());
+
+            let needs_set_key = std::env::var("OPENAI_API_KEY").map(|v| v.trim().is_empty()).unwrap_or(true);
+            if needs_set_key {
+                let key = self
+                    .config
+                    .api_key
+                    .clone()
+                    .unwrap_or_else(|| "lm-studio".to_string());
+                std::env::set_var("OPENAI_API_KEY", key);
             }
         }
 
@@ -1703,7 +1743,7 @@ impl AiService {
         // 在独立作用域中构建 agent
         let agent = {
             let client = DynClientBuilder::new();
-            let agent_builder = match client.agent(&provider, &model) {
+            let agent_builder = match client.agent(&provider_for_agent, &model) {
                 Ok(builder) => builder,
                 Err(e) => {
                     error!(

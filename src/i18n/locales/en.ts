@@ -1011,7 +1011,7 @@ export default {
     remainingTimeDefault: '2h 15m remaining',
     assets: 'Asset Management',
     intelligentTest: 'Intelligent Security Test',
-    workflowMonitor: 'Workflow Monitor'
+    
   },
   dictionary: {
     title: 'Dictionary Management',

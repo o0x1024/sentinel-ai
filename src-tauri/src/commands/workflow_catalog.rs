@@ -1,5 +1,6 @@
 use crate::models::workflow_graph::{NodeCatalogItem, PortDef, PortType};
 use crate::tools::{get_global_tool_system, ToolInfo};
+use crate::commands::passive_scan_commands::PassiveScanState;
 use serde_json::json;
 
 fn port(id: &str, name: &str, port_type: PortType, required: bool) -> PortDef {
@@ -160,7 +161,33 @@ fn output_nodes() -> Vec<NodeCatalogItem> {
             node_type: "notify".to_string(),
             label: "通知".to_string(),
             category: "output".to_string(),
-            params_schema: json!({"type": "object", "properties": {"channel": {"type": "string"}, "to": {"type": "string"}}}),
+            params_schema: json!({
+                "type": "object",
+                "properties": {
+                    "notification_rule_id": {
+                        "type": "string",
+                        "title": "通知规则",
+                        "description": "选择已配置的通知规则"
+                    },
+                    "title": {
+                        "type": "string",
+                        "title": "标题",
+                        "description": "通知标题"
+                    },
+                    "content": {
+                        "type": "string",
+                        "title": "内容",
+                        "description": "通知内容，支持模板变量"
+                    },
+                    "use_input_as_content": {
+                        "type": "boolean",
+                        "title": "使用输入作为内容",
+                        "description": "如果启用，将使用上游节点的输出作为通知内容",
+                        "default": false
+                    }
+                },
+                "required": ["notification_rule_id"]
+            }),
             input_ports: vec![port("in", "输入", PortType::Json, true)],
             output_ports: vec![],
         },
@@ -248,8 +275,67 @@ fn tool_node_from_tool(info: &ToolInfo) -> NodeCatalogItem {
     }
 }
 
+fn plugin_tool_node_from_plugin(plugin: &sentinel_passive::PluginRecord) -> NodeCatalogItem {
+    // 为Agent插件创建工具节点
+    // 使用 plugin:: 前缀以区分普通工具
+    
+    // 尝试从全局工具系统获取插件的参数schema
+    let params_schema = if let Ok(tool_system) = get_global_tool_system() {
+        let tool_name = format!("plugin::{}", plugin.metadata.id);
+        
+        // 同步获取工具列表并查找对应的插件工具
+        let tools = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                tool_system.list_tools().await
+            })
+        });
+        
+        if let Some(tool) = tools.iter().find(|t| t.name == tool_name) {
+            // 使用插件工具的实际参数schema
+            tool.parameters.schema.clone()
+        } else {
+            // 如果找不到工具，使用默认的通用参数schema
+            json!({
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "object",
+                        "title": "插件输入参数",
+                        "description": "根据插件需求填写的JSON对象",
+                        "additionalProperties": true
+                    }
+                }
+            })
+        }
+    } else {
+        // 工具系统未初始化，使用默认schema
+        json!({
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "object",
+                    "title": "插件输入参数",
+                    "description": "根据插件需求填写的JSON对象",
+                    "additionalProperties": true
+                }
+            }
+        })
+    };
+
+    NodeCatalogItem {
+        node_type: format!("plugin::{}", plugin.metadata.id),
+        label: format!("{} (插件)", plugin.metadata.name),
+        category: "tool".to_string(),
+        params_schema,
+        input_ports: vec![port("inputs", "输入", PortType::Json, false)],
+        output_ports: vec![port("result", "结果", PortType::Json, true)],
+    }
+}
+
 #[tauri::command]
-pub async fn list_node_catalog() -> Result<Vec<NodeCatalogItem>, String> {
+pub async fn list_node_catalog(
+    passive_state: tauri::State<'_, PassiveScanState>,
+) -> Result<Vec<NodeCatalogItem>, String> {
     let mut catalog: Vec<NodeCatalogItem> = Vec::new();
 
     // 基础节点
@@ -260,7 +346,7 @@ pub async fn list_node_catalog() -> Result<Vec<NodeCatalogItem>, String> {
     catalog.extend(rag_nodes());
     catalog.extend(prompt_nodes());
 
-    // 工具节点
+    // 工具节点（从全局工具系统）
     if let Ok(tool_system) = get_global_tool_system() {
         let tools = tool_system.list_tools().await;
         for t in tools {
@@ -268,6 +354,23 @@ pub async fn list_node_catalog() -> Result<Vec<NodeCatalogItem>, String> {
             if t.available {
                 catalog.push(tool_node_from_tool(&t));
             }
+        }
+    }
+
+    // Agent插件工具节点（直接从插件系统）
+    match passive_state.list_plugins_internal().await {
+        Ok(plugins) => {
+            for plugin in plugins {
+                // 只添加已启用的agent类别插件
+                if plugin.status == sentinel_passive::PluginStatus::Enabled
+                    && plugin.metadata.main_category == "agent"
+                {
+                    catalog.push(plugin_tool_node_from_plugin(&plugin));
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load agent plugins for workflow catalog: {}", e);
         }
     }
 

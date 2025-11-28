@@ -87,6 +87,13 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<WorkflowStepDetail>>;
     async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()>;
 
+    async fn create_workflow_run(&self, id: &str, workflow_id: &str, workflow_name: &str, version: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
+    async fn update_workflow_run_status(&self, id: &str, status: &str, completed_at: Option<chrono::DateTime<chrono::Utc>>, error_message: Option<&str>) -> Result<()>;
+    async fn update_workflow_run_progress(&self, id: &str, progress: u32, completed_steps: u32, total_steps: u32) -> Result<()>;
+    async fn save_workflow_run_step(&self, run_id: &str, step_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
+    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
+    async fn list_workflow_runs(&self) -> Result<Vec<serde_json::Value>>;
+
     async fn get_plugins_from_registry(&self) -> Result<Vec<serde_json::Value>>;
     async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()>;
     async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()>;
@@ -103,13 +110,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn toggle_plugin_favorite(&self, plugin_id: &str, user_id: Option<&str>) -> Result<bool>;
     async fn get_favorited_plugins(&self, user_id: Option<&str>) -> Result<Vec<String>>;
     async fn get_plugin_review_stats(&self) -> Result<serde_json::Value>;
-    // 工作流运行记录
-    async fn create_workflow_run(&self, id: &str, workflow_id: &str, workflow_name: &str, version: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
-    async fn update_workflow_run_status(&self, id: &str, status: &str, completed_at: Option<chrono::DateTime<chrono::Utc>>, error_message: Option<&str>) -> Result<()>;
-    async fn update_workflow_run_progress(&self, id: &str, progress: u32, completed_steps: u32, total_steps: u32) -> Result<()>;
-    async fn save_workflow_run_step(&self, run_id: &str, step_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
-    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
-    async fn list_workflow_runs(&self) -> Result<Vec<serde_json::Value>>;
+
     async fn create_notification_rule(&self, rule: &NotificationRule) -> Result<()>;
     async fn get_notification_rules(&self) -> Result<Vec<NotificationRule>>;
     async fn get_notification_rule(&self, id: &str) -> Result<Option<NotificationRule>>;
@@ -1330,6 +1331,74 @@ impl DatabaseService {
             .execute(&mut *tx)
             .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_run_steps_run_id ON workflow_run_steps(run_id)")
+            .execute(&mut *tx)
+            .await?;
+
+        // 工作流定义表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS workflow_definitions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                version TEXT NOT NULL,
+                graph_json TEXT NOT NULL,
+                tags TEXT,
+                is_template BOOLEAN DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            "#
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_definitions_name ON workflow_definitions(name)")
+            .execute(&mut *tx)
+            .await?;
+
+        // 工作流版本历史表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS workflow_versions (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                version_number INTEGER NOT NULL,
+                graph_json TEXT NOT NULL,
+                change_summary TEXT,
+                created_by TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (workflow_id) REFERENCES workflow_definitions(id) ON DELETE CASCADE
+            )
+            "#
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_versions_workflow_id ON workflow_versions(workflow_id)")
+            .execute(&mut *tx)
+            .await?;
+
+        // 工作流分享链接表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS workflow_shares (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                share_token TEXT UNIQUE NOT NULL,
+                permission TEXT NOT NULL,
+                expires_at DATETIME,
+                access_count INTEGER DEFAULT 0,
+                created_by TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (workflow_id) REFERENCES workflow_definitions(id) ON DELETE CASCADE
+            )
+            "#
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_shares_token ON workflow_shares(share_token)")
             .execute(&mut *tx)
             .await?;
 
@@ -5409,5 +5478,115 @@ impl sentinel_rag::db::RagDatabase for DatabaseService {
 
     async fn get_rag_query_history(&self, collection_id: Option<&str>, limit: Option<i32>) -> Result<Vec<sentinel_rag::models::QueryResult>> {
         self.get_rag_query_history(collection_id, limit).await
+    }
+}
+
+// Workflow definition methods - separate impl block
+impl DatabaseService {
+    pub async fn save_workflow_definition(&self, id: &str, name: &str, description: Option<&str>, version: &str, graph_json: &str, tags: Option<&str>, is_template: bool) -> Result<()> {
+        let pool = self.get_pool()?;
+        let now = chrono::Utc::now().to_rfc3339();
+        
+        sqlx::query(
+            r#"
+            INSERT INTO workflow_definitions (id, name, description, version, graph_json, tags, is_template, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                version = excluded.version,
+                graph_json = excluded.graph_json,
+                tags = excluded.tags,
+                is_template = excluded.is_template,
+                updated_at = excluded.updated_at
+            "#
+        )
+        .bind(id)
+        .bind(name)
+        .bind(description)
+        .bind(version)
+        .bind(graph_json)
+        .bind(tags)
+        .bind(is_template)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    pub async fn get_workflow_definition(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        let row = sqlx::query(
+            "SELECT id, name, description, version, graph_json, tags, is_template, created_at, updated_at FROM workflow_definitions WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let graph_json: String = row.get("graph_json");
+                let mut result = serde_json::json!({
+                    "id": row.get::<String, _>("id"),
+                    "name": row.get::<String, _>("name"),
+                    "description": row.get::<Option<String>, _>("description"),
+                    "version": row.get::<String, _>("version"),
+                    "tags": row.get::<Option<String>, _>("tags"),
+                    "is_template": row.get::<bool, _>("is_template"),
+                    "created_at": row.get::<String, _>("created_at"),
+                    "updated_at": row.get::<String, _>("updated_at"),
+                });
+                
+                if let Ok(graph) = serde_json::from_str::<serde_json::Value>(&graph_json) {
+                    result["graph"] = graph;
+                }
+                
+                Ok(Some(result))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn list_workflow_definitions(&self, is_template: Option<bool>) -> Result<Vec<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        let query = if let Some(template_filter) = is_template {
+            sqlx::query(
+                "SELECT id, name, description, version, tags, is_template, created_at, updated_at FROM workflow_definitions WHERE is_template = ? ORDER BY updated_at DESC"
+            )
+            .bind(template_filter)
+        } else {
+            sqlx::query(
+                "SELECT id, name, description, version, tags, is_template, created_at, updated_at FROM workflow_definitions ORDER BY updated_at DESC"
+            )
+        };
+
+        let rows = query.fetch_all(pool).await?;
+        let mut results = Vec::new();
+
+        for row in rows {
+            results.push(serde_json::json!({
+                "id": row.get::<String, _>("id"),
+                "name": row.get::<String, _>("name"),
+                "description": row.get::<Option<String>, _>("description"),
+                "version": row.get::<String, _>("version"),
+                "tags": row.get::<Option<String>, _>("tags"),
+                "is_template": row.get::<bool, _>("is_template"),
+                "created_at": row.get::<String, _>("created_at"),
+                "updated_at": row.get::<String, _>("updated_at"),
+            }));
+        }
+
+        Ok(results)
+    }
+
+    pub async fn delete_workflow_definition(&self, id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("DELETE FROM workflow_definitions WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 }
