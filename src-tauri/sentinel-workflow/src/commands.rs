@@ -513,17 +513,92 @@ pub async fn start_workflow_run(
                         ).await;
                         wrote_result = true;
                     }
+                } else if action == "ai_chat" || action == "ai_agent" {
+                    // AI Chat / AI Agent 节点执行
+                    tracing::info!("Executing AI node '{}' with action '{}', inputs: {:?}", node_id, action, step_def.inputs);
+                    
+                    // 获取上游输入
+                    let upstream_input = {
+                        let mut input_val = serde_json::Value::Null;
+                        for edge in &graph.edges {
+                            if edge.to_node == node_id && edge.to_port == "in" {
+                                if let Some(val) = engine_clone.get_step_result(&execution_id_for_spawn, &edge.from_node).await {
+                                    input_val = val;
+                                    tracing::info!("AI node '{}' got upstream input from '{}'", node_id, edge.from_node);
+                                    break;
+                                }
+                            }
+                        }
+                        input_val
+                    };
+                    
+                    // 获取参数
+                    let prompt_template = step_def.inputs.get("prompt")
+                        .or_else(|| step_def.inputs.get("message"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    
+                    // 替换模板变量 {{input}}
+                    let prompt = if prompt_template.contains("{{input}}") {
+                        let input_str = match &upstream_input {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Null => String::new(),
+                            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+                        };
+                        prompt_template.replace("{{input}}", &input_str)
+                    } else if prompt_template.is_empty() && !upstream_input.is_null() {
+                        // 如果没有prompt但有上游输入，使用上游输入作为prompt
+                        match &upstream_input {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+                        }
+                    } else {
+                        prompt_template
+                    };
+                    
+                    tracing::info!("AI node '{}' prompt: '{}'", node_id, if prompt.len() > 100 { &prompt[..100] } else { &prompt });
+                    
+                    // 获取其他参数
+                    let system_prompt = step_def.inputs.get("system_prompt").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let provider = step_def.inputs.get("provider").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                    let model = step_def.inputs.get("model").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                    
+                    // 构建结果（目前返回模拟结果，实际需要调用AI服务）
+                    // TODO: 集成实际的AI服务调用
+                    let result = serde_json::json!({
+                        "success": true,
+                        "prompt": prompt,
+                        "system_prompt": system_prompt,
+                        "provider": provider,
+                        "model": model,
+                        "input": upstream_input,
+                        "response": format!("AI response placeholder for prompt: {}", if prompt.len() > 50 { &prompt[..50] } else { &prompt }),
+                        "note": "AI service integration pending"
+                    });
+                    
+                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result).await;
+                    wrote_result = true;
+                    tracing::info!("AI node '{}' completed", node_id);
+                } else {
+                    // 未知节点类型
+                    tracing::warn!("Unknown action type '{}' for node '{}', marking as completed", action, node_id);
                 }
             } else {
+                tracing::warn!("Step definition not found for node '{}'", node_id);
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             }
 
             if !wrote_result {
                 engine_clone.mark_step_completed(&execution_id_for_spawn, &node_id).await;
             }
+            
+            // 获取步骤结果并发送事件
+            let step_result = engine_clone.get_step_result(&execution_id_for_spawn, &node_id).await;
             let _ = app_handle_clone.emit("workflow:step-complete", &serde_json::json!({
                 "execution_id": execution_id_for_spawn,
-                "step_id": node_id
+                "step_id": node_id,
+                "result": step_result
             }));
             if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now()).await { tracing::warn!("update step: {}", e); }
 

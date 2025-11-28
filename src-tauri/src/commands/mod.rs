@@ -29,7 +29,6 @@ pub mod unified_tools;
 pub mod vulnerability;
 pub mod window;
 pub mod workflow_catalog;
-pub mod workflow_run;
 
 // 重新导出所有命令
 pub use agent_commands::*;
@@ -61,7 +60,6 @@ pub use unified_tools::*;
 pub use vulnerability::*;
 pub use window::*;
 pub use workflow_catalog::*;
-pub use workflow_run::*;
 
 
 

@@ -91,12 +91,34 @@ impl UnifiedToolManager {
             }
         }
 
+        // 先从静态 registry 查找
         let tool = {
             let registry = self.tool_registry.read().await;
             registry.get(tool_name).cloned()
         };
 
-        let tool = match tool { Some(t) => t, None => { self.decrement_counter().await; return Err(anyhow!("Tool '{}' not found", tool_name)); } };
+        // 如果 registry 中没有，尝试从 providers 动态获取（支持动态启用的插件）
+        let tool = match tool {
+            Some(t) => t,
+            None => {
+                debug!("Tool '{}' not in registry, trying providers dynamically", tool_name);
+                let mut found_tool: Option<Arc<dyn UnifiedTool>> = None;
+                for (_provider_name, provider) in &self.providers {
+                    if let Ok(Some(t)) = provider.get_tool(tool_name).await {
+                        info!("Tool '{}' found dynamically from provider", tool_name);
+                        found_tool = Some(t);
+                        break;
+                    }
+                }
+                match found_tool {
+                    Some(t) => t,
+                    None => {
+                        self.decrement_counter().await;
+                        return Err(anyhow!("Tool '{}' not found", tool_name));
+                    }
+                }
+            }
+        };
 
         if let Err(e) = tool.validate_params(&params) { self.decrement_counter().await; return Err(anyhow!("Parameter validation failed for tool '{}': {}", tool_name, e)); }
         if !tool.is_available().await { self.decrement_counter().await; return Err(anyhow!("Tool '{}' is not available", tool_name)); }

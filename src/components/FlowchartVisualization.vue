@@ -80,7 +80,8 @@
             <div ref="flowchartContainer"
                 class="flowchart-container bg-base-200 rounded-lg p-4 min-h-[80vh] relative overflow-auto"
                 :class="{ 'cursor-grab': !isDragging && !isPanningCanvas, 'cursor-grabbing': isPanningCanvas }"
-                @pointerdown="on_pointer_down" @pointermove="on_pointer_move" @pointerup="on_pointer_up">
+                @pointerdown="on_pointer_down" @pointermove="on_pointer_move" @pointerup="on_pointer_up"
+                @contextmenu.prevent>
                 
                 <!-- 空状态提示 -->
                 <div v-if="nodes.length === 0" class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -95,7 +96,7 @@
                 </div>
                 
                 <div class="flowchart-content" :style="contentStyle">
-                    <svg class="absolute inset-0 w-full h-full"
+                    <svg class="absolute inset-0 w-full h-full pointer-events-none"
                         :viewBox="`0 0 ${containerSize.width} ${containerSize.height}`">
                         <defs>
                             <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -103,10 +104,17 @@
                             </marker>
                         </defs>
 
+                        <!-- 连接线点击区域（透明粗线） -->
+                        <path v-for="connection in connections" :key="connection.id + '-hit'" :d="connection.path"
+                            class="stroke-transparent fill-none cursor-pointer"
+                            :class="{ 'hover:stroke-error/30': deleteConnectionMode }"
+                            style="stroke-width: 16px; pointer-events: stroke;"
+                            @click="onConnectionClick(connection)" />
+                        <!-- 可见连接线 -->
                         <path v-for="connection in connections" :key="connection.id" :d="connection.path" :class="[
-                            'stroke-2 fill-none',
+                            'stroke-2 fill-none pointer-events-none',
                             getConnectionClass(connection)
-                        ]" marker-end="url(#arrowhead)" @click="onConnectionClick(connection)" />
+                        ]" marker-end="url(#arrowhead)" />
                         
                         <!-- 临时连接线 -->
                         <path v-if="isDraggingConnection && tempConnectionPath" 
@@ -118,13 +126,13 @@
                     <div v-for="node in nodes" :key="node.id" :class="[
                         'flowchart-node absolute',
                         node.id === draggedNode?.id ? 'cursor-grabbing duration-0' : 'cursor-pointer transition-all duration-200',
-                        'border-2 rounded-lg p-3 min-w-[120px] max-w-[200px]',
+                        'border-2 rounded-lg p-3 w-[180px]',
                         selectedNodes.has(node.id) ? 'ring-2 ring-primary ring-offset-2' : '',
                         highlightedNodes.has(node.id) ? 'ring-2 ring-warning ring-offset-2 animate-pulse' : '',
                         getNodeClass(node)
                     ]" :style="{
                     transform: `translate3d(${node.x}px, ${node.y}px, 0) ${node.id === draggedNode?.id ? 'scale(1.05)' : 'scale(1)'}`
-                }" @pointerdown="on_node_pointer_down($event, node)" @click="onNodeClick(node)" @contextmenu="onNodeContextMenu($event, node)" @mouseenter="onNodeEnter(node)" @mouseleave="onNodeLeave(node)">
+                }" @pointerdown="on_node_pointer_down($event, node)" @click="onNodeClick(node)" @contextmenu.prevent.stop="onNodeContextMenu($event, node)" @mouseenter="onNodeEnter(node)" @mouseleave="onNodeLeave(node)">
                     <!-- 输入端口 -->
                     <div class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col gap-1">
                         <div 
@@ -136,6 +144,7 @@
                             @pointerup.stop="end_drag_connection(node.id, port.id, 'input')"
                             @pointerenter="hover_port = { nodeId: node.id, portId: port.id, type: 'input' }"
                             @pointerleave="hover_port = null"
+                            @contextmenu.prevent
                         ></div>
                     </div>
                     
@@ -174,6 +183,7 @@
                             @pointerdown.stop="start_drag_connection(node.id, port.id, 'output', $event)"
                             @pointerenter="hover_port = { nodeId: node.id, portId: port.id, type: 'output' }"
                             @pointerleave="hover_port = null"
+                            @contextmenu.prevent
                         ></div>
                     </div>
 
@@ -207,7 +217,8 @@
 
         <!-- 右键菜单 -->
         <div v-if="contextMenu.visible" 
-            class="fixed z-50 bg-base-100 shadow-xl rounded-lg border border-base-300 py-1 min-w-[160px]"
+            class="fixed bg-base-100 shadow-xl rounded-lg border border-base-300 py-1 min-w-[160px]"
+            style="z-index: 9999;"
             :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
             <div v-for="(item, index) in contextMenu.items" :key="index"
                 class="px-4 py-2 hover:bg-base-200 cursor-pointer text-sm transition-colors"
@@ -479,8 +490,7 @@ const onNodeClick = (node: FlowchartNode, event?: MouseEvent) => {
 
 // 右键菜单事件处理
 const onNodeContextMenu = (event: MouseEvent, node: FlowchartNode) => {
-    event.preventDefault()
-    event.stopPropagation()
+    console.log('onNodeContextMenu triggered for node:', node.id)
     showNodeContextMenu(node, event)
 }
 
@@ -621,10 +631,17 @@ const updateConnectionsPartial = (nodeId: string) => {
 }
 
 const calculateConnectionPath = (from: FlowchartNode, to: FlowchartNode, curved = false): string => {
-    const fromX = from.x + 100 // 节点宽度的一半
-    const fromY = from.y + 40  // 节点高度的一半
-    const toX = to.x + 100
-    const toY = to.y + 40
+    // 节点尺寸（与 CSS w-[180px] 保持一致）
+    const NODE_WIDTH = 180
+    const NODE_HEIGHT = 80
+    
+    // 输出端口在节点右侧中间
+    const fromX = from.x + NODE_WIDTH
+    const fromY = from.y + NODE_HEIGHT / 2
+    
+    // 输入端口在节点左侧中间
+    const toX = to.x
+    const toY = to.y + NODE_HEIGHT / 2
 
     if (curved) {
         // 曲线连接（用于循环）
@@ -632,8 +649,10 @@ const calculateConnectionPath = (from: FlowchartNode, to: FlowchartNode, curved 
         const midY = Math.min(fromY, toY) - 50
         return `M ${fromX} ${fromY} Q ${midX} ${midY} ${toX} ${toY}`
     } else {
-        // 直线连接
-        return `M ${fromX} ${fromY} L ${toX} ${toY}`
+        // 贝塞尔曲线连接，更平滑
+        const dx = toX - fromX
+        const controlOffset = Math.min(Math.abs(dx) * 0.5, 80)
+        return `M ${fromX} ${fromY} C ${fromX + controlOffset} ${fromY}, ${toX - controlOffset} ${toY}, ${toX} ${toY}`
     }
 }
 
@@ -967,13 +986,16 @@ const start_drag_connection = (nodeId: string, portId: string, portType: 'input'
     const node = nodes.value.find(n => n.id === nodeId)
     if (!node) return
     
+    const NODE_WIDTH = 180
+    const NODE_HEIGHT = 80
+    
     isDraggingConnection.value = true
     dragConnectionStart.value = {
         nodeId,
         portId,
         portType,
-        x: node.x + 100, // 节点中心
-        y: node.y + 40
+        x: node.x + NODE_WIDTH, // 输出端口在右侧
+        y: node.y + NODE_HEIGHT / 2
     }
     dragConnectionEnd.x = dragConnectionStart.value.x
     dragConnectionEnd.y = dragConnectionStart.value.y
@@ -1034,7 +1056,10 @@ const updateTempConnectionPath = () => {
     const toX = dragConnectionEnd.x
     const toY = dragConnectionEnd.y
     
-    tempConnectionPath.value = `M ${fromX} ${fromY} L ${toX} ${toY}`
+    // 贝塞尔曲线
+    const dx = toX - fromX
+    const controlOffset = Math.min(Math.abs(dx) * 0.5, 80)
+    tempConnectionPath.value = `M ${fromX} ${fromY} C ${fromX + controlOffset} ${fromY}, ${toX - controlOffset} ${toY}, ${toX} ${toY}`
 }
 
 onUnmounted(() => {
@@ -1172,5 +1197,9 @@ defineExpose({
 }
 .flowchart-node {
     will-change: transform;
+}
+/* 删除模式下连接线悬停效果 */
+.stroke-transparent:hover {
+    stroke: rgba(239, 68, 68, 0.3);
 }
 </style>

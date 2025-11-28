@@ -169,12 +169,21 @@
           <div v-if="execution_logs.length === 0" class="text-center text-base-content/60 py-4">
             暂无日志
           </div>
-          <div v-for="(log, idx) in execution_logs" :key="idx" class="mb-1" :class="get_log_class(log.level)">
-            <span class="opacity-60">[{{ format_time(log.timestamp) }}]</span>
-            <span class="font-semibold">[{{ log.level }}]</span>
-            <span v-if="log.node_id" class="text-primary">[{{ log.node_id }}]</span>
-            <span>{{ log.message }}</span>
-            <pre v-if="log.details" class="ml-4 mt-1 text-xs opacity-80">{{ log.details }}</pre>
+          <div v-for="(log, idx) in execution_logs" :key="idx" class="mb-1">
+            <div :class="get_log_class(log.level)">
+              <span class="opacity-60">[{{ format_time(log.timestamp) }}]</span>
+              <span class="font-semibold">[{{ log.level }}]</span>
+              <span v-if="log.node_id" class="text-primary">[{{ log.node_id }}]</span>
+              <span>{{ log.message }}</span>
+              <button v-if="log.details" 
+                class="btn btn-xs btn-ghost ml-2" 
+                @click="toggle_log_details(idx)"
+                :title="expanded_logs.has(idx) ? '收起详情' : '展开详情'">
+                {{ expanded_logs.has(idx) ? '▼' : '▶' }}
+              </button>
+            </div>
+            <pre v-if="log.details && expanded_logs.has(idx)" 
+              class="ml-4 mt-1 text-xs opacity-80 bg-base-300 p-2 rounded overflow-x-auto max-h-60">{{ log.details }}</pre>
           </div>
         </div>
       </div>
@@ -256,7 +265,7 @@
               </div>
               <div class="card-actions justify-end mt-2">
                 <button class="btn btn-xs btn-primary" @click="use_template(tpl.id)">使用模板</button>
-                <button v-if="!tpl.is_builtin" class="btn btn-xs btn-outline" @click="save_as_template">另存为模板</button>
+                <button v-if="!tpl.is_builtin" class="btn btn-xs btn-outline" @click="save_current_as_template">另存为模板</button>
               </div>
             </div>
           </div>
@@ -343,7 +352,7 @@
           </label>
           
           <!-- 通知规则选择器 (特殊处理) -->
-          <div v-if="key === 'notification_rule_id' && selected_node?.type === 'notify'" class="space-y-2">
+          <div v-if="String(key) === 'notification_rule_id' && selected_node?.type === 'notify'" class="space-y-2">
             <select 
               class="select select-bordered select-sm w-full" 
               v-model="param_values[key]"
@@ -359,6 +368,72 @@
               <router-link to="/notification-management" class="link link-primary">前往配置</router-link>
             </div>
           </div>
+          
+          <!-- AI 提供商选择器 -->
+          <div v-else-if="prop['x-ui-widget'] === 'ai-provider-select'" class="space-y-2">
+            <select 
+              class="select select-bordered select-sm w-full" 
+              v-model="param_values[key]"
+            >
+              <option value="">-- 使用默认配置 --</option>
+              <option v-for="provider in get_enabled_providers()" :key="provider" :value="provider">
+                {{ provider }}
+              </option>
+            </select>
+            <div v-if="get_enabled_providers().length === 0" class="text-xs text-warning">
+              <span>⚠️ 暂无可用的 AI 提供商，</span>
+              <router-link to="/settings" class="link link-primary">前往配置</router-link>
+            </div>
+          </div>
+          
+          <!-- AI 模型选择器 -->
+          <div v-else-if="prop['x-ui-widget'] === 'ai-model-select'" class="space-y-2">
+            <select 
+              class="select select-bordered select-sm w-full" 
+              v-model="param_values[key]"
+              :disabled="!param_values['provider']"
+            >
+              <option value="">-- {{ param_values['provider'] ? '请选择模型' : '请先选择提供商' }} --</option>
+              <option v-for="model in get_provider_models(param_values['provider'])" :key="model.id" :value="model.id">
+                {{ model.name }}{{ model.description ? ' - ' + model.description : '' }}
+              </option>
+            </select>
+          </div>
+          
+          <!-- 工具多选器 -->
+          <div v-else-if="prop['x-ui-widget'] === 'tools-multiselect'" class="space-y-2">
+            <div class="max-h-48 overflow-y-auto border border-base-300 rounded-lg p-2 space-y-1">
+              <div v-if="available_tools.length === 0" class="text-xs text-base-content/60 text-center py-2">
+                暂无可用工具
+              </div>
+              <label v-for="tool in available_tools" :key="tool.name" class="flex items-center gap-2 p-1 hover:bg-base-200 rounded cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  class="checkbox checkbox-sm checkbox-primary" 
+                  :value="tool.name"
+                  :checked="(param_values[key] || []).includes(tool.name)"
+                  @change="toggle_tool_selection(String(key), tool.name)"
+                />
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium truncate">{{ tool.name }}</div>
+                  <div v-if="tool.description" class="text-xs text-base-content/60 truncate">{{ tool.description }}</div>
+                </div>
+              </label>
+            </div>
+            <div class="text-xs text-base-content/60">
+              已选择 {{ (param_values[key] || []).length }} 个工具
+            </div>
+          </div>
+          
+          <!-- Textarea 类型 -->
+          <textarea 
+            v-else-if="prop['x-ui-widget'] === 'textarea'" 
+            class="textarea textarea-bordered textarea-sm w-full" 
+            v-model="param_values[key]"
+            :placeholder="prop.default || `请输入${key}`"
+            :class="{ 'textarea-error': selected_schema.required?.includes(key) && !param_values[key] }"
+            rows="3"
+          ></textarea>
           
           <!-- 字符串类型 -->
           <input 
@@ -404,7 +479,7 @@
               v-model="param_values[key]"
               :placeholder="prop.type === 'array' ? '[\n  \n]' : '{\n  \n}'"
               rows="4"
-              @blur="validate_json(key)"
+              @blur="validate_json(String(key))"
             ></textarea>
             <div v-if="json_errors[key]" class="text-xs text-error">{{ json_errors[key] }}</div>
           </div>
@@ -432,7 +507,46 @@
         <button class="btn btn-primary btn-sm flex-1" @click="save_params_and_close" :disabled="has_validation_errors">
           保存
         </button>
+        <button 
+          v-if="selected_node && step_results[selected_node.id]" 
+          class="btn btn-info btn-sm" 
+          @click="view_node_result"
+          title="查看执行结果"
+        >
+          📊
+        </button>
         <button class="btn btn-outline btn-sm" @click="close_drawer">取消</button>
+      </div>
+    </div>
+
+    <!-- 步骤结果查看面板 -->
+    <div v-if="show_result_panel" ref="result_panel_ref" class="fixed inset-y-0 right-0 w-[500px] bg-base-100 shadow-xl border-l border-base-300 z-50">
+      <div class="p-3 flex items-center justify-between border-b border-base-300">
+        <h2 class="text-base font-semibold">步骤执行结果</h2>
+        <div class="flex gap-2">
+          <button class="btn btn-xs btn-outline" @click="copy_result_to_clipboard" title="复制结果">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </button>
+          <button class="btn btn-xs btn-ghost" @click="close_result_panel">✕</button>
+        </div>
+      </div>
+      <div class="p-3 border-b border-base-300">
+        <div class="text-sm font-semibold">节点 ID</div>
+        <div class="text-xs text-base-content/60 mt-1 font-mono">{{ selected_step_result?.step_id }}</div>
+        <div class="text-sm font-semibold mt-2">节点名称</div>
+        <div class="text-xs text-base-content/60 mt-1">{{ selected_node?.name || '未知' }}</div>
+      </div>
+      <div class="p-3 overflow-auto h-[calc(100%-140px)]">
+        <div class="text-sm font-semibold mb-2">执行结果</div>
+        <pre class="bg-base-200 p-3 rounded text-xs font-mono overflow-x-auto">{{ format_result(selected_step_result?.result) }}</pre>
+      </div>
+      <div class="p-3 flex gap-2 border-t border-base-300">
+        <button class="btn btn-primary btn-sm flex-1" @click="edit_node_params">
+          编辑参数
+        </button>
+        <button class="btn btn-outline btn-sm" @click="close_result_panel">关闭</button>
       </div>
     </div>
   </div>
@@ -454,6 +568,8 @@ const param_values = ref<Record<string, any>>({})
 const drawer_open = ref(false)
 const ignore_close_once = ref(false)
 const drawer_ref = ref<HTMLElement | null>(null)
+const result_panel_ref = ref<HTMLElement | null>(null)
+const ignore_result_panel_close_once = ref(false)
 const sidebar_collapsed = ref(false)
 const show_logs = ref(false)
 const show_load_dialog = ref(false)
@@ -469,8 +585,13 @@ const workflow_list = ref<any[]>([])
 const favorites = ref<Set<string>>(new Set())
 const show_favorites_only = ref(false)
 const notification_rules = ref<any[]>([]) // 通知规则列表
+const ai_config = ref<any>(null) // AI 配置
+const available_tools = ref<any[]>([]) // 可用工具列表
 const import_file_input = ref<HTMLInputElement | null>(null)
 const highlighted_nodes = ref<Set<string>>(new Set())
+const step_results = ref<Record<string, any>>({}) // 存储每个步骤的执行结果
+const show_result_panel = ref(false)
+const selected_step_result = ref<{ step_id: string, result: any } | null>(null)
 
 interface ExecutionLog {
   timestamp: Date
@@ -482,6 +603,7 @@ interface ExecutionLog {
 
 const execution_logs = ref<ExecutionLog[]>([])
 const json_errors = ref<Record<string, string>>({})
+const expanded_logs = ref<Set<number>>(new Set())
 const selected_schema = computed(() => {
   if (!selected_node.value) return null as any
   const item = catalog.value.find(i => i.node_type === selected_node.value.type)
@@ -625,6 +747,57 @@ const add_log = (level: ExecutionLog['level'], message: string, node_id?: string
 
 const clear_logs = () => {
   execution_logs.value = []
+  expanded_logs.value.clear()
+}
+
+const toggle_log_details = (idx: number) => {
+  if (expanded_logs.value.has(idx)) {
+    expanded_logs.value.delete(idx)
+  } else {
+    expanded_logs.value.add(idx)
+  }
+}
+
+const format_result = (result: any) => {
+  if (!result) return 'No result'
+  if (typeof result === 'object') {
+    return JSON.stringify(result, null, 2)
+  }
+  return String(result)
+}
+
+const copy_result_to_clipboard = async () => {
+  const toast = useToast()
+  if (!selected_step_result.value?.result) return
+  
+  try {
+    const text = format_result(selected_step_result.value.result)
+    await navigator.clipboard.writeText(text)
+    toast.success('结果已复制到剪贴板')
+  } catch (e: any) {
+    toast.error(`复制失败：${e.message}`)
+  }
+}
+
+const close_result_panel = () => {
+  show_result_panel.value = false
+  selected_step_result.value = null
+}
+
+const edit_node_params = () => {
+  show_result_panel.value = false
+  ignore_close_once.value = true
+  drawer_open.value = true
+}
+
+const view_node_result = () => {
+  if (!selected_node.value) return
+  selected_step_result.value = {
+    step_id: selected_node.value.id,
+    result: step_results.value[selected_node.value.id]
+  }
+  drawer_open.value = false
+  show_result_panel.value = true
 }
 
 const get_log_class = (level: string) => {
@@ -654,6 +827,10 @@ const start_run = async () => {
   const toast = useToast()
   const graph = build_graph()
   
+  // 清空之前的执行结果
+  step_results.value = {}
+  close_result_panel()
+  
   // 使用后端校验
   try {
     const issues = await invoke<any[]>('validate_workflow_graph', { graph })
@@ -674,6 +851,9 @@ const start_run = async () => {
     const exec_id = await invoke<string>('start_workflow_run', { graph })
     add_log('SUCCESS', `工作流已启动`, undefined, `执行ID: ${exec_id}`)
     toast.success(`已启动执行：${exec_id}`)
+    
+    // 保存最后运行的工作流ID
+    localStorage.setItem('last_run_workflow_id', workflow_id.value)
   } catch (e: any) {
     add_log('ERROR', `启动失败: ${e}`)
     toast.error(`启动失败：${e}`)
@@ -738,7 +918,7 @@ const load_workflow = async (id: string) => {
       })
       
       add_log('SUCCESS', `工作流已加载: ${workflow_name.value}`)
-      toast.success('工作流已加载')
+      // toast.success('工作流已加载')
       show_load_dialog.value = false
     }
   } catch (e: any) {
@@ -932,7 +1112,18 @@ const setup_event_listeners = async () => {
     const step_id = p?.step_id || p?.stepId
     if (step_id) {
       flow_ref.value?.updateNodeStatus(step_id, 'completed')
-      add_log('SUCCESS', `节点执行完成`, step_id)
+      
+      // 保存步骤结果
+      const result = p?.result
+      if (result) {
+        step_results.value[step_id] = result
+        const result_preview = typeof result === 'object' 
+          ? JSON.stringify(result, null, 2)
+          : String(result)
+        add_log('SUCCESS', `节点执行完成 (点击节点查看结果)`, step_id, result_preview)
+      } else {
+        add_log('SUCCESS', `节点执行完成`, step_id)
+      }
     }
   })
   await wf_events.on_run_complete(() => {
@@ -942,10 +1133,20 @@ const setup_event_listeners = async () => {
 
 const on_node_click = (node: any) => {
   ignore_close_once.value = true
+  ignore_result_panel_close_once.value = true
   selected_node.value = node
   const current = node.params || {}
   param_values.value = JSON.parse(JSON.stringify(current))
-  drawer_open.value = true
+  
+  // 如果节点有执行结果，同时准备好结果数据
+  if (step_results.value[node.id]) {
+    selected_step_result.value = {
+      step_id: node.id,
+      result: step_results.value[node.id]
+    }
+  }
+  // 始终打开参数编辑抽屉
+    drawer_open.value = true
 }
 
 const save_params = () => {
@@ -1022,6 +1223,59 @@ const save_current_as_template = async () => {
   }
 }
 
+// 加载 AI 配置
+const load_ai_config = async () => {
+  try {
+    ai_config.value = await invoke('get_ai_config')
+  } catch (e) {
+    console.error('Failed to load AI config:', e)
+  }
+}
+
+// 加载可用工具列表
+const load_available_tools = async () => {
+  try {
+    const tools = await invoke<any[]>('list_unified_tools')
+    // 只保留可用的工具
+    available_tools.value = tools.filter((t: any) => t.available)
+  } catch (e) {
+    console.error('Failed to load available tools:', e)
+  }
+}
+
+// 获取已启用的 AI 提供商列表
+const get_enabled_providers = () => {
+  if (!ai_config.value?.providers) return []
+  return Object.keys(ai_config.value.providers).filter(key => {
+    const provider = ai_config.value.providers[key]
+    return provider && provider.enabled === true
+  })
+}
+
+// 获取指定提供商的模型列表
+const get_provider_models = (providerKey: string) => {
+  if (!providerKey || !ai_config.value?.providers) return []
+  const provider = Object.keys(ai_config.value.providers).find(key => 
+    key.toLowerCase() === providerKey.toLowerCase()
+  )
+  if (!provider) return []
+  return ai_config.value.providers[provider]?.models || []
+}
+
+// 切换工具选择
+const toggle_tool_selection = (key: string, toolName: string) => {
+  if (!param_values.value[key]) {
+    param_values.value[key] = []
+  }
+  const arr = param_values.value[key] as string[]
+  const idx = arr.indexOf(toolName)
+  if (idx === -1) {
+    arr.push(toolName)
+  } else {
+    arr.splice(idx, 1)
+  }
+}
+
 // 监听show_load_dialog变化，加载工作流列表
 watch(show_load_dialog, (newVal) => {
   if (newVal) {
@@ -1075,6 +1329,8 @@ onMounted(async () => {
   await refresh_catalog()
   await setup_event_listeners()
   load_notification_rules()
+  load_ai_config()
+  load_available_tools()
   
   // 从localStorage加载收藏
   const saved_favorites = localStorage.getItem('workflow_favorites')
@@ -1087,12 +1343,40 @@ onMounted(async () => {
     }
   }
   
+  // 加载上次运行的工作流
+  const last_workflow_id = localStorage.getItem('last_run_workflow_id')
+  if (last_workflow_id) {
+    try {
+      await load_workflow(last_workflow_id)
+    } catch (e) {
+      console.error('Failed to load last workflow:', e)
+    }
+  }
+  
   const handle_global_click = (e: MouseEvent) => {
-    if (!drawer_open.value) return
-    if (ignore_close_once.value) { ignore_close_once.value = false; return }
-    const drawer = drawer_ref.value
-    if (drawer && drawer.contains(e.target as Node)) return
-    drawer_open.value = false
+    // 处理参数编辑抽屉的关闭
+    if (drawer_open.value) {
+      if (ignore_close_once.value) { 
+        ignore_close_once.value = false
+      } else {
+        const drawer = drawer_ref.value
+        if (!drawer || !drawer.contains(e.target as Node)) {
+          drawer_open.value = false
+        }
+      }
+    }
+    
+    // 处理结果面板的关闭
+    if (show_result_panel.value) {
+      if (ignore_result_panel_close_once.value) {
+        ignore_result_panel_close_once.value = false
+      } else {
+        const panel = result_panel_ref.value
+        if (!panel || !panel.contains(e.target as Node)) {
+          close_result_panel()
+        }
+      }
+    }
   }
   window.addEventListener('click', handle_global_click)
   onUnmounted(() => {

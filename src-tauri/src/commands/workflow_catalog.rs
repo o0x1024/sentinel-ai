@@ -261,6 +261,122 @@ fn prompt_nodes() -> Vec<NodeCatalogItem> {
     ]
 }
 
+fn ai_nodes() -> Vec<NodeCatalogItem> {
+    vec![
+        NodeCatalogItem {
+            node_type: "ai_agent".to_string(),
+            label: "AI Agent".to_string(),
+            category: "ai".to_string(),
+            params_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "title": "提示词",
+                        "description": "发送给 AI 的提示词，支持 {{input}} 引用上游输入",
+                        "x-ui-widget": "textarea"
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "title": "系统提示词",
+                        "description": "可选的系统提示词，定义 AI 的角色和行为",
+                        "x-ui-widget": "textarea"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "title": "AI 提供商",
+                        "description": "可选，留空使用默认配置",
+                        "x-ui-widget": "ai-provider-select"
+                    },
+                    "model": {
+                        "type": "string",
+                        "title": "模型",
+                        "description": "可选，留空使用默认配置",
+                        "x-ui-widget": "ai-model-select"
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "title": "温度",
+                        "description": "控制输出随机性，0-2，默认 0.7",
+                        "minimum": 0,
+                        "maximum": 2,
+                        "default": 0.7
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "title": "最大 Token 数",
+                        "description": "可选，限制输出长度"
+                    },
+                    "tools": {
+                        "type": "array",
+                        "title": "可用工具",
+                        "description": "可选，允许 AI 调用的工具列表",
+                        "items": {"type": "string"},
+                        "x-ui-widget": "tools-multiselect"
+                    },
+                    "output_format": {
+                        "type": "string",
+                        "title": "输出格式",
+                        "enum": ["text", "json"],
+                        "default": "text",
+                        "description": "输出格式：text 返回纯文本，json 尝试解析为 JSON"
+                    }
+                },
+                "required": ["prompt"]
+            }),
+            input_ports: vec![
+                port("in", "输入", PortType::Json, false),
+                port("chat_model", "Chat Model", PortType::Json, false),
+                port("memory", "Memory", PortType::Json, false),
+                port("tool", "Tool", PortType::Json, false),
+            ],
+            output_ports: vec![port("out", "输出", PortType::Json, true)],
+        },
+        NodeCatalogItem {
+            node_type: "ai_chat".to_string(),
+            label: "AI 对话".to_string(),
+            category: "ai".to_string(),
+            params_schema: json!({
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "title": "消息",
+                        "description": "发送给 AI 的消息，支持 {{input}} 引用上游输入",
+                        "x-ui-widget": "textarea"
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "title": "系统提示词",
+                        "description": "可选的系统提示词",
+                        "x-ui-widget": "textarea"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "title": "AI 提供商",
+                        "description": "可选，留空使用默认配置",
+                        "x-ui-widget": "ai-provider-select"
+                    },
+                    "model": {
+                        "type": "string",
+                        "title": "模型",
+                        "description": "可选，留空使用默认配置",
+                        "x-ui-widget": "ai-model-select"
+                    },
+                    "conversation_id": {
+                        "type": "string",
+                        "title": "会话 ID",
+                        "description": "可选，用于多轮对话"
+                    }
+                },
+                "required": ["message"]
+            }),
+            input_ports: vec![port("in", "输入", PortType::Json, false)],
+            output_ports: vec![port("out", "输出", PortType::Json, true)],
+        },
+    ]
+}
+
 fn tool_node_from_tool(info: &ToolInfo) -> NodeCatalogItem {
     // 简化映射：将工具参数schema直接用作节点参数schema
     let params_schema = info.parameters.schema.clone();
@@ -345,6 +461,7 @@ pub async fn list_node_catalog(
     catalog.extend(output_nodes());
     catalog.extend(rag_nodes());
     catalog.extend(prompt_nodes());
+    catalog.extend(ai_nodes());
 
     // 工具节点（从全局工具系统）
     if let Ok(tool_system) = get_global_tool_system() {

@@ -394,20 +394,23 @@ pub fn run() {
                 handle.manage(Arc::new(mcp_service));
                 // 将全局工具系统注入到 Tauri State，供扫描命令等读取
                 if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+                    // 获取全局工具系统的 manager，供工作流使用（这样工作流可以访问所有已注册的工具，包括 Agent 插件）
+                    let unified_manager = tool_system.get_manager();
+                    handle.manage(unified_manager);
                     handle.manage(tool_system);
                 } else {
                     tracing::error!("Global tool system not available to manage in Tauri state");
+                    // 回退：创建独立的工具管理器（但这样工作流无法访问 Agent 插件）
+                    let unified_manager = Arc::new(tokio::sync::RwLock::new(sentinel_tools::UnifiedToolManager::new(sentinel_tools::unified_types::ToolManagerConfig::default())));
+                    {
+                        let mgr = unified_manager.clone();
+                        let _ = tauri::async_runtime::spawn(async move {
+                            let mut guard = mgr.write().await;
+                            let _ = guard.register_provider(Box::new(sentinel_tools::builtin::BuiltinToolProvider::new())).await;
+                        });
+                    }
+                    handle.manage(unified_manager);
                 }
-                // 初始化并注册统一工具管理器供工作流使用
-                let unified_manager = Arc::new(tokio::sync::RwLock::new(sentinel_tools::UnifiedToolManager::new(sentinel_tools::unified_types::ToolManagerConfig::default())));
-                {
-                    let mgr = unified_manager.clone();
-                    let _ = tauri::async_runtime::spawn(async move {
-                        let mut guard = mgr.write().await;
-                        let _ = guard.register_provider(Box::new(sentinel_tools::builtin::BuiltinToolProvider::new())).await;
-                    });
-                }
-                handle.manage(unified_manager);
                 handle.manage(ai_manager);
                 // AI adapter manager removed - using Rig directly
                 handle.manage(scan_session_service);

@@ -1,5 +1,5 @@
 <template>
-  <div class="toast-container fixed top-20 right-4 z-50 space-y-2">
+  <div class="toast-container fixed top-16 left-1/2 -translate-x-1/2 z-50 space-y-2">
     <transition-group name="toast" tag="div">
       <div
         v-for="toast in toasts"
@@ -228,12 +228,12 @@ defineExpose({
 
 .toast-enter-from {
   opacity: 0;
-  transform: translateX(100%);
+  transform: translateX(-50%) translateY(-20px);
 }
 
 .toast-leave-to {
   opacity: 0;
-  transform: translateX(100%);
+  transform: translateX(-50%) translateY(-20px);
 }
 
 .toast-move {
