@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use crate::core::models::ai::AiRole;
 use crate::core::models::database::{
     AiConversation, AiMessage, Configuration, DatabaseStats, McpServerConfig,
-    ScanTask, Vulnerability,
+    ScanTask, Vulnerability, NotificationRule,
 };
 use crate::core::models::agent::{
     AgentTask, AgentSessionData, AgentExecutionResult, SessionLog, TaskPriority, LogLevel,
@@ -103,6 +103,18 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn toggle_plugin_favorite(&self, plugin_id: &str, user_id: Option<&str>) -> Result<bool>;
     async fn get_favorited_plugins(&self, user_id: Option<&str>) -> Result<Vec<String>>;
     async fn get_plugin_review_stats(&self) -> Result<serde_json::Value>;
+    // 工作流运行记录
+    async fn create_workflow_run(&self, id: &str, workflow_id: &str, workflow_name: &str, version: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
+    async fn update_workflow_run_status(&self, id: &str, status: &str, completed_at: Option<chrono::DateTime<chrono::Utc>>, error_message: Option<&str>) -> Result<()>;
+    async fn update_workflow_run_progress(&self, id: &str, progress: u32, completed_steps: u32, total_steps: u32) -> Result<()>;
+    async fn save_workflow_run_step(&self, run_id: &str, step_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
+    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
+    async fn list_workflow_runs(&self) -> Result<Vec<serde_json::Value>>;
+    async fn create_notification_rule(&self, rule: &NotificationRule) -> Result<()>;
+    async fn get_notification_rules(&self) -> Result<Vec<NotificationRule>>;
+    async fn get_notification_rule(&self, id: &str) -> Result<Option<NotificationRule>>;
+    async fn update_notification_rule(&self, rule: &NotificationRule) -> Result<()>;
+    async fn delete_notification_rule(&self, id: &str) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -758,6 +770,28 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS notification_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                channel TEXT NOT NULL,
+                config TEXT,
+                is_encrypted BOOLEAN DEFAULT 0,
+                enabled BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_notification_rules_enabled ON notification_rules(enabled)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_notification_rules_channel ON notification_rules(channel)")
+            .execute(&mut *tx)
+            .await?;
+
         // 创建字典表
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS dictionaries (
@@ -1242,6 +1276,63 @@ impl DatabaseService {
             .execute(&mut *tx)
             .await?;
 
+        // 工作流运行记录表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                workflow_name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                progress INTEGER DEFAULT 0,
+                total_steps INTEGER DEFAULT 0,
+                completed_steps INTEGER DEFAULT 0,
+                current_step TEXT,
+                started_at DATETIME,
+                completed_at DATETIME,
+                duration_ms INTEGER,
+                result_json TEXT,
+                error_message TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            "#
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS workflow_run_steps (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                step_name TEXT,
+                step_order INTEGER,
+                status TEXT NOT NULL,
+                started_at DATETIME,
+                completed_at DATETIME,
+                duration_ms INTEGER,
+                result_json TEXT,
+                error_message TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+            )
+            "#
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_runs_started_at ON workflow_runs(started_at)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_run_steps_run_id ON workflow_run_steps(run_id)")
+            .execute(&mut *tx)
+            .await?;
+
         // 提交事务
         tx.commit().await?;
 
@@ -1537,6 +1628,76 @@ impl DatabaseService {
             }));
         }
         Ok(plugins)
+    }
+
+    pub async fn create_notification_rule(&self, rule: &NotificationRule) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"INSERT INTO notification_rules (id, name, description, channel, config, is_encrypted, enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+        )
+        .bind(&rule.id)
+        .bind(&rule.name)
+        .bind(&rule.description)
+        .bind(&rule.channel)
+        .bind(&rule.config)
+        .bind(rule.is_encrypted)
+        .bind(rule.enabled)
+        .bind(rule.created_at)
+        .bind(rule.updated_at)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_notification_rules(&self) -> Result<Vec<NotificationRule>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query_as::<_, NotificationRule>(
+            "SELECT * FROM notification_rules ORDER BY updated_at DESC"
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn get_notification_rule(&self, id: &str) -> Result<Option<NotificationRule>> {
+        let pool = self.get_pool()?;
+        let row = sqlx::query_as::<_, NotificationRule>(
+            "SELECT * FROM notification_rules WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn update_notification_rule(&self, rule: &NotificationRule) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"UPDATE notification_rules
+               SET name = ?, description = ?, channel = ?, config = ?, is_encrypted = ?, enabled = ?, updated_at = ?
+               WHERE id = ?"#
+        )
+        .bind(&rule.name)
+        .bind(&rule.description)
+        .bind(&rule.channel)
+        .bind(&rule.config)
+        .bind(rule.is_encrypted)
+        .bind(rule.enabled)
+        .bind(chrono::Utc::now())
+        .bind(&rule.id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_notification_rule(&self, id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("DELETE FROM notification_rules WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()> {
@@ -4019,6 +4180,121 @@ impl Database for DatabaseService {
             "passed": passed.0,
             "average_quality": avg_quality.0.unwrap_or(0.0),
         }))
+    }
+
+    async fn create_workflow_run(&self, id: &str, workflow_id: &str, workflow_name: &str, version: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"INSERT INTO workflow_runs (id, workflow_id, workflow_name, version, status, started_at) VALUES (?, ?, ?, ?, ?, ?)"#
+        )
+        .bind(id)
+        .bind(workflow_id)
+        .bind(workflow_name)
+        .bind(version)
+        .bind(status)
+        .bind(started_at)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_workflow_run_status(&self, id: &str, status: &str, completed_at: Option<chrono::DateTime<chrono::Utc>>, error_message: Option<&str>) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"UPDATE workflow_runs SET status = ?, completed_at = ?, error_message = ? WHERE id = ?"#
+        )
+        .bind(status)
+        .bind(completed_at)
+        .bind(error_message)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_workflow_run_progress(&self, id: &str, progress: u32, completed_steps: u32, total_steps: u32) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"UPDATE workflow_runs SET progress = ?, completed_steps = ?, total_steps = ? WHERE id = ?"#
+        )
+        .bind(progress as i64)
+        .bind(completed_steps as i64)
+        .bind(total_steps as i64)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn save_workflow_run_step(&self, run_id: &str, step_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"INSERT INTO workflow_run_steps (id, run_id, step_id, status, started_at) VALUES (?, ?, ?, ?, ?)"#
+        )
+        .bind(format!("{}:{}", run_id, step_id))
+        .bind(run_id)
+        .bind(step_id)
+        .bind(status)
+        .bind(started_at)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query(
+            r#"UPDATE workflow_run_steps SET status = ?, completed_at = ? WHERE id = ?"#
+        )
+        .bind(status)
+        .bind(completed_at)
+        .bind(format!("{}:{}", run_id, step_id))
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_workflow_runs(&self) -> Result<Vec<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query(r#"SELECT id, workflow_name, version, status, started_at, completed_at, progress, total_steps, completed_steps FROM workflow_runs ORDER BY started_at DESC LIMIT 50"#)
+            .fetch_all(pool)
+            .await?;
+        let mut result = Vec::new();
+        for row in rows {
+            let item = serde_json::json!({
+                "execution_id": row.get::<String, _>("id"),
+                "workflow_name": row.get::<String, _>("workflow_name"),
+                "version": row.get::<String, _>("version"),
+                "status": row.get::<String, _>("status"),
+                "started_at": row.get::<chrono::DateTime<chrono::Utc>, _>("started_at"),
+                "completed_at": row.try_get::<chrono::DateTime<chrono::Utc>, _>("completed_at").ok(),
+                "progress": row.get::<i64, _>("progress"),
+                "total_steps": row.get::<i64, _>("total_steps"),
+                "completed_steps": row.get::<i64, _>("completed_steps"),
+            });
+            result.push(item);
+        }
+        Ok(result)
+    }
+
+    async fn create_notification_rule(&self, rule: &NotificationRule) -> Result<()> {
+        self.create_notification_rule(rule).await
+    }
+
+    async fn get_notification_rules(&self) -> Result<Vec<NotificationRule>> {
+        self.get_notification_rules().await
+    }
+
+    async fn get_notification_rule(&self, id: &str) -> Result<Option<NotificationRule>> {
+        self.get_notification_rule(id).await
+    }
+
+    async fn update_notification_rule(&self, rule: &NotificationRule) -> Result<()> {
+        self.update_notification_rule(rule).await
+    }
+
+    async fn delete_notification_rule(&self, id: &str) -> Result<()> {
+        self.delete_notification_rule(id).await
     }
 }
 

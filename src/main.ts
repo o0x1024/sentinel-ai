@@ -68,7 +68,8 @@ const McpTools = () => import('./views/Tools.vue');
 const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 
 const AgentManagerView = () => import('./views/AgentManager.vue');
-const WorkflowMonitor = () => import('./views/WorkflowMonitor.vue');
+const WorkflowStudio = () => import('./views/WorkflowStudio.vue');
+const WorkflowRuns = () => import('./views/WorkflowRuns.vue');
 const PromptManagement = () => import('./views/PromptManagement.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
 const RAGManagement = () => import('./views/RAGManagement.vue');
@@ -77,6 +78,7 @@ const PluginManagement = () => import('./views/PluginManagement.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
+const NotificationManagement = () => import('./views/NotificationManagement.vue');
 
 // 创建路由配置
 const routes = [
@@ -134,10 +136,16 @@ const routes = [
     meta: { title: '知识库管理' }
   },
   { 
-    path: '/workflow-monitor', 
-    name: 'WorkflowMonitor', 
-    component: WorkflowMonitor,
-    meta: { title: '工作流监控' }
+    path: '/workflow-studio', 
+    name: 'WorkflowStudio', 
+    component: WorkflowStudio,
+    meta: { title: '工作流工作室' }
+  },
+  { 
+    path: '/workflow-runs', 
+    name: 'WorkflowRuns', 
+    component: WorkflowRuns,
+    meta: { title: '运行历史' }
   },
   { 
     path: '/passive-scan', 
@@ -174,6 +182,12 @@ const routes = [
     name: 'PerformanceMonitor', 
     component: PerformanceMonitor,
     meta: { title: '性能监控' }
+  },
+  { 
+    path: '/notifications', 
+    name: 'NotificationManagement', 
+    component: NotificationManagement,
+    meta: { title: '通知管理' }
   },
 ];
 

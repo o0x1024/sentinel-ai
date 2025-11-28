@@ -9,6 +9,7 @@ pub mod scan_session;
 pub mod vulnerability;
 pub mod prompt;
 pub mod security_testing;
+pub mod workflow_graph;
 
 // 通用类型定义
 use chrono::{DateTime, Utc};

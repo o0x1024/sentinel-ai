@@ -27,7 +27,9 @@ sentinel-prompt = { path = "sentinel-prompt" }
 sentinel-rag = { path = "sentinel-rag" }
 sentinel-tools = { path = "sentinel-tools" }
 sentinel-services = { path = "sentinel-services" }
+sentinel-workflow = { path = "sentinel-workflow" }
 sentinel-passive = { path = "sentinel-passive" }
+sentinel-notify = { path = "sentinel-notify" }
 
 html2text = "0.15.5"
 urlencoding = "2.1.3"
@@ -218,7 +220,7 @@ members = [
     "sentinel-prompt",
     "sentinel-rag",
     "sentinel-tools",
-    "sentinel-passive", "sentinel-plugins",
+    "sentinel-passive", "sentinel-plugins", "sentinel-notify", "sentinel-workflow",
 ]
 resolver = "2"
 

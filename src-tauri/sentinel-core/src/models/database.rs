@@ -359,6 +359,36 @@ pub struct Configuration {
 
 
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct NotificationRule {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub channel: String,
+    pub config: Option<String>,
+    pub is_encrypted: bool,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl NotificationRule {
+    pub fn new(name: String, channel: String, config: Option<serde_json::Value>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            description: None,
+            channel,
+            config: config.map(|v| serde_json::to_string(&v).unwrap_or_default()),
+            is_encrypted: false,
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
 /// 创建扫描任务请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateScanTaskRequest {

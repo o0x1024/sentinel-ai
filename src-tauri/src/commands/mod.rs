@@ -21,12 +21,15 @@ pub mod role;
 pub mod scan;
 pub mod scan_commands;
 pub mod scan_session_commands;
+pub mod notifications;
 pub mod test_mcp;
 pub mod test_proxy;
 pub mod test_agent_flow;
 pub mod unified_tools;
 pub mod vulnerability;
 pub mod window;
+pub mod workflow_catalog;
+pub mod workflow_run;
 
 // 重新导出所有命令
 pub use agent_commands::*;
@@ -52,10 +55,13 @@ pub use role::*;
 pub use scan::*;
 pub use scan_commands::*;
 pub use scan_session_commands::*;
+pub use notifications::*;
 pub use test_mcp::*;
 pub use unified_tools::*;
 pub use vulnerability::*;
 pub use window::*;
+pub use workflow_catalog::*;
+pub use workflow_run::*;
 
 
 

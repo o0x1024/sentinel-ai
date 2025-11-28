@@ -18,6 +18,9 @@ pub mod react;
 // Travel 架构模块 (OODA循环)
 pub mod travel;
 
+// 智能调度器与工作流引擎
+pub mod intelligent_dispatcher;
+
 // 重新导出核心类型和trait
 pub use types::*;
 
@@ -63,8 +66,6 @@ pub use travel::{TravelConfig, TravelEngine, OodaCycle, OodaPhase, TaskComplexit
 // };
 
 // 导出智能调度器模块
-// pub use intelligent_dispatcher::{
-//     IntelligentDispatcher, QueryFeatures, ArchitectureSelection, ArchitectureConfig,
-//     ResourceConfig, DynamicPrompts, ExecutionRecord, ExecutionStatus, ExecutionHistoryResult,
-//     ExecutionHistoryRecord, DispatcherStats
-// };
+pub use intelligent_dispatcher::workflow_engine::{
+    WorkflowEngine, WorkflowDefinition, WorkflowMetadata, WorkflowStep, ExecutionStatus,
+};

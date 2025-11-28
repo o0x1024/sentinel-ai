@@ -161,52 +161,25 @@
                     </div>
                 </div>
                 
-                <!-- 架构类型 -->
-                <div class="mb-3">
-                    <h5 class="font-medium text-xs mb-2 text-base-content/80">架构类型</h5>
-                    <div class="flex flex-wrap gap-4 text-xs">
-                        <div class="flex items-center gap-1">
-                            <div class="w-4 h-3 bg-base-100 border border-l-4 border-l-purple-500"></div>
-                            <span>ReWOO</span>
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <div class="w-4 h-3 bg-base-100 border border-l-4 border-l-indigo-500"></div>
-                            <span>LLMCompiler</span>
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <div class="w-4 h-3 bg-base-100 border border-gray-300"></div>
-                            <span>Plan-Execute</span>
-                        </div>
-                    </div>
-                </div>
-                
                 <!-- 节点类型 -->
                 <div>
                     <h5 class="font-medium text-xs mb-2 text-base-content/80">节点类型</h5>
                     <div class="grid grid-cols-2 gap-2 text-xs">
                         <div class="flex items-center gap-1">
-                            <div class="w-3 h-3 bg-purple-200 border border-purple-300"></div>
-                            <span>ReWOO规划器</span>
+                            <div class="w-3 h-3 bg-gray-200 border border-gray-300"></div>
+                            <span>通用节点</span>
                         </div>
                         <div class="flex items-center gap-1">
                             <div class="w-3 h-3 bg-blue-200 border border-blue-300"></div>
-                            <span>ReWOO工作器</span>
+                            <span>工具节点</span>
                         </div>
                         <div class="flex items-center gap-1">
                             <div class="w-3 h-3 bg-green-200 border border-green-300"></div>
-                            <span>ReWOO求解器</span>
+                            <span>控制流节点</span>
                         </div>
                         <div class="flex items-center gap-1">
                             <div class="w-3 h-3 bg-indigo-200 border border-indigo-300"></div>
-                            <span>DAG调度器</span>
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <div class="w-3 h-3 bg-teal-200 border border-teal-300"></div>
-                            <span>并行执行器</span>
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <div class="w-3 h-3 bg-orange-200 border border-orange-300"></div>
-                            <span>智能连接器</span>
+                            <span>输出节点</span>
                         </div>
                     </div>
                 </div>
@@ -222,21 +195,18 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from
 type NodeStatus = 'pending' | 'planning' | 'running' | 'completed' | 'failed' | 'paused' | 'cancelled'
 
 // 节点类型
-interface FlowchartNode {
-    id: string
-    name: string
-    description: string
-    status: NodeStatus
-    progress?: number
-    x: number
-    y: number
-    type: 'start' | 'planner' | 'agent' | 'tools' | 'replan' | 'end' | 
-          'rewoo_planner' | 'rewoo_worker' | 'rewoo_solver' | 'rewoo_variable' |
-          'dag_scheduler' | 'task_fetcher' | 'parallel_executor' | 'joiner' | 'dependency_resolver'
-    dependencies: string[]
-    metadata?: Record<string, any>
-    architecture?: 'plan_execute' | 'rewoo' | 'llm_compiler'
-}
+    interface FlowchartNode {
+        id: string
+        name: string
+        description: string
+        status: NodeStatus
+        progress?: number
+        x: number
+        y: number
+        type: string
+        dependencies: string[]
+        metadata?: Record<string, any>
+    }
 
 // 连接线类型
 interface FlowchartConnection {
@@ -283,66 +253,30 @@ const containerSize = reactive({
 })
 
 // 计算属性
-const getNodeClass = computed(() => (node: FlowchartNode) => {
-    const baseClasses = ['bg-base-100', 'hover:shadow-lg']
-    
-    // 根据架构类型添加特殊样式
-    const architectureClasses = []
-    if (node.architecture === 'rewoo') {
-        architectureClasses.push('border-l-4', 'border-l-purple-500')
-    } else if (node.architecture === 'llm_compiler') {
-        architectureClasses.push('border-l-4', 'border-l-indigo-500')
-    }
-    
-    // 根据节点类型添加特殊样式
-    const typeClasses = []
-    switch (node.type) {
-        case 'rewoo_planner':
-            typeClasses.push('bg-purple-50', 'border-purple-300')
-            break
-        case 'rewoo_worker':
-            typeClasses.push('bg-blue-50', 'border-blue-300')
-            break
-        case 'rewoo_solver':
-            typeClasses.push('bg-green-50', 'border-green-300')
-            break
-        case 'rewoo_variable':
-            typeClasses.push('bg-yellow-50', 'border-yellow-300')
-            break
-        case 'dag_scheduler':
-            typeClasses.push('bg-indigo-50', 'border-indigo-300')
-            break
-        case 'task_fetcher':
-            typeClasses.push('bg-pink-50', 'border-pink-300')
-            break
-        case 'parallel_executor':
-            typeClasses.push('bg-teal-50', 'border-teal-300')
-            break
-        case 'joiner':
-            typeClasses.push('bg-orange-50', 'border-orange-300')
-            break
-        case 'dependency_resolver':
-            typeClasses.push('bg-cyan-50', 'border-cyan-300')
-            break
-    }
-
-    switch (node.status) {
-        case 'pending':
-            return [...baseClasses, ...architectureClasses, ...typeClasses, 'border-gray-300', 'text-base-content/70']
-        case 'planning':
-            return [...baseClasses, ...architectureClasses, ...typeClasses, 'border-blue-400', 'bg-blue-50']
-        case 'running':
-            return [...baseClasses, ...architectureClasses, ...typeClasses, 'border-yellow-400', 'bg-yellow-50', 'animate-pulse']
-        case 'completed':
-            return [...baseClasses, ...architectureClasses, ...typeClasses, 'border-green-400', 'bg-green-50']
-        case 'failed':
-            return [...baseClasses, ...architectureClasses, ...typeClasses, 'border-red-400', 'bg-red-50']
-        case 'paused':
-            return [...baseClasses, ...architectureClasses, ...typeClasses, 'border-orange-400', 'bg-orange-50']
-        default:
-            return [...baseClasses, ...architectureClasses, ...typeClasses]
-    }
-})
+    const getNodeClass = computed(() => (node: FlowchartNode) => {
+        const baseClasses = ['bg-base-100', 'hover:shadow-lg']
+        
+        // 根据节点类型添加特殊样式
+        const typeClasses = []
+        // 通用样式，不根据架构
+        
+        switch (node.status) {
+            case 'pending':
+                return [...baseClasses, ...typeClasses, 'border-gray-300', 'text-base-content/70']
+            case 'planning':
+                return [...baseClasses, ...typeClasses, 'border-blue-400', 'bg-blue-50']
+            case 'running':
+                return [...baseClasses, ...typeClasses, 'border-yellow-400', 'bg-yellow-50', 'animate-pulse']
+            case 'completed':
+                return [...baseClasses, ...typeClasses, 'border-green-400', 'bg-green-50']
+            case 'failed':
+                return [...baseClasses, ...typeClasses, 'border-red-400', 'bg-red-50']
+            case 'paused':
+                return [...baseClasses, ...typeClasses, 'border-orange-400', 'bg-orange-50']
+            default:
+                return [...baseClasses, ...typeClasses]
+        }
+    })
 
 const getStatusIndicatorClass = computed(() => (status: NodeStatus) => {
     switch (status) {
@@ -392,78 +326,8 @@ const getStatusText = (status: NodeStatus): string => {
 }
 
 const initializeFlowchart = () => {
-    // 初始化默认的Plan-and-Execute流程图
-    const defaultNodes: FlowchartNode[] = [
-        {
-            id: 'start',
-            name: '开始',
-            description: '用户输入任务',
-            status: 'completed',
-            x: 50,
-            y: 50,
-            type: 'start',
-            dependencies: []
-        },
-        {
-            id: 'planner',
-            name: '规划器',
-            description: '分析任务并生成执行计划',
-            status: 'completed',
-            x: 50,
-            y: 150,
-            type: 'planner',
-            dependencies: ['start']
-        },
-        {
-            id: 'agent',
-            name: '执行代理',
-            description: '执行计划中的具体步骤',
-            status: 'running',
-            progress: 65,
-            x: 50,
-            y: 250,
-            type: 'agent',
-            dependencies: ['planner']
-        },
-        {
-            id: 'tools',
-            name: '工具调用',
-            description: '调用外部工具和服务',
-            status: 'running',
-            progress: 30,
-            x: 250,
-            y: 250,
-            type: 'tools',
-            dependencies: ['agent']
-        },
-        {
-            id: 'replan',
-            name: '重新规划',
-            description: '根据执行结果调整计划',
-            status: 'pending',
-            x: 450,
-            y: 150,
-            type: 'replan',
-            dependencies: ['tools']
-        },
-        {
-            id: 'end',
-            name: '结束',
-            description: '任务执行完成',
-            status: 'pending',
-            x: 250,
-            y: 350,
-            type: 'end',
-            dependencies: ['tools', 'replan']
-        }
-    ]
-
-    nodes.value = defaultNodes
-    updateConnections()
-
-    if (autoLayout.value) {
-        performAutoLayout()
-    }
+    nodes.value = []
+    connections.value = []
 }
 
 const updateConnections = () => {
@@ -750,7 +614,17 @@ defineExpose({
         nodes.value = nodes.value.filter(n => n.id !== nodeId)
         updateConnections()
     },
-    resetFlowchart: initializeFlowchart
+    resetFlowchart: initializeFlowchart,
+    getFlowchartNodes: (): FlowchartNode[] => {
+        return [...nodes.value]
+    },
+    getFlowchartEdges: (): Array<{ from_node: string, to_node: string }> => {
+        const edges: Array<{ from_node: string, to_node: string }> = []
+        nodes.value.forEach(n => {
+            n.dependencies.forEach(dep => edges.push({ from_node: dep, to_node: n.id }))
+        })
+        return edges
+    }
 })
 </script>
 

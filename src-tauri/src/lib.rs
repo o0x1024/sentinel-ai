@@ -405,6 +405,9 @@ pub fn run() {
                 handle.manage(asset_service);
                 // Manage passive scan state (created in setup hook above)
                 handle.manage(passive_state_for_manage);
+                // 工作流引擎实例
+                let workflow_engine = Arc::new(engines::intelligent_dispatcher::workflow_engine::WorkflowEngine::new());
+                handle.manage(workflow_engine);
                 
 
 
@@ -821,6 +824,12 @@ pub fn run() {
             commands::test_agent_flow::test_tool_execution,
             // Chat with automatic web search & summarization
             commands::send_ai_stream_with_search,
+            // 工作流节点目录
+            commands::workflow_catalog::list_node_catalog,
+            // 工作流运行相关命令
+            commands::workflow_run::start_workflow_run,
+            commands::workflow_run::get_workflow_run_status,
+            commands::workflow_run::list_workflow_runs,
             
             // RAG相关命令
             rag_commands::rag_ingest_source,
@@ -914,6 +923,14 @@ pub fn run() {
             commands::plugin_review_commands::toggle_plugin_favorite,
             commands::plugin_review_commands::get_favorited_plugins,
             commands::plugin_review_commands::get_plugin_review_statistics,
+            // Notifications
+            commands::notifications::send_notification,
+            commands::notifications::create_notification_rule,
+            commands::notifications::update_notification_rule,
+            commands::notifications::delete_notification_rule,
+            commands::notifications::list_notification_rules,
+            commands::notifications::get_notification_rule,
+            commands::notifications::test_notification_rule_connection,
         ])
         .run(context)
         .expect("Failed to start Tauri application");

@@ -182,8 +182,8 @@ const mainMenuItems = computed(() => [
   },
 
   {
-    path: '/workflow-monitor',
-    name: t('sidebar.workflowMonitor', '工作流监控'),
+    path: '/workflow-studio',
+    name: t('sidebar.workflowStudio', '工作流工作室'),
     icon: 'fas fa-project-diagram',
     badge: null,
     badgeClass: ''
@@ -213,7 +213,14 @@ const toolMenuItems = computed(() => [
   //   badge: 'NEW',
   //   badgeClass: 'badge-success'
   // },
-    {
+  {
+    path: '/workflow-runs',
+    name: t('sidebar.workflowRuns', '运行历史'),
+    icon: 'fas fa-history',
+    badge: null,
+    badgeClass: ''
+  },
+  {
     path: '/rag-management',
     name: t('sidebar.ragManagement', '知识库管理'),
     icon: 'fas fa-database',
@@ -256,6 +263,13 @@ const systemMenuItems = computed(() => [
     path: '/settings',
     name: t('sidebar.settings', '系统设置'),
     icon: 'fas fa-cog',
+    badge: null,
+    badgeClass: ''
+  },
+  {
+    path: '/notifications',
+    name: t('sidebar.notifications', '通知管理'),
+    icon: 'fas fa-bell',
     badge: null,
     badgeClass: ''
   },
