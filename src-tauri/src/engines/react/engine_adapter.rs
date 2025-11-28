@@ -135,6 +135,15 @@ impl ReactEngine {
             None
         };
 
+        // === Memory 集成：获取全局 Memory 并创建集成器 ===
+        let memory_integration = {
+            use crate::engines::memory::get_global_memory;
+            use super::memory_integration::ReactMemoryIntegration;
+            
+            let memory = get_global_memory();
+            Some(Arc::new(ReactMemoryIntegration::new(memory)))
+        };
+
         let executor_config = ReactExecutorConfig {
             react_config: self.config.clone(),
             enable_streaming: true,
@@ -149,13 +158,15 @@ impl ReactEngine {
                     .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
             ),
             cancellation_token, // ✅ 传递取消令牌
+            memory_integration, // ✅ Memory 集成
+            summarization_threshold: 8, // 超过 8 步时进行摘要
         };
 
         let executor = ReactExecutor::new(task.description.clone(), executor_config.clone());
 
         // 克隆服务引用和 IDs 供闭包使用
         let ai_service = self.ai_service.clone();
-        let mcp_service = self.mcp_service.clone();
+        let _mcp_service = self.mcp_service.clone(); // TODO: 后续可用于 MCP 工具调用
         let conv_id_for_llm = conversation_id.clone();
         let msg_id_for_llm = message_id.clone();
 
@@ -510,9 +521,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_engine_metadata() {
-        // let engine = ReactEngine::with_defaults();
-        // assert_eq!(engine.get_name(), "ReAct");
-        // assert!(engine.get_supported_scenarios().contains(&"multi_step_reasoning".to_string()));
+    fn test_engine_creation() {
+        let engine = ReactEngine::with_defaults();
+        assert!(engine.ai_service.is_none());
+        assert!(engine.mcp_service.is_none());
+    }
+
+    #[test]
+    fn test_config_defaults() {
+        let config = ReactConfig::default();
+        assert_eq!(config.max_iterations, 100);
+        assert!(config.enable_rag);
     }
 }

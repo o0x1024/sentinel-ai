@@ -1,12 +1,18 @@
 //! ReAct 执行器
 //!
 //! 实现核心循环：Thought → Action → Observation → 收敛判定
+//!
+//! 集成功能：
+//! - Memory 系统（经验学习、工具缓存）
+//! - Context Summarization（长对话摘要）
+//! - RAG 知识检索
 
+use super::memory_integration::{ContextSummarizer, ReactMemoryIntegration};
 use super::parser::ActionParser;
 use super::types::*;
 use crate::services::prompt_db::PromptRepository;
-use crate::utils::ordered_message::ArchitectureType as ArchType;
 use crate::utils::message_emitter::StandardMessageEmitter;
+use crate::utils::ordered_message::ArchitectureType as ArchType;
 use anyhow::{anyhow, Context, Result};
 use sentinel_core::models::prompt::{ArchitectureType, StageType};
 use std::sync::Arc;
@@ -15,7 +21,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 /// ReAct 执行器配置
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ReactExecutorConfig {
     pub react_config: ReactConfig,
     /// 是否启用流式输出
@@ -36,6 +42,28 @@ pub struct ReactExecutorConfig {
     pub task_parameters: Option<serde_json::Value>,
     /// 取消令牌（用于支持任务取消）
     pub cancellation_token: Option<CancellationToken>,
+    /// Memory 集成（用于经验学习、工具缓存）
+    pub memory_integration: Option<Arc<ReactMemoryIntegration>>,
+    /// Context Summarization 阈值（超过此步数时进行摘要，0 表示禁用）
+    pub summarization_threshold: usize,
+}
+
+impl std::fmt::Debug for ReactExecutorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReactExecutorConfig")
+            .field("react_config", &self.react_config)
+            .field("enable_streaming", &self.enable_streaming)
+            .field("conversation_id", &self.conversation_id)
+            .field("message_id", &self.message_id)
+            .field("execution_id", &self.execution_id)
+            .field("has_app_handle", &self.app_handle.is_some())
+            .field("has_prompt_repo", &self.prompt_repo.is_some())
+            .field("has_framework_adapter", &self.framework_adapter.is_some())
+            .field("task_parameters", &self.task_parameters)
+            .field("has_memory_integration", &self.memory_integration.is_some())
+            .field("summarization_threshold", &self.summarization_threshold)
+            .finish()
+    }
 }
 
 /// ReAct 执行器
@@ -109,15 +137,39 @@ impl ReactExecutor {
             emitter.emit_start(Some(serde_json::json!({
                 "max_iterations": self.config.react_config.max_iterations,
                 "enable_rag": self.config.react_config.enable_rag,
+                "memory_enabled": self.config.memory_integration.is_some(),
             })));
         }
+
+        // === Memory 集成：检索相似推理链作为 Few-shot 示例 ===
+        let mut few_shot_examples = String::new();
+        if let Some(ref memory) = self.config.memory_integration {
+            match memory.retrieve_reasoning_chains(&task).await {
+                Ok(examples) if !examples.is_empty() => {
+                    log::info!("ReAct: Retrieved {} similar reasoning chain examples from memory", examples.len());
+                    few_shot_examples = self.format_few_shot_examples(&examples);
+                }
+                Ok(_) => {
+                    log::debug!("ReAct: No similar reasoning chains found in memory");
+                }
+                Err(e) => {
+                    log::warn!("ReAct: Failed to retrieve reasoning chains from memory: {}", e);
+                }
+            }
+        }
+
+        // Context Summarizer（如果启用）
+        let summarizer = if self.config.summarization_threshold > 0 {
+            Some(ContextSummarizer::new(self.config.summarization_threshold))
+        } else {
+            None
+        };
 
         // 可选：首次思考前注入 RAG 证据
         let mut rag_context = String::new();
         if self.config.react_config.enable_rag {
             if let Some(rag_cfg) = &self.config.react_config.rag_config {
                 if matches!(rag_cfg.injection_point, RagInjectionPoint::Initial) {
-                    // TODO: 实际调用 RAG 服务获取证据
                     rag_context = self.fetch_rag_context(&task).await?;
                 }
             }
@@ -150,7 +202,7 @@ impl ReactExecutor {
             // === 步骤 1: Thought（思考） ===
             let thought_start = SystemTime::now();
             let (system_prompt, user_prompt) = self
-                .build_thought_prompt(&task, &context_history, &rag_context)
+                .build_thought_prompt(&task, &context_history, &rag_context, &few_shot_examples)
                 .await;
 
             // 调用LLM时，传入原始任务作为要保存的用户消息（仅第一次迭代）
@@ -234,34 +286,37 @@ impl ReactExecutor {
                         final_answer.answer.len()
                     );
 
-                    // 获取 message_id、execution_id、trace_id 和 conversation_id 用于发送消息
-                    // 优先使用前端传入的 message_id 和 execution_id，否则回退到 trace_id
-                    let (message_id, execution_id, trace_id, conversation_id) = {
-                        let trace = self.trace.read().await;
-                        let msg_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                        let exec_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-                        (msg_id, exec_id, trace.trace_id.clone(), self.config.conversation_id.clone())
+                    // 更新 trace 状态
+                    let trace_clone = {
+                        let mut trace_guard = self.trace.write().await;
+                        trace_guard.add_step(ReactStep {
+                            id: format!("final_{}", iteration),
+                            step_type: ReactStepType::Final {
+                                answer: final_answer.answer.clone(),
+                                citations: final_answer.citations.clone(),
+                            },
+                            timestamp: SystemTime::now(),
+                            duration_ms: None,
+                            token_usage: None,
+                            error: None,
+                        });
+                        trace_guard.complete(ReactStatus::Completed);
+                        trace_guard.metrics.total_iterations = iteration;
+                        trace_guard.metrics.total_duration_ms = start_time
+                            .elapsed()
+                            .unwrap_or(Duration::from_secs(0))
+                            .as_millis() as u64;
+                        trace_guard.clone()
                     };
 
-                    // 更新 trace 状态
-                    let mut trace = self.trace.write().await;
-                    trace.add_step(ReactStep {
-                        id: format!("final_{}", iteration),
-                        step_type: ReactStepType::Final {
-                            answer: final_answer.answer.clone(),
-                            citations: final_answer.citations.clone(),
-                        },
-                        timestamp: SystemTime::now(),
-                        duration_ms: None,
-                        token_usage: None,
-                        error: None,
-                    });
-                    trace.complete(ReactStatus::Completed);
-                    trace.metrics.total_iterations = iteration;
-                    trace.metrics.total_duration_ms = start_time
-                        .elapsed()
-                        .unwrap_or(Duration::from_secs(0))
-                        .as_millis() as u64;
+                    // === Memory 集成：存储执行轨迹 ===
+                    if let Some(ref memory) = self.config.memory_integration {
+                        if let Err(e) = memory.store_trace(&trace_clone).await {
+                            log::warn!("ReAct: Failed to store trace to memory: {}", e);
+                        } else {
+                            log::info!("ReAct: Trace stored to memory successfully");
+                        }
+                    }
 
                     // 发送final answer内容到前端
                     if let Some(ref emitter) = emitter {
@@ -270,13 +325,13 @@ impl ReactExecutor {
                         // 发送完成信号
                         emitter.emit_complete(Some(serde_json::json!({
                             "total_iterations": iteration,
-                            "total_duration_ms": trace.metrics.total_duration_ms,
+                            "total_duration_ms": trace_clone.metrics.total_duration_ms,
                             "status": "Completed",
                             "final_answer": final_answer.answer,
                         })));
                     }
 
-                    return Ok(trace.clone());
+                    return Ok(trace_clone);
                 }
                 ActionInstruction::ToolCall { action, .. } => {
                     // === 步骤 4: Action（工具调用） ===
@@ -303,8 +358,35 @@ impl ReactExecutor {
                         emitter.emit_step_update(iteration as usize, &action.tool, "executing");
                     }
 
-                    // 执行工具
-                    let observation_result = tool_executor(action.clone()).await;
+                    // === Memory 集成：检查工具调用缓存 ===
+                    let cached_result = if let Some(ref memory) = self.config.memory_integration {
+                        // 先检查会话级缓存
+                        match memory.check_tool_cache(&action.tool, &action.args).await {
+                            Ok(Some(result)) => {
+                                log::info!("ReAct: Tool cache hit for {} (session cache)", action.tool);
+                                Some(result)
+                            }
+                            _ => {
+                                // 再检查持久化缓存
+                                match memory.check_persistent_cache(&action.tool, &action.args).await {
+                                    Ok(Some(result)) => {
+                                        log::info!("ReAct: Tool cache hit for {} (persistent cache)", action.tool);
+                                        Some(result)
+                                    }
+                                    _ => None
+                                }
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    // 执行工具（或使用缓存结果）
+                    let observation_result = if let Some(cached) = cached_result {
+                        Ok(cached)
+                    } else {
+                        tool_executor(action.clone()).await
+                    };
 
                     // ✅ 工具执行后检查取消状态
                     if self.cancellation_token.is_cancelled() {
@@ -344,12 +426,22 @@ impl ReactExecutor {
                                 trace.metrics.successful_tool_calls += 1;
                             }
 
+                            // === Memory 集成：缓存工具调用结果 ===
+                            if let Some(ref memory) = self.config.memory_integration {
+                                if let Err(e) = memory
+                                    .cache_tool_result(&action.tool, &action.args, &result, action_duration)
+                                    .await
+                                {
+                                    log::warn!("ReAct: Failed to cache tool result: {}", e);
+                                }
+                            }
+
                             // 发送工具执行结果
                             if let Some(ref emitter) = emitter {
                                 emitter.emit_tool_result(&action.tool, &result);
                             }
 
-                            // 添加到上下文历史（但不会在 LLM 流式输出中重复显示）
+                            // 添加到上下文历史
                             context_history.push(format!(
                                 "Thought: {}\nAction: {}\nObservation: {}",
                                 llm_output,
@@ -396,6 +488,45 @@ impl ReactExecutor {
                 }
             }
 
+            // === Context Summarization：检查是否需要摘要 ===
+            if let Some(ref summarizer) = summarizer {
+                if summarizer.needs_summarization(context_history.len()) {
+                    log::info!(
+                        "ReAct: Context history exceeds threshold ({} > {}), performing summarization",
+                        context_history.len(),
+                        self.config.summarization_threshold
+                    );
+
+                    // 构建摘要提示词
+                    let summary_prompt = summarizer.build_summarization_prompt(&context_history);
+
+                    // 调用 LLM 生成摘要
+                    match llm_call(
+                        Some("You are a helpful assistant that summarizes reasoning steps.".to_string()),
+                        summary_prompt,
+                        true, // skip_save
+                        String::new(),
+                    )
+                    .await
+                    {
+                        Ok(summary) => {
+                            log::info!("ReAct: Context summarization completed");
+                            // 应用摘要，保留最近的历史
+                            let mut summarizer_mut = summarizer.clone();
+                            summarizer_mut.apply_summary(&mut context_history, summary);
+                        }
+                        Err(e) => {
+                            log::warn!("ReAct: Failed to summarize context: {}", e);
+                            // 失败时简单截断历史
+                            let keep = self.config.summarization_threshold / 2;
+                            if context_history.len() > keep {
+                                context_history.drain(..context_history.len() - keep);
+                            }
+                        }
+                    }
+                }
+            }
+
             // 清除旧的 RAG 上下文（如果每次都注入，这里应重新获取）
             if self.config.react_config.enable_rag {
                 if let Some(rag_cfg) = &self.config.react_config.rag_config {
@@ -414,8 +545,9 @@ impl ReactExecutor {
         task: &str,
         history: &[String],
         rag_context: &str,
+        few_shot_examples: &str,
     ) -> (Option<String>, String) {
-        let mut system_prompt = String::new();
+        let mut system_prompt;
         let mut user_prompt = String::new();
 
         // 尝试从数据库加载提示词模板
@@ -450,9 +582,14 @@ impl ReactExecutor {
                 // 构建 user prompt
                 user_prompt.push_str(&format!("用户问题: {}", task));
 
+                // 注入 Few-shot 示例（来自 Memory）
+                if !few_shot_examples.is_empty() {
+                    user_prompt.push_str(few_shot_examples);
+                }
+
                 // 注入 RAG 证据到 user prompt
                 if !rag_context.is_empty() {
-                    user_prompt.push_str("=== Evidence from Knowledge Base ===\n");
+                    user_prompt.push_str("\n=== Evidence from Knowledge Base ===\n");
                     user_prompt.push_str(rag_context);
                     user_prompt.push_str("\n\n");
                 }
@@ -500,6 +637,11 @@ impl ReactExecutor {
 
         // User prompt 只包含任务
         user_prompt.push_str(&format!("Task: {}\n\n", task));
+
+        // 注入 Few-shot 示例
+        if !few_shot_examples.is_empty() {
+            user_prompt.push_str(few_shot_examples);
+        }
 
         return (Some(system_prompt), user_prompt);
     }
@@ -577,7 +719,7 @@ impl ReactExecutor {
                 let mut whitelist_hit = allow.contains(&tool_name);
                 let plugin_prefixed_candidate = format!("plugin::{}", tool_name);
                 let prefixed_whitelist_hit = allow.contains(&plugin_prefixed_candidate);
-                let is_plugin = prefixed_whitelist_hit || tool_name.starts_with("plugin::");
+                let _is_plugin = prefixed_whitelist_hit || tool_name.starts_with("plugin::");
 
                 // 过滤白名单/黑名单（与 Plan-and-Execute 保持一致）
                 // 如果有白名单且工具不在白名单中，跳过
@@ -698,39 +840,100 @@ impl ReactExecutor {
         tool_lines.join("\n")
     }
 
-    /// 获取 RAG 上下文（占位符，实际应调用 RAG 服务）
-    async fn fetch_rag_context(&self, _query: &str) -> Result<String> {
-        // TODO: 实际调用 RAG 服务
-        // 示例代码：
-        // use crate::commands::rag_commands::get_global_rag_service;
-        // use sentinel_rag::models::AssistantRagRequest;
-        //
-        // let rag_service = get_global_rag_service().await
-        //     .map_err(|e| anyhow!("Failed to get RAG service: {}", e))?;
-        //
-        // let rag_req = AssistantRagRequest {
-        //     query: query.to_string(),
-        //     collection_id: None,
-        //     conversation_history: None,
-        //     top_k: Some(5),
-        //     use_mmr: Some(true),
-        //     mmr_lambda: Some(0.7),
-        //     similarity_threshold: Some(0.65),
-        //     reranking_enabled: Some(false),
-        //     model_provider: None,
-        //     model_name: None,
-        //     max_tokens: None,
-        //     temperature: None,
-        //     system_prompt: None,
-        // };
-        //
-        // match rag_service.query_for_assistant(&rag_req).await {
-        //     Ok((context, _citations)) if !context.trim().is_empty() => Ok(context),
-        //     _ => Ok(String::new()),
-        // }
+    /// 格式化 Few-shot 推理链示例
+    fn format_few_shot_examples(
+        &self,
+        examples: &[super::memory_integration::ReasoningChainExample],
+    ) -> String {
+        if examples.is_empty() {
+            return String::new();
+        }
 
-        // 占位符返回
-        Ok(String::new())
+        let mut result = String::from("\n=== Similar Task Examples from History ===\n");
+        
+        for (idx, example) in examples.iter().enumerate() {
+            result.push_str(&format!(
+                "\nExample {}: Task: {}\n",
+                idx + 1,
+                &example.task[..example.task.len().min(200)]
+            ));
+            result.push_str(&format!("Steps: {}\n", example.steps_summary));
+            if let Some(ref answer) = example.final_answer {
+                let preview = if answer.len() > 300 {
+                    format!("{}...", &answer[..300])
+                } else {
+                    answer.clone()
+                };
+                result.push_str(&format!("Result: {}\n", preview));
+            }
+            result.push_str(&format!(
+                "Success Rate: {:.0}%, Similarity: {:.0}%\n",
+                example.success_rate * 100.0,
+                example.similarity_score * 100.0
+            ));
+        }
+        
+        result.push_str("\n=== End of Examples ===\n");
+        result
+    }
+
+    /// 获取 RAG 上下文
+    async fn fetch_rag_context(&self, query: &str) -> Result<String> {
+        use crate::commands::rag_commands::get_global_rag_service;
+        use sentinel_rag::models::AssistantRagRequest;
+
+        // 获取 RAG 配置
+        let rag_cfg = match &self.config.react_config.rag_config {
+            Some(cfg) => cfg,
+            None => return Ok(String::new()),
+        };
+
+        // 获取全局 RAG 服务
+        let rag_service = match get_global_rag_service().await {
+            Ok(service) => service,
+            Err(e) => {
+                log::warn!("ReAct: Failed to get RAG service: {}", e);
+                return Ok(String::new());
+            }
+        };
+
+        // 构建 RAG 请求
+        let rag_req = AssistantRagRequest {
+            query: query.to_string(),
+            collection_id: None,
+            conversation_history: None,
+            top_k: Some(rag_cfg.top_k),
+            use_mmr: Some(rag_cfg.use_mmr),
+            mmr_lambda: Some(rag_cfg.mmr_lambda),
+            similarity_threshold: Some(rag_cfg.similarity_threshold),
+            reranking_enabled: Some(false),
+            model_provider: None,
+            model_name: None,
+            max_tokens: None,
+            temperature: None,
+            system_prompt: None,
+        };
+
+        // 执行 RAG 查询
+        match rag_service.query_for_assistant(&rag_req).await {
+            Ok((context, citations)) => {
+                if context.trim().is_empty() {
+                    log::debug!("ReAct: RAG query returned empty context");
+                    Ok(String::new())
+                } else {
+                    log::info!(
+                        "ReAct: RAG query returned {} chars context with {} citations",
+                        context.len(),
+                        citations.len()
+                    );
+                    Ok(context)
+                }
+            }
+            Err(e) => {
+                log::warn!("ReAct: RAG query failed: {}", e);
+                Ok(String::new())
+            }
+        }
     }
 
     /// 获取当前轨迹快照
@@ -756,10 +959,38 @@ mod tests {
             framework_adapter: None,
             task_parameters: None,
             cancellation_token: None,
+            memory_integration: None,
+            summarization_threshold: 0,
         };
         let executor = ReactExecutor::new("Test task".to_string(), config);
         let trace = executor.get_trace().await;
         assert_eq!(trace.task, "Test task");
         assert_eq!(trace.status, ReactStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_executor_with_memory() {
+        use crate::engines::memory::IntelligentMemory;
+
+        let memory = Arc::new(RwLock::new(IntelligentMemory::new()));
+        let memory_integration = Arc::new(ReactMemoryIntegration::new(memory));
+
+        let config = ReactExecutorConfig {
+            react_config: ReactConfig::default(),
+            enable_streaming: false,
+            conversation_id: None,
+            message_id: None,
+            execution_id: None,
+            app_handle: None,
+            prompt_repo: None,
+            framework_adapter: None,
+            task_parameters: None,
+            cancellation_token: None,
+            memory_integration: Some(memory_integration),
+            summarization_threshold: 8,
+        };
+        let executor = ReactExecutor::new("Test task with memory".to_string(), config);
+        let trace = executor.get_trace().await;
+        assert_eq!(trace.task, "Test task with memory");
     }
 }

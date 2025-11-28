@@ -5,14 +5,17 @@
 //! - executor: 循环执行器
 //! - parser: Action 指令解析器（JSON + 自然语言兜底）
 //! - engine_adapter: 引擎适配器（对外接口）
+//! - memory_integration: Memory 系统集成（经验学习、缓存）
 
 pub mod types;
 pub mod executor;
 pub mod parser;
 pub mod engine_adapter;
+pub mod memory_integration;
 
 // 重新导出核心类型
 pub use types::*;
 pub use executor::{ReactExecutor, ReactExecutorConfig};
 pub use parser::ActionParser;
 pub use engine_adapter::ReactEngine;
+pub use memory_integration::{ReactMemoryIntegration, ReactMemoryConfig, ContextSummarizer};

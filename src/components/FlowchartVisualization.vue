@@ -80,8 +80,7 @@
             <div ref="flowchartContainer"
                 class="flowchart-container bg-base-200 rounded-lg p-4 min-h-[80vh] relative overflow-auto"
                 :class="{ 'cursor-grab': !isDragging && !isPanningCanvas, 'cursor-grabbing': isPanningCanvas }"
-                @pointerdown="on_pointer_down" @pointermove="on_pointer_move" @pointerup="on_pointer_up"
-                @contextmenu.prevent>
+                @pointerdown="on_pointer_down" @pointermove="on_pointer_move" @pointerup="on_pointer_up">
                 
                 <!-- 空状态提示 -->
                 <div v-if="nodes.length === 0" class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -123,8 +122,10 @@
                               marker-end="url(#arrowhead)" />
                     </svg>
 
-                    <div v-for="node in nodes" :key="node.id" :class="[
-                        'flowchart-node absolute',
+                    <div v-for="node in nodes" :key="node.id" 
+                        :data-node-id="node.id"
+                        :class="[
+                        'flowchart-node absolute z-10',
                         node.id === draggedNode?.id ? 'cursor-grabbing duration-0' : 'cursor-pointer transition-all duration-200',
                         'border-2 rounded-lg p-3 w-[180px]',
                         selectedNodes.has(node.id) ? 'ring-2 ring-primary ring-offset-2' : '',
@@ -132,7 +133,7 @@
                         getNodeClass(node)
                     ]" :style="{
                     transform: `translate3d(${node.x}px, ${node.y}px, 0) ${node.id === draggedNode?.id ? 'scale(1.05)' : 'scale(1)'}`
-                }" @pointerdown="on_node_pointer_down($event, node)" @click="onNodeClick(node)" @contextmenu.prevent.stop="onNodeContextMenu($event, node)" @mouseenter="onNodeEnter(node)" @mouseleave="onNodeLeave(node)">
+                }" @pointerdown="on_node_pointer_down($event, node)" @click="onNodeClick(node)" @mouseenter="onNodeEnter(node)" @mouseleave="onNodeLeave(node)">
                     <!-- 输入端口 -->
                     <div class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col gap-1">
                         <div 
@@ -898,6 +899,29 @@ onMounted(() => {
     updateContainerSize()
     window.addEventListener('resize', updateContainerSize)
     
+    // 使用事件代理处理节点右键菜单
+    const handleContextMenu = (e: MouseEvent) => {
+        e.preventDefault() // 阻止所有默认右键菜单
+        
+        // 查找是否点击在节点上
+        const nodeElement = (e.target as HTMLElement).closest('.flowchart-node') as HTMLElement | null
+        if (nodeElement) {
+            const nodeId = nodeElement.dataset.nodeId
+            if (nodeId) {
+                const node = nodes.value.find(n => n.id === nodeId)
+                if (node) {
+                    console.log('Context menu for node:', node.id)
+                    showNodeContextMenu(node, e)
+                }
+            }
+        }
+    }
+    
+    // 在流程图容器上监听右键事件
+    if (flowchartContainer.value) {
+        flowchartContainer.value.addEventListener('contextmenu', handleContextMenu)
+    }
+    
     const onKeyDown = (e: KeyboardEvent) => {
         // ESC 关闭右键菜单或全屏
         if (e.key === 'Escape') {
@@ -944,6 +968,9 @@ onMounted(() => {
     onUnmounted(() => {
         window.removeEventListener('keydown', onKeyDown)
         window.removeEventListener('click', onClickOutside)
+        if (flowchartContainer.value) {
+            flowchartContainer.value.removeEventListener('contextmenu', handleContextMenu)
+        }
     })
 })
 
