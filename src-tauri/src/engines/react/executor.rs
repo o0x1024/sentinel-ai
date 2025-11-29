@@ -6,13 +6,13 @@
 //! - Memory 系统（经验学习、工具缓存）
 //! - Context Summarization（长对话摘要）
 //! - RAG 知识检索
+//! - 结构化消息发送（前端友好）
 
 use super::memory_integration::{ContextSummarizer, ReactMemoryIntegration};
+use super::message_emitter::{ReactMessageEmitter, ReactExecutionStats};
 use super::parser::ActionParser;
 use super::types::*;
 use crate::services::prompt_db::PromptRepository;
-use crate::utils::message_emitter::StandardMessageEmitter;
-use crate::utils::ordered_message::ArchitectureType as ArchType;
 use anyhow::{anyhow, Context, Result};
 use sentinel_core::models::prompt::{ArchitectureType, StageType};
 use std::sync::Arc;
@@ -46,6 +46,8 @@ pub struct ReactExecutorConfig {
     pub memory_integration: Option<Arc<ReactMemoryIntegration>>,
     /// Context Summarization 阈值（超过此步数时进行摘要，0 表示禁用）
     pub summarization_threshold: usize,
+    /// 消息发送器（外部创建，确保 llm_call 和 executor 使用同一个）
+    pub emitter: Option<Arc<ReactMessageEmitter>>,
 }
 
 impl std::fmt::Debug for ReactExecutorConfig {
@@ -62,6 +64,7 @@ impl std::fmt::Debug for ReactExecutorConfig {
             .field("task_parameters", &self.task_parameters)
             .field("has_memory_integration", &self.memory_integration.is_some())
             .field("summarization_threshold", &self.summarization_threshold)
+            .field("has_emitter", &self.emitter.is_some())
             .finish()
     }
 }
@@ -116,23 +119,10 @@ impl ReactExecutor {
             trace.task.clone()
         };
 
-        // 创建标准消息发送器
-        let emitter = if self.config.enable_streaming && self.config.app_handle.is_some() {
-            let trace = self.trace.read().await;
-            let message_id = self.config.message_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-            let execution_id = self.config.execution_id.clone().unwrap_or_else(|| trace.trace_id.clone());
-            Some(StandardMessageEmitter::new(
-                Arc::new(self.config.app_handle.as_ref().unwrap().clone()),
-                execution_id,
-                message_id,
-                self.config.conversation_id.clone(),
-                ArchType::ReAct,
-            ))
-        } else {
-            None
-        };
+        // 使用外部传入的 emitter（确保与 llm_call 共享同一个实例）
+        let emitter = self.config.emitter.clone();
 
-        // 发送架构开始信号
+        // 发送执行开始信号
         if let Some(ref emitter) = emitter {
             emitter.emit_start(Some(serde_json::json!({
                 "max_iterations": self.config.react_config.max_iterations,
@@ -251,9 +241,9 @@ impl ReactExecutor {
                 });
             }
 
-            // 发送流式消息（Thought）
+            // 发送思考步骤
             if let Some(ref emitter) = emitter {
-                emitter.emit_thinking(&llm_output);
+                emitter.emit_thought(iteration, &llm_output, !rag_context.is_empty());
             }
 
             // === 步骤 2: 解析 Action ===
@@ -318,17 +308,19 @@ impl ReactExecutor {
                         }
                     }
 
-                    // 发送final answer内容到前端
+                    // 发送最终答案
                     if let Some(ref emitter) = emitter {
-                        emitter.emit_content(&final_answer.answer, false);
+                        emitter.emit_final_answer(iteration, &final_answer.answer, &final_answer.citations);
                         
-                        // 发送完成信号
-                        emitter.emit_complete(Some(serde_json::json!({
-                            "total_iterations": iteration,
-                            "total_duration_ms": trace_clone.metrics.total_duration_ms,
-                            "status": "Completed",
-                            "final_answer": final_answer.answer,
-                        })));
+                        // 发送执行完成信号
+                        emitter.emit_complete(ReactExecutionStats {
+                            total_iterations: iteration,
+                            tool_calls_count: trace_clone.metrics.tool_calls_count,
+                            successful_tool_calls: trace_clone.metrics.successful_tool_calls,
+                            failed_tool_calls: trace_clone.metrics.failed_tool_calls,
+                            total_duration_ms: trace_clone.metrics.total_duration_ms,
+                            status: "Completed".to_string(),
+                        });
                     }
 
                     return Ok(trace_clone);
@@ -355,7 +347,7 @@ impl ReactExecutor {
 
                     // 发送工具调用开始信号
                     if let Some(ref emitter) = emitter {
-                        emitter.emit_step_update(iteration as usize, &action.tool, "executing");
+                        emitter.emit_action_start(iteration, &action.tool, &action.args);
                     }
 
                     // === Memory 集成：检查工具调用缓存 ===
@@ -436,9 +428,9 @@ impl ReactExecutor {
                                 }
                             }
 
-                            // 发送工具执行结果
+                            // 发送观察结果
                             if let Some(ref emitter) = emitter {
-                                emitter.emit_tool_result(&action.tool, &result);
+                                emitter.emit_observation(iteration, &action.tool, &result, true, action_duration);
                             }
 
                             // 添加到上下文历史
@@ -468,13 +460,13 @@ impl ReactExecutor {
                                 trace.metrics.failed_tool_calls += 1;
                             }
 
-                            // 发送工具执行错误
+                            // 发送观察结果（失败）
                             if let Some(ref emitter) = emitter {
                                 let error_result = serde_json::json!({
                                     "error": e.to_string(),
                                     "success": false
                                 });
-                                emitter.emit_tool_result(&action.tool, &error_result);
+                                emitter.emit_observation(iteration, &action.tool, &error_result, false, action_duration);
                             }
 
                             context_history.push(format!(
@@ -961,6 +953,7 @@ mod tests {
             cancellation_token: None,
             memory_integration: None,
             summarization_threshold: 0,
+            emitter: None,
         };
         let executor = ReactExecutor::new("Test task".to_string(), config);
         let trace = executor.get_trace().await;
@@ -988,6 +981,7 @@ mod tests {
             cancellation_token: None,
             memory_integration: Some(memory_integration),
             summarization_threshold: 8,
+            emitter: None,
         };
         let executor = ReactExecutor::new("Test task with memory".to_string(), config);
         let trace = executor.get_trace().await;

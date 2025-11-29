@@ -1,308 +1,269 @@
 <template>
-  <div class="react-step-display">
-    <!-- Thought Section -->
-    <div v-if="thought" class="thought-section mb-3">
-      <div class="flex items-start gap-2 p-3 bg-base-200/50 rounded-lg border border-base-300/30">
-        <div class="flex-shrink-0 mt-0.5">
-          <i class="fas fa-lightbulb text-warning text-sm"></i>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="text-xs font-semibold text-base-content/70 mb-1">Thought</div>
-          <div class="text-sm text-base-content prose prose-sm max-w-none" v-html="renderMarkdown(thought)"></div>
-        </div>
+  <div class="react-display">
+    <template v-for="(step, idx) in steps" :key="step.id || idx">
+      <!-- Thought -->
+      <div v-if="step.thought" class="thought-text">
+        <div class="prose prose-sm max-w-none" v-html="renderMarkdown(step.thought)"></div>
       </div>
-    </div>
 
-    <!-- Tool Call Section (Action + Observation combined) -->
-    <div v-if="action" class="tool-call-section mb-3">
-      <details 
-        class="collapse collapse-arrow bg-base-100 border rounded-lg"
-        :class="getToolCallBorderClass()"
-        :open="isToolCallInProgress()"
-      >
-        <summary class="collapse-title min-h-0 py-3 px-4 cursor-pointer hover:bg-base-200/50 transition-colors">
-          <div class="flex items-center gap-3">
-            <!-- Status Icon -->
-            <div class="flex-shrink-0">
-              <i 
-                :class="[
-                  'text-sm',
-                  getToolCallIconClass()
-                ]"
-              ></i>
-            </div>
-            
-            <!-- Tool Info -->
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-medium text-sm">Ran</span>
-                <code class="text-xs bg-base-200 px-2 py-0.5 rounded font-mono">{{ action.tool }}</code>
-                <span v-if="action.status" class="badge badge-xs" :class="getActionStatusClass(action.status)">
-                  {{ getActionStatusText(action.status) }}
-                </span>
-              </div>
-            </div>
-          </div>
-        </summary>
+      <!-- 工具调用卡片 -->
+      <div v-if="step.action" class="tool-block" :class="getToolClass(step)">
+        <div class="tool-header" @click="toggleTool(idx)">
+          <i :class="getStatusIcon(step)"></i>
+          <span class="tool-status">{{ getStatusText(step) }}</span>
+          <code class="tool-name">{{ step.action.tool }}</code>
+          <i class="fas fa-chevron-right toggle-icon" :class="{ expanded: expandedTools.has(idx) }"></i>
+        </div>
         
-        <div class="collapse-content px-4 pb-4">
-          <div class="space-y-3">
-            <!-- Parameters Section -->
-            <div v-if="action.args && Object.keys(action.args).length > 0" class="params-section">
-              <div class="text-xs font-semibold text-base-content/70 mb-2 flex items-center gap-1">
-                <i class="fas fa-cog text-xs"></i>
-                PARAMETERS
-              </div>
-              <div class="bg-base-200/50 rounded-lg p-3 border border-base-300/30">
-                <div
-                  v-for="(value, key) in action.args"
-                  :key="key"
-                  class="flex items-start gap-2 py-1"
-                >
-                  <span class="text-xs font-medium text-base-content/70 min-w-[100px]">
-                    {{ key }}
-                  </span>
-                  <span class="text-xs text-base-content font-mono break-all whitespace-pre-wrap">
-                    {{ typeof value === 'object' ? formatJson(value) : value }}
-                  </span>
-                </div>
-              </div>
-            </div>
-            
-            <!-- Response Section -->
-            <div v-if="observation" class="response-section">
-              <div class="text-xs font-semibold text-base-content/70 mb-2 flex items-center gap-1">
-                <i class="fas fa-arrow-left text-xs"></i>
-                RESPONSE
-              </div>
-              <div 
-                :class="[
-                  'rounded-lg p-3 border',
-                  hasObservationError(observation)
-                    ? 'bg-error/5 border-error/20'
-                    : 'bg-success/5 border-success/20'
-                ]"
-              >
-                <pre class="text-xs whitespace-pre-wrap break-words font-mono text-base-content">{{ formatObservation(observation) }}</pre>
-              </div>
-            </div>
+        <div v-if="expandedTools.has(idx)" class="tool-body">
+          <div v-if="hasArgs(step.action.args)" class="tool-section">
+            <div class="section-title">Parameters</div>
+            <pre class="section-code">{{ formatJson(step.action.args) }}</pre>
+          </div>
+          <div v-if="step.observation !== undefined" class="tool-section">
+            <div class="section-title">Result</div>
+            <pre class="section-code" :class="{ error: hasError(step.observation) }">{{ formatObservation(step.observation) }}</pre>
           </div>
         </div>
-      </details>
-    </div>
-
-    <!-- Error Section -->
-    <div v-if="error" class="error-section mb-3">
-      <div class="flex items-start gap-2 p-3 bg-error/5 rounded-lg border border-error/20">
-        <div class="flex-shrink-0 mt-0.5">
-          <i class="fas fa-exclamation-triangle text-error text-sm"></i>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="text-xs font-semibold text-error mb-1">Error</div>
-          <div class="text-sm text-error whitespace-pre-wrap">{{ error }}</div>
-        </div>
       </div>
-    </div>
 
-    <!-- Final Answer Section -->
-    <div v-if="finalAnswer" class="final-answer-section">
-      <div class="flex items-start gap-2 p-3 bg-accent/5 rounded-lg border border-accent/20">
-        <div class="flex-shrink-0 mt-0.5">
-          <i class="fas fa-flag-checkered text-accent text-sm"></i>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="text-xs font-semibold text-base-content/70 mb-1">Final Answer</div>
-          <div class="text-sm text-base-content prose prose-sm max-w-none" v-html="renderMarkdown(finalAnswer)"></div>
-        </div>
+      <!-- Error -->
+      <div v-if="step.error" class="error-text">
+        <i class="fas fa-exclamation-circle"></i>
+        {{ step.error }}
       </div>
+
+      <!-- Final Answer -->
+      <div v-if="step.finalAnswer" class="answer-text">
+        <div class="prose prose-sm max-w-none" v-html="renderMarkdown(step.finalAnswer)"></div>
+      </div>
+    </template>
+
+    <!-- Loading -->
+    <div v-if="isExecuting" class="loading-text">
+      <span class="loading loading-dots loading-xs"></span>
+      思考中...
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useMessageUtils } from '../../composables/useMessageUtils'
 import { ReActMessageProcessor } from '../../composables/processors/ReActMessageProcessor'
 import type { ChatMessage } from '../../types/chat'
 import type { ReActStepDisplay } from '../../types/react'
 
-const props = defineProps<{
-  message?: ChatMessage
-  stepData?: {
-    thought?: string
-    action?: any
-    observation?: any
-    error?: string
-    finalAnswer?: string
-  }
-}>()
-
 const { renderMarkdown } = useMessageUtils()
 
-/**
- * 构建 ReAct 步骤显示数据
- * 优先从 message.architectureMeta 中读取结构化数据
- * 其次从 message.reactSteps 中读取遗留格式
- * 最后使用 stepData 进行向后兼容
- */
-const steps = computed(() => {
+const props = defineProps<{
+  message?: ChatMessage
+  stepData?: any
+  showHeader?: boolean
+  isExecuting?: boolean
+}>()
+
+const expandedTools = ref<Set<number>>(new Set())
+
+const toggleTool = (idx: number) => {
+  const newSet = new Set(expandedTools.value)
+  if (newSet.has(idx)) {
+    newSet.delete(idx)
+  } else {
+    newSet.add(idx)
+  }
+  expandedTools.value = newSet
+}
+
+const steps = computed((): ReActStepDisplay[] => {
   if (props.message) {
     return ReActMessageProcessor.buildReActStepsFromMessage(props.message)
   }
-
-  // 向后兼容：从 stepData 构造单步数组
   if (props.stepData) {
-    return [{
-      index: 0,
-      thought: props.stepData.thought,
-      action: props.stepData.action,
-      observation: props.stepData.observation,
-      error: props.stepData.error,
-      finalAnswer: props.stepData.finalAnswer,
-    } as ReActStepDisplay]
+    return [{ index: 0, ...props.stepData }]
   }
-
   return []
 })
 
-// 获取当前步骤（如果有多个步骤，取第一个用于显示；否则返回 null）
-const currentStep = computed(() => {
-  return steps.value.length > 0 ? steps.value[0] : null
-})
+// 状态判断
+const isCompleted = (step: ReActStepDisplay) => {
+  return step.observation !== undefined || step.action?.status === 'completed'
+}
 
-const thought = computed(() => currentStep.value?.thought)
-const action = computed(() => currentStep.value?.action)
-const observation = computed(() => currentStep.value?.observation)
-const error = computed(() => currentStep.value?.error)
-const finalAnswer = computed(() => currentStep.value?.finalAnswer)
+const isFailed = (step: ReActStepDisplay) => {
+  return step.action?.status === 'failed' || ReActMessageProcessor.hasObservationError(step.observation)
+}
 
+// 样式
+const getToolClass = (step: ReActStepDisplay) => {
+  if (isFailed(step)) return 'tool-failed'
+  if (isCompleted(step)) return 'tool-completed'
+  return 'tool-running'
+}
+
+const getStatusIcon = (step: ReActStepDisplay) => {
+  if (isFailed(step)) return 'fas fa-times-circle text-error'
+  if (isCompleted(step)) return 'fas fa-check-circle text-success'
+  return 'fas fa-circle-notch fa-spin text-warning'
+}
+
+const getStatusText = (step: ReActStepDisplay) => {
+  if (isFailed(step)) return 'Failed'
+  if (isCompleted(step)) return 'Ran'
+  return 'Running'
+}
+
+// 数据处理
+const hasArgs = (args: any) => args && typeof args === 'object' && Object.keys(args).length > 0
+const hasError = (obs: any) => ReActMessageProcessor.hasObservationError(obs)
 const formatJson = (obj: any) => ReActMessageProcessor.formatJson(obj)
-
 const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(obs)
-
-const isToolCallInProgress = () => {
-  if (!action.value) return false
-  const status = action.value.status
-  // 只有在运行中或待处理时才展开，完成、成功、失败或错误时都折叠
-  return status === 'running' || status === 'pending'
-}
-
-const getToolCallBorderClass = () => {
-  if (!action.value) return 'border-base-300'
-  const status = action.value.status
-  if (status === 'failed' || status === 'error') {
-    return 'border-error'
-  }
-  if (status === 'running') {
-    return 'border-warning'
-  }
-  return 'border-success'
-}
-
-const getToolCallIconClass = () => {
-  if (!action.value) return 'fas fa-check text-success'
-  const status = action.value.status
-  if (status === 'failed' || status === 'error') {
-    return 'fas fa-times-circle text-error'
-  }
-  if (status === 'running') {
-    return 'fas fa-spinner fa-spin text-warning'
-  }
-  return 'fas fa-check text-success'
-}
-
-const getActionStatusClass = (status: string) => {
-  const statusMap: Record<string, string> = {
-    running: 'badge-warning',
-    success: 'badge-success',
-    completed: 'badge-success',
-    failed: 'badge-error',
-    error: 'badge-error',
-  }
-  return statusMap[status.toLowerCase()] || 'badge-ghost'
-}
-
-const getActionStatusText = (status: string) => {
-  const textMap: Record<string, string> = {
-    running: '运行中',
-    success: '成功',
-    completed: '已完成',
-    failed: '失败',
-    error: '错误',
-  }
-  return textMap[status.toLowerCase()] || status
-}
-
-const hasObservationError = (obs: any) => ReActMessageProcessor.hasObservationError(obs)
 </script>
 
 <style scoped>
-.react-step-display {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-/* DaisyUI collapse customization */
-.collapse {
-  border-width: 2px;
-}
-
-.collapse-title {
-  padding-right: 3rem;
-}
-
-.collapse:not(.collapse-close) > .collapse-title:after {
-  top: 50%;
-  transform: translateY(-50%) rotate(0deg);
-  transition: transform 0.2s ease;
-}
-
-.collapse[open] > .collapse-title:after {
-  transform: translateY(-50%) rotate(90deg);
-}
-
-/* Custom scrollbar */
-.response-section pre {
-  max-height: 300px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: hsl(var(--bc) / 0.2) transparent;
-}
-
-.response-section pre::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.response-section pre::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.response-section pre::-webkit-scrollbar-thumb {
-  background: hsl(var(--bc) / 0.2);
-  border-radius: 3px;
-}
-
-.response-section pre::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--bc) / 0.3);
-}
-
-/* Hover effects */
-.collapse:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-/* Parameters grid layout */
-.params-section > div > div {
+.react-display {
   display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Thought */
+.thought-text {
+  color: hsl(var(--bc) / 0.9);
+  line-height: 1.65;
+}
+
+/* 工具块 */
+.tool-block {
+  border-radius: 6px;
+  border: 1px solid hsl(var(--bc) / 0.1);
+  background: hsl(var(--bc) / 0.02);
+  overflow: hidden;
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.8125rem;
 }
 
-/* Smooth transitions */
-.collapse {
-  transition: all 0.2s ease;
+.tool-header:hover {
+  background: hsl(var(--bc) / 0.04);
 }
 
-.collapse-title {
-  transition: background-color 0.15s ease;
+.tool-header i:first-child {
+  font-size: 0.75rem;
+}
+
+.tool-status {
+  color: hsl(var(--bc) / 0.5);
+}
+
+.tool-name {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8125rem;
+  color: hsl(var(--bc) / 0.85);
+  background: hsl(var(--bc) / 0.06);
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+}
+
+.toggle-icon {
+  margin-left: auto;
+  font-size: 0.625rem;
+  color: hsl(var(--bc) / 0.3);
+  transition: transform 0.15s;
+}
+
+.toggle-icon.expanded {
+  transform: rotate(90deg);
+}
+
+/* 工具状态样式 */
+.tool-running { border-color: hsl(var(--wa) / 0.3); }
+.tool-completed { border-color: hsl(var(--su) / 0.2); }
+.tool-failed { border-color: hsl(var(--er) / 0.3); }
+
+/* 工具详情 */
+.tool-body {
+  border-top: 1px solid hsl(var(--bc) / 0.08);
+  padding: 0.75rem;
+  background: hsl(var(--bc) / 0.02);
+}
+
+.tool-section {
+  margin-bottom: 0.75rem;
+}
+.tool-section:last-child {
+  margin-bottom: 0;
+}
+
+.section-title {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: hsl(var(--bc) / 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.375rem;
+}
+
+.section-code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: hsl(var(--bc) / 0.8);
+  background: hsl(var(--bc) / 0.04);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.section-code.error {
+  color: hsl(var(--er));
+  background: hsl(var(--er) / 0.06);
+}
+
+/* Error */
+.error-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: hsl(var(--er) / 0.06);
+  border-radius: 6px;
+  color: hsl(var(--er));
+  font-size: 0.8125rem;
+}
+
+/* Final Answer */
+.answer-text {
+  color: hsl(var(--bc));
+  line-height: 1.65;
+}
+
+/* Loading */
+.loading-text {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: hsl(var(--bc) / 0.5);
+  font-size: 0.8125rem;
+}
+
+/* 滚动条 */
+.section-code::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.section-code::-webkit-scrollbar-thumb {
+  background: hsl(var(--bc) / 0.15);
+  border-radius: 2px;
 }
 </style>

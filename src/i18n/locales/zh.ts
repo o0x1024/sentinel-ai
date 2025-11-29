@@ -1624,6 +1624,20 @@ export default {
     type: '类型'
  },
 
+  // ReAct 架构
+  react: {
+    iteration: '第 {n} 轮',
+    thinking: '思考中...',
+    status: {
+      completed: '已完成',
+      error: '错误',
+      running: '运行中',
+      done: '完成',
+      success: '成功',
+      failed: '失败',
+      pending: '等待中',
+    },
+  },
   // AI助手
   aiAssistant: {
     generating: '',

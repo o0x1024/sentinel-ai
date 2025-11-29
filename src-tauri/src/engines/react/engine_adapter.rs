@@ -1,8 +1,11 @@
 //! ReAct 引擎适配器
 //!
 //! 实现 BaseExecutionEngine trait，对接 AI 服务、工具调用、RAG 等
+//! 使用专用 LLM 客户端实现对消息流的精确控制
 
 use super::executor::{ReactExecutor, ReactExecutorConfig};
+use super::llm_client::{LlmConfig, ReactLlmClient};
+use super::message_emitter::ReactMessageEmitter;
 use super::types::*;
 use crate::agents::traits::{
     AgentExecutionResult, AgentSession, AgentTask, PerformanceCharacteristics,
@@ -11,7 +14,6 @@ use crate::services::ai::AiService;
 use crate::services::database::DatabaseService;
 use crate::services::mcp::McpService;
 use crate::services::prompt_db::PromptRepository;
-use crate::utils::ordered_message::ChunkType;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -144,6 +146,20 @@ impl ReactEngine {
             Some(Arc::new(ReactMemoryIntegration::new(memory)))
         };
 
+        // 创建共享的消息发送器（executor 和 llm_client 共用）
+        let emitter = if self.app_handle.is_some() {
+            let msg_id = message_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let exec_id = execution_id.clone().unwrap_or_else(|| msg_id.clone());
+            Some(Arc::new(ReactMessageEmitter::new(
+                Arc::new(self.app_handle.as_ref().unwrap().clone()),
+                exec_id,
+                msg_id,
+                conversation_id.clone(),
+            )))
+        } else {
+            None
+        };
+
         let executor_config = ReactExecutorConfig {
             react_config: self.config.clone(),
             enable_streaming: true,
@@ -160,56 +176,46 @@ impl ReactEngine {
             cancellation_token, // ✅ 传递取消令牌
             memory_integration, // ✅ Memory 集成
             summarization_threshold: 8, // 超过 8 步时进行摘要
+            emitter: emitter.clone(), // ✅ 共享消息发送器
         };
 
         let executor = ReactExecutor::new(task.description.clone(), executor_config.clone());
 
-        // 克隆服务引用和 IDs 供闭包使用
-        let ai_service = self.ai_service.clone();
-        let _mcp_service = self.mcp_service.clone(); // TODO: 后续可用于 MCP 工具调用
-        let conv_id_for_llm = conversation_id.clone();
-        let msg_id_for_llm = message_id.clone();
+        // 创建 LLM 配置（从 ai_service 获取）
+        let llm_config = if let Some(ref service) = self.ai_service {
+            let cfg = service.get_config();
+            LlmConfig {
+                provider: cfg.provider.clone(),
+                model: cfg.model.clone(),
+                api_key: cfg.api_key.clone(),
+                base_url: cfg.api_base.clone(),
+                timeout_secs: 120,
+            }
+        } else {
+            LlmConfig::default()
+        };
 
-        // 定义 LLM 调用闭包
-        let llm_call = move |system_prompt: Option<String>,
-                             user_prompt: String,
-                             skip_save_user_message: bool,
-                             original_user_input: String| {
-            let ai_service = ai_service.clone();
-            let conv_id = conv_id_for_llm.clone();
-            let msg_id = msg_id_for_llm.clone();
-            Box::pin(async move {
-                if let Some(service) = ai_service {
-                    // 根据skip_save_user_message决定要保存的内容
-                    let user_to_save = if skip_save_user_message {
-                        None // 不保存
-                    } else if !original_user_input.is_empty() {
-                        Some(original_user_input.as_str()) // 保存原始用户输入
+        // 定义 LLM 调用闭包（使用专用 LLM 客户端）
+        let llm_call = {
+            let emitter_for_llm = emitter.clone();
+            let llm_config = llm_config.clone();
+            
+            move |system_prompt: Option<String>,
+                  user_prompt: String,
+                  _skip_save_user_message: bool,
+                  _original_user_input: String| {
+                let emitter = emitter_for_llm.clone();
+                let config = llm_config.clone();
+                
+                Box::pin(async move {
+                    if let Some(emitter) = emitter {
+                        let client = ReactLlmClient::new(config, emitter);
+                        client.stream_completion(system_prompt.as_deref(), &user_prompt, 0).await
                     } else {
-                        None // 没有原始输入则不保存
-                    };
-
-                    // 调用 AI 服务进行 LLM 请求
-                    service
-                        .send_message_stream_with_save_control(
-                            Some(&user_prompt),       // 完整的user_prompt用于LLM推理
-                            user_to_save,             // 保存到数据库的用户消息（原始输入或None）
-                            system_prompt.as_deref(), // system_prompt
-                            conv_id,                  // conversation_id
-                            msg_id,                   // message_id
-                            true,                     // stream (启用流式输出)
-                            false,                    // is_final (由每个chunk自行决定)
-                            Some(ChunkType::Content), // chunk_type
-                            Some(crate::utils::ordered_message::ArchitectureType::ReAct), // architecture_type
-                            None, // attachments
-                        )
-                        .await
-                        .map_err(|e| anyhow!("LLM call failed: {}", e))
-                } else {
-                    Err(anyhow!("AI service not configured"))
-                }
-            })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
+                        Err(anyhow!("Emitter not configured"))
+                    }
+                }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
+            }
         };
 
         // 定义工具执行闭包 - 使用框架适配器统一路由工具调用

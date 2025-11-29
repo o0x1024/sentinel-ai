@@ -486,8 +486,18 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     if (this.streamCompleteFlags.get(messageId) === true) {
       return true
     }
-    // 回退到检查is_final标志（兼容旧架构）
     const chunks = this.chunks.get(messageId) || []
+    const archInfo = this.architectureInfo.get(messageId)
+    
+    // ReAct 架构：只有 stage === "complete" 才算完成
+    if (archInfo?.type === 'ReAct') {
+      return chunks.some(chunk => 
+        chunk.chunk_type === 'Meta' && 
+        chunk.stage === 'complete'
+      )
+    }
+    
+    // 其他架构：检查 is_final 标志
     return chunks.some(chunk => chunk.is_final)
   }
 
