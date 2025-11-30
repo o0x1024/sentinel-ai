@@ -241,10 +241,7 @@ impl ReactExecutor {
                 });
             }
 
-            // 发送思考步骤
-            if let Some(ref emitter) = emitter {
-                emitter.emit_thought(iteration, &llm_output, !rag_context.is_empty());
-            }
+            // LLM 输出已通过 llm_client 流式发送，这里不再重复发送
 
             // === 步骤 2: 解析 Action ===
             let instruction = match ActionParser::parse(&llm_output) {
@@ -308,11 +305,8 @@ impl ReactExecutor {
                         }
                     }
 
-                    // 发送最终答案
+                    // 发送执行完成信号
                     if let Some(ref emitter) = emitter {
-                        emitter.emit_final_answer(iteration, &final_answer.answer, &final_answer.citations);
-                        
-                        // 发送执行完成信号
                         emitter.emit_complete(ReactExecutionStats {
                             total_iterations: iteration,
                             tool_calls_count: trace_clone.metrics.tool_calls_count,
@@ -329,6 +323,11 @@ impl ReactExecutor {
                     // === 步骤 4: Action（工具调用） ===
                     let action_start = SystemTime::now();
 
+                    // 发送工具调用信息到前端
+                    if let Some(ref emitter) = emitter {
+                        emitter.emit_tool_call(iteration, &action.tool, &action.args);
+                    }
+
                     // 记录 Action 步骤
                     {
                         let mut trace = self.trace.write().await;
@@ -343,11 +342,6 @@ impl ReactExecutor {
                             error: None,
                         });
                         trace.metrics.tool_calls_count += 1;
-                    }
-
-                    // 发送工具调用开始信号
-                    if let Some(ref emitter) = emitter {
-                        emitter.emit_action_start(iteration, &action.tool, &action.args);
                     }
 
                     // === Memory 集成：检查工具调用缓存 ===
@@ -401,6 +395,11 @@ impl ReactExecutor {
                     // === 步骤 5: Observation（工具返回） ===
                     match observation_result {
                         Ok(result) => {
+                            // 发送工具执行结果到前端
+                            if let Some(ref emitter) = emitter {
+                                emitter.emit_tool_result(iteration, &action.tool, &action.args, &result, true, action_duration);
+                            }
+
                             {
                                 let mut trace = self.trace.write().await;
                                 trace.add_step(ReactStep {
@@ -428,11 +427,6 @@ impl ReactExecutor {
                                 }
                             }
 
-                            // 发送观察结果
-                            if let Some(ref emitter) = emitter {
-                                emitter.emit_observation(iteration, &action.tool, &result, true, action_duration);
-                            }
-
                             // 添加到上下文历史
                             context_history.push(format!(
                                 "Thought: {}\nAction: {}\nObservation: {}",
@@ -442,6 +436,11 @@ impl ReactExecutor {
                             ));
                         }
                         Err(e) => {
+                            // 发送工具执行失败到前端
+                            if let Some(ref emitter) = emitter {
+                                emitter.emit_tool_result(iteration, &action.tool, &action.args, &serde_json::json!({"error": e.to_string()}), false, action_duration);
+                            }
+
                             // 工具执行失败
                             {
                                 let mut trace = self.trace.write().await;
@@ -458,15 +457,6 @@ impl ReactExecutor {
                                     error: Some(e.to_string()),
                                 });
                                 trace.metrics.failed_tool_calls += 1;
-                            }
-
-                            // 发送观察结果（失败）
-                            if let Some(ref emitter) = emitter {
-                                let error_result = serde_json::json!({
-                                    "error": e.to_string(),
-                                    "success": false
-                                });
-                                emitter.emit_observation(iteration, &action.tool, &error_result, false, action_duration);
                             }
 
                             context_history.push(format!(

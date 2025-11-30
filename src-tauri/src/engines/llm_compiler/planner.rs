@@ -6,6 +6,8 @@
 //! - 识别任务间的依赖关系
 //! - 支持变量替换（$1, $2等）
 //! - 可重新规划
+//! - Memory-enhanced replanning
+
 use sentinel_rag::models::AssistantRagRequest;
 use sentinel_rag::query_utils::build_rag_query_pair;
 
@@ -17,11 +19,11 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::services::ai::AiService;
-use crate::utils::ordered_message::ChunkType;
-
+use super::memory_integration::LlmCompilerMemoryIntegration;
 use super::types::*;
+use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
+use crate::utils::ordered_message::ChunkType;
 use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
 
 /// LLMCompiler Planner - 智能任务规划器
@@ -32,6 +34,7 @@ pub struct LlmCompilerPlanner {
     config: LlmCompilerConfig,
     prompt_repo: Option<PromptRepository>,
     runtime_params: Option<HashMap<String, Value>>,
+    memory_integration: Option<Arc<LlmCompilerMemoryIntegration>>,
 }
 
 impl LlmCompilerPlanner {
@@ -47,7 +50,31 @@ impl LlmCompilerPlanner {
             config,
             prompt_repo,
             runtime_params: None,
+            memory_integration: None,
         }
+    }
+
+    /// Create with memory integration
+    pub fn new_with_memory(
+        ai_service: Arc<AiService>,
+        tool_adapter: Arc<dyn crate::tools::EngineToolAdapter>,
+        config: LlmCompilerConfig,
+        prompt_repo: Option<PromptRepository>,
+        memory_integration: Option<Arc<LlmCompilerMemoryIntegration>>,
+    ) -> Self {
+        Self {
+            ai_service,
+            tool_adapter,
+            config,
+            prompt_repo,
+            runtime_params: None,
+            memory_integration,
+        }
+    }
+
+    /// Set memory integration
+    pub fn set_memory_integration(&mut self, memory: Arc<LlmCompilerMemoryIntegration>) {
+        self.memory_integration = Some(memory);
     }
 
     pub fn set_runtime_params(&mut self, params: HashMap<String, Value>) {
@@ -459,34 +486,116 @@ impl LlmCompilerPlanner {
         out
     }
 
-    /// 重新规划
+    /// 重新规划 (with Memory-enhanced failure pattern analysis)
     pub async fn replan(
         &self,
         original_plan: &DagExecutionPlan,
         execution_results: &[TaskExecutionResult],
         feedback: &str,
     ) -> Result<DagExecutionPlan> {
-        info!("开始重新规划，反馈: {}", feedback);
+        info!("Starting replanning with feedback: {}", feedback);
 
-        // ✅ 拆分为system_prompt和user_prompt
-        let (system_prompt, user_prompt) =
+        // Query failure patterns from memory
+        let failure_patterns = self.get_failure_patterns_from_memory(execution_results).await;
+
+        // Build system_prompt and user_prompt with failure patterns
+        let (mut system_prompt, user_prompt) =
             self.build_replanning_prompts(original_plan, execution_results, feedback);
+
+        // Augment system prompt with failure patterns from memory
+        if !failure_patterns.is_empty() {
+            system_prompt.push_str("\n\n[HISTORICAL FAILURE PATTERNS]\n");
+            system_prompt.push_str("Based on past executions, these patterns caused failures:\n");
+            for pattern in &failure_patterns {
+                system_prompt.push_str(&format!("- {}\n", pattern));
+            }
+            system_prompt.push_str("\nAvoid repeating these patterns in the new plan.\n");
+        }
+
         let response = self
             .ai_service
             .send_message_stream(
-                Some(&user_prompt),   // ✅ user_prompt: 重规划请求和上下文
-                Some(&system_prompt), // ✅ system_prompt: 重规划指导原则
+                Some(&user_prompt),
+                Some(&system_prompt),
                 None,
                 None,
-                false, // 不使用流式输出
+                false, // Non-streaming for replanning
                 false,
-                None, // 不发送PlanInfo chunk到前端
-                None, // attachments
+                None,
+                None,
             )
             .await?;
 
-        self.parse_dag_plan(&response, &format!("重规划-{}", original_plan.name))
+        self.parse_dag_plan(&response, &format!("Replan-{}", original_plan.name))
             .await
+    }
+
+    /// Get failure patterns from memory for similar tasks
+    async fn get_failure_patterns_from_memory(
+        &self,
+        execution_results: &[TaskExecutionResult],
+    ) -> Vec<String> {
+        let mut patterns = Vec::new();
+
+        let Some(ref memory) = self.memory_integration else {
+            return patterns;
+        };
+
+        // Extract error patterns from current execution
+        for result in execution_results {
+            if result.status == TaskStatus::Failed {
+                if let Some(ref error) = result.error {
+                    // Query memory for similar failures
+                    if let Ok(similar_failures) = memory
+                        .retrieve_failure_patterns(&result.task_id, error)
+                        .await
+                    {
+                        for failure in similar_failures.iter().take(3) {
+                            if failure.similarity_score > 0.6 {
+                                // Extract failure info from failure_info field
+                                let failure_desc = failure
+                                    .item
+                                    .failure_info
+                                    .as_ref()
+                                    .and_then(|f| f.get("error").and_then(|e| e.as_str()))
+                                    .unwrap_or("No details");
+
+                                let pattern = format!(
+                                    "Task type '{}' failed with similar error (similarity: {:.2}): {}",
+                                    failure.item.task_type, failure.similarity_score, failure_desc
+                                );
+                                if !patterns.contains(&pattern) {
+                                    patterns.push(pattern);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Get tool effectiveness recommendations
+        for result in execution_results {
+            if result.status == TaskStatus::Failed {
+                // Try to get tool effectiveness from outputs
+                if let Some(tool_name) = result.outputs.get("tool_name").and_then(|v| v.as_str())
+                {
+                    if let Ok(effectiveness) =
+                        memory.get_tool_effectiveness(tool_name, None, None).await
+                    {
+                        if effectiveness < 0.5 {
+                            patterns.push(format!(
+                                "Tool '{}' has low effectiveness ({:.1}%), consider alternatives",
+                                tool_name,
+                                effectiveness * 100.0
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        patterns
     }
 
     /// 构建重规划提示（拆分为system_prompt和user_prompt）

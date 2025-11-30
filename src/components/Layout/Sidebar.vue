@@ -213,13 +213,7 @@ const toolMenuItems = computed(() => [
   //   badge: 'NEW',
   //   badgeClass: 'badge-success'
   // },
-  {
-    path: '/workflow-runs',
-    name: t('sidebar.workflowRuns', '运行历史'),
-    icon: 'fas fa-history',
-    badge: null,
-    badgeClass: ''
-  },
+
   {
     path: '/rag-management',
     name: t('sidebar.ragManagement', '知识库管理'),

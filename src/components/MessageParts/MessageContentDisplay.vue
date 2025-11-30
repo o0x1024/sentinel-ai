@@ -22,18 +22,11 @@
         :alt="att.image?.filename || 'attachment'"
       />
     </div>
-
-    <!-- 流式指示器 -->
-    <div v-if="isTyping" class="flex items-center gap-2 mt-2 text-base-content/70">
-      <span class="loading loading-dots loading-sm text-primary"></span>
-      <span class="text-sm">{{ t('aiAssistant.generating', 'AI正在思考...') }}</span>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { useMessageUtils } from '../../composables/useMessageUtils'
 
 interface SimplifiedChatMessage {
@@ -52,7 +45,6 @@ const props = defineProps<{
   streamSpeed?: number
 }>()
 
-const { t } = useI18n()
 const { renderMarkdown } = useMessageUtils()
 
 // 计算当前消息中的图片附件（仅做简单过滤）

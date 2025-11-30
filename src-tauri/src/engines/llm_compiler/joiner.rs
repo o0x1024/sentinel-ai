@@ -502,25 +502,39 @@ impl IntelligentJoiner {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
 
-        // 决策逻辑 - 改进判断条件
-        let should_complete = goal_completion >= 0.7 || // 目标完成度高（降低阈值）
-                             (goal_completion >= 0.5 && round >= 3) || // 中等完成度且已执行多轮
-                             success_rate < 0.3 || // 成功率太低
-                             overall_risk > 0.8 || // 风险太高
-                             (success_rate >= 0.9 && round >= 2) || // 高成功率且已执行2轮以上
-                             round >= self.config.max_iterations; // 达到最大轮次
+        // 简化决策逻辑：优先信任AI的决策，因为它已经分析了执行结果
+        // 只有在特殊情况下才覆盖AI的决策
+        let should_override_to_complete = 
+            success_rate < 0.3 || // 成功率太低，强制结束
+            overall_risk > 0.8 || // 风险太高，强制结束
+            round >= self.config.max_iterations; // 达到最大轮次
 
-        let recommended_decision = if should_complete {
-            JoinerDecision::Complete {
-                response: "基于分析建议完成执行".to_string(),
-                confidence: 0.8,
-                summary: self.get_execution_stats(),
+        // 直接使用AI的决策，保留其生成的详细response
+        let recommended_decision = match &ai_decision {
+            JoinerDecision::Complete { response, confidence, .. } => {
+                // AI决定完成，直接使用其response
+                JoinerDecision::Complete {
+                    response: response.clone(),
+                    confidence: *confidence,
+                    summary: self.get_execution_stats(),
+                }
             }
-        } else {
-            JoinerDecision::Continue {
-                feedback: "需要继续执行以获取更多信息".to_string(),
-                suggested_tasks: Vec::new(),
-                confidence: 0.8,
+            JoinerDecision::Continue { feedback, suggested_tasks, confidence } => {
+                if should_override_to_complete {
+                    // 强制结束，但尝试使用feedback作为简短说明
+                    JoinerDecision::Complete {
+                        response: format!("执行已完成。{}", feedback),
+                        confidence: 0.7,
+                        summary: self.get_execution_stats(),
+                    }
+                } else {
+                    // AI决定继续，使用其feedback
+                    JoinerDecision::Continue {
+                        feedback: feedback.clone(),
+                        suggested_tasks: suggested_tasks.clone(),
+                        confidence: *confidence,
+                    }
+                }
             }
         };
 
@@ -1002,18 +1016,24 @@ impl IntelligentJoiner {
     }
 
     fn parse_ai_decision(&self, response: &str) -> Result<JoinerDecision> {
+
+        info!("parse_ai_decision: 原始响应长度 {} 字符", response.len());
+        
         // ✅ 首先尝试从拟人化格式中提取[DECISION]部分
         let decision_json =
             if let Some(json_str) = self.extract_decision_from_humanized_response(response) {
-                debug!("从拟人化响应中提取到DECISION部分");
+                info!("从拟人化响应中提取到DECISION部分，长度 {} 字符", json_str.len());
                 json_str
             } else {
                 // 否则清理markdown标记
-                Self::strip_markdown_fences(response)
+                let cleaned = Self::strip_markdown_fences(response);
+                info!("未找到[DECISION]标记，使用清理后的响应，长度 {} 字符", cleaned.len());
+                cleaned
             };
 
         // 尝试解析JSON响应
         if let Ok(json_value) = serde_json::from_str::<Value>(&decision_json) {
+            info!("JSON解析成功，decision字段: {:?}", json_value.get("decision"));
             if let Some(decision_str) = json_value.get("decision").and_then(|v| v.as_str()) {
                 let confidence = json_value
                     .get("confidence")
@@ -1095,18 +1115,35 @@ impl IntelligentJoiner {
         // 查找 [DECISION] 标记
         if let Some(decision_start) = response.find("[DECISION]") {
             let content_after_decision = &response[decision_start + 10..]; // 跳过 "[DECISION]"
+            info!("[DECISION]后内容长度: {} 字符", content_after_decision.len());
 
             // 提取 DECISION 后的JSON内容（可能在代码块中或直接是JSON）
-            let json_candidates = vec![
-                Self::extract_json_from_code_block(content_after_decision),
-                Self::extract_json_by_braces(content_after_decision),
-            ];
+            let from_code_block = Self::extract_json_from_code_block(content_after_decision);
+            let from_braces = Self::extract_json_by_braces(content_after_decision);
+            
+            info!("从代码块提取: {} 字符", from_code_block.len());
+            info!("从大括号提取: {} 字符", from_braces.len());
 
-            for candidate in json_candidates {
-                if serde_json::from_str::<Value>(&candidate).is_ok() {
-                    return Some(candidate);
+            // 优先使用从代码块提取的
+            if !from_code_block.is_empty() {
+                if serde_json::from_str::<Value>(&from_code_block).is_ok() {
+                    info!("代码块JSON解析成功");
+                    return Some(from_code_block);
+                } else {
+                    info!("代码块JSON解析失败，内容前100字符: {}", &from_code_block.chars().take(100).collect::<String>());
                 }
             }
+            
+            if !from_braces.is_empty() {
+                if serde_json::from_str::<Value>(&from_braces).is_ok() {
+                    info!("大括号JSON解析成功");
+                    return Some(from_braces);
+                } else {
+                    info!("大括号JSON解析失败");
+                }
+            }
+        } else {
+            info!("未找到[DECISION]标记");
         }
 
         None
@@ -1313,7 +1350,7 @@ impl IntelligentJoiner {
         execution_results
             .iter()
             .map(|result| {
-                format!(
+                let status_line = format!(
                     "任务{}: {} - {} ({}ms)",
                     result.task_id,
                     match result.status {
@@ -1323,10 +1360,52 @@ impl IntelligentJoiner {
                     },
                     result.error.as_deref().unwrap_or("无错误"),
                     result.duration_ms
-                )
+                );
+                
+                // 包含工具执行的实际输出数据（关键修复）
+                if result.status == TaskStatus::Completed && !result.outputs.is_empty() {
+                    // 尝试获取主要输出字段（如 output, result, data 等）
+                    let output_str = if let Some(output) = result.outputs.get("output") {
+                        // 截断过长的输出，避免超出上下文限制
+                        let json_str = serde_json::to_string_pretty(output).unwrap_or_default();
+                        if json_str.len() > 4000 {
+                            format!("{}...(已截断)", &json_str[..4000])
+                        } else {
+                            json_str
+                        }
+                    } else if let Some(result_val) = result.outputs.get("result") {
+                        let json_str = serde_json::to_string_pretty(result_val).unwrap_or_default();
+                        if json_str.len() > 4000 {
+                            format!("{}...(已截断)", &json_str[..4000])
+                        } else {
+                            json_str
+                        }
+                    } else {
+                        // 输出所有字段（排除元数据字段）
+                        let filtered: HashMap<&String, &Value> = result.outputs.iter()
+                            .filter(|(k, _)| !k.starts_with("meta_") 
+                                && *k != "success" 
+                                && *k != "call_id"
+                                && *k != "execution_time_ms"
+                                && *k != "execution_success"
+                                && *k != "execution_source"
+                                && *k != "executed_at")
+                            .collect();
+                        let json_str = serde_json::to_string_pretty(&filtered).unwrap_or_default();
+                        if json_str.len() > 4000 {
+                            format!("{}...(已截断)", &json_str[..4000])
+                        } else {
+                            json_str
+                        }
+                    };
+                    
+                    format!("{}\n输出结果:\n{}", status_line, output_str)
+                } else {
+                    status_line
+                }
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n\n")
     }
 
     fn format_plan_summary(&self, plan: &DagExecutionPlan) -> String {

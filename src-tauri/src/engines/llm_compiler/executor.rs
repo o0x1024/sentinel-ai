@@ -7,21 +7,23 @@
 //! - 错误隔离：单个任务失败不影响其他任务
 //! - 结果收集：统一管理执行结果
 //! - 重试机制：支持任务失败重试
+//! - MCP服务集成：支持MCP工具调用
 
 use anyhow::Result;
-use serde_json::{Value, json};
+use chrono::Utc;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::time::{timeout, Instant};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-use chrono::Utc;
-use tracing::{info, warn, error};
 
-use crate::tools::{EngineToolAdapter, UnifiedToolCall, UnifiedToolResult, get_global_engine_adapter};
-use crate::engines::memory::get_global_memory;
 use super::types::*;
+use crate::engines::memory::get_global_memory;
+use crate::services::mcp::McpService;
+use crate::tools::{get_global_engine_adapter, EngineToolAdapter, UnifiedToolCall, UnifiedToolResult};
 
 /// Parallel Executor Pool - 并行执行器池
 pub struct ParallelExecutorPool {
@@ -35,6 +37,8 @@ pub struct ParallelExecutorPool {
     execution_metrics: Arc<tokio::sync::RwLock<ExecutionMetrics>>,
     /// 运行时参数（包含工具权限、conversation_id、message_id等）
     runtime_params: Arc<tokio::sync::RwLock<Option<HashMap<String, serde_json::Value>>>>,
+    /// MCP服务（可选）
+    mcp_service: Arc<tokio::sync::RwLock<Option<Arc<McpService>>>>,
 }
 
 /// 执行指标
@@ -64,20 +68,43 @@ impl ParallelExecutorPool {
             config,
             execution_metrics: Arc::new(tokio::sync::RwLock::new(ExecutionMetrics::default())),
             runtime_params: Arc::new(tokio::sync::RwLock::new(None)),
+            mcp_service: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
-    
+
+    /// Create with MCP service
+    pub fn new_with_mcp(
+        tool_adapter: Arc<dyn EngineToolAdapter>,
+        config: LlmCompilerConfig,
+        mcp_service: Option<Arc<McpService>>,
+    ) -> Self {
+        Self {
+            semaphore: Arc::new(Semaphore::new(config.max_concurrency)),
+            tool_adapter,
+            config,
+            execution_metrics: Arc::new(tokio::sync::RwLock::new(ExecutionMetrics::default())),
+            runtime_params: Arc::new(tokio::sync::RwLock::new(None)),
+            mcp_service: Arc::new(tokio::sync::RwLock::new(mcp_service)),
+        }
+    }
+
+    /// Set MCP service
+    pub async fn set_mcp_service(&self, mcp_service: Arc<McpService>) {
+        let mut service = self.mcp_service.write().await;
+        *service = Some(mcp_service);
+    }
+
     /// 设置运行时参数
     pub async fn set_runtime_params(&self, params: HashMap<String, serde_json::Value>) {
         let mut runtime_params = self.runtime_params.write().await;
         *runtime_params = Some(params);
     }
-    
+
     /// 使用全局工具适配器创建执行器池
     pub async fn new_with_global_adapter(config: LlmCompilerConfig) -> Result<Self> {
         let tool_adapter = get_global_engine_adapter()
-            .map_err(|e| anyhow::anyhow!("获取全局工具适配器失败: {}", e))?;
-        
+            .map_err(|e| anyhow::anyhow!("Failed to get global tool adapter: {}", e))?;
+
         Ok(Self::new(tool_adapter, config))
     }
 
@@ -220,43 +247,58 @@ impl ParallelExecutorPool {
     /// 调用工具
     async fn call_tool(&self, task: &DagTaskNode) -> Result<HashMap<String, Value>> {
         let call_start = Instant::now();
-        info!("调用工具: {} with inputs: {:?}", task.tool_name, task.inputs);
-        
-        // 工具权限检查（从runtime_params读取）
+        info!("Calling tool: {} with inputs: {:?}", task.tool_name, task.inputs);
+
+        // Tool permission check (from runtime_params)
         let runtime_params = self.runtime_params.read().await;
         if let Some(params) = runtime_params.as_ref() {
             let allow_list = params
                 .get("tools_allow")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
             let deny_list = params
                 .get("tools_deny")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
-            
-            // 如果没有白名单（空数组），则不允许任何工具
+
+            // If no whitelist (empty array), don't allow any tools
             if allow_list.is_empty() {
                 return Err(anyhow::anyhow!(
-                    "工具 '{}' 不在允许列表中（未配置工具权限）", task.tool_name
+                    "Tool '{}' not in allow list (no tool permissions configured)",
+                    task.tool_name
                 ));
             }
-            // 如果有白名单且工具不在白名单中，拒绝
+            // If whitelist exists and tool not in it, reject
             if !allow_list.iter().any(|&n| n == task.tool_name) {
                 return Err(anyhow::anyhow!(
-                    "工具 '{}' 不在允许列表中", task.tool_name
+                    "Tool '{}' not in allow list",
+                    task.tool_name
                 ));
             }
-            // 如果工具在黑名单中，拒绝
+            // If tool in deny list, reject
             if deny_list.iter().any(|&n| n == task.tool_name) {
-                return Err(anyhow::anyhow!(
-                    "工具 '{}' 被禁止使用", task.tool_name
-                ));
+                return Err(anyhow::anyhow!("Tool '{}' is denied", task.tool_name));
             }
         }
-        
-        // 准备工具执行参数
+        drop(runtime_params);
+
+        // First, try MCP service if available
+        let mcp_result = self.try_mcp_tool_call(task).await;
+        if let Some(result) = mcp_result {
+            return result;
+        }
+
+        // Prepare tool execution parameters
         let tool_call = UnifiedToolCall {
             id: Uuid::new_v4().to_string(),
             tool_name: task.tool_name.clone(),
@@ -265,25 +307,31 @@ impl ParallelExecutorPool {
             context: HashMap::new(),
             retry_count: 0,
         };
-        
-        // 调用统一工具适配器
+
+        // Call unified tool adapter
         match self.tool_adapter.execute_tool(tool_call).await {
             Ok(tool_result) => {
-                info!("工具执行成功: {}, 成功: {}", task.tool_name, tool_result.success);
-                
+                info!(
+                    "Tool execution success: {}, result: {}",
+                    task.tool_name, tool_result.success
+                );
+
                 if tool_result.success {
-                    // 转换工具结果为标准格式
+                    // Convert tool result to standard format
                     let mut outputs = self.convert_tool_result_to_outputs(&tool_result)?;
-                    
-                    // 添加执行元数据
+
+                    // Add execution metadata
                     outputs.insert("executed_at".to_string(), json!(Utc::now().to_rfc3339()));
                     outputs.insert("execution_success".to_string(), json!(true));
-                    
-                    // 存储到缓存
+                    outputs.insert("execution_source".to_string(), json!("local"));
+
+                    // Store to cache
                     let memory = get_global_memory();
                     let mut memory_guard = memory.write().await;
-                    let result_json = serde_json::to_value(&outputs).unwrap_or(serde_json::json!({}));
-                    let tool_args_json = serde_json::to_value(&task.inputs).unwrap_or(serde_json::json!({}));
+                    let result_json =
+                        serde_json::to_value(&outputs).unwrap_or(serde_json::json!({}));
+                    let tool_args_json =
+                        serde_json::to_value(&task.inputs).unwrap_or(serde_json::json!({}));
                     let _ = memory_guard.cache_tool_call_result(
                         task.tool_name.clone(),
                         tool_args_json,
@@ -291,24 +339,97 @@ impl ParallelExecutorPool {
                         call_start.elapsed().as_millis() as u64,
                     );
                     drop(memory_guard);
-                    
+
                     Ok(outputs)
                 } else {
-                    // 工具执行失败但没有抛出异常
-                    let error_msg = tool_result.error.unwrap_or_else(|| "工具执行失败".to_string());
-                    Err(anyhow::anyhow!("工具执行失败: {}", error_msg))
+                    // Tool execution failed but didn't throw exception
+                    let error_msg = tool_result
+                        .error
+                        .unwrap_or_else(|| "Tool execution failed".to_string());
+                    Err(anyhow::anyhow!("Tool execution failed: {}", error_msg))
                 }
             }
             Err(e) => {
-                error!("工具执行失败: {} - {}", task.tool_name, e);
-                
-                // 如果工具不存在，尝试使用模拟数据作为后备
+                error!("Tool execution failed: {} - {}", task.tool_name, e);
+
+                // If tool not found, try MCP fallback or use empty result
                 if e.to_string().contains("not found") || e.to_string().contains("not available") {
-                    warn!("工具 {} 不可用，使用模拟数据", task.tool_name);
+                    warn!(
+                        "Tool {} not available locally, returning empty result",
+                        task.tool_name
+                    );
                     Ok(HashMap::new())
                 } else {
                     Err(e)
                 }
+            }
+        }
+    }
+
+    /// Try to call tool via MCP service
+    async fn try_mcp_tool_call(&self, task: &DagTaskNode) -> Option<Result<HashMap<String, Value>>> {
+        let mcp_service = self.mcp_service.read().await;
+        let service = mcp_service.as_ref()?;
+
+        // Check if MCP has this tool
+        let tools = match service.get_available_tools().await {
+            Ok(tools) => tools,
+            Err(e) => {
+                debug!("Failed to list MCP tools: {}", e);
+                return None;
+            }
+        };
+
+        // Check if the tool exists in MCP
+        let mcp_tool = tools.iter().find(|t| t.name == task.tool_name);
+        if mcp_tool.is_none() {
+            debug!("Tool {} not found in MCP service", task.tool_name);
+            return None;
+        }
+
+        info!("Calling tool {} via MCP service", task.tool_name);
+
+        // Convert inputs to JSON Value
+        let arguments = serde_json::to_value(&task.inputs).unwrap_or(serde_json::json!({}));
+
+        // Call MCP tool
+        match service.execute_tool(&task.tool_name, arguments).await {
+            Ok(result) => {
+                info!("MCP tool call success: {}", task.tool_name);
+                let mut outputs = HashMap::new();
+
+                // Parse MCP result (result is already a Value)
+                if let Value::Object(obj) = result {
+                    for (k, v) in obj {
+                        outputs.insert(k, v);
+                    }
+                } else if let Value::String(s) = &result {
+                    // Try to parse string as JSON
+                    if let Ok(json_value) = serde_json::from_str::<Value>(s) {
+                        if let Value::Object(obj) = json_value {
+                            for (k, v) in obj {
+                                outputs.insert(k, v);
+                            }
+                        } else {
+                            outputs.insert("result".to_string(), json_value);
+                        }
+                    } else {
+                        outputs.insert("result".to_string(), result);
+                    }
+                } else {
+                    outputs.insert("result".to_string(), result);
+                }
+
+                outputs.insert("execution_success".to_string(), json!(true));
+                outputs.insert("execution_source".to_string(), json!("mcp"));
+                outputs.insert("executed_at".to_string(), json!(Utc::now().to_rfc3339()));
+
+                Some(Ok(outputs))
+            }
+            Err(e) => {
+                warn!("MCP tool call failed for {}: {}", task.tool_name, e);
+                // Return None to fall back to local tool
+                None
             }
         }
     }
@@ -474,7 +595,7 @@ impl ParallelExecutorPool {
     }
 }
 
-// 实现Clone以支持在异步任务中使用
+// Implement Clone to support use in async tasks
 impl Clone for ParallelExecutorPool {
     fn clone(&self) -> Self {
         Self {
@@ -483,6 +604,7 @@ impl Clone for ParallelExecutorPool {
             config: self.config.clone(),
             execution_metrics: self.execution_metrics.clone(),
             runtime_params: self.runtime_params.clone(),
+            mcp_service: self.mcp_service.clone(),
         }
     }
 }

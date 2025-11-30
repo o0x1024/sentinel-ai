@@ -44,9 +44,46 @@ fn trigger_nodes() -> Vec<NodeCatalogItem> {
             params_schema: json!({
                 "type": "object",
                 "properties": {
-                    "cron": {"type": "string"}
+                    "trigger_type": {
+                        "type": "string",
+                        "enum": ["interval", "daily", "weekly"],
+                        "default": "interval",
+                        "description": "触发类型：间隔触发/每日触发/每周触发"
+                    },
+                    "interval_seconds": {
+                        "type": "integer",
+                        "default": 60,
+                        "minimum": 1,
+                        "description": "间隔秒数（仅间隔触发时有效）"
+                    },
+                    "hour": {
+                        "type": "integer",
+                        "default": 9,
+                        "minimum": 0,
+                        "maximum": 23,
+                        "description": "小时（0-23）"
+                    },
+                    "minute": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0,
+                        "maximum": 59,
+                        "description": "分钟（0-59）"
+                    },
+                    "second": {
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0,
+                        "maximum": 59,
+                        "description": "秒（0-59）"
+                    },
+                    "weekdays": {
+                        "type": "string",
+                        "default": "1,2,3,4,5",
+                        "description": "星期几（1-7，逗号分隔，仅每周触发时有效）"
+                    }
                 },
-                "required": ["cron"]
+                "required": ["trigger_type"]
             }),
             input_ports: vec![],
             output_ports: vec![port("out", "输出", PortType::Json, true)],

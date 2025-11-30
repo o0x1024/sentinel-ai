@@ -94,6 +94,10 @@
             <LLMCompilerStepDisplay
               v-bind="parseLLMCompilerMessageData(message)"
             />
+            <!-- 显示最终响应：直接使用message.content中的纯文本部分 -->
+            <div v-if="getLLMCompilerTextContent(message)" class="llm-compiler-final-response mt-4 p-4 bg-base-100 rounded-lg border border-base-300">
+              <div class="prose prose-sm max-w-none" v-html="renderMarkdown(getLLMCompilerTextContent(message))"></div>
+            </div>
           </div>
 
           <!-- ReWOO 步骤显示 -->
@@ -111,18 +115,13 @@
             />
           </div>
 
-          <!-- ReAct 步骤显示 -->
-          <div v-else-if="isReActMessage(message)" class="space-y-3">
-            <ReActStepDisplay :message="message" />
-
-            <!-- ReAct 工具运行中提示 -->
-            <div
-              v-if="hasRunningTool(message)"
-              class="flex items-center gap-2 mt-1 text-warning text-xs"
-            >
-              <span class="loading loading-spinner loading-xs"></span>
-              <span>工具正在运行...</span>
-            </div>
+          <!-- ReAct 消息：工具调用内联在流式内容中 -->
+          <div v-else-if="isReActMessage(message)">
+            <MessageContentDisplay
+              :message="message"
+              :is-typing="message.isStreaming"
+              :stream-char-count="streamCharCount"
+            />
           </div>
 
           <!-- 普通消息显示 - 使用统一组件渲染文本 + 附件图片 -->
@@ -441,12 +440,14 @@ const isReActMessage = (message: ChatMessage) => {
 // Plan-and-Execute 消息检测函数（增强版：优先使用架构元数据）
 const isPlanAndExecuteMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
-  
+
   // 优先检查架构元数据
   const archType = getMessageArchitecture(message)
   if (archType === 'PlanAndExecute') return true
-  
-  // 回退到内容匹配（向后兼容）
+  // 如果已经是其他明确的架构类型，直接返回false
+  if (archType && archType !== 'Unknown') return false
+
+  // 回退到内容匹配（向后兼容，仅用于Unknown架构）
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return isPlanAndExecuteMessage(content, chunks)
@@ -466,12 +467,14 @@ const parsePlanAndExecuteMessageData = (message: ChatMessage): PlanAndExecuteMes
 // LLM Compiler 消息检测函数（增强版：优先使用架构元数据）
 const isLLMCompilerMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
-  
+
   // 优先检查架构元数据
   const archType = getMessageArchitecture(message)
   if (archType === 'LLMCompiler') return true
-  
-  // 回退到内容匹配（向后兼容）
+  // 如果已经是其他明确的架构类型，直接返回false
+  if (archType && archType !== 'Unknown') return false
+
+  // 回退到内容匹配（向后兼容，仅用于Unknown架构）
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return isLLMCompilerMessage(content, chunks)
@@ -488,15 +491,63 @@ const parseLLMCompilerMessageData = (message: ChatMessage): LLMCompilerMessageDa
   return parseLLMCompilerMessage(content, chunks)
 }
 
+// LLM Compiler 获取纯文本内容
+const getLLMCompilerTextContent = (message: ChatMessage): string => {
+  // 1. 首先检查已保存的最终响应
+  if ((message as any).llmCompilerFinalResponse) {
+    return (message as any).llmCompilerFinalResponse
+  }
+
+  // 2. 从chunks获取Content类型的文本（流式过程中）
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  const contentChunks = chunks.filter(c =>
+    c.chunk_type === 'Content' && c.architecture === 'LLMCompiler'
+  )
+  if (contentChunks.length > 0) {
+    return contentChunks.map(c => c.content?.toString() || '').join('')
+  }
+
+  // 3. 从message.content中提取[DECISION]部分的response（历史消息fallback）
+  const content = message.content || ''
+  if (content.includes('[DECISION]')) {
+    // 尝试从[DECISION]后的JSON中提取response字段
+    const decisionIdx = content.indexOf('[DECISION]')
+    const afterDecision = content.substring(decisionIdx + 10)
+    
+    // 查找JSON代码块
+    const jsonMatch = afterDecision.match(/```json\s*([\s\S]*?)```/)
+    if (jsonMatch) {
+      try {
+        const json = JSON.parse(jsonMatch[1])
+        if (json.response) {
+          return json.response
+        }
+      } catch (e) {
+        // JSON解析失败，尝试正则提取
+      }
+    }
+    
+    // 正则提取response字段
+    const responseMatch = afterDecision.match(/"response"\s*:\s*"([\s\S]*?)(?:"\s*,|\"\s*\})/i)
+    if (responseMatch && responseMatch[1]) {
+      return responseMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')
+    }
+  }
+
+  return ''
+}
+
 // ReWOO 消息检测函数（增强版：优先使用架构元数据）
 const isReWOOMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
-  
+
   // 优先检查架构元数据
   const archType = getMessageArchitecture(message)
   if (archType === 'ReWOO') return true
-  
-  // 回退到内容匹配（向后兼容）
+  // 如果已经是其他明确的架构类型，直接返回false
+  if (archType && archType !== 'Unknown') return false
+
+  // 回退到内容匹配（向后兼容，仅用于Unknown架构）
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return isReWOOMessage(content, chunks)
@@ -516,12 +567,14 @@ const parseReWOOMessageData = (message: ChatMessage): ReWOOMessageData => {
 // Travel 消息检测函数（增强版：优先使用架构元数据）
 const isTravelMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
-  
+
   // 优先检查架构元数据
   const archType = getMessageArchitecture(message)
   if (archType === 'Travel') return true
-  
-  // 回退到内容匹配（向后兼容）
+  // 如果已经是其他明确的架构类型，直接返回false
+  if (archType && archType !== 'Unknown') return false
+
+  // 回退到内容匹配（向后兼容，仅用于Unknown架构）
   const content = message.content || ''
   const chunks = orderedMessages.processor.chunks.get(message.id) || []
   return isTravelMessage(content, chunks)

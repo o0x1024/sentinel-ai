@@ -68,6 +68,7 @@ export const useConversation = () => {
           let architectureMeta = undefined
           let reactSteps = undefined
           let llmCompilerData = undefined
+          let llmCompilerFinalResponse = undefined
           let planAndExecuteData = undefined
           let rewooData = undefined
           let travelData = undefined
@@ -112,12 +113,16 @@ export const useConversation = () => {
               if (data) {
                 reactSteps = data.reactSteps
                 llmCompilerData = data.llmCompilerData
+                llmCompilerFinalResponse = data.llmCompilerFinalResponse
                 planAndExecuteData = data.planAndExecuteData
                 rewooData = data.rewooData
                 travelData = data.travelData
                 
                 if (reactSteps) {
                   console.log('[useConversation] Restored reactSteps for message:', msg.id, 'steps:', reactSteps.length)
+                }
+                if (llmCompilerFinalResponse) {
+                  console.log('[useConversation] Restored llmCompilerFinalResponse for message:', msg.id)
                 }
               }
             } catch (e) {
@@ -136,6 +141,7 @@ export const useConversation = () => {
             architectureMeta,
             reactSteps,
             llmCompilerData,
+            llmCompilerFinalResponse,
             planAndExecuteData,
             rewooData,
             travelData,
@@ -215,6 +221,10 @@ export const useConversation = () => {
         }
         if ((message as any)?.llmCompilerData) {
           structuredData.llmCompilerData = (message as any).llmCompilerData
+        }
+        // 保存LLMCompiler的最终响应内容
+        if ((message as any)?.llmCompilerFinalResponse) {
+          structuredData.llmCompilerFinalResponse = (message as any).llmCompilerFinalResponse
         }
         if ((message as any)?.planAndExecuteData) {
           structuredData.planAndExecuteData = (message as any).planAndExecuteData

@@ -69,11 +69,53 @@
             </svg>
             运行
           </button>
-          <button class="btn btn-sm btn-ghost" @click="show_logs = !show_logs" title="切换日志面板">
+          <!-- 定时调度按钮 -->
+          <button 
+            v-if="!schedule_running" 
+            class="btn btn-sm btn-warning" 
+            @click="start_schedule" 
+            :disabled="!workflow_name.trim() || !has_schedule_trigger"
+            :title="has_schedule_trigger ? '启动定时调度' : '请先保存工作流并添加定时触发节点'"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            定时
+          </button>
+          <button 
+            v-else 
+            class="btn btn-sm btn-error" 
+            @click="stop_schedule" 
+            title="停止定时调度"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+            </svg>
+            停止
+          </button>
+          <button 
+            class="btn btn-sm" 
+            :class="show_logs ? 'btn-primary' : 'btn-ghost'" 
+            @click="show_logs = !show_logs" 
+            title="切换日志面板"
+          >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             日志
+          </button>
+          <button 
+            class="btn btn-sm" 
+            :class="show_execution_history ? 'btn-secondary' : 'btn-ghost'" 
+            @click="toggle_execution_history" 
+            title="执行历史"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            历史
+            <span v-if="execution_history.length" class="badge badge-xs badge-primary ml-1">{{ execution_history.length }}</span>
           </button>
         </div>
       </div>
@@ -507,19 +549,81 @@
         <button class="btn btn-primary btn-sm flex-1" @click="save_params_and_close" :disabled="has_validation_errors">
           保存
         </button>
-        <button 
-          v-if="selected_node && step_results[selected_node.id]" 
-          class="btn btn-info btn-sm" 
-          @click="view_node_result"
-          title="查看执行结果"
-        >
-          📊
-        </button>
         <button class="btn btn-outline btn-sm" @click="close_drawer">取消</button>
       </div>
     </div>
 
-    <!-- 步骤结果查看面板 -->
+    <!-- 执行历史面板 -->
+    <div v-if="show_execution_history" ref="execution_history_ref" class="fixed inset-y-0 right-0 w-[450px] bg-base-100 shadow-xl border-l border-base-300 z-50 flex flex-col">
+      <div class="p-3 flex items-center justify-between border-b border-base-300">
+        <h2 class="text-base font-semibold">执行历史</h2>
+        <div class="flex gap-2">
+          <button class="btn btn-xs btn-outline btn-error" @click="clear_execution_history" title="清空历史" :disabled="!execution_history.length">
+            清空
+          </button>
+          <button class="btn btn-xs btn-ghost" @click="show_execution_history = false">✕</button>
+        </div>
+      </div>
+      
+      <div v-if="!execution_history.length" class="flex-1 flex items-center justify-center text-base-content/50">
+        <div class="text-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p class="text-sm">暂无执行记录</p>
+          <p class="text-xs mt-1">运行工作流后会在此显示历史</p>
+        </div>
+      </div>
+      
+      <div v-else class="flex-1 overflow-y-auto">
+        <div 
+          v-for="(exec, idx) in execution_history" 
+          :key="exec.id" 
+          class="border-b border-base-200 hover:bg-base-200/50 cursor-pointer"
+          :class="{ 'bg-primary/5': selected_execution?.id === exec.id }"
+          @click="select_execution(exec)"
+        >
+          <div class="p-3">
+            <div class="flex items-center justify-between">
+              <span class="font-medium text-sm">#{{ execution_history.length - idx }}</span>
+              <span class="text-xs" :class="{
+                'text-success': exec.status === 'completed',
+                'text-error': exec.status === 'failed',
+                'text-warning': exec.status === 'running',
+                'text-base-content/50': exec.status === 'pending'
+              }">
+                {{ exec.status === 'completed' ? '✓ 完成' : exec.status === 'failed' ? '✗ 失败' : exec.status === 'running' ? '● 运行中' : '○ 等待' }}
+              </span>
+            </div>
+            <div class="text-xs text-base-content/60 mt-1">{{ exec.start_time }}</div>
+            <div v-if="exec.duration" class="text-xs text-base-content/50">耗时: {{ exec.duration }}ms</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 选中的执行详情 -->
+      <div v-if="selected_execution" class="border-t border-base-300 max-h-[50%] overflow-y-auto">
+        <div class="p-3 bg-base-200/30">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-medium text-sm">执行详情</span>
+            <button class="btn btn-xs btn-ghost" @click="copy_execution_result" title="复制结果">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </button>
+          </div>
+          
+          <div class="space-y-2">
+            <div v-for="(result, stepId) in selected_execution.step_results" :key="stepId" class="bg-base-100 rounded p-2">
+              <div class="text-xs font-medium text-primary mb-1">{{ get_node_name(stepId) || stepId }}</div>
+              <pre class="text-xs bg-base-300/30 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">{{ format_result(result) }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 步骤结果查看面板（保留用于点击节点时查看当前执行结果） -->
     <div v-if="show_result_panel" ref="result_panel_ref" class="fixed inset-y-0 right-0 w-[500px] bg-base-100 shadow-xl border-l border-base-300 z-50">
       <div class="p-3 flex items-center justify-between border-b border-base-300">
         <h2 class="text-base font-semibold">步骤执行结果</h2>
@@ -570,8 +674,10 @@ const ignore_close_once = ref(false)
 const drawer_ref = ref<HTMLElement | null>(null)
 const result_panel_ref = ref<HTMLElement | null>(null)
 const ignore_result_panel_close_once = ref(false)
+const execution_history_ref = ref<HTMLElement | null>(null)
+const ignore_execution_history_close_once = ref(false)
 const sidebar_collapsed = ref(false)
-const show_logs = ref(false)
+const show_logs = ref(true) // 默认显示日志
 const show_load_dialog = ref(false)
 const show_meta_dialog = ref(false)
 const show_template_dialog = ref(false)
@@ -582,6 +688,8 @@ const workflow_description = ref('')
 const workflow_tags = ref('')
 const workflow_version = ref('v1.0.0')
 const workflow_list = ref<any[]>([])
+const schedule_running = ref(false) // 定时调度是否运行中
+const schedule_info = ref<any>(null) // 当前调度信息
 const favorites = ref<Set<string>>(new Set())
 const show_favorites_only = ref(false)
 const notification_rules = ref<any[]>([]) // 通知规则列表
@@ -589,9 +697,23 @@ const ai_config = ref<any>(null) // AI 配置
 const available_tools = ref<any[]>([]) // 可用工具列表
 const import_file_input = ref<HTMLInputElement | null>(null)
 const highlighted_nodes = ref<Set<string>>(new Set())
-const step_results = ref<Record<string, any>>({}) // 存储每个步骤的执行结果
+const step_results = ref<Record<string, any>>({}) // 存储当前执行的步骤结果
 const show_result_panel = ref(false)
 const selected_step_result = ref<{ step_id: string, result: any } | null>(null)
+
+// 执行历史
+interface ExecutionRecord {
+  id: string
+  start_time: string
+  end_time?: string
+  duration?: number
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  step_results: Record<string, any>
+}
+const show_execution_history = ref(false)
+const execution_history = ref<ExecutionRecord[]>([])
+const selected_execution = ref<ExecutionRecord | null>(null)
+const current_execution_id = ref<string | null>(null)
 
 interface ExecutionLog {
   timestamp: Date
@@ -643,6 +765,29 @@ const group_label = (k: string) => {
   if (k === 'output') return '输出'
   if (k === 'tool') return '工具'
   return k
+}
+
+// 检查是否有定时触发节点
+const has_schedule_trigger = computed(() => {
+  const nodes = flow_ref.value?.getFlowchartNodes() || []
+  return nodes.some(n => n.type === 'trigger_schedule')
+})
+
+// 获取定时触发配置
+const get_schedule_config = () => {
+  const nodes = flow_ref.value?.getFlowchartNodes() || []
+  const triggerNode = nodes.find((n: any) => n.type === 'trigger_schedule')
+  if (!triggerNode?.params) return null
+  
+  // 确保数值类型正确
+  return {
+    trigger_type: String(triggerNode.params.trigger_type || 'interval'),
+    interval_seconds: Number(triggerNode.params.interval_seconds) || 60,
+    hour: Number(triggerNode.params.hour) || 9,
+    minute: Number(triggerNode.params.minute) || 0,
+    second: Number(triggerNode.params.second) || 0,
+    weekdays: String(triggerNode.params.weekdays || '1,2,3,4,5'),
+  }
 }
 
 const refresh_catalog = async () => {
@@ -800,6 +945,115 @@ const view_node_result = () => {
   show_result_panel.value = true
 }
 
+// 执行历史相关方法
+const toggle_execution_history = () => {
+  if (!show_execution_history.value) {
+    ignore_execution_history_close_once.value = true
+  }
+  show_execution_history.value = !show_execution_history.value
+}
+
+const select_execution = (exec: ExecutionRecord) => {
+  selected_execution.value = exec
+}
+
+const clear_execution_history = () => {
+  execution_history.value = []
+  selected_execution.value = null
+  localStorage.removeItem(`workflow_execution_history_${workflow_id.value}`)
+}
+
+const copy_execution_result = async () => {
+  const toast = useToast()
+  if (!selected_execution.value) return
+  
+  try {
+    const text = JSON.stringify(selected_execution.value.step_results, null, 2)
+    await navigator.clipboard.writeText(text)
+    toast.success('结果已复制到剪贴板')
+  } catch (e: any) {
+    toast.error(`复制失败：${e.message}`)
+  }
+}
+
+const get_node_name = (nodeId: string): string => {
+  const nodes = flow_ref.value?.getFlowchartNodes() || []
+  const node = nodes.find((n: any) => n.id === nodeId) as any
+  return node?.name || nodeId
+}
+
+const start_new_execution = (): string => {
+  const id = `exec_${Date.now()}`
+  const now = new Date().toLocaleString('zh-CN')
+  
+  const record: ExecutionRecord = {
+    id,
+    start_time: now,
+    status: 'running',
+    step_results: {}
+  }
+  
+  execution_history.value.unshift(record)
+  current_execution_id.value = id
+  
+  // 限制历史记录数量
+  if (execution_history.value.length > 20) {
+    execution_history.value = execution_history.value.slice(0, 20)
+  }
+  
+  return id
+}
+
+const update_execution_step_result = (stepId: string, result: any) => {
+  const exec = execution_history.value.find(e => e.id === current_execution_id.value)
+  if (exec) {
+    exec.step_results[stepId] = result
+  }
+}
+
+const complete_execution = (success: boolean) => {
+  const exec = execution_history.value.find(e => e.id === current_execution_id.value)
+  if (exec) {
+    exec.status = success ? 'completed' : 'failed'
+    exec.end_time = new Date().toLocaleString('zh-CN')
+    const start = new Date(exec.start_time).getTime()
+    exec.duration = Date.now() - start
+  }
+  
+  // 保存到 localStorage
+  save_execution_history()
+}
+
+// 重置所有节点的执行状态
+const reset_node_status = () => {
+  const nodes = flow_ref.value?.getFlowchartNodes() || []
+  nodes.forEach((node: any) => {
+    flow_ref.value?.updateNodeStatus(node.id, 'pending')
+  })
+}
+
+const save_execution_history = () => {
+  try {
+    localStorage.setItem(
+      `workflow_execution_history_${workflow_id.value}`,
+      JSON.stringify(execution_history.value.slice(0, 10)) // 只保存最近10条
+    )
+  } catch (e) {
+    console.error('Failed to save execution history:', e)
+  }
+}
+
+const load_execution_history = () => {
+  try {
+    const saved = localStorage.getItem(`workflow_execution_history_${workflow_id.value}`)
+    if (saved) {
+      execution_history.value = JSON.parse(saved)
+    }
+  } catch (e) {
+    console.error('Failed to load execution history:', e)
+  }
+}
+
 const get_log_class = (level: string) => {
   switch (level) {
     case 'ERROR': return 'text-error'
@@ -827,7 +1081,7 @@ const start_run = async () => {
   const toast = useToast()
   const graph = build_graph()
   
-  // 清空之前的执行结果
+  // 清空当前执行结果
   step_results.value = {}
   close_result_panel()
   
@@ -846,6 +1100,9 @@ const start_run = async () => {
   }
   
   try {
+    // 创建新的执行记录
+    start_new_execution()
+    
     add_log('INFO', `开始执行工作流: ${workflow_name.value}`)
     show_logs.value = true
     const exec_id = await invoke<string>('start_workflow_run', { graph })
@@ -857,6 +1114,84 @@ const start_run = async () => {
   } catch (e: any) {
     add_log('ERROR', `启动失败: ${e}`)
     toast.error(`启动失败：${e}`)
+    complete_execution(false)
+  }
+}
+
+// 启动定时调度
+const start_schedule = async () => {
+  const toast = useToast()
+  
+  // 先保存工作流
+  await save_workflow()
+  
+  const config = get_schedule_config()
+  if (!config) {
+    toast.error('请先添加定时触发节点并配置参数')
+    return
+  }
+  
+  try {
+    console.log('[Schedule] Starting with config:', config)
+    console.log('[Schedule] Workflow ID:', workflow_id.value)
+    console.log('[Schedule] Workflow Name:', workflow_name.value)
+    
+    await invoke('start_workflow_schedule', {
+      workflowId: workflow_id.value,
+      workflowName: workflow_name.value,
+      config,
+    })
+    
+    schedule_running.value = true
+    const interval_desc = config.trigger_type === 'interval' 
+      ? `每 ${config.interval_seconds} 秒` 
+      : config.trigger_type === 'daily'
+        ? `每天 ${config.hour}:${String(config.minute).padStart(2, '0')}`
+        : `每周 ${config.weekdays} ${config.hour}:${String(config.minute).padStart(2, '0')}`
+    
+    add_log('SUCCESS', `定时调度已启动: ${interval_desc}`)
+    toast.success(`定时调度已启动: ${interval_desc}`)
+    show_logs.value = true
+  } catch (e: any) {
+    add_log('ERROR', `启动定时调度失败: ${e}`)
+    toast.error(`启动失败：${e}`)
+  }
+}
+
+// 停止定时调度
+const stop_schedule = async () => {
+  const toast = useToast()
+  
+  try {
+    await invoke('stop_workflow_schedule', {
+      workflowId: workflow_id.value,
+    })
+    
+    schedule_running.value = false
+    add_log('INFO', '定时调度已停止')
+    toast.success('定时调度已停止')
+  } catch (e: any) {
+    add_log('ERROR', `停止定时调度失败: ${e}`)
+    toast.error(`停止失败：${e}`)
+  }
+}
+
+// 检查当前工作流是否有运行中的调度
+const check_schedule_status = async () => {
+  try {
+    const info = await invoke<any>('get_workflow_schedule', {
+      workflowId: workflow_id.value,
+    })
+    if (info) {
+      schedule_running.value = info.is_running
+      schedule_info.value = info
+    } else {
+      schedule_running.value = false
+      schedule_info.value = null
+    }
+  } catch {
+    schedule_running.value = false
+    schedule_info.value = null
   }
 }
 
@@ -920,6 +1255,11 @@ const load_workflow = async (id: string) => {
       add_log('SUCCESS', `工作流已加载: ${workflow_name.value}`)
       // toast.success('工作流已加载')
       show_load_dialog.value = false
+      
+      // 加载该工作流的执行历史
+      load_execution_history()
+      // 检查调度状态
+      check_schedule_status()
     }
   } catch (e: any) {
     add_log('ERROR', `加载失败: ${e}`)
@@ -1113,14 +1453,16 @@ const setup_event_listeners = async () => {
     if (step_id) {
       flow_ref.value?.updateNodeStatus(step_id, 'completed')
       
-      // 保存步骤结果
+      // 保存步骤结果到当前执行和执行历史
       const result = p?.result
       if (result) {
         step_results.value[step_id] = result
+        update_execution_step_result(step_id, result)
+        
         const result_preview = typeof result === 'object' 
           ? JSON.stringify(result, null, 2)
           : String(result)
-        add_log('SUCCESS', `节点执行完成 (点击节点查看结果)`, step_id, result_preview)
+        add_log('SUCCESS', `节点执行完成`, step_id, result_preview)
       } else {
         add_log('SUCCESS', `节点执行完成`, step_id)
       }
@@ -1128,25 +1470,29 @@ const setup_event_listeners = async () => {
   })
   await wf_events.on_run_complete(() => {
     add_log('SUCCESS', '工作流执行完成')
+    complete_execution(true)
+    
+    // 自动打开执行历史面板并选中当前执行记录
+    show_execution_history.value = true
+    const currentExec = execution_history.value.find(e => e.id === current_execution_id.value)
+    if (currentExec) {
+      selected_execution.value = currentExec
+    }
+    
+    // 延迟清除节点执行状态
+    setTimeout(() => {
+      reset_node_status()
+    }, 1500)
   })
 }
 
 const on_node_click = (node: any) => {
   ignore_close_once.value = true
-  ignore_result_panel_close_once.value = true
   selected_node.value = node
   const current = node.params || {}
   param_values.value = JSON.parse(JSON.stringify(current))
-  
-  // 如果节点有执行结果，同时准备好结果数据
-  if (step_results.value[node.id]) {
-    selected_step_result.value = {
-      step_id: node.id,
-      result: step_results.value[node.id]
-    }
-  }
-  // 始终打开参数编辑抽屉
-    drawer_open.value = true
+  // 打开参数编辑抽屉
+  drawer_open.value = true
 }
 
 const save_params = () => {
@@ -1348,6 +1694,8 @@ onMounted(async () => {
   if (last_workflow_id) {
     try {
       await load_workflow(last_workflow_id)
+      // 检查调度状态
+      await check_schedule_status()
     } catch (e) {
       console.error('Failed to load last workflow:', e)
     }
@@ -1362,6 +1710,18 @@ onMounted(async () => {
         const drawer = drawer_ref.value
         if (!drawer || !drawer.contains(e.target as Node)) {
           drawer_open.value = false
+        }
+      }
+    }
+    
+    // 处理执行历史面板的关闭
+    if (show_execution_history.value) {
+      if (ignore_execution_history_close_once.value) {
+        ignore_execution_history_close_once.value = false
+      } else {
+        const historyPanel = execution_history_ref.value
+        if (!historyPanel || !historyPanel.contains(e.target as Node)) {
+          show_execution_history.value = false
         }
       }
     }

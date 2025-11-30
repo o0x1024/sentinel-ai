@@ -13,7 +13,7 @@ use crate::agents::traits::{
 use crate::services::ai::AiService;
 use crate::services::database::DatabaseService;
 use crate::services::mcp::McpService;
-use crate::services::prompt_db::PromptRepository;
+use crate::services::prompt_db::PromptRepository;                   
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -283,20 +283,30 @@ impl ReactEngine {
             use crate::models::database::AiMessage;
             use chrono::Utc;
 
-            // 提取最终答案
-            let final_answer = trace
-                .steps
-                .iter()
-                .rev()
-                .find(|step| matches!(step.step_type, ReactStepType::Final { .. }))
-                .and_then(|step| {
-                    if let ReactStepType::Final { answer, .. } = &step.step_type {
-                        Some(answer.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| "No final answer".to_string());
+            // 获取完整的消息内容（从 emitter 收集的所有内容）
+            let full_content = emitter
+                .as_ref()
+                .map(|e| e.get_full_content())
+                .unwrap_or_default();
+
+            // 如果收集的内容为空，回退到提取 final answer
+            let content_to_save = if full_content.is_empty() {
+                trace
+                    .steps
+                    .iter()
+                    .rev()
+                    .find(|step| matches!(step.step_type, ReactStepType::Final { .. }))
+                    .and_then(|step| {
+                        if let ReactStepType::Final { answer, .. } = &step.step_type {
+                            Some(answer.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| "No final answer".to_string())
+            } else {
+                full_content
+            };
 
             // 构建结构化数据
             let structured_data = serde_json::json!({
@@ -338,7 +348,7 @@ impl ReactEngine {
                 id: msg_id.clone(),
                 conversation_id: conv_id.clone(),
                 role: "assistant".to_string(),
-                content: final_answer,
+                content: content_to_save,
                 metadata: None,
                 token_count: Some(trace.metrics.total_tokens as i32),
                 cost: None,

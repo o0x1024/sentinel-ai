@@ -10230,8 +10230,11 @@ name = "sentinel-workflow"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
+ "futures",
  "log",
+ "rig-core",
  "sentinel-db",
  "sentinel-notify",
  "sentinel-prompt",
@@ -10241,6 +10244,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]

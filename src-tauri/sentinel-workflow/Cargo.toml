@@ -19,3 +19,7 @@ sentinel-prompt = { path = "../sentinel-prompt" }
 sentinel-rag = { path = "../sentinel-rag" }
 sentinel-notify = { path = "../sentinel-notify" }
 tracing = "0.1"
+rig = { version = "0.24.0", package = "rig-core", features = ["derive"] }
+futures = "0.3"
+tokio-util = "0.7"
+async-trait = "0.1"

@@ -23,5 +23,5 @@ pub use executor::{ReactExecutor, ReactExecutorConfig};
 pub use parser::ActionParser;
 pub use engine_adapter::ReactEngine;
 pub use memory_integration::{ReactMemoryIntegration, ReactMemoryConfig, ContextSummarizer};
-pub use message_emitter::{ReactMessageEmitter, ReactMessageStep, ReactMessageAction, ReactExecutionStats};
+pub use message_emitter::{ReactMessageEmitter, ReactExecutionStats};
 pub use llm_client::{ReactLlmClient, LlmConfig};

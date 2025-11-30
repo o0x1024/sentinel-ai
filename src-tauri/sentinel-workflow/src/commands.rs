@@ -174,33 +174,22 @@ fn convert_core_to_rag(core: CoreRagConfig) -> RagConfig {
     }
 }
 
-#[tauri::command]
-pub async fn start_workflow_run(
+/// 执行工作流步骤（供 start_workflow_run 和调度器共用）
+async fn execute_workflow_steps(
+    execution_id: String,
     graph: WorkflowGraph,
+    def: WorkflowDefinition,
+    db: Arc<DatabaseService>,
     app_handle: AppHandle,
-    engine: State<'_, Arc<WorkflowEngine>>,
-    db: State<'_, Arc<DatabaseService>>,
-    tool_manager: State<'_, Arc<tokio::sync::RwLock<UnifiedToolManager>>>,
-) -> Result<String, String> {
-    let def = graph_to_definition(&graph);
-    let execution_id = engine.execute_workflow(&def, None).await.map_err(|e| e.to_string())?;
-    let execution_id_for_spawn = execution_id.clone();
-
-    let _ = app_handle.emit("workflow:run-start", &serde_json::json!({
-        "execution_id": execution_id,
-        "workflow_id": def.metadata.id,
-        "workflow_name": def.metadata.name,
-        "version": def.metadata.version,
-        "status": "running"
-    }));
-
-    let db_clone = db.inner().clone();
-    let app_handle_clone = app_handle.clone();
-    let engine_clone = engine.inner().clone();
-    let def_clone = def.clone();
-    let tool_manager_clone = tool_manager.inner().clone();
-
-    tokio::spawn(async move {
+    engine: Arc<WorkflowEngine>,
+    tool_manager: Arc<tokio::sync::RwLock<UnifiedToolManager>>,
+) {
+    let execution_id_for_spawn = execution_id;
+    let db_clone = db;
+    let app_handle_clone = app_handle;
+    let engine_clone = engine;
+    let def_clone = def;
+    let tool_manager_clone = tool_manager;
         if let Err(e) = db_clone.create_workflow_run(&execution_id_for_spawn, &def_clone.metadata.id, &def_clone.metadata.name, &def_clone.metadata.version, "running", Utc::now()).await {
             tracing::warn!("Failed to create workflow_run: {}", e);
         }
@@ -564,18 +553,36 @@ pub async fn start_workflow_run(
                     let provider = step_def.inputs.get("provider").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                     let model = step_def.inputs.get("model").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                     
-                    // 构建结果（目前返回模拟结果，实际需要调用AI服务）
-                    // TODO: 集成实际的AI服务调用
-                    let result = serde_json::json!({
-                        "success": true,
-                        "prompt": prompt,
-                        "system_prompt": system_prompt,
-                        "provider": provider,
-                        "model": model,
-                        "input": upstream_input,
-                        "response": format!("AI response placeholder for prompt: {}", if prompt.len() > 50 { &prompt[..50] } else { &prompt }),
-                        "note": "AI service integration pending"
-                    });
+                    // 调用 LLM 服务
+                    let llm_config = crate::llm_client::WorkflowLlmConfig {
+                        provider: provider.clone().unwrap_or_else(|| "openai".to_string()),
+                        model: model.clone().unwrap_or_else(|| "gpt-4".to_string()),
+                        timeout_secs: 120,
+                    };
+                    let llm_client = crate::llm_client::WorkflowLlmClient::new(llm_config);
+                    
+                    let result = match llm_client.completion(system_prompt.as_deref(), &prompt).await {
+                        Ok(response) => {
+                            tracing::info!("AI node '{}' got response: {} chars", node_id, response.len());
+                            serde_json::json!({
+                                "success": true,
+                                "response": response,
+                                "prompt": prompt,
+                                "provider": provider,
+                                "model": model,
+                            })
+                        }
+                        Err(e) => {
+                            tracing::error!("AI node '{}' failed: {}", node_id, e);
+                            serde_json::json!({
+                                "success": false,
+                                "error": e.to_string(),
+                                "prompt": prompt,
+                                "provider": provider,
+                                "model": model,
+                            })
+                        }
+                    };
                     
                     engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result).await;
                     wrote_result = true;
@@ -614,11 +621,50 @@ pub async fn start_workflow_run(
             let _ = db_clone.update_workflow_run_progress(&execution_id_for_spawn, progress, completed, total).await;
         }
 
-        engine_clone.mark_execution_completed(&execution_id_for_spawn).await;
-        let _ = db_clone.update_workflow_run_status(&execution_id_for_spawn, "completed", Some(Utc::now()), None).await;
-        let _ = app_handle_clone.emit("workflow:run-complete", &serde_json::json!({
-            "execution_id": execution_id_for_spawn
-        }));
+    engine_clone.mark_execution_completed(&execution_id_for_spawn).await;
+    let _ = db_clone.update_workflow_run_status(&execution_id_for_spawn, "completed", Some(Utc::now()), None).await;
+    let _ = app_handle_clone.emit("workflow:run-complete", &serde_json::json!({
+        "execution_id": execution_id_for_spawn
+    }));
+}
+
+#[tauri::command]
+pub async fn start_workflow_run(
+    graph: WorkflowGraph,
+    app_handle: AppHandle,
+    engine: State<'_, Arc<WorkflowEngine>>,
+    db: State<'_, Arc<DatabaseService>>,
+    tool_manager: State<'_, Arc<tokio::sync::RwLock<UnifiedToolManager>>>,
+) -> Result<String, String> {
+    let def = graph_to_definition(&graph);
+    let execution_id = engine.execute_workflow(&def, None).await.map_err(|e| e.to_string())?;
+
+    let _ = app_handle.emit("workflow:run-start", &serde_json::json!({
+        "execution_id": execution_id,
+        "workflow_id": def.metadata.id,
+        "workflow_name": def.metadata.name,
+        "version": def.metadata.version,
+        "status": "running"
+    }));
+
+    let execution_id_for_spawn = execution_id.clone();
+    let db_clone = db.inner().clone();
+    let app_handle_clone = app_handle.clone();
+    let engine_clone = engine.inner().clone();
+    let def_clone = def.clone();
+    let tool_manager_clone = tool_manager.inner().clone();
+    let graph_clone = graph.clone();
+
+    tokio::spawn(async move {
+        execute_workflow_steps(
+            execution_id_for_spawn,
+            graph_clone,
+            def_clone,
+            db_clone,
+            app_handle_clone,
+            engine_clone,
+            tool_manager_clone,
+        ).await;
     });
 
     Ok(execution_id)
@@ -853,4 +899,128 @@ pub async fn validate_workflow_graph(graph: WorkflowGraph) -> Result<Vec<Workflo
     }
 
     Ok(issues)
+}
+
+// ==================== 定时调度相关 ====================
+
+use crate::scheduler::{WorkflowScheduler, ScheduleConfig, ScheduleInfo, ScheduleExecutor};
+
+/// 调度执行器实现
+pub struct WorkflowScheduleExecutor {
+    engine: Arc<WorkflowEngine>,
+    db: Arc<DatabaseService>,
+    app_handle: AppHandle,
+    tool_manager: Arc<tokio::sync::RwLock<UnifiedToolManager>>,
+}
+
+impl WorkflowScheduleExecutor {
+    pub fn new(
+        engine: Arc<WorkflowEngine>,
+        db: Arc<DatabaseService>,
+        app_handle: AppHandle,
+        tool_manager: Arc<tokio::sync::RwLock<UnifiedToolManager>>,
+    ) -> Self {
+        Self { engine, db, app_handle, tool_manager }
+    }
+}
+
+#[async_trait::async_trait]
+impl ScheduleExecutor for WorkflowScheduleExecutor {
+    async fn execute_workflow(&self, workflow_id: &str) -> Result<String, String> {
+        // 从数据库加载工作流定义
+        let wf_data = self.db.get_workflow_definition(workflow_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Workflow not found: {}", workflow_id))?;
+        
+        // graph 在 "graph" 字段中
+        let graph_value = wf_data.get("graph")
+            .ok_or_else(|| "Workflow graph not found".to_string())?;
+        
+        let graph: WorkflowGraph = serde_json::from_value(graph_value.clone())
+            .map_err(|e| format!("Failed to parse workflow graph: {}", e))?;
+        
+        let def = graph_to_definition(&graph);
+        let execution_id = self.engine.execute_workflow(&def, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        
+        // 发送事件通知前端
+        let _ = self.app_handle.emit("workflow:schedule-triggered", &serde_json::json!({
+            "workflow_id": workflow_id,
+            "execution_id": execution_id,
+        }));
+        
+        // 使用与 start_workflow_run 相同的执行逻辑
+        let execution_id_for_spawn = execution_id.clone();
+        let db_clone = self.db.clone();
+        let app_handle_clone = self.app_handle.clone();
+        let engine_clone = self.engine.clone();
+        let def_clone = def.clone();
+        let tool_manager_clone = self.tool_manager.clone();
+        
+        tokio::spawn(async move {
+            execute_workflow_steps(
+                execution_id_for_spawn,
+                graph,
+                def_clone,
+                db_clone,
+                app_handle_clone,
+                engine_clone,
+                tool_manager_clone,
+            ).await;
+        });
+        
+        Ok(execution_id)
+    }
+}
+
+/// 启动工作流定时调度
+#[tauri::command]
+pub async fn start_workflow_schedule(
+    workflow_id: String,
+    workflow_name: String,
+    config: ScheduleConfig,
+    scheduler: State<'_, Arc<WorkflowScheduler>>,
+) -> Result<(), String> {
+    tracing::info!(
+        "[Scheduler] Starting schedule for workflow: {} ({}) - type: {}, interval: {:?}s",
+        workflow_name, workflow_id, config.trigger_type, config.interval_seconds
+    );
+    
+    let result = scheduler.start_schedule(workflow_id.clone(), workflow_name.clone(), config).await;
+    
+    match &result {
+        Ok(_) => tracing::info!("[Scheduler] Schedule started successfully for: {}", workflow_name),
+        Err(e) => tracing::error!("[Scheduler] Failed to start schedule for {}: {}", workflow_name, e),
+    }
+    
+    result
+}
+
+/// 停止工作流定时调度
+#[tauri::command]
+pub async fn stop_workflow_schedule(
+    workflow_id: String,
+    scheduler: State<'_, Arc<WorkflowScheduler>>,
+) -> Result<(), String> {
+    tracing::info!("Stopping schedule for workflow: {}", workflow_id);
+    scheduler.stop_schedule(&workflow_id).await
+}
+
+/// 列出所有定时调度任务
+#[tauri::command]
+pub async fn list_workflow_schedules(
+    scheduler: State<'_, Arc<WorkflowScheduler>>,
+) -> Result<Vec<ScheduleInfo>, String> {
+    Ok(scheduler.list_schedules().await)
+}
+
+/// 获取单个调度任务信息
+#[tauri::command]
+pub async fn get_workflow_schedule(
+    workflow_id: String,
+    scheduler: State<'_, Arc<WorkflowScheduler>>,
+) -> Result<Option<ScheduleInfo>, String> {
+    Ok(scheduler.get_schedule(&workflow_id).await)
 }

@@ -750,137 +750,214 @@ impl TaskFetchingUnit {
         Ok(())
     }
 
-    /// 获取工具的 Schema 定义
-    async fn get_tool_schema(&self, tool_name: &str) -> Option<crate::engines::llm_compiler::types::ToolSchema> {
-        // 这里应该从工具注册中心或配置中获取 Schema
-        // 为了演示，我创建一些常用工具的 Schema
+    /// 获取工具的 Schema 定义（动态从工具系统获取）
+    async fn get_tool_schema(
+        &self,
+        tool_name: &str,
+    ) -> Option<crate::engines::llm_compiler::types::ToolSchema> {
+        use crate::engines::llm_compiler::types::*;
+
+        // First try to get from global tool adapter
+        if let Ok(tool_adapter) = crate::tools::get_global_engine_adapter() {
+            if let Some(tool_info) = tool_adapter.get_tool_info(tool_name).await {
+                // Convert ToolInfo to ToolSchema
+                let parameters = self.convert_tool_info_to_schema_params(&tool_info);
+                return Some(ToolSchema {
+                    name: tool_name.to_string(),
+                    description: tool_info.description.clone(),
+                    parameters,
+                    output_schema: None,
+                });
+            }
+        }
+
+        // Fallback to built-in schemas for common tools
         self.create_default_tool_schema(tool_name)
     }
 
-    /// 创建默认工具 Schema（演示用）
-    fn create_default_tool_schema(&self, tool_name: &str) -> Option<crate::engines::llm_compiler::types::ToolSchema> {
+    /// Convert ToolInfo parameters to ToolParameterSchema list
+    fn convert_tool_info_to_schema_params(
+        &self,
+        tool_info: &crate::tools::ToolInfo,
+    ) -> Vec<crate::engines::llm_compiler::types::ToolParameterSchema> {
         use crate::engines::llm_compiler::types::*;
-        
+
+        let mut params = Vec::new();
+
+        // Convert from ToolParameters structure
+        for param in &tool_info.parameters.parameters {
+            let param_type = self.sentinel_param_type_to_llm_compiler_type(&param.param_type);
+
+            params.push(ToolParameterSchema {
+                name: param.name.clone(),
+                param_type,
+                required: param.required,
+                description: Some(param.description.clone()),
+                default_value: param.default_value.clone(),
+                constraints: None,
+            });
+        }
+
+        // If no params found, create a generic "target" parameter
+        if params.is_empty() {
+            params.push(ToolParameterSchema {
+                name: "target".to_string(),
+                param_type: ParameterType::String,
+                required: true,
+                description: Some("Target for the tool operation".to_string()),
+                default_value: None,
+                constraints: None,
+            });
+        }
+
+        params
+    }
+
+    /// Convert sentinel-tools ParameterType to llm_compiler ParameterType
+    fn sentinel_param_type_to_llm_compiler_type(
+        &self,
+        param_type: &sentinel_tools::ParameterType,
+    ) -> crate::engines::llm_compiler::types::ParameterType {
+        use crate::engines::llm_compiler::types::ParameterType as LlmParamType;
+
+        match param_type {
+            sentinel_tools::ParameterType::String => LlmParamType::String,
+            sentinel_tools::ParameterType::Number => LlmParamType::Float,
+            sentinel_tools::ParameterType::Boolean => LlmParamType::Boolean,
+            sentinel_tools::ParameterType::Array => LlmParamType::Array(Box::new(LlmParamType::String)),
+            sentinel_tools::ParameterType::Object => LlmParamType::Object(HashMap::new()),
+        }
+    }
+
+    /// Create default tool Schema (fallback for tools without dynamic schema)
+    fn create_default_tool_schema(
+        &self,
+        tool_name: &str,
+    ) -> Option<crate::engines::llm_compiler::types::ToolSchema> {
+        use crate::engines::llm_compiler::types::*;
+
         match tool_name {
-            "port_scanner" | "port_scan" => {
-                Some(ToolSchema {
-                    name: tool_name.to_string(),
-                    description: "Scan network ports on target".to_string(),
-                    parameters: vec![
-                        ToolParameterSchema {
-                            name: "target".to_string(),
-                            param_type: ParameterType::String,
-                            required: true,
-                            description: Some("Target host or IP address".to_string()),
-                            default_value: None,
-                            constraints: Some(ParameterConstraints {
-                                min_length: Some(1),
-                                max_length: Some(255),
-                                pattern: Some("*".to_string()), // 简化的域名/IP模式
-                                ..Default::default()
-                            }),
-                        },
-                        ToolParameterSchema {
-                            name: "ports".to_string(),
-                            param_type: ParameterType::Enum(vec!["common".to_string(), "all".to_string(), "top1000".to_string()]),
-                            required: false,
-                            description: Some("Port scan range".to_string()),
-                            default_value: Some(Value::String("common".to_string())),
-                            constraints: None,
-                        },
-                        ToolParameterSchema {
-                            name: "threads".to_string(),
-                            param_type: ParameterType::Integer,
-                            required: false,
-                            description: Some("Number of concurrent threads".to_string()),
-                            default_value: Some(Value::Number(serde_json::Number::from(50))),
-                            constraints: Some(ParameterConstraints {
-                                min_value: Some(1.0),
-                                max_value: Some(1000.0),
-                                ..Default::default()
-                            }),
-                        },
-                    ],
-                    output_schema: None,
-                })
-            }
-            "dns_scanner" => {
-                Some(ToolSchema {
-                    name: tool_name.to_string(),
-                    description: "Perform DNS scanning and enumeration".to_string(),
-                    parameters: vec![
-                        ToolParameterSchema {
-                            name: "target".to_string(),
-                            param_type: ParameterType::String,
-                            required: true,
-                            description: Some("Target domain".to_string()),
-                            default_value: None,
-                            constraints: Some(ParameterConstraints {
-                                min_length: Some(1),
-                                max_length: Some(255),
-                                pattern: Some("*.*".to_string()), // 简化的域名模式
-                                ..Default::default()
-                            }),
-                        },
-                        ToolParameterSchema {
-                            name: "record_types".to_string(),
-                            param_type: ParameterType::Array(Box::new(ParameterType::String)),
-                            required: false,
-                            description: Some("DNS record types to query".to_string()),
-                            default_value: Some(Value::Array(vec![
-                                Value::String("A".to_string()),
-                                Value::String("AAAA".to_string()),
-                                Value::String("MX".to_string()),
-                                Value::String("NS".to_string()),
-                            ])),
-                            constraints: None,
-                        },
-                    ],
-                    output_schema: None,
-                })
-            }
-            "rsubdomain" => {
-                Some(ToolSchema {
-                    name: tool_name.to_string(),
-                    description: "Subdomain enumeration tool".to_string(),
-                    parameters: vec![
-                        ToolParameterSchema {
-                            name: "target".to_string(),
-                            param_type: ParameterType::String,
-                            required: true,
-                            description: Some("Target domain".to_string()),
-                            default_value: None,
-                            constraints: Some(ParameterConstraints {
-                                min_length: Some(1),
-                                max_length: Some(255),
-                                ..Default::default()
-                            }),
-                        },
-                        ToolParameterSchema {
-                            name: "wordlist".to_string(),
-                            param_type: ParameterType::Enum(vec!["common".to_string(), "large".to_string(), "custom".to_string()]),
-                            required: false,
-                            description: Some("Wordlist to use for enumeration".to_string()),
-                            default_value: Some(Value::String("common".to_string())),
-                            constraints: None,
-                        },
-                        ToolParameterSchema {
-                            name: "timeout".to_string(),
-                            param_type: ParameterType::Integer,
-                            required: false,
-                            description: Some("Timeout in seconds".to_string()),
-                            default_value: Some(Value::Number(serde_json::Number::from(30))),
-                            constraints: Some(ParameterConstraints {
-                                min_value: Some(1.0),
-                                max_value: Some(300.0),
-                                ..Default::default()
-                            }),
-                        },
-                    ],
-                    output_schema: None,
-                })
-            }
-            _ => None, // 未知工具不提供 Schema
+            "port_scanner" | "port_scan" => Some(ToolSchema {
+                name: tool_name.to_string(),
+                description: "Scan network ports on target".to_string(),
+                parameters: vec![
+                    ToolParameterSchema {
+                        name: "target".to_string(),
+                        param_type: ParameterType::String,
+                        required: true,
+                        description: Some("Target host or IP address".to_string()),
+                        default_value: None,
+                        constraints: Some(ParameterConstraints {
+                            min_length: Some(1),
+                            max_length: Some(255),
+                            pattern: Some("*".to_string()),
+                            ..Default::default()
+                        }),
+                    },
+                    ToolParameterSchema {
+                        name: "ports".to_string(),
+                        param_type: ParameterType::Enum(vec![
+                            "common".to_string(),
+                            "all".to_string(),
+                            "top1000".to_string(),
+                        ]),
+                        required: false,
+                        description: Some("Port scan range".to_string()),
+                        default_value: Some(Value::String("common".to_string())),
+                        constraints: None,
+                    },
+                    ToolParameterSchema {
+                        name: "threads".to_string(),
+                        param_type: ParameterType::Integer,
+                        required: false,
+                        description: Some("Number of concurrent threads".to_string()),
+                        default_value: Some(Value::Number(serde_json::Number::from(50))),
+                        constraints: Some(ParameterConstraints {
+                            min_value: Some(1.0),
+                            max_value: Some(1000.0),
+                            ..Default::default()
+                        }),
+                    },
+                ],
+                output_schema: None,
+            }),
+            "dns_scanner" => Some(ToolSchema {
+                name: tool_name.to_string(),
+                description: "Perform DNS scanning and enumeration".to_string(),
+                parameters: vec![
+                    ToolParameterSchema {
+                        name: "target".to_string(),
+                        param_type: ParameterType::String,
+                        required: true,
+                        description: Some("Target domain".to_string()),
+                        default_value: None,
+                        constraints: Some(ParameterConstraints {
+                            min_length: Some(1),
+                            max_length: Some(255),
+                            pattern: Some("*.*".to_string()),
+                            ..Default::default()
+                        }),
+                    },
+                    ToolParameterSchema {
+                        name: "record_types".to_string(),
+                        param_type: ParameterType::Array(Box::new(ParameterType::String)),
+                        required: false,
+                        description: Some("DNS record types to query".to_string()),
+                        default_value: Some(Value::Array(vec![
+                            Value::String("A".to_string()),
+                            Value::String("AAAA".to_string()),
+                            Value::String("MX".to_string()),
+                            Value::String("NS".to_string()),
+                        ])),
+                        constraints: None,
+                    },
+                ],
+                output_schema: None,
+            }),
+            "rsubdomain" => Some(ToolSchema {
+                name: tool_name.to_string(),
+                description: "Subdomain enumeration tool".to_string(),
+                parameters: vec![
+                    ToolParameterSchema {
+                        name: "target".to_string(),
+                        param_type: ParameterType::String,
+                        required: true,
+                        description: Some("Target domain".to_string()),
+                        default_value: None,
+                        constraints: Some(ParameterConstraints {
+                            min_length: Some(1),
+                            max_length: Some(255),
+                            ..Default::default()
+                        }),
+                    },
+                    ToolParameterSchema {
+                        name: "wordlist".to_string(),
+                        param_type: ParameterType::Enum(vec![
+                            "common".to_string(),
+                            "large".to_string(),
+                            "custom".to_string(),
+                        ]),
+                        required: false,
+                        description: Some("Wordlist to use for enumeration".to_string()),
+                        default_value: Some(Value::String("common".to_string())),
+                        constraints: None,
+                    },
+                    ToolParameterSchema {
+                        name: "timeout".to_string(),
+                        param_type: ParameterType::Integer,
+                        required: false,
+                        description: Some("Timeout in seconds".to_string()),
+                        default_value: Some(Value::Number(serde_json::Number::from(30))),
+                        constraints: Some(ParameterConstraints {
+                            min_value: Some(1.0),
+                            max_value: Some(300.0),
+                            ..Default::default()
+                        }),
+                    },
+                ],
+                output_schema: None,
+            }),
+            _ => None, // Unknown tools don't have schema
         }
     }
 

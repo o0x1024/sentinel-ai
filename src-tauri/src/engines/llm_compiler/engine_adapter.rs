@@ -2,23 +2,27 @@
 
 use super::executor::ParallelExecutorPool;
 use super::joiner::IntelligentJoiner;
+use super::memory_integration::{LlmCompilerMemoryConfig, LlmCompilerMemoryIntegration};
+use super::message_emitter::{LlmCompilerMessageEmitter, LlmCompilerMessageEmitterBuilder};
 use super::planner::LlmCompilerPlanner;
 use super::task_fetcher::TaskFetchingUnit;
 use super::types::*;
 use crate::agents::traits::*;
-use sentinel_core::models::workflow::WorkflowStepDetail;
+use crate::engines::memory::get_global_memory;
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::services::ai::{AiService, AiServiceManager};
 use crate::services::database::Database; // trait for DB methods
 use crate::services::database::DatabaseService;
+use crate::services::mcp::McpService;
 use crate::services::prompt_db::PromptRepository;
-use crate::engines::memory::get_global_memory;
 use crate::tools::ToolExecutionParams;
-use crate::utils::ordered_message::{emit_message_chunk, ChunkType, ArchitectureType as ArchType};
+use crate::utils::ordered_message::{emit_message_chunk, ArchitectureType as ArchType, ChunkType};
 use anyhow::Result;
 use async_trait::async_trait;
+use sentinel_core::models::workflow::WorkflowStepDetail;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -31,12 +35,17 @@ pub struct LlmCompilerEngine {
     executor_pool: Option<Arc<ParallelExecutorPool>>,
     joiner: Option<Arc<tokio::sync::Mutex<IntelligentJoiner>>>,
     ai_service: Option<Arc<AiService>>,
-    ai_service_manager: Option<Arc<AiServiceManager>>,  // ✅ 添加AI服务管理器，用于获取各阶段模型
+    ai_service_manager: Option<Arc<AiServiceManager>>,
     config: LlmCompilerConfig,
     prompt_repo: Option<PromptRepository>,
-    runtime_params: Option<std::collections::HashMap<String, serde_json::Value>>, // prompt_ids 等
+    runtime_params: Option<std::collections::HashMap<String, serde_json::Value>>,
     app_handle: Option<tauri::AppHandle>,
     db_service: Option<Arc<DatabaseService>>,
+    // New integrations
+    mcp_service: Option<Arc<McpService>>,
+    memory_integration: Option<Arc<LlmCompilerMemoryIntegration>>,
+    cancellation_token: Option<CancellationToken>,
+    message_emitter: Option<Arc<LlmCompilerMessageEmitter>>,
 }
 
 impl LlmCompilerEngine {
@@ -44,8 +53,8 @@ impl LlmCompilerEngine {
     pub async fn new() -> Result<Self> {
         let engine_info = EngineInfo {
             name: "LLMCompiler".to_string(),
-            version: "1.0.0".to_string(),
-            description: "DAG-based parallel execution architecture with intelligent task scheduling and dependency resolution".to_string(),
+            version: "1.1.0".to_string(),
+            description: "DAG-based parallel execution architecture with intelligent task scheduling, dependency resolution, and memory integration".to_string(),
             supported_scenarios: vec![
                 "Complex Multi-step Tasks".to_string(),
                 "High Concurrency Processing".to_string(),
@@ -63,6 +72,13 @@ impl LlmCompilerEngine {
 
         let config = LlmCompilerConfig::default();
 
+        // Initialize memory integration
+        let memory = get_global_memory();
+        let memory_integration = Some(Arc::new(LlmCompilerMemoryIntegration::with_config(
+            memory,
+            LlmCompilerMemoryConfig::default(),
+        )));
+
         Ok(Self {
             engine_info,
             planner: None,
@@ -76,6 +92,10 @@ impl LlmCompilerEngine {
             runtime_params: None,
             app_handle: None,
             db_service: None,
+            mcp_service: None,
+            memory_integration,
+            cancellation_token: None,
+            message_emitter: None,
         })
     }
 
@@ -85,10 +105,20 @@ impl LlmCompilerEngine {
         config: LlmCompilerConfig,
         db_service: Arc<DatabaseService>,
     ) -> Result<Self> {
+        Self::new_with_all_dependencies(ai_service_manager, config, db_service, None).await
+    }
+
+    /// 使用完整依赖创建引擎适配器（包括MCP服务）
+    pub async fn new_with_all_dependencies(
+        ai_service_manager: Arc<AiServiceManager>,
+        config: LlmCompilerConfig,
+        db_service: Arc<DatabaseService>,
+        mcp_service: Option<Arc<McpService>>,
+    ) -> Result<Self> {
         let engine_info = EngineInfo {
             name: "LLMCompiler".to_string(),
-            version: "1.0.0".to_string(),
-            description: "DAG-based parallel execution architecture with intelligent task scheduling and dependency resolution".to_string(),
+            version: "1.1.0".to_string(),
+            description: "DAG-based parallel execution architecture with intelligent task scheduling, dependency resolution, and memory integration".to_string(),
             supported_scenarios: vec![
                 "Complex Multi-step Tasks".to_string(),
                 "High Concurrency Processing".to_string(),
@@ -104,23 +134,36 @@ impl LlmCompilerEngine {
             },
         };
 
-        // 初始化各个组件
+        // Initialize components
         let pool = db_service
             .get_pool()
             .map_err(|e| anyhow::anyhow!("DB pool error: {}", e))?;
         let tool_adapter = crate::tools::get_global_engine_adapter()
-            .map_err(|e| anyhow::anyhow!("获取全局工具适配器失败: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to get global tool adapter: {}", e))?;
 
-        // ✅ 获取各阶段的AI服务
-        // Planner阶段使用Planning模型
-        let planner_service = Self::get_ai_service_for_stage(&ai_service_manager, crate::services::ai::SchedulerStage::Planning).await?;
-        // Joiner阶段使用Evaluation模型
-        let joiner_service = Self::get_ai_service_for_stage(&ai_service_manager, crate::services::ai::SchedulerStage::Evaluation).await?;
-        // 默认AI服务作为后备
+        // Get AI services for different stages
+        let planner_service = Self::get_ai_service_for_stage(
+            &ai_service_manager,
+            crate::services::ai::SchedulerStage::Planning,
+        )
+        .await?;
+        let joiner_service = Self::get_ai_service_for_stage(
+            &ai_service_manager,
+            crate::services::ai::SchedulerStage::Evaluation,
+        )
+        .await?;
         let default_service = Self::get_ai_service_from_manager(&ai_service_manager)?;
 
-        info!("LLMCompiler: Planner using model: {}/{}", planner_service.get_config().provider, planner_service.get_config().model);
-        info!("LLMCompiler: Joiner using model: {}/{}", joiner_service.get_config().provider, joiner_service.get_config().model);
+        info!(
+            "LLMCompiler: Planner using model: {}/{}",
+            planner_service.get_config().provider,
+            planner_service.get_config().model
+        );
+        info!(
+            "LLMCompiler: Joiner using model: {}/{}",
+            joiner_service.get_config().provider,
+            joiner_service.get_config().model
+        );
 
         let planner = Some(Arc::new(LlmCompilerPlanner::new(
             planner_service,
@@ -142,6 +185,13 @@ impl LlmCompilerEngine {
             Some(PromptRepository::new(pool.clone())),
         ))));
 
+        // Initialize memory integration
+        let memory = get_global_memory();
+        let memory_integration = Some(Arc::new(LlmCompilerMemoryIntegration::with_config(
+            memory,
+            LlmCompilerMemoryConfig::default(),
+        )));
+
         Ok(Self {
             engine_info,
             planner,
@@ -149,13 +199,22 @@ impl LlmCompilerEngine {
             executor_pool,
             joiner,
             ai_service: Some(default_service),
-            ai_service_manager: Some(ai_service_manager),  // ✅ 保存AI服务管理器
+            ai_service_manager: Some(ai_service_manager),
             config,
             prompt_repo: Some(PromptRepository::new(pool.clone())),
             runtime_params: None,
             app_handle: None,
             db_service: Some(db_service),
+            mcp_service,
+            memory_integration,
+            cancellation_token: None,
+            message_emitter: None,
         })
+    }
+
+    /// Set MCP service
+    pub fn set_mcp_service(&mut self, mcp_service: Arc<McpService>) {
+        self.mcp_service = Some(mcp_service);
     }
 
     pub fn set_runtime_params(
@@ -184,6 +243,53 @@ impl LlmCompilerEngine {
     /// 设置应用句柄用于发送消息
     pub fn set_app_handle(&mut self, app_handle: tauri::AppHandle) {
         self.app_handle = Some(app_handle);
+    }
+
+    /// Initialize message emitter with execution context
+    fn init_message_emitter(
+        &mut self,
+        execution_id: &str,
+        message_id: &str,
+        conversation_id: Option<&str>,
+    ) {
+        if let Some(ref app_handle) = self.app_handle {
+            self.message_emitter = LlmCompilerMessageEmitterBuilder::new()
+                .app_handle(Arc::new(app_handle.clone()))
+                .execution_id(execution_id.to_string())
+                .message_id(message_id.to_string())
+                .conversation_id(conversation_id.map(|s| s.to_string()))
+                .build()
+                .map(Arc::new);
+        }
+    }
+
+    /// Set cancellation token from global manager
+    pub async fn set_cancellation_token_from_execution(&mut self, execution_id: &str) {
+        if let Some(token) = crate::managers::cancellation_manager::get_token(execution_id).await {
+            info!(
+                "LLMCompiler: Retrieved cancellation token for execution: {}",
+                execution_id
+            );
+            self.cancellation_token = Some(token);
+        } else {
+            warn!(
+                "LLMCompiler: No cancellation token found for execution: {}",
+                execution_id
+            );
+        }
+    }
+
+    /// Check if execution is cancelled
+    fn is_cancelled(&self) -> bool {
+        self.cancellation_token
+            .as_ref()
+            .map(|t| t.is_cancelled())
+            .unwrap_or(false)
+    }
+
+    /// Get memory integration reference
+    pub fn memory_integration(&self) -> Option<&Arc<LlmCompilerMemoryIntegration>> {
+        self.memory_integration.as_ref()
     }
 
     /// 发送错误消息到前端
@@ -494,14 +600,14 @@ impl LlmCompilerEngine {
     ) -> Result<AgentExecutionResult> {
         let workflow_start = std::time::Instant::now();
 
-        // ✅ 从runtime_params中获取用户的实际任务描述和前端消息ID
+        // Extract context from runtime_params
         let context = self.runtime_params.clone().unwrap_or_default();
         let user_query = context
             .get("task_description")
             .and_then(|v| v.as_str())
             .unwrap_or("LLMCompiler workflow execution");
 
-        // ✅ 提取conversation_id、message_id、execution_id（用于统一消息推送）
+        // Extract IDs for message routing
         let conversation_id = context
             .get("conversation_id")
             .and_then(|v| v.as_str())
@@ -515,9 +621,23 @@ impl LlmCompilerEngine {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        info!("开始执行LLMCompiler工作流: {}", user_query);
-        info!("LLMCompiler: conversation_id={:?}, message_id={:?}, execution_id={:?}", 
-            conversation_id, message_id, execution_id);
+        info!("Starting LLMCompiler workflow: {}", user_query);
+        info!(
+            "LLMCompiler: conversation_id={:?}, message_id={:?}, execution_id={:?}",
+            conversation_id, message_id, execution_id
+        );
+
+        // Check for cancellation token from global manager
+        let cancellation_token = if let Some(ref exec_id) = execution_id {
+            crate::managers::cancellation_manager::get_token(exec_id).await
+        } else {
+            None
+        };
+
+        // Clear memory trajectory for new execution
+        if let Some(ref memory) = self.memory_integration {
+            memory.clear_trajectory().await;
+        }
 
         let mut execution_summary = ExecutionSummary {
             total_tasks: 0,
@@ -535,10 +655,20 @@ impl LlmCompilerEngine {
         };
 
         let mut all_results: Vec<TaskExecutionResult> = Vec::new();
+        // 保存Joiner的最终响应（如果够详细就直接使用，避免重复LLM调用）
+        let mut joiner_final_response: Option<String> = None;
 
-        // 主执行循环
+        // Main execution loop
         for round in 1..=self.config.max_iterations {
-            info!("开始执行轮次: {}/{}", round, self.config.max_iterations);
+            // Check for cancellation
+            if let Some(ref token) = cancellation_token {
+                if token.is_cancelled() {
+                    info!("LLMCompiler: Execution cancelled at round {}", round);
+                    return Err(anyhow::anyhow!("Execution cancelled by user"));
+                }
+            }
+
+            info!("Starting execution round: {}/{}", round, self.config.max_iterations);
 
             if round > 1 {
                 execution_summary.replanning_count = round - 1;
@@ -568,24 +698,47 @@ impl LlmCompilerEngine {
                 let execution_plan = match planner.generate_dag_plan(user_query, &context).await {
                     Ok(plan) => {
                         info!("✓ DAG规划成功: {} 个任务节点", plan.nodes.len());
-                        
-                        // 发送计划信息到前端
+
+                        // Send structured planning data to frontend
                         if let Some(app) = &self.app_handle {
-                            let plan_info = format!(
-                                "DAG规划成功，共{}个任务节点",
-                                plan.nodes.len()
-                            );
-                            crate::utils::ordered_message::emit_plan_info_chunk(
+                            // Build structured tasks array
+                            let tasks_json: Vec<serde_json::Value> = plan
+                                .nodes
+                                .iter()
+                                .map(|node| {
+                                    serde_json::json!({
+                                        "id": node.id,
+                                        "name": node.name,
+                                        "description": node.description,
+                                        "tool": node.tool_name,
+                                        "inputs": node.inputs,
+                                        "dependencies": node.dependencies
+                                    })
+                                })
+                                .collect();
+
+                            let plan_info_json = serde_json::json!({
+                                "plan_summary": format!("DAG规划成功，共{}个任务节点", plan.nodes.len()),
+                                "summary": plan.name,
+                                "tasks": tasks_json,
+                                "execution_strategy": "parallel"
+                            });
+
+                            crate::utils::ordered_message::emit_message_chunk_with_arch(
                                 app,
                                 execution_id.as_deref().unwrap_or("unknown"),
                                 message_id.as_deref().unwrap_or("unknown"),
                                 conversation_id.as_deref(),
-                                &plan_info,
+                                ChunkType::PlanInfo,
+                                &plan_info_json.to_string(),
+                                false,
                                 Some("llm_compiler_planning"),
                                 None,
+                                Some(ArchType::LLMCompiler),
+                                Some(plan_info_json.clone()),
                             );
                         }
-                        
+
                         plan
                     }
                     Err(e) => {
@@ -644,9 +797,61 @@ impl LlmCompilerEngine {
                     all_results.extend(round_results.clone());
 
                     info!(
-                        "轮次 {} 完成: 成功 {} 个任务, 失败 {} 个任务, 耗时 {}ms",
+                        "Round {} completed: {} successful, {} failed, {}ms",
                         round, completed_count, failed_count, round_duration
                     );
+
+                    // Send ToolResult messages to frontend for each task
+                    if let Some(app) = &self.app_handle {
+                        for result in &round_results {
+                            let tool_result_json = serde_json::json!({
+                                "task_id": result.task_id,
+                                "tool_name": result.outputs.get("tool_name").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                                "result": result.outputs,
+                                "status": format!("{:?}", result.status),
+                                "duration_ms": result.duration_ms,
+                                "round": round,
+                                "error": result.error
+                            });
+
+                            crate::utils::ordered_message::emit_message_chunk_with_arch(
+                                app,
+                                execution_id.as_deref().unwrap_or("unknown"),
+                                message_id.as_deref().unwrap_or("unknown"),
+                                conversation_id.as_deref(),
+                                ChunkType::ToolResult,
+                                &tool_result_json.to_string(),
+                                false,
+                                Some("llm_compiler_execution"),
+                                None,
+                                Some(ArchType::LLMCompiler),
+                                None,
+                            );
+                        }
+                    }
+
+                    // Record execution in memory
+                    if let Some(ref memory) = self.memory_integration {
+                        for result in &round_results {
+                            let outputs = if result.status == TaskStatus::Completed {
+                                Some(&result.outputs)
+                            } else {
+                                None
+                            };
+                            memory
+                                .record_task_execution(
+                                    &result.task_id,
+                                    &result.task_id,
+                                    "unknown", // Tool name not available in result
+                                    &HashMap::new(),
+                                    outputs,
+                                    &format!("{:?}", result.status),
+                                    result.error.as_deref(),
+                                    result.duration_ms,
+                                )
+                                .await;
+                        }
+                    }
 
                 // 4. 智能决策阶段
                 if let Some(joiner) = &self.joiner {
@@ -713,22 +918,32 @@ impl LlmCompilerEngine {
                         JoinerDecision::Complete { response, .. } => {
                             execution_summary
                                 .key_findings
-                                .push(format!("决策: 完成执行 - {}", response));
-                            info!("Joiner决定完成执行: {}", response);
-                            
-                            // 发送决策结果到前端
+                                .push(format!("决策: 完成执行"));
+                            info!("Joiner决定完成执行, response长度: {} 字符", response.len());
+
+                            // 如果Joiner的response足够详细(>100字符)，直接使用，避免重复LLM调用
+                            if response.len() > 100 {
+                                joiner_final_response = Some(response.clone());
+                            }
+
+                            // 发送简化的决策状态到前端
                             if let Some(app) = &self.app_handle {
-                                let decision_msg = format!("✓ 决策: 完成执行\n{}", response);
-                                crate::utils::ordered_message::emit_meta_chunk(
+                                let decision_json = serde_json::json!({"decision": "complete"});
+                                crate::utils::ordered_message::emit_message_chunk_with_arch(
                                     app,
                                     execution_id.as_deref().unwrap_or("unknown"),
                                     message_id.as_deref().unwrap_or("unknown"),
                                     conversation_id.as_deref(),
-                                    &decision_msg,
-                                    None,
+                                    ChunkType::Meta,
+                                    &decision_json.to_string(),
+                                    false,
+                                    Some("llm_compiler_joiner"),
+                                    Some("llm_compiler_joiner"),
+                                    Some(ArchType::LLMCompiler),
+                                    Some(decision_json),
                                 );
                             }
-                            
+
                             break;
                         }
                         JoinerDecision::Continue { feedback, .. } => {
@@ -736,17 +951,26 @@ impl LlmCompilerEngine {
                                 .key_findings
                                 .push(format!("决策: 继续执行 - {}", feedback));
                             info!("Joiner决定继续执行: {}", feedback);
-                            
-                            // 发送决策结果到前端
+
+                            // Send structured joiner decision to frontend
                             if let Some(app) = &self.app_handle {
-                                let decision_msg = format!("→ 决策: 继续执行\n{}", feedback);
-                                crate::utils::ordered_message::emit_meta_chunk(
+                                let joiner_json = serde_json::json!({
+                                    "decision": "continue",
+                                    "feedback": feedback,
+                                    "meta": format!("→ 决策: 继续执行")
+                                });
+                                crate::utils::ordered_message::emit_message_chunk_with_arch(
                                     app,
                                     execution_id.as_deref().unwrap_or("unknown"),
                                     message_id.as_deref().unwrap_or("unknown"),
                                     conversation_id.as_deref(),
-                                    &decision_msg,
-                                    None,
+                                    ChunkType::Meta,
+                                    &joiner_json.to_string(),
+                                    false,
+                                    Some("llm_compiler_joiner"),
+                                    Some("llm_compiler_joiner"),
+                                    Some(ArchType::LLMCompiler),
+                                    Some(joiner_json),
                                 );
                             }
                         }
@@ -765,30 +989,122 @@ impl LlmCompilerEngine {
         let total_duration = workflow_start.elapsed();
         execution_summary.total_duration_ms = total_duration.as_millis() as u64;
 
-        // 计算最终效率指标
+        // Calculate final efficiency metrics
         execution_summary.efficiency_metrics =
             self.calculate_efficiency_metrics(&execution_summary);
 
+        let workflow_success = execution_summary.failed_tasks == 0
+            || execution_summary.successful_tasks > execution_summary.failed_tasks;
+
         info!(
-            "工作流执行完成: {} 个任务, 成功 {}, 失败 {}, 耗时 {}ms",
+            "Workflow completed: {} tasks, {} successful, {} failed, {}ms",
             execution_summary.total_tasks,
             execution_summary.successful_tasks,
             execution_summary.failed_tasks,
             execution_summary.total_duration_ms
         );
 
-        // 生成最终结果（传递正确的conversation_id和message_id）
-        let final_response = self
-            .generate_final_response(
-                user_query, 
-                &all_results, 
+        // Store execution trajectory and learn from execution
+        if let Some(ref memory) = self.memory_integration {
+            // Store trajectory
+            if let Err(e) = memory
+                .store_execution_trajectory(user_query, workflow_success, None)
+                .await
+            {
+                warn!("Failed to store execution trajectory: {}", e);
+            }
+
+            // Learn from execution
+            let mut metrics = HashMap::new();
+            metrics.insert(
+                "success_rate".to_string(),
+                execution_summary.efficiency_metrics.task_success_rate as f64,
+            );
+            metrics.insert(
+                "parallelism".to_string(),
+                execution_summary.efficiency_metrics.average_parallelism as f64,
+            );
+            metrics.insert(
+                "duration_ms".to_string(),
+                execution_summary.total_duration_ms as f64,
+            );
+
+            if let Err(e) = memory
+                .learn_from_execution(
+                    execution_id.as_deref().unwrap_or("unknown"),
+                    user_query,
+                    workflow_success,
+                    metrics,
+                )
+                .await
+            {
+                warn!("Failed to learn from execution: {}", e);
+            }
+        }
+
+        // 生成最终响应：优先使用Joiner的详细响应，避免重复LLM调用
+        let final_response = if let Some(response) = joiner_final_response {
+            info!("使用Joiner的详细响应，长度: {} 字符", response.len());
+            // 直接流式发送Joiner的响应作为Content
+            if let Some(app) = &self.app_handle {
+                crate::utils::ordered_message::emit_message_chunk_with_arch(
+                    app,
+                    execution_id.as_deref().unwrap_or("unknown"),
+                    message_id.as_deref().unwrap_or("unknown"),
+                    conversation_id.as_deref(),
+                    ChunkType::Content,
+                    &response,
+                    false,
+                    None,
+                    None,
+                    Some(ArchType::LLMCompiler),
+                    None,
+                );
+            }
+            response
+        } else {
+            // Joiner响应不够详细，调用LLM生成最终响应
+            info!("Joiner响应不够详细，调用LLM生成最终响应");
+            self.generate_final_response(
+                user_query,
+                &all_results,
                 &execution_summary,
                 conversation_id.as_deref(),
-                message_id.as_deref()
+                message_id.as_deref(),
             )
-            .await?;
+            .await?
+        };
 
-        // 发送StreamComplete信号
+        // Send execution summary to frontend
+        if let Some(app) = &self.app_handle {
+            let summary_json = serde_json::json!({
+                "total_tasks": execution_summary.total_tasks,
+                "successful_tasks": execution_summary.successful_tasks,
+                "failed_tasks": execution_summary.failed_tasks,
+                "total_duration_ms": execution_summary.total_duration_ms,
+                "replanning_count": execution_summary.replanning_count,
+                "efficiency_metrics": {
+                    "task_success_rate": execution_summary.efficiency_metrics.task_success_rate,
+                    "average_parallelism": execution_summary.efficiency_metrics.average_parallelism,
+                    "resource_utilization": execution_summary.efficiency_metrics.resource_utilization
+                }
+            });
+            crate::utils::ordered_message::emit_message_chunk_with_arch(
+                app,
+                execution_id.as_deref().unwrap_or("unknown"),
+                message_id.as_deref().unwrap_or("unknown"),
+                conversation_id.as_deref(),
+                ChunkType::Meta,
+                &summary_json.to_string(),
+                false,
+                Some("llm_compiler_summary"),
+                Some("llm_compiler_summary"),
+                Some(ArchType::LLMCompiler),
+                Some(summary_json),
+            );
+        }
+
+        // Send StreamComplete signal
         if let Some(app) = &self.app_handle {
             crate::utils::ordered_message::emit_message_chunk_with_arch(
                 app,

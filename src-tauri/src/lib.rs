@@ -153,6 +153,7 @@ pub fn run() {
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("sentinel_ai=info".parse().unwrap())
                 .add_directive("sentinel_plugins=info".parse().unwrap())
+                .add_directive("sentinel_workflow=info".parse().unwrap())
                 // 屏蔽 rig crate 的 "Agent multi-turn stream finished" 日志
                 .add_directive("rig::agent::prompt_request::streaming=warn".parse().unwrap())
         )
@@ -388,6 +389,8 @@ pub fn run() {
                 // 为异步任务创建 mcp_service 的克隆（在 manage 之前）
                 let mcp_service_for_tools = Arc::new(mcp_service.clone());
 
+                // 克隆 db_service 供调度器使用
+                let db_service_for_scheduler = db_service.clone();
                 handle.manage(db_service);
                 handle.manage(client_manager.clone());
                 handle.manage(server_manager);
@@ -420,9 +423,23 @@ pub fn run() {
                 handle.manage(passive_state_for_manage);
                 // 工作流引擎实例
                 let workflow_engine = Arc::new(engines::intelligent_dispatcher::workflow_engine::WorkflowEngine::new());
-                handle.manage(workflow_engine);
+                handle.manage(workflow_engine.clone());
                 
-
+                // 工作流调度器
+                if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+                    let tool_manager_for_scheduler = tool_system.get_manager();
+                    let scheduler_executor = Arc::new(sentinel_workflow::commands::WorkflowScheduleExecutor::new(
+                        workflow_engine.clone(),
+                        db_service_for_scheduler,
+                        handle.clone(),
+                        tool_manager_for_scheduler,
+                    ));
+                    let workflow_scheduler = Arc::new(sentinel_workflow::WorkflowScheduler::new(scheduler_executor));
+                    handle.manage(workflow_scheduler);
+                    tracing::info!("[Scheduler] Workflow scheduler initialized and registered");
+                } else {
+                    tracing::error!("[Scheduler] Failed to initialize workflow scheduler: tool system not available");
+                }
 
 
                 // 初始化执行管理器
@@ -840,6 +857,11 @@ pub fn run() {
             sentinel_workflow::commands::list_workflow_definitions,
             sentinel_workflow::commands::delete_workflow_definition,
             sentinel_workflow::commands::validate_workflow_graph,
+            // 工作流调度相关命令
+            sentinel_workflow::commands::start_workflow_schedule,
+            sentinel_workflow::commands::stop_workflow_schedule,
+            sentinel_workflow::commands::list_workflow_schedules,
+            sentinel_workflow::commands::get_workflow_schedule,
             
             // RAG相关命令
             rag_commands::rag_ingest_source,

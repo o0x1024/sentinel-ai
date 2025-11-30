@@ -133,7 +133,7 @@
                         getNodeClass(node)
                     ]" :style="{
                     transform: `translate3d(${node.x}px, ${node.y}px, 0) ${node.id === draggedNode?.id ? 'scale(1.05)' : 'scale(1)'}`
-                }" @pointerdown="on_node_pointer_down($event, node)" @click="onNodeClick(node)" @mouseenter="onNodeEnter(node)" @mouseleave="onNodeLeave(node)">
+                }" @pointerdown="on_node_pointer_down($event, node)" @click="onNodeClick(node)" @contextmenu.prevent="onNodeContextMenu($event, node)" @mouseenter="onNodeEnter(node)" @mouseleave="onNodeLeave(node)">
                     <!-- 输入端口 -->
                     <div class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col gap-1">
                         <div 
@@ -764,7 +764,7 @@ const drag_ctx = reactive({ rect_left: 0, rect_top: 0, scale: 1 })
 
 const on_node_pointer_down = (event: PointerEvent, node: FlowchartNode) => {
     event.stopPropagation() // 阻止事件冒泡到画布
-    event.preventDefault()
+    // 注意：不调用 preventDefault()，否则会阻止 click 事件
     dragMoved.value = false
     
     // 如果是Shift+点击，不拖拽节点，而是画布平移

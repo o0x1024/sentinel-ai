@@ -218,20 +218,49 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       return ka - kb
     })
 
-    // 按顺序渲染，使用文本缓冲区优化连续的 Content chunks
+    // 按顺序渲染，使用文本缓冲区优化连续的 Content 和 Thinking chunks
     let textBuffer = ''
+    let thinkingBuffer = ''
+    let lastThinkingStage = ''
 
     for (const chunk of sortedChunks) {
       usedChunks.add(chunk.sequence)
 
       if (chunk.chunk_type === 'Content') {
+        // 先输出积累的Thinking内容
+        if (thinkingBuffer.trim()) {
+          parts.push(`\n🤔 **思考过程**\n${thinkingBuffer}\n`)
+          thinkingBuffer = ''
+          lastThinkingStage = ''
+        }
         // Content 类型：累积到缓冲区
         textBuffer += chunk.content?.toString() || ''
-      } else {
-        // 非 Content 类型：先输出缓冲区，再渲染当前 chunk
+      } else if (chunk.chunk_type === 'Thinking') {
+        // 先输出积累的Content内容
         if (textBuffer.trim()) {
           parts.push(textBuffer)
           textBuffer = ''
+        }
+        // Thinking类型：累积到thinking缓冲区（同一stage的连续chunks合并）
+        const currentStage = chunk.stage || ''
+        if (lastThinkingStage && lastThinkingStage !== currentStage && thinkingBuffer.trim()) {
+          // 不同stage，先输出前一个stage的内容
+          parts.push(`\n🤔 **思考过程**\n${thinkingBuffer}\n`)
+          thinkingBuffer = ''
+        }
+        lastThinkingStage = currentStage
+        const content = chunk.content?.toString().replace(/^Thought:\s*/i, '').trim() || ''
+        thinkingBuffer += content
+      } else {
+        // 非 Content/Thinking 类型：先输出所有缓冲区
+        if (textBuffer.trim()) {
+          parts.push(textBuffer)
+          textBuffer = ''
+        }
+        if (thinkingBuffer.trim()) {
+          parts.push(`\n🤔 **思考过程**\n${thinkingBuffer}\n`)
+          thinkingBuffer = ''
+          lastThinkingStage = ''
         }
         const formatted = this.formatChunkWithSpecialHandling(chunk, chunk.message_id)
         if (formatted.trim()) {
@@ -240,9 +269,12 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       }
     }
 
-    // 输出剩余的缓冲文本
+    // 输出剩余的缓冲内容
     if (textBuffer.trim()) {
       parts.push(textBuffer)
+    }
+    if (thinkingBuffer.trim()) {
+      parts.push(`\n🤔 **思考过程**\n${thinkingBuffer}\n`)
     }
   }
 
@@ -256,6 +288,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       case 'Content':
         return chunk.content?.toString() || ''
       case 'Thinking':
+        // Thinking类型在renderChunksInSequenceOrder中已累积处理，这里作为fallback
         return this.formatThinking(chunk)
       case 'Error':
         return `❌ **错误**\n${chunk.content}`
@@ -727,14 +760,29 @@ export const useOrderedMessages = (
 
       // 保存架构元数据（不清理）
       const archInfo = processor.getArchitectureInfo(canonicalId)
-      if (archInfo) {
-         (message as any).architectureType = archInfo.type
-          ; (message as any).architectureMeta = archInfo
-      }
-
-      // 根据架构类型保存特定数据
+      
       // 优先从 chunk 中获取明确的 architecture 标识
-      const archType = allChunks.find(c => c.architecture)?.architecture || archInfo?.type || 'Unknown'
+      const archFromChunks = allChunks.find(c => c.architecture)?.architecture
+      const archType = archFromChunks || archInfo?.type || 'Unknown'
+      
+      console.log('[useOrderedMessages] Message complete:', {
+        messageId: canonicalId,
+        archInfo,
+        archFromChunks,
+        archType,
+        chunksCount: allChunks.length
+      })
+
+      // 保存架构类型（优先使用从chunks中获取的）
+      if (archType && archType !== 'Unknown') {
+        (message as any).architectureType = archType
+        if (archInfo) {
+          (message as any).architectureMeta = archInfo
+        }
+      } else if (archInfo) {
+        (message as any).architectureType = archInfo.type
+        ;(message as any).architectureMeta = archInfo
+      }
 
       if (archType === 'ReAct') {
         // ReAct架构：使用 ReActMessageProcessor 进行处理
@@ -784,10 +832,41 @@ export const useOrderedMessages = (
           console.warn('[useOrderedMessages] Failed to persist orchestrator events:', e)
         }
       } else if (archType === 'LLMCompiler') {
-        // LLMCompiler架构
+        // LLMCompiler架构（简化版）
         try {
+          // 详细日志：记录chunks信息
+          console.log('[useOrderedMessages] LLMCompiler chunks summary:', {
+            totalChunks: allChunks.length,
+            chunkTypes: allChunks.map(c => ({ type: c.chunk_type, stage: c.stage, tool_name: c.tool_name })),
+            toolResultCount: allChunks.filter(c => c.chunk_type === 'ToolResult').length,
+            thinkingCount: allChunks.filter(c => c.chunk_type === 'Thinking').length,
+            metaCount: allChunks.filter(c => c.chunk_type === 'Meta').length,
+            planInfoCount: allChunks.filter(c => c.chunk_type === 'PlanInfo').length
+          })
+          
           const parsedData = parseLLMCompilerMessage(message.content, allChunks)
-            ; (message as any).llmCompilerData = parsedData
+          
+          console.log('[useOrderedMessages] LLMCompiler parsed data:', {
+            hasPlanningData: !!parsedData.planningData,
+            hasExecutionData: !!parsedData.executionData,
+            hasJoinerData: !!parsedData.joinerData,
+            hasSummaryData: !!parsedData.summaryData,
+            planningTasks: parsedData.planningData?.tasks?.length,
+            executionRounds: parsedData.executionData?.rounds?.length
+          })
+          
+          ;(message as any).llmCompilerData = parsedData
+
+          // 保存Content类型的最终响应（后端直接发送的）
+          const contentChunks = allChunks.filter(c =>
+            c.chunk_type === 'Content' && c.architecture === 'LLMCompiler'
+          )
+          if (contentChunks.length > 0) {
+            const finalResponse = contentChunks.map(c => c.content?.toString() || '').join('')
+            if (finalResponse.length > 50) {
+              ;(message as any).llmCompilerFinalResponse = finalResponse
+            }
+          }
         } catch (e) {
           console.warn('[useOrderedMessages] Failed to parse LLMCompiler data:', e)
         }

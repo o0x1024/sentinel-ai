@@ -69,7 +69,6 @@ const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 
 const AgentManagerView = () => import('./views/AgentManager.vue');
 const WorkflowStudio = () => import('./views/WorkflowStudio.vue');
-const WorkflowRuns = () => import('./views/WorkflowRuns.vue');
 const PromptManagement = () => import('./views/PromptManagement.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
 const RAGManagement = () => import('./views/RAGManagement.vue');
@@ -140,12 +139,6 @@ const routes = [
     name: 'WorkflowStudio', 
     component: WorkflowStudio,
     meta: { title: '工作流工作室' }
-  },
-  { 
-    path: '/workflow-runs', 
-    name: 'WorkflowRuns', 
-    component: WorkflowRuns,
-    meta: { title: '运行历史' }
   },
   { 
     path: '/passive-scan', 
