@@ -1075,49 +1075,11 @@ const toggleListenerRunning = async (listener: any, index: number) => {
         port: parseInt(port),
         index
       })
-      
-      // 同时设置全局代理配置，让 reqwest 使用此代理
-      const globalProxyConfig = {
-        enabled: true,
-        scheme: 'http',
-        host: host,
-        port: parseInt(port),
-        username: null,
-        password: null,
-        no_proxy: null
-      }
-      
-      try {
-        await invoke('set_global_proxy_config', { cfg: globalProxyConfig })
-        console.log('[ProxyConfiguration] Global proxy enabled:', globalProxyConfig)
-      } catch (proxyError) {
-        console.warn('[ProxyConfiguration] Failed to set global proxy:', proxyError)
-        // 不阻止代理启动，只是警告
-      }
-      
+      // 注意：被动扫描代理与全局出站代理是独立配置，不互相影响
       dialog.toast.success(`代理监听器 ${listener.interface} 已启动`)
     } else {
       // 停止代理监听器
       await invoke('stop_proxy_listener', { index })
-      
-      // 停止代理时，禁用全局代理
-      const globalProxyConfig = {
-        enabled: false,
-        scheme: null,
-        host: null,
-        port: null,
-        username: null,
-        password: null,
-        no_proxy: null
-      }
-      
-      try {
-        await invoke('set_global_proxy_config', { cfg: globalProxyConfig })
-        console.log('[ProxyConfiguration] Global proxy disabled')
-      } catch (proxyError) {
-        console.warn('[ProxyConfiguration] Failed to disable global proxy:', proxyError)
-      }
-      
       dialog.toast.success(`代理监听器 ${listener.interface} 已停止`)
     }
   } catch (error: any) {

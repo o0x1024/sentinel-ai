@@ -1345,22 +1345,26 @@ impl IntelligentJoiner {
                 
                 // 包含工具执行的实际输出数据（关键修复）
                 if result.status == TaskStatus::Completed && !result.outputs.is_empty() {
+                    // 安全截断函数，确保不在 UTF-8 字符中间切断
+                    let safe_truncate = |s: &str, max: usize| -> String {
+                        if s.len() <= max {
+                            return s.to_string();
+                        }
+                        let mut end = max;
+                        while end > 0 && !s.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        format!("{}...(已截断)", &s[..end])
+                    };
+                    
                     // 尝试获取主要输出字段（如 output, result, data 等）
                     let output_str = if let Some(output) = result.outputs.get("output") {
                         // 截断过长的输出，避免超出上下文限制
                         let json_str = serde_json::to_string_pretty(output).unwrap_or_default();
-                        if json_str.len() > 4000 {
-                            format!("{}...(已截断)", &json_str[..4000])
-                        } else {
-                            json_str
-                        }
+                        safe_truncate(&json_str, 4000)
                     } else if let Some(result_val) = result.outputs.get("result") {
                         let json_str = serde_json::to_string_pretty(result_val).unwrap_or_default();
-                        if json_str.len() > 4000 {
-                            format!("{}...(已截断)", &json_str[..4000])
-                        } else {
-                            json_str
-                        }
+                        safe_truncate(&json_str, 4000)
                     } else {
                         // 输出所有字段（排除元数据字段）
                         let filtered: HashMap<&String, &Value> = result.outputs.iter()
@@ -1373,11 +1377,7 @@ impl IntelligentJoiner {
                                 && *k != "executed_at")
                             .collect();
                         let json_str = serde_json::to_string_pretty(&filtered).unwrap_or_default();
-                        if json_str.len() > 4000 {
-                            format!("{}...(已截断)", &json_str[..4000])
-                        } else {
-                            json_str
-                        }
+                        safe_truncate(&json_str, 4000)
                     };
                     
                     format!("{}\n输出结果:\n{}", status_line, output_str)

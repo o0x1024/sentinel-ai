@@ -1453,9 +1453,10 @@ watch(
   ({ msgs, cid }, oldVal) => {
     if (Array.isArray(msgs)) {
       messages.value = msgs as ChatMessage[]
-      // 如果是切换会话，强制滚动到底部；否则智能滚动
+      // 首次加载或切换会话时，强制滚动到底部
+      const isInitialLoad = !oldVal
       const isConversationSwitch = oldVal && cid !== oldVal.cid
-      nextTick(() => scrollToBottom(isConversationSwitch))
+      nextTick(() => scrollToBottom(isInitialLoad || isConversationSwitch))
     }
   },
   { deep: true, immediate: true }

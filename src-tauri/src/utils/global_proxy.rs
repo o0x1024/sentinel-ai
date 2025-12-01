@@ -161,9 +161,11 @@ pub async fn clear_global_proxy() {
     let mut proxy = GLOBAL_PROXY.write().await;
     *proxy = GlobalProxyConfig::default();
     
-    // 清除所有代理环境变量
+    // 清除所有代理环境变量（包括大小写版本）
     std::env::remove_var("HTTP_PROXY");
     std::env::remove_var("HTTPS_PROXY");
+    std::env::remove_var("http_proxy");
+    std::env::remove_var("https_proxy");
     std::env::remove_var("ALL_PROXY");
     std::env::remove_var("all_proxy");
     std::env::remove_var("NO_PROXY");

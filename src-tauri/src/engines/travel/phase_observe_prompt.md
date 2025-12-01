@@ -98,9 +98,15 @@
       "args": {"target": "192.168.1.1", "ports": "80,443,8080"},
       "description": "扫描常见 Web 端口"
     },
+    {
       "tool": "playwright_navigate",
-      "args": {"url": "http://testphp.vulnweb.com", “proxy”:{"server":"http://127.0.0.1:8080”}}
-    },
+      "args": {
+        "url": "http://testphp.vulnweb.com",
+        "proxy": {"server": "http://127.0.0.1:8080"},
+        "headless": false
+      },
+      "description": "使用代理导航到目标网站"
+    }
   ],
   "reasoning": "Web 渗透测试需要全面了解目标网站的结构、技术栈和开放端口"
 }

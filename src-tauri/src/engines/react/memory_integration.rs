@@ -367,9 +367,14 @@ impl ReactMemoryIntegration {
     fn truncate_result(&self, result: &serde_json::Value) -> serde_json::Value {
         let result_str = serde_json::to_string(result).unwrap_or_default();
         if result_str.len() > 500 {
+            // 安全截断，确保不在 UTF-8 字符中间切断
+            let mut end = 500;
+            while end > 0 && !result_str.is_char_boundary(end) {
+                end -= 1;
+            }
             serde_json::json!({
                 "truncated": true,
-                "preview": &result_str[..500],
+                "preview": &result_str[..end],
                 "original_length": result_str.len()
             })
         } else {

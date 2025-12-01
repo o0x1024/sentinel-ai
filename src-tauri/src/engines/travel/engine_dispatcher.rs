@@ -483,7 +483,7 @@ impl EngineDispatcher {
             // 尝试获取全局 engine adapter 并转换为 framework adapter
             log::info!("No framework adapter set, attempting to use global engine adapter");
             match crate::tools::get_global_engine_adapter() {
-                Ok(engine_adapter) => {
+                Ok(_engine_adapter) => {
                     // EngineToolAdapter 也实现了工具执行，可以包装使用
                     // 但由于类型不同，我们需要创建一个包装器
                     // 暂时返回 None，让 ReAct 执行器内部处理
@@ -702,7 +702,7 @@ impl EngineDispatcher {
         let timeout_sec = context
             .get("execution_timeout_sec")
             .and_then(|v| v.as_u64())
-            .unwrap_or(30); // 默认30秒
+            .unwrap_or(15); // 默认30秒
 
         (allow_list, deny_list, timeout_sec)
     }
@@ -791,5 +791,4 @@ mod tests {
         assert_eq!(result["execution_type"], "simple");
     }
 }
-
 

@@ -579,21 +579,32 @@
         <div 
           v-for="(exec, idx) in execution_history" 
           :key="exec.id" 
-          class="border-b border-base-200 hover:bg-base-200/50 cursor-pointer"
+          class="border-b border-base-200 hover:bg-base-200/50 cursor-pointer group"
           :class="{ 'bg-primary/5': selected_execution?.id === exec.id }"
           @click="select_execution(exec)"
         >
           <div class="p-3">
             <div class="flex items-center justify-between">
               <span class="font-medium text-sm">#{{ execution_history.length - idx }}</span>
-              <span class="text-xs" :class="{
-                'text-success': exec.status === 'completed',
-                'text-error': exec.status === 'failed',
-                'text-warning': exec.status === 'running',
-                'text-base-content/50': exec.status === 'pending'
-              }">
-                {{ exec.status === 'completed' ? '✓ 完成' : exec.status === 'failed' ? '✗ 失败' : exec.status === 'running' ? '● 运行中' : '○ 等待' }}
-              </span>
+              <div class="flex items-center gap-2">
+                <span class="text-xs" :class="{
+                  'text-success': exec.status === 'completed',
+                  'text-error': exec.status === 'failed',
+                  'text-warning': exec.status === 'running',
+                  'text-base-content/50': exec.status === 'pending'
+                }">
+                  {{ exec.status === 'completed' ? '✓ 完成' : exec.status === 'failed' ? '✗ 失败' : exec.status === 'running' ? '● 运行中' : '○ 等待' }}
+                </span>
+                <button 
+                  class="btn btn-xs btn-ghost btn-circle opacity-0 group-hover:opacity-100 transition-opacity"
+                  @click.stop="delete_single_execution(exec.id)"
+                  title="删除此记录"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div class="text-xs text-base-content/60 mt-1">{{ exec.start_time }}</div>
             <div v-if="exec.duration" class="text-xs text-base-content/50">耗时: {{ exec.duration }}ms</div>
@@ -961,6 +972,20 @@ const clear_execution_history = () => {
   execution_history.value = []
   selected_execution.value = null
   localStorage.removeItem(`workflow_execution_history_${workflow_id.value}`)
+}
+
+// 删除单条执行记录
+const delete_single_execution = (execId: string) => {
+  const idx = execution_history.value.findIndex(e => e.id === execId)
+  if (idx === -1) return
+  
+  // 如果删除的是当前选中的记录，清除选中状态
+  if (selected_execution.value?.id === execId) {
+    selected_execution.value = null
+  }
+  
+  execution_history.value.splice(idx, 1)
+  save_execution_history()
 }
 
 const copy_execution_result = async () => {
@@ -1441,6 +1466,26 @@ const export_workflow_image = async () => {
 
 const wf_events = useWorkflowEvents()
 const setup_event_listeners = async () => {
+  // 监听工作流开始事件（定时触发或其他外部触发时会收到此事件）
+  await wf_events.on_run_start((p: any) => {
+    const exec_id = p?.exec_id || p?.execId
+    const workflow_id_from_event = p?.workflow_id || p?.workflowId
+    
+    // 只处理当前工作流的事件
+    if (workflow_id_from_event && workflow_id_from_event !== workflow_id.value) {
+      return
+    }
+    
+    // 如果是外部触发（定时等），需要创建执行记录
+    if (!current_execution_id.value || !execution_history.value.find(e => e.id === current_execution_id.value && e.status === 'running')) {
+      const id = start_new_execution()
+      add_log('INFO', `工作流执行开始 (外部触发)`, undefined, `执行ID: ${exec_id || id}`)
+      show_logs.value = true
+      // 重置节点状态
+      reset_node_status()
+    }
+  })
+  
   await wf_events.on_step_start((p: any) => {
     const step_id = p?.step_id || p?.stepId
     if (step_id) {

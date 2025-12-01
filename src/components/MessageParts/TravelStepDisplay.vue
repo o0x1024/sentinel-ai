@@ -52,7 +52,6 @@
     <!-- Loading -->
     <div v-if="isExecuting" class="loading-text">
       <span class="loading loading-dots loading-xs"></span>
-      执行中...
     </div>
   </div>
 </template>

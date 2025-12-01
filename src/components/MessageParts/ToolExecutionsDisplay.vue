@@ -41,7 +41,7 @@
                 <!-- Progress indicator for running tools -->
                 <div v-if="execution.status === 'running'" class="mt-2">
                   <div class="flex items-center gap-2 text-xs">
-                    <span class="text-base-content/60">执行中...</span>
+                    <!-- <span class="text-base-content/60">执行中...</span> -->
                     <div class="flex-1 h-1 bg-base-200 rounded-full">
                       <div class="h-full bg-primary rounded-full transition-all duration-500" 
                            style="width: 100%; animation: progress-pulse 1.5s ease-in-out infinite;"></div>

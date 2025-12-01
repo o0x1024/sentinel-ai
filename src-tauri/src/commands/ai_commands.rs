@@ -1760,12 +1760,29 @@ async fn dispatch_with_travel(
         db_service.get_pool().map_err(|e| e.to_string())?.clone()
     ));
     
+    // 获取 FrameworkToolAdapter - 从全局工具系统动态获取（确保包含最新注册的工具）
+    let framework_adapter: Option<std::sync::Arc<dyn crate::tools::FrameworkToolAdapter>> = 
+        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+            let tool_manager = tool_system.get_manager();
+            // 创建新的 LLMCompilerAdapter，使用当前的 tool_manager（包含所有已注册的工具）
+            let adapter = crate::tools::framework_adapters::LLMCompilerAdapter::new(tool_manager);
+            log::info!("Travel dispatch: Created LLMCompilerAdapter for TravelEngine");
+            Some(std::sync::Arc::new(adapter))
+        } else {
+            log::warn!("Travel dispatch: Global tool system not available, framework_adapter will be None");
+            None
+        };
+
     // 创建 TravelEngine 并设置依赖
-    // 注意：FrameworkToolAdapter 将在 engine_dispatcher 中使用全局适配器
-    let engine = TravelEngine::new(config)
+    let mut engine = TravelEngine::new(config)
         .with_ai_service(ai_service.clone())
         .with_prompt_repo(prompt_repo)
         .with_app_handle(app.clone());
+    
+    // 设置 framework_adapter（如果可用）
+    if let Some(adapter) = framework_adapter {
+        engine = engine.with_framework_adapter(adapter);
+    }
 
     // 使用 LLM 从 query 中智能提取目标信息和任务类型
     let (target_info, task_type, target_type) = extract_target_with_llm(&request.query, &ai_service).await;

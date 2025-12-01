@@ -7,12 +7,18 @@
 //! - 使用 ContextManager 压缩观察结果
 //! - 滑动窗口历史管理
 //! - HTML/JSON 智能裁剪
+//!
+//! ## 循环检测
+//! - 跟踪已访问URL和已测试参数
+//! - 检测重复工具调用
+//! - 强制推进测试进度
 
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
 use crate::tools::FrameworkToolAdapter;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio_util::sync::CancellationToken;
@@ -49,6 +55,105 @@ pub struct ReactToolCall {
     pub arguments: serde_json::Value,
 }
 
+/// 测试进度跟踪 - 防止循环
+#[derive(Debug, Clone, Default)]
+pub struct TestProgress {
+    /// 已访问的 URL
+    pub visited_urls: HashSet<String>,
+    /// 已测试的参数 (URL + param_name)
+    pub tested_params: HashSet<String>,
+    /// 工具调用历史 (tool_name + args_hash)
+    pub tool_call_history: Vec<String>,
+    /// 连续重复调用计数
+    pub repeat_count: u32,
+    /// 最后的工具调用签名
+    pub last_tool_signature: Option<String>,
+    /// 已完成的测试阶段
+    pub completed_phases: Vec<String>,
+}
+
+impl TestProgress {
+    /// 记录 URL 访问
+    pub fn record_url_visit(&mut self, url: &str) {
+        // 标准化 URL (移除参数值)
+        let normalized = Self::normalize_url(url);
+        self.visited_urls.insert(normalized);
+    }
+    
+    /// 记录参数测试
+    pub fn record_param_test(&mut self, url: &str, param: &str) {
+        let key = format!("{}:{}", Self::normalize_url(url), param);
+        self.tested_params.insert(key);
+    }
+    
+    /// 检查工具调用是否重复
+    pub fn check_and_record_tool_call(&mut self, tool_name: &str, args: &serde_json::Value) -> bool {
+        let signature = format!("{}:{}", tool_name, Self::hash_args(args));
+        
+        // 检查是否与上次相同
+        let is_repeat = self.last_tool_signature.as_ref() == Some(&signature);
+        
+        if is_repeat {
+            self.repeat_count += 1;
+        } else {
+            self.repeat_count = 0;
+        }
+        
+        self.tool_call_history.push(signature.clone());
+        self.last_tool_signature = Some(signature);
+        
+        is_repeat
+    }
+    
+    /// 是否需要强制推进 (连续重复 >= 2 次)
+    pub fn should_force_progress(&self) -> bool {
+        self.repeat_count >= 2
+    }
+    
+    /// 生成进度摘要
+    pub fn generate_summary(&self) -> String {
+        let mut summary = String::new();
+        
+        if !self.visited_urls.is_empty() {
+            summary.push_str(&format!("[已访问URL] {} 个\n", self.visited_urls.len()));
+        }
+        
+        if !self.tested_params.is_empty() {
+            summary.push_str(&format!("[已测试参数] {} 个\n", self.tested_params.len()));
+        }
+        
+        if !self.completed_phases.is_empty() {
+            summary.push_str(&format!("[已完成阶段] {}\n", self.completed_phases.join(", ")));
+        }
+        
+        summary.push_str(&format!("[总工具调用] {} 次\n", self.tool_call_history.len()));
+        
+        if self.repeat_count > 0 {
+            summary.push_str(&format!("[警告] 检测到连续 {} 次重复操作\n", self.repeat_count));
+        }
+        
+        summary
+    }
+    
+    /// 标准化 URL (只保留路径，移除参数值)
+    fn normalize_url(url: &str) -> String {
+        if let Ok(parsed) = url::Url::parse(url) {
+            format!("{}://{}{}", parsed.scheme(), parsed.host_str().unwrap_or(""), parsed.path())
+        } else {
+            url.to_string()
+        }
+    }
+    
+    /// 计算参数哈希
+    fn hash_args(args: &serde_json::Value) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        args.to_string().hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
+}
+
 /// Travel专用ReAct执行器
 pub struct TravelReactExecutor {
     ai_service: Arc<AiService>,
@@ -73,6 +178,21 @@ pub struct TravelReactExecutor {
     context_manager: ContextManager,
     /// 历史窗口大小 (保留最近N轮)
     history_window_size: usize,
+    /// 测试进度跟踪 - 防止循环
+    test_progress: std::sync::Mutex<TestProgress>,
+}
+
+/// 安全截断 UTF-8 字符串，确保不会在字符中间切断
+fn safe_truncate(s: &str, max_len: usize) -> &str {
+    if s.len() <= max_len {
+        return s;
+    }
+    // 找到最接近 max_len 的字符边界
+    let mut end = max_len;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 impl TravelReactExecutor {
@@ -138,6 +258,7 @@ impl TravelReactExecutor {
             llm_client,
             context_manager: ContextManager::new(context_config),
             history_window_size: 5,  // 保留最近5轮历史
+            test_progress: std::sync::Mutex::new(TestProgress::default()),
         }
     }
 
@@ -274,6 +395,40 @@ impl TravelReactExecutor {
             // === 步骤3: Action (执行工具) ===
             if let Some(action) = parsed.action {
                 let action_start = SystemTime::now();
+                
+                // === 循环检测 ===
+                let (is_repeat, should_force) = {
+                    let mut progress = self.test_progress.lock().unwrap();
+                    let is_repeat = progress.check_and_record_tool_call(&action.tool_name, &action.arguments);
+                    let should_force = progress.should_force_progress();
+                    
+                    // 跟踪 URL 访问
+                    if action.tool_name.contains("navigate") || action.tool_name == "http_request" {
+                        if let Some(url) = action.arguments.get("url").and_then(|v| v.as_str()) {
+                            progress.record_url_visit(url);
+                        }
+                    }
+                    
+                    (is_repeat, should_force)
+                };
+                
+                // 如果检测到过多重复，发出警告并强制推进
+                if should_force {
+                    log::warn!("Travel ReAct: Detected repetitive loop (>2 times), forcing progress");
+                    if let Some(te) = &self.travel_emitter {
+                        te.emit_error("Detected repetitive operations, forcing progress to next phase");
+                    }
+                    
+                    // 添加强制推进提示到上下文
+                    context_history.push(format!(
+                        "[系统警告] 检测到重复操作循环！请跳过当前操作，进入下一测试阶段。已完成 {} 次工具调用。",
+                        tool_calls_count
+                    ));
+                }
+                
+                if is_repeat {
+                    log::info!("Travel ReAct: Repeated tool call detected: {}", action.tool_name);
+                }
 
                 // 使用 travel_emitter 发送工具调用信息（如果没有通过 LLM 客户端发送）
                 if self.llm_client.is_none() {
@@ -292,15 +447,18 @@ impl TravelReactExecutor {
                 });
 
                 tool_calls_count += 1;
+                log::info!("Travel ReAct: Starting tool execution #{}: {}", tool_calls_count, action.tool_name);
 
                 // 执行工具
                 let tool_result = match self.execute_tool(&action).await {
                     Ok(result) => {
                         successful_tool_calls += 1;
+                        log::info!("Travel ReAct: Tool {} executed successfully (#{} total)", action.tool_name, tool_calls_count);
                         result
                     }
                     Err(e) => {
                         failed_tool_calls += 1;
+                        log::error!("Travel ReAct: Tool {} execution failed: {}", action.tool_name, e);
                         if let Some(te) = &self.travel_emitter {
                             te.emit_error(&format!("Tool {} failed: {}", action.tool_name, e));
                         }
@@ -314,12 +472,23 @@ impl TravelReactExecutor {
                     .as_millis() as u64;
 
                 // 使用 travel_emitter 发送工具结果
+                // 判断成功：优先使用 success 字段，其次检查 error 是否为非空值
+                let is_success = tool_result.get("success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or_else(|| {
+                        // 没有 success 字段时，检查 error 是否为空/null
+                        match tool_result.get("error") {
+                            None => true,
+                            Some(v) => v.is_null() || (v.is_string() && v.as_str().unwrap_or("").is_empty()),
+                        }
+                    });
+                
                 if let Some(te) = &self.travel_emitter {
                     te.emit_tool_result(
                         iteration,
                         &action.tool_name,
                         &tool_result,
-                        !tool_result.get("error").is_some(),
+                        is_success,
                         action_duration,
                     );
                 }
@@ -337,11 +506,16 @@ impl TravelReactExecutor {
                     duration_ms: action_duration,
                 });
 
-                // 添加到上下文历史 (压缩后的版本)
-                context_history.push(format!("Thought: {}", self.truncate_thought(&parsed.thought)));
-                context_history.push(format!("Action: {}", action.tool_name));
-                context_history.push(format!("Action Input: {}", self.compress_action_input(&action.arguments)));
-                context_history.push(format!("Observation: {}", observation));
+                // 添加到上下文历史 (JSON 格式)
+                let history_entry = serde_json::json!({
+                    "thought": self.truncate_thought(&parsed.thought),
+                    "action": {
+                        "name": action.tool_name,
+                        "input": self.compress_action_input_json(&action.arguments)
+                    },
+                    "observation": observation
+                });
+                context_history.push(history_entry.to_string());
                 
                 // 滑动窗口 - 保留最近N轮历史
                 self.apply_history_window(&mut context_history);
@@ -389,16 +563,28 @@ impl TravelReactExecutor {
         // 构建用户提示词
         let mut user_prompt = String::new();
         user_prompt.push_str(&format!("任务: {}\n\n", task));
+        
+        // === 添加测试进度摘要 ===
+        let progress_summary = {
+            let progress = self.test_progress.lock().unwrap();
+            progress.generate_summary()
+        };
+        
+        if !progress_summary.is_empty() {
+            user_prompt.push_str("## 测试进度\n");
+            user_prompt.push_str(&progress_summary);
+            user_prompt.push_str("\n");
+        }
 
         if !context_history.is_empty() {
-            user_prompt.push_str("历史记录:\n");
+            user_prompt.push_str("## 历史记录\n");
             for entry in context_history {
                 user_prompt.push_str(&format!("{}\n", entry));
             }
             user_prompt.push_str("\n");
         }
 
-        user_prompt.push_str("现在，你的下一步思考和行动是什么？");
+        user_prompt.push_str("现在，你的下一步思考和行动是什么？（注意避免重复已完成的操作）");
 
         Ok((system_prompt, user_prompt))
     }
@@ -543,86 +729,66 @@ impl TravelReactExecutor {
         tool_lines.join("\n")
     }
 
-    /// 默认系统提示词（中文版 ReAct）
+    /// 默认系统提示词（JSON 格式 ReAct）
     fn default_system_prompt(&self) -> String {
-        r#"你是 Travel 安全测试智能体的执行者，使用 ReAct（推理 + 行动）框架进行安全测试。
+        r#"你是 Travel 安全测试智能体，使用 ReAct（推理 + 行动）框架执行任务。
 
 ## 可用工具
 
 {tools}
 
-## 执行格式 - 严格遵守！
+## 输出格式 - 必须严格遵守！
 
-### 需要使用工具时，只输出以下格式（不要包含任何 JSON、不要输出多个步骤）：
+你的每次回复必须是一个**有效的 JSON 对象**，格式如下：
 
-```
-Thought: [你对下一步的推理和分析，可以多行]
-
-Action: [工具名称]
-
-Action Input: {"参数名": "参数值"}
-```
-
-### 有足够信息回答时：
-
-```
-Thought: [你的最终推理]
-
-Final Answer: [你对任务的完整答案]
-```
-
-## 关键规则 - 必须严格遵守！
-
-1. **绝对禁止**: 不要输出 JSON 对象、不要输出 execution_type、status 等字段
-2. **单步执行**: 每次只输出一个 Thought + 一个 Action（或 Final Answer）
-3. **等待观察**: 输出 Action 后立即停止，等待系统返回 Observation
-4. **不要自己输出 Observation**: 系统会自动提供 Observation，你只需要输出 Thought 和 Action
-5. **不要提前规划**: 不要列出多个步骤，只关注下一步要做什么
-6. **基于实际结果**: 每次 Thought 必须基于之前的 Observation
-
-## 错误示例（不要这样做）：
-
-❌ 错误：输出 JSON
+### 需要调用工具时：
 ```json
 {
-  "execution_type": "complex",
-  "current_step": "step-1"
+  "thought": "你的推理分析过程",
+  "action": {
+    "name": "工具名称",
+    "input": {"参数名": "参数值"}
+  }
 }
 ```
 
-❌ 错误：一次输出多个 Action
-```
-Thought 1: ...
-Action: tool1
-Action Input: {...}
-
-Thought 2: ...
-Action: tool2
-Action Input: {...}
+### 任务完成时：
+```json
+{
+  "thought": "你的最终推理",
+  "final_answer": "对任务的完整回答和总结"
+}
 ```
 
-❌ 错误：自己输出 Observation
+## 关键规则
+
+1. **必须输出有效 JSON**: 每次回复只能是一个完整的 JSON 对象
+2. **单步执行**: 每次只能有一个 action 或 final_answer
+3. **等待观察**: 系统会返回 Observation，基于它决定下一步
+4. **不要自造结果**: 不要假设工具执行结果
+
+## 示例
+
+### 调用工具：
+```json
+{
+  "thought": "需要导航到目标网站查看页面结构",
+  "action": {
+    "name": "playwright_navigate",
+    "input": {"url": "http://example.com"}
+  }
+}
 ```
-Action: playwright_navigate
-Action Input: {"url": "..."}
 
-Observation: 等待页面加载...
+### 完成任务：
+```json
+{
+  "thought": "已完成所有测试，发现2个SQL注入漏洞",
+  "final_answer": "安全测试完成。发现以下漏洞：\n1. /login.php 存在SQL注入\n2. /search.php 存在XSS漏洞"
+}
 ```
 
-## 正确示例：
-
-✅ 正确：只输出一个步骤
-```
-Thought: 需要先导航到目标网站主页，查看页面结构和可用的功能入口
-
-Action: playwright_navigate
-
-Action Input: {"url": "http://testphp.vulnweb.com"}
-```
-
-然后等待系统返回 Observation，再基于 Observation 决定下一步。
-
-现在开始执行任务，记住：每次只输出一个 Thought + Action 或 Final Answer！
+现在开始执行任务，记住：只输出 JSON！
 "#
         .to_string()
     }
@@ -651,8 +817,99 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
         }
     }
 
-    /// 解析LLM输出
+    /// 解析LLM输出 - JSON 格式优先，兼容旧文本格式
     fn parse_llm_output(&self, output: &str) -> Result<ParsedOutput> {
+        // 清理输出：移除 markdown 代码块标记
+        let cleaned = Self::extract_json_from_output(output);
+        
+        // 尝试 JSON 解析
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+            return self.parse_json_output(&json);
+        }
+        
+        // JSON 解析失败，尝试兼容旧的文本格式
+        log::warn!("JSON parsing failed, falling back to text format");
+        self.parse_text_output(output)
+    }
+    
+    /// 从输出中提取 JSON（移除 markdown 代码块等）
+    fn extract_json_from_output(output: &str) -> String {
+        let trimmed = output.trim();
+        
+        // 移除 ```json ... ``` 包裹
+        let mut s = trimmed.to_string();
+        if s.starts_with("```json") {
+            s = s.trim_start_matches("```json").to_string();
+        } else if s.starts_with("```") {
+            s = s.trim_start_matches("```").to_string();
+        }
+        if s.ends_with("```") {
+            s = s.trim_end_matches("```").to_string();
+        }
+        
+        // 尝试找到 JSON 对象边界
+        let s = s.trim();
+        if let Some(start) = s.find('{') {
+            if let Some(end) = s.rfind('}') {
+                if end >= start {
+                    return s[start..=end].to_string();
+                }
+            }
+        }
+        
+        s.to_string()
+    }
+    
+    /// 解析 JSON 格式输出
+    fn parse_json_output(&self, json: &serde_json::Value) -> Result<ParsedOutput> {
+        let thought = json.get("thought")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        // 检查是否有 final_answer
+        if let Some(answer) = json.get("final_answer").and_then(|v| v.as_str()) {
+            return Ok(ParsedOutput {
+                thought,
+                action: None,
+                final_answer: Some(answer.to_string()),
+            });
+        }
+        
+        // 检查是否有 action
+        if let Some(action_obj) = json.get("action") {
+            let tool_name = action_obj.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            
+            let arguments = action_obj.get("input")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+            
+            if !tool_name.is_empty() {
+                return Ok(ParsedOutput {
+                    thought,
+                    action: Some(ReactToolCall { tool_name, arguments }),
+                    final_answer: None,
+                });
+            }
+        }
+        
+        // 没有有效的 action 或 final_answer
+        if !thought.is_empty() {
+            log::warn!("JSON output has thought but no action or final_answer");
+        }
+        
+        Ok(ParsedOutput {
+            thought,
+            action: None,
+            final_answer: None,
+        })
+    }
+    
+    /// 解析旧的文本格式输出（兼容）
+    fn parse_text_output(&self, output: &str) -> Result<ParsedOutput> {
         let mut thought = String::new();
         let mut action_name = None;
         let mut action_input = None;
@@ -665,12 +922,7 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
             let line = lines[i].trim();
 
             if line.starts_with("Thought:") {
-                thought = line
-                    .strip_prefix("Thought:")
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                // 继续读取多行thought
+                thought = line.strip_prefix("Thought:").unwrap_or("").trim().to_string();
                 i += 1;
                 while i < lines.len()
                     && !lines[i].trim().starts_with("Action:")
@@ -684,24 +936,53 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
                 }
                 continue;
             } else if line.starts_with("Action:") {
-                action_name = Some(
-                    line.strip_prefix("Action:")
-                        .unwrap_or("")
-                        .trim()
-                        .to_string(),
-                );
+                action_name = Some(line.strip_prefix("Action:").unwrap_or("").trim().to_string());
             } else if line.starts_with("Action Input:") {
-                let input_str = line.strip_prefix("Action Input:").unwrap_or("").trim();
-                // 尝试解析JSON
-                action_input = serde_json::from_str(input_str).ok();
+                let first_part = line.strip_prefix("Action Input:").unwrap_or("").trim();
+                let sanitize = |s: &str| {
+                    let mut t = s.trim().to_string();
+                    if t.starts_with("```json") { t = t.trim_start_matches("```json").trim().to_string(); }
+                    if t.starts_with("```") { t = t.trim_start_matches("```").trim().to_string(); }
+                    if t.ends_with("```") { t = t.trim_end_matches("```").trim().to_string(); }
+                    t
+                };
+
+                if !first_part.is_empty() {
+                    let candidate = sanitize(first_part);
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&candidate) {
+                        action_input = Some(v);
+                        i += 1;
+                        continue;
+                    }
+                }
+
+                i += 1;
+                let mut json_buf = String::new();
+                while i < lines.len() {
+                    let current_line = lines[i].trim();
+                    if current_line.starts_with("Thought:")
+                        || current_line.starts_with("Action:")
+                        || current_line.starts_with("Final Answer:")
+                        || current_line.starts_with("Observation:") {
+                        break;
+                    }
+                    if !current_line.is_empty() && !current_line.starts_with("```") {
+                        json_buf.push_str(current_line);
+                    }
+                    i += 1;
+                }
+
+                let candidate = sanitize(&json_buf);
+                if !candidate.is_empty() {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&candidate) {
+                        action_input = Some(v);
+                    }
+                } else {
+                    action_input = Some(serde_json::json!({}));
+                }
+                continue;
             } else if line.starts_with("Final Answer:") {
-                final_answer = Some(
-                    line.strip_prefix("Final Answer:")
-                        .unwrap_or("")
-                        .trim()
-                        .to_string(),
-                );
-                // 继续读取多行final answer
+                final_answer = Some(line.strip_prefix("Final Answer:").unwrap_or("").trim().to_string());
                 i += 1;
                 while i < lines.len() {
                     if !lines[i].trim().is_empty() {
@@ -714,29 +995,22 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
                 }
                 break;
             }
-
             i += 1;
         }
 
-        // 构建action
         let action = if let (Some(name), Some(input)) = (action_name, action_input) {
-            Some(ReactToolCall {
-                tool_name: name,
-                arguments: input,
-            })
+            Some(ReactToolCall { tool_name: name, arguments: input })
         } else {
             None
         };
 
-        Ok(ParsedOutput {
-            thought,
-            action,
-            final_answer,
-        })
+        Ok(ParsedOutput { thought, action, final_answer })
     }
 
     /// 执行工具
     async fn execute_tool(&self, tool_call: &ReactToolCall) -> Result<serde_json::Value> {
+        log::info!("Travel ReAct: Executing tool: {}", tool_call.tool_name);
+        
         // 构造统一工具调用
         let parameters = if let serde_json::Value::Object(map) = &tool_call.arguments {
             map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
@@ -748,31 +1022,38 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
             id: uuid::Uuid::new_v4().to_string(),
             tool_name: tool_call.tool_name.clone(),
             parameters,
-            timeout: Some(std::time::Duration::from_secs(30)),
+            timeout: Some(std::time::Duration::from_secs(60)),  // 增加到60秒
             context: std::collections::HashMap::new(),
             retry_count: 0,
         };
 
         // 优先使用设置的 framework_adapter
         if let Some(adapter) = &self.framework_adapter {
+            log::info!("Travel ReAct: Using framework adapter for tool: {}", tool_call.tool_name);
             let result = adapter.execute_tool(unified_call).await?;
+            log::info!("Travel ReAct: Tool {} completed via framework adapter", tool_call.tool_name);
             return Ok(result.output);
         }
 
         // 降级：使用全局 engine adapter
         log::info!(
-            "No framework adapter, using global engine adapter for tool: {}",
+            "Travel ReAct: No framework adapter, using global engine adapter for tool: {}",
             tool_call.tool_name
         );
         match crate::tools::get_global_engine_adapter() {
             Ok(engine_adapter) => {
+                log::info!("Travel ReAct: Got global engine adapter, executing tool: {}", tool_call.tool_name);
                 let result = engine_adapter.execute_tool(unified_call).await?;
+                log::info!("Travel ReAct: Tool {} completed successfully via global adapter", tool_call.tool_name);
                 Ok(result.output)
             }
-            Err(e) => Err(anyhow!(
-                "No framework adapter available and failed to get global adapter: {}",
-                e
-            )),
+            Err(e) => {
+                log::error!("Travel ReAct: Failed to get global adapter for tool {}: {}", tool_call.tool_name, e);
+                Err(anyhow!(
+                    "No framework adapter available and failed to get global adapter: {}",
+                    e
+                ))
+            }
         }
     }
     
@@ -795,7 +1076,7 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
         // 通用压缩
         let result_str = result.to_string();
         if result_str.len() > max_len {
-            format!("{}...(truncated {} chars)", &result_str[..max_len], result_str.len() - max_len)
+            format!("{}...(truncated {} chars)", safe_truncate(&result_str, max_len), result_str.len() - max_len)
         } else {
             result_str
         }
@@ -839,7 +1120,7 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
         // 降级：直接截断
         let s = result.to_string();
         if s.len() > max_len {
-            format!("{}...", &s[..max_len])
+            format!("{}...", safe_truncate(&s, max_len))
         } else {
             s
         }
@@ -884,7 +1165,7 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
         
         let s = result.to_string();
         if s.len() > max_len {
-            format!("{}...", &s[..max_len])
+            format!("{}...", safe_truncate(&s, max_len))
         } else {
             s
         }
@@ -925,46 +1206,61 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
     fn truncate_thought(&self, thought: &str) -> String {
         let max_len = 300;
         if thought.len() > max_len {
-            format!("{}...", &thought[..max_len])
+            format!("{}...", safe_truncate(thought, max_len))
         } else {
             thought.to_string()
         }
     }
     
-    /// 压缩 Action Input
+    /// 压缩 Action Input (返回字符串)
     fn compress_action_input(&self, args: &serde_json::Value) -> String {
         let max_len = 200;
         let s = args.to_string();
         if s.len() > max_len {
-            format!("{}...", &s[..max_len])
+            format!("{}...", safe_truncate(&s, max_len))
         } else {
             s
         }
     }
     
-    /// 滑动窗口 - 保留最近N轮历史
+    /// 压缩 Action Input (返回 JSON Value)
+    fn compress_action_input_json(&self, args: &serde_json::Value) -> serde_json::Value {
+        // 如果是对象，只保留关键字段
+        if let Some(obj) = args.as_object() {
+            let mut compressed = serde_json::Map::new();
+            for (key, value) in obj {
+                // 压缩过长的字符串值
+                if let Some(s) = value.as_str() {
+                    if s.len() > 100 {
+                        compressed.insert(key.clone(), serde_json::json!(format!("{}...", safe_truncate(s, 100))));
+                    } else {
+                        compressed.insert(key.clone(), value.clone());
+                    }
+                } else {
+                    compressed.insert(key.clone(), value.clone());
+                }
+            }
+            serde_json::Value::Object(compressed)
+        } else {
+            args.clone()
+        }
+    }
+    
+    /// 滑动窗口 - 保留最近N轮历史 (JSON 格式，每轮1条)
     fn apply_history_window(&self, history: &mut Vec<String>) {
-        // 每轮包含: Thought, Action, Action Input, Observation (4条)
-        let entries_per_round = 4;
-        let max_entries = self.history_window_size * entries_per_round;
-        
         // 查找 Context 条目（初始上下文，始终保留）
         let context_entries: Vec<String> = history.iter()
-            .filter(|s| s.starts_with("Context:"))
+            .filter(|s| s.starts_with("Context:") || s.contains("\"context\""))
             .cloned()
             .collect();
         
         // 移除 Context 条目，只对历史进行窗口化
-        history.retain(|s| !s.starts_with("Context:"));
+        history.retain(|s| !s.starts_with("Context:") && !s.contains("\"context\""));
         
-        if history.len() > max_entries {
-            // 计算需要移除的完整轮数
-            let excess = history.len() - max_entries;
-            let rounds_to_remove = (excess + entries_per_round - 1) / entries_per_round;
-            let entries_to_remove = rounds_to_remove * entries_per_round;
-            
-            // 移除最早的几轮
-            history.drain(0..entries_to_remove.min(history.len()));
+        // 每轮现在是1条 JSON 条目
+        if history.len() > self.history_window_size {
+            let entries_to_remove = history.len() - self.history_window_size;
+            history.drain(0..entries_to_remove);
             
             log::info!("History window applied: removed {} entries, {} remain", 
                 entries_to_remove, history.len());
@@ -972,7 +1268,6 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
         
         // 重新添加 Context（如果有的话，只保留压缩版本）
         if !context_entries.is_empty() {
-            // 只保留一个压缩的 Context
             let compressed_context = self.compress_initial_context(&context_entries[0]);
             history.insert(0, compressed_context);
         }
@@ -1007,7 +1302,7 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
         // 降级：截断
         let max_len = 500;
         if context.len() > max_len {
-            format!("{}...", &context[..max_len])
+            format!("{}...", safe_truncate(context, max_len))
         } else {
             context.to_string()
         }

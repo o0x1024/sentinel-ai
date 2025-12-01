@@ -136,9 +136,10 @@ impl TravelMessageEmitter {
         // 更新循环号
         self.set_cycle(iteration.max(1));
 
-        // 收集内容
+        // 收集内容 (JSON 格式)
         if let Ok(mut collector) = self.content_collector.lock() {
-            collector.push_str(&format!("Thought: {}\n", content));
+            let entry = serde_json::json!({"thought": content, "iteration": iteration});
+            collector.push_str(&format!("{}\n", entry));
         }
 
         // 发送流式内容
@@ -163,9 +164,16 @@ impl TravelMessageEmitter {
         self.set_cycle(iteration.max(1));
         let args_str = serde_json::to_string_pretty(args).unwrap_or_default();
 
-        // 收集内容
+        // 收集内容 (JSON 格式)
         if let Ok(mut collector) = self.content_collector.lock() {
-            collector.push_str(&format!("Action: {}\nAction Input: {}\n", tool_name, args_str));
+            let entry = serde_json::json!({
+                "action": {
+                    "name": tool_name,
+                    "input": args
+                },
+                "iteration": iteration
+            });
+            collector.push_str(&format!("{}\n", entry));
         }
 
         // 发送 markdown 格式内容
@@ -198,14 +206,24 @@ impl TravelMessageEmitter {
         self.set_cycle(iteration.max(1));
         let result_str = serde_json::to_string_pretty(result).unwrap_or_default();
 
-        // 收集内容
+        // 收集内容 (JSON 格式)
         if let Ok(mut collector) = self.content_collector.lock() {
-            collector.push_str(&format!("Observation: {}\n", result_str));
+            let entry = serde_json::json!({
+                "observation": result,
+                "tool": tool_name,
+                "success": success,
+                "duration_ms": duration_ms
+            });
+            collector.push_str(&format!("{}\n", entry));
         }
 
-        // 截断过长的结果用于显示
+        // 截断过长的结果用于显示（安全处理 UTF-8 边界）
         let display_result = if result_str.len() > 500 {
-            format!("{}...(truncated)", &result_str[..500])
+            let mut end = 500;
+            while end > 0 && !result_str.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...(truncated)", &result_str[..end])
         } else {
             result_str.clone()
         };
@@ -516,7 +534,8 @@ struct ReActParser {
 #[derive(Debug, Clone, PartialEq)]
 enum ParserState {
     Initial,
-    InThought,
+    InJson,      // 解析 JSON 格式
+    InThought,   // 兼容旧文本格式
     InAction,
     InActionInput,
     InFinalAnswer,
@@ -537,8 +556,19 @@ impl ReActParser {
 
     fn process_line(&mut self, line: &str) {
         let trimmed = line.trim();
+        
+        // 跳过空行和 markdown 代码块标记
+        if trimmed.is_empty() || trimmed == "```json" || trimmed == "```" {
+            return;
+        }
 
-        // 检测新段落开始
+        // 优先尝试 JSON 格式解析
+        if trimmed.starts_with('{') || self.state == ParserState::InJson {
+            self.process_json_line(trimmed);
+            return;
+        }
+
+        // 兼容旧的文本格式
         if trimmed.starts_with("Thought:") {
             self.flush_current();
             self.state = ParserState::InThought;
@@ -578,6 +608,50 @@ impl ReActParser {
                 }
                 _ => {}
             }
+        }
+    }
+    
+    /// 处理 JSON 格式行
+    fn process_json_line(&mut self, line: &str) {
+        // 累积 JSON 内容
+        if self.state != ParserState::InJson {
+            self.state = ParserState::InJson;
+            self.thought_buffer.clear();
+        }
+        self.thought_buffer.push_str(line);
+        
+        // 尝试解析完整的 JSON
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&self.thought_buffer) {
+            self.process_json_object(&json);
+            self.thought_buffer.clear();
+            self.state = ParserState::Initial;
+        }
+    }
+    
+    /// 处理解析后的 JSON 对象
+    fn process_json_object(&mut self, json: &serde_json::Value) {
+        // 提取 thought
+        if let Some(thought) = json.get("thought").and_then(|v| v.as_str()) {
+            self.emitter.emit_thought(thought, self.iteration);
+        }
+        
+        // 检查 action
+        if let Some(action) = json.get("action") {
+            let tool_name = action.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let args = action.get("input")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+            
+            if !tool_name.is_empty() {
+                self.emitter.emit_tool_call(self.iteration, tool_name, &args);
+            }
+        }
+        
+        // 检查 final_answer
+        if let Some(answer) = json.get("final_answer").and_then(|v| v.as_str()) {
+            self.final_answer_buffer = answer.to_string();
         }
     }
 
@@ -634,15 +708,29 @@ fn write_llm_log_travel(
     let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
     
     let content = if let Some(resp) = response {
+        // 安全截断，确保不在 UTF-8 字符中间切断
+        let truncated = if resp.len() > 2000 {
+            let mut end = 2000;
+            while end > 0 && !resp.is_char_boundary(end) {
+                end -= 1;
+            }
+            &resp[..end]
+        } else {
+            resp
+        };
         format!(
             "Response ({} chars):\n{}\n",
             resp.len(),
-            if resp.len() > 2000 { &resp[..2000] } else { resp }
+            truncated
         )
     } else {
+        // format!(
+        //     "System Prompt:\n{}\n\nUser Prompt:\n{}\n",
+        //     system_prompt.unwrap_or("(none)"),
+        //     user_prompt
+        // )
         format!(
-            "System Prompt:\n{}\n\nUser Prompt:\n{}\n",
-            system_prompt.unwrap_or("(none)"),
+            "User Prompt:\n{}\n",
             user_prompt
         )
     };

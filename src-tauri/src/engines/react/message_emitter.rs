@@ -359,10 +359,20 @@ fn write_llm_log_react(
     let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
     
     let content = if let Some(resp) = response {
+        // 安全截断，确保不在 UTF-8 字符中间切断
+        let truncated = if resp.len() > 2000 {
+            let mut end = 2000;
+            while end > 0 && !resp.is_char_boundary(end) {
+                end -= 1;
+            }
+            &resp[..end]
+        } else {
+            resp
+        };
         format!(
             "Response ({} chars):\n{}\n",
             resp.len(),
-            if resp.len() > 2000 { &resp[..2000] } else { resp }
+            truncated
         )
     } else {
         format!(

@@ -784,7 +784,12 @@ impl LlmCompilerPlanner {
         Err(anyhow::anyhow!(
             "无法从响应中提取有效的JSON: {}",
             if trimmed.len() > 200 {
-                format!("{}...", &trimmed[..200])
+                // 安全截断，确保不在 UTF-8 字符中间切断
+                let mut end = 200;
+                while end > 0 && !trimmed.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}...", &trimmed[..end])
             } else {
                 trimmed.to_string()
             }

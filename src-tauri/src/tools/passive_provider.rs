@@ -61,7 +61,8 @@ impl ToolProvider for PassiveToolProvider {
 
         // 2. 漏洞查询工具
         tools.push(Arc::new(ListFindingsTool::new(self.state.clone())));
-        // tools.push(Arc::new(GetFindingDetailTool::new(self.state.clone())));
+        tools.push(Arc::new(GetFindingDetailTool::new(self.state.clone())));
+        tools.push(Arc::new(ReportVulnerabilityTool::new(self.state.clone())));
 
         // 3. 插件管理工具
         tools.push(Arc::new(ListPluginsTool::new(self.state.clone())));
@@ -96,11 +97,11 @@ impl ToolProvider for PassiveToolProvider {
             "get_passive_scan_status" => return Ok(Some(Arc::new(GetPassiveScanStatusTool::new(self.state.clone())))),
             "list_findings" => return Ok(Some(Arc::new(ListFindingsTool::new(self.state.clone())))),
             "get_finding_detail" => return Ok(Some(Arc::new(GetFindingDetailTool::new(self.state.clone())))),
+            "report_vulnerability" => return Ok(Some(Arc::new(ReportVulnerabilityTool::new(self.state.clone())))),
             "list_plugins" => return Ok(Some(Arc::new(ListPluginsTool::new(self.state.clone())))),
             "enable_plugin" => return Ok(Some(Arc::new(EnablePluginTool::new(self.state.clone())))),
             "disable_plugin" => return Ok(Some(Arc::new(DisablePluginTool::new(self.state.clone())))),
             "load_plugin" => return Ok(Some(Arc::new(LoadPluginTool::new(self.state.clone())))),
-            // "generate_plugin" (方案A) 已删除，请使用 "generate_advanced_plugin" (方案B)
             _ => {}
         }
 
@@ -835,6 +836,298 @@ impl UnifiedTool for GetFindingDetailTool {
             completed_at: Some(end_time),
             status: ExecutionStatus::Completed,
         })
+    }
+}
+
+// ===== 2.5 漏洞上报工具 =====
+
+/// 上报漏洞工具 - 让 AI 在发现漏洞时写入数据库
+#[derive(Debug, Clone)]
+struct ReportVulnerabilityTool {
+    state: Arc<PassiveScanState>,
+    parameters: ToolParameters,
+    metadata: ToolMetadata,
+}
+
+impl ReportVulnerabilityTool {
+    fn new(state: Arc<PassiveScanState>) -> Self {
+        let parameters = ToolParameters {
+            parameters: vec![
+                ParameterDefinition {
+                    name: "vuln_type".to_string(),
+                    description: "Vulnerability type: sqli, xss, idor, path_traversal, command_injection, ssrf, xxe, csrf, auth_bypass, info_leak, etc.".to_string(),
+                    param_type: ParameterType::String,
+                    required: true,
+                    default_value: None,
+                },
+                ParameterDefinition {
+                    name: "severity".to_string(),
+                    description: "Severity level: critical, high, medium, low, info".to_string(),
+                    param_type: ParameterType::String,
+                    required: true,
+                    default_value: None,
+                },
+                ParameterDefinition {
+                    name: "title".to_string(),
+                    description: "Vulnerability title, e.g., 'SQL Injection in login.php'".to_string(),
+                    param_type: ParameterType::String,
+                    required: true,
+                    default_value: None,
+                },
+                ParameterDefinition {
+                    name: "url".to_string(),
+                    description: "Affected URL".to_string(),
+                    param_type: ParameterType::String,
+                    required: true,
+                    default_value: None,
+                },
+                ParameterDefinition {
+                    name: "parameter".to_string(),
+                    description: "Vulnerable parameter name".to_string(),
+                    param_type: ParameterType::String,
+                    required: false,
+                    default_value: None,
+                },
+                ParameterDefinition {
+                    name: "payload".to_string(),
+                    description: "Payload used to exploit the vulnerability".to_string(),
+                    param_type: ParameterType::String,
+                    required: false,
+                    default_value: None,
+                },
+                ParameterDefinition {
+                    name: "evidence".to_string(),
+                    description: "Evidence of exploitation (e.g., error message, response)".to_string(),
+                    param_type: ParameterType::String,
+                    required: false,
+                    default_value: None,
+                },
+                ParameterDefinition {
+                    name: "description".to_string(),
+                    description: "Detailed description of the vulnerability".to_string(),
+                    param_type: ParameterType::String,
+                    required: false,
+                    default_value: None,
+                },
+                ParameterDefinition {
+                    name: "remediation".to_string(),
+                    description: "Recommended fix for the vulnerability".to_string(),
+                    param_type: ParameterType::String,
+                    required: false,
+                    default_value: None,
+                },
+            ],
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "vuln_type": { "type": "string", "enum": ["sqli", "xss", "idor", "path_traversal", "command_injection", "ssrf", "xxe", "csrf", "auth_bypass", "info_leak", "other"] },
+                    "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+                    "title": { "type": "string" },
+                    "url": { "type": "string" },
+                    "parameter": { "type": "string" },
+                    "payload": { "type": "string" },
+                    "evidence": { "type": "string" },
+                    "description": { "type": "string" },
+                    "remediation": { "type": "string" }
+                },
+                "required": ["vuln_type", "severity", "title", "url"]
+            }),
+            required: vec!["vuln_type".to_string(), "severity".to_string(), "title".to_string(), "url".to_string()],
+            optional: vec!["parameter".to_string(), "payload".to_string(), "evidence".to_string(), "description".to_string(), "remediation".to_string()],
+        };
+
+        let metadata = ToolMetadata {
+            author: "Sentinel AI".to_string(),
+            version: "1.0.0".to_string(),
+            license: "MIT".to_string(),
+            homepage: None,
+            repository: None,
+            tags: vec!["passive".to_string(), "vulnerability".to_string(), "report".to_string()],
+            install_command: None,
+            requirements: vec![],
+        };
+
+        Self {
+            state,
+            parameters,
+            metadata,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl UnifiedTool for ReportVulnerabilityTool {
+    fn name(&self) -> &str {
+        "report_vulnerability"
+    }
+
+    fn description(&self) -> &str {
+        "Report a discovered vulnerability to the security center database. Use this when you confirm a vulnerability through testing."
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Analysis
+    }
+
+    fn parameters(&self) -> &ToolParameters {
+        &self.parameters
+    }
+
+    fn metadata(&self) -> &ToolMetadata {
+        &self.metadata
+    }
+
+    async fn execute(&self, params: ToolExecutionParams) -> anyhow::Result<ToolExecutionResult> {
+        let start_time = chrono::Utc::now();
+
+        // 解析必需参数
+        let vuln_type = params.inputs.get("vuln_type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: vuln_type"))?;
+        let severity = params.inputs.get("severity")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: severity"))?;
+        let title = params.inputs.get("title")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: title"))?;
+        let url = params.inputs.get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: url"))?;
+
+        // 解析可选参数
+        let parameter = params.inputs.get("parameter").and_then(|v| v.as_str());
+        let payload = params.inputs.get("payload").and_then(|v| v.as_str());
+        let evidence = params.inputs.get("evidence").and_then(|v| v.as_str());
+        let description = params.inputs.get("description").and_then(|v| v.as_str());
+        let remediation = params.inputs.get("remediation").and_then(|v| v.as_str());
+
+        // 构建漏洞描述
+        let full_description = format!(
+            "{}{}{}",
+            description.unwrap_or(""),
+            parameter.map(|p| format!("\n\nVulnerable Parameter: {}", p)).unwrap_or_default(),
+            payload.map(|p| format!("\n\nPayload: {}", p)).unwrap_or_default()
+        );
+
+        // 构建 PoC
+        let poc = format!(
+            "URL: {}\n{}{}",
+            url,
+            parameter.map(|p| format!("Parameter: {}\n", p)).unwrap_or_default(),
+            payload.map(|p| format!("Payload: {}\n", p)).unwrap_or_default()
+        );
+
+        // 获取数据库服务
+        let db_service = self.state.get_db_service().await
+            .map_err(|e| anyhow::anyhow!("Failed to get database service: {}", e))?;
+
+        // 创建 Finding 记录（使用 sentinel_plugins 的 Finding 类型）
+        let vuln_id = uuid::Uuid::new_v4().to_string();
+        let finding = sentinel_passive::Finding {
+            id: vuln_id.clone(),
+            plugin_id: "ai-agent".to_string(),
+            vuln_type: vuln_type.to_string(),
+            severity: Self::str_to_severity(severity),
+            title: title.to_string(),
+            description: if full_description.trim().is_empty() { 
+                format!("{} vulnerability found at {}", vuln_type, url) 
+            } else { 
+                full_description 
+            },
+            evidence: evidence.unwrap_or("").to_string(),
+            location: parameter.unwrap_or("").to_string(),
+            confidence: sentinel_passive::Confidence::High,
+            cwe: Self::vuln_type_to_cwe(vuln_type),
+            owasp: Self::vuln_type_to_owasp(vuln_type),
+            remediation: remediation.map(|s| s.to_string()),
+            url: url.to_string(),
+            method: "GET".to_string(),
+            created_at: chrono::Utc::now(),
+            request_headers: None,
+            request_body: payload.map(|p| p.to_string()),
+            response_status: None,
+            response_headers: None,
+            response_body: None,
+        };
+
+        // 保存到被动扫描数据库
+        db_service.insert_vulnerability(&finding).await
+            .map_err(|e| anyhow::anyhow!("Failed to save vulnerability: {}", e))?;
+
+        let end_time = chrono::Utc::now();
+        let duration = (end_time - start_time).to_std().unwrap_or_default();
+
+        let output = json!({
+            "success": true,
+            "vulnerability_id": vuln_id,
+            "message": format!("Vulnerability '{}' has been reported and saved to the security center", title),
+            "severity": severity,
+            "type": vuln_type,
+            "url": url
+        });
+
+        tracing::info!("Reported vulnerability: {} ({})", title, vuln_id);
+
+        Ok(ToolExecutionResult {
+            execution_id: params.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4()),
+            tool_name: "report_vulnerability".to_string(),
+            tool_id: "passive.report_vulnerability".to_string(),
+            success: true,
+            output,
+            error: None,
+            execution_time_ms: duration.as_millis() as u64,
+            metadata: HashMap::new(),
+            started_at: start_time,
+            completed_at: Some(end_time),
+            status: ExecutionStatus::Completed,
+        })
+    }
+}
+
+impl ReportVulnerabilityTool {
+    /// 将字符串转换为 Severity 枚举
+    fn str_to_severity(severity: &str) -> sentinel_passive::Severity {
+        match severity.to_lowercase().as_str() {
+            "critical" => sentinel_passive::Severity::Critical,
+            "high" => sentinel_passive::Severity::High,
+            "medium" => sentinel_passive::Severity::Medium,
+            "low" => sentinel_passive::Severity::Low,
+            _ => sentinel_passive::Severity::Info,
+        }
+    }
+
+    /// 将漏洞类型转换为 CWE ID
+    fn vuln_type_to_cwe(vuln_type: &str) -> Option<String> {
+        match vuln_type.to_lowercase().as_str() {
+            "sqli" => Some("CWE-89".to_string()),
+            "xss" => Some("CWE-79".to_string()),
+            "idor" => Some("CWE-639".to_string()),
+            "path_traversal" => Some("CWE-22".to_string()),
+            "command_injection" => Some("CWE-78".to_string()),
+            "ssrf" => Some("CWE-918".to_string()),
+            "xxe" => Some("CWE-611".to_string()),
+            "csrf" => Some("CWE-352".to_string()),
+            "auth_bypass" => Some("CWE-287".to_string()),
+            "info_leak" => Some("CWE-200".to_string()),
+            _ => None,
+        }
+    }
+
+    /// 将漏洞类型转换为 OWASP 类别
+    fn vuln_type_to_owasp(vuln_type: &str) -> Option<String> {
+        match vuln_type.to_lowercase().as_str() {
+            "sqli" => Some("A03:2021-Injection".to_string()),
+            "xss" => Some("A03:2021-Injection".to_string()),
+            "idor" => Some("A01:2021-Broken Access Control".to_string()),
+            "path_traversal" => Some("A01:2021-Broken Access Control".to_string()),
+            "command_injection" => Some("A03:2021-Injection".to_string()),
+            "ssrf" => Some("A10:2021-SSRF".to_string()),
+            "xxe" => Some("A05:2021-Security Misconfiguration".to_string()),
+            "csrf" => Some("A01:2021-Broken Access Control".to_string()),
+            "auth_bypass" => Some("A07:2021-Identification and Authentication Failures".to_string()),
+            "info_leak" => Some("A01:2021-Broken Access Control".to_string()),
+            _ => None,
+        }
     }
 }
 

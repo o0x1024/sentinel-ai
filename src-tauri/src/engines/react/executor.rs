@@ -834,15 +834,28 @@ impl ReactExecutor {
         let mut result = String::from("\n=== Similar Task Examples from History ===\n");
         
         for (idx, example) in examples.iter().enumerate() {
+            // 安全截断，确保不在 UTF-8 字符中间切断
+            let task_preview = {
+                let max = 200.min(example.task.len());
+                let mut end = max;
+                while end > 0 && !example.task.is_char_boundary(end) {
+                    end -= 1;
+                }
+                &example.task[..end]
+            };
             result.push_str(&format!(
                 "\nExample {}: Task: {}\n",
                 idx + 1,
-                &example.task[..example.task.len().min(200)]
+                task_preview
             ));
             result.push_str(&format!("Steps: {}\n", example.steps_summary));
             if let Some(ref answer) = example.final_answer {
                 let preview = if answer.len() > 300 {
-                    format!("{}...", &answer[..300])
+                    let mut end = 300;
+                    while end > 0 && !answer.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}...", &answer[..end])
                 } else {
                     answer.clone()
                 };

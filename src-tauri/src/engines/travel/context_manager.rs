@@ -142,9 +142,13 @@ impl ContextManager {
                     HistoryEntryType::Error => "错误",
                     HistoryEntryType::Decision => "决策",
                 };
-                // 截断长内容
+                // 截断长内容（安全处理 UTF-8 边界）
                 let content = if entry.content.len() > 100 {
-                    format!("{}...", &entry.content[..100])
+                    let mut end = 100;
+                    while end > 0 && !entry.content.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}...", &entry.content[..end])
                 } else {
                     entry.content.clone()
                 };
@@ -347,9 +351,13 @@ impl ContextManager {
                     serde_json::Value::String(s) => s.clone(),
                     _ => value.to_string(),
                 };
-                // 截断长值
+                // 截断长值（安全处理 UTF-8 边界）
                 let display_value = if value_str.len() > 100 {
-                    format!("{}...", &value_str[..100])
+                    let mut end = 100;
+                    while end > 0 && !value_str.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}...", &value_str[..end])
                 } else {
                     value_str
                 };
