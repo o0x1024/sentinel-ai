@@ -10,7 +10,7 @@ use crate::services::{AiServiceManager, database::{Database, DatabaseService}};
 use crate::engines::plan_and_execute::engine_adapter::PlanAndExecuteEngine;
 use crate::engines::llm_compiler::engine_adapter::LlmCompilerEngine;
 use crate::engines::llm_compiler::types::LlmCompilerConfig;
-use crate::engines::plan_and_execute::types::PlanAndExecuteConfig;
+use crate::engines::plan_and_execute::types::PlanAndExecuteConfig;  
 use crate::engines::rewoo::engine_adapter::ReWooEngine;
 use crate::engines::rewoo::rewoo_types::ReWOOConfig;
 // use crate::engines::orchestrator::engine_adapter::OrchestratorEngineAdapter; // Orchestrator已删除
@@ -119,7 +119,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use uuid::Uuid;
 use anyhow::Result;
-use log::{info};
+use log::{info, warn};
 
 /// 命令响应包装器
 #[derive(Debug, Serialize)]
@@ -1901,16 +1901,14 @@ async fn extract_target_with_llm(
     query: &str,
     ai_service: &Arc<crate::services::ai::AiService>,
 ) -> (Option<String>, String, String) {
-    let prompt = format!(r#"你是一个安全测试任务分析专家。请分析以下用户查询，提取关键信息。
-
-用户查询："{}"
+    let system_prompt = r#"你是一个安全测试任务分析专家。请分析用户输入，提取关键信息。
 
 请按照以下JSON格式返回结果（只返回JSON，不要其他文字）：
-{{
+{
   "task_type": "任务类型",
   "target": "目标对象",
   "target_type": "目标类型"
-}}
+}
 
 **任务类型(task_type)选项：**
 - web_pentest: Web渗透测试（网站安全测试、漏洞扫描）
@@ -1944,22 +1942,18 @@ async fn extract_target_with_llm(
 4. 严格按照JSON格式返回，确保可解析
 
 示例：
-- "对 http://example.com 进行渗透测试" → {{"task_type":"web_pentest","target":"http://example.com","target_type":"url"}}
-- "审计 /path/to/code 的代码" → {{"task_type":"code_audit","target":"/path/to/code","target_type":"file_path"}}
-- "解这道CTF题" → {{"task_type":"ctf","target":null,"target_type":"none"}}
-"#, query);
+- "对 http://example.com 进行渗透测试" → {"task_type":"web_pentest","target":"http://example.com","target_type":"url"}
+- "审计 /path/to/code 的代码" → {"task_type":"code_audit","target":"/path/to/code","target_type":"file_path"}
+- "解这道CTF题" → {"task_type":"ctf","target":null,"target_type":"none"}"#;
 
-    // 调用 LLM
-    match ai_service.send_message_stream(
-        Some(&prompt), 
-        None, 
-        None, 
-        None, 
-        false, // stream = false, 直接返回完整响应
-        true,  // is_final = true
-        None,  // chunk_type
-        None,  // attachments
-    ).await {
+    let user_prompt = format!(r#"用户输入："{}"
+
+请提取任务类型、目标和目标类型，返回JSON格式。"#, query);
+
+    // 使用统一的 LlmClient
+    let llm_client = crate::engines::llm_client::create_client(ai_service);
+    
+    match llm_client.completion(Some(system_prompt), &user_prompt).await {
         Ok(response) => {
             log::debug!("LLM extraction response: {}", response);
             
@@ -2123,4 +2117,205 @@ fn fallback_extract_target(query: &str) -> (Option<String>, String, String) {
     
     // 没有找到明确目标
     (None, task_type.to_string(), "none".to_string())
+}
+
+// ============================================================================
+// 自定义 AI 提供商相关命令
+// ============================================================================
+
+/// 测试自定义提供商请求参数
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TestCustomProviderRequest {
+    pub name: String,
+    pub api_key: Option<String>,
+    pub api_base: String,
+    pub model_id: String,
+    pub compat_mode: String, // openai, anthropic, rig_openai, rig_anthropic
+    pub extra_headers: Option<std::collections::HashMap<String, String>>,
+    pub timeout: Option<u64>,
+}
+
+/// 测试自定义提供商响应
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TestCustomProviderResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// 添加自定义提供商请求参数
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AddCustomProviderRequest {
+    pub name: String,
+    pub display_name: String,
+    pub api_key: Option<String>,
+    pub api_base: String,
+    pub model_id: String,
+    pub compat_mode: String,
+    pub extra_headers: Option<std::collections::HashMap<String, String>>,
+    pub timeout: Option<u64>,
+    pub max_retries: Option<u32>,
+}
+
+/// 测试自定义 AI 提供商连接
+#[tauri::command]
+pub async fn test_custom_provider(
+    request: TestCustomProviderRequest,
+) -> Result<TestCustomProviderResponse, String> {
+    use crate::services::custom_llm::CustomLlmClient;
+    
+    info!("Testing custom provider: {} (mode: {})", request.name, request.compat_mode);
+    
+    // 根据兼容模式选择测试方式
+    let result = match request.compat_mode.as_str() {
+        "rig_openai" | "rig_anthropic" => {
+            // 使用 rig-core 测试
+            test_with_rig(&request).await
+        }
+        _ => {
+            // 使用自定义 HTTP 客户端测试
+            let client = CustomLlmClient::new(
+                request.api_base.clone(),
+                request.api_key.clone(),
+                request.model_id.clone(),
+                request.compat_mode.clone(),
+                request.extra_headers.clone(),
+                request.timeout.unwrap_or(30),
+            );
+            client.test_connection().await.map_err(|e| e.to_string())
+        }
+    };
+    
+    match result {
+        Ok(msg) => Ok(TestCustomProviderResponse {
+            success: true,
+            message: msg,
+        }),
+        Err(e) => Ok(TestCustomProviderResponse {
+            success: false,
+            message: format!("Connection test failed: {}", e),
+        }),
+    }
+}
+
+/// 使用 rig-core 测试连接
+async fn test_with_rig(request: &TestCustomProviderRequest) -> Result<String, String> {
+    use rig::client::builder::DynClientBuilder;
+    use rig::completion::Prompt;
+    
+    let provider = if request.compat_mode == "rig_anthropic" {
+        "anthropic"
+    } else {
+        "openai"
+    };
+    
+    // 设置环境变量
+    if let Some(api_key) = &request.api_key {
+        match provider {
+            "anthropic" => {
+                std::env::set_var("ANTHROPIC_API_KEY", api_key);
+                std::env::set_var("ANTHROPIC_API_BASE", &request.api_base);
+            }
+            _ => {
+                std::env::set_var("OPENAI_API_KEY", api_key);
+                std::env::set_var("OPENAI_API_BASE", &request.api_base);
+                std::env::set_var("OPENAI_BASE_URL", &request.api_base);
+            }
+        }
+    }
+    
+    let agent = DynClientBuilder::new()
+        .agent(provider, &request.model_id)
+        .map_err(|e| format!("Failed to create agent: {}", e))?
+        .build();
+    
+    let timeout = std::time::Duration::from_secs(request.timeout.unwrap_or(30));
+    let response = tokio::time::timeout(timeout, agent.prompt("Hello, respond with 'OK' if you receive this."))
+        .await
+        .map_err(|_| "Request timeout".to_string())?
+        .map_err(|e| format!("Request failed: {}", e))?;
+    
+    Ok(format!("Connection successful! Response: {}", response.chars().take(100).collect::<String>()))
+}
+
+/// 添加自定义 AI 提供商
+#[tauri::command]
+pub async fn add_custom_provider(
+    request: AddCustomProviderRequest,
+    db_service: State<'_, Arc<DatabaseService>>,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<(), String> {
+    info!("Adding custom provider: {} ({})", request.name, request.display_name);
+    
+    // 获取现有的 providers_config
+    let mut providers: serde_json::Map<String, serde_json::Value> = 
+        match db_service.get_config("ai", "providers_config").await {
+            Ok(Some(json_str)) => {
+                serde_json::from_str(&json_str).unwrap_or_default()
+            }
+            _ => serde_json::Map::new(),
+        };
+    
+    // 构建新提供商配置
+    let provider_id = request.name.to_lowercase().replace(" ", "_");
+    let new_provider = serde_json::json!({
+        "id": provider_id,
+        "provider": provider_id,
+        "name": request.display_name,
+        "enabled": true,
+        "api_key": request.api_key,
+        "api_base": request.api_base,
+        "organization": null,
+        "default_model": request.model_id,
+        "compat_mode": request.compat_mode,
+        "extra_headers": request.extra_headers,
+        "timeout": request.timeout.unwrap_or(120),
+        "max_retries": request.max_retries.unwrap_or(3),
+        "is_custom": true,
+        "models": [{
+            "id": request.model_id,
+            "name": request.model_id,
+            "description": format!("Custom model from {}", request.display_name),
+            "context_length": 4096,
+            "supports_streaming": true,
+            "supports_tools": false,
+            "supports_vision": false,
+            "is_available": true
+        }]
+    });
+    
+    // 添加到配置
+    providers.insert(request.name.clone(), new_provider);
+    
+    // 保存到数据库
+    let config_str = serde_json::to_string(&providers)
+        .map_err(|e| format!("Failed to serialize providers config: {}", e))?;
+    
+    db_service
+        .set_config(
+            "ai",
+            "providers_config",
+            &config_str,
+            Some("AI providers configuration"),
+        )
+        .await
+        .map_err(|e| format!("Failed to save providers config: {}", e))?;
+    
+    // 如果有 API Key，单独保存（加密存储）
+    if let Some(api_key) = &request.api_key {
+        if !api_key.is_empty() {
+            let key_name = format!("api_key_{}", provider_id);
+            db_service
+                .set_config("ai", &key_name, api_key, Some(&format!("{} API key", request.display_name)))
+                .await
+                .map_err(|e| format!("Failed to save API key: {}", e))?;
+        }
+    }
+    
+    // 重新加载 AI 服务
+    if let Err(e) = ai_manager.reload_services().await {
+        warn!("Failed to reload AI services after adding custom provider: {}", e);
+    }
+    
+    info!("Custom provider '{}' added successfully", request.name);
+    Ok(())
 }

@@ -8,6 +8,7 @@ use super::planner::LlmCompilerPlanner;
 use super::task_fetcher::TaskFetchingUnit;
 use super::types::*;
 use crate::agents::traits::*;
+use crate::engines::llm_client::{StreamingLlmClient, StreamContent};
 use crate::engines::memory::get_global_memory;
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::services::ai::{AiService, AiServiceManager};
@@ -1392,10 +1393,10 @@ impl LlmCompilerEngine {
 
         if let Some(ai_service) = execution_service {
             info!(
-                "开始调用AI生成最终响应，提示词长度: {} 字符",
+                "Starting AI response generation, prompt length: {} chars",
                 response_prompt.len()
             );
-            debug!("AI响应生成提示词: {}", response_prompt);
+            debug!("AI response prompt: {}", response_prompt);
 
             // 构建最终回答的 user 提示（仅包含业务上下文，不包含系统说明）
             let outputs_block = successful_outputs
@@ -1418,32 +1419,48 @@ impl LlmCompilerEngine {
                 outputs_block
             );
 
-            match ai_service
-                .send_message_stream_with_save_control(
-                    Some(&final_user_prompt),        // 发送给LLM的用户消息
-                    None,                             // 不重复保存用户消息
-                    Some(&response_prompt),           // 作为system prompt使用（来自DB模板或默认）
-                    conversation_id.map(|s| s.to_string()),
-                    message_id.map(|s| s.to_string()),
-                    true,
-                    false,
-                    Some(ChunkType::Content),
-                    Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
-                    None, // attachments
-                )
+            // 使用公共 llm_client 模块 - StreamingLlmClient 流式输出到前端
+            let llm_config = crate::engines::llm_client::create_llm_config(&ai_service);
+            let streaming_client = StreamingLlmClient::new(llm_config);
+            
+            // 获取 app_handle 用于发送消息
+            let app_handle = self.app_handle.clone();
+            let conv_id = conversation_id.map(|s| s.to_string());
+            let msg_id = message_id.map(|s| s.to_string());
+            let exec_id = msg_id.clone(); // 使用 message_id 作为 execution_id
+            
+            match streaming_client
+                .stream_completion(Some(&response_prompt), &final_user_prompt, |chunk| {
+                    if let StreamContent::Text(text) = chunk {
+                        // 发送流式消息到前端
+                        if let (Some(ref handle), Some(ref mid), Some(ref eid)) = (&app_handle, &msg_id, &exec_id) {
+                            let _ = emit_message_chunk(
+                                handle,
+                                eid,
+                                mid,
+                                conv_id.as_deref(),
+                                ChunkType::Content,
+                                &text,
+                                false,
+                                None,
+                                None,
+                            );
+                        }
+                    }
+                })
                 .await
             {
                 Ok(ai_response) => {
                     if ai_response.trim().is_empty() {
-                        warn!("AI返回了空响应，使用默认响应");
+                        warn!("AI returned empty response, using default response");
                         Ok(self.generate_default_response(task_results, execution_summary))
                     } else {
-                        info!("AI响应生成成功，响应长度: {} 字符", ai_response.len());
+                        info!("AI response generated successfully, length: {} chars", ai_response.len());
                         Ok(ai_response)
                     }
                 }
                 Err(e) => {
-                    error!("AI响应生成失败: {}, 使用默认响应", e);
+                    error!("AI response generation failed: {}, using default response", e);
                     Ok(self.generate_default_response(task_results, execution_summary))
                 }
             }
@@ -1501,9 +1518,9 @@ impl LlmCompilerEngine {
         execution_summary: &ExecutionSummary,
     ) -> String {
         format!(
-            r#"你是一个专业的安全分析专家，请基于以下LLMCompiler工作流执行结果，为用户查询生成一个完整、准确、专业的分析报告。
+            r#"你是一个专业的安全分析专家，请基于以下LLMCompiler工作流执行结果，为用户输入生成一个完整、准确、专业的分析报告。
 
-**用户查询**: {}
+**用户输入**: {}
 
 **执行统计**:
 - 总任务数: {}

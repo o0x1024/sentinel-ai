@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod asset_service;
+pub mod custom_llm;
 pub mod mcp;
 pub mod database {
     pub use sentinel_db::DatabaseService;

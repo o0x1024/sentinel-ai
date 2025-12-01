@@ -8,8 +8,8 @@ import type { ChatMessage } from '../types/chat'
 import { parseLLMCompilerMessage } from './useLLMCompilerMessage'
 import { parsePlanAndExecuteMessage } from './usePlanAndExecuteMessage'
 import { parseReWOOMessage } from './useReWOOMessage'
-import { parseTravelMessage } from './useTravelMessage'
 import { ReActMessageProcessor } from './processors/ReActMessageProcessor'
+import { TravelMessageProcessor } from './processors/TravelMessageProcessor'
 
 class MessageChunkProcessorImpl implements MessageChunkProcessor {
   chunks = new Map<string, OrderedMessageChunk[]>()
@@ -791,46 +791,10 @@ export const useOrderedMessages = (
         const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
         ;(message as any).reactSteps = steps
       } else if (archType === 'Travel') {
-        // Travel架构：解析 OODA 执行数据
-        try {
-          const parsedData = parseTravelMessage(message.content, allChunks)
-          ; (message as any).travelData = parsedData
-          console.log('[useOrderedMessages] Travel data saved:', parsedData)
-        } catch (e) {
-          console.warn('[useOrderedMessages] Failed to parse Travel data:', e)
-        }
-      } else if (archType === 'Unknown') {
-        // Unknown架构：尝试解析 Orchestrator 事件（旧版 Travel）
-        try {
-          const orchestratorEvents: string[] = []
-          for (const c of allChunks) {
-            if (c.chunk_type === 'Meta' && c.content) {
-              try {
-                const obj = JSON.parse(c.content.toString())
-                if (obj?.type === 'orchestrator_session' || obj?.type === 'orchestrator_step') {
-                  orchestratorEvents.push(c.content.toString())
-                }
-              } catch {
-                // ignore non-json meta
-              }
-            }
-          }
-          if (orchestratorEvents.length > 0) {
-            message.content = JSON.stringify({
-              type: 'orchestrator_bundle',
-              events: orchestratorEvents,
-            })
-            // 解析并保存 Travel 数据
-            try {
-              const parsedData = parseTravelMessage(message.content, allChunks)
-                ; (message as any).travelData = parsedData
-            } catch (e) {
-              console.warn('[useOrderedMessages] Failed to parse Travel data:', e)
-            }
-          }
-        } catch (e) {
-          console.warn('[useOrderedMessages] Failed to persist orchestrator events:', e)
-        }
+        // Travel架构：使用 TravelMessageProcessor 提取 OODA 循环数据
+        const cycles = TravelMessageProcessor.extractCyclesFromChunks(allChunks)
+        ;(message as any).travelCycles = cycles
+        console.log('[useOrderedMessages] Travel cycles extracted:', cycles.length)
       } else if (archType === 'LLMCompiler') {
         // LLMCompiler架构（简化版）
         try {
@@ -909,44 +873,9 @@ export const useOrderedMessages = (
         const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
         ;(message as any).reactSteps = steps
       } else if (archType === 'Travel') {
-        // Travel架构：实时解析 OODA 执行数据
-        const allChunks = processor.chunks.get(canonicalId) || []
-        try {
-          const parsedData = parseTravelMessage(message.content, allChunks)
-          ; (message as any).travelData = parsedData
-          console.log('[useOrderedMessages] Travel data parsed:', parsedData)
-        } catch (e) {
-          console.warn('[useOrderedMessages] Failed to parse Travel data during streaming:', e)
-        }
-      } else if (archType === 'Unknown') {
-        // Unknown架构：尝试解析 Orchestrator 事件（旧版 Travel）
-        const allChunks = processor.chunks.get(canonicalId) || []
-        const orchestratorEvents: string[] = []
-        for (const c of allChunks) {
-          if (c.chunk_type === 'Meta' && c.content) {
-            try {
-              const obj = JSON.parse(c.content.toString())
-              if (obj?.type === 'orchestrator_session' || obj?.type === 'orchestrator_step') {
-                orchestratorEvents.push(c.content.toString())
-              }
-            } catch {
-              // ignore non-json meta
-            }
-          }
-        }
-        if (orchestratorEvents.length > 0) {
-          message.content = JSON.stringify({
-            type: 'orchestrator_bundle',
-            events: orchestratorEvents,
-          })
-          // 实时解析 Travel 数据
-          try {
-            const parsedData = parseTravelMessage(message.content, allChunks)
-              ; (message as any).travelData = parsedData
-          } catch (e) {
-            // ignore parsing errors during streaming
-          }
-        }
+        // Travel架构：使用 TravelMessageProcessor 实时提取 OODA 循环数据
+        const cycles = TravelMessageProcessor.extractCyclesFromChunks(allChunks)
+        ;(message as any).travelCycles = cycles
       } else if (archType === 'LLMCompiler') {
         // LLMCompiler架构实时解析
         const allChunks = processor.chunks.get(canonicalId) || []

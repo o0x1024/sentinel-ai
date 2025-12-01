@@ -184,7 +184,7 @@ impl EngineDispatcher {
         log::info!("Dispatching simple task: direct tool execution");
         self.emit_message(
             ChunkType::Content,
-            "🔧 Simple task: Direct tool execution",
+            "[TASK] Simple task: Direct tool execution",
             None
         );
 
@@ -204,7 +204,7 @@ impl EngineDispatcher {
                             Ok(result) => {
                                 self.emit_message(
                                     ChunkType::ToolResult,
-                                    &format!("✅ Step {} completed: {}", idx + 1, step.name),
+                                    &format!("[SUCCESS] Step {} completed: {}", idx + 1, step.name),
                                     Some(serde_json::json!({
                                         "step_id": step.id,
                                         "tool": tool_name
@@ -220,7 +220,7 @@ impl EngineDispatcher {
                             Err(e) => {
                                 self.emit_message(
                                     ChunkType::Error,
-                                    &format!("❌ Step {} failed: {}", idx + 1, e),
+                                    &format!("[FAILED] Step {} failed: {}", idx + 1, e),
                                     None
                                 );
                                 results.push(serde_json::json!({
@@ -260,7 +260,7 @@ impl EngineDispatcher {
         log::info!("Dispatching medium task: sequential tool execution");
         self.emit_message(
             ChunkType::Content,
-            "🔧 Medium task: Sequential tool execution",
+            "[TASK] Medium task: Sequential tool execution",
             Some(serde_json::json!({
                 "total_steps": action_plan.steps.len()
             }))
@@ -289,7 +289,7 @@ impl EngineDispatcher {
 
                                 self.emit_message(
                                     ChunkType::ToolResult,
-                                    &format!("✅ Step {} completed: {}", idx + 1, step.name),
+                                    &format!("[SUCCESS] Step {} completed: {}", idx + 1, step.name),
                                     Some(serde_json::json!({
                                         "step_id": step.id,
                                         "tool": tool_name
@@ -308,7 +308,7 @@ impl EngineDispatcher {
                                 log::error!("Tool {} execution failed: {}", tool_name, e);
                                 self.emit_message(
                                     ChunkType::Error,
-                                    &format!("❌ Step {} failed: {}", idx + 1, e),
+                                    &format!("[FAILED] Step {} failed: {}", idx + 1, e),
                                     None
                                 );
                                 results.push(serde_json::json!({
@@ -443,7 +443,7 @@ impl EngineDispatcher {
         log::info!("Dispatching complex task: using embedded ReAct executor");
         self.emit_message(
             ChunkType::Content,
-            "🤖 Complex task: Using ReAct executor for intelligent reasoning",
+            "[TASK] Complex task: Using ReAct executor for intelligent reasoning",
             None
         );
 
@@ -454,7 +454,7 @@ impl EngineDispatcher {
                 log::warn!("AI service not available, falling back to sequential execution");
                 self.emit_message(
                     ChunkType::Error,
-                    "⚠️ AI service unavailable, falling back to sequential execution",
+                    "[WARNING] AI service unavailable, falling back to sequential execution",
                     None
                 );
                 return self.dispatch_medium_task(action_plan, context).await;
@@ -527,7 +527,7 @@ impl EngineDispatcher {
 
         self.emit_message(
             ChunkType::Content,
-            "🚀 Starting ReAct reasoning loop...",
+            "[START] Starting ReAct reasoning loop...",
             None
         );
 
@@ -537,7 +537,7 @@ impl EngineDispatcher {
                 log::info!("ReAct execution completed successfully");
                 self.emit_message(
                     ChunkType::Content,
-                    "✅ ReAct execution completed successfully",
+                    "[SUCCESS] ReAct execution completed successfully",
                     None
                 );
                 Ok(serde_json::json!({
@@ -551,7 +551,7 @@ impl EngineDispatcher {
                 log::error!("ReAct execution failed: {}, falling back to sequential", e);
                 self.emit_message(
                     ChunkType::Error,
-                    &format!("⚠️ ReAct execution failed: {}, falling back to sequential", e),
+                    &format!("[WARNING] ReAct execution failed: {}, falling back to sequential", e),
                     None
                 );
                 self.dispatch_medium_task(action_plan, context).await

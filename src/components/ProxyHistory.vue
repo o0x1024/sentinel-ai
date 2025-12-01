@@ -1,5 +1,43 @@
 <template>
   <div class="flex flex-col h-screen bg-base-200">
+    <!-- 右键菜单 -->
+    <div 
+      v-if="contextMenu.visible"
+      ref="contextMenuRef"
+      class="fixed z-50 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-48"
+      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+      @click.stop
+    >
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="sendToRepeater"
+      >
+        <i class="fas fa-redo text-primary"></i>
+        Send to Repeater
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="copyUrl"
+      >
+        <i class="fas fa-link text-info"></i>
+        Copy URL
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="copyAsCurl"
+      >
+        <i class="fas fa-terminal text-warning"></i>
+        Copy as cURL
+      </button>
+      <div class="divider my-1 h-0"></div>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="openInBrowser"
+      >
+        <i class="fas fa-external-link-alt text-success"></i>
+        Open in Browser
+      </button>
+    </div>
 
     <!-- 筛选器工具栏 -->
     <div class="bg-base-100 border-b border-base-300 p-3 flex-shrink-0">
@@ -126,6 +164,7 @@
                 minWidth: 'max-content'
               }"
               @click="selectRequest(item.data)"
+              @contextmenu.prevent="showContextMenu($event, item.data)"
             >
               <div 
                 v-for="col in visibleColumns" 
@@ -280,6 +319,20 @@ const refreshTrigger = inject<any>('refreshTrigger', ref(0));
 defineOptions({
   name: 'ProxyHistory'
 });
+
+// Emit 声明
+const emit = defineEmits<{
+  (e: 'sendToRepeater', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
+}>();
+
+// 右键菜单状态
+const contextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  request: null as ProxyRequest | null,
+});
+const contextMenuRef = ref<HTMLElement | null>(null);
 
 // 类型定义
 interface ProxyRequest {
@@ -1002,6 +1055,98 @@ function selectRequest(request: ProxyRequest) {
     topPanelHeight.value = Math.floor(availableHeight * 0.4);
     bottomPanelHeight.value = Math.floor(availableHeight * 0.6);
   }
+}
+
+// 右键菜单相关函数
+function showContextMenu(event: MouseEvent, request: ProxyRequest) {
+  contextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    request,
+  };
+  
+  // 添加点击外部关闭菜单的监听
+  setTimeout(() => {
+    document.addEventListener('click', hideContextMenu);
+    document.addEventListener('contextmenu', hideContextMenu);
+  }, 0);
+}
+
+function hideContextMenu() {
+  contextMenu.value.visible = false;
+  contextMenu.value.request = null;
+  document.removeEventListener('click', hideContextMenu);
+  document.removeEventListener('contextmenu', hideContextMenu);
+}
+
+function sendToRepeater() {
+  if (!contextMenu.value.request) return;
+  
+  const req = contextMenu.value.request;
+  let headers: Record<string, string> = {};
+  
+  if (req.request_headers) {
+    try {
+      headers = JSON.parse(req.request_headers);
+    } catch {
+      // 忽略解析错误
+    }
+  }
+  
+  emit('sendToRepeater', {
+    method: req.method,
+    url: req.url,
+    headers,
+    body: req.request_body || undefined,
+  });
+  
+  hideContextMenu();
+}
+
+function copyUrl() {
+  if (!contextMenu.value.request) return;
+  
+  navigator.clipboard.writeText(contextMenu.value.request.url)
+    .then(() => dialog.toast.success('URL 已复制'))
+    .catch(() => dialog.toast.error('复制失败'));
+  
+  hideContextMenu();
+}
+
+function copyAsCurl() {
+  if (!contextMenu.value.request) return;
+  
+  const req = contextMenu.value.request;
+  let curl = `curl -X ${req.method} '${req.url}'`;
+  
+  if (req.request_headers) {
+    try {
+      const headers = JSON.parse(req.request_headers);
+      for (const [key, value] of Object.entries(headers)) {
+        curl += ` \\\n  -H '${key}: ${value}'`;
+      }
+    } catch {
+      // 忽略解析错误
+    }
+  }
+  
+  if (req.request_body) {
+    curl += ` \\\n  -d '${req.request_body.replace(/'/g, "'\\''")}'`;
+  }
+  
+  navigator.clipboard.writeText(curl)
+    .then(() => dialog.toast.success('cURL 命令已复制'))
+    .catch(() => dialog.toast.error('复制失败'));
+  
+  hideContextMenu();
+}
+
+function openInBrowser() {
+  if (!contextMenu.value.request) return;
+  
+  window.open(contextMenu.value.request.url, '_blank');
+  hideContextMenu();
 }
 
 function formatRequest(request: ProxyRequest, tab: string): string {

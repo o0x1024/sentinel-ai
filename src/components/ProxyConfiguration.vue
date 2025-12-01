@@ -129,6 +129,14 @@
               <i :class="['fas fa-sync-alt mr-1', { 'fa-spin': isRegeneratingCert }]"></i>
               重新生成 CA 证书
             </button>
+            <button 
+              class="btn btn-sm btn-outline"
+              @click="openCertDir"
+              :disabled="isOpeningCertDir"
+            >
+              <i :class="['fas fa-folder-open mr-1', { 'fa-spin': isOpeningCertDir }]"></i>
+              打开证书目录
+            </button>
           </div>
           <p class="text-xs text-base-content/60">
             每个安装都会生成自己的 CA 证书，代理监听器在协商 TLS 连接时可以使用该证书。导出证书后，请手动将其安装到系统信任列表中。
@@ -804,104 +812,6 @@
       </div>
     </div>
 
-    <!-- Advanced Proxy Settings -->
-    <div class="card bg-base-100 shadow-xl">
-      <div class="card-body">
-        <h2 class="card-title text-base mb-3">
-          <i class="fas fa-sliders-h mr-2"></i>
-          高级代理设置
-        </h2>
-        <p class="text-sm text-base-content/70 mb-4">
-          配置代理服务器的高级选项，包括端口范围、MITM 设置和请求/响应体大小限制。
-        </p>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">起始端口</span>
-            </label>
-            <input 
-              type="number" 
-              v-model.number="proxyConfig.start_port" 
-              class="input input-bordered input-sm"
-              placeholder="8080"
-              min="1024"
-              max="65535"
-            />
-            <label class="label">
-              <span class="label-text-alt text-xs">代理将从此端口开始尝试绑定</span>
-            </label>
-          </div>
-
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">最大尝试次数</span>
-            </label>
-            <input 
-              type="number" 
-              v-model.number="proxyConfig.max_port_attempts" 
-              class="input input-bordered input-sm"
-              placeholder="10"
-              min="1"
-              max="100"
-            />
-            <label class="label">
-              <span class="label-text-alt text-xs">端口被占用时的尝试次数</span>
-            </label>
-          </div>
-
-          <div class="form-control">
-            <label class="label cursor-pointer">
-              <span class="label-text">启用 MITM (HTTPS 拦截)</span>
-              <input 
-                type="checkbox" 
-                v-model="proxyConfig.mitm_enabled" 
-                class="toggle toggle-primary"
-              />
-            </label>
-            <label class="label">
-              <span class="label-text-alt text-xs">启用后可拦截 HTTPS 流量</span>
-            </label>
-          </div>
-
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">请求体大小限制 (MB)</span>
-            </label>
-            <input 
-              type="number" 
-              v-model.number="requestBodySizeMB" 
-              class="input input-bordered input-sm"
-              placeholder="2"
-              min="1"
-              max="100"
-              @input="updateRequestBodySize"
-            />
-            <label class="label">
-              <span class="label-text-alt text-xs">超过此大小的请求将被跳过</span>
-            </label>
-          </div>
-
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">响应体大小限制 (MB)</span>
-            </label>
-            <input 
-              type="number" 
-              v-model.number="responseBodySizeMB" 
-              class="input input-bordered input-sm"
-              placeholder="2"
-              min="1"
-              max="100"
-              @input="updateResponseBodySize"
-            />
-            <label class="label">
-              <span class="label-text-alt text-xs">超过此大小的响应将被跳过</span>
-            </label>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- Reset Button -->
     <div class="flex justify-end gap-2">
@@ -1121,6 +1031,7 @@ const dontSendToProxyHistoryIfOutOfScope = ref(false)
 // Certificate management states
 const isDownloadingCert = ref(false)
 const isRegeneratingCert = ref(false)
+const isOpeningCertDir = ref(false)
 
 // 编辑监听器相关状态
 const editDialogRef = ref<HTMLDialogElement | null>(null)
@@ -1448,6 +1359,23 @@ async function regenerateCACert() {
   }
 }
 
+async function openCertDir() {
+  isOpeningCertDir.value = true
+  try {
+    const response = await invoke<any>('open_ca_cert_dir')
+    if (response.success) {
+      dialog.toast.success(`已打开证书目录: ${response.data}`)
+    } else {
+      dialog.toast.error(`打开证书目录失败: ${response.error || '未知错误'}`)
+    }
+  } catch (error: any) {
+    console.error('Failed to open cert directory:', error)
+    dialog.toast.error(`打开证书目录失败: ${error}`)
+  } finally {
+    isOpeningCertDir.value = false
+  }
+}
+
 // 加载配置的通用函数
 const loadConfig = async () => {
   try {
@@ -1488,6 +1416,13 @@ const loadConfig = async () => {
         })
         console.log('[ProxyConfiguration] Proxy is not running')
       }
+    }
+    
+    // 加载响应拦截状态
+    const responseInterceptResponse = await invoke<any>('get_response_intercept_enabled')
+    if (responseInterceptResponse.success) {
+      interceptResponses.value = responseInterceptResponse.data
+      console.log('[ProxyConfiguration] Response intercept:', responseInterceptResponse.data)
     }
   } catch (error) {
     console.error('[ProxyConfiguration] Failed to load config or status:', error)
@@ -1559,6 +1494,18 @@ watch(proxyConfig, () => {
   console.log('[ProxyConfiguration] Config changed, triggering auto-save')
   debouncedSave()
 }, { deep: true })
+
+// 监听响应拦截开关变化
+watch(interceptResponses, async (newValue) => {
+  if (isInitialLoad.value) return
+  
+  console.log('[ProxyConfiguration] Response intercept changed:', newValue)
+  try {
+    await invoke('set_response_intercept_enabled', { enabled: newValue })
+  } catch (error) {
+    console.error('[ProxyConfiguration] Failed to set response intercept:', error)
+  }
+})
 </script>
 
 <style scoped>

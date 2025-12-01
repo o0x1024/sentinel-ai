@@ -3,12 +3,13 @@
 //! 负责根据工具执行结果生成最终答案
 
 use super::*;
+use crate::engines::llm_client::{LlmClient, StreamingLlmClient, StreamContent};
 use crate::services::ai::AiServiceManager;
 use crate::services::prompt_db::PromptRepository;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 const DEFAULT_SOLVER_PROMPT: &str = r#"You are a ReWOO solving assistant. Your task is to generate a comprehensive final answer based on the execution plan and tool results.
 
@@ -159,34 +160,45 @@ impl ReWOOSolver {
             }
         };
 
-        let config = ai_service.get_config();
+        // 使用公共 llm_client 模块
+        let llm_config = crate::engines::llm_client::create_llm_config(&ai_service);
         info!(
             "ReWOO Solver: Using provider={}, model={}, execution_id={}",
-            config.provider, config.model, execution_id
+            llm_config.provider, llm_config.model, execution_id
         );
-
-        // 如果有emitter,则流式发送到前端;否则使用非流式模式
-        let stream_to_frontend = emitter.is_some();
 
         // 在开始生成答案前,发送solving阶段的Content chunk
         if let Some(emitter) = emitter {
-            // 发送一个空的Content chunk来标记Solving阶段开始
             emitter.emit_content("", false);
         }
 
-        // 调用 AiService,不保存到数据库(conversation_id=None)
-        let content = ai_service
-            .send_message_stream(
-                Some(user_prompt),
-                Some(system_prompt),
-                None, // 不关联会话
-                Some(execution_id.to_string()),
-                stream_to_frontend, // 根据emitter决定是否流式发送
-                false,              // 不是最终消息(最终消息由engine_adapter发送)
-                None,  // chunk_type
-                None,  // attachments
-            )
-            .await?;
+        // 根据是否需要流式输出选择不同的客户端
+        let content = if emitter.is_some() {
+            // 流式输出：使用 StreamingLlmClient
+            let streaming_client = StreamingLlmClient::new(llm_config);
+            let emitter_ref = emitter.unwrap();
+            streaming_client
+                .stream_completion(Some(system_prompt), user_prompt, |chunk| {
+                    if let StreamContent::Text(text) = chunk {
+                        emitter_ref.emit_content(&text, false);
+                    }
+                })
+                .await
+                .map_err(|e| {
+                    error!("ReWOO Solver: LLM stream call failed: {}", e);
+                    anyhow!("LLM call failed: {}", e)
+                })?
+        } else {
+            // 非流式输出：使用 LlmClient
+            let llm_client = LlmClient::new(llm_config);
+            llm_client
+                .completion(Some(system_prompt), user_prompt)
+                .await
+                .map_err(|e| {
+                    error!("ReWOO Solver: LLM call failed: {}", e);
+                    anyhow!("LLM call failed: {}", e)
+                })?
+        };
 
         if content.is_empty() {
             return Err(anyhow!("LLM returned empty response"));

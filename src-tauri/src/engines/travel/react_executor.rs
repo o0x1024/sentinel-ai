@@ -1,19 +1,27 @@
 //! Travel专用ReAct执行器
 //!
 //! 简化版ReAct执行逻辑,直接集成到Travel的Act阶段
+//! 使用自有 LLM 客户端实现流式消息展示
+//! 
+//! ## Token优化
+//! - 使用 ContextManager 压缩观察结果
+//! - 滑动窗口历史管理
+//! - HTML/JSON 智能裁剪
 
-use crate::models::prompt::ArchitectureType as ArchType;
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
 use crate::tools::FrameworkToolAdapter;
-use crate::utils::message_emitter::StandardMessageEmitter;
-use crate::utils::ordered_message::{ChunkType, emit_message_chunk_arc, ArchitectureType};
 use anyhow::{anyhow, Context, Result};
-use sentinel_core::models::prompt::{ArchitectureType as SentinelArchType, StageType};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio_util::sync::CancellationToken;
+
+use super::message_emitter::{TravelMessageEmitter, TravelExecutionStats};
+use super::message_emitter::TravelLlmClient;
+use super::context_manager::ContextManager;
+use super::types::ContextManagerConfig;
+use crate::engines::llm_client::create_llm_config;
 
 /// ReAct步骤类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +65,14 @@ pub struct TravelReactExecutor {
     denied_tools: Option<Vec<String>>,
     /// 执行ID
     execution_id: Option<String>,
+    /// Travel 专用消息发送器
+    travel_emitter: Option<Arc<TravelMessageEmitter>>,
+    /// Travel 专用 LLM 客户端
+    llm_client: Option<Arc<TravelLlmClient>>,
+    /// 上下文管理器 - Token优化
+    context_manager: ContextManager,
+    /// 历史窗口大小 (保留最近N轮)
+    history_window_size: usize,
 }
 
 impl TravelReactExecutor {
@@ -71,6 +87,41 @@ impl TravelReactExecutor {
         app_handle: Option<tauri::AppHandle>,
         cancellation_token: Option<CancellationToken>,
     ) -> Self {
+        // 创建 Travel 专用消息发送器和 LLM 客户端
+        let (travel_emitter, llm_client) = if let Some(app) = &app_handle {
+            let exec_id = message_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let msg_id = message_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            
+            let emitter = Arc::new(TravelMessageEmitter::new(
+                Arc::new(app.clone()),
+                exec_id,
+                msg_id,
+                conversation_id.clone(),
+            ));
+            
+            let llm_config = create_llm_config(&ai_service);
+            let client = Arc::new(TravelLlmClient::new(llm_config, emitter.clone()));
+            
+            (Some(emitter), Some(client))
+        } else {
+            (None, None)
+        };
+        
+        // 创建上下文管理器 - Token优化配置
+        let context_config = ContextManagerConfig {
+            enable_compression: true,
+            max_context_tokens: 4000,
+            max_history_entries: 10,
+            max_tool_result_length: 1000,  // 工具结果最大1000字符
+            preserve_fields: vec![
+                "success".to_string(),
+                "error".to_string(),
+                "status".to_string(),
+                "url".to_string(),
+                "target".to_string(),
+            ],
+        };
+
         Self {
             ai_service,
             prompt_repo,
@@ -83,6 +134,10 @@ impl TravelReactExecutor {
             allowed_tools: None,
             denied_tools: None,
             execution_id: None,
+            travel_emitter,
+            llm_client,
+            context_manager: ContextManager::new(context_config),
+            history_window_size: 5,  // 保留最近5轮历史
         }
     }
 
@@ -104,59 +159,20 @@ impl TravelReactExecutor {
         self
     }
 
-    /// 发送消息到前端（带 Travel/OODA 元数据）
-    fn emit_message(&self, chunk_type: ChunkType, content: &str, structured_data: Option<serde_json::Value>) {
-        if let (Some(app_handle), Some(execution_id), Some(message_id)) = (&self.app_handle, &self.execution_id, &self.message_id) {
-            let app_handle = Arc::new(app_handle.clone());
-            emit_message_chunk_arc(
-                &app_handle,
-                execution_id,
-                message_id,
-                self.conversation_id.as_deref(),
-                chunk_type,
-                content,
-                false,
-                // 使用 Travel 的 Act 阶段，方便前端 OODA 解析
-                Some("Act"),
-                None,
-                Some(ArchitectureType::Travel),
-                structured_data,
-            );
-        }
-    }
-
     /// 执行ReAct循环
     pub async fn execute(&self, task: &str, context: &str) -> Result<String> {
         let start_time = SystemTime::now();
         let mut iteration = 0;
         let mut context_history = Vec::new();
         let mut steps = Vec::new();
+        let mut tool_calls_count = 0u32;
+        let mut successful_tool_calls = 0u32;
+        let mut failed_tool_calls = 0u32;
 
-        // 发送开始消息（标记为 Travel/Act 阶段的thinking）
-        self.emit_message(
-            ChunkType::Thinking,
-            "🤖 ReAct executor started",
-            Some(serde_json::json!({
-                "phase": "Act",
-                "status": "started",
-                "max_iterations": self.max_iterations
-            }))
-        );
-
-        // 初始化消息发送器（如果有app_handle）
-        let emitter = if let (Some(app), Some(msg_id), Some(conv_id)) =
-            (&self.app_handle, &self.message_id, &self.conversation_id)
-        {
-            Some(StandardMessageEmitter::new(
-                Arc::new(app.clone()),
-                format!("travel-react-{}", msg_id),
-                msg_id.clone(),
-                Some(conv_id.clone()),
-                crate::utils::ordered_message::ArchitectureType::Travel,
-            ))
-        } else {
-            None
-        };
+        // 发送开始消息
+        if let Some(te) = &self.travel_emitter {
+            te.emit_start(0);
+        }
 
         // 添加初始上下文
         if !context.is_empty() {
@@ -166,30 +182,11 @@ impl TravelReactExecutor {
         loop {
             iteration += 1;
 
-            // 发送迭代开始消息（Act 阶段内部的子步骤）
-            self.emit_message(
-                ChunkType::Thinking,
-                &format!("🔄 Iteration {}/{} starting", iteration, self.max_iterations),
-                Some(serde_json::json!({
-                    "phase": "Act",
-                    "iteration": iteration
-                }))
-            );
-
             // 检查取消状态
             if self.cancellation_token.is_cancelled() {
-                log::info!(
-                    "Travel ReAct: Execution cancelled (iteration {})",
-                    iteration
-                );
-                self.emit_message(
-                    ChunkType::Error,
-                    "⚠️ Execution cancelled",
-                    None
-                );
-                if let Some(emitter) = &emitter {
-                    emitter.emit_error("Execution cancelled");
-                    emitter.emit_complete(None);
+                log::info!("Travel ReAct: Execution cancelled (iteration {})", iteration);
+                if let Some(te) = &self.travel_emitter {
+                    te.emit_error("Execution cancelled");
                 }
                 return Err(anyhow!("Execution cancelled"));
             }
@@ -197,46 +194,27 @@ impl TravelReactExecutor {
             // 检查最大迭代次数
             if iteration > self.max_iterations {
                 log::warn!("Travel ReAct: Max iterations reached");
-                self.emit_message(
-                    ChunkType::Error,
-                    &format!("⚠️ Max iterations ({}) reached", self.max_iterations),
-                    None
-                );
-                if let Some(emitter) = &emitter {
-                    emitter
-                        .emit_error(&format!("Max iterations ({}) reached", self.max_iterations));
-                    emitter.emit_complete(None);
+                if let Some(te) = &self.travel_emitter {
+                    te.emit_error(&format!("Max iterations ({}) reached", self.max_iterations));
                 }
                 return Err(anyhow!("Max iterations reached"));
             }
-
-            // === 步骤1: Thought (思考) ===
-            self.emit_message(
-                ChunkType::Thinking,
-                "💭 Thinking phase...",
-                Some(serde_json::json!({
-                    "phase": "Act",
-                    "status": "running"
-                }))
-            );
 
             let thought_start = SystemTime::now();
             let (system_prompt, user_prompt) =
                 self.build_thought_prompt(task, &context_history).await?;
 
-            // 调用LLM
+            // 调用LLM - 使用 Travel 专用 LLM 客户端
             let llm_output = self
-                .call_llm(&system_prompt, &user_prompt, iteration == 1, task)
+                .call_llm(&system_prompt, &user_prompt, iteration == 1, task, iteration)
                 .await
                 .context("LLM call failed during Thought phase")?;
 
             // 再次检查取消状态
             if self.cancellation_token.is_cancelled() {
-                self.emit_message(
-                    ChunkType::Error,
-                    "⚠️ Execution cancelled after LLM call",
-                    None
-                );
+                if let Some(te) = &self.travel_emitter {
+                    te.emit_error("Execution cancelled after LLM call");
+                }
                 return Err(anyhow!("Execution cancelled after LLM call"));
             }
 
@@ -245,23 +223,8 @@ impl TravelReactExecutor {
                 .unwrap_or(Duration::from_secs(0))
                 .as_millis() as u64;
 
-            // 解析LLM输出
+            // 解析LLM输出（LLM 客户端已经发送了 thought/action 消息）
             let parsed = self.parse_llm_output(&llm_output)?;
-
-            // 发送Thinking消息（映射到 Travel Act 阶段的 thinking）
-            self.emit_message(
-                ChunkType::Thinking,
-                &parsed.thought,
-                Some(serde_json::json!({
-                    "phase": "Act",
-                    "iteration": iteration,
-                    "type": "thought"
-                }))
-            );
-
-            if let Some(emitter) = &emitter {
-                emitter.emit_thinking(&format!("**Iteration {}** - {}", iteration, parsed.thought));
-            }
 
             // 记录Thought步骤
             steps.push(ReactStep {
@@ -274,22 +237,6 @@ impl TravelReactExecutor {
 
             // === 步骤2: 判断是Final Answer还是Action ===
             if let Some(final_answer) = parsed.final_answer {
-                // 发送最终答案
-                self.emit_message(
-                    ChunkType::Content,
-                    &final_answer,
-                    Some(serde_json::json!({
-                        "phase": "Act",
-                        "iteration": iteration,
-                        "type": "final_answer"
-                    }))
-                );
-
-                if let Some(emitter) = &emitter {
-                    emitter.emit_content(&final_answer, false);
-                    emitter.emit_complete(None);
-                }
-
                 // 找到最终答案,结束循环
                 steps.push(ReactStep {
                     step_type: ReactStepType::FinalAnswer,
@@ -299,55 +246,40 @@ impl TravelReactExecutor {
                     duration_ms: 0,
                 });
 
+                let total_duration = start_time
+                    .elapsed()
+                    .unwrap_or(Duration::from_secs(0))
+                    .as_millis() as u64;
+
                 log::info!(
                     "Travel ReAct: Completed in {} iterations, duration: {}ms",
-                    iteration,
-                    start_time
-                        .elapsed()
-                        .unwrap_or(Duration::from_secs(0))
-                        .as_millis()
+                    iteration, total_duration
                 );
 
-                self.emit_message(
-                    ChunkType::Thinking,
-                    &format!("✅ ReAct completed in {} iterations", iteration),
-                    Some(serde_json::json!({
-                        "phase": "Act",
-                        "status": "completed",
-                        "iterations": iteration
-                    }))
-                );
+                // 发送完成统计
+                if let Some(te) = &self.travel_emitter {
+                    te.emit_complete(TravelExecutionStats {
+                        total_iterations: iteration,
+                        tool_calls_count,
+                        successful_tool_calls,
+                        failed_tool_calls,
+                        total_duration_ms: total_duration,
+                        status: "completed".to_string(),
+                    });
+                }
 
                 return Ok(final_answer);
             }
 
             // === 步骤3: Action (执行工具) ===
             if let Some(action) = parsed.action {
-                self.emit_message(
-                    ChunkType::Content,
-                    &format!("🔧 Executing tool: {}", action.tool_name),
-                    Some(serde_json::json!({
-                        "phase": "Act",
-                        "iteration": iteration,
-                        "type": "action",
-                        "tool_name": action.tool_name,
-                        "arguments": action.arguments
-                    }))
-                );
-
                 let action_start = SystemTime::now();
 
-                // 发送工具调用Meta信息
-                if let Some(emitter) = &emitter {
-                    emitter.emit_meta(
-                        &serde_json::json!({
-                            "type": "tool_call",
-                            "iteration": iteration,
-                            "tool_name": action.tool_name,
-                            "arguments": action.arguments,
-                        })
-                        .to_string(),
-                    );
+                // 使用 travel_emitter 发送工具调用信息（如果没有通过 LLM 客户端发送）
+                if self.llm_client.is_none() {
+                    if let Some(te) = &self.travel_emitter {
+                        te.emit_tool_call(iteration, &action.tool_name, &action.arguments);
+                    }
                 }
 
                 // 记录Action步骤
@@ -359,46 +291,60 @@ impl TravelReactExecutor {
                     duration_ms: 0,
                 });
 
+                tool_calls_count += 1;
+
                 // 执行工具
-                let tool_result = self.execute_tool(&action).await?;
+                let tool_result = match self.execute_tool(&action).await {
+                    Ok(result) => {
+                        successful_tool_calls += 1;
+                        result
+                    }
+                    Err(e) => {
+                        failed_tool_calls += 1;
+                        if let Some(te) = &self.travel_emitter {
+                            te.emit_error(&format!("Tool {} failed: {}", action.tool_name, e));
+                        }
+                        serde_json::json!({"error": e.to_string()})
+                    }
+                };
 
                 let action_duration = action_start
                     .elapsed()
                     .unwrap_or(Duration::from_secs(0))
                     .as_millis() as u64;
 
-                // 发送工具结果
-                self.emit_message(
-                    ChunkType::ToolResult,
-                    &format!("Tool {} completed", action.tool_name),
-                    Some(serde_json::json!({
-                        "phase": "Act",
-                        "iteration": iteration,
-                        "tool_name": action.tool_name,
-                        "duration_ms": action_duration,
-                        "result": tool_result
-                    }))
-                );
-
-                if let Some(emitter) = &emitter {
-                    emitter.emit_tool_result(&action.tool_name, &tool_result);
+                // 使用 travel_emitter 发送工具结果
+                if let Some(te) = &self.travel_emitter {
+                    te.emit_tool_result(
+                        iteration,
+                        &action.tool_name,
+                        &tool_result,
+                        !tool_result.get("error").is_some(),
+                        action_duration,
+                    );
                 }
 
+                // 压缩工具结果 - Token优化
+                let compressed_result = self.context_manager.compress_tool_result(&tool_result);
+                let observation = self.compress_observation(&action.tool_name, &compressed_result);
+
                 // 记录Observation步骤
-                let observation = format!("{}", tool_result);
                 steps.push(ReactStep {
                     step_type: ReactStepType::Observation,
                     content: observation.clone(),
                     tool_call: None,
-                    tool_result: Some(tool_result),
+                    tool_result: Some(compressed_result),
                     duration_ms: action_duration,
                 });
 
-                // 添加到上下文历史
-                context_history.push(format!("Thought: {}", parsed.thought));
+                // 添加到上下文历史 (压缩后的版本)
+                context_history.push(format!("Thought: {}", self.truncate_thought(&parsed.thought)));
                 context_history.push(format!("Action: {}", action.tool_name));
-                context_history.push(format!("Action Input: {}", action.arguments));
+                context_history.push(format!("Action Input: {}", self.compress_action_input(&action.arguments)));
                 context_history.push(format!("Observation: {}", observation));
+                
+                // 滑动窗口 - 保留最近N轮历史
+                self.apply_history_window(&mut context_history);
             } else {
                 // 没有Action也没有Final Answer,这是错误的输出格式
                 return Err(anyhow!(
@@ -681,36 +627,28 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
         .to_string()
     }
 
-    /// 调用LLM
+    /// 调用LLM - 使用 Travel 专用 LLM 客户端实现流式输出
     async fn call_llm(
         &self,
         system_prompt: &str,
         user_prompt: &str,
-        is_first_iteration: bool,
-        original_task: &str,
+        _is_first_iteration: bool,
+        _original_task: &str,
+        iteration: u32,
     ) -> Result<String> {
-        // 决定是否保存用户消息
-        let user_to_save = if is_first_iteration {
-            Some(original_task)
-        } else {
-            None
-        };
-
-        self.ai_service
-            .send_message_stream_with_save_control(
-                Some(user_prompt),
-                user_to_save,
-                Some(system_prompt),
-                self.conversation_id.clone(),
-                self.message_id.clone(),
-                true, // stream
-                false,
-                Some(ChunkType::Content),
-                Some(crate::utils::ordered_message::ArchitectureType::Travel),
-                None, // attachments
-            )
-            .await
-            .map_err(|e| anyhow!("LLM call failed: {}", e))
+        // 使用 Travel 专用 LLM 客户端（不降级）
+        match &self.llm_client {
+            Some(llm_client) => {
+                log::info!("Travel ReAct: Using TravelLlmClient for iteration {}", iteration);
+                llm_client
+                    .stream_completion(Some(system_prompt), user_prompt, iteration)
+                    .await
+            }
+            None => {
+                log::error!("Travel ReAct: TravelLlmClient not available, cannot proceed");
+                Err(anyhow!("Travel LLM client not initialized. Check AI service configuration."))
+            }
+        }
     }
 
     /// 解析LLM输出
@@ -835,6 +773,243 @@ Action Input: {"url": "http://testphp.vulnweb.com"}
                 "No framework adapter available and failed to get global adapter: {}",
                 e
             )),
+        }
+    }
+    
+    // ========== Token 优化辅助方法 ==========
+    
+    /// 压缩观察结果 - 根据工具类型智能裁剪
+    fn compress_observation(&self, tool_name: &str, result: &serde_json::Value) -> String {
+        let max_len = 800; // 单个观察结果最大长度
+        
+        // 特殊处理 HTML 相关工具
+        if tool_name.contains("html") || tool_name.contains("visible") {
+            return self.compress_html_result(result, max_len);
+        }
+        
+        // 特殊处理网站分析结果
+        if tool_name.contains("analyze") {
+            return self.compress_analysis_result(result, max_len);
+        }
+        
+        // 通用压缩
+        let result_str = result.to_string();
+        if result_str.len() > max_len {
+            format!("{}...(truncated {} chars)", &result_str[..max_len], result_str.len() - max_len)
+        } else {
+            result_str
+        }
+    }
+    
+    /// 压缩 HTML 相关结果
+    fn compress_html_result(&self, result: &serde_json::Value, max_len: usize) -> String {
+        if let Some(obj) = result.as_object() {
+            let mut summary = String::new();
+            
+            // 保留 success 状态
+            if let Some(success) = obj.get("success") {
+                summary.push_str(&format!("success:{}", success));
+            }
+            
+            // 提取 HTML 内容并压缩
+            if let Some(output) = obj.get("output").and_then(|v| v.as_str()) {
+                // 提取关键元素: 表单、输入框、链接
+                let forms = self.extract_html_elements(output, "form");
+                let inputs = self.extract_html_elements(output, "input");
+                let links_count = output.matches("<a ").count();
+                
+                summary.push_str(&format!(", forms:{}, inputs:{}, links:{}", 
+                    forms.len(), inputs.len(), links_count));
+                
+                // 如果有表单/输入框，保留关键信息
+                if !inputs.is_empty() {
+                    let input_names: Vec<&str> = inputs.iter()
+                        .filter_map(|s| self.extract_attr(s, "name"))
+                        .take(5)
+                        .collect();
+                    if !input_names.is_empty() {
+                        summary.push_str(&format!(", input_names:[{}]", input_names.join(",")));
+                    }
+                }
+            }
+            
+            return format!("{{{}}}", summary);
+        }
+        
+        // 降级：直接截断
+        let s = result.to_string();
+        if s.len() > max_len {
+            format!("{}...", &s[..max_len])
+        } else {
+            s
+        }
+    }
+    
+    /// 压缩网站分析结果
+    fn compress_analysis_result(&self, result: &serde_json::Value, max_len: usize) -> String {
+        if let Some(obj) = result.as_object() {
+            let mut summary = serde_json::Map::new();
+            
+            // 保留关键字段
+            for key in &["domain", "total_requests", "api_endpoints_count", "tech_stack"] {
+                if let Some(v) = obj.get(*key) {
+                    summary.insert((*key).to_string(), v.clone());
+                }
+            }
+            
+            // 压缩 endpoints 列表
+            if let Some(endpoints) = obj.get("endpoints").and_then(|v| v.as_array()) {
+                let endpoint_summaries: Vec<serde_json::Value> = endpoints.iter()
+                    .take(5)  // 只保留前5个端点
+                    .filter_map(|e| {
+                        e.as_object().map(|ep| {
+                            serde_json::json!({
+                                "path": ep.get("path"),
+                                "method": ep.get("method"),
+                                "params": ep.get("query_params").and_then(|p| p.as_array()).map(|a| a.len())
+                            })
+                        })
+                    })
+                    .collect();
+                summary.insert("endpoints".to_string(), serde_json::Value::Array(endpoint_summaries));
+                
+                if endpoints.len() > 5 {
+                    summary.insert("more_endpoints".to_string(), 
+                        serde_json::json!(endpoints.len() - 5));
+                }
+            }
+            
+            return serde_json::Value::Object(summary).to_string();
+        }
+        
+        let s = result.to_string();
+        if s.len() > max_len {
+            format!("{}...", &s[..max_len])
+        } else {
+            s
+        }
+    }
+    
+    /// 提取 HTML 元素
+    fn extract_html_elements<'a>(&self, html: &'a str, tag: &str) -> Vec<&'a str> {
+        let start_tag = format!("<{}", tag);
+        let mut elements = Vec::new();
+        let mut pos = 0;
+        
+        while let Some(start) = html[pos..].find(&start_tag) {
+            let abs_start = pos + start;
+            if let Some(end) = html[abs_start..].find('>') {
+                elements.push(&html[abs_start..abs_start + end + 1]);
+                pos = abs_start + end + 1;
+            } else {
+                break;
+            }
+        }
+        
+        elements
+    }
+    
+    /// 提取 HTML 属性值
+    fn extract_attr<'a>(&self, element: &'a str, attr: &str) -> Option<&'a str> {
+        let pattern = format!("{}=\"", attr);
+        if let Some(start) = element.find(&pattern) {
+            let value_start = start + pattern.len();
+            if let Some(end) = element[value_start..].find('"') {
+                return Some(&element[value_start..value_start + end]);
+            }
+        }
+        None
+    }
+    
+    /// 截断 Thought 内容
+    fn truncate_thought(&self, thought: &str) -> String {
+        let max_len = 300;
+        if thought.len() > max_len {
+            format!("{}...", &thought[..max_len])
+        } else {
+            thought.to_string()
+        }
+    }
+    
+    /// 压缩 Action Input
+    fn compress_action_input(&self, args: &serde_json::Value) -> String {
+        let max_len = 200;
+        let s = args.to_string();
+        if s.len() > max_len {
+            format!("{}...", &s[..max_len])
+        } else {
+            s
+        }
+    }
+    
+    /// 滑动窗口 - 保留最近N轮历史
+    fn apply_history_window(&self, history: &mut Vec<String>) {
+        // 每轮包含: Thought, Action, Action Input, Observation (4条)
+        let entries_per_round = 4;
+        let max_entries = self.history_window_size * entries_per_round;
+        
+        // 查找 Context 条目（初始上下文，始终保留）
+        let context_entries: Vec<String> = history.iter()
+            .filter(|s| s.starts_with("Context:"))
+            .cloned()
+            .collect();
+        
+        // 移除 Context 条目，只对历史进行窗口化
+        history.retain(|s| !s.starts_with("Context:"));
+        
+        if history.len() > max_entries {
+            // 计算需要移除的完整轮数
+            let excess = history.len() - max_entries;
+            let rounds_to_remove = (excess + entries_per_round - 1) / entries_per_round;
+            let entries_to_remove = rounds_to_remove * entries_per_round;
+            
+            // 移除最早的几轮
+            history.drain(0..entries_to_remove.min(history.len()));
+            
+            log::info!("History window applied: removed {} entries, {} remain", 
+                entries_to_remove, history.len());
+        }
+        
+        // 重新添加 Context（如果有的话，只保留压缩版本）
+        if !context_entries.is_empty() {
+            // 只保留一个压缩的 Context
+            let compressed_context = self.compress_initial_context(&context_entries[0]);
+            history.insert(0, compressed_context);
+        }
+    }
+    
+    /// 压缩初始上下文
+    fn compress_initial_context(&self, context: &str) -> String {
+        // 尝试解析为 JSON 并提取关键字段
+        if let Some(json_start) = context.find('{') {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&context[json_start..]) {
+                if let Some(obj) = value.as_object() {
+                    let mut summary = serde_json::Map::new();
+                    
+                    // 只保留关键字段
+                    for key in &["target", "query", "task_type", "target_type"] {
+                        if let Some(v) = obj.get(*key) {
+                            summary.insert((*key).to_string(), v.clone());
+                        }
+                    }
+                    
+                    // 保留工具列表（只保留数量）
+                    if let Some(tools) = obj.get("tools_allow").and_then(|v| v.as_array()) {
+                        summary.insert("tools_count".to_string(), 
+                            serde_json::json!(tools.len()));
+                    }
+                    
+                    return format!("Context: {}", serde_json::Value::Object(summary));
+                }
+            }
+        }
+        
+        // 降级：截断
+        let max_len = 500;
+        if context.len() > max_len {
+            format!("{}...", &context[..max_len])
+        } else {
+            context.to_string()
         }
     }
 }

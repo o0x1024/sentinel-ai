@@ -136,7 +136,7 @@
             <div class="w-full flex items-center gap-2">
               <div class="truncate flex-1 text-left">
                 <div class="font-medium text-xs truncate flex items-center gap-1">
-                  <span v-if="t.is_active" class="inline-block w-2 h-2 rounded-full bg-success" title="已激活"></span>
+                  <span v-if="t.is_active" class="inline-block w-2 h-2 rounded-full bg-success" title="已启用"></span>
                   {{ t.name }}
                 </div>
                 <div class="text-[10px] opacity-70 truncate">
@@ -149,7 +149,7 @@
                   </span>
                 </div>
               </div>
-              <span v-if="t.is_active" class="badge badge-success badge-xs">激活</span>
+              <span v-if="t.is_active" class="badge badge-success badge-xs">已启用</span>
               <span v-else-if="t.id === activePromptId" class="badge badge-success badge-xs">{{ $t('promptMgmt.activeBadge') }}</span>
               <span v-else-if="t.is_default" class="badge badge-outline badge-xs">{{ $t('promptMgmt.default') }}</span>
             </div>

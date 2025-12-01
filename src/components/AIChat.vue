@@ -111,7 +111,7 @@
           <div v-else-if="isTravelMessageFn(message)" class="space-y-3">
             <TravelStepDisplay
               :message="message"
-              :stepData="parseTravelMessageData(message)"
+              :isExecuting="message.isStreaming"
             />
           </div>
 
@@ -132,8 +132,8 @@
             :stream-char-count="streamCharCount"
           />
 
-          <!-- 流式指示器 -->
-          <div v-if="message.isStreaming" class="flex items-center gap-2 mt-2 text-base-content/70">
+          <!-- 流式指示器（Travel 有自己的 loading，不重复显示） -->
+          <div v-if="message.isStreaming && !isTravelMessageFn(message)" class="flex items-center gap-2 mt-2 text-base-content/70">
             <span class="loading loading-dots loading-sm text-primary"></span>
             <span class="text-sm">{{ t('aiAssistant.generating', 'AI正在思考...') }}</span>
           </div>
@@ -325,8 +325,6 @@ import LLMCompilerStepDisplay from './MessageParts/LLMCompilerStepDisplay.vue'
 import PlanAndExecuteStepDisplay from './MessageParts/PlanAndExecuteStepDisplay.vue'
 import TravelStepDisplay from './MessageParts/TravelStepDisplay.vue'
 import MessageContentDisplay from './MessageParts/MessageContentDisplay.vue'
-import { isTravelMessage, parseTravelMessage } from '../composables/useTravelMessage'
-import type { TravelMessageData } from '../composables/useTravelMessage'
 import OrchestratorStepDisplay from './MessageParts/OrchestratorStepDisplay.vue'
 
 // Types
@@ -564,31 +562,21 @@ const parseReWOOMessageData = (message: ChatMessage): ReWOOMessageData => {
   return parseReWOOMessage(content, chunks)
 }
 
-// Travel 消息检测函数（增强版：优先使用架构元数据）
+// Travel 消息检测函数：检查是否有 travelCycles 数据
 const isTravelMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
 
   // 优先检查架构元数据
   const archType = getMessageArchitecture(message)
   if (archType === 'Travel') return true
+  
+  // 检查是否有 travelCycles 数据
+  if ((message as any).travelCycles?.length > 0) return true
+  
   // 如果已经是其他明确的架构类型，直接返回false
   if (archType && archType !== 'Unknown') return false
 
-  // 回退到内容匹配（向后兼容，仅用于Unknown架构）
-  const content = message.content || ''
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  return isTravelMessage(content, chunks)
-}
-
-// Travel 消息解析函数
-const parseTravelMessageData = (message: ChatMessage): TravelMessageData => {
-  // 优先使用预解析的数据
-  if ((message as any).travelData) {
-    return (message as any).travelData
-  }
-  const content = message.content || ''
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  return parseTravelMessage(content, chunks)
+  return false
 }
 
 // Orchestrator 消息检测函数（增强版：优先使用架构元数据）

@@ -20,6 +20,50 @@ use flate2::read::GzDecoder;
 use brotli::Decompressor;
 use std::collections::{HashMap, HashSet};
 
+/// 拦截动作
+#[derive(Debug, Clone)]
+pub enum InterceptAction {
+    Forward(Option<String>), // Forward with optional modified content
+    Drop,
+}
+
+/// 拦截请求（用于等待用户操作）
+pub struct PendingInterceptRequest {
+    pub id: String,
+    pub method: String,
+    pub url: String,
+    pub path: String,
+    pub protocol: String,
+    pub headers: HashMap<String, String>,
+    pub body: Option<String>,
+    pub timestamp: i64,
+    pub response_tx: tokio::sync::oneshot::Sender<InterceptAction>,
+}
+
+/// 拦截响应（用于等待用户操作）
+pub struct PendingInterceptResponse {
+    pub id: String,
+    pub request_id: String,
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+    pub body: Option<String>,
+    pub timestamp: i64,
+    pub response_tx: tokio::sync::oneshot::Sender<InterceptAction>,
+}
+
+/// 拦截状态（共享）
+#[derive(Clone)]
+pub struct InterceptState {
+    /// 是否启用请求拦截
+    pub enabled: Arc<RwLock<bool>>,
+    /// 是否启用响应拦截
+    pub response_enabled: Arc<RwLock<bool>>,
+    /// 待处理的拦截请求发送端
+    pub pending_tx: Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptRequest>>,
+    /// 待处理的拦截响应发送端
+    pub pending_response_tx: Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptResponse>>,
+}
+
 /// 代理配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
@@ -83,6 +127,8 @@ pub struct PassiveProxyHandler {
     fail_counts: Arc<RwLock<HashMap<String, u32>>>,
     /// 连接键到 CONNECT host 的映射
     conn_to_host: Arc<RwLock<HashMap<String, String>>>,
+    /// 拦截状态
+    intercept_state: Option<InterceptState>,
 }
 
 impl PassiveProxyHandler {
@@ -96,6 +142,26 @@ impl PassiveProxyHandler {
             bypass_hosts: Arc::new(RwLock::new(HashSet::new())),
             fail_counts: Arc::new(RwLock::new(HashMap::new())),
             conn_to_host: Arc::new(RwLock::new(HashMap::new())),
+            intercept_state: None,
+        }
+    }
+    
+    /// Create a new handler with intercept support
+    pub fn with_intercept(
+        config: ProxyConfig, 
+        scan_tx: Option<ScanSender>,
+        intercept_state: InterceptState,
+    ) -> Self {
+        Self {
+            config,
+            stats: Arc::new(RwLock::new(ProxyStats::default())),
+            scan_tx,
+            request_map: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            conn_to_request: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            bypass_hosts: Arc::new(RwLock::new(HashSet::new())),
+            fail_counts: Arc::new(RwLock::new(HashMap::new())),
+            conn_to_host: Arc::new(RwLock::new(HashMap::new())),
+            intercept_state: Some(intercept_state),
         }
     }
 
@@ -484,7 +550,7 @@ impl HttpHandler for PassiveProxyHandler {
 
                         // 同时保存连接键到请求ID的映射
                         let mut conn_map = self.conn_to_request.write().await;
-                        conn_map.insert(conn_key, request_id);
+                        conn_map.insert(conn_key, request_id.clone());
 
                         // 限制缓存大小
                         if request_map.len() > 1000 {
@@ -508,8 +574,83 @@ impl HttpHandler for PassiveProxyHandler {
                     }
 
                     // 发送到扫描器
-                    if let Err(e) = tx.send(ScanTask::Request(req_ctx)) {
+                    if let Err(e) = tx.send(ScanTask::Request(req_ctx.clone())) {
                         warn!("Failed to send request to scanner: {}", e);
+                    }
+
+                    // 检查是否启用了拦截模式（跳过 CONNECT 请求）
+                    if !is_https {
+                        if let Some(intercept_state) = &self.intercept_state {
+                            let intercept_enabled = *intercept_state.enabled.read().await;
+                            if intercept_enabled {
+                                if let Some(pending_tx) = &intercept_state.pending_tx {
+                                    // 创建 oneshot channel 等待用户操作
+                                    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                                    
+                                    // 解析 URL path
+                                    let path = uri.path_and_query()
+                                        .map(|pq| pq.to_string())
+                                        .unwrap_or_else(|| uri.path().to_string());
+                                    
+                                    let pending_request = PendingInterceptRequest {
+                                        id: request_id.clone(),
+                                        method: req_ctx.method.clone(),
+                                        url: req_ctx.url.clone(),
+                                        path,
+                                        protocol: if req_ctx.is_https { "HTTPS".to_string() } else { "HTTP/1.1".to_string() },
+                                        headers: req_ctx.headers.clone(),
+                                        body: if req_ctx.body.is_empty() { None } else { String::from_utf8(req_ctx.body.clone()).ok() },
+                                        timestamp: chrono::Utc::now().timestamp_millis(),
+                                        response_tx,
+                                    };
+                                    
+                                    // 发送到待处理队列
+                                    if let Err(e) = pending_tx.send(pending_request) {
+                                        warn!("Failed to send intercept request: {}", e);
+                                        return RequestOrResponse::Request(new_req);
+                                    }
+                                    
+                                    info!("Request {} intercepted, waiting for user action", request_id);
+                                    
+                                    // 等待用户操作（带超时）
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_secs(300), // 5 minutes timeout
+                                        response_rx
+                                    ).await {
+                                        Ok(Ok(action)) => {
+                                            match action {
+                                                InterceptAction::Forward(modified_content) => {
+                                                    info!("Request {} forwarded by user", request_id);
+                                                    if let Some(_content) = modified_content {
+                                                        // TODO: Parse modified content and rebuild request
+                                                        // For now, just forward the original request
+                                                    }
+                                                    return RequestOrResponse::Request(new_req);
+                                                }
+                                                InterceptAction::Drop => {
+                                                    info!("Request {} dropped by user", request_id);
+                                                    // Return an empty response (connection reset)
+                                                    return RequestOrResponse::Response(
+                                                        Response::builder()
+                                                            .status(444) // Connection Closed Without Response
+                                                            .body(Body::empty())
+                                                            .unwrap_or_else(|_| Response::new(Body::empty()))
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        Ok(Err(_)) => {
+                                            warn!("Intercept channel closed for request {}, forwarding", request_id);
+                                            return RequestOrResponse::Request(new_req);
+                                        }
+                                        Err(_) => {
+                                            warn!("Intercept timeout for request {}, forwarding", request_id);
+                                            return RequestOrResponse::Request(new_req);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // 返回修改后的请求
@@ -566,6 +707,66 @@ impl HttpHandler for PassiveProxyHandler {
                                 conn_key
                             );
 
+                            // 检查是否需要拦截响应
+                            let mut final_response = new_res;
+                            if let Some(intercept_state) = &self.intercept_state {
+                                let response_intercept_enabled = *intercept_state.response_enabled.read().await;
+                                
+                                if response_intercept_enabled {
+                                    if let Some(pending_tx) = &intercept_state.pending_response_tx {
+                                        let response_id = uuid::Uuid::new_v4().to_string();
+                                        let (action_tx, action_rx) = tokio::sync::oneshot::channel();
+                                        
+                                        // 发送拦截响应到待处理队列
+                                        let body_string = String::from_utf8_lossy(&resp_ctx.body).to_string();
+                                        let pending_response = PendingInterceptResponse {
+                                            id: response_id.clone(),
+                                            request_id: request_id.clone(),
+                                            status: resp_ctx.status,
+                                            headers: resp_ctx.headers.clone(),
+                                            body: Some(body_string),
+                                            timestamp: chrono::Utc::now().timestamp_millis(),
+                                            response_tx: action_tx,
+                                        };
+                                        
+                                        if pending_tx.send(pending_response).is_ok() {
+                                            info!("Response intercepted: {} (status: {})", response_id, resp_ctx.status);
+                                            
+                                            // 等待用户操作（最多30秒）
+                                            match tokio::time::timeout(
+                                                std::time::Duration::from_secs(30),
+                                                action_rx
+                                            ).await {
+                                                Ok(Ok(InterceptAction::Forward(modified_content))) => {
+                                                    info!("Response {} forwarded", response_id);
+                                                    if let Some(content) = modified_content {
+                                                        // 用户修改了响应，重新构建
+                                                        final_response = Response::builder()
+                                                            .status(resp_ctx.status)
+                                                            .body(Body::from(content))
+                                                            .unwrap_or_else(|_| Response::new(Body::from("")));
+                                                    }
+                                                }
+                                                Ok(Ok(InterceptAction::Drop)) => {
+                                                    info!("Response {} dropped", response_id);
+                                                    // 返回一个空响应
+                                                    return Response::builder()
+                                                        .status(204)
+                                                        .body(Body::empty())
+                                                        .unwrap_or_else(|_| Response::new(Body::from("")));
+                                                }
+                                                Ok(Err(_)) => {
+                                                    warn!("Response intercept channel closed for {}", response_id);
+                                                }
+                                                Err(_) => {
+                                                    warn!("Response intercept timeout for {}, forwarding", response_id);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // 发送到扫描器
                             if let Err(e) = tx.send(ScanTask::Response(resp_ctx)) {
                                 warn!("Failed to send response to scanner: {}", e);
@@ -580,8 +781,8 @@ impl HttpHandler for PassiveProxyHandler {
                                 conn_map.remove(&conn_key);
                             }
 
-                            // 返回修改后的响应
-                            new_res
+                            // 返回响应
+                            final_response
                         }
                         Err(e) => {
                             error!("Failed to build response context: {}", e);
@@ -665,6 +866,7 @@ pub struct ProxyService {
     stats: Arc<RwLock<ProxyStats>>,
     actual_port: Arc<RwLock<Option<u16>>>,
     ca_dir: std::path::PathBuf,
+    intercept_state: Option<InterceptState>,
 }
 
 impl ProxyService {
@@ -680,6 +882,7 @@ impl ProxyService {
             stats: Arc::new(RwLock::new(ProxyStats::default())),
             actual_port: Arc::new(RwLock::new(None)),
             ca_dir,
+            intercept_state: None,
         }
     }
 
@@ -691,6 +894,19 @@ impl ProxyService {
             stats: Arc::new(RwLock::new(ProxyStats::default())),
             actual_port: Arc::new(RwLock::new(None)),
             ca_dir,
+            intercept_state: None,
+        }
+    }
+    
+    /// 创建代理服务实例（支持拦截）
+    pub fn with_intercept(config: ProxyConfig, ca_dir: std::path::PathBuf, intercept_state: InterceptState) -> Self {
+        Self {
+            config,
+            handle: Arc::new(RwLock::new(None)),
+            stats: Arc::new(RwLock::new(ProxyStats::default())),
+            actual_port: Arc::new(RwLock::new(None)),
+            ca_dir,
+            intercept_state: Some(intercept_state),
         }
     }
 
@@ -758,8 +974,12 @@ impl ProxyService {
         // 获取 CA authority
         let ca = ca_service.get_ca()?;
 
-        // 创建处理器
-        let handler = PassiveProxyHandler::new(self.config.clone(), scan_tx);
+        // 创建处理器（如果有拦截状态，则使用支持拦截的构造器）
+        let handler = if let Some(intercept_state) = &self.intercept_state {
+            PassiveProxyHandler::with_intercept(self.config.clone(), scan_tx, intercept_state.clone())
+        } else {
+            PassiveProxyHandler::new(self.config.clone(), scan_tx)
+        };
         let stats = handler.stats();
 
         // 启动代理（支持 HTTPS MITM）

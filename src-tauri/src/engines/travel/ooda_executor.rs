@@ -7,7 +7,9 @@ use super::guardrails::GuardrailManager;
 use super::threat_intel::ThreatIntelManager;
 use super::engine_dispatcher::EngineDispatcher;
 use super::memory_integration::TravelMemoryIntegration;
-use crate::utils::ordered_message::{emit_message_chunk_arc, ChunkType, ArchitectureType};
+use crate::engines::llm_client::{LlmClient, create_client as create_llm_client};
+use crate::utils::message_emitter::{StandardMessageEmitter, TravelPhaseStep, TravelAction};
+use crate::utils::ordered_message::ArchitectureType;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -73,65 +75,56 @@ impl OodaExecutor {
         self
     }
 
-    /// 发送消息到前端
-    fn emit_phase_message(&self, stage: &str, chunk_type: ChunkType, content: &str, structured_data: Option<serde_json::Value>) {
-        if let (Some(app_handle), Some(execution_id), Some(message_id)) = (&self.app_handle, &self.execution_id, &self.message_id) {
-            emit_message_chunk_arc(
-                app_handle,
-                execution_id,
-                message_id,
-                self.conversation_id.as_deref(),
-                chunk_type,
-                content,
-                false,
-                Some(stage),
-                None,
-                Some(ArchitectureType::Travel),
-                structured_data,
-            );
+    /// 创建消息发送器
+    fn create_emitter(&self) -> Option<StandardMessageEmitter> {
+        if let (Some(app_handle), Some(execution_id), Some(message_id)) = 
+            (&self.app_handle, &self.execution_id, &self.message_id) 
+        {
+            Some(StandardMessageEmitter::new(
+                app_handle.clone(),
+                execution_id.clone(),
+                message_id.clone(),
+                self.conversation_id.clone(),
+                ArchitectureType::Travel,
+            ))
+        } else {
+            None
         }
     }
 
-    /// 发送阶段开始消息
-    fn emit_phase_start(&self, phase_name: &str) {
-        self.emit_phase_message(
-            phase_name,
-            ChunkType::Thinking,
-            &format!("🔄 Starting {} phase...", phase_name),
-            Some(serde_json::json!({
-                "phase": phase_name,
-                "status": "started"
-            }))
-        );
+    /// 发送阶段思考（流式）
+    fn emit_thought(&self, cycle: u32, phase: &str, thought: &str) {
+        if let Some(emitter) = self.create_emitter() {
+            emitter.emit_travel_thought(cycle, phase, thought);
+        }
     }
 
-    /// 发送阶段完成消息
-    fn emit_phase_complete(&self, phase_name: &str, output: Option<&serde_json::Value>) {
-        let content = format!("✅ {} phase completed", phase_name);
-        self.emit_phase_message(
-            phase_name,
-            ChunkType::Thinking,
-            &content,
-            Some(serde_json::json!({
-                "phase": phase_name,
-                "status": "completed",
-                "output": output
-            }))
-        );
+    /// 发送工具调用开始
+    fn emit_tool_start(&self, cycle: u32, phase: &str, tool: &str, args: &serde_json::Value) {
+        if let Some(emitter) = self.create_emitter() {
+            emitter.emit_travel_tool_start(cycle, phase, tool, args);
+        }
     }
 
-    /// 发送阶段错误消息
-    fn emit_phase_error(&self, phase_name: &str, error: &str) {
-        self.emit_phase_message(
-            phase_name,
-            ChunkType::Error,
-            &format!("❌ {} phase error: {}", phase_name, error),
-            Some(serde_json::json!({
-                "phase": phase_name,
-                "status": "error",
-                "error": error
-            }))
-        );
+    /// 发送工具调用完成
+    fn emit_tool_complete(&self, cycle: u32, phase: &str, tool: &str, args: &serde_json::Value, result: &serde_json::Value, success: bool) {
+        if let Some(emitter) = self.create_emitter() {
+            emitter.emit_travel_tool_complete(cycle, phase, tool, args, result, success);
+        }
+    }
+
+    /// 发送阶段完成
+    fn emit_phase_complete(&self, cycle: u32, phase: &str, output: Option<serde_json::Value>) {
+        if let Some(emitter) = self.create_emitter() {
+            emitter.emit_travel_phase_complete(cycle, phase, output);
+        }
+    }
+
+    /// 发送阶段错误
+    fn emit_phase_error(&self, cycle: u32, phase: &str, error: &str) {
+        if let Some(emitter) = self.create_emitter() {
+            emitter.emit_travel_phase_error(cycle, phase, error);
+        }
     }
 
     /// 执行单次OODA循环
@@ -222,11 +215,15 @@ impl OodaExecutor {
         cycle: &mut OodaCycle,
         context: &mut HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        log::info!("Executing Observe phase");
-        self.emit_phase_start("Observe");
+        let cycle_num = cycle.cycle_number;
+        log::info!("Executing Observe phase (cycle #{})", cycle_num);
+        
+        // 发送阶段开始
+        self.emit_thought(cycle_num, "Observe", "[PHASE_START] Starting Observe phase - gathering target information...");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Observe;
+        let mut tool_calls = Vec::new();
 
         // 1. 查询Memory:获取相似任务经验
         if let Some(memory_integration) = &self.memory_integration {
@@ -243,12 +240,7 @@ impl OodaExecutor {
             {
                 Ok(experiences) => {
                     log::info!("Found {} similar experiences from memory", experiences.len());
-                    self.emit_phase_message(
-                        "Observe",
-                        ChunkType::Content,
-                        &format!("📚 Found {} similar experiences from memory", experiences.len()),
-                        None
-                    );
+                    self.emit_thought(cycle_num, "Observe", &format!("[MEMORY] Found {} similar experiences from memory", experiences.len()));
                     context.insert(
                         "memory_experiences".to_string(),
                         serde_json::to_value(&experiences).unwrap_or(serde_json::json!([]))
@@ -256,12 +248,7 @@ impl OodaExecutor {
                 }
                 Err(e) => {
                     log::warn!("Failed to query memory experiences: {}", e);
-                    self.emit_phase_message(
-                        "Observe",
-                        ChunkType::Content,
-                        &format!("⚠️ Memory query failed: {}", e),
-                        None
-                    );
+                    self.emit_thought(cycle_num, "Observe", &format!("[WARNING] Memory query failed: {}", e));
                 }
             }
         }
@@ -273,21 +260,12 @@ impl OodaExecutor {
             .check_observe_phase(&target_info)
             .await?;
 
-        self.emit_phase_message(
-            "Observe",
-            ChunkType::Content,
-            &format!("🛡️ Guardrail checks: {} items checked", guardrail_checks.len()),
-            None
-        );
+        self.emit_thought(cycle_num, "Observe", &format!("[GUARDRAIL] Guardrail checks: {} items passed", guardrail_checks.len()));
 
-        // 3. 收集目标信息
-        let observations = self.collect_observations(context).await?;
-        self.emit_phase_message(
-            "Observe",
-            ChunkType::Content,
-            "🔍 Target observations collected",
-            None
-        );
+        // 3. 收集目标信息（带工具调用追踪）
+        let observations = self.collect_observations_with_tracking(cycle_num, context, &mut tool_calls).await?;
+        
+        self.emit_thought(cycle_num, "Observe", "[COMPLETE] Target observations collected");
 
         // 4. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
@@ -298,7 +276,7 @@ impl OodaExecutor {
             input: target_info,
             output: Some(serde_json::to_value(&observations)?),
             guardrail_checks,
-            tool_calls: vec![],
+            tool_calls,
             error: None,
         };
 
@@ -307,7 +285,8 @@ impl OodaExecutor {
         // 5. 更新上下文
         context.insert("observations".to_string(), serde_json::to_value(&observations)?);
 
-        self.emit_phase_complete("Observe", None);
+        // 发送阶段完成
+        self.emit_phase_complete(cycle_num, "Observe", Some(serde_json::to_value(&observations)?));
         Ok(())
     }
 
@@ -317,8 +296,10 @@ impl OodaExecutor {
         cycle: &mut OodaCycle,
         context: &mut HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        log::info!("Executing Orient phase");
-        self.emit_phase_start("Orient");
+        let cycle_num = cycle.cycle_number;
+        log::info!("Executing Orient phase (cycle #{})", cycle_num);
+        
+        self.emit_thought(cycle_num, "Orient", "[PHASE_START] Starting Orient phase - analyzing observations...");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Orient;
@@ -327,18 +308,12 @@ impl OodaExecutor {
 
         // 1. 查询Memory:获取知识图谱信息
         if let Some(memory_integration) = &self.memory_integration {
-            // 提取实体
             let entities = self.extract_entities(&observations);
             
             match memory_integration.query_knowledge_graph(&entities).await {
                 Ok(knowledge_entities) => {
                     log::info!("Found {} knowledge entities from memory", knowledge_entities.len());
-                    self.emit_phase_message(
-                        "Orient",
-                        ChunkType::Content,
-                        &format!("🧠 Found {} knowledge entities", knowledge_entities.len()),
-                        None
-                    );
+                    self.emit_thought(cycle_num, "Orient", &format!("🧠 Found {} knowledge entities", knowledge_entities.len()));
                     context.insert(
                         "memory_knowledge".to_string(),
                         serde_json::to_value(&knowledge_entities).unwrap_or(serde_json::json!([]))
@@ -346,24 +321,14 @@ impl OodaExecutor {
                 }
                 Err(e) => {
                     log::warn!("Failed to query knowledge graph: {}", e);
-                    self.emit_phase_message(
-                        "Orient",
-                        ChunkType::Content,
-                        &format!("⚠️ Knowledge graph query failed: {}", e),
-                        None
-                    );
+                    self.emit_thought(cycle_num, "Orient", &format!("[WARNING] Knowledge graph query failed: {}", e));
                 }
             }
         }
 
         // 2. 查询威胁情报
         let threat_query = self.build_threat_query(&observations);
-        self.emit_phase_message(
-            "Orient",
-            ChunkType::Content,
-            "🔍 Querying threat intelligence...",
-            None
-        );
+        self.emit_thought(cycle_num, "Orient", "[SEARCH] Querying threat intelligence...");
         
         let mut threat_context = HashMap::new();
         if let Some(tech) = observations.get("technology").and_then(|v| v.as_str()) {
@@ -377,12 +342,7 @@ impl OodaExecutor {
 
         // 3. 分析威胁
         let vulnerabilities = self.identify_vulnerabilities(&observations, &threats);
-        self.emit_phase_message(
-            "Orient",
-            ChunkType::Content,
-            &format!("⚠️ Identified {} vulnerabilities", vulnerabilities.len()),
-            None
-        );
+        self.emit_thought(cycle_num, "Orient", &format!("[WARNING] Identified {} vulnerabilities", vulnerabilities.len()));
 
         let analysis = self
             .threat_intel_manager
@@ -395,14 +355,9 @@ impl OodaExecutor {
             .check_orient_phase(&analysis)
             .await?;
 
-        self.emit_phase_message(
-            "Orient",
-            ChunkType::Content,
-            &format!("🛡️ Guardrail checks: {} items checked", guardrail_checks.len()),
-            None
-        );
+        self.emit_thought(cycle_num, "Orient", &format!("[GUARDRAIL] Guardrail checks: {} items passed", guardrail_checks.len()));
 
-        // 4. 记录阶段执行
+        // 5. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
             phase: OodaPhase::Orient,
             started_at,
@@ -417,10 +372,10 @@ impl OodaExecutor {
 
         cycle.add_phase_execution(phase_execution);
 
-        // 5. 更新上下文
+        // 6. 更新上下文
         context.insert("threat_analysis".to_string(), serde_json::to_value(&analysis)?);
 
-        self.emit_phase_complete("Orient", None);
+        self.emit_phase_complete(cycle_num, "Orient", Some(serde_json::to_value(&analysis)?));
         Ok(())
     }
 
@@ -431,8 +386,10 @@ impl OodaExecutor {
         task_complexity: TaskComplexity,
         context: &mut HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        log::info!("Executing Decide phase");
-        self.emit_phase_start("Decide");
+        let cycle_num = cycle.cycle_number;
+        log::info!("Executing Decide phase (cycle #{})", cycle_num);
+        
+        self.emit_thought(cycle_num, "Decide", "[PHASE_START] Starting Decide phase - generating action plan...");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Decide;
@@ -446,12 +403,7 @@ impl OodaExecutor {
             match memory_integration.get_plan_templates(task_type).await {
                 Ok(templates) => {
                     log::info!("Found {} plan templates from memory", templates.len());
-                    self.emit_phase_message(
-                        "Decide",
-                        ChunkType::PlanInfo,
-                        &format!("📋 Found {} plan templates", templates.len()),
-                        None
-                    );
+                    self.emit_thought(cycle_num, "Decide", &format!("[TEMPLATE] Found {} plan templates", templates.len()));
                     context.insert(
                         "memory_plan_templates".to_string(),
                         serde_json::to_value(&templates).unwrap_or(serde_json::json!([]))
@@ -459,12 +411,7 @@ impl OodaExecutor {
                 }
                 Err(e) => {
                     log::warn!("Failed to query plan templates: {}", e);
-                    self.emit_phase_message(
-                        "Decide",
-                        ChunkType::Content,
-                        &format!("⚠️ Plan template query failed: {}", e),
-                        None
-                    );
+                    self.emit_thought(cycle_num, "Decide", &format!("[WARNING] Plan template query failed: {}", e));
                 }
             }
         }
@@ -475,16 +422,7 @@ impl OodaExecutor {
 
         // 3. 生成行动计划
         let action_plan = self.generate_action_plan(&analysis, task_complexity, context)?;
-        self.emit_phase_message(
-            "Decide",
-            ChunkType::PlanInfo,
-            &format!("📝 Generated action plan with {} steps", action_plan.steps.len()),
-            Some(serde_json::json!({
-                "plan_name": action_plan.name,
-                "steps_count": action_plan.steps.len(),
-                "estimated_duration": action_plan.estimated_duration
-            }))
-        );
+        self.emit_thought(cycle_num, "Decide", &format!("[PLAN] Generated action plan: {} ({} steps)", action_plan.name, action_plan.steps.len()));
 
         // 4. 护栏检查
         let guardrail_checks = self
@@ -492,12 +430,7 @@ impl OodaExecutor {
             .check_decide_phase(&action_plan)
             .await?;
 
-        self.emit_phase_message(
-            "Decide",
-            ChunkType::Content,
-            &format!("🛡️ Guardrail checks: {} items checked", guardrail_checks.len()),
-            None
-        );
+        self.emit_thought(cycle_num, "Decide", &format!("[GUARDRAIL] Guardrail checks: {} items passed", guardrail_checks.len()));
 
         // 5. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
@@ -514,10 +447,10 @@ impl OodaExecutor {
 
         cycle.add_phase_execution(phase_execution);
 
-        // 5. 更新上下文
+        // 6. 更新上下文
         context.insert("action_plan".to_string(), serde_json::to_value(&action_plan)?);
 
-        self.emit_phase_complete("Decide", None);
+        self.emit_phase_complete(cycle_num, "Decide", Some(serde_json::to_value(&action_plan)?));
         Ok(())
     }
 
@@ -528,8 +461,10 @@ impl OodaExecutor {
         task_complexity: TaskComplexity,
         context: &mut HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        log::info!("Executing Act phase");
-        self.emit_phase_start("Act");
+        let cycle_num = cycle.cycle_number;
+        log::info!("Executing Act phase (cycle #{})", cycle_num);
+        
+        self.emit_thought(cycle_num, "Act", "[PHASE_START] Starting Act phase - executing action plan...");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Act;
@@ -538,15 +473,7 @@ impl OodaExecutor {
         let plan_value = context.get("action_plan").cloned().unwrap_or(serde_json::json!({}));
         let action_plan: ActionPlan = serde_json::from_value(plan_value.clone())?;
 
-        self.emit_phase_message(
-            "Act",
-            ChunkType::Content,
-            &format!("⚙️ Starting execution of action plan: {}", action_plan.name),
-            Some(serde_json::json!({
-                "plan_name": action_plan.name,
-                "steps_count": action_plan.steps.len()
-            }))
-        );
+        self.emit_thought(cycle_num, "Act", &format!("[EXECUTE] Executing plan: {} ({} steps)", action_plan.name, action_plan.steps.len()));
 
         // 2. 最终护栏检查
         let execution_context = serde_json::json!({
@@ -557,12 +484,7 @@ impl OodaExecutor {
             .check_act_phase(&action_plan, &execution_context)
             .await?;
 
-        self.emit_phase_message(
-            "Act",
-            ChunkType::Content,
-            &format!("🛡️ Final guardrail checks: {} items checked", guardrail_checks.len()),
-            None
-        );
+        self.emit_thought(cycle_num, "Act", &format!("[GUARDRAIL] Final guardrail checks: {} items passed", guardrail_checks.len()));
 
         // 3. 调度执行
         let mut exec_context = HashMap::new();
@@ -570,8 +492,8 @@ impl OodaExecutor {
             exec_context.insert(k.clone(), v.clone());
         }
 
-        // 传递消息相关ID到dispatcher
-        if let Some(app_handle) = &self.app_handle {
+        // 传递消息相关ID和cycle_number到dispatcher
+        if let Some(_app_handle) = &self.app_handle {
             exec_context.insert("_app_handle".to_string(), serde_json::json!({}));
         }
         if let Some(execution_id) = &self.execution_id {
@@ -583,25 +505,16 @@ impl OodaExecutor {
         if let Some(conversation_id) = &self.conversation_id {
             exec_context.insert("_conversation_id".to_string(), serde_json::Value::String(conversation_id.clone()));
         }
+        exec_context.insert("_cycle_number".to_string(), serde_json::json!(cycle_num));
 
-        self.emit_phase_message(
-            "Act",
-            ChunkType::Content,
-            "🚀 Dispatching execution to appropriate engine...",
-            None
-        );
+        self.emit_thought(cycle_num, "Act", "[DISPATCH] Dispatching execution to appropriate engine...");
 
         let execution_result = self
             .engine_dispatcher
             .dispatch(task_complexity, &action_plan, &exec_context)
             .await?;
 
-        self.emit_phase_message(
-            "Act",
-            ChunkType::Content,
-            "✅ Execution completed",
-            None
-        );
+        self.emit_thought(cycle_num, "Act", "[SUCCESS] Execution completed");
 
         // 4. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
@@ -619,8 +532,10 @@ impl OodaExecutor {
         cycle.add_phase_execution(phase_execution);
 
         // 5. 更新上下文
-        context.insert("execution_result".to_string(), execution_result);
+        context.insert("execution_result".to_string(), execution_result.clone());
 
+        // 发送阶段完成
+        self.emit_phase_complete(cycle_num, "Act", Some(execution_result));
         Ok(())
     }
 
@@ -695,6 +610,58 @@ impl OodaExecutor {
         }
     }
 
+    /// 收集观察信息（带工具调用追踪）
+    async fn collect_observations_with_tracking(
+        &self,
+        cycle_num: u32,
+        context: &HashMap<String, serde_json::Value>,
+        tool_calls: &mut Vec<ToolCallRecord>,
+    ) -> Result<HashMap<String, serde_json::Value>> {
+        let mut observations = HashMap::new();
+
+        let target = context.get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let task_type = context.get("task_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let query = context.get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        observations.insert("target".to_string(), serde_json::json!(target));
+        observations.insert("task_type".to_string(), serde_json::json!(task_type));
+
+        log::info!("Collecting observations for task_type: {}, target: {} (cycle #{})", task_type, target, cycle_num);
+
+        // 使用 LLM 动态规划 Observe 流程（使用内置 LlmClient）
+        let llm_client = match &self.engine_dispatcher.ai_service {
+            Some(ai_service) => Some(create_llm_client(ai_service)),
+            None => {
+                log::error!("Travel OODA: AI service not available, cannot create LLM client");
+                None
+            }
+        };
+
+        if let Some(client) = llm_client {
+            match self.plan_observation_with_llm_tracked(&client, cycle_num, task_type, target, query, context, tool_calls).await {
+                Ok(planned_observations) => {
+                    for (key, value) in planned_observations {
+                        observations.insert(key, value);
+                    }
+                }
+                Err(e) => {
+                    log::error!("Travel OODA: LLM observation planning failed: {}", e);
+                    return Err(anyhow!("LLM observation planning failed: {}", e));
+                }
+            }
+        } else {
+            return Err(anyhow!("Travel LLM client not available"));
+        }
+
+        Ok(observations)
+    }
+
     /// 收集观察信息
     /// 使用 LLM 动态规划 Observe 流程
     async fn collect_observations(
@@ -719,33 +686,38 @@ impl OodaExecutor {
 
         log::info!("Collecting observations for task_type: {}, target: {}", task_type, target);
 
-        // 使用 LLM 动态规划 Observe 流程
-        if let Some(ai_service) = &self.engine_dispatcher.ai_service {
-            match self.plan_observation_with_llm(ai_service, task_type, target, query, context).await {
+        // 使用 LLM 动态规划 Observe 流程（使用内置 LlmClient）
+        let llm_client = match &self.engine_dispatcher.ai_service {
+            Some(ai_service) => Some(create_llm_client(ai_service)),
+            None => {
+                log::error!("Travel OODA: AI service not available, cannot create LLM client");
+                None
+            }
+        };
+
+        if let Some(client) = llm_client {
+            match self.plan_observation_with_llm(&client, task_type, target, query, context).await {
                 Ok(planned_observations) => {
-                    // 执行 LLM 规划的观察步骤
                     for (key, value) in planned_observations {
                         observations.insert(key, value);
                     }
                 }
                 Err(e) => {
-                    log::warn!("LLM observation planning failed: {}, falling back to default", e);
-                    // 降级到默认流程
-                    self.collect_observations_fallback(target, task_type, context, &mut observations).await;
+                    log::error!("Travel OODA: LLM observation planning failed: {}", e);
+                    return Err(anyhow!("LLM observation planning failed: {}", e));
                 }
             }
         } else {
-            log::warn!("No AI service available, using fallback observation collection");
-            self.collect_observations_fallback(target, task_type, context, &mut observations).await;
+            return Err(anyhow!("Travel LLM client not available"));
         }
 
         Ok(observations)
     }
 
-    /// 使用 LLM 规划观察流程
+    /// 使用 LLM 规划观察流程（使用内置 LlmClient）
     async fn plan_observation_with_llm(
         &self,
-        ai_service: &Arc<crate::services::ai::AiService>,
+        llm_client: &LlmClient,
         task_type: &str,
         target: &str,
         query: &str,
@@ -762,32 +734,10 @@ impl OodaExecutor {
             &available_tools,
         ).await?;
 
-        // 调用 LLM（返回完整响应）
-        let response = ai_service
-            .send_message_stream(
-                Some(&user_prompt),
-                Some(&system_prompt),
-                None, // 不关联会话
-                None, // 无 execution_id
-                false, // 不流式发送到前端
-                false, // 不是最终消息
-                None,
-                None, // attachments
-            )
+        // 调用 LLM（使用内置客户端）
+        let response = llm_client
+            .completion(Some(&system_prompt), &user_prompt)
             .await?;
-
-        // 将 LLM 的规划思考以 Travel 架构的 Thinking chunk 发送到前端，便于前端在 "思考过程" 区块中展示
-        // 注意：这里只发送高层 reasoning，避免把完整 JSON 结果再次输出
-        if let Ok(plan_preview) = serde_json::from_str::<serde_json::Value>(&response) {
-            if let Some(reasoning) = plan_preview.get("reasoning").and_then(|v| v.as_str()) {
-                self.emit_phase_message(
-                    "Observe",
-                    ChunkType::Thinking,
-                    &format!("Thought: {}", reasoning),
-                    None,
-                );
-            }
-        }
 
         // 解析 LLM 响应
         let plan: serde_json::Value = self.parse_llm_observation_plan(&response)?;
@@ -831,6 +781,233 @@ impl OodaExecutor {
         }
 
         Ok(observations)
+    }
+
+    /// 使用 LLM 规划观察流程（带工具调用追踪，使用内置 LlmClient）
+    async fn plan_observation_with_llm_tracked(
+        &self,
+        llm_client: &LlmClient,
+        cycle_num: u32,
+        task_type: &str,
+        target: &str,
+        query: &str,
+        context: &HashMap<String, serde_json::Value>,
+        tool_calls: &mut Vec<ToolCallRecord>,
+    ) -> Result<HashMap<String, serde_json::Value>> {
+        let available_tools = self.get_available_tools_for_observation(context).await;
+        
+        let (system_prompt, user_prompt) = self.build_observation_planning_prompt(
+            task_type,
+            target,
+            query,
+            &available_tools,
+        ).await?;
+
+        // 使用内置 LLM 客户端
+        let response = llm_client
+            .completion(Some(&system_prompt), &user_prompt)
+            .await?;
+
+        if let Ok(plan_preview) = serde_json::from_str::<serde_json::Value>(&response) {
+            if let Some(reasoning) = plan_preview.get("reasoning").and_then(|v| v.as_str()) {
+                self.emit_thought(cycle_num, "Observe", &format!("Thought: {}", reasoning));
+            }
+        }
+
+        let plan: serde_json::Value = self.parse_llm_observation_plan(&response)?;
+        let mut observations = HashMap::new();
+        
+        if let Some(steps) = plan.get("steps").and_then(|s| s.as_array()) {
+            log::info!("LLM planned {} observation steps", steps.len());
+            
+            for (idx, step) in steps.iter().enumerate() {
+                let tool_name = step.get("tool")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                let args = step.get("args")
+                    .and_then(|a| a.as_object())
+                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<HashMap<String, serde_json::Value>>())
+                    .unwrap_or_default();
+                
+                let args_value = serde_json::to_value(&args).unwrap_or(serde_json::json!({}));
+                log::info!("Executing observation step {}: {} with args: {:?}", idx + 1, tool_name, args);
+                
+                // 发送工具调用开始
+                self.emit_tool_start(cycle_num, "Observe", tool_name, &args_value);
+                let call_time = SystemTime::now();
+                
+                // 执行工具
+                match self.engine_dispatcher.execute_tool(tool_name, &args, context).await {
+                    Ok(result) => {
+                        // 发送工具调用完成
+                        self.emit_tool_complete(cycle_num, "Observe", tool_name, &args_value, &result, true);
+                        
+                        // 记录工具调用
+                        tool_calls.push(ToolCallRecord {
+                            call_id: Uuid::new_v4().to_string(),
+                            tool_name: tool_name.to_string(),
+                            args: args.clone(),
+                            called_at: call_time,
+                            completed_at: Some(SystemTime::now()),
+                            status: ToolCallStatus::Completed,
+                            result: Some(result.clone()),
+                            error: None,
+                        });
+                        
+                        observations.insert(format!("{}_result", tool_name), result);
+                    }
+                    Err(e) => {
+                        let error_msg = e.to_string();
+                        self.emit_tool_complete(cycle_num, "Observe", tool_name, &args_value, &serde_json::json!({"error": error_msg}), false);
+                        
+                        tool_calls.push(ToolCallRecord {
+                            call_id: Uuid::new_v4().to_string(),
+                            tool_name: tool_name.to_string(),
+                            args: args.clone(),
+                            called_at: call_time,
+                            completed_at: Some(SystemTime::now()),
+                            status: ToolCallStatus::Failed,
+                            result: None,
+                            error: Some(error_msg.clone()),
+                        });
+                        
+                        log::warn!("Observation step {} ({}) failed: {}", idx + 1, tool_name, error_msg);
+                    }
+                }
+            }
+        }
+
+        if let Some(reasoning) = plan.get("reasoning").and_then(|r| r.as_str()) {
+            observations.insert("observation_reasoning".to_string(), serde_json::json!(reasoning));
+        }
+
+        Ok(observations)
+    }
+
+    /// 降级观察流程（带追踪）
+    async fn collect_observations_fallback_tracked(
+        &self,
+        cycle_num: u32,
+        target: &str,
+        task_type: &str,
+        context: &HashMap<String, serde_json::Value>,
+        observations: &mut HashMap<String, serde_json::Value>,
+        tool_calls: &mut Vec<ToolCallRecord>,
+    ) {
+        if target.is_empty() {
+            log::warn!("No target specified, skipping observation collection");
+            return;
+        }
+
+        match task_type {
+            "web_pentest" | "api_pentest" => {
+                if let Some(result) = self.try_tool_with_tracking(cycle_num, "analyze_website", target, context, tool_calls).await {
+                    observations.insert("website_analysis".to_string(), result);
+                }
+                if let Some(result) = self.try_tool_with_tracking(cycle_num, "http_request", target, context, tool_calls).await {
+                    observations.insert("http_response".to_string(), result);
+                }
+            }
+            "code_audit" => {
+                observations.insert("code_target".to_string(), serde_json::json!(target));
+                observations.insert("audit_type".to_string(), serde_json::json!("static_analysis"));
+            }
+            "ctf" => {
+                if target.starts_with("http://") || target.starts_with("https://") {
+                    if let Some(result) = self.try_tool_with_tracking(cycle_num, "http_request", target, context, tool_calls).await {
+                        observations.insert("http_response".to_string(), result);
+                    }
+                } else {
+                    observations.insert("ctf_target".to_string(), serde_json::json!(target));
+                }
+            }
+            _ => {
+                log::warn!("Unknown task type: {}, using basic HTTP observation", task_type);
+                if target.starts_with("http://") || target.starts_with("https://") {
+                    if let Some(result) = self.try_tool_with_tracking(cycle_num, "http_request", target, context, tool_calls).await {
+                        observations.insert("http_response".to_string(), result);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 尝试执行工具（带追踪）
+    async fn try_tool_with_tracking(
+        &self,
+        cycle_num: u32,
+        tool_name: &str,
+        target: &str,
+        context: &HashMap<String, serde_json::Value>,
+        tool_calls: &mut Vec<ToolCallRecord>,
+    ) -> Option<serde_json::Value> {
+        let mut args = HashMap::new();
+        
+        // 根据工具名准备参数
+        match tool_name {
+            "analyze_website" => {
+                let domain = target
+                    .trim_start_matches("http://")
+                    .trim_start_matches("https://")
+                    .split('/')
+                    .next()
+                    .unwrap_or(target)
+                    .split(':')
+                    .next()
+                    .unwrap_or(target);
+                args.insert("domain".to_string(), serde_json::json!(domain));
+            }
+            "http_request" => {
+                args.insert("url".to_string(), serde_json::json!(target));
+                args.insert("method".to_string(), serde_json::json!("GET"));
+            }
+            _ => {
+                args.insert("target".to_string(), serde_json::json!(target));
+            }
+        }
+
+        let args_value = serde_json::to_value(&args).unwrap_or(serde_json::json!({}));
+        
+        self.emit_tool_start(cycle_num, "Observe", tool_name, &args_value);
+        let call_time = SystemTime::now();
+
+        match self.engine_dispatcher.execute_tool(tool_name, &args, context).await {
+            Ok(result) => {
+                self.emit_tool_complete(cycle_num, "Observe", tool_name, &args_value, &result, true);
+                
+                tool_calls.push(ToolCallRecord {
+                    call_id: Uuid::new_v4().to_string(),
+                    tool_name: tool_name.to_string(),
+                    args,
+                    called_at: call_time,
+                    completed_at: Some(SystemTime::now()),
+                    status: ToolCallStatus::Completed,
+                    result: Some(result.clone()),
+                    error: None,
+                });
+                
+                log::info!("Tool {} completed successfully", tool_name);
+                Some(result)
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                self.emit_tool_complete(cycle_num, "Observe", tool_name, &args_value, &serde_json::json!({"error": error_msg}), false);
+                
+                tool_calls.push(ToolCallRecord {
+                    call_id: Uuid::new_v4().to_string(),
+                    tool_name: tool_name.to_string(),
+                    args,
+                    called_at: call_time,
+                    completed_at: Some(SystemTime::now()),
+                    status: ToolCallStatus::Failed,
+                    result: None,
+                    error: Some(error_msg.clone()),
+                });
+                
+                log::warn!("Tool {} failed: {}", tool_name, error_msg);
+                None
+            }
+        }
     }
 
     /// 构建观察规划的 prompt（返回 system prompt 和 user prompt）

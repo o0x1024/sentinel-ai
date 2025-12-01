@@ -1,6 +1,6 @@
 //! 查询分析器模块
 //! 
-//! 负责分析用户查询的特征，包括：
+//! 负责分析用户输入的特征，包括：
 //! - 任务类型识别
 //! - 复杂度评估
 //! - 并行化潜力分析
@@ -60,7 +60,7 @@ impl QueryAnalyzer {
         }
     }
 
-    /// 分析用户查询
+    /// 分析用户输入
     pub async fn analyze_query(&self, user_input: &str) -> Result<QueryAnalysisResult> {
         info!("Starting query analysis for: {}", user_input);
 
@@ -180,9 +180,9 @@ impl QueryAnalyzer {
     fn build_analysis_prompt(&self, user_input: &str) -> String {
         format!(
             r#"
-你是一个专业的任务分析专家，请分析以下用户查询并以JSON格式返回分析结果：
+你是一个专业的任务分析专家，请分析以下用户输入并以JSON格式返回分析结果：
 
-用户查询: "{}"
+用户输入: "{}"
 
 请按以下格式分析：
 {{

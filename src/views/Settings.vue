@@ -44,6 +44,8 @@
                 :custom-provider="customProvider"
                 :ai-usage-stats="aiUsageStats"
                 :saving="saving"
+                :testing-custom-provider="testingCustomProvider"
+                :adding-custom-provider="addingCustomProvider"
                 @test-connection="testConnection"
                 @save-ai-config="saveAiConfig"
                 @test-custom-provider="testCustomProvider"
@@ -286,12 +288,32 @@ const loadAiUsageStats = async () => {
     console.warn('Failed to load AI usage stats', e)
   }
 }
+
+// 单独加载 AI 配置
+const loadAiConfig = async () => {
+  try {
+    const aiConfigData = await invoke('get_ai_config')
+    aiConfig.value = aiConfigData as any
+    console.log('Reloaded AI config:', aiConfig.value)
+  } catch (e) {
+    console.error('Failed to load AI config', e)
+  }
+}
 const customProvider = reactive({
   name: '',
   api_key: '',
   api_base: '',
-  model_id: ''
+  model_id: '',
+  display_name: '',
+  compat_mode: 'openai', // openai, anthropic, rig_openai, rig_anthropic
+  extra_headers_json: '',
+  timeout: 120,
+  max_retries: 3,
 })
+
+// 测试/添加自定义提供商的状态
+const testingCustomProvider = ref(false)
+const addingCustomProvider = ref(false)
 
 // 数据库状态
 const databaseStatus = ref({
@@ -686,13 +708,96 @@ const setDefaultChatModel = async (model: string) => {
 }
 
 const testCustomProvider = async () => {
-  // 测试自定义提供商逻辑
-  dialog.toast.info('测试自定义提供商...')
+  testingCustomProvider.value = true
+  try {
+    // 解析额外请求头
+    let extraHeaders: Record<string, string> = {}
+    if (customProvider.extra_headers_json && customProvider.extra_headers_json.trim()) {
+      try {
+        extraHeaders = JSON.parse(customProvider.extra_headers_json)
+      } catch {
+        dialog.toast.error('额外请求头 JSON 格式无效')
+        return
+      }
+    }
+    
+    const request = {
+      name: customProvider.name.trim(),
+      api_key: customProvider.api_key || null,
+      api_base: customProvider.api_base.trim(),
+      model_id: customProvider.model_id.trim(),
+      compat_mode: customProvider.compat_mode,
+      extra_headers: Object.keys(extraHeaders).length > 0 ? extraHeaders : null,
+      timeout: customProvider.timeout || 120,
+    }
+    
+    dialog.toast.info('正在测试自定义提供商连接...')
+    const result = await invoke('test_custom_provider', { request }) as { success: boolean, message: string }
+    
+    if (result.success) {
+      dialog.toast.success(result.message || '连接测试成功')
+    } else {
+      dialog.toast.error(result.message || '连接测试失败')
+    }
+  } catch (e) {
+    console.error('Test custom provider failed:', e)
+    dialog.toast.error(`测试失败: ${e}`)
+  } finally {
+    testingCustomProvider.value = false
+  }
 }
 
 const addCustomProvider = async () => {
-  // 添加自定义提供商逻辑
-  dialog.toast.success('自定义提供商已添加')
+  addingCustomProvider.value = true
+  try {
+    // 解析额外请求头
+    let extraHeaders: Record<string, string> = {}
+    if (customProvider.extra_headers_json && customProvider.extra_headers_json.trim()) {
+      try {
+        extraHeaders = JSON.parse(customProvider.extra_headers_json)
+      } catch {
+        dialog.toast.error('额外请求头 JSON 格式无效')
+        return
+      }
+    }
+    
+    const providerName = customProvider.name.trim()
+    const displayName = customProvider.display_name.trim() || providerName
+    
+    const request = {
+      name: providerName,
+      display_name: displayName,
+      api_key: customProvider.api_key || null,
+      api_base: customProvider.api_base.trim(),
+      model_id: customProvider.model_id.trim(),
+      compat_mode: customProvider.compat_mode,
+      extra_headers: Object.keys(extraHeaders).length > 0 ? extraHeaders : null,
+      timeout: customProvider.timeout || 120,
+      max_retries: customProvider.max_retries || 3,
+    }
+    
+    await invoke('add_custom_provider', { request })
+    dialog.toast.success(`自定义提供商 "${displayName}" 已添加`)
+    
+    // 重置表单
+    customProvider.name = ''
+    customProvider.display_name = ''
+    customProvider.api_key = ''
+    customProvider.api_base = ''
+    customProvider.model_id = ''
+    customProvider.compat_mode = 'openai'
+    customProvider.extra_headers_json = ''
+    customProvider.timeout = 120
+    customProvider.max_retries = 3
+    
+    // 重新加载 AI 配置
+    await loadAiConfig()
+  } catch (e) {
+    console.error('Add custom provider failed:', e)
+    dialog.toast.error(`添加失败: ${e}`)
+  } finally {
+    addingCustomProvider.value = false
+  }
 }
 
 const applyManualConfig = async (config: any) => {

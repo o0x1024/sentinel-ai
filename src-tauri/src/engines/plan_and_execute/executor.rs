@@ -2,9 +2,11 @@
 //!
 //! 负责按照计划逐步执行子任务，调用具体的工具和服务
 use sentinel_rag::models::AssistantRagRequest;
+use crate::engines::llm_client::{StreamingLlmClient, StreamContent};
 use crate::engines::plan_and_execute::repository::PlanExecuteRepository;
 use crate::engines::plan_and_execute::memory_manager::MemoryManager;
 use crate::engines::plan_and_execute::replanner::Replanner;
+use crate::engines::plan_and_execute::resource_tracker::{ResourceTracker, ResourceType};
 use crate::engines::plan_and_execute::types::*;
 use crate::engines::{ExecutionError, StepExecutionStatus};
 use crate::models::prompt::ArchitectureType;
@@ -21,12 +23,13 @@ use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptRes
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, Instant, UNIX_EPOCH};
 use tauri::AppHandle;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use regex::Regex;
+use futures::future::join_all;
 
 /// 执行器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -429,7 +432,137 @@ pub struct Executor {
     memory_manager: Option<Arc<MemoryManager>>,
     repository: Arc<PlanExecuteRepository>,
     app_handle: Option<Arc<AppHandle>>,
-    cancellation_token: CancellationToken,  // ✅ 新增取消令牌
+    cancellation_token: CancellationToken,
+    resource_tracker: Arc<ResourceTracker>,
+    /// 真实执行指标收集
+    real_metrics: Arc<Mutex<RealExecutionMetrics>>,
+}
+
+/// 真实执行指标（运行时收集）
+#[derive(Debug, Clone, Default)]
+pub struct RealExecutionMetrics {
+    /// 并发执行峰值
+    pub peak_concurrency: u32,
+    /// 当前并发数
+    pub current_concurrency: u32,
+    /// 每个步骤的实际执行时间
+    pub step_durations: HashMap<String, u64>,
+    /// 工具调用次数
+    pub tool_call_count: u32,
+    /// LLM调用次数
+    pub llm_call_count: u32,
+    /// 重试次数
+    pub retry_count: u32,
+    /// 资源使用峰值
+    pub resource_peak: ResourcePeakMetrics,
+}
+
+/// 资源峰值指标
+#[derive(Debug, Clone, Default)]
+pub struct ResourcePeakMetrics {
+    /// 活动浏览器会话数
+    pub browser_sessions: u32,
+    /// 活动代理数
+    pub proxy_count: u32,
+    /// 活动网络连接数
+    pub network_connections: u32,
+}
+
+/// 暂停操作结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PauseResult {
+    /// 操作是否成功
+    pub success: bool,
+    /// 消息
+    pub message: String,
+    /// 暂停时间
+    pub paused_at: Option<SystemTime>,
+    /// 当前执行的步骤
+    pub current_step: Option<String>,
+    /// 已完成的步骤数
+    pub completed_steps: usize,
+}
+
+/// 恢复操作结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeResult {
+    /// 操作是否成功
+    pub success: bool,
+    /// 消息
+    pub message: String,
+    /// 恢复时间
+    pub resumed_at: Option<SystemTime>,
+    /// 剩余步骤数
+    pub remaining_steps: usize,
+}
+
+/// 暂停状态详细信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PauseStatusInfo {
+    /// 是否暂停
+    pub is_paused: bool,
+    /// 是否取消
+    pub is_cancelled: bool,
+    /// 当前执行的步骤
+    pub current_steps: Vec<String>,
+    /// 已完成的步骤
+    pub completed_steps: Vec<String>,
+    /// 失败的步骤
+    pub failed_steps: Vec<String>,
+}
+
+/// 数据流验证结果
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DataFlowValidationResult {
+    /// 验证是否通过
+    pub is_valid: bool,
+    /// 缺失的依赖
+    pub missing_dependencies: Vec<DataFlowIssue>,
+    /// 循环依赖
+    pub circular_dependencies: Vec<DataFlowIssue>,
+    /// 警告信息
+    pub warnings: Vec<DataFlowIssue>,
+}
+
+/// 数据流问题
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataFlowIssue {
+    /// 涉及的步骤索引
+    pub step_index: usize,
+    /// 涉及的步骤名称
+    pub step_name: String,
+    /// 问题类型
+    pub issue_type: DataFlowIssueType,
+    /// 问题描述
+    pub description: String,
+    /// 严重程度
+    pub severity: IssueSeverity,
+}
+
+/// 数据流问题类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DataFlowIssueType {
+    /// 缺失依赖
+    MissingDependency,
+    /// 无效的前置条件
+    InvalidPrecondition,
+    /// 循环依赖
+    CircularDependency,
+    /// 未使用的输出
+    UnusedOutput,
+    /// 类型不匹配
+    TypeMismatch,
+}
+
+/// 问题严重程度
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum IssueSeverity {
+    /// 错误（阻止执行）
+    Error,
+    /// 警告
+    Warning,
+    /// 信息
+    Info,
 }
 
 impl Executor {
@@ -627,7 +760,9 @@ impl Executor {
             memory_manager: None,
             repository,
             app_handle: None,
-            cancellation_token: CancellationToken::new(),  // ✅ 初始化取消令牌
+            cancellation_token: CancellationToken::new(),
+            resource_tracker: Arc::new(ResourceTracker::new()),
+            real_metrics: Arc::new(Mutex::new(RealExecutionMetrics::default())),
         }
     }
 
@@ -653,7 +788,9 @@ impl Executor {
             memory_manager: None,
             repository,
             app_handle: None,
-            cancellation_token: CancellationToken::new(),  // ✅ 初始化取消令牌
+            cancellation_token: CancellationToken::new(),
+            resource_tracker: Arc::new(ResourceTracker::new()),
+            real_metrics: Arc::new(Mutex::new(RealExecutionMetrics::default())),
         }
     }
 
@@ -681,7 +818,9 @@ impl Executor {
             memory_manager: None,
             repository,
             app_handle,
-            cancellation_token: CancellationToken::new(),  // ✅ 初始化取消令牌
+            cancellation_token: CancellationToken::new(),
+            resource_tracker: Arc::new(ResourceTracker::new()),
+            real_metrics: Arc::new(Mutex::new(RealExecutionMetrics::default())),
         }
     }
 
@@ -710,8 +849,152 @@ impl Executor {
             memory_manager,
             repository,
             app_handle,
-            cancellation_token: CancellationToken::new(),  // ✅ 初始化取消令牌
+            cancellation_token: CancellationToken::new(),
+            resource_tracker: Arc::new(ResourceTracker::new()),
+            real_metrics: Arc::new(Mutex::new(RealExecutionMetrics::default())),
         }
+    }
+    
+    /// 获取资源追踪器
+    pub fn get_resource_tracker(&self) -> Arc<ResourceTracker> {
+        self.resource_tracker.clone()
+    }
+    
+    /// 并发步骤执行（静态方法，用于tokio::spawn）
+    async fn execute_concurrent_step(
+        step: &ExecutionStep,
+        context: &ExecutionContext,
+    ) -> Result<StepResult, PlanAndExecuteError> {
+        let start_time = SystemTime::now();
+        
+        // 获取工具管理器
+        let tool_manager = context.tool_manager.read().await;
+        
+        // 执行工具调用
+        if let Some(tool_config) = &step.tool_config {
+            // 合并参数
+            let mut merged_inputs = tool_config.tool_args.clone();
+            for (k, v) in &step.parameters {
+                merged_inputs.insert(k.clone(), v.clone());
+            }
+            
+            // 替换变量引用
+            let shared_data = context.shared_data.read().await;
+            let mut substituted_inputs = HashMap::new();
+            for (k, v) in &merged_inputs {
+                substituted_inputs.insert(k.clone(), v.clone());
+            }
+            drop(shared_data);
+            
+            let tool_params = ToolExecutionParams {
+                inputs: substituted_inputs,
+                context: HashMap::new(),
+                timeout: Some(Duration::from_secs(tool_config.timeout.unwrap_or(60))),
+                execution_id: None,
+            };
+            
+            let timeout_duration = Duration::from_secs(tool_config.timeout.unwrap_or(60));
+            
+            match timeout(
+                timeout_duration,
+                tool_manager.call_tool(&tool_config.tool_name, tool_params),
+            )
+            .await
+            {
+                Ok(Ok(result)) => {
+                    let status = if result.status == ExecutionStatus::Completed {
+                        StepExecutionStatus::Completed
+                    } else {
+                        StepExecutionStatus::Failed
+                    };
+                    
+                    Ok(StepResult {
+                        step_id: step.id.clone(),
+                        status,
+                        started_at: start_time,
+                        completed_at: Some(SystemTime::now()),
+                        duration_ms: start_time.elapsed().unwrap_or_default().as_millis() as u64,
+                        result_data: Some(result.output),
+                        error: None,
+                        retry_count: 0,
+                        tool_result: None,
+                    })
+                }
+                Ok(Err(error)) => {
+                    Ok(StepResult {
+                        step_id: step.id.clone(),
+                        status: StepExecutionStatus::Failed,
+                        started_at: start_time,
+                        completed_at: Some(SystemTime::now()),
+                        duration_ms: start_time.elapsed().unwrap_or_default().as_millis() as u64,
+                        result_data: None,
+                        error: Some(error.to_string()),
+                        retry_count: 0,
+                        tool_result: None,
+                    })
+                }
+                Err(_) => {
+                    Ok(StepResult {
+                        step_id: step.id.clone(),
+                        status: StepExecutionStatus::Failed,
+                        started_at: start_time,
+                        completed_at: Some(SystemTime::now()),
+                        duration_ms: start_time.elapsed().unwrap_or_default().as_millis() as u64,
+                        result_data: None,
+                        error: Some("Tool call timeout".to_string()),
+                        retry_count: 0,
+                        tool_result: None,
+                    })
+                }
+            }
+        } else {
+            Err(PlanAndExecuteError::ConfigError(
+                "Concurrent step missing tool config".to_string(),
+            ))
+        }
+    }
+    
+    /// 执行后自动清理泄露的资源
+    pub async fn cleanup_leaked_resources(&self) -> Result<Vec<String>, PlanAndExecuteError> {
+        let cleanup_tasks = self.resource_tracker.get_cleanup_tasks().await;
+        let mut cleaned = Vec::new();
+        
+        if cleanup_tasks.is_empty() {
+            log::info!("No leaked resources to clean up");
+            return Ok(cleaned);
+        }
+        
+        log::warn!("Found {} leaked resources, attempting cleanup", cleanup_tasks.len());
+        
+        // 获取工具管理器
+        let context_guard = self.context.lock().await;
+        if let Some(context) = context_guard.as_ref() {
+            let tool_manager = context.tool_manager.read().await;
+            
+            for (resource, tool_name, args) in cleanup_tasks {
+                log::info!("Cleaning up resource {:?} with tool {}", resource.resource_type, tool_name);
+                
+                let tool_params = ToolExecutionParams {
+                    inputs: args.into_iter().collect(),
+                    context: HashMap::new(),
+                    timeout: Some(Duration::from_secs(30)),
+                    execution_id: None,
+                };
+                
+                match tool_manager.call_tool(&tool_name, tool_params).await {
+                    Ok(_) => {
+                        self.resource_tracker.mark_released(&resource.id).await;
+                        cleaned.push(resource.id.clone());
+                        log::info!("Successfully cleaned up resource {}", resource.id);
+                    }
+                    Err(e) => {
+                        log::error!("Failed to clean up resource {}: {}", resource.id, e);
+                    }
+                }
+            }
+        }
+        
+        Ok(cleaned)
     }
 
     /// 获取执行阶段应使用的AI配置
@@ -1565,6 +1848,196 @@ impl Executor {
         false
     }
 
+    /// 验证计划的数据流完整性
+    pub async fn validate_data_flow(&self, plan: &ExecutionPlan) -> DataFlowValidationResult {
+        let mut result = DataFlowValidationResult::default();
+        
+        // 追踪每个步骤产生的输出
+        let mut available_outputs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        
+        for (index, step) in plan.steps.iter().enumerate() {
+            // 检查此步骤的输入依赖
+            let input_refs = self.extract_input_references(&step.parameters);
+            
+            for input_ref in &input_refs {
+                if !available_outputs.contains(input_ref) && !input_ref.starts_with("task_") {
+                    result.missing_dependencies.push(DataFlowIssue {
+                        step_index: index,
+                        step_name: step.name.clone(),
+                        issue_type: DataFlowIssueType::MissingDependency,
+                        description: format!(
+                            "Step '{}' references '{}' which is not produced by any previous step",
+                            step.name, input_ref
+                        ),
+                        severity: IssueSeverity::Error,
+                    });
+                }
+            }
+            
+            // 检查前置条件引用
+            for precondition in &step.preconditions {
+                let pre_refs = self.extract_condition_references(precondition);
+                for pre_ref in &pre_refs {
+                    if !available_outputs.contains(pre_ref) {
+                        result.missing_dependencies.push(DataFlowIssue {
+                            step_index: index,
+                            step_name: step.name.clone(),
+                            issue_type: DataFlowIssueType::InvalidPrecondition,
+                            description: format!(
+                                "Step '{}' has precondition referencing '{}' which may not be available",
+                                step.name, pre_ref
+                            ),
+                            severity: IssueSeverity::Warning,
+                        });
+                    }
+                }
+            }
+            
+            // 将此步骤的输出添加到可用输出集合
+            available_outputs.insert(format!("step_result_{}", step.name));
+            available_outputs.insert(step.id.clone());
+            
+            // 如果是工具调用，添加工具特定的输出
+            if let Some(tool_config) = &step.tool_config {
+                available_outputs.insert(format!("tool_output_{}", tool_config.tool_name));
+            }
+        }
+        
+        // 检查循环依赖
+        let cycle_result = self.detect_dependency_cycles(plan);
+        if !cycle_result.is_empty() {
+            for cycle in cycle_result {
+                result.circular_dependencies.push(DataFlowIssue {
+                    step_index: 0,
+                    step_name: cycle.clone(),
+                    issue_type: DataFlowIssueType::CircularDependency,
+                    description: format!("Circular dependency detected involving: {}", cycle),
+                    severity: IssueSeverity::Error,
+                });
+            }
+        }
+        
+        // 检查未使用的输出
+        for step in &plan.steps {
+            let output_key = format!("step_result_{}", step.name);
+            let is_used = plan.steps.iter().any(|s| {
+                let refs = self.extract_input_references(&s.parameters);
+                refs.contains(&output_key) || refs.contains(&step.id)
+            });
+            
+            let is_last_step = plan.steps.last().map(|s| s.id == step.id).unwrap_or(false);
+            if !is_used && !is_last_step {
+                result.warnings.push(DataFlowIssue {
+                    step_index: plan.steps.iter().position(|s| s.id == step.id).unwrap_or(0),
+                    step_name: step.name.clone(),
+                    issue_type: DataFlowIssueType::UnusedOutput,
+                    description: format!("Step '{}' output is never used by subsequent steps", step.name),
+                    severity: IssueSeverity::Info,
+                });
+            }
+        }
+        
+        // 设置验证结果
+        result.is_valid = result.missing_dependencies.iter().all(|i| i.severity != IssueSeverity::Error)
+            && result.circular_dependencies.is_empty();
+        
+        log::info!(
+            "Data flow validation complete: valid={}, issues={}",
+            result.is_valid,
+            result.missing_dependencies.len() + result.circular_dependencies.len() + result.warnings.len()
+        );
+        
+        result
+    }
+    
+    /// 从参数中提取输入引用
+    fn extract_input_references(&self, parameters: &HashMap<String, serde_json::Value>) -> Vec<String> {
+        let mut refs = Vec::new();
+        let re = regex::Regex::new(r"\{\{([^}]+)\}\}").unwrap();
+        
+        for value in parameters.values() {
+            self.extract_refs_from_value(value, &re, &mut refs);
+        }
+        
+        refs
+    }
+    
+    /// 从值中递归提取引用
+    fn extract_refs_from_value(&self, value: &serde_json::Value, re: &regex::Regex, refs: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(s) => {
+                for cap in re.captures_iter(s) {
+                    if let Some(m) = cap.get(1) {
+                        let ref_name = m.as_str().trim().to_string();
+                        if !refs.contains(&ref_name) {
+                            refs.push(ref_name);
+                        }
+                    }
+                }
+            }
+            serde_json::Value::Object(obj) => {
+                for v in obj.values() {
+                    self.extract_refs_from_value(v, re, refs);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr {
+                    self.extract_refs_from_value(v, re, refs);
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    /// 从条件表达式中提取引用
+    fn extract_condition_references(&self, condition: &str) -> Vec<String> {
+        let mut refs = Vec::new();
+        let re = regex::Regex::new(r"(?:completed|exists|non_empty_output)\(([^)]+)\)").unwrap();
+        
+        for cap in re.captures_iter(condition) {
+            if let Some(m) = cap.get(1) {
+                refs.push(m.as_str().trim().to_string());
+            }
+        }
+        
+        refs
+    }
+    
+    /// 检测依赖循环
+    fn detect_dependency_cycles(&self, plan: &ExecutionPlan) -> Vec<String> {
+        let mut cycles = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut rec_stack = std::collections::HashSet::new();
+        
+        // 构建依赖图
+        let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+        for step in &plan.steps {
+            let refs = self.extract_input_references(&step.parameters);
+            let deps: Vec<String> = refs.iter()
+                .filter_map(|r| {
+                    // 尝试将引用转换为步骤ID
+                    if r.starts_with("step_result_") {
+                        Some(r.replace("step_result_", ""))
+                    } else {
+                        plan.steps.iter().find(|s| s.id == *r).map(|s| s.name.clone())
+                    }
+                })
+                .collect();
+            graph.insert(step.name.clone(), deps);
+        }
+        
+        // DFS检测循环
+        for step in &plan.steps {
+            if !visited.contains(&step.name) {
+                if self.has_cycle_dfs(&step.name, &graph, &mut visited, &mut rec_stack) {
+                    cycles.push(step.name.clone());
+                }
+            }
+        }
+        
+        cycles
+    }
+
     /// 验证前置条件是否满足
     async fn validate_preconditions(&self, plan: &ExecutionPlan) -> bool {
         let context_guard = self.context.lock().await;
@@ -2162,30 +2635,44 @@ impl Executor {
         // 创建并发控制信号量 (暂未使用，为未来真正的并发实现准备)
         let _semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_steps as usize));
 
-        // 并发执行可并发的工具调用步骤
+        // 真正的并发执行可并发的工具调用步骤
         if !concurrent_steps.is_empty() {
             log::info!(
-                "检测到 {} 个可并发步骤，使用并发执行",
+                "检测到 {} 个可并发步骤，使用真正的并发执行",
                 concurrent_steps.len()
             );
 
-            // 为了简化实现，先串行执行但记录并发能力
+            let execution_id = self.resolve_execution_id(context).await;
+            let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+            
+            // 创建并发任务
+            let semaphore = Arc::clone(&_semaphore);
+            let mut handles = Vec::new();
+            
             for (index, step) in concurrent_steps {
-                log::info!(
-                    "并发模式执行步骤 {}: {} (当前为串行实现)",
-                    index + 1,
-                    step.name
-                );
-
-                // 后端增强标注：发出步骤开始 Meta
-                let execution_id = self.resolve_execution_id(context).await;
-                let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+                let step_clone = step.clone();
+                let step_id = step.id.clone();
+                let step_name = step.name.clone();
                 let step_type_str = format!("{:?}", step.step_type);
+                let sem = Arc::clone(&semaphore);
+                let context_clone = ExecutionContext {
+                    task_id: context.task_id.clone(),
+                    plan_id: context.plan_id.clone(),
+                    shared_data: Arc::clone(&context.shared_data),
+                    execution_state: Arc::clone(&context.execution_state),
+                    tool_manager: Arc::clone(&context.tool_manager),
+                };
+                let resource_tracker = Arc::clone(&self.resource_tracker);
+                let real_metrics = Arc::clone(&self.real_metrics);
+                let cancellation_token = self.cancellation_token.clone();
+                
+                // 发出步骤开始 Meta
                 let start_meta = serde_json::json!({
                     "type": "step_started",
                     "step_index": index + 1,
-                    "step_name": step.name,
-                    "step_type": step_type_str
+                    "step_name": step_name,
+                    "step_type": step_type_str,
+                    "concurrent": true
                 });
                 self.emit_message_chunk(
                     &execution_id,
@@ -2198,71 +2685,139 @@ impl Executor {
                     None,
                 );
 
-                match self.execute_step(step, context).await {
-                    Ok(result) => {
-                        if result.status == StepExecutionStatus::Completed {
-                            completed_steps.push(step.id.clone());
-                        } else {
-                            failed_steps.push(step.id.clone());
+                // 创建异步任务
+                let handle = tokio::spawn(async move {
+                    // 获取信号量许可
+                    let _permit = sem.acquire().await.unwrap();
+                    
+                    // 检查取消状态
+                    if cancellation_token.is_cancelled() {
+                        return (step_id, step_name, Err(PlanAndExecuteError::ExecutionFailed(
+                            "Task cancelled".to_string()
+                        )));
+                    }
+                    
+                    // 更新并发指标
+                    {
+                        let mut metrics = real_metrics.lock().await;
+                        metrics.current_concurrency += 1;
+                        if metrics.current_concurrency > metrics.peak_concurrency {
+                            metrics.peak_concurrency = metrics.current_concurrency;
                         }
-                        // 发出步骤完成 Meta
-                        let status_str = match result.status {
-                            StepExecutionStatus::Completed => "Completed",
-                            StepExecutionStatus::Failed => "Failed",
-                            StepExecutionStatus::Skipped => "Skipped",
-                            StepExecutionStatus::Running => "Running",
-                            StepExecutionStatus::Pending => "Pending",
-                            StepExecutionStatus::Retrying => "Retrying",
-                            StepExecutionStatus::Cancelled => "Cancelled",
-                        };
-                        let done_meta = serde_json::json!({
-                            "type": "step_completed",
-                            "step_index": index + 1,
-                            "step_name": step.name,
-                            "step_type": step_type_str,
-                            "status": status_str
-                        });
-                        self.emit_message_chunk(
-                            &execution_id,
-                            &message_id,
-                            conversation_id.as_deref(),
-                            ChunkType::Meta,
-                            &done_meta.to_string(),
-                            false,
-                            Some("executor"),
-                            None,
-                        );
-                        step_results.insert(step.id.clone(), result);
+                    }
+                    
+                    let start_time = Instant::now();
+                    
+                    // 注册资源（如果是资源创建工具）
+                    if let Some(tool_config) = &step_clone.tool_config {
+                        resource_tracker.register_by_tool(&tool_config.tool_name, Some(step_name.clone())).await;
+                    }
+                    
+                    // 执行步骤（需要直接调用execute_step_once，因为我们在另一个任务中）
+                    let result = Self::execute_concurrent_step(&step_clone, &context_clone).await;
+                    
+                    // 记录执行时间
+                    let duration = start_time.elapsed().as_millis() as u64;
+                    {
+                        let mut metrics = real_metrics.lock().await;
+                        metrics.current_concurrency -= 1;
+                        metrics.step_durations.insert(step_id.clone(), duration);
+                        metrics.tool_call_count += 1;
+                    }
+                    
+                    // 标记资源释放（如果是资源清理工具）
+                    if let Some(tool_config) = &step_clone.tool_config {
+                        resource_tracker.mark_released_by_tool(&tool_config.tool_name).await;
+                    }
+                    
+                    (step_id, step_name, result)
+                });
+                
+                handles.push((index, step_type_str, handle));
+            }
+            
+            // 等待所有并发任务完成
+            for (index, step_type_str, handle) in handles {
+                match handle.await {
+                    Ok((step_id, step_name, result)) => {
+                        match result {
+                            Ok(result) => {
+                                if result.status == StepExecutionStatus::Completed {
+                                    completed_steps.push(step_id.clone());
+                                } else {
+                                    failed_steps.push(step_id.clone());
+                                }
+                                let status_str = match result.status {
+                                    StepExecutionStatus::Completed => "Completed",
+                                    StepExecutionStatus::Failed => "Failed",
+                                    StepExecutionStatus::Skipped => "Skipped",
+                                    StepExecutionStatus::Running => "Running",
+                                    StepExecutionStatus::Pending => "Pending",
+                                    StepExecutionStatus::Retrying => "Retrying",
+                                    StepExecutionStatus::Cancelled => "Cancelled",
+                                };
+                                let done_meta = serde_json::json!({
+                                    "type": "step_completed",
+                                    "step_index": index + 1,
+                                    "step_name": step_name,
+                                    "step_type": step_type_str,
+                                    "status": status_str,
+                                    "concurrent": true
+                                });
+                                self.emit_message_chunk(
+                                    &execution_id,
+                                    &message_id,
+                                    conversation_id.as_deref(),
+                                    ChunkType::Meta,
+                                    &done_meta.to_string(),
+                                    false,
+                                    Some("executor"),
+                                    None,
+                                );
+                                step_results.insert(step_id, result);
+                            }
+                            Err(e) => {
+                                log::error!("并发步骤执行异常: {}: {}", step_name, e);
+                                failed_steps.push(step_id.clone());
+                                errors.push(ExecutionError {
+                                    error_type: crate::engines::types::ErrorType::Tool,
+                                    message: format!("并发步骤 '{}' 执行异常", step_name),
+                                    details: Some(e.to_string()),
+                                    error_code: None,
+                                    retryable: true,
+                                    timestamp: SystemTime::now(),
+                                });
+                                let done_meta = serde_json::json!({
+                                    "type": "step_completed",
+                                    "step_index": index + 1,
+                                    "step_name": step_name,
+                                    "step_type": step_type_str,
+                                    "status": "Failed",
+                                    "concurrent": true
+                                });
+                                self.emit_message_chunk(
+                                    &execution_id,
+                                    &message_id,
+                                    conversation_id.as_deref(),
+                                    ChunkType::Meta,
+                                    &done_meta.to_string(),
+                                    false,
+                                    Some("executor"),
+                                    None,
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
-                        log::error!("并发步骤执行异常: {}: {}", step.name, e);
-                        failed_steps.push(step.id.clone());
+                        log::error!("并发任务 join 失败: {}", e);
                         errors.push(ExecutionError {
-                            error_type: crate::engines::types::ErrorType::Tool,
-                            message: format!("并发步骤 '{}' 执行异常", step.name),
-                            details: Some(e.to_string()),
+                            error_type: crate::engines::types::ErrorType::System,
+                            message: format!("并发任务失败: {}", e),
+                            details: None,
                             error_code: None,
-                            retryable: true,
+                            retryable: false,
                             timestamp: SystemTime::now(),
                         });
-                        // 发出失败完成 Meta
-                        let done_meta = serde_json::json!({
-                            "type": "step_completed",
-                            "step_index": index + 1,
-                            "step_name": step.name,
-                            "step_type": step_type_str,
-                            "status": "Failed"
-                        });
-                        self.emit_message_chunk(
-                            &execution_id,
-                            &message_id,
-                            conversation_id.as_deref(),
-                            ChunkType::Meta,
-                            &done_meta.to_string(),
-                            false,
-                            Some("executor"),
-                            None,
-                        );
                     }
                 }
             }
@@ -2912,25 +3467,154 @@ impl Executor {
     }
 
     /// 暂停执行
-    pub async fn pause(&self) -> Result<(), PlanAndExecuteError> {
+    pub async fn pause(&self) -> Result<PauseResult, PlanAndExecuteError> {
         let context_guard = self.context.lock().await;
         if let Some(context) = context_guard.as_ref() {
             let mut state = context.execution_state.write().await;
+            
+            if state.is_paused {
+                return Ok(PauseResult {
+                    success: false,
+                    message: "Execution is already paused".to_string(),
+                    paused_at: None,
+                    current_step: None,
+                    completed_steps: state.completed_steps.len(),
+                });
+            }
+            
             state.is_paused = true;
-            log::info!("执行已暂停");
+            let paused_at = SystemTime::now();
+            
+            // 获取当前执行的步骤信息
+            let current_step = state.current_steps.keys().next().cloned();
+            let completed_count = state.completed_steps.len();
+            
+            log::info!(
+                "Execution paused. Current step: {:?}, Completed steps: {}",
+                current_step, completed_count
+            );
+            
+            // 发送暂停事件到前端
+            let execution_id = self.resolve_execution_id(context).await;
+            let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+            let pause_meta = serde_json::json!({
+                "type": "execution_paused",
+                "paused_at": paused_at.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                "current_step": current_step,
+                "completed_steps": completed_count,
+            });
+            drop(state);
+            
+            self.emit_message_chunk(
+                &execution_id,
+                &message_id,
+                conversation_id.as_deref(),
+                ChunkType::Meta,
+                &pause_meta.to_string(),
+                false,
+                Some("executor"),
+                None,
+            );
+            
+            Ok(PauseResult {
+                success: true,
+                message: "Execution paused successfully".to_string(),
+                paused_at: Some(paused_at),
+                current_step,
+                completed_steps: completed_count,
+            })
+        } else {
+            Err(PlanAndExecuteError::ExecutionFailed(
+                "No active execution context to pause".to_string()
+            ))
         }
-        Ok(())
     }
 
     /// 恢复执行
-    pub async fn resume(&self) -> Result<(), PlanAndExecuteError> {
+    pub async fn resume(&self) -> Result<ResumeResult, PlanAndExecuteError> {
         let context_guard = self.context.lock().await;
         if let Some(context) = context_guard.as_ref() {
             let mut state = context.execution_state.write().await;
+            
+            if !state.is_paused {
+                return Ok(ResumeResult {
+                    success: false,
+                    message: "Execution is not paused".to_string(),
+                    resumed_at: None,
+                    remaining_steps: 0,
+                });
+            }
+            
             state.is_paused = false;
-            log::info!("执行已恢复");
+            let resumed_at = SystemTime::now();
+            
+            let remaining_steps = state.current_steps.len();
+            
+            log::info!(
+                "Execution resumed. Remaining steps: {}",
+                remaining_steps
+            );
+            
+            // 发送恢复事件到前端
+            let execution_id = self.resolve_execution_id(context).await;
+            let (message_id, conversation_id) = self.resolve_message_and_conversation_ids(context).await;
+            let resume_meta = serde_json::json!({
+                "type": "execution_resumed",
+                "resumed_at": resumed_at.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+                "remaining_steps": remaining_steps,
+            });
+            drop(state);
+            
+            self.emit_message_chunk(
+                &execution_id,
+                &message_id,
+                conversation_id.as_deref(),
+                ChunkType::Meta,
+                &resume_meta.to_string(),
+                false,
+                Some("executor"),
+                None,
+            );
+            
+            Ok(ResumeResult {
+                success: true,
+                message: "Execution resumed successfully".to_string(),
+                resumed_at: Some(resumed_at),
+                remaining_steps,
+            })
+        } else {
+            Err(PlanAndExecuteError::ExecutionFailed(
+                "No active execution context to resume".to_string()
+            ))
         }
-        Ok(())
+    }
+    
+    /// 检查执行是否暂停
+    pub async fn is_paused(&self) -> bool {
+        let context_guard = self.context.lock().await;
+        if let Some(context) = context_guard.as_ref() {
+            let state = context.execution_state.read().await;
+            state.is_paused
+        } else {
+            false
+        }
+    }
+    
+    /// 获取详细的暂停状态信息
+    pub async fn get_pause_status(&self) -> Option<PauseStatusInfo> {
+        let context_guard = self.context.lock().await;
+        if let Some(context) = context_guard.as_ref() {
+            let state = context.execution_state.read().await;
+            Some(PauseStatusInfo {
+                is_paused: state.is_paused,
+                is_cancelled: state.is_cancelled,
+                current_steps: state.current_steps.keys().cloned().collect(),
+                completed_steps: state.completed_steps.clone(),
+                failed_steps: state.failed_steps.clone(),
+            })
+        } else {
+            None
+        }
     }
 
     /// 取消执行（旧版本，已被CancellationToken替代）
@@ -3723,40 +4407,54 @@ impl Executor {
                 }
                 Ok(None) => {
                     return Err(PlanAndExecuteError::AiAdapterError(format!(
-                        "找不到提供商配置: {}",
+                        "Provider config not found: {}",
                         provider_name
                     )))
                 }
                 Err(e) => {
                     return Err(PlanAndExecuteError::AiAdapterError(format!(
-                        "读取提供商配置失败: {}",
+                        "Failed to read provider config: {}",
                         e
                     )))
                 }
             }
         } else {
             return Err(PlanAndExecuteError::AiAdapterError(
-                "AI服务管理器未初始化".to_string(),
+                "AI service manager not initialized".to_string(),
             ));
         };
 
-        // 使用流式消息API发送请求
-        // 绑定到前端该次助手消息ID，确保chunk落到正确消息上
+        // 使用公共 llm_client 模块进行流式 LLM 调用
+        let llm_config = crate::engines::llm_client::create_llm_config(&ai_service);
+        let streaming_client = StreamingLlmClient::new(llm_config);
+        
+        // 获取消息ID和会话ID
         let (bound_message_id, conv_id_opt) =
             self.resolve_message_and_conversation_ids(context).await;
-        let content = ai_service
-            .send_message_stream_with_save_control(
-                Some(&user_prompt),
-                None,
-                Some(system_prompt.as_str()),
-                conv_id_opt,
-                Some(bound_message_id.clone()),
-                true,
-                false,
-                Some(ChunkType::Content),
-                Some(ArchType::PlanAndExecute),
-                None,
-            )
+        let app_handle = self.app_handle.clone();
+        let exec_id = bound_message_id.clone(); // 使用 message_id 作为 execution_id
+        
+        let content = streaming_client
+            .stream_completion(Some(&system_prompt), &user_prompt, |chunk| {
+                if let StreamContent::Text(text) = chunk {
+                    // 发送流式消息到前端
+                    if let Some(ref handle) = app_handle {
+                        let _ = emit_message_chunk_arc(
+                            handle,
+                            &exec_id,
+                            &bound_message_id,
+                            conv_id_opt.as_deref(),
+                            ChunkType::Content,
+                            &text,
+                            false,
+                            None,
+                            None,
+                            Some(ArchType::PlanAndExecute),
+                            None,
+                        );
+                    }
+                }
+            })
             .await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
 

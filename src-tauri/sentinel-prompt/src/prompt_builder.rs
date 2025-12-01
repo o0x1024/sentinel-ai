@@ -48,7 +48,7 @@ pub struct VariableResolver {
 /// Prompt构建上下文
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptBuildContext {
-    /// 用户查询
+    /// 用户输入
     pub user_query: String,
     /// 目标信息
     pub target_info: Option<TargetInfo>,
@@ -300,7 +300,7 @@ impl PromptBuilder {
 
         // 准备变量
         let mut variables = HashMap::new();
-        variables.insert("user_query".to_string(), format!("**用户查询：** {}", context.user_query));
+        variables.insert("user_query".to_string(), format!("**用户输入：** {}", context.user_query));
         variables.insert("domain_specific_instructions".to_string(), optimal_config.domain_template.domain_instructions);
         variables.insert("available_tools_info".to_string(), self.format_tools_info(&context.available_tools)?);
         variables.insert("custom_constraints".to_string(), optimal_config.custom_constraints.join("\n- "));

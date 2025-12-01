@@ -1,11 +1,24 @@
-//! ReAct 消息发送器
+//! ReAct 消息发送器和专用 LLM 客户端
 //!
 //! 简化版：直接发送流式内容到前端，并收集完整内容用于保存
 
+use crate::engines::llm_client::LlmConfig;
 use crate::utils::ordered_message::{emit_message_chunk_with_arch, ArchitectureType, ChunkType};
+use anyhow::{anyhow, Result};
+use futures::StreamExt;
+use rig::agent::MultiTurnStreamItem;
+use rig::client::builder::DynClientBuilder;
+use rig::completion::Message;
+use rig::message::UserContent;
+use rig::one_or_many::OneOrMany;
+use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
+use chrono::Utc;
 use tauri::AppHandle;
+use tracing::{debug, error, info};
 
 /// ReAct 消息发送器
 pub struct ReactMessageEmitter {
@@ -199,5 +212,197 @@ impl ReactMessageEmitter {
             Some(ArchitectureType::ReAct),
             Some(data),
         );
+    }
+}
+
+// ============================================================================
+// ReactLlmClient - 流式 LLM 调用（每个 token 发送到前端）
+// ============================================================================
+
+/// ReAct LLM 客户端
+pub struct ReactLlmClient {
+    config: LlmConfig,
+    emitter: Arc<ReactMessageEmitter>,
+}
+
+impl ReactLlmClient {
+    pub fn new(config: LlmConfig, emitter: Arc<ReactMessageEmitter>) -> Self {
+        Self { config, emitter }
+    }
+
+    /// 流式调用 LLM，每个 token 通过 emitter 发送
+    pub async fn stream_completion(
+        &self,
+        system_prompt: Option<&str>,
+        user_prompt: &str,
+        iteration: u32,
+    ) -> Result<String> {
+        let provider = &self.config.provider;
+        let model = &self.config.model;
+
+        info!(
+            "ReAct LLM stream request - Provider: {}, Model: {}, Iteration: {}",
+            provider, model, iteration
+        );
+        
+        // 记录 prompt 到日志
+        log_prompts_react("ReactLlmClient", system_prompt, user_prompt);
+
+        // 创建 agent
+        let agent = {
+            let client = DynClientBuilder::new();
+            let agent_builder = match client.agent(provider, model) {
+                Ok(builder) => builder,
+                Err(e) => {
+                    error!(
+                        "ReactLlmClient: Failed to create agent for provider '{}' model '{}': {}",
+                        provider, model, e
+                    );
+                    return Err(anyhow!(
+                        "ReAct LLM client unavailable: Provider '{}' model '{}' error: {}",
+                        provider, model, e
+                    ));
+                }
+            };
+            let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
+            agent_builder.preamble(preamble).build()
+        };
+
+        // 构建用户消息
+        let user_message = Message::User {
+            content: OneOrMany::one(UserContent::text(user_prompt.to_string())),
+        };
+
+        // 流式请求（带超时）
+        let stream_result = tokio::time::timeout(
+            std::time::Duration::from_secs(self.config.timeout_secs),
+            agent.stream_prompt(user_message).multi_turn(100),
+        )
+        .await;
+
+        let mut stream_iter = match stream_result {
+            Ok(iter) => iter,
+            Err(_) => {
+                error!(
+                    "ReactLlmClient: Request timeout after {} seconds",
+                    self.config.timeout_secs
+                );
+                return Err(anyhow!(
+                    "ReAct LLM request timeout after {} seconds",
+                    self.config.timeout_secs
+                ));
+            }
+        };
+
+        // 处理流式响应
+        let mut content = String::new();
+        while let Some(item) = stream_iter.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
+                    let piece = t.text;
+                    if !piece.is_empty() {
+                        content.push_str(&piece);
+                        // 通过 emitter 发送每个 token
+                        self.emitter.emit_content(&piece, false);
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Reasoning(r),
+                )) => {
+                    let piece = r.reasoning.join("");
+                    if !piece.is_empty() {
+                        self.emitter.emit_thinking(&piece);
+                    }
+                }
+                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                    debug!("ReactLlmClient: Stream completed");
+                    break;
+                }
+                Ok(_) => { /* ignore other stream items */ }
+                Err(e) => {
+                    error!("ReactLlmClient: Stream error: {}", e);
+                    return Err(anyhow!("ReAct LLM stream error: {}", e));
+                }
+            }
+        }
+
+        info!(
+            "ReactLlmClient: Response length: {} chars, Iteration: {}",
+            content.len(), iteration
+        );
+        
+        // 记录响应到日志文件
+        log_response_react("ReactLlmClient", &content);
+
+        Ok(content)
+    }
+}
+
+/// 记录 prompts 到 LLM 日志文件
+fn log_prompts_react(client_name: &str, system_prompt: Option<&str>, user_prompt: &str) {
+    write_llm_log_react(client_name, "REQUEST", system_prompt, user_prompt, None);
+}
+
+/// 记录 LLM 响应到日志文件
+fn log_response_react(client_name: &str, response: &str) {
+    write_llm_log_react(client_name, "RESPONSE", None, "", Some(response));
+}
+
+/// 写入 LLM 日志到文件
+fn write_llm_log_react(
+    client_name: &str,
+    log_type: &str,
+    system_prompt: Option<&str>,
+    user_prompt: &str,
+    response: Option<&str>,
+) {
+    let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
+    
+    let content = if let Some(resp) = response {
+        format!(
+            "Response ({} chars):\n{}\n",
+            resp.len(),
+            if resp.len() > 2000 { &resp[..2000] } else { resp }
+        )
+    } else {
+        format!(
+            "System Prompt:\n{}\n\nUser Prompt:\n{}\n",
+            system_prompt.unwrap_or("(none)"),
+            user_prompt
+        )
+    };
+    
+    let log_entry = format!(
+        "\n{}\n[{}] [{}] [Client: {}]\n{}\n{}\n",
+        "=".repeat(80), timestamp, log_type, client_name, "=".repeat(80), content
+    );
+
+    // 确保日志目录存在
+    if let Err(e) = std::fs::create_dir_all("logs") {
+        error!("Failed to create logs directory: {}", e);
+        return;
+    }
+
+    // 写入专门的 LLM 请求日志文件
+    let log_file_path = format!(
+        "logs/llm-http-requests-{}.log",
+        Utc::now().format("%Y-%m-%d")
+    );
+
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(log_entry.as_bytes()) {
+                error!("Failed to write to LLM log file {}: {}", log_file_path, e);
+            } else {
+                let _ = file.flush();
+            }
+        }
+        Err(e) => {
+            error!("Failed to open LLM log file {}: {}", log_file_path, e);
+        }
     }
 }

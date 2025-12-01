@@ -787,6 +787,8 @@ pub fn run() {
             ai_commands::get_ai_assistant_settings,
             ai_commands::save_ai_assistant_settings,
             ai_commands::get_agent_statistics,
+            ai_commands::test_custom_provider,
+            ai_commands::add_custom_provider,
             ai::get_ai_usage_stats,
             // Tools catalog for AgentManager (simple list)
             ai_commands::list_unified_tools,
@@ -909,6 +911,7 @@ pub fn run() {
             passive_scan_commands::trust_ca_cert,
             passive_scan_commands::regenerate_ca_cert,
             passive_scan_commands::get_ca_fingerprint,
+            passive_scan_commands::open_ca_cert_dir,
             passive_scan_commands::get_finding,
             passive_scan_commands::update_finding_status,
             passive_scan_commands::export_findings_html,
@@ -933,6 +936,21 @@ pub fn run() {
             passive_scan_commands::stop_proxy_listener,
             passive_scan_commands::save_proxy_config,
             passive_scan_commands::get_proxy_config,
+            // 请求拦截相关命令
+            passive_scan_commands::set_intercept_enabled,
+            passive_scan_commands::get_intercept_enabled,
+            passive_scan_commands::get_intercepted_requests,
+            passive_scan_commands::forward_intercepted_request,
+            passive_scan_commands::drop_intercepted_request,
+            // 响应拦截相关命令
+            passive_scan_commands::set_response_intercept_enabled,
+            passive_scan_commands::get_response_intercept_enabled,
+            passive_scan_commands::get_intercepted_responses,
+            passive_scan_commands::forward_intercepted_response,
+            passive_scan_commands::drop_intercepted_response,
+            // 请求重放（Repeater）相关命令
+            passive_scan_commands::replay_request,
+            passive_scan_commands::replay_raw_request,
             // Plugin review commands (Plan B)
             commands::plugin_review_commands::get_plugins_for_review,
             commands::plugin_review_commands::list_generated_plugins,

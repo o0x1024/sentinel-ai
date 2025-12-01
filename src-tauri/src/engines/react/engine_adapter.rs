@@ -4,8 +4,8 @@
 //! 使用专用 LLM 客户端实现对消息流的精确控制
 
 use super::executor::{ReactExecutor, ReactExecutorConfig};
-use super::llm_client::{LlmConfig, ReactLlmClient};
-use super::message_emitter::ReactMessageEmitter;
+use super::message_emitter::{ReactMessageEmitter, ReactLlmClient};
+use crate::engines::llm_client::LlmConfig;
 use super::types::*;
 use crate::agents::traits::{
     AgentExecutionResult, AgentSession, AgentTask, PerformanceCharacteristics,

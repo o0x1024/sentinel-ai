@@ -63,6 +63,30 @@ pub struct PluginChangedEvent {
     pub name: String,
 }
 
+/// 拦截请求事件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterceptRequestEvent {
+    pub id: String,
+    pub method: String,
+    pub url: String,
+    pub path: String,
+    pub protocol: String,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+    pub timestamp: i64,
+}
+
+/// 拦截响应事件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterceptResponseEvent {
+    pub id: String,
+    pub request_id: String,
+    pub status: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+    pub timestamp: i64,
+}
+
 /// 发射代理状态事件
 pub fn emit_proxy_status(app: &AppHandle, event: ProxyStatusEvent) {
     if let Err(e) = app.emit("proxy:status", event) {
@@ -88,5 +112,19 @@ pub fn emit_scan_stats(app: &AppHandle, event: ScanStatsEvent) {
 pub fn emit_plugin_changed(app: &AppHandle, event: PluginChangedEvent) {
     if let Err(e) = app.emit("plugin:changed", event) {
         tracing::error!("Failed to emit plugin:changed event: {}", e);
+    }
+}
+
+/// 发射拦截请求事件
+pub fn emit_intercept_request(app: &AppHandle, event: InterceptRequestEvent) {
+    if let Err(e) = app.emit("intercept:request", event) {
+        tracing::error!("Failed to emit intercept:request event: {}", e);
+    }
+}
+
+/// 发射拦截响应事件
+pub fn emit_intercept_response(app: &AppHandle, event: InterceptResponseEvent) {
+    if let Err(e) = app.emit("intercept:response", event) {
+        tracing::error!("Failed to emit intercept:response event: {}", e);
     }
 }

@@ -6,6 +6,25 @@
 
 {tools}
 
+## generate_advanced_plugin 工具使用规范
+
+使用 `generate_advanced_plugin` 生成插件时，`vuln_types` 参数**只允许**使用以下标准类型：
+
+- `sqli` - SQL注入
+- `xss` - 跨站脚本
+- `idor` - 越权访问
+- `path_traversal` - 路径遍历
+- `command_injection` - 命令注入
+- `file_upload` - 文件上传
+- `ssrf` - 服务端请求伪造
+- `xxe` - XML外部实体注入
+- `csrf` - 跨站请求伪造
+- `auth_bypass` - 认证绕过
+- `info_leak` - 信息泄露
+
+**正确**: `"vuln_types": ["sqli", "xss", "path_traversal"]`
+**错误**: `"vuln_types": ["SQL Injection", "Cross-Site Scripting"]`
+
 ## 执行格式
 
 ### 需要使用工具时：

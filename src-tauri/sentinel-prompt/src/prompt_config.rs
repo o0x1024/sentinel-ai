@@ -296,7 +296,7 @@ pub enum TestStatus {
 /// 配置选择上下文
 #[derive(Debug, Clone)]
 pub struct ConfigSelectionContext {
-    /// 用户查询
+    /// 用户输入
     pub user_query: String,
     /// 检测到的领域
     pub detected_domain: Option<String>,
@@ -727,7 +727,7 @@ impl PromptConfigManager {
 你是一个任务规划专家。你的职责是将复杂任务分解为可执行的子步骤。
 
 **核心规划原则：**
-- 分析用户查询，理解最终目标
+- 分析用户输入，理解最终目标
 - 将任务分解为逻辑清晰的步骤序列  
 - 每个步骤应该是具体可执行的
 - 考虑步骤间的依赖关系

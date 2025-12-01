@@ -2,12 +2,12 @@
 //! 
 //! 基于 Prompt 驱动的通用规划逻辑，不针对特定任务类型做特殊处理
 
+use crate::engines::llm_client::LlmClient;
 use crate::services::prompt_db::PromptRepository;
 use crate::services::mcp::McpService;
 use crate::services::ai::{AiService, AiServiceManager, SchedulerStage};
 use crate::engines::plan_and_execute::types::*;
 use crate::tools::{ToolInfo};
-use crate::utils::ordered_message::ChunkType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
@@ -722,44 +722,33 @@ impl Planner {
                     if let Some(ref mgr) = self.ai_service_manager {
                         AiService::new(dc, mgr.get_db_arc(), app_handle, self.mcp_service.clone())
                     } else {
-                        return Err(PlanAndExecuteError::AiAdapterError("AI服务管理器未初始化".to_string()));
+                        return Err(PlanAndExecuteError::AiAdapterError("AI service manager not initialized".to_string()));
                     }
                 }
                 Ok(None) => {
                     return Err(PlanAndExecuteError::AiAdapterError(format!(
-                        "找不到提供商配置: {}", provider_name
+                        "Provider config not found: {}", provider_name
                     )));
                 }
                 Err(e) => {
                     return Err(PlanAndExecuteError::AiAdapterError(format!(
-                        "读取提供商配置失败: {}", e
+                        "Failed to read provider config: {}", e
                     )));
                 }
             }
         } else {
             return Err(PlanAndExecuteError::AiAdapterError(
-                "AI服务管理器未初始化".to_string()
+                "AI service manager not initialized".to_string()
             ));
         };
         
-        // 使用流式消息API发送请求（分别传递 system 与 user 提示），并显式传入前端提供的 IDs
-        let result = ai_service
-            .send_message_stream_with_save_control(
-                Some(user_prompt),
-                None,
-                Some(system_prompt),
-                conversation_id,
-                message_id,
-                false,
-                false,
-                Some(ChunkType::PlanInfo),
-                Some(crate::utils::ordered_message::ArchitectureType::PlanAndExecute),
-                None,
-            )
+        // 使用公共 llm_client 模块进行 LLM 调用
+        let llm_client = LlmClient::from_ai_service(&ai_service);
+        let result = llm_client
+            .completion(Some(system_prompt), user_prompt)
             .await
             .map_err(|e| PlanAndExecuteError::AiAdapterError(e.to_string()))?;
         
-        // log::info!("AI响应内容: {}", result);
         Ok(result)
     }
 
@@ -1050,7 +1039,7 @@ impl Planner {
         })
     }
 
-    // 这些方法不再需要，因为我们现在使用AiService的send_message_stream方法
+    // LLM calls now use the unified llm_client module
 
 
 

@@ -1,5 +1,6 @@
 pub mod traits;
 pub mod types;
+pub mod llm_client;
 
 pub mod memory;
 
@@ -23,6 +24,14 @@ pub mod intelligent_dispatcher;
 
 // 重新导出核心类型和trait
 pub use types::*;
+
+// 导出公共 LLM 客户端
+pub use llm_client::{
+    LlmConfig, LlmClient, StreamingLlmClient, StreamContent,
+    create_llm_config, create_client, create_streaming_client,
+    // 向后兼容
+    SimpleLlmClient, create_simple_client
+};
 
 pub use types::{
     ErrorType, ExecutionContext, ExecutionError, ExecutionMetrics, ExecutionPlan, ExecutionSession,

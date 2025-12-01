@@ -1474,30 +1474,40 @@ pub async fn toggle_builtin_tool(
 /// 获取带有启用状态的内置工具列表
 #[tauri::command]
 pub async fn get_builtin_tools_with_status(
-    _state: State<'_, Arc<McpService>>, // 不再依赖McpService列出内置工具
+    _state: State<'_, Arc<McpService>>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    // 直接创建BuiltinToolProvider来获取纯内置工具（避免MCP工具混入）
-    let builtin_provider = crate::tools::BuiltinToolProvider::new(db_service.inner().clone());
-    let builtin_unified_tools = builtin_provider.get_tools().await.map_err(|e| e.to_string())?;
+    // 从全局工具系统获取所有工具（包括所有 Provider 注册的工具）
+    let tool_system = crate::tools::get_global_tool_system()
+        .map_err(|e| format!("Failed to get tool system: {}", e))?;
     
-    // 转换为ToolInfo格式
-    let mut builtin_tools = Vec::new();
-    for tool in builtin_unified_tools {
-        let info = crate::tools::ToolInfo {
-            id: tool.name().to_string(),
-            name: tool.name().to_string(),
-            description: tool.description().to_string(),
-            version: tool.metadata().version.clone(),
-            category: tool.category(),
-            parameters: tool.parameters().clone(),
-            metadata: tool.metadata().clone(),
-            available: tool.is_available().await,
-            installed: tool.is_installed().await,
-            source: crate::tools::ToolSource::Builtin,
-        };
-        builtin_tools.push(info);
-    }
+    let all_tools = tool_system.list_tools().await;
+    
+    // 过滤掉 MCP 外部工具和插件工具，只保留系统内置工具
+    let builtin_tools: Vec<_> = all_tools
+        .into_iter()
+        .filter(|t| {
+            // 排除 source 为 External 的工具
+            if matches!(t.source, crate::tools::ToolSource::External) {
+                return false;
+            }
+            // 排除 category 为 "external" 的工具（MCP 客户端连接的工具）
+            if let crate::tools::ToolCategory::Custom(ref cat) = t.category {
+                if cat == "external" {
+                    return false;
+                }
+            }
+            // 排除 tags 中包含特定标记的工具
+            // - "mcp" 或 "connection:" 前缀：MCP 外部工具
+            // - "plugin"：用户创建的插件工具（AgentPluginTool, PluginAnalysisTool）
+            if t.metadata.tags.iter().any(|tag| {
+                tag == "mcp" || tag == "plugin" || tag.starts_with("connection:")
+            }) {
+                return false;
+            }
+            true
+        })
+        .collect();
 
     // 读取启用状态
     let query = "SELECT tool_name, enabled FROM builtin_tool_settings";
@@ -1532,6 +1542,7 @@ pub async fn get_builtin_tools_with_status(
             "name": info.name,
             "description": info.description,
             "category": info.category.to_string(),
+            "version": info.version,
             "enabled": enabled,
         });
         result.push(tool_json);

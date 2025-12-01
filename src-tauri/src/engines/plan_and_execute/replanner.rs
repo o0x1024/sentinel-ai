@@ -410,4 +410,510 @@ impl Replanner {
             }
         }
     }
+
+    // ===== 增强的智能重规划功能 =====
+
+    /// 分析执行结果并确定最佳重规划策略
+    pub async fn analyze_and_determine_strategy(
+        &self,
+        original_plan: &ExecutionPlan,
+        execution_result: &ExecResult,
+    ) -> ReplanStrategy {
+        let mut strategy = ReplanStrategy::default();
+        
+        // 分析失败模式
+        let failure_analysis = self.analyze_failure_patterns(execution_result).await;
+        
+        // 根据失败分析确定策略
+        match failure_analysis.primary_cause {
+            FailureCause::ResourceUnavailable => {
+                strategy.action = ReplanAction::ReplaceFailedTools;
+                strategy.priority = ReplanPriority::High;
+                strategy.suggestions.push("替换不可用的工具为备选方案".to_string());
+            }
+            FailureCause::Timeout => {
+                strategy.action = ReplanAction::SimplifyPlan;
+                strategy.priority = ReplanPriority::Medium;
+                strategy.suggestions.push("简化执行计划，减少长时间运行的步骤".to_string());
+            }
+            FailureCause::DependencyFailure => {
+                strategy.action = ReplanAction::ReorderSteps;
+                strategy.priority = ReplanPriority::High;
+                strategy.suggestions.push("重新排序步骤以修复依赖问题".to_string());
+            }
+            FailureCause::ValidationError => {
+                strategy.action = ReplanAction::AddValidationSteps;
+                strategy.priority = ReplanPriority::Medium;
+                strategy.suggestions.push("添加额外的验证步骤".to_string());
+            }
+            FailureCause::Unknown => {
+                strategy.action = ReplanAction::FullReplan;
+                strategy.priority = ReplanPriority::Low;
+                strategy.suggestions.push("需要完全重新规划".to_string());
+            }
+        }
+        
+        // 检查是否需要添加清理步骤
+        if failure_analysis.has_resource_leak {
+            strategy.requires_cleanup = true;
+            strategy.cleanup_steps = self.generate_cleanup_steps(execution_result).await;
+        }
+        
+        // 计算重规划置信度
+        strategy.confidence = self.calculate_strategy_confidence(&failure_analysis).await;
+        
+        log::info!(
+            "Replan strategy determined: action={:?}, priority={:?}, confidence={:.2}",
+            strategy.action, strategy.priority, strategy.confidence
+        );
+        
+        strategy
+    }
+
+    /// 分析失败模式
+    async fn analyze_failure_patterns(&self, result: &ExecResult) -> FailureAnalysis {
+        let mut analysis = FailureAnalysis::default();
+        
+        // 分析错误类型
+        let mut timeout_count = 0;
+        let mut tool_errors = 0;
+        let mut validation_errors = 0;
+        
+        for error in &result.errors {
+            match error.error_type {
+                crate::engines::types::ErrorType::Timeout => timeout_count += 1,
+                crate::engines::types::ErrorType::Tool => tool_errors += 1,
+                crate::engines::types::ErrorType::Configuration => validation_errors += 1,
+                _ => {}
+            }
+        }
+        
+        // 确定主要原因
+        analysis.primary_cause = if timeout_count > tool_errors && timeout_count > validation_errors {
+            FailureCause::Timeout
+        } else if tool_errors > validation_errors {
+            FailureCause::ResourceUnavailable
+        } else if validation_errors > 0 {
+            FailureCause::ValidationError
+        } else if !result.failed_steps.is_empty() {
+            FailureCause::DependencyFailure
+        } else {
+            FailureCause::Unknown
+        };
+        
+        // 检查资源泄露
+        analysis.has_resource_leak = self.check_potential_resource_leak(result).await;
+        
+        // 分析失败步骤
+        analysis.failed_step_names = result.failed_steps.clone();
+        analysis.failure_rate = if result.completed_steps.len() + result.failed_steps.len() > 0 {
+            result.failed_steps.len() as f64 / 
+            (result.completed_steps.len() + result.failed_steps.len()) as f64
+        } else {
+            0.0
+        };
+        
+        analysis
+    }
+
+    /// 检查是否有潜在的资源泄露
+    async fn check_potential_resource_leak(&self, result: &ExecResult) -> bool {
+        // 检查是否有浏览器会话未关闭
+        let has_browser_open = result.completed_steps.iter()
+            .any(|s| s.contains("playwright_navigate") || s.contains("browser_open"));
+        let has_browser_close = result.completed_steps.iter()
+            .any(|s| s.contains("playwright_close") || s.contains("browser_close"));
+        
+        // 检查是否有代理未停止
+        let has_proxy_start = result.completed_steps.iter()
+            .any(|s| s.contains("start_passive_scan"));
+        let has_proxy_stop = result.completed_steps.iter()
+            .any(|s| s.contains("stop_passive_scan"));
+        
+        (has_browser_open && !has_browser_close) || (has_proxy_start && !has_proxy_stop)
+    }
+
+    /// 生成清理步骤
+    async fn generate_cleanup_steps(&self, result: &ExecResult) -> Vec<ExecutionStep> {
+        let mut cleanup_steps = Vec::new();
+        
+        // 检查需要清理的浏览器会话
+        let has_browser_open = result.completed_steps.iter()
+            .any(|s| s.contains("playwright_navigate") || s.contains("browser_open"));
+        let has_browser_close = result.completed_steps.iter()
+            .any(|s| s.contains("playwright_close") || s.contains("browser_close"));
+        
+        if has_browser_open && !has_browser_close {
+            cleanup_steps.push(ExecutionStep {
+                id: format!("cleanup_browser_{}", uuid::Uuid::new_v4()),
+                name: "Close browser session".to_string(),
+                description: "Clean up leaked browser session".to_string(),
+                step_type: StepType::ToolCall,
+                tool_config: Some(ToolConfig {
+                    tool_name: "playwright_close".to_string(),
+                    tool_version: None,
+                    tool_args: std::collections::HashMap::new(),
+                    timeout: Some(30),
+                    env_vars: std::collections::HashMap::new(),
+                }),
+                parameters: std::collections::HashMap::new(),
+                estimated_duration: 30,
+                retry_config: RetryConfig::default(),
+                preconditions: vec![],
+                postconditions: vec![],
+            });
+        }
+        
+        // 检查需要清理的代理
+        let has_proxy_start = result.completed_steps.iter()
+            .any(|s| s.contains("start_passive_scan"));
+        let has_proxy_stop = result.completed_steps.iter()
+            .any(|s| s.contains("stop_passive_scan"));
+        
+        if has_proxy_start && !has_proxy_stop {
+            cleanup_steps.push(ExecutionStep {
+                id: format!("cleanup_proxy_{}", uuid::Uuid::new_v4()),
+                name: "Stop passive scan proxy".to_string(),
+                description: "Clean up leaked proxy session".to_string(),
+                step_type: StepType::ToolCall,
+                tool_config: Some(ToolConfig {
+                    tool_name: "stop_passive_scan".to_string(),
+                    tool_version: None,
+                    tool_args: std::collections::HashMap::new(),
+                    timeout: Some(30),
+                    env_vars: std::collections::HashMap::new(),
+                }),
+                parameters: std::collections::HashMap::new(),
+                estimated_duration: 30,
+                retry_config: RetryConfig::default(),
+                preconditions: vec![],
+                postconditions: vec![],
+            });
+        }
+        
+        cleanup_steps
+    }
+
+    /// 计算策略置信度
+    async fn calculate_strategy_confidence(&self, analysis: &FailureAnalysis) -> f64 {
+        let mut confidence: f64 = 0.5; // 基础置信度
+        
+        // 根据失败原因调整
+        match analysis.primary_cause {
+            FailureCause::Timeout => confidence += 0.2, // 超时问题通常容易解决
+            FailureCause::ResourceUnavailable => confidence += 0.1,
+            FailureCause::ValidationError => confidence += 0.15,
+            FailureCause::DependencyFailure => confidence += 0.1,
+            FailureCause::Unknown => confidence -= 0.2,
+        }
+        
+        // 根据失败率调整
+        if analysis.failure_rate < 0.3 {
+            confidence += 0.2; // 低失败率，更容易修复
+        } else if analysis.failure_rate > 0.7 {
+            confidence -= 0.2; // 高失败率，可能需要完全重做
+        }
+        
+        confidence.max(0.0_f64).min(1.0_f64)
+    }
+
+    /// 应用重规划策略生成新计划
+    pub async fn apply_strategy(
+        &self,
+        original_plan: &ExecutionPlan,
+        execution_result: &ExecResult,
+        strategy: &ReplanStrategy,
+    ) -> Result<ReplanResult, PlanAndExecuteError> {
+        log::info!("Applying replan strategy: {:?}", strategy.action);
+        
+        match strategy.action {
+            ReplanAction::SimplifyPlan => {
+                self.simplify_plan(original_plan, execution_result).await
+            }
+            ReplanAction::ReplaceFailedTools => {
+                self.replace_failed_tools(original_plan, execution_result).await
+            }
+            ReplanAction::ReorderSteps => {
+                self.reorder_steps(original_plan, execution_result).await
+            }
+            ReplanAction::AddValidationSteps => {
+                self.add_validation_steps(original_plan, execution_result).await
+            }
+            ReplanAction::FullReplan => {
+                // 对于完全重规划，我们返回None让上层调用replan_with_planner
+                Ok(ReplanResult {
+                    should_replan: true,
+                    replan_reason: "Full replan required - use replan_with_planner".to_string(),
+                    new_plan: None,
+                })
+            }
+        }
+    }
+
+    /// 简化计划（移除不必要的步骤）
+    async fn simplify_plan(
+        &self,
+        original_plan: &ExecutionPlan,
+        result: &ExecResult,
+    ) -> Result<ReplanResult, PlanAndExecuteError> {
+        let failed_set: std::collections::HashSet<String> = result.failed_steps.iter().cloned().collect();
+        
+        // 保留成功的步骤，移除失败的步骤
+        let simplified_steps: Vec<ExecutionStep> = original_plan.steps.iter()
+            .filter(|s| !failed_set.contains(&s.id))
+            .take(5) // 限制最多5个步骤
+            .cloned()
+            .collect();
+        
+        if simplified_steps.is_empty() {
+            return Ok(ReplanResult {
+                should_replan: false,
+                replan_reason: "Cannot simplify: no successful steps".to_string(),
+                new_plan: None,
+            });
+        }
+        
+        let new_plan = ExecutionPlan {
+            id: uuid::Uuid::new_v4().to_string(),
+            task_id: original_plan.task_id.clone(),
+            name: format!("{} (simplified)", original_plan.name),
+            description: "Simplified plan with reduced complexity".to_string(),
+            steps: simplified_steps,
+            estimated_duration: original_plan.estimated_duration / 2,
+            created_at: std::time::SystemTime::now(),
+            dependencies: std::collections::HashMap::new(),
+            metadata: original_plan.metadata.clone(),
+        };
+        
+        Ok(ReplanResult {
+            should_replan: true,
+            replan_reason: "Plan simplified to remove problematic steps".to_string(),
+            new_plan: Some(new_plan),
+        })
+    }
+
+    /// 替换失败的工具
+    async fn replace_failed_tools(
+        &self,
+        original_plan: &ExecutionPlan,
+        result: &ExecResult,
+    ) -> Result<ReplanResult, PlanAndExecuteError> {
+        let failed_set: std::collections::HashSet<String> = result.failed_steps.iter().cloned().collect();
+        
+        let mut new_steps = Vec::new();
+        for step in &original_plan.steps {
+            if failed_set.contains(&step.id) {
+                // 对于失败的工具调用步骤，转换为AI推理步骤
+                if matches!(step.step_type, StepType::ToolCall) {
+                    let mut alt_step = step.clone();
+                    alt_step.id = format!("{}_alt", step.id);
+                    alt_step.name = format!("{} (alternative)", step.name);
+                    alt_step.step_type = StepType::AiReasoning;
+                    alt_step.tool_config = None;
+                    alt_step.description = format!(
+                        "Use AI reasoning as alternative for failed tool: {}",
+                        step.description
+                    );
+                    new_steps.push(alt_step);
+                }
+            } else {
+                new_steps.push(step.clone());
+            }
+        }
+        
+        let new_plan = ExecutionPlan {
+            id: uuid::Uuid::new_v4().to_string(),
+            task_id: original_plan.task_id.clone(),
+            name: format!("{} (tools replaced)", original_plan.name),
+            description: "Plan with failed tools replaced by alternatives".to_string(),
+            steps: new_steps,
+            estimated_duration: original_plan.estimated_duration,
+            created_at: std::time::SystemTime::now(),
+            dependencies: original_plan.dependencies.clone(),
+            metadata: original_plan.metadata.clone(),
+        };
+        
+        Ok(ReplanResult {
+            should_replan: true,
+            replan_reason: "Failed tools replaced with AI reasoning alternatives".to_string(),
+            new_plan: Some(new_plan),
+        })
+    }
+
+    /// 重新排序步骤
+    async fn reorder_steps(
+        &self,
+        original_plan: &ExecutionPlan,
+        result: &ExecResult,
+    ) -> Result<ReplanResult, PlanAndExecuteError> {
+        // 将成功的步骤放在前面
+        let mut successful_steps: Vec<ExecutionStep> = original_plan.steps.iter()
+            .filter(|s| result.completed_steps.contains(&s.id))
+            .cloned()
+            .collect();
+        
+        let mut other_steps: Vec<ExecutionStep> = original_plan.steps.iter()
+            .filter(|s| !result.completed_steps.contains(&s.id) && !result.failed_steps.contains(&s.id))
+            .cloned()
+            .collect();
+        
+        let mut reordered = Vec::new();
+        reordered.append(&mut successful_steps);
+        reordered.append(&mut other_steps);
+        
+        // 添加恢复步骤
+        reordered.push(ExecutionStep {
+            id: format!("recovery_{}", uuid::Uuid::new_v4()),
+            name: "Recovery analysis".to_string(),
+            description: "Analyze previous results and recover".to_string(),
+            step_type: StepType::AiReasoning,
+            tool_config: None,
+            parameters: std::collections::HashMap::new(),
+            estimated_duration: 60,
+            retry_config: RetryConfig::default(),
+            preconditions: vec![],
+            postconditions: vec![],
+        });
+        
+        let new_plan = ExecutionPlan {
+            id: uuid::Uuid::new_v4().to_string(),
+            task_id: original_plan.task_id.clone(),
+            name: format!("{} (reordered)", original_plan.name),
+            description: "Plan with reordered steps for better execution".to_string(),
+            steps: reordered,
+            estimated_duration: original_plan.estimated_duration,
+            created_at: std::time::SystemTime::now(),
+            dependencies: std::collections::HashMap::new(),
+            metadata: original_plan.metadata.clone(),
+        };
+        
+        Ok(ReplanResult {
+            should_replan: true,
+            replan_reason: "Steps reordered based on execution success".to_string(),
+            new_plan: Some(new_plan),
+        })
+    }
+
+    /// 添加验证步骤
+    async fn add_validation_steps(
+        &self,
+        original_plan: &ExecutionPlan,
+        _result: &ExecResult,
+    ) -> Result<ReplanResult, PlanAndExecuteError> {
+        let mut new_steps = Vec::new();
+        
+        for (i, step) in original_plan.steps.iter().enumerate() {
+            new_steps.push(step.clone());
+            
+            // 在每个工具调用后添加验证步骤
+            if matches!(step.step_type, StepType::ToolCall) {
+                new_steps.push(ExecutionStep {
+                    id: format!("validate_{}", step.id),
+                    name: format!("Validate {}", step.name),
+                    description: format!("Validate output of step: {}", step.name),
+                    step_type: StepType::AiReasoning,
+                    tool_config: None,
+                    parameters: std::collections::HashMap::new(),
+                    estimated_duration: 30,
+                    retry_config: RetryConfig::default(),
+                    preconditions: vec![format!("completed({})", step.id)],
+                    postconditions: vec![],
+                });
+            }
+        }
+        
+        let new_plan = ExecutionPlan {
+            id: uuid::Uuid::new_v4().to_string(),
+            task_id: original_plan.task_id.clone(),
+            name: format!("{} (with validation)", original_plan.name),
+            description: "Plan with additional validation steps".to_string(),
+            steps: new_steps,
+            estimated_duration: original_plan.estimated_duration * 3 / 2, // 增加50%时间
+            created_at: std::time::SystemTime::now(),
+            dependencies: original_plan.dependencies.clone(),
+            metadata: original_plan.metadata.clone(),
+        };
+        
+        Ok(ReplanResult {
+            should_replan: true,
+            replan_reason: "Added validation steps after tool calls".to_string(),
+            new_plan: Some(new_plan),
+        })
+    }
+}
+
+// ===== 重规划相关数据结构 =====
+
+/// 重规划策略
+#[derive(Debug, Clone, Default)]
+pub struct ReplanStrategy {
+    /// 重规划动作
+    pub action: ReplanAction,
+    /// 优先级
+    pub priority: ReplanPriority,
+    /// 建议
+    pub suggestions: Vec<String>,
+    /// 置信度
+    pub confidence: f64,
+    /// 是否需要清理
+    pub requires_cleanup: bool,
+    /// 清理步骤
+    pub cleanup_steps: Vec<ExecutionStep>,
+}
+
+/// 重规划动作
+#[derive(Debug, Clone, Default)]
+pub enum ReplanAction {
+    /// 简化计划
+    SimplifyPlan,
+    /// 替换失败的工具
+    ReplaceFailedTools,
+    /// 重新排序步骤
+    ReorderSteps,
+    /// 添加验证步骤
+    AddValidationSteps,
+    /// 完全重新规划
+    #[default]
+    FullReplan,
+}
+
+/// 重规划优先级
+#[derive(Debug, Clone, Default)]
+pub enum ReplanPriority {
+    /// 高优先级
+    High,
+    /// 中优先级
+    #[default]
+    Medium,
+    /// 低优先级
+    Low,
+}
+
+/// 失败分析结果
+#[derive(Debug, Clone, Default)]
+pub struct FailureAnalysis {
+    /// 主要失败原因
+    pub primary_cause: FailureCause,
+    /// 失败的步骤名称
+    pub failed_step_names: Vec<String>,
+    /// 失败率
+    pub failure_rate: f64,
+    /// 是否有资源泄露
+    pub has_resource_leak: bool,
+}
+
+/// 失败原因
+#[derive(Debug, Clone, Default)]
+pub enum FailureCause {
+    /// 资源不可用
+    ResourceUnavailable,
+    /// 超时
+    Timeout,
+    /// 依赖失败
+    DependencyFailure,
+    /// 验证错误
+    ValidationError,
+    /// 未知原因
+    #[default]
+    Unknown,
 }

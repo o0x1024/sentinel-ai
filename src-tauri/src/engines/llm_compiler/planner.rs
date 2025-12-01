@@ -21,14 +21,14 @@ use uuid::Uuid;
 
 use super::memory_integration::LlmCompilerMemoryIntegration;
 use super::types::*;
+use crate::engines::llm_client::LlmClient;
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
-use crate::utils::ordered_message::ChunkType;
 use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
 
 /// LLMCompiler Planner - 智能任务规划器
 pub struct LlmCompilerPlanner {
-    ai_service: Arc<AiService>,
+    llm_client: Arc<LlmClient>,
     tool_adapter: Arc<dyn crate::tools::EngineToolAdapter>,
     #[allow(unused)]
     config: LlmCompilerConfig,
@@ -44,8 +44,9 @@ impl LlmCompilerPlanner {
         config: LlmCompilerConfig,
         prompt_repo: Option<PromptRepository>,
     ) -> Self {
+        let llm_client = Arc::new(LlmClient::from_ai_service(&ai_service));
         Self {
-            ai_service,
+            llm_client,
             tool_adapter,
             config,
             prompt_repo,
@@ -62,8 +63,9 @@ impl LlmCompilerPlanner {
         prompt_repo: Option<PromptRepository>,
         memory_integration: Option<Arc<LlmCompilerMemoryIntegration>>,
     ) -> Self {
+        let llm_client = Arc::new(LlmClient::from_ai_service(&ai_service));
         Self {
-            ai_service,
+            llm_client,
             tool_adapter,
             config,
             prompt_repo,
@@ -97,40 +99,18 @@ impl LlmCompilerPlanner {
             .build_planning_prompts(user_input, context, &available_tools)
             .await?;
 
-        // ✅ 从context中提取conversation_id和message_id（用于统一消息推送）
-        let conversation_id = context
-            .get("conversation_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let message_id = context
-            .get("message_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        // ✅ 调用LLM生成计划（流式输出,前端可以看到思考过程）
-        // 注意: 这里不保存user消息,因为在engine_adapter层已经保存过了
+        // 使用公共 llm_client 模块进行 LLM 调用
         let response = match self
-            .ai_service
-            .send_message_stream_with_save_control(
-                Some(&user_prompt),   // ✅ user_prompt: 用户的实际任务+上下文
-                None,                 // ✅ 不保存user消息(已在上层保存)
-                Some(&system_prompt), // ✅ system_prompt: 拟人化的规划助手提示词
-                conversation_id,
-                message_id,
-                true,                      // 使用流式输出
-                false,                     // 不是最终消息
-                Some(ChunkType::Thinking), // ✅ 标记为Thinking类型,前端显示思考过程
-                Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler), // architecture_type
-                None, // attachments
-            )
+            .llm_client
+            .completion(Some(&system_prompt), &user_prompt)
             .await
         {
             Ok(resp) => {
-                debug!("LLMCompiler Planner: LLM响应长度 {} 字符", resp.len());
+                debug!("LLMCompiler Planner: LLM response length {} chars", resp.len());
                 resp
             }
             Err(e) => {
-                error!("LLMCompiler Planner: LLM调用失败: {}", e);
+                error!("LLMCompiler Planner: LLM call failed: {}", e);
                 return Err(anyhow::anyhow!(
                     "Failed to generate DAG plan: LLM call failed - {}. Please check your AI service configuration.",
                     e
@@ -512,18 +492,10 @@ impl LlmCompilerPlanner {
             system_prompt.push_str("\nAvoid repeating these patterns in the new plan.\n");
         }
 
+        // 使用公共 llm_client 模块进行 LLM 调用
         let response = self
-            .ai_service
-            .send_message_stream(
-                Some(&user_prompt),
-                Some(&system_prompt),
-                None,
-                None,
-                false, // Non-streaming for replanning
-                false,
-                None,
-                None,
-            )
+            .llm_client
+            .completion(Some(&system_prompt), &user_prompt)
             .await?;
 
         self.parse_dag_plan(&response, &format!("Replan-{}", original_plan.name))

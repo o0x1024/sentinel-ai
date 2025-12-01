@@ -12,6 +12,8 @@
     "dialog:allow-message",
     "dialog:default",
     "dialog:default",
-    "fs:default"
+    "fs:default",
+    "shell:allow-open",
+    "shell:default"
   ]
 }

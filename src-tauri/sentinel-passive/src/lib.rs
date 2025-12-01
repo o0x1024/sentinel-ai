@@ -23,7 +23,7 @@ pub mod types;
 
 pub use error::{PassiveError, Result};
 pub use types::*;
-pub use proxy::{ProxyConfig, ProxyService, ScanTask, ScanSender};
+pub use proxy::{ProxyConfig, ProxyService, ScanTask, ScanSender, InterceptState, InterceptAction, PendingInterceptRequest, PendingInterceptResponse};
 pub use scanner::{ScanPipeline, FindingDeduplicator, FindingSender, FindingReceiver};
 pub use database::{
     PassiveDatabaseService, 

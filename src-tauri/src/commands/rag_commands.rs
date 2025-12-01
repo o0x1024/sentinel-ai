@@ -599,7 +599,7 @@ pub async fn assistant_rag_answer(
     // 记录是否找到了相关上下文，但不提前返回，继续调用LLM
     let has_context = !context.is_empty();
     if !has_context {
-        info!("未找到相关上下文，但将继续调用LLM处理用户查询");
+        info!("未找到相关上下文，但将继续调用LLM处理用户输入");
     }
 
     // 获取当前角色提示词

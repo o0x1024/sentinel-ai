@@ -161,8 +161,198 @@ impl PlanAndExecuteEngine {
 
     /// 设置运行期参数（单次执行专用）
     pub fn set_runtime_params(&mut self, params: HashMap<String, serde_json::Value>) {
-        self.runtime_params = Some(params);
+        // 验证并规范化参数
+        let normalized = Self::normalize_runtime_params(&params);
+        self.runtime_params = Some(normalized);
     }
+    
+    /// 规范化运行期参数（处理camelCase和snake_case兼容）
+    fn normalize_runtime_params(params: &HashMap<String, serde_json::Value>) -> HashMap<String, serde_json::Value> {
+        let mut normalized = params.clone();
+        
+        // 处理prompt_ids/promptIds兼容
+        if !normalized.contains_key("prompt_ids") {
+            if let Some(v) = params.get("promptIds") {
+                normalized.insert("prompt_ids".to_string(), v.clone());
+            }
+        }
+        
+        // 处理tools_allow/toolsAllow兼容
+        if !normalized.contains_key("tools_allow") {
+            if let Some(v) = params.get("toolsAllow") {
+                normalized.insert("tools_allow".to_string(), v.clone());
+            }
+        }
+        
+        // 处理tools_deny/toolsDeny兼容
+        if !normalized.contains_key("tools_deny") {
+            if let Some(v) = params.get("toolsDeny") {
+                normalized.insert("tools_deny".to_string(), v.clone());
+            }
+        }
+        
+        // 处理conversation_id/conversationId兼容
+        if !normalized.contains_key("conversation_id") {
+            if let Some(v) = params.get("conversationId") {
+                normalized.insert("conversation_id".to_string(), v.clone());
+            }
+        }
+        
+        // 处理message_id/messageId兼容
+        if !normalized.contains_key("message_id") {
+            if let Some(v) = params.get("messageId") {
+                normalized.insert("message_id".to_string(), v.clone());
+            }
+        }
+        
+        // 处理execution_id/executionId兼容
+        if !normalized.contains_key("execution_id") {
+            if let Some(v) = params.get("executionId") {
+                normalized.insert("execution_id".to_string(), v.clone());
+            }
+        }
+        
+        // 处理role_prompt/rolePrompt兼容
+        if !normalized.contains_key("role_prompt") {
+            if let Some(v) = params.get("rolePrompt") {
+                normalized.insert("role_prompt".to_string(), v.clone());
+            }
+        }
+        
+        normalized
+    }
+    
+    /// 获取规范化的参数值（支持snake_case和camelCase）
+    pub fn get_param<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        if let Some(params) = &self.runtime_params {
+            // 先尝试snake_case
+            if let Some(v) = params.get(key) {
+                if let Ok(result) = serde_json::from_value(v.clone()) {
+                    return Some(result);
+                }
+            }
+            
+            // 再尝试camelCase
+            let camel_key = Self::to_camel_case(key);
+            if let Some(v) = params.get(&camel_key) {
+                if let Ok(result) = serde_json::from_value(v.clone()) {
+                    return Some(result);
+                }
+            }
+        }
+        None
+    }
+    
+    /// 将snake_case转换为camelCase
+    fn to_camel_case(s: &str) -> String {
+        let mut result = String::new();
+        let mut capitalize_next = false;
+        
+        for c in s.chars() {
+            if c == '_' {
+                capitalize_next = true;
+            } else if capitalize_next {
+                result.push(c.to_ascii_uppercase());
+                capitalize_next = false;
+            } else {
+                result.push(c);
+            }
+        }
+        
+        result
+    }
+    
+    /// 获取参数验证结果
+    pub fn validate_params(&self) -> ParamValidationResult {
+        let mut result = ParamValidationResult::default();
+        
+        if let Some(params) = &self.runtime_params {
+            // 验证必需参数
+            let required_params = vec!["conversation_id", "message_id"];
+            for param in required_params {
+                if !params.contains_key(param) && !params.contains_key(&Self::to_camel_case(param)) {
+                    result.warnings.push(format!("Missing recommended parameter: {}", param));
+                }
+            }
+            
+            // 验证工具权限配置
+            if let Some(tools_allow) = params.get("tools_allow").or(params.get("toolsAllow")) {
+                if let Some(arr) = tools_allow.as_array() {
+                    if arr.is_empty() {
+                        result.warnings.push("tools_allow is empty - all tools will be disabled".to_string());
+                    }
+                    result.info.push(format!("Allowed tools count: {}", arr.len()));
+                }
+            }
+            
+            if let Some(tools_deny) = params.get("tools_deny").or(params.get("toolsDeny")) {
+                if let Some(arr) = tools_deny.as_array() {
+                    result.info.push(format!("Denied tools count: {}", arr.len()));
+                }
+            }
+            
+            // 验证prompt配置
+            if let Some(prompt_ids) = params.get("prompt_ids").or(params.get("promptIds")) {
+                if let Some(obj) = prompt_ids.as_object() {
+                    if obj.contains_key("planner") {
+                        result.info.push("Custom planner prompt configured".to_string());
+                    }
+                    if obj.contains_key("executor") {
+                        result.info.push("Custom executor prompt configured".to_string());
+                    }
+                }
+            }
+            
+            // 验证LLM配置
+            if let Some(llm) = params.get("llm") {
+                if let Some(obj) = llm.as_object() {
+                    if let Some(default_llm) = obj.get("default") {
+                        if let Some(model) = default_llm.get("model").and_then(|v| v.as_str()) {
+                            result.info.push(format!("LLM model override: {}", model));
+                        }
+                    }
+                }
+            }
+        } else {
+            result.warnings.push("No runtime parameters configured".to_string());
+        }
+        
+        result.is_valid = result.errors.is_empty();
+        result
+    }
+    
+    /// 获取执行器实例
+    pub fn get_executor(&self) -> Option<Arc<Executor>> {
+        self.executor.clone()
+    }
+    
+    /// 获取规划器实例
+    pub fn get_planner(&self) -> Option<Arc<Planner>> {
+        self.planner.clone()
+    }
+    
+    /// 获取重规划器实例
+    pub fn get_replanner(&self) -> Option<Arc<Replanner>> {
+        self.replanner.clone()
+    }
+    
+    /// 获取内存管理器实例
+    pub fn get_memory_manager(&self) -> Option<Arc<MemoryManager>> {
+        self.memory_manager.clone()
+    }
+}
+
+/// 参数验证结果
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ParamValidationResult {
+    /// 验证是否通过
+    pub is_valid: bool,
+    /// 错误列表
+    pub errors: Vec<String>,
+    /// 警告列表
+    pub warnings: Vec<String>,
+    /// 信息列表
+    pub info: Vec<String>,
 }
 
 

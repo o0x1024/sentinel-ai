@@ -1192,4 +1192,253 @@ impl MemoryManager {
             context_build_time: SystemTime::now(),
         })
     }
+
+    // ===== 执行结果自动保存和摘要生成 =====
+
+    /// 自动保存执行结果到内存（供Replanner使用）
+    pub async fn save_execution_result(
+        &self,
+        task_id: &str,
+        plan: &ExecutionPlan,
+        result: &crate::engines::plan_and_execute::executor::ExecutionResult,
+    ) -> Result<String, PlanAndExecuteError> {
+        // 生成执行摘要
+        let summary = self.generate_execution_summary(result).await;
+        
+        let execution_record = serde_json::json!({
+            "task_id": task_id,
+            "plan_id": plan.id,
+            "plan_name": plan.name,
+            "status": format!("{:?}", result.status),
+            "completed_steps": result.completed_steps,
+            "failed_steps": result.failed_steps,
+            "skipped_steps": result.skipped_steps,
+            "metrics": {
+                "total_duration_ms": result.metrics.total_duration_ms,
+                "successful_steps": result.metrics.successful_steps,
+                "failed_steps": result.metrics.failed_steps,
+                "total_retries": result.metrics.total_retries,
+                "avg_step_duration_ms": result.metrics.avg_step_duration_ms,
+                "peak_concurrency": result.metrics.peak_concurrency,
+            },
+            "summary": summary,
+            "timestamp": SystemTime::now(),
+        });
+        
+        self.store(
+            MemoryEntryType::ExecutionState,
+            execution_record,
+            vec![
+                format!("task:{}", task_id),
+                format!("plan:{}", plan.id),
+                "execution_result".to_string(),
+            ],
+            Priority::High,
+            Some(Duration::from_secs(24 * 60 * 60)),
+        ).await
+    }
+
+    /// 生成执行摘要（供AI理解）
+    async fn generate_execution_summary(
+        &self,
+        result: &crate::engines::plan_and_execute::executor::ExecutionResult,
+    ) -> ExecutionSummary {
+        let total_steps = result.completed_steps.len() + result.failed_steps.len() + result.skipped_steps.len();
+        let success_rate = if total_steps > 0 {
+            result.completed_steps.len() as f64 / total_steps as f64 * 100.0
+        } else {
+            0.0
+        };
+
+        // 分析失败原因
+        let mut failure_categories: HashMap<String, u32> = HashMap::new();
+        for error in &result.errors {
+            let category = match error.error_type {
+                crate::engines::types::ErrorType::Tool => "tool_error",
+                crate::engines::types::ErrorType::Network => "network_error",
+                crate::engines::types::ErrorType::Timeout => "timeout_error",
+                crate::engines::types::ErrorType::Configuration => "config_error",
+                crate::engines::types::ErrorType::System => "system_error",
+                crate::engines::types::ErrorType::Authentication => "auth_error",
+                crate::engines::types::ErrorType::Permission => "permission_error",
+                crate::engines::types::ErrorType::User => "user_error",
+                crate::engines::types::ErrorType::Unknown => "unknown_error",
+            };
+            *failure_categories.entry(category.to_string()).or_insert(0) += 1;
+        }
+
+        // 识别关键问题
+        let mut key_issues = Vec::new();
+        if result.metrics.total_retries > 5 {
+            key_issues.push("高重试次数，可能存在稳定性问题".to_string());
+        }
+        if result.metrics.avg_step_duration_ms > 30000 {
+            key_issues.push("平均步骤执行时间过长".to_string());
+        }
+        if !result.failed_steps.is_empty() && result.completed_steps.is_empty() {
+            key_issues.push("所有步骤都失败，需要完全重新规划".to_string());
+        }
+
+        // 生成改进建议
+        let mut suggestions = Vec::new();
+        if failure_categories.contains_key("timeout_error") {
+            suggestions.push("考虑增加超时时间或优化工具性能".to_string());
+        }
+        if failure_categories.contains_key("network_error") {
+            suggestions.push("检查网络连接或添加重试机制".to_string());
+        }
+        if result.skipped_steps.len() > 2 {
+            suggestions.push("多个步骤被跳过，建议简化执行计划".to_string());
+        }
+
+        ExecutionSummary {
+            overall_status: format!("{:?}", result.status),
+            success_rate,
+            total_steps,
+            completed_count: result.completed_steps.len(),
+            failed_count: result.failed_steps.len(),
+            skipped_count: result.skipped_steps.len(),
+            total_duration_ms: result.metrics.total_duration_ms,
+            failure_categories,
+            key_issues,
+            suggestions,
+            quality_score: result.enhanced_feedback.quality_assessment.overall_score as f64,
+        }
+    }
+
+    /// 获取任务的执行历史摘要（供Replanner分析）
+    pub async fn get_execution_history(
+        &self,
+        task_id: &str,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, PlanAndExecuteError> {
+        let query = MemoryQuery {
+            entry_types: Some(vec![MemoryEntryType::ExecutionState]),
+            tags: Some(vec![format!("task:{}", task_id), "execution_result".to_string()]),
+            time_range: None,
+            priority: None,
+            limit: Some(limit),
+            sort_by: SortBy::CreatedAt,
+        };
+        
+        let results = self.query(query).await?;
+        Ok(results.into_iter().map(|e| e.data).collect())
+    }
+
+    /// 记录步骤执行开始
+    pub async fn record_step_start(
+        &self,
+        task_id: &str,
+        step_name: &str,
+        step_type: &str,
+    ) -> Result<(), PlanAndExecuteError> {
+        let record = ConversationRecord {
+            id: Uuid::new_v4().to_string(),
+            record_type: ConversationRecordType::StepStart,
+            content: format!("开始执行步骤: {} (类型: {})", step_name, step_type),
+            step_id: Some(step_name.to_string()),
+            plan_id: None,
+            timestamp: SystemTime::now(),
+            metadata: HashMap::new(),
+        };
+        
+        self.append_conversation_record(task_id, record).await
+    }
+
+    /// 记录步骤执行完成
+    pub async fn record_step_complete(
+        &self,
+        task_id: &str,
+        step_name: &str,
+        result: &serde_json::Value,
+    ) -> Result<(), PlanAndExecuteError> {
+        let mut metadata = HashMap::new();
+        metadata.insert("result".to_string(), result.clone());
+        
+        let record = ConversationRecord {
+            id: Uuid::new_v4().to_string(),
+            record_type: ConversationRecordType::StepComplete,
+            content: format!("步骤完成: {}", step_name),
+            step_id: Some(step_name.to_string()),
+            plan_id: None,
+            timestamp: SystemTime::now(),
+            metadata,
+        };
+        
+        self.append_conversation_record(task_id, record).await
+    }
+
+    /// 记录步骤执行失败
+    pub async fn record_step_failed(
+        &self,
+        task_id: &str,
+        step_name: &str,
+        error: &str,
+    ) -> Result<(), PlanAndExecuteError> {
+        let mut metadata = HashMap::new();
+        metadata.insert("error".to_string(), serde_json::json!(error));
+        
+        let record = ConversationRecord {
+            id: Uuid::new_v4().to_string(),
+            record_type: ConversationRecordType::StepFailed,
+            content: format!("步骤失败: {} - {}", step_name, error),
+            step_id: Some(step_name.to_string()),
+            plan_id: None,
+            timestamp: SystemTime::now(),
+            metadata,
+        };
+        
+        self.append_conversation_record(task_id, record).await
+    }
+
+    /// 记录重新规划事件
+    pub async fn record_replan_event(
+        &self,
+        task_id: &str,
+        reason: &str,
+        new_plan_id: &str,
+    ) -> Result<(), PlanAndExecuteError> {
+        let mut metadata = HashMap::new();
+        metadata.insert("new_plan_id".to_string(), serde_json::json!(new_plan_id));
+        metadata.insert("reason".to_string(), serde_json::json!(reason));
+        
+        let record = ConversationRecord {
+            id: Uuid::new_v4().to_string(),
+            record_type: ConversationRecordType::Replan,
+            content: format!("触发重新规划: {}", reason),
+            step_id: None,
+            plan_id: Some(new_plan_id.to_string()),
+            timestamp: SystemTime::now(),
+            metadata,
+        };
+        
+        self.append_conversation_record(task_id, record).await
+    }
+}
+
+/// 执行摘要（供AI和Replanner使用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionSummary {
+    /// 总体状态
+    pub overall_status: String,
+    /// 成功率
+    pub success_rate: f64,
+    /// 总步骤数
+    pub total_steps: usize,
+    /// 完成数量
+    pub completed_count: usize,
+    /// 失败数量
+    pub failed_count: usize,
+    /// 跳过数量
+    pub skipped_count: usize,
+    /// 总执行时间(ms)
+    pub total_duration_ms: u64,
+    /// 失败分类
+    pub failure_categories: HashMap<String, u32>,
+    /// 关键问题
+    pub key_issues: Vec<String>,
+    /// 改进建议
+    pub suggestions: Vec<String>,
+    /// 质量评分
+    pub quality_score: f64,
 }

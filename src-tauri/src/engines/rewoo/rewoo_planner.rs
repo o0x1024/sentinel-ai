@@ -9,10 +9,11 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
+use crate::engines::llm_client::LlmClient;
 use crate::services::prompt_db::PromptRepository;
 use crate::services::ai::AiServiceManager;
 use anyhow::{Result, anyhow};
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 const DEFAULT_PLANNER_PROMPT: &str = r##"You are a ReWOO (Reasoning without Observation) planning assistant. Your task is to create a detailed execution plan for the given query using available tools.
 
@@ -203,22 +204,19 @@ impl ReWOOPlanner {
             }
         };
         
-        let config = ai_service.get_config();
+        // 使用公共 llm_client 模块
+        let llm_client = LlmClient::from_ai_service(&ai_service);
+        let config = llm_client.config();
         info!("ReWOO Planner: Using provider={}, model={}, execution_id={}", config.provider, config.model, execution_id);
         
-        // 调用 AiService，不保存到数据库（conversation_id=None）
-        let content = ai_service
-            .send_message_stream(
-                Some(user_prompt),
-                Some(system_prompt),
-                None, // 不关联会话
-                Some(execution_id.to_string()),
-                false, // 不流式发送到前端
-                false, // 不是最终消息
-                None,  // chunk_type
-                None,  // attachments
-            )
-            .await?;
+        // 调用 LlmClient
+        let content = llm_client
+            .completion(Some(system_prompt), user_prompt)
+            .await
+            .map_err(|e| {
+                error!("ReWOO Planner: LLM call failed: {}", e);
+                anyhow!("LLM call failed: {}", e)
+            })?;
         
         if content.is_empty() {
             return Err(anyhow!("LLM returned empty response"));

@@ -149,8 +149,13 @@ impl UnifiedTool for GenerateAdvancedPluginTool {
         let vuln_types_value = params.inputs.get("vuln_types")
             .ok_or_else(|| anyhow::anyhow!("Missing required parameter: vuln_types"))?;
         
-        let vuln_types: Vec<String> = serde_json::from_value(vuln_types_value.clone())
+        let raw_vuln_types: Vec<String> = serde_json::from_value(vuln_types_value.clone())
             .map_err(|e| anyhow::anyhow!("Failed to parse vuln_types: {}", e))?;
+        
+        // 标准化漏洞类型名称
+        let vuln_types: Vec<String> = raw_vuln_types.iter()
+            .map(|t| Self::normalize_vuln_type(t))
+            .collect();
 
         // Parse optional parameters
         let target_endpoints: Option<Vec<String>> = params.inputs.get("target_endpoints")
@@ -503,6 +508,37 @@ impl GenerateAdvancedPluginTool {
     /// Enable and load plugin into scan engine
     async fn enable_and_load_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
         Self::enable_and_load_plugin_static(&self.passive_state, plugin_id).await
+    }
+    
+    /// 标准化漏洞类型名称
+    fn normalize_vuln_type(vuln_type: &str) -> String {
+        let normalized = vuln_type.to_lowercase();
+        match normalized.as_str() {
+            // SQL 注入变体
+            "sql injection" | "sqli" | "sql_injection" | "sqlinjection" => "sqli".to_string(),
+            // XSS 变体
+            "cross-site scripting" | "cross site scripting" | "xss" | "crosssitescripting" => "xss".to_string(),
+            // 路径遍历变体
+            "path traversal" | "path_traversal" | "directory traversal" | "lfi" | "local file inclusion" => "path_traversal".to_string(),
+            // 命令注入变体
+            "command injection" | "command_injection" | "cmd injection" | "os command injection" | "rce" => "command_injection".to_string(),
+            // 文件上传变体
+            "file upload" | "file_upload" | "fileupload" | "unrestricted file upload" => "file_upload".to_string(),
+            // SSRF 变体
+            "ssrf" | "server-side request forgery" | "server side request forgery" => "ssrf".to_string(),
+            // XXE 变体
+            "xxe" | "xml external entity" | "xml_external_entity" => "xxe".to_string(),
+            // CSRF 变体
+            "csrf" | "cross-site request forgery" | "cross site request forgery" | "xsrf" => "csrf".to_string(),
+            // IDOR 变体
+            "idor" | "insecure direct object reference" | "broken access control" | "authorization bypass" => "idor".to_string(),
+            // 认证绕过变体
+            "auth bypass" | "auth_bypass" | "authentication bypass" | "authbypass" => "auth_bypass".to_string(),
+            // 信息泄露变体
+            "info leak" | "info_leak" | "information disclosure" | "information leak" | "infoleak" => "info_leak".to_string(),
+            // 默认保持原样（已经是标准格式或未知类型）
+            _ => normalized.replace(" ", "_").replace("-", "_"),
+        }
     }
 }
 

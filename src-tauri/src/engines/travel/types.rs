@@ -28,6 +28,57 @@ pub struct TravelConfig {
     pub verbose: bool,
     /// 错误回退策略
     pub rollback_strategy: RollbackStrategy,
+    /// 精简模式配置 (Token优化)
+    pub lite_mode: LiteModeConfig,
+    /// 并行执行配置
+    pub parallel_config: ParallelExecutionConfig,
+    /// 上下文管理配置
+    pub context_config: ContextManagerConfig,
+}
+
+/// 精简模式配置 - 用于节省Token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiteModeConfig {
+    /// 是否启用精简模式
+    pub enabled: bool,
+    /// 精简模式适用的复杂度级别
+    pub applicable_complexity: Vec<TaskComplexity>,
+    /// 精简模式最大步骤数
+    pub max_steps: u32,
+    /// 是否跳过OODA循环(直接DAG执行)
+    pub skip_ooda_for_simple: bool,
+    /// 是否启用规划缓存
+    pub enable_plan_cache: bool,
+    /// 规划缓存TTL(秒)
+    pub plan_cache_ttl: u64,
+}
+
+/// 并行执行配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParallelExecutionConfig {
+    /// 是否启用并行执行
+    pub enabled: bool,
+    /// 最大并发任务数
+    pub max_concurrency: usize,
+    /// 任务超时(秒)
+    pub task_timeout: u64,
+    /// 是否启用资源追踪
+    pub enable_resource_tracking: bool,
+}
+
+/// 上下文管理配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextManagerConfig {
+    /// 是否启用上下文压缩
+    pub enable_compression: bool,
+    /// 最大上下文Token数
+    pub max_context_tokens: usize,
+    /// 历史记录最大条数
+    pub max_history_entries: usize,
+    /// 工具结果最大长度
+    pub max_tool_result_length: usize,
+    /// 保留字段白名单(不压缩)
+    pub preserve_fields: Vec<String>,
 }
 
 /// 护栏配置
@@ -515,6 +566,9 @@ impl Default for TravelConfig {
             complexity_config: ComplexityConfig::default(),
             verbose: false,
             rollback_strategy: RollbackStrategy::Intelligent,
+            lite_mode: LiteModeConfig::default(),
+            parallel_config: ParallelExecutionConfig::default(),
+            context_config: ContextManagerConfig::default(),
         }
     }
 }
@@ -697,4 +751,249 @@ unsafe impl Send for TravelTrace {}
 unsafe impl Sync for TravelTrace {}
 unsafe impl Send for OodaCycle {}
 unsafe impl Sync for OodaCycle {}
+
+// ========== DAG 任务类型 (Token优化核心) ==========
+
+/// DAG执行计划 - 一次LLM调用生成完整计划
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagPlan {
+    /// 计划ID
+    pub id: String,
+    /// 任务描述
+    pub task_description: String,
+    /// DAG任务节点
+    pub tasks: Vec<DagTask>,
+    /// 任务依赖关系 (task_id -> 依赖的task_ids)
+    pub dependencies: HashMap<String, Vec<String>>,
+    /// 创建时间
+    pub created_at: SystemTime,
+    /// 预估总Token消耗
+    pub estimated_tokens: u32,
+}
+
+/// DAG任务节点
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagTask {
+    /// 任务ID (如 "1", "2", "3")
+    pub id: String,
+    /// 工具名称
+    pub tool_name: String,
+    /// 工具参数 (支持 $1, $2 等变量引用)
+    pub arguments: HashMap<String, serde_json::Value>,
+    /// 依赖的任务ID列表
+    pub depends_on: Vec<String>,
+    /// 任务描述
+    pub description: Option<String>,
+    /// 执行状态
+    pub status: DagTaskStatus,
+    /// 执行结果
+    pub result: Option<serde_json::Value>,
+    /// 错误信息
+    pub error: Option<String>,
+    /// 开始时间
+    pub started_at: Option<SystemTime>,
+    /// 完成时间
+    pub completed_at: Option<SystemTime>,
+}
+
+/// DAG任务状态
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DagTaskStatus {
+    /// 等待依赖
+    Pending,
+    /// 可执行(依赖已满足)
+    Ready,
+    /// 执行中
+    Running,
+    /// 已完成
+    Completed,
+    /// 执行失败
+    Failed,
+    /// 已跳过
+    Skipped,
+}
+
+/// DAG执行结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagExecutionResult {
+    /// 计划ID
+    pub plan_id: String,
+    /// 是否成功
+    pub success: bool,
+    /// 任务结果 (task_id -> result)
+    pub task_results: HashMap<String, serde_json::Value>,
+    /// 失败的任务
+    pub failed_tasks: Vec<String>,
+    /// 执行指标
+    pub metrics: DagExecutionMetrics,
+    /// 最终输出
+    pub final_output: Option<serde_json::Value>,
+}
+
+/// DAG执行指标
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DagExecutionMetrics {
+    /// 总任务数
+    pub total_tasks: u32,
+    /// 成功任务数
+    pub completed_tasks: u32,
+    /// 失败任务数
+    pub failed_tasks: u32,
+    /// 跳过任务数
+    pub skipped_tasks: u32,
+    /// 并行执行的最大数量
+    pub max_parallel: u32,
+    /// 总执行时间(ms)
+    pub total_duration_ms: u64,
+    /// LLM调用次数
+    pub llm_calls: u32,
+    /// 估算节省的Token数
+    pub tokens_saved: u32,
+}
+
+/// 执行模式
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ExecutionMode {
+    /// 完整OODA模式
+    FullOoda,
+    /// 精简DAG模式
+    LiteDag,
+    /// 混合模式(根据复杂度自动切换)
+    Hybrid,
+}
+
+/// 资源信息(用于追踪)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackedResource {
+    /// 资源ID
+    pub id: String,
+    /// 资源类型
+    pub resource_type: TrackedResourceType,
+    /// 创建任务
+    pub created_by: Option<String>,
+    /// 创建时间
+    pub created_at: SystemTime,
+    /// 是否已清理
+    pub cleaned: bool,
+}
+
+/// 追踪的资源类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum TrackedResourceType {
+    /// 浏览器会话
+    Browser,
+    /// 代理服务
+    Proxy,
+    /// 临时文件
+    TempFile,
+    /// 网络连接
+    NetworkConnection,
+}
+
+// ========== 新类型默认实现 ==========
+
+impl Default for LiteModeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            applicable_complexity: vec![TaskComplexity::Simple, TaskComplexity::Medium],
+            max_steps: 10,
+            skip_ooda_for_simple: true,
+            enable_plan_cache: true,
+            plan_cache_ttl: 3600,
+        }
+    }
+}
+
+impl Default for ParallelExecutionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_concurrency: 5,
+            task_timeout: 60,
+            enable_resource_tracking: true,
+        }
+    }
+}
+
+impl Default for ContextManagerConfig {
+    fn default() -> Self {
+        Self {
+            enable_compression: true,
+            max_context_tokens: 4000,
+            max_history_entries: 10,
+            max_tool_result_length: 2000,
+            preserve_fields: vec![
+                "target".to_string(),
+                "url".to_string(),
+                "domain".to_string(),
+                "status".to_string(),
+                "error".to_string(),
+            ],
+        }
+    }
+}
+
+impl DagPlan {
+    pub fn new(task_description: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            task_description,
+            tasks: Vec::new(),
+            dependencies: HashMap::new(),
+            created_at: SystemTime::now(),
+            estimated_tokens: 0,
+        }
+    }
+
+    /// 添加任务
+    pub fn add_task(&mut self, task: DagTask) {
+        let task_id = task.id.clone();
+        let deps = task.depends_on.clone();
+        self.tasks.push(task);
+        if !deps.is_empty() {
+            self.dependencies.insert(task_id, deps);
+        }
+    }
+
+    /// 获取可执行的任务(依赖已满足)
+    pub fn get_ready_tasks(&self, completed: &[String]) -> Vec<&DagTask> {
+        self.tasks
+            .iter()
+            .filter(|t| {
+                t.status == DagTaskStatus::Pending
+                    && t.depends_on.iter().all(|dep| completed.contains(dep))
+            })
+            .collect()
+    }
+}
+
+impl DagTask {
+    pub fn new(id: String, tool_name: String, arguments: HashMap<String, serde_json::Value>) -> Self {
+        Self {
+            id,
+            tool_name,
+            arguments,
+            depends_on: Vec::new(),
+            description: None,
+            status: DagTaskStatus::Pending,
+            result: None,
+            error: None,
+            started_at: None,
+            completed_at: None,
+        }
+    }
+
+    pub fn with_depends(mut self, deps: Vec<String>) -> Self {
+        self.depends_on = deps;
+        self
+    }
+
+    pub fn with_description(mut self, desc: String) -> Self {
+        self.description = Some(desc);
+        self
+    }
+}
+
+// DagExecutionMetrics 使用 derive(Default)
 

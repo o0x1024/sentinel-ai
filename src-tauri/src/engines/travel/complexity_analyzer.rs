@@ -3,6 +3,7 @@
 //! 实现混合判断机制:规则快速判断+LLM深度分析
 
 use super::types::{TaskComplexity, ComplexityConfig};
+use crate::engines::llm_client::{LlmClient, create_client as create_llm_client};
 use crate::services::ai::AiService;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
@@ -11,20 +12,20 @@ use std::sync::Arc;
 /// 任务复杂度分析器
 pub struct ComplexityAnalyzer {
     config: ComplexityConfig,
-    ai_service: Option<Arc<AiService>>,
+    llm_client: Option<LlmClient>,
 }
 
 impl ComplexityAnalyzer {
     pub fn new(config: ComplexityConfig) -> Self {
         Self { 
             config,
-            ai_service: None,
+            llm_client: None,
         }
     }
 
-    /// 设置AI服务
+    /// 设置AI服务（创建内置 LlmClient）
     pub fn with_ai_service(mut self, ai_service: Arc<AiService>) -> Self {
-        self.ai_service = Some(ai_service);
+        self.llm_client = Some(create_llm_client(&ai_service));
         self
     }
 
@@ -139,7 +140,7 @@ impl ComplexityAnalyzer {
         !has_connectors
     }
 
-    /// 基于LLM的深度分析
+    /// 基于LLM的深度分析（使用内置 LlmClient）
     async fn llm_based_analysis(
         &self,
         task_description: &str,
@@ -147,57 +148,38 @@ impl ComplexityAnalyzer {
     ) -> Result<TaskComplexity> {
         // 构建分析prompt
         let user_prompt = self.build_complexity_analysis_prompt(task_description, task_parameters);
-        //中文
         let system_prompt = "你是一个任务复杂度分析专家，请分析给定的安全测试任务并将其分类为简单、中等或复杂。只用一个词回答。";
 
         log::info!("LLM complexity analysis for task: {}", task_description);
 
-        // 如果有AI服务,使用LLM分析
-        if let Some(service) = &self.ai_service {
-            match service
-                .send_message_stream(
-                    Some(&user_prompt),
-                    Some(system_prompt),
-                    None, // conversation_id
-                    None, // message_id
-                    false, // stream
-                    false, // is_final
-                    None, // chunk_type
-                    None, // attachments
-                )
-                .await
-            {
-                Ok(response) => {
-                    log::info!("LLM response: {}", response);
-                    match self.parse_llm_response(&response) {
-                        Ok(complexity) => {
-                            log::info!("LLM analysis result: {:?}", complexity);
-                            return Ok(complexity);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to parse LLM response: {}, falling back to heuristic", e);
+        // 使用内置 LLM 客户端
+        match &self.llm_client {
+            Some(client) => {
+                match client.completion(Some(system_prompt), &user_prompt).await {
+                    Ok(response) => {
+                        log::info!("LLM response: {}", response);
+                        match self.parse_llm_response(&response) {
+                            Ok(complexity) => {
+                                log::info!("LLM analysis result: {:?}", complexity);
+                                return Ok(complexity);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to parse LLM response: {}", e);
+                                return Err(anyhow!("Travel complexity analysis: Failed to parse LLM response: {}", e));
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    log::warn!("LLM call failed: {}, falling back to heuristic", e);
+                    Err(e) => {
+                        log::error!("Travel complexity analysis LLM call failed: {}", e);
+                        return Err(anyhow!("Travel complexity analysis LLM call failed: {}", e));
+                    }
                 }
             }
-        } else {
-            log::info!("No AI service available, using heuristic analysis");
+            None => {
+                log::error!("Travel LLM client not initialized");
+                return Err(anyhow!("Travel LLM client not initialized"));
+            }
         }
-
-        // 降级:基于启发式规则返回
-        let complexity = if task_description.len() > 100 {
-            TaskComplexity::Complex
-        } else if task_description.len() > 30 {
-            TaskComplexity::Medium
-        } else {
-            TaskComplexity::Simple
-        };
-
-        log::info!("Heuristic analysis result: {:?}", complexity);
-        Ok(complexity)
     }
 
     /// 构建复杂度分析prompt

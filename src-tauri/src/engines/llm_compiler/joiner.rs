@@ -13,19 +13,19 @@ use sentinel_rag::models::AssistantRagRequest;
 use sentinel_rag::query_utils::build_rag_query_pair;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 
 use super::types::EfficiencyMetrics;
 use super::types::*;
+use crate::engines::llm_client::LlmClient;
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
-use crate::utils::ordered_message::ChunkType;
 
 /// Intelligent Joiner - 智能决策器
 pub struct IntelligentJoiner {
-    /// AI服务
-    ai_service: AiService,
+    /// LLM客户端
+    llm_client: LlmClient,
     /// 配置
     config: LlmCompilerConfig,
     /// 动态Prompt仓库
@@ -35,8 +35,10 @@ pub struct IntelligentJoiner {
     /// 执行上下文
     execution_context: ExecutionContext,
     /// Conversation ID（用于流式消息）
+    #[allow(unused)]
     conversation_id: Option<String>,
     /// Message ID（用于流式消息）
+    #[allow(unused)]
     message_id: Option<String>,
 }
 
@@ -104,8 +106,9 @@ impl IntelligentJoiner {
         config: LlmCompilerConfig,
         prompt_repo: Option<PromptRepository>,
     ) -> Self {
+        let llm_client = LlmClient::from_ai_service(&ai_service);
         Self {
-            ai_service,
+            llm_client,
             config,
             prompt_repo,
             decision_history: Vec::new(),
@@ -272,21 +275,10 @@ impl IntelligentJoiner {
             .build_goal_completion_prompts(original_query, &successful_outputs)
             .await?;
 
-        // 调用AI分析目标完成度（携带system_prompt，避免默认system）
+        // 使用公共 llm_client 模块进行 LLM 调用
         match self
-            .ai_service
-            .send_message_stream_with_save_control(
-                Some(&user_prompt),
-                None,
-                Some(&system_prompt),
-                self.conversation_id.clone(),
-                self.message_id.clone(),
-                true,
-                false,
-                Some(ChunkType::Thinking),
-                Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
-                None, // attachments
-            )
+            .llm_client
+            .completion(Some(&system_prompt), &user_prompt)
             .await
         {
             Ok(response) => {
@@ -294,7 +286,7 @@ impl IntelligentJoiner {
                 self.parse_completion_score(&response)
             }
             Err(e) => {
-                warn!("AI目标完成度分析失败: {}", e);
+                error!("LLMCompiler Joiner: Goal completion analysis failed: {}", e);
                 // 使用启发式方法估算
                 Ok(self.heuristic_completion_estimate(&successful_outputs))
             }
@@ -456,26 +448,15 @@ impl IntelligentJoiner {
             }
         }
 
-        // ✅ 使用拟人化的消息格式调用LLM
+        // 使用公共 llm_client 模块进行 LLM 调用
         match self
-            .ai_service
-            .send_message_stream_with_save_control(
-                Some(&user_prompt),   // user_prompt: 具体的分析请求
-                None,                 // 不保存user消息(已在上层保存)
-                Some(&system_prompt), // system_prompt: 拟人化的决策助手提示词
-                self.conversation_id.clone(),
-                self.message_id.clone(),
-                true,                      // 流式输出
-                false,                     // 不是最终消息
-                Some(ChunkType::Thinking), // 标记为Thinking类型
-                Some(crate::utils::ordered_message::ArchitectureType::LLMCompiler),
-                None, // attachments
-            )
+            .llm_client
+            .completion(Some(&system_prompt), &user_prompt)
             .await
         {
             Ok(response) => self.parse_ai_decision(&response),
             Err(e) => {
-                warn!("AI决策分析失败: {}", e);
+                error!("LLMCompiler Joiner: AI decision analysis failed: {}", e);
                 // 使用默认决策逻辑
                 Ok(self.default_decision_logic(execution_results, round))
             }

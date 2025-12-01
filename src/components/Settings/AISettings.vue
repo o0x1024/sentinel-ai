@@ -97,13 +97,13 @@
                     默认 Provider
                   </span>
                 </label>
-                <select class="select select-bordered w-full"
-                        v-model="defaultProviderLocal"
-                        @change="onChangeDefaultProvider">
-                  <option v-for="provider in getEnabledProviders()" :key="provider" :value="provider">
-                    {{ provider }}
-                  </option>
-                </select>
+                <SearchableSelect
+                  v-model="defaultProviderLocal"
+                  :options="providerOptions"
+                  :placeholder="t('settings.ai.selectProvider', '选择提供商')"
+                  search-placeholder="搜索提供商..."
+                  @change="onChangeDefaultProvider"
+                />
               </div>
               
               <!-- 默认模型选择器 -->
@@ -114,18 +114,14 @@
                     默认 Chat 模型
                   </span>
                 </label>
-                <select class="select select-bordered w-full"
-                        v-model="defaultChatModelLocal"
-                        @change="onChangeDefaultChatModel"
-                        :disabled="!defaultProviderLocal || !getProviderModels(defaultProviderLocal).length">
-                  <option value="">{{ t('settings.ai.selectModel') }}</option>
-                  <option v-for="model in getProviderModels(defaultProviderLocal)" 
-                          :key="model.id" 
-                          :value="model.id"
-                          :selected="model.id === defaultChatModelLocal">
-                    {{ model.name }}{{ model.description ? ' - ' + model.description : '' }}
-                  </option>
-                </select>
+                <SearchableSelect
+                  v-model="defaultChatModelLocal"
+                  :options="chatModelOptions"
+                  :placeholder="t('settings.ai.selectModel')"
+                  search-placeholder="搜索模型..."
+                  :disabled="!defaultProviderLocal || !getProviderModels(defaultProviderLocal).length"
+                  @change="onChangeDefaultChatModel"
+                />
               </div>
             </div>
             
@@ -285,13 +281,13 @@
           <label class="label">
             <span class="label-text">{{ t('settings.ai.defaultModel') }}</span>
           </label>
-          <select class="select select-bordered" v-model="selectedProviderConfig.default_model" @change="saveAiConfig">
-            <option value="">{{ t('settings.ai.selectModel') }}</option>
-            <option v-for="model in selectedProviderConfig.models" 
-                    :key="model.id" :value="model.id">
-              {{ model.name }}{{ model.description ? ' - ' + model.description : '' }}
-            </option>
-          </select>
+          <SearchableSelect
+            v-model="selectedProviderDefaultModel"
+            :options="selectedProviderModelOptions"
+            :placeholder="t('settings.ai.selectModel')"
+            search-placeholder="搜索模型..."
+            @change="onSelectedProviderModelChange"
+          />
         </div>
       </div>
 
@@ -431,54 +427,145 @@
         </h3>
         
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- 提供商唯一名称（ID） -->
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ t('settings.ai.providerName') }}</span>
+              <span class="label-text-alt text-warning">*必填，唯一标识</span>
             </label>
-            <input type="text" :placeholder="t('settings.ai.providerNamePlaceholder')" 
+            <input type="text" placeholder="MyCustomProvider" 
                    class="input input-bordered"
-                   v-model="customProvider.name"
-                   @blur="saveAiConfig">
+                   v-model="customProvider.name">
           </div>
           
+          <!-- 兼容模式选择 -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">API 兼容模式</span>
+              <span class="label-text-alt text-info">影响请求方式</span>
+            </label>
+            <select class="select select-bordered" v-model="customProvider.compat_mode">
+              <option value="openai">OpenAI 兼容 (推荐)</option>
+              <option value="anthropic">Anthropic 兼容</option>
+              <option value="rig_openai">Rig-OpenAI 原生</option>
+              <option value="rig_anthropic">Rig-Anthropic 原生</option>
+            </select>
+            <label class="label">
+              <span class="label-text-alt">
+                OpenAI/Anthropic 兼容：使用自定义HTTP请求<br>
+                Rig原生：使用rig-core库（需设置对应环境变量）
+              </span>
+            </label>
+          </div>
+          
+          <!-- API密钥 -->
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ t('settings.ai.apiKey') }}</span>
+              <span class="label-text-alt text-warning" v-if="customProvider.compat_mode !== 'ollama'">*必填</span>
             </label>
             <input type="password" :placeholder="t('settings.apiKeyPlaceholder')" 
                    class="input input-bordered"
-                   v-model="customProvider.api_key"
-                   @blur="saveAiConfig">
+                   v-model="customProvider.api_key">
           </div>
           
+          <!-- API Base URL -->
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ t('settings.ai.apiBaseUrl') }}</span>
+              <span class="label-text-alt text-warning">*必填</span>
             </label>
             <input type="url" placeholder="https://api.example.com/v1" 
                    class="input input-bordered"
-                   v-model="customProvider.api_base"
-                   @blur="saveAiConfig">
+                   v-model="customProvider.api_base">
+            <label class="label">
+              <span class="label-text-alt">
+                示例：https://api.openai.com/v1
+              </span>
+            </label>
           </div>
           
+          <!-- 模型ID -->
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ t('settings.ai.modelId') }}</span>
+              <span class="label-text-alt text-warning">*必填，默认模型</span>
             </label>
-            <input type="text" :placeholder="t('settings.ai.modelIdPlaceholder')" 
+            <input type="text" placeholder="gpt-4o-mini" 
                    class="input input-bordered"
-                   v-model="customProvider.model_id"
-                   @blur="saveAiConfig">
+                   v-model="customProvider.model_id">
+          </div>
+          
+          <!-- 显示名称 -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">显示名称</span>
+              <span class="label-text-alt">可选，用于界面显示</span>
+            </label>
+            <input type="text" placeholder="我的自定义提供商" 
+                   class="input input-bordered"
+                   v-model="customProvider.display_name">
           </div>
         </div>
         
+        <!-- 高级选项折叠 -->
+        <div class="collapse collapse-arrow bg-base-200 mt-4">
+          <input type="checkbox" /> 
+          <div class="collapse-title font-medium">
+            <i class="fas fa-cogs mr-2"></i>高级选项
+          </div>
+          <div class="collapse-content">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- 额外请求头 -->
+              <div class="form-control md:col-span-2">
+                <label class="label">
+                  <span class="label-text">额外请求头 (JSON)</span>
+                </label>
+                <textarea 
+                  class="textarea textarea-bordered font-mono text-sm h-24"
+                  placeholder='{"X-Custom-Header": "value"}'
+                  v-model="customProvider.extra_headers_json"
+                ></textarea>
+              </div>
+              
+              <!-- 超时设置 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">请求超时（秒）</span>
+                </label>
+                <input type="number" class="input input-bordered" 
+                       v-model.number="customProvider.timeout" 
+                       min="10" max="600" placeholder="120">
+              </div>
+              
+              <!-- 最大重试次数 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">最大重试次数</span>
+                </label>
+                <input type="number" class="input input-bordered" 
+                       v-model.number="customProvider.max_retries" 
+                       min="0" max="5" placeholder="3">
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 验证提示 -->
+        <div v-if="customProviderValidationError" class="alert alert-error mt-4">
+          <i class="fas fa-exclamation-triangle"></i>
+          <span>{{ customProviderValidationError }}</span>
+        </div>
+        
         <div class="card-actions justify-end mt-4">
-          <button class="btn btn-outline" @click="testCustomProvider">
-            <i class="fas fa-vial"></i>
+          <button class="btn btn-outline" @click="testCustomProvider" :disabled="!!customProviderValidationError || testingCustomProvider">
+            <span v-if="testingCustomProvider" class="loading loading-spinner loading-sm"></span>
+            <i v-else class="fas fa-vial"></i>
             {{ t('settings.ai.testCustomProvider') }}
           </button>
-          <button class="btn btn-primary" @click="addCustomProvider">
-            <i class="fas fa-plus"></i>
+          <button class="btn btn-primary" @click="addCustomProvider" :disabled="!!customProviderValidationError || addingCustomProvider">
+            <span v-if="addingCustomProvider" class="loading loading-spinner loading-sm"></span>
+            <i v-else class="fas fa-plus"></i>
             {{ t('settings.ai.addCustomProvider') }}
           </button>
         </div>
@@ -527,6 +614,7 @@
 import { computed, ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
+import SearchableSelect from '@/components/SearchableSelect.vue'
 
 const { t } = useI18n()
 
@@ -545,9 +633,14 @@ interface Props {
   customProvider: any
   aiUsageStats: any
   saving: boolean
+  testingCustomProvider?: boolean
+  addingCustomProvider?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  testingCustomProvider: false,
+  addingCustomProvider: false,
+})
 
 // Emits
 interface Emits {
@@ -583,6 +676,44 @@ const settings = computed({
 const customProvider = computed({
   get: () => props.customProvider,
   set: (value) => emit('update:customProvider', value)
+})
+
+// 是否正在测试/添加自定义提供商
+const testingCustomProvider = computed(() => props.testingCustomProvider)
+const addingCustomProvider = computed(() => props.addingCustomProvider)
+
+// 自定义提供商验证错误
+const customProviderValidationError = computed(() => {
+  const p = props.customProvider
+  if (!p.name || !p.name.trim()) {
+    return '请输入提供商名称（唯一标识）'
+  }
+  // 检查名称是否与现有提供商冲突
+  const existingProviders = Object.keys(props.aiConfig?.providers || {})
+  const nameLower = p.name.trim().toLowerCase()
+  if (existingProviders.some(k => k.toLowerCase() === nameLower)) {
+    return `提供商名称 "${p.name}" 已存在，请使用其他名称`
+  }
+  if (!p.api_base || !p.api_base.trim()) {
+    return '请输入 API Base URL'
+  }
+  if (!p.model_id || !p.model_id.trim()) {
+    return '请输入默认模型 ID'
+  }
+  // 非 Ollama 兼容模式需要 API Key
+  const needsApiKey = p.compat_mode !== 'ollama'
+  if (needsApiKey && (!p.api_key || !p.api_key.trim())) {
+    return '请输入 API Key'
+  }
+  // 验证 extra_headers_json 是否为有效 JSON
+  if (p.extra_headers_json && p.extra_headers_json.trim()) {
+    try {
+      JSON.parse(p.extra_headers_json)
+    } catch {
+      return '额外请求头 JSON 格式无效'
+    }
+  }
+  return ''
 })
 
 const selectedProviderConfig = computed(() => {
@@ -651,6 +782,50 @@ const getEnabledProviders = () => {
     const provider = props.aiConfig.providers[providerKey]
     return provider && provider.enabled === true
   })
+}
+
+// Provider 选项（用于可搜索下拉）
+const providerOptions = computed(() => {
+  return getEnabledProviders().map(provider => ({
+    value: provider,
+    label: getProviderName(provider),
+    description: ''
+  }))
+})
+
+// Chat 模型选项（用于可搜索下拉）
+const chatModelOptions = computed(() => {
+  const models = getProviderModels(defaultProviderLocal.value)
+  return models.map((model: any) => ({
+    value: model.id,
+    label: model.name,
+    description: model.description || ''
+  }))
+})
+
+// 选中提供商的模型选项（用于可搜索下拉）
+const selectedProviderModelOptions = computed(() => {
+  const models = selectedProviderConfig.value?.models || []
+  return models.map((model: any) => ({
+    value: model.id,
+    label: model.name,
+    description: model.description || ''
+  }))
+})
+
+// 选中提供商的默认模型（双向绑定）
+const selectedProviderDefaultModel = computed({
+  get: () => selectedProviderConfig.value?.default_model || '',
+  set: (value: string) => {
+    if (selectedProviderConfig.value) {
+      selectedProviderConfig.value.default_model = value
+    }
+  }
+})
+
+// 提供商默认模型变更处理
+const onSelectedProviderModelChange = () => {
+  saveAiConfig()
 }
 
 // 获取指定提供商的模型列表

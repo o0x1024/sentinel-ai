@@ -18,10 +18,50 @@ use sentinel_passive::{
     CertificateService, Finding, FindingDeduplicator, PassiveDatabaseService, PluginManager,
     PluginRecord, PluginStatus, PluginMetadata, ProxyConfig, ProxyService, ProxyStats, ProxyStatus, ScanPipeline, ScanTask,
     VulnerabilityFilters, VulnerabilityRecord, EvidenceRecord,
+    InterceptState, InterceptAction as PassiveInterceptAction, PendingInterceptRequest, PendingInterceptResponse,
 };
 
-use crate::events::{emit_finding, emit_plugin_changed, emit_proxy_status, emit_scan_stats};
-use crate::events::{FindingEvent, PluginChangedEvent, ProxyStatusEvent, ScanStatsEvent};
+use crate::events::{emit_finding, emit_plugin_changed, emit_proxy_status, emit_scan_stats, emit_intercept_request, emit_intercept_response};
+use crate::events::{FindingEvent, PluginChangedEvent, ProxyStatusEvent, ScanStatsEvent, InterceptRequestEvent, InterceptResponseEvent};
+
+/// 拦截请求（用于前端展示）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterceptedRequest {
+    pub id: String,
+    pub method: String,
+    pub url: String,
+    pub path: String,
+    pub protocol: String,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+    pub timestamp: i64,
+}
+
+/// 本地拦截动作（用于命令参数）
+pub type InterceptAction = PassiveInterceptAction;
+
+/// 内部拦截请求（包含响应通道）
+pub struct InterceptedRequestInternal {
+    pub request: InterceptedRequest,
+    pub response_tx: tokio::sync::oneshot::Sender<InterceptAction>,
+}
+
+/// 拦截响应（用于前端展示）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterceptedResponse {
+    pub id: String,
+    pub request_id: String,
+    pub status: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+    pub timestamp: i64,
+}
+
+/// 内部拦截响应（包含响应通道）
+pub struct InterceptedResponseInternal {
+    pub response: InterceptedResponse,
+    pub response_tx: tokio::sync::oneshot::Sender<InterceptAction>,
+}
 
 /// 被动扫描服务状态（全局单例）
 pub struct PassiveScanState {
@@ -32,6 +72,20 @@ pub struct PassiveScanState {
     database_url: String,
     is_running: Arc<RwLock<bool>>,
     scan_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<sentinel_passive::ScanTask>>>>,
+    /// 是否启用请求拦截
+    intercept_enabled: Arc<RwLock<bool>>,
+    /// 是否启用响应拦截
+    response_intercept_enabled: Arc<RwLock<bool>>,
+    /// 待处理的拦截请求（内部使用，包含响应通道）
+    intercepted_requests: Arc<RwLock<std::collections::HashMap<String, InterceptedRequestInternal>>>,
+    /// 待处理的拦截响应（内部使用，包含响应通道）
+    intercepted_responses: Arc<RwLock<std::collections::HashMap<String, InterceptedResponseInternal>>>,
+    /// 应用句柄（用于发送事件）
+    app_handle: Arc<RwLock<Option<AppHandle>>>,
+    /// 拦截请求接收端（用于处理从代理发来的拦截请求）
+    intercept_pending_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptRequest>>>>,
+    /// 拦截响应接收端（用于处理从代理发来的拦截响应）
+    intercept_response_pending_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptResponse>>>>,
 }
 
 impl Clone for PassiveScanState {
@@ -44,6 +98,13 @@ impl Clone for PassiveScanState {
             database_url: self.database_url.clone(),
             is_running: self.is_running.clone(),
             scan_tx: self.scan_tx.clone(),
+            intercept_enabled: self.intercept_enabled.clone(),
+            response_intercept_enabled: self.response_intercept_enabled.clone(),
+            intercepted_requests: self.intercepted_requests.clone(),
+            intercepted_responses: self.intercepted_responses.clone(),
+            app_handle: self.app_handle.clone(),
+            intercept_pending_tx: self.intercept_pending_tx.clone(),
+            intercept_response_pending_tx: self.intercept_response_pending_tx.clone(),
         }
     }
 }
@@ -86,6 +147,13 @@ impl PassiveScanState {
             database_url,
             is_running: Arc::new(RwLock::new(false)),
             scan_tx: Arc::new(RwLock::new(None)),
+            intercept_enabled: Arc::new(RwLock::new(false)),
+            response_intercept_enabled: Arc::new(RwLock::new(false)),
+            intercepted_requests: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            intercepted_responses: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            app_handle: Arc::new(RwLock::new(None)),
+            intercept_pending_tx: Arc::new(RwLock::new(None)),
+            intercept_response_pending_tx: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -138,6 +206,27 @@ impl PassiveScanState {
     pub async fn set_scan_tx(&self, tx: UnboundedSender<ScanTask>) {
         let mut scan_tx_guard = self.scan_tx.write().await;
         *scan_tx_guard = Some(tx);
+    }
+    
+    /// 获取拦截启用状态
+    pub fn get_intercept_enabled(&self) -> Arc<RwLock<bool>> {
+        self.intercept_enabled.clone()
+    }
+    
+    /// 获取拦截请求映射
+    pub fn get_intercepted_requests(&self) -> Arc<RwLock<std::collections::HashMap<String, InterceptedRequestInternal>>> {
+        self.intercepted_requests.clone()
+    }
+    
+    /// 设置应用句柄
+    pub async fn set_app_handle(&self, app: AppHandle) {
+        let mut handle = self.app_handle.write().await;
+        *handle = Some(app);
+    }
+    
+    /// 获取应用句柄
+    pub fn get_app_handle(&self) -> Arc<RwLock<Option<AppHandle>>> {
+        self.app_handle.clone()
     }
 
     /// 内部方法：列出所有插件（数据库来源，供工具提供者使用）
@@ -254,16 +343,15 @@ impl<T> CommandResponse<T> {
     }
 }
 
-/// 启动被动扫描代理
-#[tauri::command]
-pub async fn start_passive_scan(
-    app: AppHandle,
-    state: State<'_, PassiveScanState>,
+/// 内部启动函数（可在内部复用）
+async fn start_passive_scan_internal(
+    app: &AppHandle,
+    state: &PassiveScanState,
     config: Option<ProxyConfig>,
-) -> Result<CommandResponse<u16>, String> {
+) -> Result<u16, String> {
     let mut is_running = state.is_running.write().await;
     if *is_running {
-        return Ok(CommandResponse::err("Proxy already running".to_string()));
+        return Err("Proxy already running".to_string());
     }
 
     let config = config.unwrap_or_default();
@@ -272,7 +360,33 @@ pub async fn start_passive_scan(
     let ca_dir = std::env::current_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
         .join("ca");
-    let proxy = ProxyService::with_ca_dir(config, ca_dir);
+    
+    // 创建请求拦截通道
+    let (intercept_pending_tx, mut intercept_pending_rx) = tokio::sync::mpsc::unbounded_channel::<PendingInterceptRequest>();
+    
+    // 创建响应拦截通道
+    let (intercept_response_pending_tx, mut intercept_response_pending_rx) = tokio::sync::mpsc::unbounded_channel::<PendingInterceptResponse>();
+    
+    // 保存拦截发送端到 state
+    {
+        let mut tx_guard = state.intercept_pending_tx.write().await;
+        *tx_guard = Some(intercept_pending_tx.clone());
+    }
+    {
+        let mut tx_guard = state.intercept_response_pending_tx.write().await;
+        *tx_guard = Some(intercept_response_pending_tx.clone());
+    }
+    
+    // 创建拦截状态
+    let intercept_state = InterceptState {
+        enabled: state.intercept_enabled.clone(),
+        response_enabled: state.response_intercept_enabled.clone(),
+        pending_tx: Some(intercept_pending_tx),
+        pending_response_tx: Some(intercept_response_pending_tx),
+    };
+    
+    // 创建代理服务（支持拦截）
+    let proxy = ProxyService::with_intercept(config, ca_dir, intercept_state);
 
     // 创建扫描与发现通道（scan_rx 在单独线程内消费）
     let (scan_tx, scan_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -329,7 +443,7 @@ pub async fn start_passive_scan(
     let port = match proxy.start(Some(scan_tx)).await {
         Ok(port) => port,
         Err(e) => {
-            return Ok(CommandResponse::err(format!("Failed to start proxy: {}", e)))
+            return Err(format!("Failed to start proxy: {}", e))
         }
     };
 
@@ -340,13 +454,82 @@ pub async fn start_passive_scan(
             emit_finding(&app_clone, FindingEvent::from(finding));
         }
     });
+    
+    // 处理拦截请求（从代理发来的待处理请求）
+    let app_for_intercept = app.clone();
+    let intercepted_requests_arc = state.intercepted_requests.clone();
+    tokio::spawn(async move {
+        while let Some(pending_req) = intercept_pending_rx.recv().await {
+            tracing::info!("Received intercept request: {} {}", pending_req.method, pending_req.url);
+            
+            // 发送事件到前端
+            emit_intercept_request(&app_for_intercept, InterceptRequestEvent {
+                id: pending_req.id.clone(),
+                method: pending_req.method.clone(),
+                url: pending_req.url.clone(),
+                path: pending_req.path.clone(),
+                protocol: pending_req.protocol.clone(),
+                headers: pending_req.headers.clone(),
+                body: pending_req.body.clone(),
+                timestamp: pending_req.timestamp,
+            });
+            
+            // 保存到待处理列表（带响应通道）
+            let mut requests = intercepted_requests_arc.write().await;
+            requests.insert(pending_req.id.clone(), InterceptedRequestInternal {
+                request: InterceptedRequest {
+                    id: pending_req.id.clone(),
+                    method: pending_req.method,
+                    url: pending_req.url,
+                    path: pending_req.path,
+                    protocol: pending_req.protocol,
+                    headers: pending_req.headers,
+                    body: pending_req.body,
+                    timestamp: pending_req.timestamp,
+                },
+                response_tx: pending_req.response_tx,
+            });
+        }
+    });
+    
+    // 处理拦截响应（从代理发来的待处理响应）
+    let app_for_response_intercept = app.clone();
+    let intercepted_responses_arc = state.intercepted_responses.clone();
+    tokio::spawn(async move {
+        while let Some(pending_resp) = intercept_response_pending_rx.recv().await {
+            tracing::info!("Received intercept response: {} (status: {})", pending_resp.id, pending_resp.status);
+            
+            // 发送事件到前端
+            emit_intercept_response(&app_for_response_intercept, InterceptResponseEvent {
+                id: pending_resp.id.clone(),
+                request_id: pending_resp.request_id.clone(),
+                status: pending_resp.status,
+                headers: pending_resp.headers.clone(),
+                body: pending_resp.body.clone(),
+                timestamp: pending_resp.timestamp,
+            });
+            
+            // 保存到待处理列表（带响应通道）
+            let mut responses = intercepted_responses_arc.write().await;
+            responses.insert(pending_resp.id.clone(), InterceptedResponseInternal {
+                response: InterceptedResponse {
+                    id: pending_resp.id.clone(),
+                    request_id: pending_resp.request_id,
+                    status: pending_resp.status,
+                    headers: pending_resp.headers,
+                    body: pending_resp.body,
+                    timestamp: pending_resp.timestamp,
+                },
+                response_tx: pending_resp.response_tx,
+            });
+        }
+    });
 
-    // 启动周期性统计发射任务（每5秒），包括插件数量（当前无法动态刷新，需要重启以加载新插件）
+    // 启动周期性统计发射任务（每5秒）
     let app_clone2 = app.clone();
     let is_running_arc = state.is_running.clone();
     let proxy_service_arc = state.proxy_service.clone();
     let db_service_arc = db_service.clone();
-    // NOTE: 当前未在统计事件中加入插件数；需要时可通过额外通道回传
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
@@ -372,7 +555,7 @@ pub async fn start_passive_scan(
                     &app_clone2,
                     ScanStatsEvent {
                         requests: stats.http_requests + stats.https_requests,
-                        responses: stats.http_requests + stats.https_requests, // Assuming 1:1 for now
+                        responses: stats.http_requests + stats.https_requests,
                         qps: stats.qps,
                         findings: total_findings as u64,
                     },
@@ -387,7 +570,7 @@ pub async fn start_passive_scan(
 
     // 发射代理状态事件
     emit_proxy_status(
-        &app,
+        app,
         ProxyStatusEvent {
             running: true,
             port,
@@ -397,7 +580,20 @@ pub async fn start_passive_scan(
     );
 
     tracing::info!("Passive scan started on port {} (ScanPipeline running in dedicated thread)", port);
-    Ok(CommandResponse::ok(port))
+    Ok(port)
+}
+
+/// 启动被动扫描代理
+#[tauri::command]
+pub async fn start_passive_scan(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+    config: Option<ProxyConfig>,
+) -> Result<CommandResponse<u16>, String> {
+    match start_passive_scan_internal(&app, &state, config).await {
+        Ok(port) => Ok(CommandResponse::ok(port)),
+        Err(e) => Ok(CommandResponse::err(e)),
+    }
 }
 
 /// 停止被动扫描代理
@@ -975,11 +1171,49 @@ pub async fn trust_ca_cert(
     }
 }
 
-/// 重新生成 CA 证书（删除旧的并生成新的）
+/// 重新生成 CA 证书（删除旧的并生成新的，如果代理正在运行则自动重启）
 #[tauri::command]
 pub async fn regenerate_ca_cert(
+    app: AppHandle,
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<String>, String> {
+    // 检查代理是否正在运行
+    let was_running = *state.is_running.read().await;
+    let mut saved_port = None;
+    
+    // 如果代理正在运行，先停止它
+    if was_running {
+        tracing::info!("Proxy is running, stopping before regenerating CA...");
+        
+        // 获取当前端口（用于日志）
+        if let Some(proxy) = state.proxy_service.read().await.as_ref() {
+            saved_port = proxy.get_port().await;
+        }
+        
+        // 停止代理
+        let mut proxy = state.proxy_service.write().await;
+        if let Some(p) = proxy.take() {
+            if let Err(e) = p.stop().await {
+                tracing::error!("Failed to stop proxy before regenerating CA: {}", e);
+            }
+        }
+        
+        // 更新运行状态
+        *state.is_running.write().await = false;
+        
+        // 发送停止事件
+        emit_proxy_status(
+            &app,
+            ProxyStatusEvent {
+                running: false,
+                port: 0,
+                mitm: false,
+                stats: ProxyStats::default(),
+            },
+        );
+    }
+    
+    // 重新生成证书
     match state.certificate_service.regenerate_root_ca().await {
         Ok(_) => {
             let path = state
@@ -989,10 +1223,34 @@ pub async fn regenerate_ca_cert(
             let path_str = path.to_string_lossy().to_string();
             
             tracing::info!("CA certificate regenerated at: {}", path_str);
-            Ok(CommandResponse::ok(format!(
-                "CA certificate regenerated successfully. Please re-import: {}",
-                path_str
-            )))
+            
+            // 如果之前代理正在运行，重新启动它
+            if was_running {
+                tracing::info!("Restarting proxy with new CA certificate...");
+                
+                // 使用默认配置重新启动代理
+                match start_passive_scan_internal(&app, &state, None).await {
+                    Ok(new_port) => {
+                        tracing::info!("Proxy restarted on port {} with new CA certificate", new_port);
+                        Ok(CommandResponse::ok(format!(
+                            "CA certificate regenerated and proxy restarted on port {}. Please re-import: {}",
+                            new_port, path_str
+                        )))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to restart proxy after CA regeneration: {}", e);
+                        Ok(CommandResponse::ok(format!(
+                            "CA certificate regenerated but failed to restart proxy: {}. Please re-import: {}",
+                            e, path_str
+                        )))
+                    }
+                }
+            } else {
+                Ok(CommandResponse::ok(format!(
+                    "CA certificate regenerated successfully. Please re-import: {}",
+                    path_str
+                )))
+            }
         }
         Err(e) => Ok(CommandResponse::err(format!(
             "Failed to regenerate CA: {}",
@@ -1015,6 +1273,55 @@ pub async fn get_ca_fingerprint(
             "Failed to get fingerprint: {}",
             e
         ))),
+    }
+}
+
+/// 打开 CA 证书目录
+#[tauri::command]
+pub async fn open_ca_cert_dir(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<String>, String> {
+    match state.certificate_service.export_root_ca() {
+        Ok(cert_path) => {
+            // 获取父目录
+            let dir_path = cert_path.parent().ok_or_else(|| "Failed to get parent directory".to_string())?;
+            let dir_str = dir_path.to_string_lossy().to_string();
+            
+            // 使用系统命令打开目录
+            #[cfg(target_os = "macos")]
+            {
+                match std::process::Command::new("open").arg(&dir_str).spawn() {
+                    Ok(_) => {
+                        tracing::info!("Opened CA cert directory: {}", dir_str);
+                        Ok(CommandResponse::ok(dir_str))
+                    }
+                    Err(e) => Ok(CommandResponse::err(format!("Failed to open directory: {}", e))),
+                }
+            }
+            
+            #[cfg(target_os = "windows")]
+            {
+                match std::process::Command::new("explorer").arg(&dir_str).spawn() {
+                    Ok(_) => {
+                        tracing::info!("Opened CA cert directory: {}", dir_str);
+                        Ok(CommandResponse::ok(dir_str))
+                    }
+                    Err(e) => Ok(CommandResponse::err(format!("Failed to open directory: {}", e))),
+                }
+            }
+            
+            #[cfg(target_os = "linux")]
+            {
+                match std::process::Command::new("xdg-open").arg(&dir_str).spawn() {
+                    Ok(_) => {
+                        tracing::info!("Opened CA cert directory: {}", dir_str);
+                        Ok(CommandResponse::ok(dir_str))
+                    }
+                    Err(e) => Ok(CommandResponse::err(format!("Failed to open directory: {}", e))),
+                }
+            }
+        }
+        Err(e) => Ok(CommandResponse::err(format!("Failed to get CA path: {}", e))),
     }
 }
 
@@ -1723,7 +2030,7 @@ pub struct AdvancedTestResult {
 }
 
 /// 高级并发测试插件：可自定义请求参数 + 并发 + 重复运行
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn test_plugin_advanced(
     state: State<'_, PassiveScanState>,
     plugin_id: String,
@@ -2094,4 +2401,552 @@ pub async fn get_proxy_config(
     };
     
     Ok(CommandResponse::ok(config))
+}
+
+// ============================================================
+// 请求拦截相关命令
+// ============================================================
+
+/// 设置拦截启用状态
+#[tauri::command]
+pub async fn set_intercept_enabled(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+    enabled: bool,
+) -> Result<CommandResponse<bool>, String> {
+    tracing::info!("Setting intercept enabled: {}", enabled);
+    
+    // 保存 AppHandle
+    state.set_app_handle(app).await;
+    
+    let mut intercept = state.intercept_enabled.write().await;
+    *intercept = enabled;
+    
+    tracing::info!("Intercept mode {}", if enabled { "enabled" } else { "disabled" });
+    Ok(CommandResponse::ok(enabled))
+}
+
+/// 获取拦截启用状态
+#[tauri::command]
+pub async fn get_intercept_enabled(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<bool>, String> {
+    let enabled = *state.intercept_enabled.read().await;
+    Ok(CommandResponse::ok(enabled))
+}
+
+/// 获取所有待处理的拦截请求
+#[tauri::command]
+pub async fn get_intercepted_requests(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<Vec<InterceptedRequest>>, String> {
+    let requests = state.intercepted_requests.read().await;
+    let list: Vec<InterceptedRequest> = requests.values()
+        .map(|r| r.request.clone())
+        .collect();
+    Ok(CommandResponse::ok(list))
+}
+
+/// 转发拦截的请求
+#[tauri::command]
+pub async fn forward_intercepted_request(
+    state: State<'_, PassiveScanState>,
+    request_id: String,
+    modified_content: Option<String>,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Forwarding intercepted request: {}", request_id);
+    
+    let mut requests = state.intercepted_requests.write().await;
+    if let Some(req_internal) = requests.remove(&request_id) {
+        let _ = req_internal.response_tx.send(InterceptAction::Forward(modified_content));
+        tracing::info!("Request forwarded: {}", request_id);
+        Ok(CommandResponse::ok(()))
+    } else {
+        tracing::warn!("Request not found: {}", request_id);
+        Ok(CommandResponse::err(format!("Request not found: {}", request_id)))
+    }
+}
+
+/// 丢弃拦截的请求
+#[tauri::command]
+pub async fn drop_intercepted_request(
+    state: State<'_, PassiveScanState>,
+    request_id: String,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Dropping intercepted request: {}", request_id);
+    
+    let mut requests = state.intercepted_requests.write().await;
+    if let Some(req_internal) = requests.remove(&request_id) {
+        let _ = req_internal.response_tx.send(InterceptAction::Drop);
+        tracing::info!("Request dropped: {}", request_id);
+        Ok(CommandResponse::ok(()))
+    } else {
+        tracing::warn!("Request not found: {}", request_id);
+        Ok(CommandResponse::err(format!("Request not found: {}", request_id)))
+    }
+}
+
+// ============================================================
+// 响应拦截相关命令
+// ============================================================
+
+/// 设置响应拦截启用状态
+#[tauri::command]
+pub async fn set_response_intercept_enabled(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+    enabled: bool,
+) -> Result<CommandResponse<bool>, String> {
+    tracing::info!("Setting response intercept enabled: {}", enabled);
+    
+    // 保存 AppHandle
+    state.set_app_handle(app).await;
+    
+    let mut intercept = state.response_intercept_enabled.write().await;
+    *intercept = enabled;
+    
+    tracing::info!("Response intercept mode {}", if enabled { "enabled" } else { "disabled" });
+    Ok(CommandResponse::ok(enabled))
+}
+
+/// 获取响应拦截启用状态
+#[tauri::command]
+pub async fn get_response_intercept_enabled(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<bool>, String> {
+    let enabled = *state.response_intercept_enabled.read().await;
+    Ok(CommandResponse::ok(enabled))
+}
+
+/// 获取所有待处理的拦截响应
+#[tauri::command]
+pub async fn get_intercepted_responses(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<Vec<InterceptedResponse>>, String> {
+    let responses = state.intercepted_responses.read().await;
+    let list: Vec<InterceptedResponse> = responses.values()
+        .map(|r| r.response.clone())
+        .collect();
+    Ok(CommandResponse::ok(list))
+}
+
+/// 转发拦截的响应
+#[tauri::command]
+pub async fn forward_intercepted_response(
+    state: State<'_, PassiveScanState>,
+    response_id: String,
+    modified_content: Option<String>,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Forwarding intercepted response: {}", response_id);
+    
+    let mut responses = state.intercepted_responses.write().await;
+    if let Some(resp_internal) = responses.remove(&response_id) {
+        let _ = resp_internal.response_tx.send(InterceptAction::Forward(modified_content));
+        tracing::info!("Response forwarded: {}", response_id);
+        Ok(CommandResponse::ok(()))
+    } else {
+        tracing::warn!("Response not found: {}", response_id);
+        Ok(CommandResponse::err(format!("Response not found: {}", response_id)))
+    }
+}
+
+/// 丢弃拦截的响应
+#[tauri::command]
+pub async fn drop_intercepted_response(
+    state: State<'_, PassiveScanState>,
+    response_id: String,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Dropping intercepted response: {}", response_id);
+    
+    let mut responses = state.intercepted_responses.write().await;
+    if let Some(resp_internal) = responses.remove(&response_id) {
+        let _ = resp_internal.response_tx.send(InterceptAction::Drop);
+        tracing::info!("Response dropped: {}", response_id);
+        Ok(CommandResponse::ok(()))
+    } else {
+        tracing::warn!("Response not found: {}", response_id);
+        Ok(CommandResponse::err(format!("Response not found: {}", response_id)))
+    }
+}
+
+// ============================================================
+// 请求重放（Repeater）相关命令
+// ============================================================
+
+/// 重放请求结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayResult {
+    pub status_code: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: String,
+    pub response_time_ms: u64,
+}
+
+/// 重放请求（发送自定义 HTTP 请求）
+#[tauri::command]
+pub async fn replay_request(
+    method: String,
+    url: String,
+    headers: Option<std::collections::HashMap<String, String>>,
+    body: Option<String>,
+) -> Result<CommandResponse<ReplayResult>, String> {
+    tracing::info!("Replaying request: {} {}", method, url);
+    
+    let start = std::time::Instant::now();
+    
+    // 创建 HTTP 客户端（禁用证书验证和代理以避免循环）
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .no_proxy()  // 禁用代理，避免通过自身代理造成循环
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    // 构建请求
+    let mut request = match method.to_uppercase().as_str() {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        "HEAD" => client.head(&url),
+        "OPTIONS" => client.request(reqwest::Method::OPTIONS, &url),
+        _ => return Ok(CommandResponse::err(format!("Unsupported method: {}", method))),
+    };
+    
+    // 添加请求头
+    if let Some(hdrs) = headers {
+        for (key, value) in hdrs {
+            request = request.header(&key, &value);
+        }
+    }
+    
+    // 添加请求体
+    if let Some(body_content) = body {
+        request = request.body(body_content);
+    }
+    
+    // 发送请求
+    let response = request.send().await
+        .map_err(|e| format!("Failed to send request: {}", e))?;
+    
+    let elapsed = start.elapsed().as_millis() as u64;
+    
+    // 提取响应信息
+    let status_code = response.status().as_u16();
+    let mut resp_headers = std::collections::HashMap::new();
+    for (name, value) in response.headers().iter() {
+        if let Ok(v) = value.to_str() {
+            resp_headers.insert(name.to_string(), v.to_string());
+        }
+    }
+    
+    // 读取响应体
+    let body = response.text().await
+        .unwrap_or_else(|e| format!("[Failed to read body: {}]", e));
+    
+    tracing::info!("Replay completed: {} {} - {} in {}ms", method, url, status_code, elapsed);
+    
+    Ok(CommandResponse::ok(ReplayResult {
+        status_code,
+        headers: resp_headers,
+        body,
+        response_time_ms: elapsed,
+    }))
+}
+
+/// 解码 chunked 传输编码
+fn decode_chunked(data: &[u8]) -> Vec<u8> {
+    let mut result = Vec::new();
+    let mut pos = 0;
+    
+    while pos < data.len() {
+        // 查找 chunk size 行结束
+        let line_end = data[pos..]
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .map(|p| pos + p);
+        
+        let Some(line_end) = line_end else { break; };
+        
+        // 解析 chunk size（十六进制）
+        let size_str = String::from_utf8_lossy(&data[pos..line_end]);
+        let size_str = size_str.split(';').next().unwrap_or("").trim();
+        let chunk_size = match usize::from_str_radix(size_str, 16) {
+            Ok(s) => s,
+            Err(_) => break,
+        };
+        
+        // chunk size 为 0 表示结束
+        if chunk_size == 0 { break; }
+        
+        // 读取 chunk 数据
+        let chunk_start = line_end + 2;
+        let chunk_end = chunk_start + chunk_size;
+        
+        if chunk_end > data.len() { break; }
+        
+        result.extend_from_slice(&data[chunk_start..chunk_end]);
+        
+        // 跳过 chunk 数据后的 \r\n
+        pos = chunk_end + 2;
+    }
+    
+    if result.is_empty() {
+        data.to_vec()
+    } else {
+        result
+    }
+}
+
+/// 解码 HTTP 响应（处理 chunked 传输编码和 gzip/deflate 压缩）
+fn decode_http_response(response_buf: &[u8]) -> String {
+    use flate2::read::{GzDecoder, DeflateDecoder};
+    use std::io::Read;
+    
+    // 查找响应头和响应体的分隔点
+    let header_end = response_buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4);
+    
+    let Some(header_end) = header_end else {
+        return String::from_utf8_lossy(response_buf).to_string();
+    };
+    
+    let header_bytes = &response_buf[..header_end];
+    let body_bytes = &response_buf[header_end..];
+    
+    // 解析响应头
+    let header_str = String::from_utf8_lossy(header_bytes);
+    let header_lower = header_str.to_lowercase();
+    
+    // 检查 Transfer-Encoding
+    let is_chunked = header_lower
+        .lines()
+        .any(|line| line.starts_with("transfer-encoding:") && line.contains("chunked"));
+    
+    // 检查 Content-Encoding
+    let content_encoding = header_str
+        .lines()
+        .find(|line| line.to_lowercase().starts_with("content-encoding:"))
+        .map(|line| line.split(':').nth(1).unwrap_or("").trim().to_lowercase());
+    
+    // 1. 先处理 chunked 编码
+    let body_bytes = if is_chunked {
+        decode_chunked(body_bytes)
+    } else {
+        body_bytes.to_vec()
+    };
+    
+    // 2. 再处理压缩编码
+    let decoded_body = match content_encoding.as_deref() {
+        Some("gzip") => {
+            let mut decoder = GzDecoder::new(body_bytes.as_slice());
+            let mut decoded = Vec::new();
+            match decoder.read_to_end(&mut decoded) {
+                Ok(_) => {
+                    tracing::debug!("Successfully decoded gzip response, {} -> {} bytes", 
+                        body_bytes.len(), decoded.len());
+                    decoded
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to decode gzip: {}", e);
+                    body_bytes
+                }
+            }
+        }
+        Some("deflate") => {
+            let mut decoder = DeflateDecoder::new(body_bytes.as_slice());
+            let mut decoded = Vec::new();
+            match decoder.read_to_end(&mut decoded) {
+                Ok(_) => decoded,
+                Err(e) => {
+                    tracing::warn!("Failed to decode deflate: {}", e);
+                    body_bytes
+                }
+            }
+        }
+        Some("br") => {
+            // Brotli 压缩暂不支持，返回原始数据
+            tracing::warn!("Brotli encoding not supported, returning raw body");
+            body_bytes
+        }
+        _ => body_bytes,
+    };
+    
+    // 组合响应头和解码后的响应体
+    let mut result = String::from_utf8_lossy(header_bytes).to_string();
+    result.push_str(&String::from_utf8_lossy(&decoded_body));
+    result
+}
+
+/// 智能读取 HTTP 响应（根据 Content-Length 或 chunked 编码判断响应结束）
+async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    
+    let mut response_buf = Vec::new();
+    let mut buf = [0u8; 8192];
+    let mut headers_parsed = false;
+    let mut content_length: Option<usize> = None;
+    let mut is_chunked = false;
+    let mut header_end_pos: Option<usize> = None;
+    
+    // 短超时用于检测响应结束（500ms 没有新数据就认为响应完成）
+    let read_timeout = std::time::Duration::from_millis(500);
+    
+    loop {
+        match tokio::time::timeout(read_timeout, stream.read(&mut buf)).await {
+            Ok(Ok(0)) => break, // EOF
+            Ok(Ok(n)) => {
+                response_buf.extend_from_slice(&buf[..n]);
+                
+                // 解析响应头（只解析一次）
+                if !headers_parsed {
+                    if let Some(pos) = response_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        header_end_pos = Some(pos + 4);
+                        headers_parsed = true;
+                        
+                        // 解析头部
+                        let header_str = String::from_utf8_lossy(&response_buf[..pos]);
+                        for line in header_str.lines() {
+                            let lower = line.to_lowercase();
+                            if lower.starts_with("content-length:") {
+                                if let Some(len_str) = line.split(':').nth(1) {
+                                    content_length = len_str.trim().parse().ok();
+                                }
+                            } else if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
+                                is_chunked = true;
+                            }
+                        }
+                    }
+                }
+                
+                // 检查是否已读取完整响应
+                if headers_parsed {
+                    if let Some(header_end) = header_end_pos {
+                        let body_len = response_buf.len() - header_end;
+                        
+                        // 有 Content-Length：检查是否已读取足够字节
+                        if let Some(expected_len) = content_length {
+                            if body_len >= expected_len {
+                                break;
+                            }
+                        }
+                        
+                        // chunked 编码：检查是否以 0\r\n\r\n 结尾
+                        if is_chunked && response_buf.len() >= 5 {
+                            let tail = &response_buf[response_buf.len().saturating_sub(7)..];
+                            if tail.windows(5).any(|w| w == b"0\r\n\r\n") {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("Read error: {}", e);
+                break;
+            }
+            Err(_) => {
+                // 读取超时 - 如果已经有响应头，可能响应已完成
+                if headers_parsed {
+                    break;
+                }
+                // 如果还没收到响应头，继续等待（但使用更长的总超时）
+                if response_buf.is_empty() {
+                    // 没有收到任何数据，再等一会
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+    
+    response_buf
+}
+
+/// Raw 请求重放结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawReplayResult {
+    pub raw_response: String,
+    pub response_time_ms: u64,
+}
+
+/// 重放 Raw 请求（通过 TCP socket 直接发送原始字节）
+#[tauri::command]
+pub async fn replay_raw_request(
+    host: String,
+    port: u16,
+    use_tls: bool,
+    raw_request: String,
+    timeout_secs: Option<u64>,
+) -> Result<CommandResponse<RawReplayResult>, String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    
+    tracing::info!("Replaying raw request to {}:{} (TLS: {})", host, port, use_tls);
+    
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(30));
+    
+    // 连接到目标服务器
+    let addr = format!("{}:{}", host, port);
+    let stream = tokio::time::timeout(timeout, TcpStream::connect(&addr))
+        .await
+        .map_err(|_| format!("Connection timeout to {}", addr))?
+        .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
+    
+    let response_buf = if use_tls {
+        // TLS 连接
+        let connector = tokio_native_tls::TlsConnector::from(
+            native_tls::TlsConnector::builder()
+                .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_hostnames(true)
+                .build()
+                .map_err(|e| format!("Failed to create TLS connector: {}", e))?
+        );
+        
+        let mut tls_stream = tokio::time::timeout(timeout, connector.connect(&host, stream))
+            .await
+            .map_err(|_| "TLS handshake timeout".to_string())?
+            .map_err(|e| format!("TLS handshake failed: {}", e))?;
+        
+        // 发送原始请求
+        tls_stream.write_all(raw_request.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to send request: {}", e))?;
+        tls_stream.flush()
+            .await
+            .map_err(|e| format!("Failed to flush: {}", e))?;
+        
+        // 智能读取响应
+        read_http_response(&mut tls_stream).await
+    } else {
+        // 普通 TCP 连接
+        let mut stream = stream;
+        
+        // 发送原始请求
+        stream.write_all(raw_request.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to send request: {}", e))?;
+        stream.flush()
+            .await
+            .map_err(|e| format!("Failed to flush: {}", e))?;
+        
+        // 智能读取响应
+        read_http_response(&mut stream).await
+    };
+    
+    // 处理响应：检查是否需要解压 gzip
+    let raw_response = decode_http_response(&response_buf);
+    
+    let elapsed = start.elapsed().as_millis() as u64;
+    tracing::info!("Raw replay completed to {}:{} in {}ms, response size: {} bytes", 
+        host, port, elapsed, raw_response.len());
+    
+    Ok(CommandResponse::ok(RawReplayResult {
+        raw_response,
+        response_time_ms: elapsed,
+    }))
 }

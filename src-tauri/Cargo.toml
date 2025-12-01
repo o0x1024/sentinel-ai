@@ -45,6 +45,8 @@ tauri-plugin-shell = "2"
 
 
 futures-util = "0.3"
+# LRU 缓存 (用于 Travel Token优化)
+lru = "0.12"
 # 子域名扫描工具
 rsubdomain = "1.2.6"
 
@@ -100,6 +102,10 @@ async-trait = "0.1"
 # 异步运行时
 tokio = { version = "1", features = ["full"] }
 
+# TLS 支持
+native-tls = "0.2"
+tokio-native-tls = "0.3"
+
 # UUID生成
 uuid = { version = "1", features = ["v4", "serde"] }
 
@@ -140,7 +146,7 @@ sha2 = "0.10"
 # x509-parser = "0.16"
 # deno_runtime = "0.194"
 tera = "1.20"
-# flate2 = "1.0"
+flate2 = "1.0"
 # brotli = "7.0"
 
 # Plan B: AI插件生成依赖

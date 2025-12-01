@@ -14,6 +14,7 @@ pub mod planner;
 pub mod replanner;
 pub mod engine_adapter;
 pub mod repository;
+pub mod resource_tracker;
 
 pub mod types;
 
