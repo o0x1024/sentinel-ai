@@ -2,6 +2,7 @@ pub mod global_proxy;
 pub mod ordered_message;
 pub mod message_emitter;
 pub mod prompt_resolver;
+pub mod aliyun_oss;
 
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;

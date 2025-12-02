@@ -2336,3 +2336,77 @@ pub async fn add_custom_provider(
     info!("Custom provider '{}' added successfully", request.name);
     Ok(())
 }
+
+// ============================================================================
+// Aliyun DashScope Commands
+// ============================================================================
+
+/// 测试阿里云 DashScope 连接
+#[tauri::command]
+pub async fn test_aliyun_dashscope_connection(
+    api_key: String,
+    model: String,
+) -> Result<bool, String> {
+    use crate::utils::aliyun_oss::test_dashscope_connection;
+    
+    info!("Testing Aliyun DashScope connection with model: {}", model);
+    
+    test_dashscope_connection(&api_key, &model)
+        .await
+        .map_err(|e| format!("Connection test failed: {}", e))
+}
+
+/// 上传文件到阿里云 OSS
+#[tauri::command]
+pub async fn upload_file_to_aliyun(
+    api_key: String,
+    model: String,
+    file_path: String,
+) -> Result<crate::utils::aliyun_oss::UploadResult, String> {
+    use crate::utils::aliyun_oss::upload_file_and_get_url;
+    use std::path::Path;
+    
+    info!("Uploading file to Aliyun OSS: {}", file_path);
+    
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    
+    upload_file_and_get_url(&api_key, &model, path)
+        .await
+        .map_err(|e| format!("Upload failed: {}", e))
+}
+
+/// 使用数据库配置上传文件到阿里云 OSS
+#[tauri::command]
+pub async fn upload_file_to_aliyun_with_config(
+    db: tauri::State<'_, Arc<DatabaseService>>,
+    file_path: String,
+) -> Result<crate::utils::aliyun_oss::UploadResult, String> {
+    use crate::utils::aliyun_oss::upload_file_and_get_url;
+    use crate::services::database::Database;
+    use std::path::Path;
+    
+    // 从数据库读取配置
+    let api_key = db.get_config("ai", "aliyun_dashscope_api_key")
+        .await
+        .map_err(|e| format!("Failed to get API key: {}", e))?
+        .ok_or("Aliyun DashScope API key not configured")?;
+    
+    let model = db.get_config("ai", "aliyun_dashscope_model")
+        .await
+        .map_err(|e| format!("Failed to get model: {}", e))?
+        .unwrap_or_else(|| "qwen-vl-plus".to_string());
+    
+    info!("Uploading file to Aliyun OSS with saved config: {}", file_path);
+    
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    
+    upload_file_and_get_url(&api_key, &model, path)
+        .await
+        .map_err(|e| format!("Upload failed: {}", e))
+}

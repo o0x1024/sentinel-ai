@@ -390,6 +390,33 @@ impl TravelLlmClient {
         Self { config, emitter }
     }
 
+    /// 设置 rig 库所需的环境变量
+    fn setup_env_vars(&self) {
+        let provider = self.config.provider.to_lowercase();
+        
+        if let Some(api_key) = &self.config.api_key {
+            match provider.as_str() {
+                "gemini" | "google" => std::env::set_var("GEMINI_API_KEY", api_key),
+                "openai" => std::env::set_var("OPENAI_API_KEY", api_key),
+                "anthropic" => std::env::set_var("ANTHROPIC_API_KEY", api_key),
+                _ => std::env::set_var("OPENAI_API_KEY", api_key),
+            }
+        }
+        
+        if let Some(base_url) = &self.config.base_url {
+            match provider.as_str() {
+                "gemini" | "google" => std::env::set_var("GEMINI_API_BASE", base_url),
+                "anthropic" => std::env::set_var("ANTHROPIC_API_BASE", base_url),
+                _ => {
+                    std::env::set_var("OPENAI_API_BASE", base_url);
+                    std::env::set_var("OPENAI_BASE_URL", base_url);
+                    std::env::set_var("OPENAI_BASE", base_url);
+                }
+            }
+            tracing::debug!("TravelLlmClient: Set base URL for '{}': {}", provider, base_url);
+        }
+    }
+
     /// 流式调用 LLM，解析 Thought/Action/Observation 并发送到前端
     pub async fn stream_completion(
         &self,
@@ -407,6 +434,9 @@ impl TravelLlmClient {
         
         // 记录 prompt 到日志
         log_prompts_travel("TravelLlmClient", system_prompt, user_prompt);
+
+        // 设置 rig 库所需的环境变量
+        self.setup_env_vars();
 
         // 创建 agent
         let agent = {

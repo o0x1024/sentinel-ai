@@ -19,6 +19,9 @@ pub mod react;
 // Travel 架构模块 (OODA循环)
 pub mod travel;
 
+// 视觉探索引擎 (VLM驱动的网站全流量发现)
+pub mod vision_explorer;
+
 // 智能调度器与工作流引擎
 pub mod intelligent_dispatcher;
 
@@ -43,6 +46,12 @@ pub use react::{ReactConfig, ReactEngine, ReactStatus, ReactTrace};
 
 // 导出 Travel 核心类型
 pub use travel::{TravelConfig, TravelEngine, OodaCycle, OodaPhase, TaskComplexity};
+
+// 导出 VisionExplorer 核心类型
+pub use vision_explorer::{
+    VisionExplorer, VisionExplorerConfig, ExplorationState, ExplorationStatus,
+    ExplorationSummary, BrowserAction, ApiEndpoint,
+};
 // // 导出prompt相关模块
 // pub use prompt_config::{
 //     PromptConfigManager, PromptConfig, AgentProfile, DomainTemplate,

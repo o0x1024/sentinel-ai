@@ -191,6 +191,24 @@
           </label>
         </div>
 
+        <!-- Rig 提供商类型 -->
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text">Rig 提供商类型</span>
+            <span class="label-text-alt text-info">后端 API 调用方式</span>
+          </label>
+          <SearchableSelect
+            v-model="selectedProviderConfig.rig_provider"
+            :options="rigProviderOptions"
+            placeholder="选择提供商类型..."
+            search-placeholder="搜索提供商..."
+            @change="saveAiConfig"
+          />
+          <label class="label">
+            <span class="label-text-alt">决定后端使用哪种 API 格式发送请求</span>
+          </label>
+        </div>
+
         <!-- API密钥配置 -->
         <div class="form-control" v-if="needsApiKey(selectedAiProvider)">
           <label class="label">
@@ -376,6 +394,47 @@
       </div>
     </div>
 
+    <!-- 阿里云 OSS 配置（用于 DashScope 文件上传） -->
+    <div class="card bg-base-100 shadow-sm mt-6">
+      <div class="card-body p-4">
+        <div class="flex items-center gap-3 mb-2">
+          <i class="fas fa-cloud-upload-alt text-primary text-lg"></i>
+          <h3 class="font-semibold">阿里云 DashScope</h3>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">DashScope API Key</span>
+            </label>
+            <input v-model="aliyunApiKeyLocal" type="password" class="input input-bordered" placeholder="sk-..." />
+            <label class="label">
+              <span class="label-text-alt">用于文件上传和多模态模型调用</span>
+            </label>
+          </div>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">默认模型</span>
+            </label>
+            <input v-model="aliyunDefaultModelLocal" type="text" class="input input-bordered" placeholder="qwen-vl-plus" />
+            <label class="label">
+              <span class="label-text-alt">上传文件时使用的模型名称</span>
+            </label>
+          </div>
+        </div>
+        <div class="flex justify-end mt-3 gap-2">
+          <button class="btn btn-outline btn-sm" @click="testAliyunConnection" :disabled="testingAliyun">
+            <span v-if="testingAliyun" class="loading loading-spinner loading-sm"></span>
+            <i v-else class="fas fa-plug mr-1"></i>
+            测试连接
+          </button>
+          <button class="btn btn-primary btn-sm" @click="saveAiConfig">
+            <i class="fas fa-save mr-1"></i>
+            保存设置
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 可用模型列表 - 重构为卡片布局 -->
     <div class="mt-6">
       <h3 class="text-lg font-semibold border-b pb-2 mb-4">
@@ -438,22 +497,21 @@
                    v-model="customProvider.name">
           </div>
           
-          <!-- 兼容模式选择 -->
+          <!-- Rig 提供商选择 -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">API 兼容模式</span>
-              <span class="label-text-alt text-info">影响请求方式</span>
+              <span class="label-text">Rig 提供商</span>
+              <span class="label-text-alt text-warning">*必填，决定 API 调用方式</span>
             </label>
-            <select class="select select-bordered" v-model="customProvider.compat_mode">
-              <option value="openai">OpenAI 兼容 (推荐)</option>
-              <option value="anthropic">Anthropic 兼容</option>
-              <option value="rig_openai">Rig-OpenAI 原生</option>
-              <option value="rig_anthropic">Rig-Anthropic 原生</option>
-            </select>
+            <SearchableSelect
+              v-model="customProvider.rig_provider"
+              :options="rigProviderOptions"
+              placeholder="选择提供商类型..."
+              search-placeholder="搜索提供商..."
+            />
             <label class="label">
               <span class="label-text-alt">
-                OpenAI/Anthropic 兼容：使用自定义HTTP请求<br>
-                Rig原生：使用rig-core库（需设置对应环境变量）
+                选择与你的 API 服务兼容的提供商类型，后端将使用对应的调用方式
               </span>
             </label>
           </div>
@@ -694,15 +752,18 @@ const customProviderValidationError = computed(() => {
   if (existingProviders.some(k => k.toLowerCase() === nameLower)) {
     return `提供商名称 "${p.name}" 已存在，请使用其他名称`
   }
+  if (!p.rig_provider || !p.rig_provider.trim()) {
+    return '请选择 Rig 提供商类型'
+  }
   if (!p.api_base || !p.api_base.trim()) {
     return '请输入 API Base URL'
   }
   if (!p.model_id || !p.model_id.trim()) {
     return '请输入默认模型 ID'
   }
-  // 非 Ollama 兼容模式需要 API Key
-  const needsApiKey = p.compat_mode !== 'ollama'
-  if (needsApiKey && (!p.api_key || !p.api_key.trim())) {
+  // Ollama 不需要 API Key
+  const noApiKeyProviders = ['ollama']
+  if (!noApiKeyProviders.includes(p.rig_provider) && (!p.api_key || !p.api_key.trim())) {
     return '请输入 API Key'
   }
   // 验证 extra_headers_json 是否为有效 JSON
@@ -858,7 +919,13 @@ const getProviderIcon = (provider: string) => {
     'DeepSeek': 'fas fa-eye',
     'Moonshot': 'fas fa-moon',
     'OpenRouter': 'fas fa-route',
-    'ModelScope': 'fas fa-cog'
+    'ModelScope': 'fas fa-cog',
+    'Groq': 'fas fa-bolt',
+    'Perplexity': 'fas fa-search',
+    'TogetherAI': 'fas fa-users',
+    'xAI': 'fas fa-atom',
+    'Cohere': 'fas fa-comments',
+    'Hyperbolic': 'fas fa-infinity',
   }
   return icons[provider] || 'fas fa-cog'
 }
@@ -873,10 +940,34 @@ const getProviderName = (provider: string) => {
     'DeepSeek': 'DeepSeek',
     'Moonshot': 'Moonshot',
     'OpenRouter': 'OpenRouter',
-    'ModelScope': 'ModelScope'
+    'ModelScope': 'ModelScope',
+    'Groq': 'Groq',
+    'Perplexity': 'Perplexity',
+    'TogetherAI': 'TogetherAI',
+    'xAI': 'xAI',
+    'Cohere': 'Cohere',
+    'Hyperbolic': 'Hyperbolic',
   }
   return names[provider] || provider
 }
+
+// rig 库支持的提供商列表
+const rigProviderOptions = [
+  { value: 'openai', label: 'OpenAI', description: 'OpenAI 及兼容 API' },
+  { value: 'anthropic', label: 'Anthropic', description: 'Claude 系列模型' },
+  { value: 'gemini', label: 'Google Gemini', description: 'Google Gemini 模型' },
+  { value: 'openrouter', label: 'OpenRouter', description: '多模型路由服务' },
+  { value: 'ollama', label: 'Ollama', description: '本地模型服务' },
+  { value: 'deepseek', label: 'DeepSeek', description: 'DeepSeek 模型' },
+  { value: 'groq', label: 'Groq', description: 'Groq 高速推理' },
+  { value: 'perplexity', label: 'Perplexity', description: 'Perplexity 搜索增强' },
+  { value: 'togetherai', label: 'TogetherAI', description: '开源模型托管' },
+  { value: 'xai', label: 'xAI', description: 'xAI Grok 模型' },
+  { value: 'cohere', label: 'Cohere', description: 'Cohere 模型' },
+  { value: 'hyperbolic', label: 'Hyperbolic', description: 'Hyperbolic 模型' },
+  { value: 'moonshot', label: 'Moonshot', description: 'Moonshot Kimi 模型' },
+  { value: 'azure', label: 'Azure OpenAI', description: 'Azure 托管的 OpenAI' },
+]
 
 const needsApiKey = (provider: string) => {
   return !['Ollama'].includes(provider)
@@ -900,6 +991,7 @@ const addCustomProvider = () => {
 
 const saveAiConfig = async () => {
   await saveTavilyConfig()
+  await saveAliyunConfig()
   emit('saveAiConfig')
 }
 
@@ -931,8 +1023,60 @@ const saveTavilyConfig = async () => {
   }
 }
 
+// --- Aliyun DashScope Settings ---
+const aliyunApiKeyLocal = ref('')
+const aliyunDefaultModelLocal = ref('qwen-vl-plus')
+const testingAliyun = ref(false)
+
+const loadAliyunConfig = async () => {
+  try {
+    const items = await invoke('get_config', { request: { category: 'ai', key: null } }) as Array<{ key: string, value: string }>
+    const map = new Map(items.map(i => [i.key, i.value]))
+    aliyunApiKeyLocal.value = String(map.get('aliyun_dashscope_api_key') || '')
+    aliyunDefaultModelLocal.value = String(map.get('aliyun_dashscope_model') || 'qwen-vl-plus')
+  } catch (e) {
+    console.warn('Failed to load Aliyun config', e)
+  }
+}
+
+const saveAliyunConfig = async () => {
+  try {
+    const configs = [
+      { category: 'ai', key: 'aliyun_dashscope_api_key', value: aliyunApiKeyLocal.value || '', description: 'Aliyun DashScope API key for file upload', is_encrypted: true },
+      { category: 'ai', key: 'aliyun_dashscope_model', value: aliyunDefaultModelLocal.value || 'qwen-vl-plus', description: 'Default model for DashScope upload', is_encrypted: false },
+    ]
+    await invoke('save_config_batch', { configs })
+  } catch (e) {
+    console.error('Failed to save Aliyun config', e)
+  }
+}
+
+const testAliyunConnection = async () => {
+  if (!aliyunApiKeyLocal.value) {
+    alert('请先输入 DashScope API Key')
+    return
+  }
+  testingAliyun.value = true
+  try {
+    const result = await invoke('test_aliyun_dashscope_connection', {
+      apiKey: aliyunApiKeyLocal.value,
+      model: aliyunDefaultModelLocal.value || 'qwen-vl-plus',
+    })
+    if (result) {
+      alert('连接成功！')
+    } else {
+      alert('连接失败，请检查 API Key')
+    }
+  } catch (e: any) {
+    alert('连接测试失败: ' + (e?.message || e))
+  } finally {
+    testingAliyun.value = false
+  }
+}
+
 onMounted(() => {
   loadTavilyConfig()
+  loadAliyunConfig()
 })
 
 // 手动编辑相关方法
@@ -1018,6 +1162,7 @@ const resetToDefault = () => {
     providers: {
       OpenAI: {
         enabled: false,
+        rig_provider: 'openai',
         api_key: '',
         api_base: 'https://api.openai.com/v1',
         default_model: '',
@@ -1025,6 +1170,7 @@ const resetToDefault = () => {
       },
       Anthropic: {
         enabled: false,
+        rig_provider: 'anthropic',
         api_key: '',
         api_base: 'https://api.anthropic.com',
         default_model: '',
@@ -1032,6 +1178,7 @@ const resetToDefault = () => {
       },
       Gemini: {
         enabled: false,
+        rig_provider: 'gemini',
         api_key: '',
         api_base: 'https://generativelanguage.googleapis.com/v1beta',
         default_model: '',
@@ -1039,12 +1186,14 @@ const resetToDefault = () => {
       },
       Ollama: {
         enabled: false,
+        rig_provider: 'ollama',
         api_base: 'http://localhost:11434',
         default_model: '',
         models: []
       },
       DeepSeek: {
         enabled: false,
+        rig_provider: 'deepseek',
         api_key: '',
         api_base: 'https://api.deepseek.com/v1',
         default_model: '',
@@ -1052,6 +1201,7 @@ const resetToDefault = () => {
       },
       Moonshot: {
         enabled: false,
+        rig_provider: 'moonshot',
         api_key: '',
         api_base: 'https://api.moonshot.cn/v1',
         default_model: '',
@@ -1059,11 +1209,36 @@ const resetToDefault = () => {
       },
       OpenRouter: {
         enabled: false,
+        rig_provider: 'openrouter',
         api_key: '',
         api_base: 'https://openrouter.ai/api/v1',
         default_model: '',
         http_referer: '',
         x_title: '',
+        models: []
+      },
+      Groq: {
+        enabled: false,
+        rig_provider: 'groq',
+        api_key: '',
+        api_base: 'https://api.groq.com/openai/v1',
+        default_model: '',
+        models: []
+      },
+      Perplexity: {
+        enabled: false,
+        rig_provider: 'perplexity',
+        api_key: '',
+        api_base: 'https://api.perplexity.ai',
+        default_model: '',
+        models: []
+      },
+      xAI: {
+        enabled: false,
+        rig_provider: 'xai',
+        api_key: '',
+        api_base: 'https://api.x.ai/v1',
+        default_model: '',
         models: []
       }
     }

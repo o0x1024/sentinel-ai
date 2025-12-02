@@ -11,12 +11,12 @@ use futures::StreamExt;
 use rig::agent::{CancelSignal, MultiTurnStreamItem, PromptHook, StreamingPromptHook};
 use rig::client::builder::DynClientBuilder;
 use rig::completion::{message::Image, CompletionModel, CompletionResponse, Message};
-use rig::message::{AssistantContent, DocumentSourceKind, ImageMediaType, UserContent};
+use rig::message::{AssistantContent, DocumentSourceKind, ImageDetail, ImageMediaType, UserContent};
 use rig::one_or_many::OneOrMany;
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
-use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
+use rig::streaming::{StreamedAssistantContent, StreamingChat, StreamingPrompt};
 
 use base64::Engine as _;
 
@@ -387,6 +387,9 @@ pub struct ProviderConfig {
     id: String,
     provider: String,
     name: String,
+    /// rig 库使用的提供商类型（如 openai, anthropic, gemini 等）
+    #[serde(default)]
+    rig_provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
     organization: Option<String>,
@@ -625,14 +628,26 @@ impl AiServiceManager {
                             .filter(|s| !s.is_empty())
                             .map(String::from);
 
+                        // 优先使用 rig_provider，如果未设置则回退到 provider
+                        let rig_provider = provider_config
+                            .rig_provider
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| provider_config.provider.clone());
+
+                        tracing::debug!(
+                            "Provider {} using rig_provider: {}",
+                            provider_config.name,
+                            rig_provider
+                        );
+
                         let config = AiConfig {
-                            provider: provider_config.provider.clone(),
+                            provider: rig_provider,
                             model: default_model.clone(),
                             api_key: api_key,
                             api_base: api_base,
                             organization: organization,
                             temperature: Some(0.7),
-                            max_tokens: Some(4096), // 确保有默认值，避免响应被截断
+                            max_tokens: Some(4096),
                         };
 
                         if let Err(e) = self.add_service(provider_config.name.clone(), config).await
@@ -1604,7 +1619,8 @@ impl AiService {
                             let image = Image {
                                 data: DocumentSourceKind::base64(base64_data),
                                 media_type,
-                                ..Default::default()
+                                detail: Some(ImageDetail::Auto),
+                                additional_params: None,
                             };
 
                             maybe_image = Some(image);
@@ -1786,14 +1802,18 @@ impl AiService {
             }
         };
 
-        // 添加超时保护，防止请求无限期挂起
-        // 注意：暂时移除 with_hook(logger)，因为它可能导致流阻塞
-        // TODO: 研究 rig 库的正确 hook 用法或使用其他日志记录方式
+        // 将数据库历史消息转换为 rig Message 格式
+        let chat_history = Self::convert_to_rig_messages(&messages);
+        debug!(
+            "Chat history: {} messages converted for multi-turn conversation",
+            chat_history.len()
+        );
+
+        // 使用 stream_chat 支持多轮对话
         let stream_result = tokio::time::timeout(
-            std::time::Duration::from_secs(120), // 2分钟超时
+            std::time::Duration::from_secs(120),
             agent
-                .stream_prompt(user_message)
-                // .with_hook(logger)  // 临时禁用，避免阻塞
+                .stream_chat(user_message, chat_history)
                 .multi_turn(100),
         )
         .await;
@@ -1945,6 +1965,31 @@ impl AiService {
         self.db
             .get_ai_messages_by_conversation(conversation_id)
             .await
+    }
+
+    /// 将数据库消息转换为 rig Message 格式（用于多轮对话）
+    fn convert_to_rig_messages(db_messages: &[AiMessage]) -> Vec<Message> {
+        db_messages
+            .iter()
+            .filter_map(|msg| {
+                let content = msg.content.trim();
+                if content.is_empty() {
+                    return None;
+                }
+                match msg.role.to_lowercase().as_str() {
+                    "user" => Some(Message::User {
+                        content: OneOrMany::one(UserContent::text(content.to_string())),
+                    }),
+                    "assistant" => Some(Message::Assistant {
+                        id: Some(msg.id.clone()),
+                        content: OneOrMany::one(AssistantContent::Text(
+                            rig::message::Text::from(content.to_string()),
+                        )),
+                    }),
+                    _ => None, // 忽略 system 等其他角色
+                }
+            })
+            .collect()
     }
 
     // 保存消息到数据库

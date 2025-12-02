@@ -1863,7 +1863,6 @@ pub async fn save_ai_config(
     let config_str = serde_json::to_string(&config.providers)
         .map_err(|e| format!("Failed to serialize providers config: {}", e))?;
 
-    tracing::info!("Saving providers config: {}", config_str);
 
     db_service
         .set_config(
@@ -2106,12 +2105,14 @@ pub async fn get_ai_config(
 fn default_providers_config() -> serde_json::Value {
     use serde_json::json;
     // 提供商清单与后端支持的 provider 名称保持一致
+    // rig_provider 字段指定后端使用的 rig 库提供商类型
     let providers: Vec<(&'static str, serde_json::Value)> = vec![
         (
             "OpenAI",
             json!({
                 "id": "openai",
                 "provider": "openai",
+                "rig_provider": "openai",
                 "name": "OpenAI",
                 "enabled": false,
                 "api_key": null,
@@ -2126,6 +2127,7 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "anthropic",
                 "provider": "anthropic",
+                "rig_provider": "anthropic",
                 "name": "Anthropic",
                 "enabled": false,
                 "api_key": null,
@@ -2140,10 +2142,11 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "gemini",
                 "provider": "gemini",
+                "rig_provider": "gemini",
                 "name": "Gemini",
                 "enabled": false,
                 "api_key": null,
-                "api_base": null, // Gemini 主要通过 key 查询，无必须 base
+                "api_base": null,
                 "organization": null,
                 "default_model": "",
                 "models": []
@@ -2154,6 +2157,7 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "deepseek",
                 "provider": "deepseek",
+                "rig_provider": "deepseek",
                 "name": "DeepSeek",
                 "enabled": false,
                 "api_key": null,
@@ -2168,6 +2172,7 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "ollama",
                 "provider": "ollama",
+                "rig_provider": "ollama",
                 "name": "Ollama",
                 "enabled": false,
                 "api_key": null,
@@ -2182,6 +2187,7 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "groq",
                 "provider": "groq",
+                "rig_provider": "groq",
                 "name": "Groq",
                 "enabled": false,
                 "api_key": null,
@@ -2196,6 +2202,7 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "cohere",
                 "provider": "cohere",
+                "rig_provider": "cohere",
                 "name": "Cohere",
                 "enabled": false,
                 "api_key": null,
@@ -2210,6 +2217,7 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "moonshot",
                 "provider": "moonshot",
+                "rig_provider": "moonshot",
                 "name": "Moonshot",
                 "enabled": false,
                 "api_key": null,
@@ -2224,6 +2232,7 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "xai",
                 "provider": "xai",
+                "rig_provider": "xai",
                 "name": "xAI",
                 "enabled": false,
                 "api_key": null,
@@ -2234,10 +2243,41 @@ fn default_providers_config() -> serde_json::Value {
             }),
         ),
         (
+            "Perplexity",
+            json!({
+                "id": "perplexity",
+                "provider": "perplexity",
+                "rig_provider": "perplexity",
+                "name": "Perplexity",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.perplexity.ai",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "TogetherAI",
+            json!({
+                "id": "togetherai",
+                "provider": "togetherai",
+                "rig_provider": "togetherai",
+                "name": "TogetherAI",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.together.xyz/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
             "OpenRouter",
             json!({
                 "id": "openrouter",
                 "provider": "openrouter",
+                "rig_provider": "openrouter",
                 "name": "OpenRouter",
                 "enabled": false,
                 "api_key": null,
@@ -2254,10 +2294,26 @@ fn default_providers_config() -> serde_json::Value {
             json!({
                 "id": "modelscope",
                 "provider": "modelscope",
+                "rig_provider": "openai",
                 "name": "ModelScope",
                 "enabled": false,
                 "api_key": null,
                 "api_base": "https://api-inference.modelscope.cn/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "Hyperbolic",
+            json!({
+                "id": "hyperbolic",
+                "provider": "hyperbolic",
+                "rig_provider": "hyperbolic",
+                "name": "Hyperbolic",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "https://api.hyperbolic.xyz/v1",
                 "organization": null,
                 "default_model": "",
                 "models": []

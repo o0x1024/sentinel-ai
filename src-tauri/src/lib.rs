@@ -789,6 +789,10 @@ pub fn run() {
             ai_commands::get_agent_statistics,
             ai_commands::test_custom_provider,
             ai_commands::add_custom_provider,
+            // Aliyun DashScope commands
+            ai_commands::test_aliyun_dashscope_connection,
+            ai_commands::upload_file_to_aliyun,
+            ai_commands::upload_file_to_aliyun_with_config,
             ai::get_ai_usage_stats,
             // Tools catalog for AgentManager (simple list)
             ai_commands::list_unified_tools,
