@@ -16,6 +16,7 @@ pub enum ArchitectureType {
     LLMCompiler,
     PlanAndExecute,
     Travel,
+    VisionExplorer,
     Unknown,
 }
 

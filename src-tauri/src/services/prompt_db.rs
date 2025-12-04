@@ -331,9 +331,7 @@ impl PromptRepository {
             TemplateType::PluginFix => "PluginFix",
             TemplateType::AgentPluginFix => "AgentPluginFix",
             TemplateType::PluginVulnSpecific => "PluginVulnSpecific",
-            TemplateType::PluginInterface => "PluginInterface",
-            TemplateType::PluginOutputFormat => "PluginOutputFormat",
-            TemplateType::AgentPluginOutputFormat => "AgentPluginOutputFormat",
+            TemplateType::VisionExplorerSystem => "VisionExplorerSystem",
         }
     }
     
@@ -353,12 +351,8 @@ impl PromptRepository {
             "PluginFix" => Some(TemplateType::PluginFix),
             "AgentPluginFix" => Some(TemplateType::AgentPluginFix),
             "PluginVulnSpecific" => Some(TemplateType::PluginVulnSpecific),
-            "PluginInterface" => Some(TemplateType::PluginInterface),
-            "PluginOutputFormat" => Some(TemplateType::PluginOutputFormat),
-            "AgentPluginOutputFormat" => Some(TemplateType::AgentPluginOutputFormat),
+            "VisionExplorerSystem" => Some(TemplateType::VisionExplorerSystem),
             _ => None,
         }
     }
 }
-
-

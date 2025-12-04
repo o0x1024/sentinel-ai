@@ -1,6 +1,5 @@
-pub mod ai;
+pub mod ai_manager;
 pub mod asset_service;
-pub mod custom_llm;
 pub mod mcp;
 pub mod database {
     pub use sentinel_db::DatabaseService;
@@ -17,8 +16,23 @@ pub use sentinel_services::message_emitter;
 pub use sentinel_services::performance;
 pub use sentinel_services::dictionary;
 
-// 导出所有服务
-pub use ai::{AiService, AiServiceManager};
+// 导出 AI 服务（从 sentinel-llm 和本地管理器）
+pub use ai_manager::{AiServiceManager, AiServiceWrapper};
+pub use sentinel_llm::{AiConfig, AiService, SchedulerConfig, SchedulerStage};
+
+// 向后兼容的模块别名
+pub mod ai {
+    pub use super::ai_manager::{AiServiceManager, AiServiceWrapper, ModelInfo};
+    pub use sentinel_llm::{
+        AiConfig, AiToolCall, SchedulerConfig, SchedulerStage,
+        StreamError, StreamMessage, TaskProgressMessage, TaskStreamMessage,
+        ToolCallResultMessage,
+    };
+    // 使用 AiServiceWrapper 作为 AiService（保持原有接口兼容）
+    pub type AiService = super::ai_manager::AiServiceWrapper;
+}
+
+// 导出其他服务
 pub use asset_service::AssetService;
 pub use database::DatabaseService;
 pub use mcp::McpService;

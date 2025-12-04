@@ -9,6 +9,21 @@ export default {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
+      fontSize: {
+        'xs': ['calc(var(--font-size-base, 14px) * 0.75)', { lineHeight: '1rem' }],
+        'sm': ['calc(var(--font-size-base, 14px) * 0.875)', { lineHeight: '1.25rem' }],
+        'base': ['var(--font-size-base, 14px)', { lineHeight: '1.5rem' }],
+        'lg': ['calc(var(--font-size-base, 14px) * 1.125)', { lineHeight: '1.75rem' }],
+        'xl': ['calc(var(--font-size-base, 14px) * 1.25)', { lineHeight: '1.75rem' }],
+        '2xl': ['calc(var(--font-size-base, 14px) * 1.5)', { lineHeight: '2rem' }],
+        '3xl': ['calc(var(--font-size-base, 14px) * 1.875)', { lineHeight: '2.25rem' }],
+        '4xl': ['calc(var(--font-size-base, 14px) * 2.25)', { lineHeight: '2.5rem' }],
+        '5xl': ['calc(var(--font-size-base, 14px) * 3)', { lineHeight: '1' }],
+        '6xl': ['calc(var(--font-size-base, 14px) * 3.75)', { lineHeight: '1' }],
+        '7xl': ['calc(var(--font-size-base, 14px) * 4.5)', { lineHeight: '1' }],
+        '8xl': ['calc(var(--font-size-base, 14px) * 6)', { lineHeight: '1' }],
+        '9xl': ['calc(var(--font-size-base, 14px) * 8)', { lineHeight: '1' }],
+      },
     },
   },
   plugins: [

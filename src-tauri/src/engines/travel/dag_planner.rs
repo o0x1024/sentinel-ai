@@ -3,7 +3,7 @@
 //! 借鉴 LLMCompiler 的一次规划理念，用单次 LLM 调用生成完整执行计划
 
 use super::types::*;
-use crate::engines::llm_client::{LlmClient, create_client as create_llm_client};
+use crate::engines::LlmClient;
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
@@ -26,7 +26,7 @@ pub struct DagPlanner {
 impl DagPlanner {
     pub fn new(ai_service: Arc<AiService>, config: LiteModeConfig) -> Self {
         Self {
-            llm_client: create_llm_client(&ai_service),
+            llm_client: crate::engines::create_client(ai_service.as_ref()),
             tool_adapter: None,
             prompt_repo: None,
             config,
@@ -203,9 +203,56 @@ impl DagPlanner {
             .replace("{tools}", tools_description)
             .replace("{max_steps}", &self.config.max_steps.to_string());
 
+        // 构建增强的 user prompt，包含上下文信息
+        let mut context_hints = Vec::new();
+        
+        // 检查是否有视觉探索结果
+        if let Some(vision_result) = context.get("vision_exploration_result") {
+            let api_count = context.get("vision_api_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let form_count = context.get("vision_form_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            
+            context_hints.push(format!(
+                "🔍 视觉探索已完成: 发现 {} 个 API 端点, {} 个表单。代理流量已捕获，可以使用 analyze_website 分析。",
+                api_count, form_count
+            ));
+            
+            // 如果有 API 端点，提取一些示例
+            if let Some(api_endpoints) = vision_result.get("api_endpoints").and_then(|v| v.as_array()) {
+                if !api_endpoints.is_empty() {
+                    let sample_apis: Vec<String> = api_endpoints.iter()
+                        .take(5)
+                        .filter_map(|api| {
+                            let method = api.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
+                            let path = api.get("path").and_then(|v| v.as_str()).unwrap_or("/");
+                            Some(format!("{} {}", method, path))
+                        })
+                        .collect();
+                    context_hints.push(format!("   示例 API: {}", sample_apis.join(", ")));
+                }
+            }
+        } else {
+            // 没有视觉探索结果，检查是否有代理流量
+            if context.get("has_proxy_traffic").and_then(|v| v.as_bool()).unwrap_or(false) {
+                context_hints.push("📦 代理流量已存在，可以使用 analyze_website 分析。".to_string());
+            } else {
+                context_hints.push("⚠️ 注意: 没有预先捕获的代理流量。如果需要分析网站，请先使用 playwright 工具访问目标，或使用 http_request 直接请求。".to_string());
+            }
+        }
+        
+        // 构建最终的 user prompt
+        let context_section = if context_hints.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n**上下文信息**:\n{}", context_hints.join("\n"))
+        };
+        
         let user_prompt = format!(
-            "任务: {}\n目标: {}\n\n请生成执行计划。",
-            task_description, target
+            "任务: {}\n目标: {}{}\n\n请生成执行计划。",
+            task_description, target, context_section
         );
 
         Ok((system_prompt, user_prompt))

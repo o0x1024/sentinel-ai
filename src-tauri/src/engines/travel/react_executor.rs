@@ -27,7 +27,6 @@ use super::message_emitter::{TravelMessageEmitter, TravelExecutionStats};
 use super::message_emitter::TravelLlmClient;
 use super::context_manager::ContextManager;
 use super::types::ContextManagerConfig;
-use crate::engines::llm_client::create_llm_config;
 
 /// ReAct步骤类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +179,8 @@ pub struct TravelReactExecutor {
     history_window_size: usize,
     /// 测试进度跟踪 - 防止循环
     test_progress: std::sync::Mutex<TestProgress>,
+    /// OODA 循环号（在整个 ReAct 执行期间保持不变）
+    ooda_cycle: u32,
 }
 
 /// 安全截断 UTF-8 字符串，确保不会在字符中间切断
@@ -219,7 +220,7 @@ impl TravelReactExecutor {
                 conversation_id.clone(),
             ));
             
-            let llm_config = create_llm_config(&ai_service);
+            let llm_config = crate::engines::create_llm_config(&ai_service);
             let client = Arc::new(TravelLlmClient::new(llm_config, emitter.clone()));
             
             (Some(emitter), Some(client))
@@ -259,12 +260,19 @@ impl TravelReactExecutor {
             context_manager: ContextManager::new(context_config),
             history_window_size: 5,  // 保留最近5轮历史
             test_progress: std::sync::Mutex::new(TestProgress::default()),
+            ooda_cycle: 1,  // 默认 OODA 循环号
         }
     }
 
     /// 设置执行ID
     pub fn with_execution_id(mut self, execution_id: String) -> Self {
         self.execution_id = Some(execution_id);
+        self
+    }
+
+    /// 设置 OODA 循环号（在整个 ReAct 执行期间保持不变）
+    pub fn with_ooda_cycle(mut self, cycle: u32) -> Self {
+        self.ooda_cycle = cycle;
         self
     }
 
@@ -290,9 +298,9 @@ impl TravelReactExecutor {
         let mut successful_tool_calls = 0u32;
         let mut failed_tool_calls = 0u32;
 
-        // 发送开始消息
+        // 发送开始消息，使用固定的 OODA 循环号
         if let Some(te) = &self.travel_emitter {
-            te.emit_start(0);
+            te.emit_start(self.ooda_cycle);
         }
 
         // 添加初始上下文
@@ -325,27 +333,93 @@ impl TravelReactExecutor {
             let (system_prompt, user_prompt) =
                 self.build_thought_prompt(task, &context_history).await?;
 
-            // 调用LLM - 使用 Travel 专用 LLM 客户端
-            let llm_output = self
-                .call_llm(&system_prompt, &user_prompt, iteration == 1, task, iteration)
-                .await
-                .context("LLM call failed during Thought phase")?;
+            // 调用LLM - 使用 Travel 专用 LLM 客户端，带重试机制
+            let max_retries = 3;
+            let mut retry_count = 0;
+            let mut llm_output;
+            let mut parsed;
+            
+            loop {
+                llm_output = self
+                    .call_llm(&system_prompt, &user_prompt, iteration == 1, task, iteration)
+                    .await
+                    .context("LLM call failed during Thought phase")?;
 
-            // 再次检查取消状态
-            if self.cancellation_token.is_cancelled() {
-                if let Some(te) = &self.travel_emitter {
-                    te.emit_error("Execution cancelled after LLM call");
+                // 再次检查取消状态
+                if self.cancellation_token.is_cancelled() {
+                    if let Some(te) = &self.travel_emitter {
+                        te.emit_error("Execution cancelled after LLM call");
+                    }
+                    return Err(anyhow!("Execution cancelled after LLM call"));
                 }
-                return Err(anyhow!("Execution cancelled after LLM call"));
+
+                // 检查输出是否完整
+                let (is_complete, issue) = self.check_output_completeness(&llm_output);
+                
+                if !is_complete && retry_count < max_retries {
+                    retry_count += 1;
+                    log::warn!(
+                        "Travel ReAct: Incomplete LLM output detected ({}), retrying ({}/{})",
+                        issue, retry_count, max_retries
+                    );
+                    if let Some(te) = &self.travel_emitter {
+                        te.emit_error(&format!(
+                            "Incomplete response detected: {}, retrying ({}/{})",
+                            issue, retry_count, max_retries
+                        ));
+                    }
+                    // 短暂延迟后重试
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+                
+                // 尝试解析输出
+                match self.parse_llm_output(&llm_output) {
+                    Ok(p) => {
+                        // 检查解析结果是否有效（有action或final_answer）
+                        if p.action.is_none() && p.final_answer.is_none() && retry_count < max_retries {
+                            retry_count += 1;
+                            log::warn!(
+                                "Travel ReAct: Invalid output (no action/final_answer), retrying ({}/{})",
+                                retry_count, max_retries
+                            );
+                            if let Some(te) = &self.travel_emitter {
+                                te.emit_error(&format!(
+                                    "Invalid response (no action/final_answer), retrying ({}/{})",
+                                    retry_count, max_retries
+                                ));
+                            }
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        }
+                        parsed = p;
+                        break;
+                    }
+                    Err(e) if retry_count < max_retries => {
+                        retry_count += 1;
+                        log::warn!(
+                            "Travel ReAct: Parse error ({}), retrying ({}/{})",
+                            e, retry_count, max_retries
+                        );
+                        if let Some(te) = &self.travel_emitter {
+                            te.emit_error(&format!(
+                                "Parse error: {}, retrying ({}/{})",
+                                e, retry_count, max_retries
+                            ));
+                        }
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(e.context("Failed to parse LLM output after retries"));
+                    }
+                }
             }
 
             let thought_duration = thought_start
                 .elapsed()
                 .unwrap_or(Duration::from_secs(0))
                 .as_millis() as u64;
-
-            // 解析LLM输出（LLM 客户端已经发送了 thought/action 消息）
-            let parsed = self.parse_llm_output(&llm_output)?;
 
             // 记录Thought步骤
             steps.push(ReactStep {
@@ -815,6 +889,90 @@ impl TravelReactExecutor {
                 Err(anyhow!("Travel LLM client not initialized. Check AI service configuration."))
             }
         }
+    }
+
+    /// 检查LLM输出是否完整
+    /// 返回 (is_complete, issue_description)
+    fn check_output_completeness(&self, output: &str) -> (bool, String) {
+        let trimmed = output.trim();
+        
+        // 空输出
+        if trimmed.is_empty() {
+            return (false, "empty response".to_string());
+        }
+        
+        // 检查是否是被截断的JSON
+        let json_start = trimmed.find('{');
+        let json_end = trimmed.rfind('}');
+        
+        if let Some(start) = json_start {
+            // 有JSON开始标记
+            match json_end {
+                None => {
+                    // 没有闭合的}，明显被截断
+                    return (false, "JSON not closed (missing '}')".to_string());
+                }
+                Some(end) if end < start => {
+                    // }在{之前，不合法
+                    return (false, "malformed JSON structure".to_string());
+                }
+                Some(end) => {
+                    // 检查括号是否匹配
+                    let json_str = &trimmed[start..=end];
+                    let open_braces = json_str.matches('{').count();
+                    let close_braces = json_str.matches('}').count();
+                    if open_braces != close_braces {
+                        return (false, format!(
+                            "unbalanced braces (open: {}, close: {})",
+                            open_braces, close_braces
+                        ));
+                    }
+                    
+                    // 检查方括号是否匹配
+                    let open_brackets = json_str.matches('[').count();
+                    let close_brackets = json_str.matches(']').count();
+                    if open_brackets != close_brackets {
+                        return (false, format!(
+                            "unbalanced brackets (open: {}, close: {})",
+                            open_brackets, close_brackets
+                        ));
+                    }
+                    
+                    // 检查引号是否匹配（简单检查，不处理转义）
+                    let quotes = json_str.matches('"').count();
+                    if quotes % 2 != 0 {
+                        return (false, "unclosed string (odd number of quotes)".to_string());
+                    }
+                }
+            }
+        }
+        
+        // 检查输出长度是否过短（可能被截断）
+        if trimmed.len() < 20 {
+            // 非常短的输出可能有问题，除非是简单的final_answer
+            if !trimmed.contains("final_answer") && !trimmed.contains("Final Answer") {
+                return (false, "response too short".to_string());
+            }
+        }
+        
+        // 检查是否以不完整的JSON结尾（常见截断模式）
+        let incomplete_endings = [
+            "\"thought\":",
+            "\"action\":",
+            "\"name\":",
+            "\"input\":",
+            "\"final_answer\":",
+            ": \"",
+            ",",
+        ];
+        
+        for ending in incomplete_endings {
+            if trimmed.ends_with(ending) {
+                return (false, format!("truncated at '{}'", ending));
+            }
+        }
+        
+        (true, String::new())
     }
 
     /// 解析LLM输出 - JSON 格式优先，兼容旧文本格式

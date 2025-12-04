@@ -124,16 +124,13 @@ impl PassiveScanState {
         // macOS: ~/Library/Application Support/sentinel-ai/
         // Linux: ~/.local/share/sentinel-ai/
         // Windows: %APPDATA%\sentinel-ai\
-
-        // 使用当前工作目录下的 ./ca 作为证书目录（项目内路径）
-        let ca_dir = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("ca");
-
-        // 保持原有逻辑：仍然使用用户数据目录（避免随代码路径变化导致数据丢失）
         let app_data_dir = dirs::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("sentinel-ai");
+
+        // 证书目录固定在用户数据目录下的 ca 子目录
+        let ca_dir = app_data_dir.join("ca");
+
         // 数据库路径：使用主数据库 database.db
         let db_path = app_data_dir.join("database.db");
 
@@ -343,8 +340,8 @@ impl<T> CommandResponse<T> {
     }
 }
 
-/// 内部启动函数（可在内部复用）
-async fn start_passive_scan_internal(
+/// 内部启动函数（可在内部和外部复用）
+pub async fn start_passive_scan_internal(
     app: &AppHandle,
     state: &PassiveScanState,
     config: Option<ProxyConfig>,
@@ -356,9 +353,10 @@ async fn start_passive_scan_internal(
 
     let config = config.unwrap_or_default();
     
-    // 使用当前工作目录下的 ./ca 目录（证书）
-    let ca_dir = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+    // 证书目录固定在用户数据目录下
+    let ca_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("sentinel-ai")
         .join("ca");
     
     // 创建请求拦截通道

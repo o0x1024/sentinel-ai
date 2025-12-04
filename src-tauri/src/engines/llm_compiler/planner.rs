@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use super::memory_integration::LlmCompilerMemoryIntegration;
 use super::types::*;
-use crate::engines::llm_client::LlmClient;
+use crate::engines::LlmClient;
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
 use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
@@ -44,7 +44,7 @@ impl LlmCompilerPlanner {
         config: LlmCompilerConfig,
         prompt_repo: Option<PromptRepository>,
     ) -> Self {
-        let llm_client = Arc::new(LlmClient::from_ai_service(&ai_service));
+        let llm_client = Arc::new(crate::engines::create_client(ai_service.as_ref()));
         Self {
             llm_client,
             tool_adapter,
@@ -63,7 +63,7 @@ impl LlmCompilerPlanner {
         prompt_repo: Option<PromptRepository>,
         memory_integration: Option<Arc<LlmCompilerMemoryIntegration>>,
     ) -> Self {
-        let llm_client = Arc::new(LlmClient::from_ai_service(&ai_service));
+        let llm_client = Arc::new(crate::engines::create_client(ai_service.as_ref()));
         Self {
             llm_client,
             tool_adapter,

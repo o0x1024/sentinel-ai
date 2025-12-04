@@ -15,15 +15,17 @@
 
 pub mod proxy;
 pub mod certificate;
+pub mod certificate_authority;
 pub mod scanner;
 pub mod finding;
 pub mod database;
 pub mod error;
 pub mod types;
+pub mod system_proxy;
 
 pub use error::{PassiveError, Result};
 pub use types::*;
-pub use proxy::{ProxyConfig, ProxyService, ScanTask, ScanSender, InterceptState, InterceptAction, PendingInterceptRequest, PendingInterceptResponse};
+pub use proxy::{ProxyConfig, ProxyService, ScanTask, ScanSender, InterceptState, InterceptAction, PendingInterceptRequest, PendingInterceptResponse, FailedConnection};
 pub use scanner::{ScanPipeline, FindingDeduplicator, FindingSender, FindingReceiver};
 pub use database::{
     PassiveDatabaseService, 
@@ -35,6 +37,7 @@ pub use database::{
     ProxyRequestFilters,
 };
 pub use certificate::CertificateService;
+pub use certificate_authority::ChainedCertificateAuthority;
 
 // 重导出插件系统（来自 sentinel-plugins）
 pub use sentinel_plugins::{

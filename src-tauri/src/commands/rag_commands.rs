@@ -3,6 +3,7 @@ use crate::services::ai::AiServiceManager;
 use crate::services::database::{Database, DatabaseService};
 use chrono::Utc;
 use log::{info, warn};
+use sentinel_llm::LlmClient;
 use sentinel_rag::config::RagConfig as RagConfigRag;
 use sentinel_core::models::rag_config::RagConfig as RagConfigCore;
 use sentinel_rag::db::RagDatabase;
@@ -184,6 +185,27 @@ pub async fn rag_ingest_source(
     let rag_service = get_global_rag_service().await?;
     rag_service
         .ingest_source(request)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 手动输入文本导入到RAG系统
+#[tauri::command]
+pub async fn rag_ingest_text(
+    title: String,
+    content: String,
+    collection_id: Option<String>,
+    metadata: Option<HashMap<String, String>>,
+) -> Result<IngestResponse, String> {
+    info!("开始导入手动输入文本: {}", title);
+
+    if content.trim().is_empty() {
+        return Err("文本内容不能为空".to_string());
+    }
+
+    let rag_service = get_global_rag_service().await?;
+    rag_service
+        .ingest_text(&title, &content, collection_id.as_deref(), metadata)
         .await
         .map_err(|e| e.to_string())
 }
@@ -671,39 +693,31 @@ pub async fn assistant_rag_answer(
             }
         };
 
-    // 直接基于配置构建AI服务
-    let mut service =
-        if let Ok(Some(provider_config)) = ai_manager.get_provider_config(&provider).await {
-            let mut dynamic_config = provider_config;
-            dynamic_config.model = model.clone();
-            let db_service = app.state::<Arc<crate::services::database::DatabaseService>>();
-            let mcp_service = ai_manager.get_mcp_service();
-            crate::services::ai::AiService::new(
-                dynamic_config,
-                db_service.inner().clone(),
-                Some(app.clone()),
-                mcp_service,
-            )
-        } else {
-            let msg = format!("Provider config not found for: {}", provider);
-            log::error!("{}", msg);
-            return Err(msg);
-        };
-    // 绑定 AppHandle（尽管本次非流式，不强制要求）
-    service.set_app_handle(app);
-
-    // 实际调用模型（非流式，不发事件）
-    let answer = match service
-        .send_message_stream(
-            Some(&request.query),
-            Some(&system_prompt),
-            None,
-            None,
-            false, // stream
-            false, // is_final
-            None,  // chunk_type
-            None,  // attachments
+    // 直接基于配置构建 LLM 客户端
+    let service = if let Ok(Some(provider_config)) = ai_manager.get_provider_config(&provider).await
+    {
+        let mut dynamic_config = provider_config;
+        dynamic_config.model = model.clone();
+        let db_service = app.state::<Arc<crate::services::database::DatabaseService>>();
+        let mcp_service = ai_manager.get_mcp_service();
+        crate::services::ai::AiService::new(
+            dynamic_config,
+            db_service.inner().clone(),
+            Some(app.clone()),
+            mcp_service,
         )
+    } else {
+        let msg = format!("Provider config not found for: {}", provider);
+        log::error!("{}", msg);
+        return Err(msg);
+    };
+
+    // 使用 LlmClient 进行非流式调用
+    let llm_config = service.service.to_llm_config();
+    let llm_client = LlmClient::new(llm_config);
+
+    let answer = match llm_client
+        .completion(Some(&system_prompt), &request.query)
         .await
     {
         Ok(content) => content,

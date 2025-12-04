@@ -48,15 +48,14 @@ pub enum TemplateType {
     ReportGenerator,
     Domain,
     Custom,
-    // Plugin generation templates
-    PluginGeneration,        // Passive scanning plugin generation
-    AgentPluginGeneration,   // Agent tool plugin generation
-    PluginFix,               // Passive plugin fix
-    AgentPluginFix,          // Agent plugin fix
-    PluginVulnSpecific,
-    PluginInterface,         // Passive plugin interface
-    PluginOutputFormat,      // Passive plugin output format
-    AgentPluginOutputFormat, // Agent plugin output format
+    // Plugin generation templates (合并后的完整模板)
+    PluginGeneration,        // 被动扫描插件生成（合并了 interface 和 output format）
+    AgentPluginGeneration,   // Agent 工具插件生成（合并了 interface 和 output format）
+    PluginFix,               // 被动扫描插件修复
+    AgentPluginFix,          // Agent 插件修复
+    PluginVulnSpecific,      // 漏洞特定插件模板
+    // Vision Explorer templates
+    VisionExplorerSystem,    // VisionExplorer 系统提示
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,16 +131,14 @@ mod tests {
 
     #[test]
     fn test_template_type_serde() {
-        // Test all new plugin-related template types
+        // Test all plugin-related template types
         let test_cases = vec![
             ("PluginGeneration", TemplateType::PluginGeneration),
             ("AgentPluginGeneration", TemplateType::AgentPluginGeneration),
             ("PluginFix", TemplateType::PluginFix),
             ("AgentPluginFix", TemplateType::AgentPluginFix),
             ("PluginVulnSpecific", TemplateType::PluginVulnSpecific),
-            ("PluginInterface", TemplateType::PluginInterface),
-            ("PluginOutputFormat", TemplateType::PluginOutputFormat),
-            ("AgentPluginOutputFormat", TemplateType::AgentPluginOutputFormat),
+            ("VisionExplorerSystem", TemplateType::VisionExplorerSystem),
         ];
 
         for (json_str, expected) in test_cases {

@@ -3658,7 +3658,7 @@ textarea.textarea {
 /* CodeMirror 样式 */
 :deep(.cm-editor) {
   height: 600px;
-  font-size: 12px;
+  font-size: calc(var(--font-size-base, 14px) * 0.857);
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
 }
 

@@ -1,44 +1,44 @@
-# Agent Tool Plugin Code Fix Task
+# Agent 工具插件代码修复任务
 
-You are an expert TypeScript developer and security researcher. An Agent tool plugin was generated but failed execution testing. Your task is to fix the code so it executes correctly.
+你是一名专业的 TypeScript 开发者和安全研究员。一个 Agent 工具插件已生成但执行测试失败。你的任务是修复代码使其正确执行。
 
-## Error Analysis
+## 错误分析
 
-Analyze the provided error information:
-- Original plugin code
-- Error message from execution
-- Detailed error information
-- Tool type and requirements
-- Fix attempt number
+分析提供的错误信息：
+- 原始插件代码
+- 执行时的错误消息
+- 详细错误信息
+- 工具类型和要求
+- 修复尝试次数
 
-## Common Issues
+## 常见问题
 
-1. **Type Errors**: Incorrect TypeScript typing or interface mismatches
-2. **Runtime Errors**: Undefined variables, null references, or logic errors
-3. **API Usage**: Incorrect use of available APIs (fetch, TextDecoder, etc.)
-4. **Export Issues**: Missing or incorrect globalThis exports
-5. **Async/Await**: Improper handling of promises or async operations
+1. **类型错误**: TypeScript 类型不正确或接口不匹配
+2. **运行时错误**: 未定义变量、空引用或逻辑错误
+3. **API 使用**: 可用 API（fetch、TextDecoder 等）使用不正确
+4. **导出问题**: globalThis 导出缺失或不正确
+5. **异步/等待**: Promise 或异步操作处理不当
 
-## Fix Strategy
+## 修复策略
 
-1. Identify the root cause of the error
-2. Fix the specific issue without changing working code
-3. Ensure proper error handling
-4. Validate input parameters
-5. Test edge cases
+1. 识别错误的根本原因
+2. 修复特定问题而不更改正常工作的代码
+3. 确保适当的错误处理
+4. 验证输入参数
+5. 测试边界情况
 
-## Requirements
+## 要求
 
-- Maintain the same functionality as the original plugin
-- Fix only the broken parts
-- Keep the code structure and style consistent
-- Ensure all TypeScript types are correct
-- Include proper error handling
+- 保持与原始插件相同的功能
+- 只修复损坏的部分
+- 保持代码结构和风格一致
+- 确保所有 TypeScript 类型正确
+- 包含适当的错误处理
 
-**Variables**:
-- {original_code}: The original plugin code
-- {error_message}: Error message from execution
-- {error_details}: Detailed error information
-- {tool_type}: Tool type
-- {attempt}: Fix attempt number
+**变量**:
+- {original_code}: 原始插件代码
+- {error_message}: 执行时的错误消息
+- {error_details}: 详细错误信息
+- {tool_type}: 工具类型
+- {attempt}: 修复尝试次数
 

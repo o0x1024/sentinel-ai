@@ -56,22 +56,27 @@ pub enum BrowserAction {
         direction: ScrollDirection,
         scroll_count: u32,
     },
-    /// 输入文本
-    TypeText { text: String },
-    /// 粘贴文本
-    PasteText { text: String },
     /// 按键
     TypeKeys { keys: Vec<String> },
     /// 等待
     Wait { duration_ms: u64 },
     /// 导航到URL
     Navigate { url: String },
-    /// 点击元素 (通过选择器)
-    ClickElement { selector: String },
-    /// 填写输入框
-    FillInput { selector: String, value: String },
     /// 选择下拉选项
     SelectOption { selector: String, value: String },
+    
+    // ========== 新增：元素标注相关操作 ==========
+    
+    /// 标注页面所有可交互元素
+    AnnotateElements,
+    /// 通过标注索引点击元素
+    ClickByIndex { index: u32 },
+    /// 设置自动标注开关
+    SetAutoAnnotation { enabled: bool },
+    /// 获取已标注元素列表
+    GetAnnotatedElements,
+    /// 通过索引填充输入框（使用 fill 而非 type，更可靠）
+    FillByIndex { index: u32, value: String },
 }
 
 /// 操作执行结果
@@ -121,6 +126,29 @@ pub struct BoundingBox {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+}
+
+/// 标注的元素信息 (来自 playwright_annotate)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnotatedElement {
+    /// 索引号 (用于 click_by_index)
+    pub index: u32,
+    /// 元素类型 (link, button, input, select, checkbox, radio, textarea, form, submit, file, clickable)
+    #[serde(rename = "type")]
+    pub element_type: String,
+    /// 标签名
+    #[serde(rename = "tagName")]
+    pub tag_name: String,
+    /// 元素文本内容
+    pub text: String,
+    /// CSS选择器
+    pub selector: String,
+    /// 位置信息
+    #[serde(rename = "boundingBox")]
+    pub bounding_box: BoundingBox,
+    /// 属性 (href, type, name, placeholder, value, role, aria-label 等)
+    #[serde(default)]
+    pub attributes: HashMap<String, String>,
 }
 
 /// 表单信息
@@ -297,8 +325,10 @@ impl Default for ExplorationState {
 pub struct VlmNextAction {
     /// 操作类型
     pub action_type: String,
-    /// 目标元素ID或选择器
+    /// 目标元素ID或选择器 (兼容旧格式)
     pub element_id: Option<String>,
+    /// 目标元素索引号 (新格式，优先使用)
+    pub element_index: Option<u32>,
     /// 填写内容 (如果是输入操作)
     pub value: Option<String>,
     /// 选择此操作的原因
@@ -333,6 +363,12 @@ pub struct VisionExplorerConfig {
     pub target_url: String,
     /// 最大迭代次数
     pub max_iterations: u32,
+    /// 执行 ID (用于前端消息)
+    pub execution_id: Option<String>,
+    /// 消息 ID (用于前端消息)
+    pub message_id: Option<String>,
+    /// 会话 ID (用于前端消息)
+    pub conversation_id: Option<String>,
     /// 操作后等待时间 (ms)
     pub action_delay_ms: u64,
     /// 截图后等待UI稳定时间 (ms)
@@ -343,6 +379,8 @@ pub struct VisionExplorerConfig {
     pub passive_proxy_port: Option<u16>,
     /// 是否无头模式
     pub headless: bool,
+    /// 浏览器代理服务器 (例如: http://127.0.0.1:8080)
+    pub browser_proxy: Option<String>,
     /// 浏览器视口宽度
     pub viewport_width: u32,
     /// 浏览器视口高度
@@ -353,6 +391,21 @@ pub struct VisionExplorerConfig {
     pub vlm_model: String,
     /// 登录凭据 (可选)
     pub credentials: Option<LoginCredentials>,
+    /// 是否启用多模态 (图片输入)
+    pub enable_multimodal: bool,
+    /// 是否启用上下文摘要
+    pub enable_context_summary: bool,
+    /// 上下文摘要阈值 (token数，超过则触发摘要)
+    pub context_summary_threshold: u32,
+    /// 是否在 prompt 中包含可交互元素 JSON（用于非多模态模型）
+    /// 默认关闭以节省 token，多模态模型通过截图查看元素标注
+    pub include_elements_in_prompt: bool,
+    /// 是否启用Takeover模式
+    pub enable_takeover: bool,
+    /// API发现轮询间隔 (ms)
+    pub api_poll_interval_ms: u64,
+    /// 探索完成时是否发送最终块以终止消息流
+    pub finalize_on_complete: bool,
 }
 
 /// 登录凭据
@@ -367,18 +420,128 @@ impl Default for VisionExplorerConfig {
         Self {
             target_url: String::new(),
             max_iterations: 100,
+            execution_id: None,
+            message_id: None,
+            conversation_id: None,
             action_delay_ms: 500,
             screenshot_delay_ms: 750, // bytebot使用750ms
             enable_passive_proxy: true,
             passive_proxy_port: Some(4201),
             headless: false,
+            browser_proxy: Some("http://127.0.0.1:8080".to_string()),
             viewport_width: 1280,
             viewport_height: 960, // bytebot使用1280x960
             vlm_provider: "anthropic".to_string(),
             vlm_model: "claude-sonnet-4-20250514".to_string(),
             credentials: None,
+            enable_multimodal: true, // 默认启用多模态
+            enable_context_summary: true, // 默认启用上下文摘要
+            context_summary_threshold: 50000, // 50k tokens触发摘要
+            include_elements_in_prompt: false, // 默认关闭，多模态模型通过截图查看
+            enable_takeover: false, // 默认禁用Takeover
+            api_poll_interval_ms: 2000, // 2秒轮询一次API
+            finalize_on_complete: true,
         }
     }
+}
+
+// ============================================================================
+// Takeover模式类型
+// ============================================================================
+
+/// Takeover模式状态
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TakeoverStatus {
+    /// 未激活
+    Inactive,
+    /// 用户已接管
+    Active,
+    /// 等待用户操作
+    WaitingForUser,
+    /// 用户已归还控制权
+    Returned,
+}
+
+/// 用户操作记录 (Takeover模式)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserAction {
+    /// 操作ID
+    pub id: String,
+    /// 操作类型
+    pub action_type: String,
+    /// 操作详情
+    pub details: serde_json::Value,
+    /// 操作时间
+    pub timestamp: DateTime<Utc>,
+    /// 触发的截图
+    pub screenshot: Option<String>,
+}
+
+/// Takeover会话
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TakeoverSession {
+    /// 会话ID
+    pub session_id: String,
+    /// 状态
+    pub status: TakeoverStatus,
+    /// 开始时间
+    pub started_at: Option<DateTime<Utc>>,
+    /// 结束时间
+    pub ended_at: Option<DateTime<Utc>>,
+    /// 用户操作记录
+    pub user_actions: Vec<UserAction>,
+    /// 原因 (为什么需要Takeover)
+    pub reason: Option<String>,
+}
+
+impl Default for TakeoverSession {
+    fn default() -> Self {
+        Self {
+            session_id: uuid::Uuid::new_v4().to_string(),
+            status: TakeoverStatus::Inactive,
+            started_at: None,
+            ended_at: None,
+            user_actions: Vec::new(),
+            reason: None,
+        }
+    }
+}
+
+// ============================================================================
+// 上下文摘要类型
+// ============================================================================
+
+/// 上下文摘要
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextSummary {
+    /// 摘要ID
+    pub id: String,
+    /// 摘要内容
+    pub content: String,
+    /// 摘要覆盖的迭代范围
+    pub iteration_range: (u32, u32),
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 摘要前的token估算
+    pub tokens_before: u32,
+    /// 摘要后的token估算
+    pub tokens_after: u32,
+}
+
+/// 消息历史项 (用于上下文管理)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationMessage {
+    /// 角色 (user/assistant)
+    pub role: String,
+    /// 内容
+    pub content: String,
+    /// 关联的迭代号
+    pub iteration: u32,
+    /// 是否包含图片
+    pub has_image: bool,
+    /// 时间戳
+    pub timestamp: DateTime<Utc>,
 }
 
 // ============================================================================
@@ -396,59 +559,126 @@ pub struct BrowserToolDefinition {
 /// 获取所有浏览器工具定义
 pub fn get_browser_tool_definitions() -> Vec<BrowserToolDefinition> {
     vec![
+        // ========== 观察类工具 ==========
         BrowserToolDefinition {
-            name: "computer_screenshot".to_string(),
-            description: "Captures a screenshot of the current browser page".to_string(),
+            name: "screenshot".to_string(),
+            description: "截取当前页面截图（包含元素标注）".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {}
             }),
         },
         BrowserToolDefinition {
-            name: "computer_click_mouse".to_string(),
-            description: "Performs a mouse click at the specified coordinates or current position".to_string(),
+            name: "annotate".to_string(),
+            description: "标注页面所有可交互元素，返回带索引号的元素列表".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
-                "properties": {
-                    "coordinates": {
-                        "type": "object",
-                        "properties": {
-                            "x": { "type": "integer", "description": "X coordinate" },
-                            "y": { "type": "integer", "description": "Y coordinate" }
-                        },
-                        "required": ["x", "y"]
-                    },
-                    "button": {
-                        "type": "string",
-                        "enum": ["left", "right", "middle"],
-                        "default": "left"
-                    },
-                    "click_count": {
-                        "type": "integer",
-                        "default": 1,
-                        "description": "Number of clicks (2 for double-click)"
-                    }
-                },
-                "required": ["coordinates"]
+                "properties": {}
             }),
         },
         BrowserToolDefinition {
-            name: "computer_type_text".to_string(),
-            description: "Types text into the currently focused element".to_string(),
+            name: "get_elements".to_string(),
+            description: "获取已标注元素列表".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        
+        // ========== 交互类工具（使用元素索引） ==========
+        BrowserToolDefinition {
+            name: "click_by_index".to_string(),
+            description: "通过元素索引号点击元素（推荐方式）".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "元素标注索引号"
+                    }
+                },
+                "required": ["index"]
+            }),
+        },
+        BrowserToolDefinition {
+            name: "type_text".to_string(),
+            description: "在当前聚焦的输入框中输入文本".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "text": {
                         "type": "string",
-                        "description": "The text to type"
+                        "description": "要输入的文本"
                     }
                 },
                 "required": ["text"]
             }),
         },
         BrowserToolDefinition {
-            name: "computer_scroll".to_string(),
-            description: "Scrolls the page in the specified direction".to_string(),
+            name: "scroll".to_string(),
+            description: "滚动页面".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "left", "right"],
+                        "description": "滚动方向"
+                    }
+                },
+                "required": ["direction"]
+            }),
+        },
+        BrowserToolDefinition {
+            name: "type_keys".to_string(),
+            description: "按下键盘按键（如 Enter, Tab, Escape 等）".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "keys": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "按键名称数组"
+                    }
+                },
+                "required": ["keys"]
+            }),
+        },
+        
+        // ========== 导航类工具 ==========
+        BrowserToolDefinition {
+            name: "navigate".to_string(),
+            description: "导航到指定URL".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "目标URL"
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
+        BrowserToolDefinition {
+            name: "wait".to_string(),
+            description: "等待页面稳定".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "duration_ms": {
+                        "type": "integer",
+                        "default": 500,
+                        "description": "等待毫秒数"
+                    }
+                }
+            }),
+        },
+        
+        // ========== 坐标类工具（备用） ==========
+        BrowserToolDefinition {
+            name: "click_mouse".to_string(),
+            description: "在指定坐标点击鼠标（仅当索引点击失效时使用）".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -457,82 +687,33 @@ pub fn get_browser_tool_definitions() -> Vec<BrowserToolDefinition> {
                         "properties": {
                             "x": { "type": "integer" },
                             "y": { "type": "integer" }
-                        }
-                    },
-                    "direction": {
-                        "type": "string",
-                        "enum": ["up", "down", "left", "right"]
-                    },
-                    "scroll_count": {
-                        "type": "integer",
-                        "default": 3
+                        },
+                        "required": ["x", "y"]
                     }
                 },
-                "required": ["direction"]
+                "required": ["coordinates"]
             }),
         },
+        
+        // ========== 任务管理 ==========
         BrowserToolDefinition {
-            name: "computer_type_keys".to_string(),
-            description: "Presses keyboard keys (for shortcuts like Enter, Tab, etc.)".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "keys": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Array of key names to press"
-                    }
-                },
-                "required": ["keys"]
-            }),
-        },
-        BrowserToolDefinition {
-            name: "computer_wait".to_string(),
-            description: "Waits for a specified duration".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "duration_ms": {
-                        "type": "integer",
-                        "default": 500,
-                        "description": "Duration to wait in milliseconds"
-                    }
-                }
-            }),
-        },
-        BrowserToolDefinition {
-            name: "computer_navigate".to_string(),
-            description: "Navigates to a URL".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "The URL to navigate to"
-                    }
-                },
-                "required": ["url"]
-            }),
-        },
-        BrowserToolDefinition {
-            name: "set_exploration_status".to_string(),
-            description: "Sets the exploration status (completed or needs_help)".to_string(),
+            name: "set_status".to_string(),
+            description: "设置探索状态（完成或需要帮助）".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
                         "enum": ["completed", "needs_help"],
-                        "description": "The exploration status"
+                        "description": "探索状态"
                     },
-                    "description": {
+                    "reason": {
                         "type": "string",
-                        "description": "Summary or description of help needed"
+                        "description": "状态说明"
                     }
                 },
-                "required": ["status", "description"]
+                "required": ["status", "reason"]
             }),
         },
     ]
 }
-

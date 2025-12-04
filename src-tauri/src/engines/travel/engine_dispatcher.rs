@@ -517,6 +517,12 @@ impl EngineDispatcher {
             react_executor = react_executor.with_execution_id(exec_id.clone());
         }
         
+        // 设置 OODA 循环号（从上下文获取）
+        let ooda_cycle = context.get("_cycle_number")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        react_executor = react_executor.with_ooda_cycle(ooda_cycle);
+        
         // 设置工具权限
         if !allowed_tools.is_empty() {
             react_executor = react_executor.with_allowed_tools(allowed_tools);

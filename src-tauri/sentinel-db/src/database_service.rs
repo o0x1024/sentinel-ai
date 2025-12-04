@@ -1402,6 +1402,53 @@ impl DatabaseService {
             .execute(&mut *tx)
             .await?;
 
+        // 创建 Proxifier 代理服务器表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS proxifier_proxies (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                proxy_type TEXT NOT NULL,
+                username TEXT,
+                password TEXT,
+                enabled BOOLEAN DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            "#
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 创建 Proxifier 规则表
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS proxifier_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                enabled BOOLEAN DEFAULT 1,
+                applications TEXT NOT NULL DEFAULT 'Any',
+                target_hosts TEXT NOT NULL DEFAULT 'Any',
+                target_ports TEXT NOT NULL DEFAULT 'Any',
+                action TEXT NOT NULL DEFAULT 'Direct',
+                proxy_id TEXT,
+                sort_order INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (proxy_id) REFERENCES proxifier_proxies(id) ON DELETE SET NULL
+            )
+            "#
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_proxifier_rules_sort_order ON proxifier_rules(sort_order)")
+            .execute(&mut *tx)
+            .await?;
+
         // 提交事务
         tx.commit().await?;
 
@@ -1498,57 +1545,7 @@ impl DatabaseService {
         .execute(pool)
         .await?;
         
-        // 插件接口模板
-        sqlx::query(r#"
-            INSERT INTO prompt_templates (
-                name, description, architecture, stage, content, 
-                is_default, is_active, category, template_type, 
-                is_system, priority, tags, variables, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#)
-        .bind("Plugin Interface Template")
-        .bind("Template describing the plugin interface and API")
-        .bind("rewoo")
-        .bind("planner")
-        .bind(include_str!("../../src/generators/templates/plugin_interface.txt"))
-        .bind(1)
-        .bind(1)
-        .bind("Application")
-        .bind("PluginInterface")
-        .bind(1)
-        .bind(80)
-        .bind(r#"["plugin","interface","api"]"#)
-        .bind(r#"[]"#)
-        .bind("1.0.0")
-        .execute(pool)
-        .await?;
-        
-        // 插件输出格式模板
-        sqlx::query(r#"
-            INSERT INTO prompt_templates (
-                name, description, architecture, stage, content, 
-                is_default, is_active, category, template_type, 
-                is_system, priority, tags, variables, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#)
-        .bind("Plugin Output Format Template")
-        .bind("Template describing the expected output format")
-        .bind("rewoo")
-        .bind("planner")
-        .bind(include_str!("../../src/generators/templates/plugin_output_format.txt"))
-        .bind(1)
-        .bind(1)
-        .bind("Application")
-        .bind("PluginOutputFormat")
-        .bind(1)
-        .bind(75)
-        .bind(r#"["plugin","output","format"]"#)
-        .bind(r#"[]"#)
-        .bind("1.0.0")
-        .execute(pool)
-        .await?;
-        
-        // Agent 插件生成主模板
+        // Agent 插件生成模板（已包含接口和输出格式）
         sqlx::query(r#"
             INSERT INTO prompt_templates (
                 name, description, architecture, stage, content, 
@@ -1569,31 +1566,6 @@ impl DatabaseService {
         .bind(90)
         .bind(r#"["agent","plugin","generation","tool"]"#)
         .bind(r#"["tool_type","requirements","options"]"#)
-        .bind("1.0.0")
-        .execute(pool)
-        .await?;
-        
-        // Agent 插件接口模板
-        sqlx::query(r#"
-            INSERT INTO prompt_templates (
-                name, description, architecture, stage, content, 
-                is_default, is_active, category, template_type, 
-                is_system, priority, tags, variables, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#)
-        .bind("Agent Plugin Interface Template")
-        .bind("Template describing the Agent tool plugin interface and API")
-        .bind("rewoo")
-        .bind("planner")
-        .bind(include_str!("../../src/generators/templates/agent_plugin_interface.txt"))
-        .bind(1)
-        .bind(1)
-        .bind("Application")
-        .bind("PluginInterface")
-        .bind(1)
-        .bind(80)
-        .bind(r#"["agent","plugin","interface","api"]"#)
-        .bind(r#"[]"#)
         .bind("1.0.0")
         .execute(pool)
         .await?;
@@ -1619,31 +1591,6 @@ impl DatabaseService {
         .bind(85)
         .bind(r#"["agent","plugin","fix","repair"]"#)
         .bind(r#"["original_code","error_message","error_details","tool_type","attempt"]"#)
-        .bind("1.0.0")
-        .execute(pool)
-        .await?;
-        
-        // Agent 插件输出格式模板
-        sqlx::query(r#"
-            INSERT INTO prompt_templates (
-                name, description, architecture, stage, content, 
-                is_default, is_active, category, template_type, 
-                is_system, priority, tags, variables, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#)
-        .bind("Agent Plugin Output Format Template")
-        .bind("Template describing the expected Agent plugin output format")
-        .bind("rewoo")
-        .bind("planner")
-        .bind(include_str!("../../src/generators/templates/agent_plugin_output_format.txt"))
-        .bind(1)
-        .bind(1)
-        .bind("Application")
-        .bind("AgentPluginOutputFormat")
-        .bind(1)
-        .bind(75)
-        .bind(r#"["agent","plugin","output","format"]"#)
-        .bind(r#"[]"#)
         .bind("1.0.0")
         .execute(pool)
         .await?;

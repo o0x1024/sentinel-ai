@@ -16,6 +16,16 @@ fn extract_text_from_content(content: &rmcp::model::RawContent) -> String {
         _ => format!("[Non-text content: {:?}]", content),
     }
 }
+
+/// 从MCP RawContent结构中提取图片数据（base64）
+fn extract_image_from_content(content: &rmcp::model::RawContent) -> Option<String> {
+    match content {
+        rmcp::model::RawContent::Image(image_content) => {
+            Some(image_content.data.clone())
+        }
+        _ => None,
+    }
+}
  
 // 工具信息类型已移动到 types 模块
 
@@ -254,16 +264,38 @@ impl McpService {
             // 发起调用
             let result = session.call_tool_with_progress(req).await?;
 
-            // 优先返回 structured_content；否则返回合并的content文本
+            // 优先返回 structured_content
             if let Some(sc) = result.structured_content {
                 return Ok(serde_json::json!({ "success": true, "output": sc }));
             }
-            let text = result
-                .content
-                .into_iter()
-                .map(|c| extract_text_from_content(&c.raw))
-                .collect::<Vec<_>>()
-                .join("\n");
+            
+            // 分别提取文本和图片内容
+            let mut texts = Vec::new();
+            let mut images = Vec::new();
+            
+            for content_item in result.content {
+                // 提取文本
+                let text = extract_text_from_content(&content_item.raw);
+                if !text.starts_with("[Non-text content:") {
+                    texts.push(text);
+                }
+                // 提取图片
+                if let Some(image_data) = extract_image_from_content(&content_item.raw) {
+                    images.push(image_data);
+                }
+            }
+            
+            let text = texts.join("\n");
+            
+            // 如果有图片数据，也包含在响应中
+            if !images.is_empty() {
+                return Ok(serde_json::json!({ 
+                    "success": result.is_error != Some(true), 
+                    "output": text,
+                    "images": images
+                }));
+            }
+            
             return Ok(serde_json::json!({ "success": result.is_error != Some(true), "output": text }));
         }
 

@@ -1,5 +1,37 @@
 <template>
   <div class="travel-display">
+    <!-- VisionExplorer 嵌入数据（如果有） -->
+    <div v-if="visionIterations.length > 0" class="vision-embedded">
+      <div class="vision-header">
+        <i class="fas fa-eye"></i>
+        <span>VisionExplorer 前置探索</span>
+        <span class="badge badge-info">{{ visionIterations.length }} 迭代</span>
+      </div>
+      <template v-for="(iter, iterIdx) in visionIterations" :key="`vision-${iterIdx}`">
+        <div class="vision-iteration">
+          <div class="iteration-label">
+            迭代 #{{ iter.iteration }}
+            <span v-if="iter.url" class="url-text">{{ truncateUrl(iter.url) }}</span>
+          </div>
+          <template v-for="(phase, pIdx) in iter.phases" :key="`vp-${pIdx}`">
+            <div v-if="phase.phase === 'analyze' && phase.analysis" class="vision-analysis">
+              <span class="analysis-icon">🧠</span>
+              <span class="analysis-text">{{ phase.analysis.page_analysis }}</span>
+              <span v-if="phase.analysis.exploration_progress" class="progress-text">
+                ({{ Math.round(phase.analysis.exploration_progress * 100) }}%)
+              </span>
+            </div>
+            <div v-if="phase.phase === 'action' && phase.action" class="vision-action" :class="{ success: phase.action.success, failed: !phase.action.success }">
+              <span class="action-icon">{{ phase.action.success ? '✅' : '❌' }}</span>
+              <span class="action-type">{{ phase.action.action_type }}</span>
+              <span v-if="phase.action.element_index !== undefined" class="element-idx">[{{ phase.action.element_index }}]</span>
+              <span class="action-reason">- {{ phase.action.reason }}</span>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
     <!-- OODA 循环列表 -->
     <template v-for="(cycle, cycleIdx) in cycles" :key="cycleIdx">
       <!-- 循环标题 -->
@@ -60,13 +92,17 @@
 import { computed, ref } from 'vue'
 import { useMessageUtils } from '../../composables/useMessageUtils'
 import { TravelMessageProcessor } from '../../composables/processors/TravelMessageProcessor'
+import { VisionExplorerMessageProcessor } from '../../composables/processors/VisionExplorerMessageProcessor'
 import type { TravelCycleDisplay, TravelActionDisplay } from '../../composables/processors/TravelMessageProcessor'
+import type { VisionIterationDisplay } from '../../composables/processors/VisionExplorerMessageProcessor'
 import type { ChatMessage } from '../../types/chat'
+import type { OrderedMessageChunk } from '../../types/ordered-chat'
 
 const { renderMarkdown } = useMessageUtils()
 
 const props = defineProps<{
   message?: ChatMessage
+  chunks?: OrderedMessageChunk[]
   stepData?: any
   isExecuting?: boolean
 }>()
@@ -84,11 +120,38 @@ const toggleTool = (key: string) => {
 }
 
 const cycles = computed((): TravelCycleDisplay[] => {
+  // 优先从 message 中获取（历史消息）
   if (props.message) {
-    return TravelMessageProcessor.buildCyclesFromMessage(props.message)
+    const fromMessage = TravelMessageProcessor.buildCyclesFromMessage(props.message)
+    if (fromMessage.length > 0) {
+      return fromMessage
+    }
+  }
+  // 从 chunks 中实时提取（流式消息）
+  if (props.chunks && props.chunks.length > 0) {
+    return TravelMessageProcessor.extractCyclesFromChunks(props.chunks)
   }
   return []
 })
+
+// 提取嵌入的 VisionExplorer 迭代数据
+const visionIterations = computed((): VisionIterationDisplay[] => {
+  // 优先从 message 中获取
+  if (props.message && (props.message as any).visionIterations?.length > 0) {
+    return (props.message as any).visionIterations
+  }
+  // 从 chunks 中实时提取
+  if (props.chunks && props.chunks.length > 0) {
+    return VisionExplorerMessageProcessor.extractIterationsFromChunks(props.chunks)
+  }
+  return []
+})
+
+// 截断 URL 显示
+const truncateUrl = (url: string, maxLen = 50) => {
+  if (url.length <= maxLen) return url
+  return url.substring(0, maxLen - 3) + '...'
+}
 
 // 状态样式
 const getStatusClass = (status: string) => {
@@ -133,6 +196,114 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
   gap: 0.75rem;
 }
 
+/* VisionExplorer 嵌入区域 */
+.vision-embedded {
+  border: 1px solid hsl(var(--in) / 0.2);
+  border-radius: 8px;
+  background: hsl(var(--in) / 0.03);
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.vision-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
+  font-weight: 500;
+  color: hsl(var(--in));
+  margin-bottom: 0.75rem;
+}
+
+.vision-header i {
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
+}
+
+.vision-iteration {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid hsl(var(--bc) / 0.06);
+}
+
+.vision-iteration:last-child {
+  border-bottom: none;
+}
+
+.iteration-label {
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
+  font-weight: 500;
+  color: hsl(var(--bc) / 0.7);
+  margin-bottom: 0.375rem;
+}
+
+.url-text {
+  font-family: ui-monospace, monospace;
+  font-size: calc(var(--font-size-base, 14px) * 0.6875);
+  color: hsl(var(--bc) / 0.5);
+  margin-left: 0.5rem;
+}
+
+.vision-analysis {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  background: hsl(var(--bc) / 0.02);
+  border-radius: 4px;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
+  margin-bottom: 0.25rem;
+}
+
+.analysis-icon {
+  flex-shrink: 0;
+}
+
+.analysis-text {
+  color: hsl(var(--bc) / 0.8);
+  line-height: 1.5;
+}
+
+.progress-text {
+  color: hsl(var(--bc) / 0.5);
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
+}
+
+.vision-action {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
+  margin-bottom: 0.125rem;
+}
+
+.vision-action.success {
+  color: hsl(var(--su) / 0.9);
+}
+
+.vision-action.failed {
+  color: hsl(var(--er) / 0.9);
+}
+
+.action-icon {
+  flex-shrink: 0;
+}
+
+.action-type {
+  font-weight: 500;
+}
+
+.element-idx {
+  font-family: ui-monospace, monospace;
+  background: hsl(var(--bc) / 0.08);
+  padding: 0 0.25rem;
+  border-radius: 2px;
+}
+
+.action-reason {
+  color: hsl(var(--bc) / 0.6);
+  font-style: italic;
+}
+
 /* 循环标题 */
 .cycle-header {
   display: flex;
@@ -141,7 +312,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
   padding: 0.5rem 0.75rem;
   background: hsl(var(--bc) / 0.04);
   border-radius: 6px;
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
   font-weight: 500;
 }
 
@@ -150,7 +321,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
 }
 
 .badge {
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   padding: 0.125rem 0.5rem;
 }
 
@@ -174,7 +345,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   cursor: pointer;
-  font-size: 0.8125rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
 }
 
 .tool-header:hover {
@@ -182,7 +353,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
 }
 
 .tool-header i:first-child {
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
 }
 
 .tool-status {
@@ -191,7 +362,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
 
 .tool-name {
   font-family: ui-monospace, monospace;
-  font-size: 0.8125rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
   color: hsl(var(--bc) / 0.85);
   background: hsl(var(--bc) / 0.06);
   padding: 0.125rem 0.375rem;
@@ -200,7 +371,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
 
 .toggle-icon {
   margin-left: auto;
-  font-size: 0.625rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.625);
   color: hsl(var(--bc) / 0.3);
   transition: transform 0.15s;
 }
@@ -229,7 +400,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
 }
 
 .section-title {
-  font-size: 0.6875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.6875);
   font-weight: 500;
   color: hsl(var(--bc) / 0.45);
   text-transform: uppercase;
@@ -239,7 +410,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
 
 .section-code {
   font-family: ui-monospace, monospace;
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   line-height: 1.5;
   color: hsl(var(--bc) / 0.8);
   background: hsl(var(--bc) / 0.04);
@@ -266,7 +437,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
   background: hsl(var(--er) / 0.06);
   border-radius: 6px;
   color: hsl(var(--er));
-  font-size: 0.8125rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
 }
 
 /* Loading */
@@ -275,7 +446,7 @@ const formatJson = (obj: any) => TravelMessageProcessor.formatJson(obj)
   align-items: center;
   gap: 0.5rem;
   color: hsl(var(--bc) / 0.5);
-  font-size: 0.8125rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
 }
 
 /* 滚动条 */

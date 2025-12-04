@@ -34,7 +34,7 @@
       <div class="flex-1 p-4 space-y-2">
         <!-- 核心功能区 -->
         <div class="mb-6">
-          <h3 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
+          <h3 class="sidebar-section-title font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
             {{ t('sidebar.coreFeatures', '核心功能') }}
           </h3>
           <ul class="menu menu-sm space-y-1">
@@ -56,7 +56,7 @@
 
         <!-- 工具与管理区 -->
         <div class="mb-6">
-          <h3 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
+          <h3 class="sidebar-section-title font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
             {{ t('sidebar.toolsManagement', '工具与管理') }}
           </h3>
           <ul class="menu menu-sm space-y-1">
@@ -78,7 +78,7 @@
 
         <!-- 系统设置区 -->
         <div>
-          <h3 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
+          <h3 class="sidebar-section-title font-semibold text-base-content/60 uppercase tracking-wider mb-3 px-2">
             {{ t('sidebar.systemSettings', '系统设置') }}
           </h3>
           <ul class="menu menu-sm space-y-1">
@@ -101,23 +101,23 @@
         <!-- 当前任务状态 -->
         <div class="bg-base-100 rounded-lg p-3 mb-3">
           <div class="flex items-center justify-between mb-2">
-            <span class="text-sm font-medium">{{ t('sidebar.currentTask', '当前任务') }}</span>
+            <span class="sidebar-text font-medium">{{ t('sidebar.currentTask', '当前任务') }}</span>
             <div class="badge badge-primary badge-sm">{{ t('sidebar.running') }}</div>
           </div>
-          <div class="text-xs text-base-content/70 mb-2">{{ t('sidebar.scanning') }} example.com</div>
+          <div class="sidebar-small-text text-base-content/70 mb-2">{{ t('sidebar.scanning') }} example.com</div>
           <progress class="progress progress-primary w-full h-2" :value="taskProgress" max="100"></progress>
-          <div class="text-xs text-center mt-1 opacity-70">{{ taskProgress }}% - {{ t('sidebar.remaining') }} {{ remainingTime }}</div>
+          <div class="sidebar-small-text text-center mt-1 opacity-70">{{ taskProgress }}% - {{ t('sidebar.remaining') }} {{ remainingTime }}</div>
         </div>
 
         <!-- 今日统计 -->
         <div class="grid grid-cols-2 gap-2 text-center">
           <div class="bg-base-100 rounded-lg p-2">
-            <div class="text-lg font-bold text-error">{{ todayVulns }}</div>
-            <div class="text-xs opacity-70">{{ t('sidebar.vulnerabilitiesFound') }}</div>
+            <div class="sidebar-stat-number font-bold text-error">{{ todayVulns }}</div>
+            <div class="sidebar-small-text opacity-70">{{ t('sidebar.vulnerabilitiesFound') }}</div>
           </div>
           <div class="bg-base-100 rounded-lg p-2">
-            <div class="text-lg font-bold text-success">{{ completedTasks }}</div>
-            <div class="text-xs opacity-70">{{ t('sidebar.completedTasks') }}</div>
+            <div class="sidebar-stat-number font-bold text-success">{{ completedTasks }}</div>
+            <div class="sidebar-small-text opacity-70">{{ t('sidebar.completedTasks') }}</div>
           </div>
         </div>
       </div>
@@ -351,6 +351,25 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* 侧边栏字体大小跟随系统配置 */
+.sidebar-section-title {
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
+}
+.sidebar-text {
+  font-size: var(--font-size-base, 14px);
+}
+.sidebar-small-text {
+  font-size: calc(var(--font-size-base, 14px) * 0.85);
+}
+.sidebar-stat-number {
+  font-size: calc(var(--font-size-base, 14px) * 1.15);
+}
+
+/* 菜单项字体 */
+:deep(.menu) {
+  font-size: var(--font-size-base, 14px);
+}
+
 /* 自定义滚动条 */
 ::-webkit-scrollbar {
   width: 4px;

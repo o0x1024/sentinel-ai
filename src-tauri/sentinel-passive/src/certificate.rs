@@ -5,6 +5,7 @@
 //! - 为 Hudsucker 提供 RcgenAuthority 实例
 //! - macOS Keychain 信任助手（可选）
 
+use crate::certificate_authority::ChainedCertificateAuthority;
 use crate::{PassiveError, Result};
 use hudsucker::certificate_authority::RcgenAuthority;
 use hudsucker::rcgen::{CertificateParams, Issuer, KeyPair, SerialNumber};
@@ -85,17 +86,30 @@ impl CertificateService {
         params.key_usages = vec![
             hudsucker::rcgen::KeyUsagePurpose::KeyCertSign,
             hudsucker::rcgen::KeyUsagePurpose::CrlSign,
+            hudsucker::rcgen::KeyUsagePurpose::DigitalSignature,
         ];
 
+        // 添加 Extended Key Usage（某些应用需要）
+        params.extended_key_usages = vec![
+            hudsucker::rcgen::ExtendedKeyUsagePurpose::ServerAuth,
+            hudsucker::rcgen::ExtendedKeyUsagePurpose::ClientAuth,
+        ];
+
+        // 添加更多 Distinguished Name 属性（提高兼容性）
+        params.distinguished_name.push(
+            hudsucker::rcgen::DnType::OrganizationName,
+            "Sentinel AI",
+        );
+        params.distinguished_name.push(
+            hudsucker::rcgen::DnType::CountryName,
+            "CN",
+        );
+
         // 随机序列号（避免所有环境都为固定值 1 导致某些客户端缓存冲突）
-        // 采用 64bit 随机数；若需要更长可扩展为 128bit
         let mut rng = rand::rngs::OsRng;
         let random_serial: u64 = rng.next_u64();
         params.serial_number = Some(SerialNumber::from(random_serial));
         tracing::debug!("Generated root CA serial number={:#x}", random_serial);
-
-        // TODO(SKIAKI): 可选添加 Subject Key Identifier / Authority Key Identifier 扩展
-        // rcgen 目前可通过 CustomExtension 注入；后续版本完成后在此补充。
 
         // 使用 params 生成证书
         let cert = params.self_signed(&key_pair).map_err(|e| {
@@ -149,7 +163,8 @@ impl CertificateService {
         Ok(hex::encode(result))
     }
 
-    /// 获取 RcgenAuthority 实例（用于 Hudsucker）
+    /// 获取 RcgenAuthority 实例（用于 Hudsucker，已弃用）
+    #[deprecated(note = "Use get_chained_ca() instead for full certificate chain support")]
     pub fn get_ca(&self) -> Result<RcgenAuthority> {
         let cert_path = self.ca_dir.join("root-ca.pem");
         let key_path = self.ca_dir.join("root-ca.key");
@@ -177,6 +192,64 @@ impl CertificateService {
 
         // 创建 RcgenAuthority（使用 ring 作为 crypto provider）
         Ok(RcgenAuthority::new(issuer, 1000, ring::default_provider()))
+    }
+
+    /// 获取 CA 证书的 DER 格式（用于构建完整证书链）
+    pub fn get_ca_cert_der(&self) -> Result<Vec<u8>> {
+        let cert_path = self.ca_dir.join("root-ca.pem");
+        if !cert_path.exists() {
+            return Err(PassiveError::Certificate("Root CA not found".to_string()));
+        }
+
+        let cert_pem = fs::read(&cert_path)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to read certificate: {}", e)))?;
+
+        // 解析 PEM 并转换为 DER
+        let pem = pem::parse(&cert_pem)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to parse PEM: {}", e)))?;
+
+        Ok(pem.contents().to_vec())
+    }
+
+    /// 获取支持完整证书链的 CertificateAuthority 实例
+    ///
+    /// 与 get_ca() 不同，此方法返回的 authority 在 TLS 握手时
+    /// 会发送完整证书链（叶子证书 + CA 证书），解决某些客户端的验证问题。
+    pub fn get_chained_ca(&self) -> Result<ChainedCertificateAuthority> {
+        let cert_path = self.ca_dir.join("root-ca.pem");
+        let key_path = self.ca_dir.join("root-ca.key");
+
+        if !key_path.exists() || !cert_path.exists() {
+            return Err(PassiveError::Certificate(
+                "Root CA not found. Call ensure_root_ca() first.".to_string(),
+            ));
+        }
+
+        // 读取证书和私钥
+        let cert_pem = fs::read_to_string(&cert_path)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to read certificate: {}", e)))?;
+        let key_pem = fs::read_to_string(&key_path)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to read private key: {}", e)))?;
+
+        // 解析私钥
+        let key_pair = KeyPair::from_pem(&key_pem).map_err(|e| {
+            PassiveError::Certificate(format!("Failed to parse private key: {}", e))
+        })?;
+
+        // 创建 Issuer
+        let issuer = Issuer::from_ca_cert_pem(&cert_pem, key_pair)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to create issuer: {}", e)))?;
+
+        // 获取 CA 证书 DER
+        let ca_cert_der = self.get_ca_cert_der()?;
+
+        // 创建支持完整证书链的 authority
+        Ok(ChainedCertificateAuthority::new(
+            issuer,
+            ca_cert_der,
+            1000,
+            ring::default_provider(),
+        ))
     }
 
     /// 读取 Root CA PEM 内容

@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
-use crate::engines::llm_client::LlmClient;
+use crate::engines::LlmClient;
 use crate::services::prompt_db::PromptRepository;
 use crate::services::ai::AiServiceManager;
 use anyhow::{Result, anyhow};
@@ -205,7 +205,7 @@ impl ReWOOPlanner {
         };
         
         // 使用公共 llm_client 模块
-        let llm_client = LlmClient::from_ai_service(&ai_service);
+        let llm_client = crate::engines::create_client(&ai_service);
         let config = llm_client.config();
         info!("ReWOO Planner: Using provider={}, model={}, execution_id={}", config.provider, config.model, execution_id);
         

@@ -34,6 +34,9 @@ pub mod parallel_executor;
 pub mod context_manager;
 pub mod resource_integration;
 
+// Vision Explorer 集成
+pub mod vision_integration;
+
 #[cfg(test)]
 mod tests;
 
@@ -51,12 +54,19 @@ pub use memory_integration::TravelMemoryIntegration;
 // LLM 客户端导出（TravelLlmClient 在 message_emitter 中）
 pub use message_emitter::TravelLlmClient;
 
-// 从公共 llm_client 导出
-pub use crate::engines::llm_client::{LlmConfig, LlmClient, create_llm_config, create_client};
+// 从 sentinel_llm 重新导出
+pub use sentinel_llm::{LlmConfig, LlmClient, create_llm_config, create_client};
 
 // Token优化组件导出
 pub use dag_planner::DagPlanner;
 pub use parallel_executor::ParallelExecutor;
 pub use context_manager::ContextManager;
 pub use resource_integration::ResourceTracker;
+
+// Vision Explorer 集成导出
+pub use vision_integration::{
+    VisionIntegration, VisionIntegrationConfig,
+    VisionExplorerToolAdapter, ObservePhaseEnhancer,
+    ReconEnhancementResult, ApiEndpointInfo, AttackSurface,
+};
 

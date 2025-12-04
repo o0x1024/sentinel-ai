@@ -1,37 +1,38 @@
 <template>
   <div class="page-content-padded safe-top h-full flex gap-4">
-    <!-- 左侧：分类选择 + 架构/阶段 + 搜索 + 模板列表 -->
-    <div class="w-80 card bg-base-100 shadow-md overflow-hidden flex flex-col">
+    <!-- 第一列：分类选择 + 架构/阶段选择 -->
+    <div class="w-56 card bg-base-100 shadow-md overflow-hidden flex flex-col">
       <div class="card-body p-4 pb-3">
         <!-- Prompt分类选择器 -->
         <div class="mb-4">
           <h4 class="card-title text-xs mb-2">Prompt分类</h4>
           <select v-model="selectedCategory" class="select select-sm select-bordered w-full">
             <option v-for="cat in promptCategories" :key="cat.value" :value="cat.value">
-              {{ cat.label }} - {{ cat.description }}
+              {{ cat.label }}
             </option>
           </select>
+          <div class="text-xs opacity-60 mt-1">{{ promptCategories.find(c => c.value === selectedCategory)?.description }}</div>
         </div>
         
         <!-- 架构/阶段选择 - 仅在LLM架构分类时显示 -->
-        <div v-if="selectedCategory === 'LlmArchitecture'">
+        <div v-if="selectedCategory === 'LlmArchitecture'" class="flex-1 overflow-auto">
           <h3 class="card-title text-sm">{{ $t('promptMgmt.archStage') }}</h3>
-        <ul class="menu menu-sm rounded-box mt-2">
-          <li v-for="group in groups" :key="group.value">
-            <h2 class="menu-title">{{ group.label }}</h2>
-            <ul>
-              <li v-for="st in group.stages" :key="st.value">
-                <a
-                  class="justify-start"
-                  :class="{ active: selected.architecture===group.value && selected.stage===st.value }"
-                  @click="onSelectWithGuard(group.value as ArchitectureType, st.value as StageType)"
-                >
-                  {{ st.label }}
-                </a>
-              </li>
-            </ul>
-          </li>
-        </ul>
+          <ul class="menu menu-sm rounded-box mt-2">
+            <li v-for="group in groups" :key="group.value">
+              <h2 class="menu-title">{{ group.label }}</h2>
+              <ul>
+                <li v-for="st in group.stages" :key="st.value">
+                  <a
+                    class="justify-start"
+                    :class="{ active: selected.architecture===group.value && selected.stage===st.value }"
+                    @click="onSelectWithGuard(group.value as ArchitectureType, st.value as StageType)"
+                  >
+                    {{ st.label }}
+                  </a>
+                </li>
+              </ul>
+            </li>
+          </ul>
         </div>
         
         <!-- 系统级提示 - 仅在系统分类时显示 -->
@@ -39,7 +40,7 @@
           <h3 class="card-title text-sm">系统级提示模板</h3>
           <div class="text-xs opacity-70 mt-1">管理跨架构通用的系统提示</div>
           <div class="mt-2">
-            <button class="btn btn-xs btn-outline" @click="createIntentClassifierTemplate">
+            <button class="btn btn-xs btn-outline w-full" @click="createIntentClassifierTemplate">
               创建意图分析器模板
             </button>
           </div>
@@ -51,28 +52,19 @@
           <div class="text-xs opacity-70 mt-1">管理应用特定的提示模板</div>
           <div class="mt-2 flex flex-col gap-1">
             <button class="btn btn-xs btn-outline" @click="createPluginGenerationTemplate">
-              创建插件生成模板(被动扫描)
+              插件生成(被动扫描)
             </button>
             <button class="btn btn-xs btn-outline" @click="createAgentPluginGenerationTemplate">
-              创建插件生成模板(Agent工具)
+              插件生成(Agent工具)
             </button>
             <button class="btn btn-xs btn-outline" @click="createPluginFixTemplate">
-              创建插件修复模板(被动扫描)
+              插件修复(被动扫描)
             </button>
             <button class="btn btn-xs btn-outline" @click="createAgentPluginFixTemplate">
-              创建插件修复模板(Agent工具)
+              插件修复(Agent工具)
             </button>
-            <button class="btn btn-xs btn-outline" @click="createPluginInterfaceTemplate">
-              创建插件接口模板(被动扫描)
-            </button>
-            <button class="btn btn-xs btn-outline" @click="createAgentPluginInterfaceTemplate">
-              创建插件接口模板(Agent工具)
-            </button>
-            <button class="btn btn-xs btn-outline" @click="createPluginOutputFormatTemplate">
-              创建插件输出格式模板(被动扫描)
-            </button>
-            <button class="btn btn-xs btn-outline" @click="createAgentPluginOutputFormatTemplate">
-              创建插件输出格式模板(Agent工具)
+            <button class="btn btn-xs btn-outline" @click="createVisionExplorerSystemTemplate">
+              VisionExplorer系统提示
             </button>
           </div>
         </div>
@@ -84,44 +76,62 @@
         </div>
         
       </div>
-      <div class="px-4 pb-2">
-        <input v-model.trim="searchQuery" class="input input-sm input-bordered w-full" :placeholder="$t('promptMgmt.searchTemplates') as string" />
-      </div>
-      <div class="px-4 pb-3 text-xs opacity-60 flex items-center gap-2" v-if="selectedCategory === 'LlmArchitecture'">
-        <span>{{ $t('promptMgmt.active') }}</span>
-        <span v-if="activePromptId">#{{ activePromptId }}</span>
-        <span v-else>{{ $t('promptMgmt.none') }}</span>
-      </div>
-      <!-- 分组管理 -->
-      <div class="px-4 pb-2" v-if="selectedCategory === 'LlmArchitecture'">
-        <div class="flex items-center justify-between mb-1">
-          <div class="text-xs opacity-70">{{ $t('promptMgmt.groups') }}</div>
-          <div class="flex items-center gap-1">
-            <button class="btn btn-xs" @click="createGroup">{{ $t('promptMgmt.new') }}</button>
-            <button class="btn btn-xs" :disabled="!selectedGroupId" @click="setDefaultGroup">{{ $t('promptMgmt.setDefault') }}</button>
-            <button class="btn btn-xs btn-error" :disabled="!selectedGroupId || selectedGroup?.is_default" @click="deleteGroup">{{ $t('common.delete') }}</button>
+    </div>
+
+    <!-- 第二列：分组管理 + 模板列表 -->
+    <div class="w-72 card bg-base-100 shadow-md overflow-hidden flex flex-col">
+      <div class="card-body p-4 pb-2">
+        <!-- 搜索框 -->
+        <input v-model.trim="searchQuery" class="input input-sm input-bordered w-full mb-3" :placeholder="$t('promptMgmt.searchTemplates') as string" />
+        
+        <!-- 当前激活状态 -->
+        <div class="text-xs opacity-60 flex items-center gap-2 mb-2" v-if="selectedCategory === 'LlmArchitecture'">
+          <span>{{ $t('promptMgmt.active') }}:</span>
+          <span v-if="activePromptId" class="badge badge-success badge-xs">#{{ activePromptId }}</span>
+          <span v-else class="opacity-50">{{ $t('promptMgmt.none') }}</span>
+        </div>
+        
+        <!-- 分组管理 -->
+        <div v-if="selectedCategory === 'LlmArchitecture'" class="mb-3">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs font-medium">{{ $t('promptMgmt.groups') }}</div>
+            <div class="flex items-center gap-1">
+              <button class="btn btn-xs btn-ghost" @click="createGroup" title="新建分组">
+                <i class="fas fa-plus text-xs"></i>
+              </button>
+              <button class="btn btn-xs btn-ghost" :disabled="!selectedGroupId" @click="setDefaultGroup" title="设为默认">
+                <i class="fas fa-star text-xs"></i>
+              </button>
+              <button class="btn btn-xs btn-ghost text-error" :disabled="!selectedGroupId || selectedGroup?.is_default" @click="deleteGroup" title="删除">
+                <i class="fas fa-trash text-xs"></i>
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1 max-h-32 overflow-auto">
+            <button
+              v-for="g in promptGroups"
+              :key="g.id"
+              class="btn btn-outline btn-xs justify-start normal-case w-full"
+              :class="{ '!btn-primary text-white': selectedGroupId === g.id }"
+              @click="selectGroup(g.id!)"
+            >
+              <div class="w-full flex items-center gap-2">
+                <div class="truncate flex-1 text-left">
+                  <div class="font-medium text-[11px] truncate">{{ g.name }}</div>
+                </div>
+                <span v-if="g.is_default" class="badge badge-success badge-xs">默认</span>
+              </div>
+            </button>
           </div>
         </div>
-        <div class="flex flex-col gap-2 max-h-40 overflow-auto">
-          <button
-            v-for="g in promptGroups"
-            :key="g.id"
-            class="btn btn-outline btn-xs justify-start normal-case w-full"
-            :class="{ '!btn-primary text-white': selectedGroupId === g.id }"
-            @click="selectGroup(g.id!)"
-          >
-            <div class="w-full flex items-center gap-2">
-              <div class="truncate flex-1 text-left">
-                <div class="font-medium text-[11px] truncate">{{ g.name }}</div>
-                <div class="text-[10px] opacity-70 truncate">{{ g.description }}</div>
-              </div>
-              <span v-if="g.is_default" class="badge badge-success badge-xs">{{ $t('promptMgmt.default') }}</span>
-            </div>
-          </button>
-        </div>
+        
+        <div class="divider my-1"></div>
+        
+        <!-- 模板列表标题 -->
+        <div class="text-xs font-medium mb-2">模板列表 ({{ filteredTemplates.length }})</div>
       </div>
-      <div class="divider"></div>
 
+      <!-- 模板列表 -->
       <div class="px-4 pb-4 flex-1 overflow-auto">
         <div class="grid grid-cols-1 gap-2">
           <button
@@ -149,16 +159,21 @@
                   </span>
                 </div>
               </div>
-              <span v-if="t.is_active" class="badge badge-success badge-xs">已启用</span>
+              <span v-if="t.is_active" class="badge badge-success badge-xs">启用</span>
               <span v-else-if="t.id === activePromptId" class="badge badge-success badge-xs">{{ $t('promptMgmt.activeBadge') }}</span>
               <span v-else-if="t.is_default" class="badge badge-outline badge-xs">{{ $t('promptMgmt.default') }}</span>
             </div>
           </button>
         </div>
+        
+        <!-- 空状态 -->
+        <div v-if="filteredTemplates.length === 0" class="text-center py-8 text-xs opacity-50">
+          暂无模板，点击"新建"创建
+        </div>
       </div>
     </div>
 
-    <!-- 中右：工具栏 + 编辑/预览 -->
+    <!-- 第三列：工具栏 + 编辑/预览 -->
     <div class="flex-1 flex flex-col gap-3">
       <!-- 工具栏 -->
       <div class="card bg-base-100 shadow-md">
@@ -205,9 +220,7 @@
                   <option value="PluginFix">插件修复(被动扫描)</option>
                   <option value="AgentPluginFix">插件修复(Agent工具)</option>
                   <option value="PluginVulnSpecific">插件漏洞专用</option>
-                  <option value="PluginInterface">插件接口(被动扫描)</option>
-                  <option value="PluginOutputFormat">插件输出格式(被动扫描)</option>
-                  <option value="AgentPluginOutputFormat">插件输出格式(Agent工具)</option>
+                  <option value="VisionExplorerSystem">VisionExplorer系统提示</option>
                   <option value="Custom">自定义</option>
                 </select>
               </div>
@@ -341,7 +354,7 @@ import { dialog } from '@/composables/useDialog'
 type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct' | 'Travel'
 type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Evaluation' | 'Replan' | 'Observe' | 'Orient' | 'Decide' | 'Act'
 type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
-type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'PluginInterface' | 'PluginOutputFormat' | 'AgentPluginOutputFormat'
+type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'VisionExplorerSystem'
 
 interface PromptTemplate {
   id?: number
@@ -1395,93 +1408,6 @@ Do NOT include explanations, comments about the fix, or any other text outside t
   isDirty.value = false
 }
 
-// 创建插件接口模板(被动扫描)
-function createPluginInterfaceTemplate() {
-  const defaultContent = `## Plugin Interface (Required Structure)
-
-Your generated plugin MUST implement the following TypeScript interface:
-
-**Variables**: None (this is a static interface definition)
-
-Please ensure all generated plugins follow this exact interface structure.`
-
-  editingTemplate.value = {
-    name: `被动扫描插件接口模板-${Date.now()}`,
-    description: '定义被动扫描插件接口和API的模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
-    content: defaultContent,
-    is_default: false,
-    is_active: true,
-    category: 'Application' as PromptCategory,
-    template_type: 'PluginInterface' as TemplateType,
-    is_system: true,
-    priority: 80,
-    tags: ['plugin', 'interface', 'api', 'passive'],
-    variables: [],
-    version: '1.0.0',
-  }
-  isDirty.value = false
-}
-
-// 创建插件输出格式模板(被动扫描)
-function createPluginOutputFormatTemplate() {
-  const defaultContent = `## Output Format
-
-Return ONLY the TypeScript plugin code wrapped in a markdown code block.
-
-**Variables**: None (this is a static format requirement)
-
-Ensure the output follows the exact format specified.`
-
-  editingTemplate.value = {
-    name: `被动扫描插件输出格式模板-${Date.now()}`,
-    description: '定义被动扫描插件输出格式要求的模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
-    content: defaultContent,
-    is_default: false,
-    is_active: true,
-    category: 'Application' as PromptCategory,
-    template_type: 'PluginOutputFormat' as TemplateType,
-    is_system: true,
-    priority: 75,
-    tags: ['plugin', 'output', 'format', 'passive'],
-    variables: [],
-    version: '1.0.0',
-  }
-  isDirty.value = false
-}
-
-// 创建Agent插件接口模板
-function createAgentPluginInterfaceTemplate() {
-  const defaultContent = `## Agent Tool Plugin Interface (Required Structure)
-
-Your generated Agent tool plugin MUST implement the following TypeScript interface:
-
-**Variables**: None (this is a static interface definition)
-
-Please ensure all generated Agent tool plugins follow this exact interface structure.`
-
-  editingTemplate.value = {
-    name: `Agent工具插件接口模板-${Date.now()}`,
-    description: '定义Agent工具插件接口和API的模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
-    content: defaultContent,
-    is_default: false,
-    is_active: true,
-    category: 'Application' as PromptCategory,
-    template_type: 'PluginInterface' as TemplateType,
-    is_system: true,
-    priority: 80,
-    tags: ['agent', 'plugin', 'interface', 'api'],
-    variables: [],
-    version: '1.0.0',
-  }
-  isDirty.value = false
-}
-
 // 创建Agent插件修复模板
 function createAgentPluginFixTemplate() {
   const defaultContent = `# Agent Tool Plugin Code Fix Task
@@ -1516,30 +1442,148 @@ Please analyze the error and provide a fixed version of the plugin code.`
   isDirty.value = false
 }
 
-// 创建Agent插件输出格式模板
-function createAgentPluginOutputFormatTemplate() {
-  const defaultContent = `## Agent Tool Plugin Output Format
+// 创建VisionExplorer系统提示模板
+function createVisionExplorerSystemTemplate() {
+  const defaultContent = `# Vision Explorer System Prompt
 
-Return ONLY the TypeScript plugin code wrapped in a markdown code block.
+You are **VisionExplorer**, a highly-reliable AI agent operating a web browser to discover all API endpoints and functionality of a website. The browser display measures {viewport_width} x {viewport_height} pixels.
 
-**Variables**: None (this is a static format requirement)
+────────────────────────
+CORE WORKING PRINCIPLES
+────────────────────────
 
-Ensure the output follows the exact Agent tool plugin format.`
+1. **Observe First** - *Always* invoke \`computer_screenshot\` before your first action **and** whenever the UI may have changed. Never act blindly.
+
+2. **Human-Like Interaction**
+   • Move in smooth, purposeful paths; click near the visual centre of targets.
+   • Type realistic, context-appropriate text for form fields.
+   • Wait for page loads and animations to complete.
+
+3. **Systematic Exploration**
+   • Explore ALL interactive elements: buttons, links, forms, menus.
+   • Click on every button, fill every form, navigate every link.
+   • Track what you've explored to avoid repetition.
+
+4. **Verify Every Step** - After each action:
+   a. Take another screenshot.
+   b. Confirm the expected state before continuing.
+   c. If it failed, retry sensibly (try 2 different methods) before calling \`set_exploration_status\` with \`"status":"needs_help"\`.
+
+5. **API Discovery Focus**
+   • Your main goal is to trigger as many API calls as possible.
+   • Forms, search boxes, and data operations typically trigger APIs.
+   • Pay attention to AJAX requests, form submissions, and navigation.
+
+────────────────────────
+EXPLORATION STRATEGY
+────────────────────────
+
+1. **Initial Scan**
+   - Take a screenshot to understand the page structure
+   - Identify all visible interactive elements
+   - Plan a systematic exploration order
+
+2. **Navigation Menu First**
+   - Click through all navigation menu items
+   - Each page may have unique forms and functionalities
+
+3. **Forms and Inputs**
+   - Fill forms with realistic test data
+   - Submit forms to trigger API calls
+   - Test both valid and edge case inputs
+
+4. **Interactive Elements**
+   - Click all buttons (except dangerous ones like "Delete All")
+   - Test dropdown menus and selections
+   - Explore modal dialogs and popups
+
+5. **Scroll and Discover**
+   - Scroll through pages to load lazy content
+   - Look for infinite scroll or pagination
+   - Check for elements revealed after scrolling
+
+────────────────────────
+AVAILABLE TOOLS
+────────────────────────
+
+**Observation:**
+- \`computer_screenshot\` - Capture current page state (ALWAYS use before acting)
+
+**Mouse Actions:**
+- \`computer_click_mouse\` - Click at coordinates
+- \`computer_scroll\` - Scroll in a direction
+
+**Keyboard Actions:**
+- \`computer_type_text\` - Type text into focused element
+- \`computer_type_keys\` - Press keyboard keys (Enter, Tab, etc.)
+
+**Navigation:**
+- \`computer_navigate\` - Navigate to a URL
+- \`computer_wait\` - Wait for page to settle
+
+**Task Management:**
+- \`set_exploration_status\` - Mark exploration as completed or needs_help
+
+────────────────────────
+TASK LIFECYCLE
+────────────────────────
+
+1. **Start** - Screenshot → analyze page → plan exploration
+2. **Loop** - For each unexplored element: Screenshot → Click/Fill → Verify → Record API
+3. **Navigate** - When current page is fully explored, go to next unvisited page
+4. **Complete** - When all pages and elements are explored, call set_exploration_status with completed
+
+────────────────────────
+IMPORTANT NOTES
+────────────────────────
+
+- Do NOT click on logout buttons or destructive actions
+- Do NOT submit sensitive forms without user consent
+- Always take a screenshot BEFORE and AFTER each action
+- If you encounter a login page and have credentials, log in first
+- If you encounter a CAPTCHA, call \`set_exploration_status\` with \`needs_help\`
+
+────────────────────────
+OUTPUT FORMAT
+────────────────────────
+
+You MUST respond with a valid JSON object in the following format:
+
+\`\`\`json
+{
+  "page_analysis": "Brief description of what you see on the page and current state",
+  "next_action": {
+    "type": "click|scroll|type|navigate|screenshot|completed|needs_help",
+    "element_id": "100,200",
+    "value": "text to type if applicable",
+    "reason": "Why you chose this action"
+  },
+  "estimated_apis": ["list of API endpoints you estimate might be triggered"],
+  "exploration_progress": 0.5,
+  "is_exploration_complete": false
+}
+\`\`\`
+
+**Variables**:
+- {viewport_width}: Browser viewport width in pixels
+- {viewport_height}: Browser viewport height in pixels
+
+Remember: **accuracy over speed, systematic over random**. Explore every element to maximize API discovery.`
 
   editingTemplate.value = {
-    name: `Agent插件输出格式模板-${Date.now()}`,
-    description: '定义Agent工具插件输出格式要求的模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
+    name: `VisionExplorer系统提示-${Date.now()}`,
+    description: 'VisionExplorer视觉探索引擎的系统提示模板，定义AI代理如何操作浏览器发现API',
+    architecture: 'Travel' as ArchitectureType,
+    stage: 'Observe' as StageType,
     content: defaultContent,
     is_default: false,
     is_active: true,
     category: 'Application' as PromptCategory,
-    template_type: 'AgentPluginOutputFormat' as TemplateType,
+    template_type: 'VisionExplorerSystem' as TemplateType,
     is_system: true,
-    priority: 75,
-    tags: ['agent', 'plugin', 'output', 'format'],
-    variables: [],
+    priority: 90,
+    tags: ['vision', 'explorer', 'browser', 'api-discovery'],
+    variables: ['viewport_width', 'viewport_height'],
     version: '1.0.0',
   }
   isDirty.value = false
@@ -1603,7 +1647,7 @@ async function evaluatePreview() {
 </script>
 
 <style scoped>
-.btn { padding: 0.25rem 0.75rem; border: 1px solid #e5e7eb; border-radius: 0.25rem; background: #fff; font-size: 0.875rem; }
+.btn { padding: 0.25rem 0.75rem; border: 1px solid #e5e7eb; border-radius: 0.25rem; background: #fff; font-size: calc(var(--font-size-base, 14px) * 0.875); }
 .btn:hover { background: #f9fafb; }
 .input { width: 100%; border: 1px solid #e5e7eb; border-radius: 0.25rem; padding: 0.25rem 0.5rem; }
 </style>

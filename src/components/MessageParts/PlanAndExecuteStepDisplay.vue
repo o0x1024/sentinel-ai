@@ -574,7 +574,7 @@ const hasResultError = (result: any) => {
   border-radius: 50%;
   color: hsl(var(--p));
   font-weight: 700;
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
 }
 
 /* Summary Stats */
@@ -591,13 +591,13 @@ const hasResultError = (result: any) => {
 }
 
 .stat-label {
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   color: hsl(var(--bc) / 0.6);
   margin-bottom: 0.25rem;
 }
 
 .stat-value {
-  font-size: 1.25rem;
+  font-size: calc(var(--font-size-base, 14px) * 1.25);
   font-weight: 700;
   color: hsl(var(--bc));
 }

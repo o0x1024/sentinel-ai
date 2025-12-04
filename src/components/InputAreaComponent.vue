@@ -379,7 +379,7 @@ watch(
 
 <style scoped>
 .chat-input { position: relative; }
-.icon-btn { width:1.75rem; height:1.75rem; display:flex; align-items:center; justify-content:center; border-radius:0.375rem; font-size:0.75rem; transition:background-color .15s,color .15s; }
+.icon-btn { width:1.75rem; height:1.75rem; display:flex; align-items:center; justify-content:center; border-radius:0.375rem; font-size:calc(var(--font-size-base, 14px) * 0.75); transition:background-color .15s,color .15s; }
 .icon-btn:hover { background-color: hsl(var(--b3)/0.7); }
 .icon-btn.active { background: hsl(var(--p)); color: hsl(var(--pc)); box-shadow:0 2px 4px rgba(0,0,0,.15); }
 .send-btn { width:2rem; height:2rem; border-radius:9999px; background: hsl(var(--b3)); color: hsl(var(--bc)); display:flex; align-items:center; justify-content:center; transition: background-color .15s,color .15s; }

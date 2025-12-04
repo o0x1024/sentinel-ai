@@ -9,7 +9,8 @@ use crate::{PassiveError, ProxyStats, RequestContext, ResponseContext, Result};
 use http_body_util::{BodyExt, Full};
 use hudsucker::{
     hyper::{self, Request, Response},
-    Body, HttpContext, HttpHandler, Proxy, RequestOrResponse,
+    tokio_tungstenite::tungstenite::Message,
+    Body, HttpContext, HttpHandler, Proxy, RequestOrResponse, WebSocketContext, WebSocketHandler,
 };
 use hyper::body::Bytes;
 use serde::{Deserialize, Serialize};
@@ -102,12 +103,23 @@ impl Default for ProxyConfig {
 /// 扫描任务发送器（用于将请求/响应发送到扫描器）
 pub type ScanSender = tokio::sync::mpsc::UnboundedSender<ScanTask>;
 
+/// 失败连接记录
+#[derive(Debug, Clone)]
+pub struct FailedConnection {
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+    pub error: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
 /// 扫描任务
 #[derive(Debug, Clone)]
 pub enum ScanTask {
     Request(RequestContext),
     Response(ResponseContext),
-    ReloadPlugin(String), // 重新加载指定插件
+    ReloadPlugin(String),
+    FailedConnection(FailedConnection), // TLS 握手失败的连接
 }
 
 /// 代理处理器（实现 Hudsucker HttpHandler）
@@ -800,8 +812,9 @@ impl HttpHandler for PassiveProxyHandler {
                     res
                 }
             } else {
-                warn!(
-                    "No request_id found for connection key (status: {}, conn_key: {}). This may be a CONNECT tunnel response.",
+                // CONNECT 隧道响应没有 request_id 是正常的，降级为 debug
+                debug!(
+                    "No request_id for connection (status: {}, conn_key: {}). Expected for CONNECT tunnels.",
                     status, conn_key
                 );
                 res
@@ -822,6 +835,7 @@ impl HttpHandler for PassiveProxyHandler {
         // 复制必要的状态用于 async 块
         let stats = self.stats.clone();
         let self_clone = self.clone();
+        let scan_tx = self.scan_tx.clone();
 
         async move {
             // 在异步上下文中获取 host，避免在 Tokio runtime 线程中使用阻塞读
@@ -830,12 +844,41 @@ impl HttpHandler for PassiveProxyHandler {
                 map.get(&conn_key).cloned()
             };
 
-            if let Some(host) = host_opt {
-                let msg = err.to_string().to_lowercase();
+            let error_msg = err.to_string();
+            
+            if let Some(host) = &host_opt {
+                let msg = error_msg.to_lowercase();
                 // 启发式匹配证书/握手错误
-                if msg.contains("certificate") || msg.contains("tls") || msg.contains("alert")
-                {
-                    self_clone.note_fail_and_maybe_bypass(&host).await;
+                let is_tls_error = msg.contains("certificate") 
+                    || msg.contains("tls") 
+                    || msg.contains("alert")
+                    || msg.contains("handshake");
+                    
+                if is_tls_error {
+                    self_clone.note_fail_and_maybe_bypass(host).await;
+                    
+                    // 发送失败连接记录到扫描器
+                    if let Some(tx) = &scan_tx {
+                        // 解析 host:port
+                        let (hostname, port) = if host.contains(':') {
+                            let parts: Vec<&str> = host.split(':').collect();
+                            (parts[0].to_string(), parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443))
+                        } else {
+                            (host.clone(), 443)
+                        };
+                        
+                        let failed_conn = FailedConnection {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            host: hostname,
+                            port,
+                            error: error_msg.clone(),
+                            timestamp: chrono::Utc::now(),
+                        };
+                        
+                        if let Err(e) = tx.send(ScanTask::FailedConnection(failed_conn)) {
+                            warn!("Failed to send failed connection to scanner: {}", e);
+                        }
+                    }
                 }
 
                 // 清理连接→host 映射
@@ -850,11 +893,48 @@ impl HttpHandler for PassiveProxyHandler {
                 s.errors += 1;
             }
 
-            error!("Failed to forward request: {}", err);
+            // 区分错误类型：连接错误和超时是常见的，降级为 warn
+            let error_lower = error_msg.to_lowercase();
+            if error_lower.contains("connect") 
+                || error_lower.contains("timeout") 
+                || error_lower.contains("reset")
+                || error_lower.contains("refused")
+                || error_lower.contains("closed")
+            {
+                warn!("Forward request failed (network): {}", error_msg);
+            } else {
+                error!("Forward request failed: {}", error_msg);
+            }
+            
             Response::builder()
                 .status(hudsucker::hyper::StatusCode::BAD_GATEWAY)
                 .body(Body::empty())
                 .expect("Failed to build response")
+        }
+    }
+}
+
+/// WebSocket 处理器实现
+/// 
+/// 处理 WebSocket 消息的转发，优雅地处理连接关闭等情况，
+/// 避免产生大量无意义的错误日志。
+impl WebSocketHandler for PassiveProxyHandler {
+    async fn handle_message(&mut self, _ctx: &WebSocketContext, msg: Message) -> Option<Message> {
+        // 简单转发所有 WebSocket 消息
+        // 对于 Close 消息，返回 None 会优雅地关闭连接
+        match &msg {
+            Message::Close(_) => {
+                debug!("WebSocket close message received, closing connection gracefully");
+                None // 返回 None 优雅关闭，不转发 close 帧
+            }
+            Message::Ping(data) => {
+                // 自动响应 Ping 为 Pong
+                Some(Message::Pong(data.clone()))
+            }
+            _ => {
+                // 转发其他所有消息（Text, Binary, Pong 等）
+                Some(msg)
+            }
         }
     }
 }
@@ -971,8 +1051,8 @@ impl ProxyService {
             }
         }
 
-        // 获取 CA authority
-        let ca = ca_service.get_ca()?;
+        // 获取 CA authority（使用完整证书链版本）
+        let ca = ca_service.get_chained_ca()?;
 
         // 创建处理器（如果有拦截状态，则使用支持拦截的构造器）
         let handler = if let Some(intercept_state) = &self.intercept_state {
@@ -982,14 +1062,15 @@ impl ProxyService {
         };
         let stats = handler.stats();
 
-        // 启动代理（支持 HTTPS MITM）
+        // 启动代理（支持 HTTPS MITM 和 WebSocket）
         info!("Starting HTTPS MITM proxy on port {}", port);
         let proxy_task = tokio::spawn(async move {
             match Proxy::builder()
                 .with_listener(listener)
                 .with_ca(ca)
                 .with_rustls_connector(rustls::crypto::ring::default_provider())
-                .with_http_handler(handler)
+                .with_http_handler(handler.clone())
+                .with_websocket_handler(handler)
                 .build()
             {
                 Ok(proxy) => {

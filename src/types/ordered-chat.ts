@@ -3,7 +3,7 @@
 
 export type ChunkType = 'Content' | 'Thinking' | 'ToolResult' | 'PlanInfo' | 'Error' | 'Meta' | 'StreamComplete'
 
-export type ArchitectureType = 'ReAct' | 'ReWOO' | 'LLMCompiler' | 'PlanAndExecute' | 'Travel' | 'Unknown'
+export type ArchitectureType = 'ReAct' | 'ReWOO' | 'LLMCompiler' | 'PlanAndExecute' | 'Travel' | 'VisionExplorer' | 'Unknown'
 
 export interface OrderedMessageChunk {
   execution_id: string

@@ -3,17 +3,11 @@
 //! 专门用于 Travel 架构的流式消息发送
 //! 发送 ooda_step 格式以与前端 TravelMessageProcessor 兼容
 
-use crate::engines::llm_client::LlmConfig;
+use crate::engines::LlmConfig;
 use crate::utils::ordered_message::{emit_message_chunk_with_arch, ArchitectureType, ChunkType};
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
-use rig::agent::MultiTurnStreamItem;
-use rig::client::builder::DynClientBuilder;
-use rig::completion::Message;
-use rig::message::UserContent;
-use rig::one_or_many::OneOrMany;
-use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use serde::{Deserialize, Serialize};
+use sentinel_llm::{StreamingLlmClient, StreamContent};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -29,8 +23,10 @@ pub struct TravelMessageEmitter {
     conversation_id: Option<String>,
     /// 收集所有发送的内容，用于保存到数据库
     content_collector: Arc<Mutex<String>>,
-    /// 当前循环号（用于 OODA step 消息）
+    /// 当前OODA循环号（在整个ReAct执行期间保持不变）
     current_cycle: Arc<Mutex<u32>>,
+    /// 当前ReAct迭代号（每次工具调用递增）
+    current_iteration: Arc<Mutex<u32>>,
 }
 
 /// 执行统计
@@ -50,6 +46,9 @@ struct OodaStep {
     cycle: u32,
     phase: String,
     status: String,
+    /// ReAct 迭代号（仅在 Act 阶段的 ReAct 执行中使用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    react_iteration: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thought: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -84,6 +83,7 @@ impl TravelMessageEmitter {
             conversation_id,
             content_collector: Arc::new(Mutex::new(String::new())),
             current_cycle: Arc::new(Mutex::new(1)),
+            current_iteration: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -92,22 +92,39 @@ impl TravelMessageEmitter {
         self.content_collector.lock().unwrap().clone()
     }
 
-    /// 获取当前循环号
+    /// 获取当前OODA循环号
     fn get_cycle(&self) -> u32 {
         *self.current_cycle.lock().unwrap()
     }
 
-    /// 设置当前循环号
-    fn set_cycle(&self, cycle: u32) {
+    /// 设置当前OODA循环号（整个ReAct执行期间保持不变）
+    pub fn set_ooda_cycle(&self, cycle: u32) {
         *self.current_cycle.lock().unwrap() = cycle;
     }
 
+    /// 设置当前循环号（已弃用，请使用 set_ooda_cycle）
+    fn set_cycle(&self, _cycle: u32) {
+        // 不再由 iteration 设置 cycle，保持 OODA 循环号不变
+    }
+
+    /// 获取当前ReAct迭代号
+    fn get_iteration(&self) -> u32 {
+        *self.current_iteration.lock().unwrap()
+    }
+
+    /// 设置当前ReAct迭代号
+    fn set_iteration(&self, iteration: u32) {
+        *self.current_iteration.lock().unwrap() = iteration;
+    }
+
     /// 发送执行开始信号
-    pub fn emit_start(&self, iteration: u32) {
-        self.set_cycle(iteration.max(1));
+    /// iteration 参数实际上是 OODA 循环号，在 ReAct 开始时设置
+    pub fn emit_start(&self, ooda_cycle: u32) {
+        self.set_ooda_cycle(ooda_cycle.max(1));
+        self.set_iteration(0);  // 重置迭代号
         self.emit_meta("start", serde_json::json!({
             "type": "start",
-            "iteration": iteration
+            "cycle": ooda_cycle
         }));
     }
 
@@ -133,8 +150,8 @@ impl TravelMessageEmitter {
 
     /// 发送 Thought (思考) 内容 - 使用 ooda_step 格式
     pub fn emit_thought(&self, content: &str, iteration: u32) {
-        // 更新循环号
-        self.set_cycle(iteration.max(1));
+        // 更新迭代号（不再改变OODA循环号）
+        self.set_iteration(iteration);
 
         // 收集内容 (JSON 格式)
         if let Ok(mut collector) = self.content_collector.lock() {
@@ -147,10 +164,12 @@ impl TravelMessageEmitter {
         self.emit_content(&formatted, false);
 
         // 发送 ooda_step 格式的结构化数据（与前端 TravelMessageProcessor 兼容）
+        // cycle 保持为 OODA 循环号，react_iteration 用于标识 ReAct 迭代
         let step = OodaStep {
             cycle: self.get_cycle(),
             phase: "Act".to_string(),  // ReAct 在 OODA 的 Act 阶段执行
             status: "running".to_string(),
+            react_iteration: Some(iteration),
             thought: Some(content.to_string()),
             action: None,
             output: None,
@@ -161,7 +180,7 @@ impl TravelMessageEmitter {
 
     /// 发送工具调用信息 - 使用 ooda_step 格式
     pub fn emit_tool_call(&self, iteration: u32, tool_name: &str, args: &serde_json::Value) {
-        self.set_cycle(iteration.max(1));
+            self.set_iteration(iteration);
         let args_str = serde_json::to_string_pretty(args).unwrap_or_default();
 
         // 收集内容 (JSON 格式)
@@ -188,6 +207,7 @@ impl TravelMessageEmitter {
             cycle: self.get_cycle(),
             phase: "Act".to_string(),
             status: "running".to_string(),
+            react_iteration: Some(iteration),
             thought: None,
             action: Some(OodaAction {
                 tool: tool_name.to_string(),
@@ -203,7 +223,7 @@ impl TravelMessageEmitter {
 
     /// 发送工具执行结果 - 使用 ooda_step 格式
     pub fn emit_tool_result(&self, iteration: u32, tool_name: &str, result: &serde_json::Value, success: bool, duration_ms: u64) {
-        self.set_cycle(iteration.max(1));
+        self.set_iteration(iteration);
         let result_str = serde_json::to_string_pretty(result).unwrap_or_default();
 
         // 收集内容 (JSON 格式)
@@ -241,6 +261,7 @@ impl TravelMessageEmitter {
             cycle: self.get_cycle(),
             phase: "Act".to_string(),
             status: "running".to_string(),
+            react_iteration: Some(iteration),
             thought: None,
             action: Some(OodaAction {
                 tool: tool_name.to_string(),
@@ -256,7 +277,7 @@ impl TravelMessageEmitter {
 
     /// 发送 Final Answer - 使用 ooda_step 格式
     pub fn emit_final_answer(&self, content: &str, iteration: u32) {
-        self.set_cycle(iteration.max(1));
+        self.set_iteration(iteration);
 
         // 收集内容
         if let Ok(mut collector) = self.content_collector.lock() {
@@ -271,6 +292,7 @@ impl TravelMessageEmitter {
             cycle: self.get_cycle(),
             phase: "Act".to_string(),
             status: "completed".to_string(),
+            react_iteration: Some(iteration),
             thought: Some(format!("Final Answer: {}", content)),
             action: None,
             output: Some(serde_json::json!({ "final_answer": content })),
@@ -323,6 +345,7 @@ impl TravelMessageEmitter {
             cycle: self.get_cycle(),
             phase: "Act".to_string(),
             status: "failed".to_string(),
+            react_iteration: Some(self.get_iteration()),
             thought: None,
             action: None,
             output: None,
@@ -383,38 +406,29 @@ impl TravelMessageEmitter {
 pub struct TravelLlmClient {
     config: LlmConfig,
     emitter: Arc<TravelMessageEmitter>,
+    /// 底层使用 sentinel_llm 的流式客户端
+    streaming_client: StreamingLlmClient,
 }
 
 impl TravelLlmClient {
     pub fn new(config: LlmConfig, emitter: Arc<TravelMessageEmitter>) -> Self {
-        Self { config, emitter }
-    }
-
-    /// 设置 rig 库所需的环境变量
-    fn setup_env_vars(&self) {
-        let provider = self.config.provider.to_lowercase();
+        // 将 crate::engines::LlmConfig 转换为 sentinel_llm::LlmConfig
+        let sentinel_config = sentinel_llm::LlmConfig::new(&config.provider, &config.model)
+            .with_timeout(config.timeout_secs);
+        let sentinel_config = if let Some(api_key) = &config.api_key {
+            sentinel_config.with_api_key(api_key)
+        } else {
+            sentinel_config
+        };
+        let sentinel_config = if let Some(base_url) = &config.base_url {
+            sentinel_config.with_base_url(base_url)
+        } else {
+            sentinel_config
+        };
         
-        if let Some(api_key) = &self.config.api_key {
-            match provider.as_str() {
-                "gemini" | "google" => std::env::set_var("GEMINI_API_KEY", api_key),
-                "openai" => std::env::set_var("OPENAI_API_KEY", api_key),
-                "anthropic" => std::env::set_var("ANTHROPIC_API_KEY", api_key),
-                _ => std::env::set_var("OPENAI_API_KEY", api_key),
-            }
-        }
+        let streaming_client = StreamingLlmClient::new(sentinel_config);
         
-        if let Some(base_url) = &self.config.base_url {
-            match provider.as_str() {
-                "gemini" | "google" => std::env::set_var("GEMINI_API_BASE", base_url),
-                "anthropic" => std::env::set_var("ANTHROPIC_API_BASE", base_url),
-                _ => {
-                    std::env::set_var("OPENAI_API_BASE", base_url);
-                    std::env::set_var("OPENAI_BASE_URL", base_url);
-                    std::env::set_var("OPENAI_BASE", base_url);
-                }
-            }
-            tracing::debug!("TravelLlmClient: Set base URL for '{}': {}", provider, base_url);
-        }
+        Self { config, emitter, streaming_client }
     }
 
     /// 流式调用 LLM，解析 Thought/Action/Observation 并发送到前端
@@ -435,114 +449,67 @@ impl TravelLlmClient {
         // 记录 prompt 到日志
         log_prompts_travel("TravelLlmClient", system_prompt, user_prompt);
 
-        // 设置 rig 库所需的环境变量
-        self.setup_env_vars();
-
-        // 创建 agent
-        let agent = {
-            let client = DynClientBuilder::new();
-            let agent_builder = match client.agent(provider, model) {
-                Ok(builder) => builder,
-                Err(e) => {
-                    error!(
-                        "TravelLlmClient: Failed to create agent for provider '{}' model '{}': {}",
-                        provider, model, e
-                    );
-                    return Err(anyhow!(
-                        "Travel LLM client unavailable: Provider '{}' model '{}' error: {}",
-                        provider, model, e
-                    ));
-                }
-            };
-            let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
-            agent_builder.preamble(preamble).build()
-        };
-
-        // 构建用户消息
-        let user_message = Message::User {
-            content: OneOrMany::one(UserContent::text(user_prompt.to_string())),
-        };
-
-        // 流式请求（带超时）
-        let stream_result = tokio::time::timeout(
-            std::time::Duration::from_secs(self.config.timeout_secs),
-            agent.stream_prompt(user_message).multi_turn(100),
-        )
-        .await;
-
-        let mut stream_iter = match stream_result {
-            Ok(iter) => iter,
-            Err(_) => {
-                error!(
-                    "TravelLlmClient: Request timeout after {} seconds",
-                    self.config.timeout_secs
-                );
-                return Err(anyhow!(
-                    "Travel LLM request timeout after {} seconds",
-                    self.config.timeout_secs
-                ));
-            }
-        };
-
-        // 处理流式响应，实时解析并发送
-        let mut content = String::new();
+        // 使用 sentinel_llm 流式客户端
+        // 创建 ReAct 解析器和状态容器
+        let emitter = self.emitter.clone();
         let mut current_line = String::new();
-        let mut parser = ReActParser::new(iteration, self.emitter.clone());
+        let mut parser = ReActParser::new(iteration, emitter.clone());
 
-        while let Some(item) = stream_iter.next().await {
-            match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
-                    let piece = t.text;
-                    if piece.is_empty() {
-                        continue;
+        // 使用 sentinel_llm 的流式调用
+        let result = self.streaming_client.stream_completion(
+            system_prompt,
+            user_prompt,
+            |stream_content| {
+                match stream_content {
+                    StreamContent::Text(piece) => {
+                        if !piece.is_empty() {
+                            current_line.push_str(&piece);
+                            
+                            // 检查是否有完整行可以解析
+                            while let Some(pos) = current_line.find('\n') {
+                                let line = current_line[..pos].to_string();
+                                current_line = current_line[pos + 1..].to_string();
+                                parser.process_line(&line);
+                            }
+                        }
                     }
-                    content.push_str(&piece);
-                    current_line.push_str(&piece);
+                    StreamContent::Reasoning(piece) => {
+                        if !piece.is_empty() {
+                            emitter.emit_thinking(&piece);
+                        }
+                    }
+                    StreamContent::Done => {
+                        debug!("TravelLlmClient: Stream completed");
+                    }
+                }
+            },
+        ).await;
 
-                    // 检查是否有完整行可以解析
-                    while let Some(pos) = current_line.find('\n') {
-                        let line = current_line[..pos].to_string();
-                        current_line = current_line[pos + 1..].to_string();
-                        parser.process_line(&line);
-                    }
+        match result {
+            Ok(content) => {
+                // 处理最后一行（可能没有换行符）
+                if !current_line.trim().is_empty() {
+                    parser.process_line(&current_line);
                 }
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::Reasoning(r),
-                )) => {
-                    let piece = r.reasoning.join("");
-                    if !piece.is_empty() {
-                        self.emitter.emit_thinking(&piece);
-                    }
-                }
-                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                    debug!("TravelLlmClient: Stream completed");
-                    break;
-                }
-                Ok(_) => { /* ignore other stream items */ }
-                Err(e) => {
-                    error!("TravelLlmClient: Stream error: {}", e);
-                    return Err(anyhow!("Travel LLM stream error: {}", e));
-                }
+
+                // 完成解析
+                parser.finalize();
+
+                info!(
+                    "TravelLlmClient: Response length: {} chars, Iteration: {}",
+                    content.len(), iteration
+                );
+                
+                // 记录响应到日志文件
+                log_response_travel("TravelLlmClient", &content);
+
+                Ok(content)
+            }
+            Err(e) => {
+                error!("TravelLlmClient: Stream error: {}", e);
+                Err(anyhow!("Travel LLM stream error: {}", e))
             }
         }
-
-        // 处理最后一行（可能没有换行符）
-        if !current_line.trim().is_empty() {
-            parser.process_line(&current_line);
-        }
-
-        // 完成解析
-        parser.finalize();
-
-        info!(
-            "TravelLlmClient: Response length: {} chars, Iteration: {}",
-            content.len(), iteration
-        );
-        
-        // 记录响应到日志文件
-        log_response_travel("TravelLlmClient", &content);
-
-        Ok(content)
     }
 }
 
@@ -799,4 +766,5 @@ fn write_llm_log_travel(
         }
     }
 }
+
 

@@ -9340,10 +9340,40 @@ dependencies = [
 ]
 
 [[package]]
-name = "rig-derive"
-version = "0.1.8"
+name = "rig-core"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d3f8b16bae04eca6b0f115f78f172cc7979c1ec82c30af0ccd7d7ed99f3ef48"
+checksum = "9bebec2ed450ae89ff9748eb41f47710718d9dbfe7e8fb2345424f6013807cd1"
+dependencies = [
+ "as-any",
+ "async-stream",
+ "base64 0.22.1",
+ "bytes",
+ "eventsource-stream",
+ "futures",
+ "futures-timer",
+ "glob",
+ "http 1.3.1",
+ "mime_guess",
+ "ordered-float",
+ "pin-project-lite",
+ "reqwest 0.12.24",
+ "rig-derive",
+ "schemars 1.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tracing-futures",
+ "url",
+]
+
+[[package]]
+name = "rig-derive"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d294d0cac2e452a0d2994ae1c09f6264cab99d759e351b325df34c42233851f8"
 dependencies = [
  "convert_case 0.8.0",
  "deluxe",
@@ -9364,7 +9394,7 @@ dependencies = [
  "deranged 0.4.0",
  "futures",
  "lancedb",
- "rig-core",
+ "rig-core 0.24.0",
  "serde",
  "serde_json",
 ]
@@ -9957,7 +9987,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest 0.12.24",
- "rig-core",
+ "rig-core 0.25.0",
  "rig-lancedb",
  "rmcp",
  "rsubdomain",
@@ -9965,6 +9995,7 @@ dependencies = [
  "semaphore",
  "sentinel-core",
  "sentinel-db",
+ "sentinel-llm",
  "sentinel-notify",
  "sentinel-passive",
  "sentinel-prompt",
@@ -10045,6 +10076,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sentinel-llm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures",
+ "rig-core 0.25.0",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "sentinel-notify"
 version = "0.1.0"
 dependencies = [
@@ -10079,6 +10126,8 @@ dependencies = [
  "hyper 1.8.1",
  "hyper-util",
  "log",
+ "moka",
+ "pem",
  "rand 0.8.5",
  "rcgen 0.13.2",
  "regex",
@@ -10162,7 +10211,7 @@ dependencies = [
  "rand 0.9.2",
  "regex",
  "reqwest 0.12.24",
- "rig-core",
+ "rig-core 0.24.0",
  "rig-lancedb",
  "sentinel-core",
  "serde",
@@ -10238,8 +10287,8 @@ dependencies = [
  "chrono",
  "futures",
  "log",
- "rig-core",
  "sentinel-db",
+ "sentinel-llm",
  "sentinel-notify",
  "sentinel-prompt",
  "sentinel-rag",

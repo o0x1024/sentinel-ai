@@ -1,0 +1,473 @@
+//! 集成模块
+//!
+//! 提供与被动代理、上下文摘要等外部系统的集成
+
+use super::types::*;
+use anyhow::Result;
+use chrono::Utc;
+use serde_json::Value;
+use std::collections::HashMap;
+use tracing::{debug, info, warn};
+
+// ============================================================================
+// 被动代理集成
+// ============================================================================
+
+/// 被动代理集成服务
+pub struct PassiveProxyIntegration {
+    /// 代理端口
+    port: u16,
+    /// 目标域名过滤
+    target_domain: Option<String>,
+    /// 已发现的API缓存
+    discovered_apis: Vec<ApiEndpoint>,
+    /// 上次轮询时间
+    last_poll_time: Option<chrono::DateTime<Utc>>,
+}
+
+impl PassiveProxyIntegration {
+    /// 创建新的集成服务
+    pub fn new(port: u16, target_domain: Option<String>) -> Self {
+        Self {
+            port,
+            target_domain,
+            discovered_apis: Vec::new(),
+            last_poll_time: None,
+        }
+    }
+
+    /// 从被动代理获取新发现的API
+    /// 
+    /// 注意：这个方法需要访问PassiveScanState，但由于跨模块限制，
+    /// 实际实现需要通过回调或者事件来获取数据
+    pub async fn poll_new_apis(&mut self, proxy_requests: Vec<ProxyRequestInfo>) -> Vec<ApiEndpoint> {
+        let mut new_apis = Vec::new();
+        
+        for req in proxy_requests {
+            // 过滤域名
+            if let Some(ref domain) = self.target_domain {
+                if !req.host.contains(domain) {
+                    continue;
+                }
+            }
+            
+            // 检查是否是新发现的API
+            let is_new = !self.discovered_apis.iter().any(|api| {
+                api.method == req.method && api.path == req.path
+            });
+            
+            if is_new {
+                let api = ApiEndpoint {
+                    method: req.method.clone(),
+                    path: req.path.clone(),
+                    full_url: req.url.clone(),
+                    headers: req.headers.clone(),
+                    parameters: Self::extract_parameters(&req.url, req.body.as_deref()),
+                    body: req.body.clone(),
+                    status_code: req.status_code,
+                    discovered_at: Utc::now(),
+                    source_action_id: None,
+                };
+                
+                info!("New API discovered: {} {}", api.method, api.path);
+                self.discovered_apis.push(api.clone());
+                new_apis.push(api);
+            }
+        }
+        
+        self.last_poll_time = Some(Utc::now());
+        new_apis
+    }
+
+    /// 从URL和body提取参数
+    fn extract_parameters(url: &str, body: Option<&str>) -> HashMap<String, String> {
+        let mut params = HashMap::new();
+        
+        // 从URL查询参数提取
+        if let Some(query_start) = url.find('?') {
+            let query = &url[query_start + 1..];
+            for pair in query.split('&') {
+                if let Some((key, value)) = pair.split_once('=') {
+                    params.insert(
+                        urlencoding::decode(key).unwrap_or_default().to_string(),
+                        urlencoding::decode(value).unwrap_or_default().to_string(),
+                    );
+                }
+            }
+        }
+        
+        // 从JSON body提取顶层参数
+        if let Some(body_str) = body {
+            if let Ok(json) = serde_json::from_str::<Value>(body_str) {
+                if let Some(obj) = json.as_object() {
+                    for (key, value) in obj {
+                        params.insert(key.clone(), value.to_string());
+                    }
+                }
+            }
+        }
+        
+        params
+    }
+
+    /// 获取所有发现的API
+    pub fn get_all_apis(&self) -> &[ApiEndpoint] {
+        &self.discovered_apis
+    }
+
+    /// 获取API统计
+    pub fn get_stats(&self) -> ApiDiscoveryStats {
+        let mut methods = HashMap::new();
+        for api in &self.discovered_apis {
+            *methods.entry(api.method.clone()).or_insert(0) += 1;
+        }
+        
+        ApiDiscoveryStats {
+            total_apis: self.discovered_apis.len(),
+            methods_breakdown: methods,
+            last_poll_time: self.last_poll_time,
+        }
+    }
+}
+
+/// 代理请求信息 (简化版，用于集成)
+#[derive(Debug, Clone)]
+pub struct ProxyRequestInfo {
+    pub method: String,
+    pub url: String,
+    pub path: String,
+    pub host: String,
+    pub headers: HashMap<String, String>,
+    pub body: Option<String>,
+    pub status_code: Option<u16>,
+}
+
+/// API发现统计
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ApiDiscoveryStats {
+    pub total_apis: usize,
+    pub methods_breakdown: HashMap<String, usize>,
+    pub last_poll_time: Option<chrono::DateTime<Utc>>,
+}
+
+// ============================================================================
+// 上下文摘要管理
+// ============================================================================
+
+/// 上下文摘要管理器
+pub struct ContextSummaryManager {
+    /// 对话历史
+    conversation_history: Vec<ConversationMessage>,
+    /// 已生成的摘要
+    summaries: Vec<ContextSummary>,
+    /// token阈值
+    token_threshold: u32,
+    /// 当前估算token数
+    estimated_tokens: u32,
+}
+
+impl ContextSummaryManager {
+    /// 创建新的摘要管理器
+    pub fn new(token_threshold: u32) -> Self {
+        Self {
+            conversation_history: Vec::new(),
+            summaries: Vec::new(),
+            token_threshold,
+            estimated_tokens: 0,
+        }
+    }
+
+    /// 添加消息到历史
+    pub fn add_message(&mut self, role: &str, content: &str, iteration: u32, has_image: bool) {
+        let message = ConversationMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+            iteration,
+            has_image,
+            timestamp: Utc::now(),
+        };
+        
+        // 估算token数 (粗略: 4个字符约1个token)
+        self.estimated_tokens += (content.len() / 4) as u32;
+        if has_image {
+            self.estimated_tokens += 1000; // 图片约1000 tokens
+        }
+        
+        self.conversation_history.push(message);
+    }
+
+    /// 检查是否需要生成摘要
+    pub fn needs_summary(&self) -> bool {
+        self.estimated_tokens >= self.token_threshold
+    }
+
+    /// 获取需要摘要的消息
+    pub fn get_messages_for_summary(&self) -> Vec<&ConversationMessage> {
+        // 保留最近10条消息，其余进行摘要
+        let keep_count = 10.min(self.conversation_history.len());
+        let summary_count = self.conversation_history.len().saturating_sub(keep_count);
+        
+        self.conversation_history[..summary_count].iter().collect()
+    }
+
+    /// 应用摘要，清理旧消息
+    pub fn apply_summary(&mut self, summary_content: String, iteration_end: u32) {
+        let messages_for_summary = self.get_messages_for_summary();
+        let iteration_start = messages_for_summary
+            .first()
+            .map(|m| m.iteration)
+            .unwrap_or(0);
+        
+        // 计算摘要前后的token
+        let tokens_before = self.estimated_tokens;
+        
+        // 移除已摘要的消息
+        let keep_count = 10.min(self.conversation_history.len());
+        let remove_count = self.conversation_history.len().saturating_sub(keep_count);
+        self.conversation_history.drain(..remove_count);
+        
+        // 重新计算token
+        self.estimated_tokens = self.conversation_history.iter()
+            .map(|m| (m.content.len() / 4) as u32 + if m.has_image { 1000 } else { 0 })
+            .sum::<u32>()
+            + (summary_content.len() / 4) as u32;
+        
+        // 保存摘要
+        let summary = ContextSummary {
+            id: uuid::Uuid::new_v4().to_string(),
+            content: summary_content,
+            iteration_range: (iteration_start, iteration_end),
+            created_at: Utc::now(),
+            tokens_before,
+            tokens_after: self.estimated_tokens,
+        };
+        
+        info!(
+            "Context summary applied: iterations {}-{}, tokens {} -> {}",
+            iteration_start, iteration_end, tokens_before, self.estimated_tokens
+        );
+        
+        self.summaries.push(summary);
+    }
+
+    /// 构建完整的上下文 (摘要 + 最近消息)
+    pub fn build_context(&self) -> String {
+        let mut context_parts = Vec::new();
+        
+        // 添加最新摘要
+        if let Some(latest_summary) = self.summaries.last() {
+            context_parts.push(format!(
+                "[Previous exploration summary (iterations {}-{})]\n{}",
+                latest_summary.iteration_range.0,
+                latest_summary.iteration_range.1,
+                latest_summary.content
+            ));
+        }
+        
+        // 添加最近消息
+        for msg in &self.conversation_history {
+            let prefix = if msg.role == "user" { "User" } else { "Assistant" };
+            let image_note = if msg.has_image { " [with screenshot]" } else { "" };
+            context_parts.push(format!(
+                "[{}{}] {}",
+                prefix, image_note, msg.content
+            ));
+        }
+        
+        context_parts.join("\n\n")
+    }
+
+    /// 获取当前估算token数
+    pub fn get_estimated_tokens(&self) -> u32 {
+        self.estimated_tokens
+    }
+
+    /// 获取摘要历史
+    pub fn get_summaries(&self) -> &[ContextSummary] {
+        &self.summaries
+    }
+
+    /// 生成摘要提示词
+    pub fn get_summary_prompt(&self) -> String {
+        let messages = self.get_messages_for_summary();
+        
+        let conversation_text = messages.iter()
+            .map(|m| {
+                let role = if m.role == "user" { "User" } else { "Assistant" };
+                format!("[Iteration {}] {}: {}", m.iteration, role, m.content)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        
+        format!(
+            r#"Please summarize the following exploration conversation. Focus on:
+1. Pages visited and their key features
+2. Elements interacted with and their results
+3. APIs discovered and their parameters
+4. Any errors or issues encountered
+5. Current exploration progress and what remains
+
+Conversation to summarize:
+{}
+
+Provide a concise but comprehensive summary that preserves all important information for continuing the exploration."#,
+            conversation_text
+        )
+    }
+}
+
+// ============================================================================
+// Takeover模式管理
+// ============================================================================
+
+/// Takeover模式管理器
+pub struct TakeoverManager {
+    /// 当前会话
+    session: TakeoverSession,
+    /// 是否启用
+    enabled: bool,
+}
+
+impl TakeoverManager {
+    /// 创建新的Takeover管理器
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            session: TakeoverSession::default(),
+            enabled,
+        }
+    }
+
+    /// 检查是否启用
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// 获取当前状态
+    pub fn get_status(&self) -> &TakeoverStatus {
+        &self.session.status
+    }
+
+    /// 请求用户接管
+    pub fn request_takeover(&mut self, reason: &str) -> bool {
+        if !self.enabled {
+            warn!("Takeover requested but not enabled");
+            return false;
+        }
+        
+        self.session.status = TakeoverStatus::WaitingForUser;
+        self.session.reason = Some(reason.to_string());
+        self.session.started_at = Some(Utc::now());
+        
+        info!("Takeover requested: {}", reason);
+        true
+    }
+
+    /// 用户接管
+    pub fn user_takeover(&mut self) {
+        self.session.status = TakeoverStatus::Active;
+        self.session.started_at = Some(Utc::now());
+        
+        info!("User has taken over control");
+    }
+
+    /// 记录用户操作
+    pub fn record_user_action(
+        &mut self,
+        action_type: &str,
+        details: Value,
+        screenshot: Option<String>,
+    ) {
+        if !matches!(self.session.status, TakeoverStatus::Active) {
+            return;
+        }
+        
+        let action = UserAction {
+            id: uuid::Uuid::new_v4().to_string(),
+            action_type: action_type.to_string(),
+            details,
+            timestamp: Utc::now(),
+            screenshot,
+        };
+        
+        debug!("User action recorded: {}", action_type);
+        self.session.user_actions.push(action);
+    }
+
+    /// 用户归还控制权
+    pub fn return_control(&mut self) {
+        self.session.status = TakeoverStatus::Returned;
+        self.session.ended_at = Some(Utc::now());
+        
+        info!(
+            "User returned control after {} actions",
+            self.session.user_actions.len()
+        );
+    }
+
+    /// 获取用户操作摘要 (用于继续探索)
+    pub fn get_actions_summary(&self) -> String {
+        if self.session.user_actions.is_empty() {
+            return "No user actions recorded".to_string();
+        }
+        
+        let actions: Vec<String> = self.session.user_actions.iter()
+            .map(|a| format!("- {}: {:?}", a.action_type, a.details))
+            .collect();
+        
+        format!(
+            "User performed {} actions during takeover:\n{}",
+            self.session.user_actions.len(),
+            actions.join("\n")
+        )
+    }
+
+    /// 重置会话
+    pub fn reset(&mut self) {
+        self.session = TakeoverSession::default();
+    }
+
+    /// 获取当前会话
+    pub fn get_session(&self) -> &TakeoverSession {
+        &self.session
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_context_summary_manager() {
+        let mut manager = ContextSummaryManager::new(1000);
+        
+        // 添加一些消息
+        for i in 0..20 {
+            manager.add_message(
+                if i % 2 == 0 { "user" } else { "assistant" },
+                &format!("Test message {}", i),
+                i,
+                false,
+            );
+        }
+        
+        // 检查是否需要摘要
+        assert!(manager.needs_summary() || manager.get_estimated_tokens() > 0);
+    }
+
+    #[test]
+    fn test_takeover_manager() {
+        let mut manager = TakeoverManager::new(true);
+        
+        assert!(manager.request_takeover("Test reason"));
+        assert!(matches!(manager.get_status(), TakeoverStatus::WaitingForUser));
+        
+        manager.user_takeover();
+        assert!(matches!(manager.get_status(), TakeoverStatus::Active));
+        
+        manager.record_user_action("click", serde_json::json!({"x": 100, "y": 200}), None);
+        
+        manager.return_control();
+        assert!(matches!(manager.get_status(), TakeoverStatus::Returned));
+    }
+}
+

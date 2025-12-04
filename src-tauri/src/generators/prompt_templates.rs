@@ -43,19 +43,21 @@ impl PromptTemplateBuilder {
             }
         }
         
-        // Fallback to built-in templates
+        // Fallback to built-in templates (合并后的完整模板)
         match template_type {
             TemplateType::PluginGeneration => {
+                // 被动扫描插件生成 - 使用合并后的完整模板
                 Ok(include_str!("templates/plugin_generation.txt").to_string())
+            }
+            TemplateType::AgentPluginGeneration => {
+                // Agent 工具插件生成 - 使用合并后的完整模板
+                Ok(include_str!("templates/agent_plugin_generation.txt").to_string())
             }
             TemplateType::PluginFix => {
                 Ok(include_str!("templates/plugin_fix.txt").to_string())
             }
-            TemplateType::PluginInterface => {
-                Ok(include_str!("templates/plugin_interface.txt").to_string())
-            }
-            TemplateType::PluginOutputFormat => {
-                Ok(include_str!("templates/plugin_output_format.txt").to_string())
+            TemplateType::AgentPluginFix => {
+                Ok(include_str!("templates/agent_plugin_fix.txt").to_string())
             }
             _ => Err(anyhow::anyhow!("Unsupported template type: {:?}", template_type))
         }
@@ -199,6 +201,8 @@ impl PromptTemplateBuilder {
     }
 
     /// Build generation prompt with Few-shot examples (async version with DB support)
+    /// 
+    /// 使用合并后的完整模板，模板中已包含接口定义和输出格式要求
     pub async fn build_generation_prompt_with_examples_async(
         &self,
         analysis: &WebsiteAnalysis,
@@ -207,13 +211,13 @@ impl PromptTemplateBuilder {
         requirements: Option<&str>,
         examples: &[&FewShotExample],
     ) -> Result<String> {
-        // Try to get base template from database
+        // 获取合并后的完整模板（已包含接口和输出格式）
         let base_template = self.get_template_content(TemplateType::PluginGeneration).await?;
         
         let mut prompt = base_template;
         
         // Add dynamic content
-        prompt.push_str("\n\n## Website Analysis\n\n");
+        prompt.push_str("\n\n---\n\n## 动态上下文\n\n");
         
         // Few-shot examples (if provided)
         if !examples.is_empty() {
@@ -237,20 +241,10 @@ impl PromptTemplateBuilder {
 
         // Additional requirements
         if let Some(reqs) = requirements {
-            prompt.push_str("**Additional Requirements**:\n");
+            prompt.push_str("**附加要求**:\n");
             prompt.push_str(reqs);
             prompt.push_str("\n\n");
         }
-
-        // Add plugin interface template from database
-        let interface_template = self.get_template_content(TemplateType::PluginInterface).await?;
-        prompt.push_str("\n\n");
-        prompt.push_str(&interface_template);
-        prompt.push_str("\n\n");
-
-        // Add output format template from database
-        let output_format_template = self.get_template_content(TemplateType::PluginOutputFormat).await?;
-        prompt.push_str(&output_format_template);
 
         Ok(prompt)
     }

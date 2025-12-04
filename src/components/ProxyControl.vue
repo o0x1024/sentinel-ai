@@ -10,7 +10,7 @@
       <div class="stats shadow mb-4">
         <div class="stat">
           <div class="stat-figure text-primary">
-            <i :class="['fas fa-circle', proxyStatus.running ? 'text-success' : 'text-error']" style="font-size: 1.875rem;"></i>
+            <i :class="['fas fa-circle', proxyStatus.running ? 'text-success' : 'text-error', 'stat-icon']"></i>
           </div>
           <div class="stat-title text-xs">代理状态</div>
           <div class="stat-value text-base" :class="proxyStatus.running ? 'text-success' : 'text-error'">
@@ -21,7 +21,7 @@
         
         <div class="stat">
           <div class="stat-figure text-secondary">
-            <i class="fas fa-lock" style="font-size: 1.875rem;"></i>
+            <i class="fas fa-lock stat-icon"></i>
           </div>
           <div class="stat-title text-xs">MITM 状态</div>
           <div class="stat-value text-base">{{ proxyStatus.mitm ? '已启用' : '未启用' }}</div>
@@ -30,7 +30,7 @@
         
         <div class="stat">
           <div class="stat-figure text-accent">
-            <i class="fas fa-tachometer-alt" style="font-size: 1.875rem;"></i>
+            <i class="fas fa-tachometer-alt stat-icon"></i>
           </div>
           <div class="stat-title text-xs">QPS</div>
           <div class="stat-value text-base">{{ proxyStatus.stats.qps.toFixed(2) }}</div>
@@ -39,7 +39,7 @@
         
         <div class="stat">
           <div class="stat-figure text-info">
-            <i class="fas fa-exchange-alt" style="font-size: 1.875rem;"></i>
+            <i class="fas fa-exchange-alt stat-icon"></i>
           </div>
           <div class="stat-title text-xs">请求统计</div>
           <div class="stat-value text-base">{{ totalRequests }}</div>
@@ -210,3 +210,9 @@ watch(refreshTrigger, async () => {
   await refreshStatus();
 });
 </script>
+
+<style scoped>
+.stat-icon {
+  font-size: calc(var(--font-size-base, 14px) * 1.875);
+}
+</style>

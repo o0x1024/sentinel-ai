@@ -306,6 +306,219 @@ impl<D: RagDatabase> RagService<D> {
         })
     }
 
+    /// 摄取手动输入的文本
+    pub async fn ingest_text(
+        &self,
+        title: &str,
+        content: &str,
+        collection_id: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+    ) -> Result<IngestResponse> {
+        let task_id = Uuid::new_v4().to_string();
+        info!("开始摄取手动输入文本: {} - {}", task_id, title);
+
+        // 创建摄取状态
+        let mut ingestion_status = IngestionStatus {
+            task_id: task_id.clone(),
+            source_path: format!("manual://{}", title),
+            status: "processing".to_string(),
+            progress: 0.0,
+            total_chunks: 0,
+            processed_chunks: 0,
+            error_message: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+
+        // 存储状态
+        self.ingestion_status.write().await.insert(task_id.clone(), ingestion_status.clone());
+
+        // 获取或验证集合
+        let target_collection_id = if let Some(cid) = collection_id {
+            if self.database.get_rag_collection_by_id(cid).await?.is_some() {
+                cid.to_string()
+            } else {
+                return Err(anyhow::anyhow!("Collection with id {} not found", cid));
+            }
+        } else {
+            // 使用默认集合
+            let default_name = "default";
+            match self.database.get_rag_collection_by_name(default_name).await? {
+                Some(collection) => collection.id,
+                None => {
+                    self.database.create_rag_collection(default_name, Some("默认集合")).await?
+                }
+            }
+        };
+
+        // 直接对文本进行分块
+        let chunks = self.chunk_raw_text(content, title)?;
+        ingestion_status.total_chunks = chunks.len();
+
+        // 创建文档记录
+        let document_id = match self.database.create_rag_document(
+            &target_collection_id,
+            &format!("manual://{}", title),
+            title,
+            "", // 内容在chunks中
+            metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()).as_deref().unwrap_or(""),
+        ).await {
+            Ok(id) => id,
+            Err(e) => {
+                error!("创建文档记录失败: {}", e);
+                ingestion_status.status = "failed".to_string();
+                ingestion_status.error_message = Some(format!("创建文档记录失败: {}", e));
+                ingestion_status.completed_at = Some(chrono::Utc::now());
+                self.ingestion_status.write().await.insert(task_id.clone(), ingestion_status);
+                return Err(anyhow!("创建文档记录失败: {}", e));
+            }
+        };
+
+        // 获取集合名称用于向量存储
+        let collection_name = if let Some(collection) = self.database.get_rag_collection_by_id(&target_collection_id).await? {
+            collection.name
+        } else {
+            "default".to_string()
+        };
+
+        // 插入向量存储
+        let chunks_created = match self.vector_store.insert_chunks(&collection_name, chunks.clone()).await {
+            Ok(count) => count,
+            Err(e) => {
+                error!("向量存储插入失败: {}", e);
+                ingestion_status.status = "failed".to_string();
+                ingestion_status.error_message = Some(format!("向量存储插入失败: {}", e));
+                ingestion_status.completed_at = Some(chrono::Utc::now());
+                self.ingestion_status.write().await.insert(task_id.clone(), ingestion_status);
+                return Err(anyhow!("向量存储插入失败: {}", e));
+            }
+        };
+
+        // 保存chunks到SQL数据库
+        for (index, chunk) in chunks.iter().enumerate() {
+            let metadata_json = serde_json::to_string(&chunk.metadata).unwrap_or("{}".to_string());
+            
+            if let Err(e) = self.database.create_rag_chunk(
+                &document_id,
+                &target_collection_id,
+                &chunk.content,
+                index as i32,
+                None,
+                &self._config.embedding_model,
+                self._config.embedding_dimensions.unwrap_or(768) as i32,
+                &metadata_json,
+            ).await {
+                warn!("创建chunk记录失败: {}", e);
+            }
+        }
+
+        // 更新集合统计
+        if let Err(e) = self.database.update_collection_stats(&target_collection_id).await {
+            warn!("更新集合统计失败: {}", e);
+        }
+
+        ingestion_status.status = "completed".to_string();
+        ingestion_status.completed_at = Some(chrono::Utc::now());
+        ingestion_status.processed_chunks = chunks.len();
+        ingestion_status.progress = 100.0;
+        self.ingestion_status.write().await.insert(task_id.clone(), ingestion_status.clone());
+
+        let processing_time = ingestion_status.completed_at.unwrap()
+            .signed_duration_since(ingestion_status.started_at)
+            .num_milliseconds() as u64;
+
+        Ok(IngestResponse {
+            source_id: document_id,
+            chunks_created,
+            processing_time_ms: processing_time,
+            status: ingestion_status,
+        })
+    }
+
+    /// 对原始文本进行分块
+    fn chunk_raw_text(&self, content: &str, title: &str) -> Result<Vec<DocumentChunk>> {
+        use crate::models::ChunkMetadata;
+
+        let mut chunks = Vec::new();
+        let chunk_size = self._config.chunk_size_chars;
+        let overlap = self._config.chunk_overlap_chars;
+
+        let chars: Vec<char> = content.chars().collect();
+        let total_len = chars.len();
+
+        if total_len == 0 {
+            return Ok(chunks);
+        }
+
+        // 如果内容短于chunk_size，作为单个chunk
+        if total_len <= chunk_size {
+            let chunk = DocumentChunk {
+                id: Uuid::new_v4().to_string(),
+                source_id: String::new(), // 会在外部设置
+                content: content.to_string(),
+                content_hash: format!("{:x}", md5::compute(content.as_bytes())),
+                chunk_index: 0,
+                metadata: ChunkMetadata {
+                    file_path: format!("manual://{}", title),
+                    file_name: title.to_string(),
+                    file_type: "text".to_string(),
+                    file_size: content.len() as u64,
+                    chunk_start_char: 0,
+                    chunk_end_char: total_len,
+                    page_number: None,
+                    section_title: Some(title.to_string()),
+                    custom_fields: HashMap::new(),
+                },
+                embedding: None,
+                created_at: chrono::Utc::now(),
+            };
+            chunks.push(chunk);
+            return Ok(chunks);
+        }
+
+        // 分块处理
+        let mut chunk_index = 0;
+        let mut start = 0;
+
+        while start < total_len {
+            let end = std::cmp::min(start + chunk_size, total_len);
+            let chunk_content: String = chars[start..end].iter().collect();
+
+            let chunk = DocumentChunk {
+                id: Uuid::new_v4().to_string(),
+                source_id: String::new(),
+                content: chunk_content.clone(),
+                content_hash: format!("{:x}", md5::compute(chunk_content.as_bytes())),
+                chunk_index,
+                metadata: ChunkMetadata {
+                    file_path: format!("manual://{}", title),
+                    file_name: title.to_string(),
+                    file_type: "text".to_string(),
+                    file_size: content.len() as u64,
+                    chunk_start_char: start,
+                    chunk_end_char: end,
+                    page_number: None,
+                    section_title: Some(title.to_string()),
+                    custom_fields: HashMap::new(),
+                },
+                embedding: None,
+                created_at: chrono::Utc::now(),
+            };
+            chunks.push(chunk);
+            chunk_index += 1;
+
+            if end >= total_len {
+                break;
+            }
+            start = end.saturating_sub(overlap);
+            if start >= end {
+                break;
+            }
+        }
+
+        Ok(chunks)
+    }
+
     /// 查询相似文档 - 使用 Rig + LanceDB
     pub async fn query(&self, request: RagQueryRequest) -> Result<RagQueryResponse> {
         info!("执行RAG查询 (使用 Rig + LanceDB): {}", request.query);

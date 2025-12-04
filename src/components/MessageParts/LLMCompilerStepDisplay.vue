@@ -560,7 +560,7 @@ const hasResultError = (result: any) => {
   border: 1px solid hsl(var(--in) / 0.3);
   border-radius: 0.375rem;
   color: hsl(var(--in));
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   font-weight: 600;
 }
 
@@ -582,13 +582,13 @@ const hasResultError = (result: any) => {
 }
 
 .stat-label {
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   color: hsl(var(--bc) / 0.6);
   margin-bottom: 0.25rem;
 }
 
 .stat-value {
-  font-size: 1.25rem;
+  font-size: calc(var(--font-size-base, 14px) * 1.25);
   font-weight: 700;
   color: hsl(var(--bc));
 }

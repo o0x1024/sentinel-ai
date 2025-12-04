@@ -15,6 +15,8 @@ rcgen = "0.13"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-pemfile = "2.2"
 x509-parser = "0.16"
+pem = "3.0"
+moka = { version = "0.12", features = ["future", "sync"] }
 
 # Deno 插件引擎（已移至 sentinel-plugins）
 # deno_core = "0.365.0"

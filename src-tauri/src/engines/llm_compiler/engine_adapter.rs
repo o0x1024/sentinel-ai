@@ -8,7 +8,7 @@ use super::planner::LlmCompilerPlanner;
 use super::task_fetcher::TaskFetchingUnit;
 use super::types::*;
 use crate::agents::traits::*;
-use crate::engines::llm_client::{StreamingLlmClient, StreamContent};
+use crate::engines::{StreamingLlmClient, StreamContent};
 use crate::engines::memory::get_global_memory;
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::services::ai::{AiService, AiServiceManager};
@@ -1420,7 +1420,7 @@ impl LlmCompilerEngine {
             );
 
             // 使用公共 llm_client 模块 - StreamingLlmClient 流式输出到前端
-            let llm_config = crate::engines::llm_client::create_llm_config(&ai_service);
+            let llm_config = crate::engines::create_llm_config(&ai_service);
             let streaming_client = StreamingLlmClient::new(llm_config);
             
             // 获取 app_handle 用于发送消息

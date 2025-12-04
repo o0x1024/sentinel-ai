@@ -7,13 +7,16 @@ use super::guardrails::GuardrailManager;
 use super::threat_intel::ThreatIntelManager;
 use super::engine_dispatcher::EngineDispatcher;
 use super::memory_integration::TravelMemoryIntegration;
-use crate::engines::llm_client::{LlmClient, create_client as create_llm_client};
+use super::vision_integration::{VisionIntegration, VisionIntegrationConfig};
+use crate::engines::LlmClient;
+use crate::services::mcp::McpService;
 use crate::utils::message_emitter::{StandardMessageEmitter, TravelPhaseStep, TravelAction};
 use crate::utils::ordered_message::ArchitectureType;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// OODA执行器
@@ -23,11 +26,15 @@ pub struct OodaExecutor {
     threat_intel_manager: ThreatIntelManager,
     engine_dispatcher: EngineDispatcher,
     memory_integration: Option<TravelMemoryIntegration>,
+    /// Vision Explorer 集成
+    vision_integration: Option<Arc<VisionIntegration>>,
     // 消息发送相关字段
     app_handle: Option<Arc<tauri::AppHandle>>,
     execution_id: Option<String>,
     message_id: Option<String>,
     conversation_id: Option<String>,
+    // 取消令牌
+    cancellation_token: Option<CancellationToken>,
 }
 
 impl OodaExecutor {
@@ -42,16 +49,24 @@ impl OodaExecutor {
             threat_intel_manager,
             engine_dispatcher,
             memory_integration: None,
+            vision_integration: None,
             app_handle: None,
             execution_id: None,
             message_id: None,
             conversation_id: None,
+            cancellation_token: None,
         }
     }
 
     /// 设置Memory集成
     pub fn with_memory_integration(mut self, memory_integration: TravelMemoryIntegration) -> Self {
         self.memory_integration = Some(memory_integration);
+        self
+    }
+
+    /// 设置Vision Explorer集成
+    pub fn with_vision_integration(mut self, vision_integration: Arc<VisionIntegration>) -> Self {
+        self.vision_integration = Some(vision_integration);
         self
     }
 
@@ -72,6 +87,12 @@ impl OodaExecutor {
         self.execution_id = Some(execution_id);
         self.message_id = Some(message_id);
         self.conversation_id = conversation_id;
+        self
+    }
+
+    /// 设置取消令牌
+    pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
+        self.cancellation_token = Some(token);
         self
     }
 
@@ -142,6 +163,9 @@ impl OodaExecutor {
             cycle_number,
             task_description
         );
+
+        // 将用户原始任务描述存入上下文，供后续阶段使用
+        context.insert("task_description".to_string(), serde_json::json!(task_description));
 
         // 执行四个阶段
         match self.execute_observe_phase(&mut cycle, context).await {
@@ -219,7 +243,7 @@ impl OodaExecutor {
         log::info!("Executing Observe phase (cycle #{})", cycle_num);
         
         // 发送阶段开始
-        self.emit_thought(cycle_num, "Observe", "[PHASE_START] Starting Observe phase - gathering target information...");
+        self.emit_thought(cycle_num, "Observe", "[PHASE_START] 开始侦察阶段 - 收集目标信息...");
 
         let started_at = SystemTime::now();
         cycle.current_phase = OodaPhase::Observe;
@@ -240,7 +264,7 @@ impl OodaExecutor {
             {
                 Ok(experiences) => {
                     log::info!("Found {} similar experiences from memory", experiences.len());
-                    self.emit_thought(cycle_num, "Observe", &format!("[MEMORY] Found {} similar experiences from memory", experiences.len()));
+                    self.emit_thought(cycle_num, "Observe", &format!("[MEMORY] 从记忆中找到 {} 个相似经验", experiences.len()));
                     context.insert(
                         "memory_experiences".to_string(),
                         serde_json::to_value(&experiences).unwrap_or(serde_json::json!([]))
@@ -248,7 +272,7 @@ impl OodaExecutor {
                 }
                 Err(e) => {
                     log::warn!("Failed to query memory experiences: {}", e);
-                    self.emit_thought(cycle_num, "Observe", &format!("[WARNING] Memory query failed: {}", e));
+                    self.emit_thought(cycle_num, "Observe", &format!("[WARNING] 记忆查询失败: {}", e));
                 }
             }
         }
@@ -260,12 +284,82 @@ impl OodaExecutor {
             .check_observe_phase(&target_info)
             .await?;
 
-        self.emit_thought(cycle_num, "Observe", &format!("[GUARDRAIL] Guardrail checks: {} items passed", guardrail_checks.len()));
+        self.emit_thought(cycle_num, "Observe", &format!("[GUARDRAIL] 护栏检查: {} 项通过", guardrail_checks.len()));
 
         // 3. 收集目标信息（带工具调用追踪）
-        let observations = self.collect_observations_with_tracking(cycle_num, context, &mut tool_calls).await?;
+        let mut observations = self.collect_observations_with_tracking(cycle_num, context, &mut tool_calls).await?;
         
-        self.emit_thought(cycle_num, "Observe", "[COMPLETE] Target observations collected");
+        self.emit_thought(cycle_num, "Observe", "[COMPLETE] 目标信息收集完成");
+
+        // 3.5 Vision Explorer 增强（如果启用且目标是 Web URL）
+        // 注意：VisionExplorer 需要 Playwright MCP 服务器，如果未连接会自动跳过
+        if let Some(vision) = &self.vision_integration {
+            let target = context.get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            
+            if target.starts_with("http://") || target.starts_with("https://") {
+                // 先检查 Playwright MCP 是否可用（避免不必要的尝试）
+                let playwright_available = self.check_playwright_available().await;
+                
+                if playwright_available {
+                    self.emit_thought(cycle_num, "Observe", "[VISION] 开始VLM驱动的网站探索...");
+                    
+                    // 设置消息参数以支持前端显示
+                    if let (Some(exec_id), Some(msg_id)) = (&self.execution_id, &self.message_id) {
+                        vision.set_message_info(exec_id, msg_id, self.conversation_id.as_deref()).await;
+                    }
+                    
+                    // 传递取消令牌以支持外部停止
+                    if let Some(token) = &self.cancellation_token {
+                        vision.set_cancellation_token(token.clone()).await;
+                    }
+                    
+                    match vision.enhance_observe_phase(target).await {
+                        Ok(recon_result) => {
+                            log::info!("Vision Explorer: Discovered {} APIs, {} forms", 
+                                recon_result.api_endpoints.len(), 
+                                recon_result.forms.len());
+                            
+                            self.emit_thought(cycle_num, "Observe", &format!(
+                                "[VISION] Discovered {} APIs, {} forms, Risk score: {}",
+                                recon_result.api_endpoints.len(),
+                                recon_result.forms.len(),
+                                recon_result.attack_surface.risk_score
+                            ));
+                            
+                            // 注入观察数据
+                            observations.insert(
+                                "vision_explorer_apis".to_string(),
+                                serde_json::to_value(&recon_result.api_endpoints).unwrap_or(serde_json::json!([]))
+                            );
+                            observations.insert(
+                                "vision_explorer_forms".to_string(),
+                                serde_json::to_value(&recon_result.forms).unwrap_or(serde_json::json!([]))
+                            );
+                            observations.insert(
+                                "attack_surface".to_string(),
+                                serde_json::to_value(&recon_result.attack_surface).unwrap_or(serde_json::json!({}))
+                            );
+                            observations.insert(
+                                "vision_page_summary".to_string(),
+                                serde_json::Value::String(recon_result.page_summary)
+                            );
+                            observations.insert(
+                                "exploration_coverage".to_string(),
+                                serde_json::json!(recon_result.coverage)
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("Vision Explorer enhancement failed: {}", e);
+                            self.emit_thought(cycle_num, "Observe", &format!("[VISION] Enhancement skipped: {}", e));
+                        }
+                    }
+                } else {
+                    log::debug!("Vision Explorer skipped: Playwright MCP server not available");
+                }
+            }
+        }
 
         // 4. 记录阶段执行
         let phase_execution = OodaPhaseExecution {
@@ -636,7 +730,7 @@ impl OodaExecutor {
 
         // 使用 LLM 动态规划 Observe 流程（使用内置 LlmClient）
         let llm_client = match &self.engine_dispatcher.ai_service {
-            Some(ai_service) => Some(create_llm_client(ai_service)),
+            Some(ai_service) => Some(crate::engines::create_client(ai_service.as_ref())),
             None => {
                 log::error!("Travel OODA: AI service not available, cannot create LLM client");
                 None
@@ -688,7 +782,7 @@ impl OodaExecutor {
 
         // 使用 LLM 动态规划 Observe 流程（使用内置 LlmClient）
         let llm_client = match &self.engine_dispatcher.ai_service {
-            Some(ai_service) => Some(create_llm_client(ai_service)),
+            Some(ai_service) => Some(crate::engines::create_client(ai_service.as_ref())),
             None => {
                 log::error!("Travel OODA: AI service not available, cannot create LLM client");
                 None
@@ -1385,6 +1479,15 @@ impl OodaExecutor {
         }
     }
     
+    /// 检查 Playwright MCP 服务器是否可用
+    async fn check_playwright_available(&self) -> bool {
+        if let Some(vision) = &self.vision_integration {
+            vision.is_playwright_available().await
+        } else {
+            false
+        }
+    }
+    
     /// 从 HTTP 响应中提取技术信息
     fn extract_technology_from_response(&self, response: &serde_json::Value) -> Option<String> {
         // 尝试从响应头中提取服务器信息
@@ -1539,29 +1642,21 @@ impl OodaExecutor {
             }
             TaskComplexity::Complex => {
                 // 复杂任务：使用 ReAct 引擎进行推理
-                // 但我们需要提供具体的任务描述而不是空的工具调用
+                // 使用用户原始任务描述，而不是固定的安全评估任务
+                let user_task_desc = context.get("task_description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("执行任务");
+                
                 steps.push(ActionStep {
                     id: "step-1".to_string(),
-                    name: "综合安全评估".to_string(),
-                    description: format!( //使用中文
-                        "对 {} 全面安全评估 . 分析安全风险, 识别漏洞, 测试常见安全风险包括: {}",
-                        target,
-                        analysis.threats.iter()
-                            .map(|t| t.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
+                    name: "任务执行".to_string(),
+                    description: user_task_desc.to_string(),  // 使用用户原始任务描述
                     step_type: ActionStepType::ReactEngine,
                     tool_name: None, // ReAct 引擎会自己选择工具
                     tool_args: {
                         let mut args = HashMap::new();
                         args.insert("target".to_string(), serde_json::json!(target));
-                        args.insert("task_description".to_string(), serde_json::json!(
-                            format!("对 {} 全面安全评估, 识别漏洞, 测试常见安全风险包括: {}", target, analysis.threats.iter()
-                            .map(|t| t.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", "))
-                        ));
+                        args.insert("task_description".to_string(), serde_json::json!(user_task_desc));
                         args
                     },
                     estimated_duration: 300,

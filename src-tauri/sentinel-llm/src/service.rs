@@ -1,0 +1,496 @@
+//! AI 服务核心实现
+//!
+//! 提供统一的 AI 服务接口，不依赖应用特定的类型。
+
+use anyhow::{anyhow, Result};
+use futures::StreamExt;
+use rig::agent::MultiTurnStreamItem;
+use rig::client::{CompletionClient, ProviderClient};
+use rig::completion::{message::Image, Message};
+use rig::message::{AssistantContent, DocumentSourceKind, ImageDetail, ImageMediaType, UserContent};
+use rig::one_or_many::OneOrMany;
+use rig::providers::gemini::completion::gemini_api_types::{
+    AdditionalParameters, GenerationConfig,
+};
+use rig::streaming::{StreamedAssistantContent, StreamingChat};
+use tracing::{debug, error, info};
+
+use crate::agent::{get_rig_provider, validate_config};
+use crate::config::LlmConfig;
+use crate::log::{log_request, log_response};
+use crate::message::ChatMessage;
+use crate::types::AiConfig;
+
+/// AI 服务 - 无应用依赖版本
+#[derive(Clone)]
+pub struct AiService {
+    config: AiConfig,
+}
+
+impl AiService {
+    /// 创建新的 AI 服务
+    pub fn new(config: AiConfig) -> Self {
+        Self { config }
+    }
+
+    /// 获取配置
+    pub fn get_config(&self) -> &AiConfig {
+        &self.config
+    }
+
+    /// 转换为 LlmConfig
+    pub fn to_llm_config(&self) -> LlmConfig {
+        let mut config = LlmConfig::new(&self.config.provider, &self.config.model);
+        if let Some(ref key) = self.config.api_key {
+            config = config.with_api_key(key);
+        }
+        if let Some(ref url) = self.config.api_base {
+            config = config.with_base_url(url);
+        }
+        config.with_timeout(120)
+    }
+
+    /// 流式发送消息
+    ///
+    /// 返回 (完整响应, 流式回调)
+    pub async fn send_message_stream<F>(
+        &self,
+        user_prompt: &str,
+        system_prompt: Option<&str>,
+        history: &[ChatMessage],
+        image_attachment: Option<ImageAttachment>,
+        execution_id: &str,
+        conversation_id: Option<&str>,
+        mut on_chunk: F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        info!("发送流式消息请求 - 模型: {}", self.config.model);
+
+        // 验证配置
+        let llm_config = self.to_llm_config();
+        if let Err(e) = validate_config(&llm_config) {
+            error!("{}", e);
+            return Err(e);
+        }
+
+        let provider = self.config.provider.to_lowercase();
+        let provider_for_agent = get_rig_provider(&provider);
+        let model = self.config.model.clone();
+
+        // 设置环境变量
+        llm_config.setup_env_vars();
+
+        // 处理 LM Studio
+        if matches!(provider.as_str(), "lm studio" | "lmstudio" | "lm_studio") {
+            let mut base = self
+                .config
+                .api_base
+                .clone()
+                .unwrap_or_else(|| "http://localhost:1234".to_string());
+            if !base.ends_with("/v1") {
+                base = format!("{}/v1", base.trim_end_matches('/'));
+            }
+            std::env::set_var("OPENAI_API_BASE", base.clone());
+            std::env::set_var("OPENAI_BASE_URL", base.clone());
+            std::env::set_var("OPENAI_BASE", base);
+
+            let needs_set_key = std::env::var("OPENAI_API_KEY")
+                .map(|v| v.trim().is_empty())
+                .unwrap_or(true);
+            if needs_set_key {
+                let key = self
+                    .config
+                    .api_key
+                    .clone()
+                    .unwrap_or_else(|| "lm-studio".to_string());
+                std::env::set_var("OPENAI_API_KEY", key);
+            }
+        }
+
+        // 构造用户消息
+        let user_message: Message = if let Some(img) = image_attachment {
+            let image = Image {
+                data: DocumentSourceKind::base64(&img.base64_data),
+                media_type: Some(img.to_image_media_type()),
+                detail: Some(ImageDetail::Auto),
+                additional_params: None,
+            };
+            Message::User {
+                content: OneOrMany::one(UserContent::Image(image)),
+            }
+        } else {
+            Message::User {
+                content: OneOrMany::one(UserContent::text(user_prompt.to_string())),
+            }
+        };
+
+        // 转换历史消息
+        let chat_history = Self::convert_history(history);
+        debug!(
+            "Chat history: {} messages converted",
+            chat_history.len()
+        );
+
+        let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
+        let timeout = std::time::Duration::from_secs(120);
+
+        // 记录请求日志
+        info!(
+            "LLM Request - Provider: {}, Model: {}, Input length: {} chars",
+            provider, model, user_prompt.len()
+        );
+        log_request(
+            execution_id,
+            conversation_id,
+            &provider,
+            &model,
+            system_prompt,
+            user_prompt,
+        );
+
+        // 根据 provider 创建 agent 并执行流式调用
+        let content = match provider_for_agent.as_str() {
+            "openai" => {
+                self.stream_with_openai(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+            "anthropic" => {
+                self.stream_with_anthropic(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+            "gemini" | "google" => {
+                self.stream_with_gemini(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+            "ollama" => {
+                self.stream_with_ollama(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+            "deepseek" => {
+                self.stream_with_deepseek(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+            "openrouter" => {
+                self.stream_with_openrouter(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+            "xai" => {
+                self.stream_with_xai(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+            "groq" => {
+                self.stream_with_groq(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+            _ => {
+                info!("Unknown provider '{}', trying OpenAI compatible mode", provider_for_agent);
+                self.stream_with_openai(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+            }
+        };
+
+        // 记录响应日志
+        info!(
+            "LLM Response - Provider: {}, Model: {}, Output length: {} chars",
+            provider, model, content.len()
+        );
+        log_response(execution_id, conversation_id, &provider, &model, &content);
+
+        Ok(content)
+    }
+
+    async fn stream_with_openai<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        use rig::providers::openai;
+        let client = openai::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+    }
+
+    async fn stream_with_anthropic<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        use rig::providers::anthropic;
+        let client = anthropic::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).max_tokens(4096).build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+    }
+
+    async fn stream_with_gemini<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        use rig::providers::gemini;
+        let client = gemini::Client::from_env();
+        let gen_cfg = GenerationConfig::default();
+        let cfg = AdditionalParameters::default().with_config(gen_cfg);
+        let agent = client.agent(model)
+            .preamble(preamble)
+            .additional_params(serde_json::to_value(cfg).unwrap())
+            .build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+    }
+
+    async fn stream_with_ollama<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        use rig::providers::ollama;
+        let client = ollama::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+    }
+
+    async fn stream_with_deepseek<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        use rig::providers::deepseek;
+        let client = deepseek::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+    }
+
+    async fn stream_with_openrouter<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        use rig::providers::openrouter;
+        let client = openrouter::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+    }
+
+    async fn stream_with_xai<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        use rig::providers::xai;
+        let client = xai::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+    }
+
+    async fn stream_with_groq<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk),
+    {
+        use rig::providers::groq;
+        let client = groq::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+    }
+
+    async fn execute_stream<M, F>(
+        &self,
+        agent: rig::agent::Agent<M>,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        M: rig::completion::CompletionModel + 'static,
+        M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
+        F: FnMut(StreamChunk),
+    {
+        // 流式调用
+        let stream_result = tokio::time::timeout(
+            timeout,
+            agent.stream_chat(user_message, chat_history).multi_turn(100),
+        )
+        .await;
+
+        let mut stream_iter = match stream_result {
+            Ok(iter) => iter,
+            Err(_) => {
+                error!("LLM request timeout after 120 seconds");
+                return Err(anyhow!(
+                    "LLM request timeout: The AI service did not respond within 120 seconds."
+                ));
+            }
+        };
+
+        // 处理流式响应
+        let mut content = String::new();
+        while let Some(item) = stream_iter.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
+                    let piece = t.text;
+                    if !piece.is_empty() {
+                        content.push_str(&piece);
+                        on_chunk(StreamChunk::Text(piece));
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Reasoning(r),
+                )) => {
+                    let piece = r.reasoning.join("");
+                    if !piece.is_empty() {
+                        on_chunk(StreamChunk::Reasoning(piece));
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ToolCall(_),
+                )) => {}
+                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                    on_chunk(StreamChunk::Done);
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Stream error: {}", e);
+                    return Err(anyhow!("Stream error: {}", e));
+                }
+            }
+        }
+
+        Ok(content)
+    }
+
+    /// 简单调用（非流式）
+    pub async fn completion(
+        &self,
+        system_prompt: Option<&str>,
+        user_prompt: &str,
+    ) -> Result<String> {
+        let mut result = String::new();
+        self.send_message_stream(
+            user_prompt,
+            system_prompt,
+            &[],
+            None,
+            &uuid::Uuid::new_v4().to_string(),
+            None,
+            |chunk| {
+                if let StreamChunk::Text(text) = chunk {
+                    result.push_str(&text);
+                }
+            },
+        )
+        .await?;
+        Ok(result)
+    }
+
+    /// 转换历史消息
+    fn convert_history(history: &[ChatMessage]) -> Vec<Message> {
+        history
+            .iter()
+            .filter_map(|msg| {
+                let content = msg.content.trim();
+                if content.is_empty() {
+                    return None;
+                }
+                match msg.role.to_lowercase().as_str() {
+                    "user" => Some(Message::User {
+                        content: OneOrMany::one(UserContent::text(content.to_string())),
+                    }),
+                    "assistant" => Some(Message::Assistant {
+                        id: None,
+                        content: OneOrMany::one(AssistantContent::Text(rig::message::Text::from(
+                            content.to_string(),
+                        ))),
+                    }),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+}
+
+/// 流式响应块
+#[derive(Debug, Clone)]
+pub enum StreamChunk {
+    /// 文本内容
+    Text(String),
+    /// 推理内容
+    Reasoning(String),
+    /// 完成
+    Done,
+}
+
+/// 图片附件
+#[derive(Debug, Clone)]
+pub struct ImageAttachment {
+    pub base64_data: String,
+    pub media_type: String,
+}
+
+impl ImageAttachment {
+    pub fn new(base64_data: String, media_type: String) -> Self {
+        Self {
+            base64_data,
+            media_type,
+        }
+    }
+
+    pub(crate) fn to_image_media_type(&self) -> ImageMediaType {
+        match self.media_type.to_lowercase().as_str() {
+            "png" => ImageMediaType::PNG,
+            "webp" => ImageMediaType::WEBP,
+            "gif" => ImageMediaType::GIF,
+            "jpeg" | "jpg" => ImageMediaType::JPEG,
+            _ => ImageMediaType::JPEG,
+        }
+    }
+}

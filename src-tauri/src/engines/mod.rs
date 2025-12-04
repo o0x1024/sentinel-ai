@@ -1,6 +1,5 @@
 pub mod traits;
 pub mod types;
-pub mod llm_client;
 
 pub mod memory;
 
@@ -28,13 +27,40 @@ pub mod intelligent_dispatcher;
 // 重新导出核心类型和trait
 pub use types::*;
 
-// 导出公共 LLM 客户端
-pub use llm_client::{
+// 重新导出 sentinel_llm 的 LLM 客户端
+pub use sentinel_llm::{
     LlmConfig, LlmClient, StreamingLlmClient, StreamContent,
-    create_llm_config, create_client, create_streaming_client,
-    // 向后兼容
-    SimpleLlmClient, create_simple_client
+    ChatMessage, ImageAttachment, Message,
+    create_llm_config as create_llm_config_raw, create_client as create_client_raw,
+    create_streaming_client as create_streaming_client_raw,
 };
+
+use crate::services::ai::AiService;
+use std::sync::Arc;
+
+/// 从 AiService 创建 LlmConfig
+pub fn create_llm_config(ai_service: &AiService) -> LlmConfig {
+    let config = ai_service.get_config();
+    LlmConfig::new(&config.provider, &config.model)
+        .with_api_key(config.api_key.clone().unwrap_or_default())
+        .with_base_url(config.api_base.clone().unwrap_or_default())
+        .with_timeout(120)
+}
+
+/// 从 Arc<AiService> 创建 LlmConfig
+pub fn create_llm_config_from_arc(ai_service: &Arc<AiService>) -> LlmConfig {
+    create_llm_config(ai_service.as_ref())
+}
+
+/// 从 AiService 创建 LlmClient
+pub fn create_client(ai_service: &AiService) -> LlmClient {
+    LlmClient::new(create_llm_config(ai_service))
+}
+
+/// 从 AiService 创建 StreamingLlmClient
+pub fn create_streaming_client(ai_service: &AiService) -> StreamingLlmClient {
+    StreamingLlmClient::new(create_llm_config(ai_service))
+}
 
 pub use types::{
     ErrorType, ExecutionContext, ExecutionError, ExecutionMetrics, ExecutionPlan, ExecutionSession,

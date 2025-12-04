@@ -11,12 +11,17 @@ use super::dag_planner::DagPlanner;
 use super::parallel_executor::ParallelExecutor;
 use super::context_manager::ContextManager;
 use super::resource_integration::ResourceTracker;
+use super::vision_integration::{VisionIntegration, VisionIntegrationConfig};
+use super::memory_integration::TravelMemoryIntegration;
+use crate::engines::memory::get_global_memory;
 use crate::agents::traits::{
     AgentExecutionResult, AgentSession, AgentTask, PerformanceCharacteristics,
 };
 use crate::engines::traits::BaseExecutionEngine;
 use crate::services::ai::AiService;
+use crate::services::mcp::McpService;
 use crate::utils::ordered_message::{emit_message_chunk_arc, ArchitectureType, ChunkType};
+use crate::utils::message_emitter::StandardMessageEmitter;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -37,16 +42,34 @@ pub struct TravelEngine {
     context_manager: ContextManager,
     /// 资源追踪器
     resource_tracker: ResourceTracker,
+    /// MCP 服务 (用于 VisionExplorer)
+    mcp_service: Option<Arc<McpService>>,
+    /// Vision Explorer 集成
+    vision_integration: Option<Arc<VisionIntegration>>,
+    /// 被动扫描状态 (用于 VisionExplorer 启动代理)
+    passive_scan_state: Option<Arc<crate::commands::passive_scan_commands::PassiveScanState>>,
+    /// 被动扫描数据库服务 (用于 VisionExplorer 获取代理请求)
+    passive_db: Option<Arc<sentinel_passive::PassiveDatabaseService>>,
 }
 
 impl TravelEngine {
     /// 创建新的Travel引擎
     pub fn new(config: TravelConfig) -> Self {
         let complexity_analyzer = ComplexityAnalyzer::new(config.complexity_config.clone());
-        let ooda_executor = OodaExecutor::new(config.clone());
+        
+        // 获取全局记忆实例并创建 TravelMemoryIntegration
+        let global_memory = get_global_memory();
+        let memory_integration = TravelMemoryIntegration::new(global_memory);
+        
+        // 创建 OodaExecutor 并注入记忆集成
+        let ooda_executor = OodaExecutor::new(config.clone())
+            .with_memory_integration(memory_integration);
+        
         let context_manager = ContextManager::new(config.context_config.clone());
         let resource_tracker = ResourceTracker::new()
             .with_auto_cleanup(config.parallel_config.enable_resource_tracking);
+
+        log::info!("TravelEngine initialized with memory integration enabled");
 
         Self {
             config,
@@ -58,6 +81,10 @@ impl TravelEngine {
             app_handle: None,
             context_manager,
             resource_tracker,
+            mcp_service: None,
+            vision_integration: None,
+            passive_scan_state: None,
+            passive_db: None,
         }
     }
 
@@ -106,6 +133,7 @@ impl TravelEngine {
         self.complexity_analyzer = self.complexity_analyzer.with_ai_service(ai_service.clone());
         self.ai_service = Some(ai_service);
         self.update_engine_dispatcher();
+        self.update_vision_integration();
         self
     }
     
@@ -128,7 +156,75 @@ impl TravelEngine {
     pub fn with_app_handle(mut self, app: tauri::AppHandle) -> Self {
         self.app_handle = Some(app);
         self.update_engine_dispatcher();
+        self.update_vision_integration();  // 确保 VisionIntegration 获得 AppHandle
         self
+    }
+    
+    /// 设置 MCP 服务 (用于 VisionExplorer)
+    pub fn with_mcp_service(mut self, mcp_service: Arc<McpService>) -> Self {
+        self.mcp_service = Some(mcp_service);
+        self.update_vision_integration();
+        self
+    }
+
+    /// 设置被动扫描状态 (用于 VisionExplorer 启动代理)
+    pub fn with_passive_scan_state(mut self, state: Arc<crate::commands::passive_scan_commands::PassiveScanState>) -> Self {
+        self.passive_scan_state = Some(state);
+        self.update_vision_integration();
+        self
+    }
+
+    /// 设置被动扫描数据库服务 (用于 VisionExplorer 获取代理请求)
+    pub fn with_passive_db(mut self, db: Arc<sentinel_passive::PassiveDatabaseService>) -> Self {
+        self.passive_db = Some(db);
+        self.update_vision_integration();
+        self
+    }
+    
+    /// 更新 VisionIntegration
+    fn update_vision_integration(&mut self) {
+        // 需要 AI 服务和 MCP 服务才能创建 VisionIntegration
+        if let (Some(ai_service), Some(mcp_service)) = (&self.ai_service, &self.mcp_service) {
+            let config = ai_service.get_config();
+            let vision_config = VisionIntegrationConfig {
+                enabled: true,
+                max_iterations: 30,
+                timeout_secs: 180,
+                auto_start: false,
+                inject_to_threat_intel: true,
+                auto_observe: true,
+                viewport_width: 1920,
+                viewport_height: 1080,
+                // 消息参数会在运行时通过 set_message_info 动态设置
+                execution_id: None,
+                message_id: None,
+                conversation_id: None,
+            };
+            
+            let mut vision = VisionIntegration::new(
+                vision_config,
+                Some(mcp_service.clone()),
+                config.provider.clone(),
+                config.model.clone(),
+            );
+            
+            // 传入代理启动依赖
+            if let Some(app) = &self.app_handle {
+                vision = vision.with_app_handle(app.clone());
+            }
+            if let Some(state) = &self.passive_scan_state {
+                vision = vision.with_passive_scan_state(state.clone());
+            }
+            // 传入被动扫描数据库服务（用于获取代理捕获的流量）
+            if let Some(db) = &self.passive_db {
+                vision = vision.with_passive_db(db.clone());
+            }
+            
+            self.vision_integration = Some(Arc::new(vision));
+            log::info!("TravelEngine: VisionIntegration initialized with MCP service");
+        } else if self.ai_service.is_some() && self.mcp_service.is_none() {
+            log::debug!("TravelEngine: Waiting for MCP service to initialize VisionIntegration");
+        }
     }
     
     /// 更新 engine_dispatcher 的依赖
@@ -205,7 +301,7 @@ impl TravelEngine {
                 &message_id,
                 conversation_id.as_deref(),
                 ChunkType::Thinking,
-                "[MODE] Using optimized DAG execution mode",
+                "[MODE] 使用优化后的DAG执行模式",
                 Some(serde_json::json!({
                     "mode": "lite_dag",
                     "complexity": format!("{:?}", task_complexity)
@@ -220,7 +316,7 @@ impl TravelEngine {
                 &message_id,
                 conversation_id.as_deref(),
                 ChunkType::Thinking,
-                "[MODE] Using full OODA execution mode",
+                "[MODE] 使用完整的OODA执行模式",
                 Some(serde_json::json!({
                     "mode": "full_ooda",
                     "complexity": format!("{:?}", task_complexity)
@@ -266,6 +362,45 @@ impl TravelEngine {
     ) -> Result<AgentExecutionResult> {
         let start_time = Instant::now();
         
+        // 【重要】对于 Web 任务，先检查是否需要 VisionExplorer 前置探索
+        // 注意：先克隆 target 和 task_type，避免借用冲突
+        let target = context.get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let task_type = context.get("task_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        // 判断是否需要前置视觉探索
+        let needs_vision_exploration = self.should_use_vision_exploration(&target, &task_type, context).await;
+        
+        if needs_vision_exploration {
+            log::info!("Travel Lite: Target requires VisionExplorer pre-exploration");
+            self.emit_message(
+                execution_id,
+                message_id,
+                conversation_id,
+                ChunkType::Thinking,
+                "[VISION] 目标没有捕获流量, 开始视觉探索...",
+                None,
+            );
+            
+            // 执行视觉探索
+            if let Err(e) = self.execute_vision_exploration(&target, execution_id, message_id, conversation_id, context).await {
+                log::warn!("视觉探索失败: {}, 将继续使用DAG计划", e);
+                self.emit_message(
+                    execution_id,
+                    message_id,
+                    conversation_id,
+                    ChunkType::Content,
+                    &format!("[WARNING] 视觉探索跳过: {}", e),
+                    None,
+                );
+            }
+        }
+        
         // 检查缓存
         let task_hash = ContextManager::generate_task_hash(&task.description, context);
         if let Some(cached_plan) = self.context_manager.get_cached_plan(&task_hash).await {
@@ -275,7 +410,7 @@ impl TravelEngine {
                 message_id,
                 conversation_id,
                 ChunkType::Content,
-                "📦 Using cached execution plan",
+                "📦 使用缓存的执行计划",
                 None,
             );
             
@@ -301,7 +436,7 @@ impl TravelEngine {
             message_id,
             conversation_id,
             ChunkType::Thinking,
-            "[PLANNING] Generating DAG execution plan...",
+            "[PLANNING] 生成DAG执行计划...",
             None,
         );
 
@@ -313,7 +448,7 @@ impl TravelEngine {
             message_id,
             conversation_id,
             ChunkType::PlanInfo,
-            &format!("[SUCCESS] Plan generated with {} tasks", plan.tasks.len()),
+            &format!("[SUCCESS] 计划生成完成, 包含 {} 个任务", plan.tasks.len()),
             Some(serde_json::json!({
                 "task_count": plan.tasks.len(),
                 "tasks": plan.tasks.iter().map(|t| &t.tool_name).collect::<Vec<_>>()
@@ -330,6 +465,152 @@ impl TravelEngine {
         }
 
         self.execute_dag_plan(plan, context, execution_id, message_id, conversation_id).await
+    }
+
+    /// 判断是否需要视觉探索前置
+    /// 
+    /// 条件：
+    /// 1. 目标是 Web URL (http/https)
+    /// 2. 任务类型是 web_pentest 或 api_pentest
+    /// 3. 数据库中没有该域名的请求记录
+    /// 4. VisionExplorer 可用 (Playwright MCP 已连接)
+    async fn should_use_vision_exploration(
+        &self,
+        target: &str,
+        task_type: &str,
+        context: &HashMap<String, serde_json::Value>,
+    ) -> bool {
+        // 1. 检查是否是 Web URL
+        if !target.starts_with("http://") && !target.starts_with("https://") {
+            return false;
+        }
+        
+        // 2. 检查任务类型
+        let web_task_types = ["web_pentest", "api_pentest", "web_recon", "api_discovery"];
+        if !web_task_types.contains(&task_type) {
+            return false;
+        }
+        
+        // 3. 检查 VisionExplorer 是否可用
+        let vision_available = if let Some(vision) = &self.vision_integration {
+            vision.is_playwright_available().await
+        } else {
+            false
+        };
+        
+        if !vision_available {
+            log::debug!("Vision exploration not available: Playwright MCP not connected");
+            return false;
+        }
+        
+        // 4. 检查数据库中是否已有请求记录
+        if let Some(db) = &self.passive_db {
+            let domain = target
+                .trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .split('/')
+                .next()
+                .unwrap_or(target)
+                .split(':')
+                .next()
+                .unwrap_or(target);
+            
+            match db.list_proxy_requests_by_host(domain, 1).await {
+                Ok(requests) => {
+                    if requests.is_empty() {
+                        log::info!("No existing requests for domain {}, vision exploration needed", domain);
+                        return true;
+                    } else {
+                        log::info!("Found existing requests for domain {}, skipping vision exploration", domain);
+                        return false;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to check existing requests: {}, assuming vision exploration needed", e);
+                    return true;
+                }
+            }
+        }
+        
+        // 如果没有 passive_db，默认需要视觉探索
+        true
+    }
+    
+    /// 执行视觉探索前置任务
+    async fn execute_vision_exploration(
+        &self,
+        target: &str,
+        execution_id: &str,
+        message_id: &str,
+        conversation_id: Option<&str>,
+        context: &mut HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        let vision = self.vision_integration.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("VisionIntegration not available"))?;
+        
+        // 设置消息参数
+        vision.set_message_info(execution_id, message_id, conversation_id).await;
+        
+        // 如果有取消令牌，传递给 VisionExplorer
+        if let Some(token) = crate::managers::cancellation_manager::get_token(execution_id).await {
+            vision.set_cancellation_token(token).await;
+        }
+        
+        self.emit_message(
+            execution_id,
+            message_id,
+            conversation_id,
+            ChunkType::Thinking,
+            "[VISION] 开始VLM驱动的网站探索...",
+            Some(serde_json::json!({
+                "target": target,
+                "phase": "pre_exploration"
+            })),
+        );
+        
+        // 执行视觉探索
+        let recon_result = vision.enhance_observe_phase(target).await?;
+        
+        log::info!(
+            "视觉探索完成: {} API, {} 表单发现",
+            recon_result.api_endpoints.len(),
+            recon_result.forms.len()
+        );
+        
+        // 注入探索结果到上下文
+        context.insert(
+            "vision_exploration_result".to_string(),
+            serde_json::to_value(&recon_result).unwrap_or(serde_json::json!({})),
+        );
+        context.insert(
+            "vision_api_count".to_string(),
+            serde_json::json!(recon_result.api_endpoints.len()),
+        );
+        context.insert(
+            "vision_form_count".to_string(),
+            serde_json::json!(recon_result.forms.len()),
+        );
+        
+        self.emit_message(
+            execution_id,
+            message_id,
+            conversation_id,
+            ChunkType::Content,
+            &format!(
+                "✅ 视觉探索完成: {} API, {} 表单, 覆盖率: {:.1}%",
+                recon_result.api_endpoints.len(),
+                recon_result.forms.len(),
+                recon_result.coverage * 100.0
+            ),
+            Some(serde_json::json!({
+                "apis_discovered": recon_result.api_endpoints.len(),
+                "forms_discovered": recon_result.forms.len(),
+                "coverage": recon_result.coverage,
+                "attack_surface": recon_result.attack_surface
+            })),
+        );
+        
+        Ok(())
     }
 
     /// 执行 DAG 计划
@@ -374,7 +655,7 @@ impl TravelEngine {
             conversation_id,
             ChunkType::Content,
             &format!(
-                "📊 DAG execution completed: {} succeeded, {} failed ({}ms saved ~{} tokens)",
+                "📊 DAG 执行完成: {} 成功, {} 失败 ({}ms 节省 ~{} tokens)",
                 result.metrics.completed_tasks,
                 result.metrics.failed_tasks,
                 duration,
@@ -414,11 +695,39 @@ impl TravelEngine {
         // 初始化执行轨迹
         let mut trace = TravelTrace::new(task.description.clone(), task_complexity.clone());
 
+        let mut arch_emitter = None;
+        if let Some(app_handle) = &self.app_handle {
+            let emitter = StandardMessageEmitter::new(
+                Arc::new(app_handle.clone()),
+                execution_id.to_string(),
+                message_id.to_string(),
+                conversation_id.clone(),
+                ArchitectureType::Travel,
+            );
+            emitter.emit_start(Some(serde_json::json!({
+                "task": task.description,
+                "complexity": format!("{:?}", task_complexity),
+            })));
+            arch_emitter = Some(emitter);
+        }
+
         // 为OodaExecutor配置消息发送
         let mut executor = OodaExecutor::new(self.config.clone());
         
         if let Some(app_handle) = &self.app_handle {
             executor = executor.with_app_handle(Arc::new(app_handle.clone()));
+        }
+        
+        // 设置 VisionIntegration
+        if let Some(vision) = &self.vision_integration {
+            executor = executor.with_vision_integration(vision.clone());
+            log::info!("TravelEngine: VisionIntegration passed to OodaExecutor");
+        }
+        
+        // 获取取消令牌并传递给 OodaExecutor
+        if let Some(token) = crate::managers::cancellation_manager::get_token(&execution_id).await {
+            log::info!("TravelEngine: CancellationToken passed to OodaExecutor for {}", execution_id);
+            executor = executor.with_cancellation_token(token);
         }
         
         executor = executor
@@ -490,8 +799,21 @@ impl TravelEngine {
             }
         }
 
-        // 转换为AgentExecutionResult
-        self.trace_to_result(trace)
+        let result = self.trace_to_result(trace)?;
+
+        if let Some(emitter) = &arch_emitter {
+            if result.success {
+                emitter.emit_complete(result.data.clone());
+            } else {
+                let err = result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "Travel execution failed".to_string());
+                emitter.emit_error(&err);
+            }
+        }
+
+        Ok(result)
     }
 
     /// 准备执行上下文
@@ -708,4 +1030,3 @@ mod tests {
     //     assert!(context.contains_key("target_info"));
     // }
 }
-

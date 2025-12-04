@@ -2,7 +2,7 @@
 //!
 //! 负责按照计划逐步执行子任务，调用具体的工具和服务
 use sentinel_rag::models::AssistantRagRequest;
-use crate::engines::llm_client::{StreamingLlmClient, StreamContent};
+use crate::engines::{StreamingLlmClient, StreamContent};
 use crate::engines::plan_and_execute::repository::PlanExecuteRepository;
 use crate::engines::plan_and_execute::memory_manager::MemoryManager;
 use crate::engines::plan_and_execute::replanner::Replanner;
@@ -4425,7 +4425,7 @@ impl Executor {
         };
 
         // 使用公共 llm_client 模块进行流式 LLM 调用
-        let llm_config = crate::engines::llm_client::create_llm_config(&ai_service);
+        let llm_config = crate::engines::create_llm_config(&ai_service);
         let streaming_client = StreamingLlmClient::new(llm_config);
         
         // 获取消息ID和会话ID

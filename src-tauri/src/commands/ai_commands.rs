@@ -1773,11 +1773,42 @@ async fn dispatch_with_travel(
             None
         };
 
+    // 获取 MCP 服务（用于 VisionExplorer）
+    let mcp_service = ai_service_manager.get_mcp_service();
+    
     // 创建 TravelEngine 并设置依赖
     let mut engine = TravelEngine::new(config)
         .with_ai_service(ai_service.clone())
         .with_prompt_repo(prompt_repo)
         .with_app_handle(app.clone());
+    
+    // 设置 MCP 服务（用于 VisionExplorer）
+    if let Some(mcp) = mcp_service {
+        engine = engine.with_mcp_service(mcp);
+        log::info!("Travel dispatch: MCP service configured for VisionExplorer");
+    } else {
+        log::warn!("Travel dispatch: MCP service not available, VisionExplorer will be disabled");
+    }
+    
+    // 设置 PassiveScanState（用于 VisionExplorer 启动代理）
+    if let Some(passive_state) = app.try_state::<crate::commands::passive_scan_commands::PassiveScanState>() {
+        let passive_state_arc = Arc::new(passive_state.inner().clone());
+        engine = engine.with_passive_scan_state(passive_state_arc.clone());
+        log::info!("Travel dispatch: PassiveScanState configured for VisionExplorer");
+        
+        // 获取 PassiveDatabaseService（用于 VisionExplorer 获取代理请求）
+        match passive_state.get_db_service().await {
+            Ok(db) => {
+                engine = engine.with_passive_db(db);
+                log::info!("Travel dispatch: PassiveDatabaseService configured for VisionExplorer");
+            }
+            Err(e) => {
+                log::warn!("Travel dispatch: Failed to get PassiveDatabaseService: {}", e);
+            }
+        }
+    } else {
+        log::warn!("Travel dispatch: PassiveScanState not available, VisionExplorer won't auto-start proxy");
+    }
     
     // 设置 framework_adapter（如果可用）
     if let Some(adapter) = framework_adapter {
@@ -1968,7 +1999,7 @@ async fn extract_target_with_llm(
 请提取任务类型、目标和目标类型，返回JSON格式。"#, query);
 
     // 使用统一的 LlmClient
-    let llm_client = crate::engines::llm_client::create_client(ai_service);
+    let llm_client = crate::engines::create_client(&ai_service);
     
     match llm_client.completion(Some(system_prompt), &user_prompt).await {
         Ok(response) => {
@@ -2178,29 +2209,10 @@ pub struct AddCustomProviderRequest {
 pub async fn test_custom_provider(
     request: TestCustomProviderRequest,
 ) -> Result<TestCustomProviderResponse, String> {
-    use crate::services::custom_llm::CustomLlmClient;
-    
     info!("Testing custom provider: {} (mode: {})", request.name, request.compat_mode);
     
-    // 根据兼容模式选择测试方式
-    let result = match request.compat_mode.as_str() {
-        "rig_openai" | "rig_anthropic" => {
-            // 使用 rig-core 测试
-            test_with_rig(&request).await
-        }
-        _ => {
-            // 使用自定义 HTTP 客户端测试
-            let client = CustomLlmClient::new(
-                request.api_base.clone(),
-                request.api_key.clone(),
-                request.model_id.clone(),
-                request.compat_mode.clone(),
-                request.extra_headers.clone(),
-                request.timeout.unwrap_or(30),
-            );
-            client.test_connection().await.map_err(|e| e.to_string())
-        }
-    };
+    // 使用 rig-core 测试所有提供商
+    let result = test_with_rig(&request).await;
     
     match result {
         Ok(msg) => Ok(TestCustomProviderResponse {
@@ -2216,7 +2228,7 @@ pub async fn test_custom_provider(
 
 /// 使用 rig-core 测试连接
 async fn test_with_rig(request: &TestCustomProviderRequest) -> Result<String, String> {
-    use rig::client::builder::DynClientBuilder;
+    use rig::client::{CompletionClient, ProviderClient};
     use rig::completion::Prompt;
     
     let provider = if request.compat_mode == "rig_anthropic" {
@@ -2240,16 +2252,26 @@ async fn test_with_rig(request: &TestCustomProviderRequest) -> Result<String, St
         }
     }
     
-    let agent = DynClientBuilder::new()
-        .agent(provider, &request.model_id)
-        .map_err(|e| format!("Failed to create agent: {}", e))?
-        .build();
-    
     let timeout = std::time::Duration::from_secs(request.timeout.unwrap_or(30));
-    let response = tokio::time::timeout(timeout, agent.prompt("Hello, respond with 'OK' if you receive this."))
-        .await
-        .map_err(|_| "Request timeout".to_string())?
-        .map_err(|e| format!("Request failed: {}", e))?;
+    
+    // 根据 provider 创建 agent
+    let response = if provider == "anthropic" {
+        use rig::providers::anthropic;
+        let client = anthropic::Client::from_env();
+        let agent = client.agent(&request.model_id).max_tokens(1024).build();
+        tokio::time::timeout(timeout, agent.prompt("Hello, respond with 'OK' if you receive this."))
+            .await
+            .map_err(|_| "Request timeout".to_string())?
+            .map_err(|e| format!("Request failed: {}", e))?
+    } else {
+        use rig::providers::openai;
+        let client = openai::Client::from_env();
+        let agent = client.agent(&request.model_id).build();
+        tokio::time::timeout(timeout, agent.prompt("Hello, respond with 'OK' if you receive this."))
+            .await
+            .map_err(|_| "Request timeout".to_string())?
+            .map_err(|e| format!("Request failed: {}", e))?
+    };
     
     Ok(format!("Connection successful! Response: {}", response.chars().take(100).collect::<String>()))
 }

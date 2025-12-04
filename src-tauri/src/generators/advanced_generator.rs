@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sentinel_llm::LlmClient;
 use std::sync::Arc;
 
 use super::auto_approval::{ApprovalDecision, PluginAutoApprovalConfig, PluginAutoApprovalEngine};
@@ -552,18 +553,12 @@ impl AdvancedPluginGenerator {
             )
         };
 
-        // Call AI service using send_message_stream (non-streaming mode)
-        let content = service
-            .send_message_stream(
-                Some(&full_prompt), // user_prompt
-                None,               // system_prompt (already included in prompt)
-                None,               // conversation_id (no session needed)
-                None,               // message_id
-                false,              // stream (non-streaming)
-                true,               // is_final
-                None,               // chunk_type
-                None,               // attachments
-            )
+        // 使用 LlmClient 进行非流式调用
+        let llm_config = service.service.to_llm_config();
+        let llm_client = LlmClient::new(llm_config);
+
+        let content = llm_client
+            .completion(None, &full_prompt)
             .await
             .context("Failed to call LLM service")?;
 

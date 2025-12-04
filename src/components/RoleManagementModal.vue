@@ -258,7 +258,7 @@ watch(() => props.isOpen, (newValue) => {
 .close-button {
   background: none;
   border: none;
-  font-size: 1.5rem;
+  font-size: calc(var(--font-size-base, 14px) * 1.5);
   cursor: pointer;
   color: #9ca3af;
   padding: 0;
@@ -278,7 +278,7 @@ watch(() => props.isOpen, (newValue) => {
   border-radius: 6px;
   border: none;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
   display: inline-flex;
   align-items: center;
   transition: background-color 0.2s;
@@ -370,7 +370,7 @@ watch(() => props.isOpen, (newValue) => {
 }
 
 .role-card-description {
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
   color: #4b5563;
   line-height: 1.5;
   margin-bottom: 1.5rem;
@@ -392,7 +392,7 @@ watch(() => props.isOpen, (newValue) => {
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s;
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -420,7 +420,7 @@ watch(() => props.isOpen, (newValue) => {
 .role-list-header {
   background-color: #f9fafb;
   color: #374151;
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
 }
 
 .role-list-item {
@@ -438,7 +438,7 @@ watch(() => props.isOpen, (newValue) => {
   border-radius: 6px;
   border: none;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
   display: inline-flex;
   align-items: center;
   transition: background-color 0.2s;
@@ -509,7 +509,7 @@ watch(() => props.isOpen, (newValue) => {
   border: 1px solid #d1d5db;
   border-radius: 4px;
   background-color: #fff;
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
 }
 
 .form-group textarea {
@@ -521,7 +521,7 @@ watch(() => props.isOpen, (newValue) => {
   position: absolute;
   right: 0;
   bottom: -1.25rem;
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   color: #6b7280;
 }
 

@@ -1,11 +1,15 @@
 use crate::models::database::{AiConversation, AiMessage};
-use crate::services::ai::{AiConfig, AiServiceManager, AiToolCall};
+use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::{Database, DatabaseService};
 use crate::utils::ordered_message::ChunkType;
 use crate::utils::global_proxy::create_client_with_proxy;
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sentinel_llm::{
+    log_request, log_response, parse_image_from_json, ChatMessage as LlmChatMessage,
+    StreamContent, StreamingLlmClient,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -78,6 +82,194 @@ pub fn cancel_conversation_stream(conversation_id: &str) {
         remove_cancellation_token(conversation_id);
         tracing::info!("Cancelled conversation stream: {}", conversation_id);
     }
+}
+
+/// 流式调用 LLM 并处理事件发送、消息保存
+///
+/// 使用 sentinel_llm::StreamingLlmClient 处理 LLM 调用
+async fn stream_chat_with_llm(
+    service: &AiServiceWrapper,
+    app_handle: &AppHandle,
+    conversation_id: &str,
+    message_id: &str,
+    user_message: &str,
+    system_prompt: Option<&str>,
+    attachments: Option<serde_json::Value>,
+    is_final: bool,
+) -> Result<String, String> {
+    let db = app_handle
+        .try_state::<Arc<DatabaseService>>()
+        .ok_or("Database service not initialized")?;
+
+    // 获取对话历史
+    let history_messages = match db.get_ai_messages_by_conversation(conversation_id).await {
+        Ok(msgs) => msgs,
+        Err(e) => {
+            tracing::warn!("Failed to get conversation history: {}", e);
+            Vec::new()
+        }
+    };
+
+    // 检查对话是否存在
+    let has_conversation = db
+        .get_ai_conversation(conversation_id)
+        .await
+        .map(|c| c.is_some())
+        .unwrap_or(false);
+
+    // 保存用户消息
+    if has_conversation && !user_message.trim().is_empty() {
+        let user_msg = AiMessage {
+            id: Uuid::new_v4().to_string(),
+            conversation_id: conversation_id.to_string(),
+            role: "user".to_string(),
+            content: user_message.to_string(),
+            metadata: None,
+            token_count: Some(user_message.len() as i32),
+            cost: None,
+            tool_calls: None,
+            attachments: attachments
+                .as_ref()
+                .and_then(|v| serde_json::to_string(v).ok()),
+            timestamp: chrono::Utc::now(),
+            architecture_type: None,
+            architecture_meta: None,
+            structured_data: None,
+        };
+        if let Err(e) = db.create_ai_message(&user_msg).await {
+            tracing::warn!("Failed to save user message: {}", e);
+        }
+    }
+
+    // 解析图片附件
+    let image = parse_image_from_json(attachments.as_ref());
+
+    // 转换历史消息
+    let history: Vec<LlmChatMessage> = history_messages
+        .iter()
+        .filter(|msg| !msg.content.trim().is_empty())
+        .map(|msg| LlmChatMessage::new(&msg.role, &msg.content))
+        .collect();
+
+    // 创建 LLM 客户端
+    let llm_config = service.service.to_llm_config();
+    let streaming_client = StreamingLlmClient::new(llm_config);
+
+    let provider = service.get_config().provider.to_lowercase();
+    let model = service.get_config().model.clone();
+
+    // 记录请求日志
+    log_request(
+        message_id,
+        if has_conversation {
+            Some(conversation_id)
+        } else {
+            None
+        },
+        &provider,
+        &model,
+        system_prompt,
+        user_message,
+    );
+
+    // 流式调用
+    let execution_id = message_id.to_string();
+    let msg_id = message_id.to_string();
+    let conv_id = conversation_id.to_string();
+    let app = app_handle.clone();
+
+    let content = streaming_client
+        .stream_chat(system_prompt, user_message, &history, image.as_ref(), move |chunk| {
+            match chunk {
+                StreamContent::Text(text) => {
+                    crate::utils::ordered_message::emit_message_chunk_with_arch(
+                        &app,
+                        &execution_id,
+                        &msg_id,
+                        Some(&conv_id),
+                        ChunkType::Content,
+                        &text,
+                        false,
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                }
+                StreamContent::Reasoning(text) => {
+                    crate::utils::ordered_message::emit_message_chunk_with_arch(
+                        &app,
+                        &execution_id,
+                        &msg_id,
+                        Some(&conv_id),
+                        ChunkType::Thinking,
+                        &text,
+                        false,
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                }
+                StreamContent::Done => {}
+            }
+        })
+        .await
+        .map_err(|e| format!("LLM stream error: {}", e))?;
+
+    // 发送完成标记
+    if is_final && has_conversation {
+        crate::utils::ordered_message::emit_message_chunk_with_arch(
+            app_handle,
+            message_id,
+            message_id,
+            Some(conversation_id),
+            ChunkType::Meta,
+            "",
+            true,
+            None,
+            None,
+            None,
+            None,
+        );
+    }
+
+    // 记录响应日志
+    log_response(
+        message_id,
+        if has_conversation {
+            Some(conversation_id)
+        } else {
+            None
+        },
+        &provider,
+        &model,
+        &content,
+    );
+
+    // 保存助手消息
+    if has_conversation && !content.is_empty() {
+        let msg = AiMessage {
+            id: message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            role: "assistant".to_string(),
+            content: content.clone(),
+            metadata: None,
+            token_count: Some(content.len() as i32),
+            cost: None,
+            tool_calls: None,
+            attachments: None,
+            timestamp: chrono::Utc::now(),
+            architecture_type: None,
+            architecture_meta: None,
+            structured_data: None,
+        };
+        if let Err(e) = db.upsert_ai_message_append(&msg).await {
+            tracing::warn!("Failed to save assistant message: {}", e);
+        }
+    }
+
+    Ok(content)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -412,19 +604,18 @@ pub async fn send_ai_stream_message(
             tracing::error!("Failed to emit stream start event: {}", e);
         }
 
-        // 直接调用AI服务的流式方法，它内部已经处理所有的事件发送
-        match service_clone
-            .send_message_stream(
-                Some(&message),
-                system_prompt.as_deref(),
-                Some(conversation_id.clone()),
-                Some(message_id_clone.clone()), // 传递消息ID作为后端的assistant_message_id
-                true,
-                true,
-                Some(ChunkType::Content),
-                attachments,
-            )
-            .await
+        // 使用 sentinel-llm 流式调用 LLM
+        match stream_chat_with_llm(
+            &service_clone,
+            &app_handle,
+            &conversation_id,
+            &message_id_clone,
+            &message,
+            system_prompt.as_deref(),
+            attachments,
+            true,
+        )
+        .await
         {
             Ok(_response_content) => {
                 tracing::info!(
@@ -434,7 +625,6 @@ pub async fn send_ai_stream_message(
             }
             Err(e) => {
                 tracing::error!("Stream chat failed: {}", e);
-                // AI服务内部已经处理了错误事件发送，这里不需要重复发送
             }
         }
 
@@ -664,18 +854,18 @@ pub async fn send_ai_stream_with_search(
             tracing::error!("Failed to emit stream start event: {}", e);
         }
 
-        if let Err(e) = service_clone
-            .send_message_stream(
-                Some(&content_to_send),
-                resolved_system_prompt.as_deref(),
-                Some(conversation_id.clone()),
-                Some(message_id_clone.clone()),
-                true,
-                false,
-                Some(ChunkType::Content),
-                None, // attachments not supported in search mode yet
-            )
-            .await
+        // 使用 sentinel-llm 流式调用 LLM
+        if let Err(e) = stream_chat_with_llm(
+            &service_clone,
+            &app_handle,
+            &conversation_id,
+            &message_id_clone,
+            &content_to_send,
+            resolved_system_prompt.as_deref(),
+            None,
+            false,
+        )
+        .await
         {
             tracing::error!("Stream chat with search failed: {}", e);
         }
@@ -1743,14 +1933,13 @@ async fn test_ollama_connection(
 
 // 使用rig crate测试Ollama连接
 async fn test_ollama_with_rig(model: &str) -> Result<String, String> {
+    use rig::client::{CompletionClient, ProviderClient};
     use rig::completion::Prompt;
-    use rig::client::builder::DynClientBuilder;
+    use rig::providers::ollama;
 
-    // 通过动态客户端创建Agent（提供稳定的 prompt 接口）
-    let agent = DynClientBuilder::new()
-        .agent("ollama", model)
-        .map_err(|e| format!("Rig agent build failed: {}", e))?
-        .build();
+    // 直接创建 Ollama 客户端
+    let client = ollama::Client::from_env();
+    let agent = client.agent(model).build();
 
     // 发送简单的测试消息
     match agent.prompt("Hello").await {

@@ -5,7 +5,7 @@
 
 use super::executor::{ReactExecutor, ReactExecutorConfig};
 use super::message_emitter::{ReactMessageEmitter, ReactLlmClient};
-use crate::engines::llm_client::LlmConfig;
+use crate::engines::LlmConfig;
 use super::types::*;
 use crate::agents::traits::{
     AgentExecutionResult, AgentSession, AgentTask, PerformanceCharacteristics,

@@ -147,6 +147,9 @@ impl ScanPipeline {
                         warn!("Cannot reload plugin {} - no database service", plugin_id);
                     }
                 }
+                ScanTask::FailedConnection(failed_conn) => {
+                    self.process_failed_connection(failed_conn).await;
+                }
             }
         }
 
@@ -160,6 +163,12 @@ impl ScanPipeline {
         {
             let mut cache = self.request_cache.write().await;
             cache.insert(req_ctx.id.clone(), req_ctx.clone());
+        }
+
+        // 跳过 CONNECT 请求（HTTPS 隧道），不记录也不扫描
+        if req_ctx.method == "CONNECT" {
+            debug!("Skipping CONNECT request: {}", req_ctx.url);
+            return;
         }
 
         let plugins = self.plugin_engines.read().await;
@@ -453,6 +462,15 @@ impl ScanPipeline {
             let mut cache = self.request_cache.write().await;
             cache.remove(&resp_ctx.request_id);
         }
+    }
+
+    /// 处理失败的连接（TLS 握手失败等）
+    /// 仅记录日志，不保存到数据库（CONNECT 方法不记录）
+    async fn process_failed_connection(&self, failed_conn: crate::proxy::FailedConnection) {
+        debug!(
+            "Failed connection (not saved): host={}, port={}, error={}",
+            failed_conn.host, failed_conn.port, failed_conn.error
+        );
     }
 
     /// 添加插件到启用列表（供 PluginManager 或测试调用）

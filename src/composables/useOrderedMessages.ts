@@ -10,6 +10,7 @@ import { parsePlanAndExecuteMessage } from './usePlanAndExecuteMessage'
 import { parseReWOOMessage } from './useReWOOMessage'
 import { ReActMessageProcessor } from './processors/ReActMessageProcessor'
 import { TravelMessageProcessor } from './processors/TravelMessageProcessor'
+import { VisionExplorerMessageProcessor } from './processors/VisionExplorerMessageProcessor'
 
 class MessageChunkProcessorImpl implements MessageChunkProcessor {
   chunks = new Map<string, OrderedMessageChunk[]>()
@@ -795,6 +796,18 @@ export const useOrderedMessages = (
         const cycles = TravelMessageProcessor.extractCyclesFromChunks(allChunks)
         ;(message as any).travelCycles = cycles
         console.log('[useOrderedMessages] Travel cycles extracted:', cycles.length)
+        
+        // 同时提取嵌入的 VisionExplorer 迭代数据（Travel 可能包含 VisionExplorer 子任务）
+        const visionIterations = VisionExplorerMessageProcessor.extractIterationsFromChunks(allChunks)
+        if (visionIterations.length > 0) {
+          ;(message as any).visionIterations = visionIterations
+          console.log('[useOrderedMessages] Travel embedded vision iterations:', visionIterations.length)
+        }
+      } else if (archType === 'VisionExplorer') {
+        // VisionExplorer架构：使用 VisionExplorerMessageProcessor 提取迭代数据
+        const iterations = VisionExplorerMessageProcessor.extractIterationsFromChunks(allChunks)
+        ;(message as any).visionIterations = iterations
+        console.log('[useOrderedMessages] Vision iterations extracted:', iterations.length)
       } else if (archType === 'LLMCompiler') {
         // LLMCompiler架构（简化版）
         try {
@@ -876,6 +889,15 @@ export const useOrderedMessages = (
         // Travel架构：使用 TravelMessageProcessor 实时提取 OODA 循环数据
         const cycles = TravelMessageProcessor.extractCyclesFromChunks(allChunks)
         ;(message as any).travelCycles = cycles
+        // 同时提取嵌入的 VisionExplorer 迭代数据
+        const visionIterations = VisionExplorerMessageProcessor.extractIterationsFromChunks(allChunks)
+        if (visionIterations.length > 0) {
+          ;(message as any).visionIterations = visionIterations
+        }
+      } else if (archType === 'VisionExplorer') {
+        // VisionExplorer架构：实时提取迭代数据
+        const iterations = VisionExplorerMessageProcessor.extractIterationsFromChunks(allChunks)
+        ;(message as any).visionIterations = iterations
       } else if (archType === 'LLMCompiler') {
         // LLMCompiler架构实时解析
         const allChunks = processor.chunks.get(canonicalId) || []

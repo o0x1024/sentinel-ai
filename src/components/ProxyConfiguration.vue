@@ -425,7 +425,7 @@
           响应修改规则
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来控制 Burp 自动修改响应的方式。
+          使用这些设置来控制 Sentinel 自动修改响应的方式。
         </p>
 
         <div class="space-y-2">
@@ -541,7 +541,7 @@
           TLS 直通
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来指定目标 Web 服务器，Burp 将直接通过 TLS 连接。通过这些连接将无法在代理拦截视图或历史记录中查看有关请求或响应的详细信息。
+          使用这些设置来指定目标 Web 服务器，Sentinel 将直接通过 TLS 连接。通过这些连接将无法在代理拦截视图或历史记录中查看有关请求或响应的详细信息。
         </p>
 
         <div class="overflow-x-auto">
@@ -659,7 +659,7 @@
           默认代理拦截状态
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用此设置来选择启动 Burp 时是否启用代理拦截。
+          使用此设置来选择启动 Sentinel 时是否启用代理拦截。
         </p>
 
         <div class="space-y-2">
@@ -699,7 +699,7 @@
                 value="restore"
                 v-model="interceptionState"
               />
-              <span class="label-text">恢复关闭 Burp 时在 <strong>代理 > 拦截</strong> 选项卡中选择的设置</span>
+              <span class="label-text">恢复关闭 Sentinel 时在 <strong>代理 > 拦截</strong> 选项卡中选择的设置</span>
             </label>
           </div>
         </div>
@@ -714,7 +714,7 @@
           其他设置
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来更改 Burp 代理的默认行为。
+          使用这些设置来更改 Sentinel 代理的默认行为。
         </p>
 
         <div class="space-y-2">
@@ -781,17 +781,11 @@
             </label>
           </div>
 
-          <div class="form-control">
-            <label class="label cursor-pointer justify-start gap-2">
-              <input type="checkbox" class="checkbox checkbox-sm" v-model="disableWebInterface" />
-              <span class="label-text">禁用 http://burpsuite 的 Web 界面</span>
-            </label>
-          </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="suppressBurpErrorMessages" />
-              <span class="label-text">在浏览器中抑制 Burp 错误消息</span>
+              <span class="label-text">在浏览器中抑制 Sentinel 错误消息</span>
             </label>
           </div>
 
@@ -1070,17 +1064,31 @@ const toggleListenerRunning = async (listener: any, index: number) => {
     if (listener.running) {
       // 启动代理监听器
       const [host, port] = listener.interface.split(':')
-      await invoke('start_proxy_listener', { 
+      const response = await invoke<any>('start_proxy_listener', { 
         host,
         port: parseInt(port),
         index
       })
-      // 注意：被动扫描代理与全局出站代理是独立配置，不互相影响
-      dialog.toast.success(`代理监听器 ${listener.interface} 已启动`)
+      
+      // 检查返回结果
+      if (response.success) {
+        dialog.toast.success(`代理监听器 ${listener.interface} 已启动`)
+      } else {
+        // 启动失败，恢复状态
+        listener.running = false
+        dialog.toast.error(`启动失败: ${response.error || '端口可能被占用'}`)
+      }
     } else {
       // 停止代理监听器
-      await invoke('stop_proxy_listener', { index })
-      dialog.toast.success(`代理监听器 ${listener.interface} 已停止`)
+      const response = await invoke<any>('stop_proxy_listener', { index })
+      
+      if (response.success) {
+        dialog.toast.success(`代理监听器 ${listener.interface} 已停止`)
+      } else {
+        // 停止失败，恢复状态
+        listener.running = true
+        dialog.toast.error(`停止失败: ${response.error || '未知错误'}`)
+      }
     }
   } catch (error: any) {
     console.error('Failed to toggle listener:', error)
@@ -1305,10 +1313,6 @@ async function downloadCACert() {
 }
 
 async function regenerateCACert() {
-  if (!confirm('重新生成证书将使旧证书失效，需要重新安装。确定继续吗？')) {
-    return
-  }
-  
   isRegeneratingCert.value = true
   try {
     await invoke('regenerate_ca_cert')

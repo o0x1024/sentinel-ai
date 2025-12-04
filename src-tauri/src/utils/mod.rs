@@ -4,6 +4,8 @@ pub mod message_emitter;
 pub mod prompt_resolver;
 pub mod aliyun_oss;
 
+// macOS 系统代理模块已移至 sentinel_passive::system_proxy
+
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};

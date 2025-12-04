@@ -180,7 +180,8 @@ impl StateManager {
                         "Click".to_string()
                     }
                 }
-                BrowserAction::TypeText { text } => format!("Type: '{}'", text.chars().take(20).collect::<String>()),
+                BrowserAction::ClickByIndex { index } => format!("Click element [{}]", index),
+                BrowserAction::FillByIndex { index, value } => format!("Fill [{}]: '{}'", index, value.chars().take(20).collect::<String>()),
                 BrowserAction::Navigate { url } => format!("Navigate to: {}", url),
                 BrowserAction::Scroll { direction, .. } => format!("Scroll {:?}", direction),
                 _ => format!("{:?}", record.action),

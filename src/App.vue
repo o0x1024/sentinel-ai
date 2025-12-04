@@ -305,21 +305,21 @@ body {
   font-family: 'Inter', system-ui, sans-serif;
 }
 
-/* 字体大小设置 */
+/* 字体大小设置 - 现在基于系统设置 */
 .font-size-small {
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
 }
 
 .font-size-normal {
-  font-size: 1rem;
+  font-size: var(--font-size-base, 14px);
 }
 
 .font-size-large {
-  font-size: 1.125rem;
+  font-size: calc(var(--font-size-base, 14px) * 1.125);
 }
 
 .font-size-xlarge {
-  font-size: 1.25rem;
+  font-size: calc(var(--font-size-base, 14px) * 1.25);
 }
 
 /* 活动路由样式 */

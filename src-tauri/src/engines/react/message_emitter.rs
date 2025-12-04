@@ -2,12 +2,12 @@
 //!
 //! 简化版：直接发送流式内容到前端，并收集完整内容用于保存
 
-use crate::engines::llm_client::LlmConfig;
+use crate::engines::LlmConfig;
 use crate::utils::ordered_message::{emit_message_chunk_with_arch, ArchitectureType, ChunkType};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
-use rig::client::builder::DynClientBuilder;
+use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Message;
 use rig::message::UserContent;
 use rig::one_or_many::OneOrMany;
@@ -264,7 +264,7 @@ impl ReactLlmClient {
         user_prompt: &str,
         iteration: u32,
     ) -> Result<String> {
-        let provider = &self.config.provider;
+        let provider = self.config.provider.to_lowercase();
         let model = &self.config.model;
 
         info!(
@@ -278,34 +278,180 @@ impl ReactLlmClient {
         // 设置 rig 库所需的环境变量
         self.setup_env_vars();
 
-        // 创建 agent
-        let agent = {
-            let client = DynClientBuilder::new();
-            let agent_builder = match client.agent(provider, model) {
-                Ok(builder) => builder,
-                Err(e) => {
-                    error!(
-                        "ReactLlmClient: Failed to create agent for provider '{}' model '{}': {}",
-                        provider, model, e
-                    );
-                    return Err(anyhow!(
-                        "ReAct LLM client unavailable: Provider '{}' model '{}' error: {}",
-                        provider, model, e
-                    ));
-                }
-            };
-            let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
-            agent_builder.preamble(preamble).build()
-        };
-
         // 构建用户消息
         let user_message = Message::User {
             content: OneOrMany::one(UserContent::text(user_prompt.to_string())),
         };
 
+        let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
+        let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
+
+        // 根据 provider 创建 agent 并执行
+        let content = match provider.as_str() {
+            "openai" | "lm studio" | "lmstudio" | "lm_studio" => {
+                self.stream_with_openai(model, preamble, user_message, timeout).await?
+            }
+            "anthropic" => {
+                self.stream_with_anthropic(model, preamble, user_message, timeout).await?
+            }
+            "gemini" | "google" => {
+                self.stream_with_gemini(model, preamble, user_message, timeout).await?
+            }
+            "ollama" => {
+                self.stream_with_ollama(model, preamble, user_message, timeout).await?
+            }
+            "deepseek" => {
+                self.stream_with_deepseek(model, preamble, user_message, timeout).await?
+            }
+            "openrouter" => {
+                self.stream_with_openrouter(model, preamble, user_message, timeout).await?
+            }
+            "xai" => {
+                self.stream_with_xai(model, preamble, user_message, timeout).await?
+            }
+            "groq" => {
+                self.stream_with_groq(model, preamble, user_message, timeout).await?
+            }
+            _ => {
+                info!("Unknown provider '{}', trying OpenAI compatible mode", provider);
+                self.stream_with_openai(model, preamble, user_message, timeout).await?
+            }
+        };
+
+        info!(
+            "ReactLlmClient: Response length: {} chars, Iteration: {}",
+            content.len(), iteration
+        );
+        
+        // 记录响应到日志文件
+        log_response_react("ReactLlmClient", &content);
+
+        Ok(content)
+    }
+
+    async fn stream_with_openai(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::openai;
+        let client = openai::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, timeout).await
+    }
+
+    async fn stream_with_anthropic(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::anthropic;
+        let client = anthropic::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).max_tokens(4096).build();
+        self.execute_stream(agent, user_message, timeout).await
+    }
+
+    async fn stream_with_gemini(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::gemini;
+        use rig::providers::gemini::completion::gemini_api_types::{AdditionalParameters, GenerationConfig};
+        let client = gemini::Client::from_env();
+        let gen_cfg = GenerationConfig::default();
+        let cfg = AdditionalParameters::default().with_config(gen_cfg);
+        let agent = client.agent(model)
+            .preamble(preamble)
+            .additional_params(serde_json::to_value(cfg).unwrap())
+            .build();
+        self.execute_stream(agent, user_message, timeout).await
+    }
+
+    async fn stream_with_ollama(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::ollama;
+        let client = ollama::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, timeout).await
+    }
+
+    async fn stream_with_deepseek(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::deepseek;
+        let client = deepseek::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, timeout).await
+    }
+
+    async fn stream_with_openrouter(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::openrouter;
+        let client = openrouter::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, timeout).await
+    }
+
+    async fn stream_with_xai(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::xai;
+        let client = xai::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, timeout).await
+    }
+
+    async fn stream_with_groq(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::groq;
+        let client = groq::Client::from_env();
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_stream(agent, user_message, timeout).await
+    }
+
+    async fn execute_stream<M>(
+        &self,
+        agent: rig::agent::Agent<M>,
+        user_message: Message,
+        timeout: std::time::Duration,
+    ) -> Result<String>
+    where
+        M: rig::completion::CompletionModel + 'static,
+        M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
+    {
         // 流式请求（带超时）
         let stream_result = tokio::time::timeout(
-            std::time::Duration::from_secs(self.config.timeout_secs),
+            timeout,
             agent.stream_prompt(user_message).multi_turn(100),
         )
         .await;
@@ -355,14 +501,6 @@ impl ReactLlmClient {
                 }
             }
         }
-
-        info!(
-            "ReactLlmClient: Response length: {} chars, Iteration: {}",
-            content.len(), iteration
-        );
-        
-        // 记录响应到日志文件
-        log_response_react("ReactLlmClient", &content);
 
         Ok(content)
     }

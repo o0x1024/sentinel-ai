@@ -8,6 +8,7 @@
 import type { ArchitectureType, OrderedMessageChunk } from '../../types/ordered-chat'
 import type { ChatMessage } from '../../types/chat'
 import { ReActMessageProcessor } from './ReActMessageProcessor'
+import { VisionExplorerMessageProcessor } from './VisionExplorerMessageProcessor'
 
 /**
  * 架构消息处理器的通用接口
@@ -48,6 +49,8 @@ export class ArchitectureProcessorFactory {
     switch (architectureType) {
       case 'ReAct':
         return new ReActProcessorAdapter()
+      case 'VisionExplorer':
+        return new VisionExplorerProcessorAdapter()
       // 未来可以添加其他架构
       case 'ReWOO':
       case 'LLMCompiler':
@@ -89,5 +92,28 @@ class ReActProcessorAdapter implements IArchitectureMessageProcessor {
 
   formatData(data: any): string {
     return ReActMessageProcessor.formatJson(data)
+  }
+}
+
+/**
+ * VisionExplorer 处理器适配器
+ * 将 VisionExplorerMessageProcessor 适配为通用接口
+ */
+class VisionExplorerProcessorAdapter implements IArchitectureMessageProcessor {
+  buildDisplayData(message: ChatMessage): any {
+    return VisionExplorerMessageProcessor.buildIterationsFromMessage(message)
+  }
+
+  extractStepsFromChunks(chunks: OrderedMessageChunk[]): any {
+    return VisionExplorerMessageProcessor.extractIterationsFromChunks(chunks)
+  }
+
+  shouldCollapse(data: any): boolean {
+    // VisionExplorer 迭代默认不折叠
+    return false
+  }
+
+  formatData(data: any): string {
+    return JSON.stringify(data, null, 2)
   }
 }

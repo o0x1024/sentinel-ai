@@ -48,6 +48,8 @@ pub mod types;
 pub mod tools;
 pub mod explorer;
 pub mod state;
+pub mod integrations;
+pub mod message_emitter;
 
 // 导出核心类型
 pub use types::{
@@ -55,14 +57,31 @@ pub use types::{
     PageState, PageElement, ActionRecord, ApiEndpoint,
     BrowserAction, ActionResult, VlmAnalysisResult,
     get_browser_tool_definitions,
+    // 新增类型
+    TakeoverStatus, TakeoverSession, UserAction,
+    ContextSummary, ConversationMessage,
+    // 表单相关
+    FormInfo as VisionFormInfo, FormField,
 };
 
 // 导出探索引擎
-pub use explorer::VisionExplorer;
+pub use explorer::{VisionExplorer, TakeoverEvent};
 
 // 导出工具
 pub use tools::BrowserTools;
 
 // 导出状态管理
 pub use state::{StateManager, ExplorationSummary};
+
+// 导出集成模块
+pub use integrations::{
+    ContextSummaryManager, PassiveProxyIntegration, TakeoverManager,
+    ProxyRequestInfo, ApiDiscoveryStats,
+};
+
+// 导出消息发送器
+pub use message_emitter::{
+    VisionExplorerMessageEmitter, VisionStep, VisionAnalysis,
+    VisionAction, VisionExplorationStats,
+};
 

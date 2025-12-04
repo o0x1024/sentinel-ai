@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.sentinel-ai.proxy.extension</string>
+    <key>CFBundleName</key>
+    <string>SentinelProxy</string>
+    <key>CFBundleDisplayName</key>
+    <string>Sentinel AI Proxy</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+    <key>CFBundleExecutable</key>
+    <string>SentinelProxy</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2024 Sentinel AI. All rights reserved.</string>
+    
+    <!-- Network Extension Configuration -->
+    <key>NetworkExtension</key>
+    <dict>
+        <key>NEProviderClasses</key>
+        <dict>
+            <key>com.apple.networkextension.transparent-proxy</key>
+            <string>$(PRODUCT_MODULE_NAME).TransparentProxyProvider</string>
+        </dict>
+        <key>NEMachServiceName</key>
+        <string>$(TeamIdentifierPrefix)com.sentinel-ai.proxy.extension</string>
+    </dict>
+    
+    <!-- System Extension Properties -->
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>Sentinel AI needs to install a system extension to intercept network traffic for security analysis.</string>
+</dict>
+</plist>
+

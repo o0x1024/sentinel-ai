@@ -147,7 +147,7 @@ const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   cursor: pointer;
-  font-size: 0.8125rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
 }
 
 .tool-header:hover {
@@ -155,7 +155,7 @@ const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(
 }
 
 .tool-header i:first-child {
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
 }
 
 .tool-status {
@@ -164,7 +164,7 @@ const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(
 
 .tool-name {
   font-family: ui-monospace, monospace;
-  font-size: 0.8125rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
   color: hsl(var(--bc) / 0.85);
   background: hsl(var(--bc) / 0.06);
   padding: 0.125rem 0.375rem;
@@ -173,7 +173,7 @@ const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(
 
 .toggle-icon {
   margin-left: auto;
-  font-size: 0.625rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.625);
   color: hsl(var(--bc) / 0.3);
   transition: transform 0.15s;
 }
@@ -202,7 +202,7 @@ const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(
 }
 
 .section-title {
-  font-size: 0.6875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.6875);
   font-weight: 500;
   color: hsl(var(--bc) / 0.45);
   text-transform: uppercase;
@@ -212,7 +212,7 @@ const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(
 
 .section-code {
   font-family: ui-monospace, monospace;
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   line-height: 1.5;
   color: hsl(var(--bc) / 0.8);
   background: hsl(var(--bc) / 0.04);
@@ -239,7 +239,7 @@ const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(
   background: hsl(var(--er) / 0.06);
   border-radius: 6px;
   color: hsl(var(--er));
-  font-size: 0.8125rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
 }
 
 /* Final Answer */
@@ -254,7 +254,7 @@ const formatObservation = (obs: any) => ReActMessageProcessor.formatObservation(
   align-items: center;
   gap: 0.5rem;
   color: hsl(var(--bc) / 0.5);
-  font-size: 0.8125rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.8125);
 }
 
 /* 滚动条 */

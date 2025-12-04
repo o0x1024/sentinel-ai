@@ -326,79 +326,40 @@ pub async fn get_combined_plugin_prompt_api(
     println!("plugin_type: {}", plugin_type);
     println!("vuln_type: {}", vuln_type);
     println!("severity: {}", severity);
-    // 根据插件类型选择对应的模板类型
-    let (generation_template_type, interface_template_type, output_template_type) = match plugin_type.as_str() {
-        "passive" => (
-            TemplateType::PluginGeneration,
-            TemplateType::PluginInterface,
-            TemplateType::PluginOutputFormat
-        ),
-        "agent" => (
-            TemplateType::AgentPluginGeneration,
-            TemplateType::PluginInterface, // Agent 也使用 PluginInterface，但可以有自己的
-            TemplateType::AgentPluginOutputFormat
-        ),
-        _ => (
-            TemplateType::PluginGeneration,
-            TemplateType::PluginInterface,
-            TemplateType::PluginOutputFormat
-        ),
+    
+    // 根据插件类型选择对应的模板类型（合并后的完整模板）
+    let template_type = match plugin_type.as_str() {
+        "passive" => TemplateType::PluginGeneration,
+        "agent" => TemplateType::AgentPluginGeneration,
+        _ => TemplateType::PluginGeneration,
     };
     
-    // 获取三个模板：生成、接口、输出格式
-    let generation_templates = repo.list_templates_filtered(
+    // 获取合并后的完整模板
+    let templates = repo.list_templates_filtered(
         Some(PromptCategory::Application),
-        Some(generation_template_type),
-        None,
-        None
-    ).await.map_err(|e| e.to_string())?;
-    
-    let interface_templates = repo.list_templates_filtered(
-        Some(PromptCategory::Application),
-        Some(interface_template_type),
-        None,
-        None
-    ).await.map_err(|e| e.to_string())?;
-    
-    let output_templates = repo.list_templates_filtered(
-        Some(PromptCategory::Application),
-        Some(output_template_type),
+        Some(template_type),
         None,
         None
     ).await.map_err(|e| e.to_string())?;
     
     // 获取激活的模板，如果没有激活的则使用第一个
-    let get_active_or_first = |templates: &[PromptTemplate], template_name: &str| -> Result<String, String> {
-        if templates.is_empty() {
-            return Err(format!("No {} template found in database", template_name));
-        }
-        
-        // 优先选择激活的模板
+    let template = if templates.is_empty() {
+        return Err(format!("No plugin generation template found for type: {}", plugin_type));
+    } else {
         templates.iter()
             .find(|t| t.is_active)
             .or_else(|| templates.first())
             .map(|t| t.content.clone())
-            .ok_or_else(|| format!("No suitable {} template found", template_name))
+            .ok_or_else(|| format!("No suitable template found for type: {}", plugin_type))?
     };
     
-    let generation_content = get_active_or_first(&generation_templates, "generation")?;
-    let interface_content = get_active_or_first(&interface_templates, "interface")?;
-    let output_content = get_active_or_first(&output_templates, "output format")?;
+    // 进行变量替换
+    let mut content = template;
+    content = content.replace("{plugin_type}", &plugin_type);
+    content = content.replace("{vuln_type}", &vuln_type);
+    content = content.replace("{severity}", &severity);
     
-    // 组合模板，进行变量替换
-    let mut combined = format!(
-        "{}\n\n{}\n\n{}",
-        generation_content,
-        interface_content,
-        output_content
-    );
-    
-    // 简单的变量替换
-    combined = combined.replace("{plugin_type}", &plugin_type);
-    combined = combined.replace("{vuln_type}", &vuln_type);
-    combined = combined.replace("{severity}", &severity);
-    
-    Ok(combined)
+    Ok(content)
 }
 
 /// Get default prompt content from prompt.md files in app data directory

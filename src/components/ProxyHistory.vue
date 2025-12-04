@@ -37,56 +37,185 @@
         <i class="fas fa-external-link-alt text-success"></i>
         Open in Browser
       </button>
+      <div class="divider my-1 h-0"></div>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2 text-error"
+        @click="clearHistoryFromMenu"
+      >
+        <i class="fas fa-trash"></i>
+        Clear History
+      </button>
     </div>
 
+    <!-- 筛选器配置弹窗 -->
+    <dialog ref="filterDialog" class="modal">
+      <div class="modal-box max-w-4xl">
+        <h3 class="font-bold text-lg mb-4">Configure HTTP Proxy filter</h3>
+        
+        <div class="grid grid-cols-4 gap-4">
+          <!-- Filter by request type -->
+          <div class="border border-base-300 rounded-lg p-3">
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by request type</h4>
+            <div class="space-y-1">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.requestType.showOnlyWithParams" class="checkbox checkbox-xs" />
+                <span class="text-xs">Show only parameterized requests</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.requestType.hideWithoutResponse" class="checkbox checkbox-xs" />
+                <span class="text-xs">Hide items without responses</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Filter by MIME type -->
+          <div class="border border-base-300 rounded-lg p-3">
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by MIME type</h4>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.mimeType.html" class="checkbox checkbox-xs" />
+                <span class="text-xs">HTML</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.mimeType.otherText" class="checkbox checkbox-xs" />
+                <span class="text-xs">Other text</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.mimeType.script" class="checkbox checkbox-xs" />
+                <span class="text-xs">Script</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.mimeType.images" class="checkbox checkbox-xs" />
+                <span class="text-xs">Images</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.mimeType.xml" class="checkbox checkbox-xs" />
+                <span class="text-xs">XML</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.mimeType.flash" class="checkbox checkbox-xs" />
+                <span class="text-xs">Flash</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.mimeType.css" class="checkbox checkbox-xs" />
+                <span class="text-xs">CSS</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.mimeType.otherBinary" class="checkbox checkbox-xs" />
+                <span class="text-xs">Other binary</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Filter by status code -->
+          <div class="border border-base-300 rounded-lg p-3">
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by status code</h4>
+            <div class="space-y-1">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.statusCode.s2xx" class="checkbox checkbox-xs" />
+                <span class="text-xs">2xx [success]</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.statusCode.s3xx" class="checkbox checkbox-xs" />
+                <span class="text-xs">3xx [redirection]</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.statusCode.s4xx" class="checkbox checkbox-xs" />
+                <span class="text-xs">4xx [request error]</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.statusCode.s5xx" class="checkbox checkbox-xs" />
+                <span class="text-xs">5xx [server error]</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Filter by listener -->
+          <div class="border border-base-300 rounded-lg p-3">
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by listener</h4>
+            <div class="form-control">
+              <label class="label py-0">
+                <span class="label-text text-xs">Port</span>
+              </label>
+              <input type="text" v-model="filterConfig.listener.port" placeholder="e.g. 8080" class="input input-bordered input-xs w-full" />
+            </div>
+          </div>
+
+          <!-- Filter by search term -->
+          <div class="border border-base-300 rounded-lg p-3 col-span-2">
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by search term</h4>
+            <input type="text" v-model="filterConfig.search.term" placeholder="Search..." class="input input-bordered input-xs w-full mb-2" />
+            <div class="flex gap-4">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.search.regex" class="checkbox checkbox-xs" />
+                <span class="text-xs">Regex</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.search.caseSensitive" class="checkbox checkbox-xs" />
+                <span class="text-xs">Case sensitive</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="filterConfig.search.negative" class="checkbox checkbox-xs" />
+                <span class="text-xs">Negative search</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Filter by file extension -->
+          <div class="border border-base-300 rounded-lg p-3 col-span-2">
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by file extension</h4>
+            <div class="grid grid-cols-2 gap-2">
+              <div class="form-control">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.extension.showOnlyEnabled" class="checkbox checkbox-xs" />
+                  <span class="label-text text-xs">Show only:</span>
+                </label>
+                <input type="text" v-model="filterConfig.extension.showOnly" placeholder="asp,aspx,jsp,php" class="input input-bordered input-xs w-full mt-1" />
+              </div>
+              <div class="form-control">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.extension.hideEnabled" class="checkbox checkbox-xs" />
+                  <span class="label-text text-xs">Hide:</span>
+                </label>
+                <input type="text" v-model="filterConfig.extension.hide" placeholder="js,gif,jpg,png,css" class="input input-bordered input-xs w-full mt-1" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部按钮 -->
+        <div class="modal-action justify-between">
+          <div class="flex gap-2">
+            <button class="btn btn-sm" @click="showAllFilters">Show all</button>
+            <button class="btn btn-sm" @click="hideAllFilters">Hide all</button>
+            <button class="btn btn-sm" @click="revertFilterChanges">Revert changes</button>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-sm" @click="closeFilterDialog">Cancel</button>
+            <button class="btn btn-sm btn-primary" @click="applyFilterConfig">Apply</button>
+          </div>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+      </form>
+    </dialog>
+
     <!-- 筛选器工具栏 -->
-    <div class="bg-base-100 border-b border-base-300 p-3 flex-shrink-0">
-      <div class="flex flex-wrap gap-2 items-end">
-        <div class="form-control">
-          <label class="label py-0 pb-1"><span class="label-text text-xs">协议</span></label>
-          <select v-model="filters.protocol" class="select select-bordered select-sm w-24">
-            <option value="">全部</option>
-            <option value="http">HTTP</option>
-            <option value="https">HTTPS</option>
-          </select>
-        </div>
-
-        <div class="form-control">
-          <label class="label py-0 pb-1"><span class="label-text text-xs">方法</span></label>
-          <select v-model="filters.method" class="select select-bordered select-sm w-28">
-            <option value="">全部</option>
-            <option value="GET">GET</option>
-            <option value="POST">POST</option>
-            <option value="PUT">PUT</option>
-            <option value="DELETE">DELETE</option>
-            <option value="PATCH">PATCH</option>
-          </select>
-        </div>
-
-        <div class="form-control">
-          <label class="label py-0 pb-1"><span class="label-text text-xs">状态码</span></label>
-          <select v-model="filters.statusCode" class="select select-bordered select-sm w-32">
-            <option value="">全部</option>
-            <option value="2xx">2xx</option>
-            <option value="3xx">3xx</option>
-            <option value="4xx">4xx</option>
-            <option value="5xx">5xx</option>
-          </select>
-        </div>
-
-        <div class="form-control flex-1 min-w-[200px]">
-          <label class="label py-0 pb-1"><span class="label-text text-xs">搜索</span></label>
-          <input v-model="filters.search" type="text" placeholder="URL、主机名..."
-            class="input input-bordered input-sm" @input="applyFilters" />
-        </div>
-
-        <button @click="clearHistory" class="btn btn-sm btn-error btn-outline" title="清空历史">
-          <i class="fas fa-trash"></i>
+    <div class="bg-base-100 border-b border-base-300 p-2 flex-shrink-0">
+      <div class="flex items-center gap-2">
+        <!-- 筛选器状态按钮 -->
+        <button 
+          @click="openFilterDialog" 
+          class="btn btn-sm btn-ghost gap-2 border border-base-300 flex-1 justify-start"
+          :class="{ 'border-primary': hasActiveFilters }"
+        >
+          <i class="fas fa-filter" :class="{ 'text-primary': hasActiveFilters }"></i>
+          <span class="text-xs truncate">{{ filterSummary }}</span>
         </button>
-        <button @click="resetFilters" class="btn btn-sm btn-outline" title="重置筛选">
-          <i class="fas fa-redo"></i>
-        </button>
-        <button @click="refreshRequests" class="btn btn-sm btn-outline" title="刷新">
+        
+        <!-- 快捷操作按钮 -->
+        <button @click="refreshRequests" class="btn btn-sm btn-ghost" title="刷新">
           <i :class="['fas fa-sync-alt', { 'fa-spin': isLoading }]"></i>
         </button>
       </div>
@@ -135,7 +264,7 @@
           <div v-else-if="filteredRequests.length > 0" :style="{ height: totalHeight + 'px', position: 'relative' }">
             <!-- 表头 -->
             <div 
-              class="sticky top-0 z-10 flex bg-base-200 border-b-2 border-base-300 text-xs font-semibold"
+              class="sticky top-0 z-10 flex bg-base-200 border-b-2 border-base-300 font-semibold table-row-text"
               :style="{ height: headerHeight + 'px', minWidth: 'max-content' }"
             >
               <div 
@@ -156,7 +285,7 @@
             <div 
               v-for="item in visibleItems" 
               :key="item.data.id"
-              class="absolute left-0 right-0 flex text-xs hover:bg-base-200 cursor-pointer border-b border-base-300"
+              class="absolute left-0 right-0 flex hover:bg-base-200 cursor-pointer border-b border-base-300 table-row-text"
               :class="{ 'bg-primary/10': selectedRequest?.id === item.data.id }"
               :style="{ 
                 top: (item.offset + headerHeight) + 'px', 
@@ -178,8 +307,8 @@
                   </span>
                 </template>
                 <template v-else-if="col.id === 'status'">
-                  <span :class="['badge badge-xs', getStatusClass(item.data.status_code)]">
-                    {{ item.data.status_code }}
+                  <span :class="['badge badge-xs', getStatusClass(item.data.status_code)]" :title="getStatusTitle(item.data.status_code)">
+                    {{ getStatusText(item.data.status_code) }}
                   </span>
                 </template>
                 <template v-else-if="col.id === 'params'">
@@ -254,8 +383,14 @@
                 </button>
               </div>
             </div>
-            <div class="flex-1 overflow-auto p-3  font-mono text-xs min-h-0">
-              <pre class="whitespace-pre-wrap break-all">{{ formatRequest(selectedRequest, requestTab) }}</pre>
+            <div class="flex-1 overflow-hidden flex min-h-0">
+              <div class="line-numbers select-none">
+                <div v-for="n in getLineCount(formatRequest(selectedRequest, requestTab))" :key="n" class="line-number">{{ n }}</div>
+              </div>
+              <div 
+                class="flex-1 overflow-auto p-2 http-content"
+                v-html="highlightHttpRequest(formatRequest(selectedRequest, requestTab))"
+              ></div>
             </div>
           </div>
 
@@ -296,8 +431,14 @@
                 </button>
               </div>
             </div>
-            <div class="flex-1 overflow-auto p-3  font-mono text-xs min-h-0">
-              <pre class="whitespace-pre-wrap break-all">{{ formatResponse(selectedRequest, responseTab) }}</pre>
+            <div class="flex-1 overflow-hidden flex min-h-0">
+              <div class="line-numbers select-none">
+                <div v-for="n in getLineCount(formatResponse(selectedRequest, responseTab))" :key="n" class="line-number">{{ n }}</div>
+              </div>
+              <div 
+                class="flex-1 overflow-auto p-2 http-content"
+                v-html="highlightHttpResponse(formatResponse(selectedRequest, responseTab))"
+              ></div>
             </div>
           </div>
         </div>
@@ -422,6 +563,56 @@ const stats = ref({
   avgResponseTime: 0,
 });
 
+// 筛选器弹窗引用
+const filterDialog = ref<HTMLDialogElement | null>(null);
+
+// 默认筛选器配置
+const defaultFilterConfig = () => ({
+  requestType: {
+    showOnlyWithParams: false,
+    hideWithoutResponse: false,
+  },
+  mimeType: {
+    html: true,
+    script: true,
+    xml: true,
+    css: false,
+    otherText: true,
+    images: false,
+    flash: true,
+    otherBinary: false,
+  },
+  statusCode: {
+    s2xx: true,
+    s3xx: true,
+    s4xx: true,
+    s5xx: true,
+  },
+  search: {
+    term: '',
+    regex: false,
+    caseSensitive: false,
+    negative: false,
+  },
+  extension: {
+    showOnlyEnabled: false,
+    showOnly: '',
+    hideEnabled: true,
+    hide: 'js,gif,jpg,png,css,ico,woff,woff2,ttf,svg',
+  },
+  listener: {
+    port: '',
+  },
+});
+
+// 筛选器配置（可编辑）
+const filterConfig = ref(defaultFilterConfig());
+// 已应用的筛选器配置
+const appliedFilterConfig = ref(defaultFilterConfig());
+// 备份配置（用于 revert）
+const backupFilterConfig = ref(defaultFilterConfig());
+
+// 旧的 filters 保留用于兼容
 const filters = ref({
   protocol: '',
   method: '',
@@ -493,47 +684,188 @@ let unlistenRequest: (() => void) | null = null;
 // 计算属性
 const filteredRequests = computed(() => {
   let result = requests.value;
+  const config = appliedFilterConfig.value;
 
-  // 过滤掉 CONNECT 请求
-  // result = result.filter(r => r.method.toUpperCase() !== 'CONNECT');
-
-  // 使用早期返回优化性能
-  if (!filters.value.protocol && 
-      !filters.value.method && 
-      !filters.value.statusCode && 
-      !filters.value.search) {
-    return result;
+  // Filter by request type
+  if (config.requestType.showOnlyWithParams) {
+    result = result.filter(r => hasParams(r.url));
+  }
+  if (config.requestType.hideWithoutResponse) {
+    result = result.filter(r => r.status_code > 0);
   }
 
-  if (filters.value.protocol) {
-    result = result.filter(r => r.protocol === filters.value.protocol);
-  }
+  // Filter by status code
+  result = result.filter(r => {
+    const code = r.status_code;
+    if (code === 0) return true; // 未收到响应的请求
+    if (code >= 200 && code < 300) return config.statusCode.s2xx;
+    if (code >= 300 && code < 400) return config.statusCode.s3xx;
+    if (code >= 400 && code < 500) return config.statusCode.s4xx;
+    if (code >= 500 && code < 600) return config.statusCode.s5xx;
+    return true;
+  });
 
-  if (filters.value.method) {
-    result = result.filter(r => r.method === filters.value.method);
-  }
+  // Filter by MIME type
+  result = result.filter(r => {
+    const mime = getMimeTypeCategory(r);
+    if (mime === 'html') return config.mimeType.html;
+    if (mime === 'script') return config.mimeType.script;
+    if (mime === 'xml') return config.mimeType.xml;
+    if (mime === 'css') return config.mimeType.css;
+    if (mime === 'image') return config.mimeType.images;
+    if (mime === 'flash') return config.mimeType.flash;
+    if (mime === 'text') return config.mimeType.otherText;
+    if (mime === 'binary') return config.mimeType.otherBinary;
+    return true; // 未知类型默认显示
+  });
 
-  if (filters.value.statusCode) {
-    const statusRange = filters.value.statusCode;
+  // Filter by file extension
+  if (config.extension.showOnlyEnabled && config.extension.showOnly) {
+    const showExts = config.extension.showOnly.toLowerCase().split(',').map(e => e.trim());
     result = result.filter(r => {
-      const code = r.status_code;
-      if (statusRange === '2xx') return code >= 200 && code < 300;
-      if (statusRange === '3xx') return code >= 300 && code < 400;
-      if (statusRange === '4xx') return code >= 400 && code < 500;
-      if (statusRange === '5xx') return code >= 500 && code < 600;
-      return true;
+      const ext = getExtension(r.url).toLowerCase();
+      return !ext || showExts.includes(ext);
+    });
+  }
+  if (config.extension.hideEnabled && config.extension.hide) {
+    const hideExts = config.extension.hide.toLowerCase().split(',').map(e => e.trim());
+    result = result.filter(r => {
+      const ext = getExtension(r.url).toLowerCase();
+      return !ext || !hideExts.includes(ext);
     });
   }
 
-  if (filters.value.search) {
-    const search = filters.value.search.toLowerCase();
-    result = result.filter(r =>
-      r.url.toLowerCase().includes(search) ||
-      r.host.toLowerCase().includes(search)
-    );
+  // Filter by search term
+  if (config.search.term) {
+    const term = config.search.term;
+    const caseSensitive = config.search.caseSensitive;
+    const isRegex = config.search.regex;
+    const isNegative = config.search.negative;
+    
+    result = result.filter(r => {
+      let text = r.url + ' ' + r.host;
+      let match = false;
+      
+      if (isRegex) {
+        try {
+          const regex = new RegExp(term, caseSensitive ? '' : 'i');
+          match = regex.test(text);
+        } catch {
+          match = false;
+        }
+      } else {
+        if (caseSensitive) {
+          match = text.includes(term);
+        } else {
+          match = text.toLowerCase().includes(term.toLowerCase());
+        }
+      }
+      
+      return isNegative ? !match : match;
+    });
+  }
+
+  // Filter by listener port
+  if (config.listener.port) {
+    result = result.filter(r => {
+      const listenerPort = r.listener || '';
+      return listenerPort.includes(config.listener.port);
+    });
   }
 
   return result;
+});
+
+// 获取 MIME 类型分类
+function getMimeTypeCategory(request: ProxyRequest): string {
+  let contentType = '';
+  
+  if (request.response_headers) {
+    try {
+      const headers = JSON.parse(request.response_headers);
+      contentType = (headers['content-type'] || headers['Content-Type'] || '').toLowerCase();
+    } catch {
+      // ignore
+    }
+  }
+  
+  if (!contentType) {
+    // 根据扩展名推断
+    const ext = getExtension(request.url).toLowerCase();
+    const extMap: Record<string, string> = {
+      'html': 'html', 'htm': 'html',
+      'js': 'script', 'mjs': 'script',
+      'xml': 'xml',
+      'css': 'css',
+      'png': 'image', 'jpg': 'image', 'jpeg': 'image', 'gif': 'image', 'webp': 'image', 'svg': 'image', 'ico': 'image',
+      'swf': 'flash',
+      'txt': 'text', 'json': 'text',
+      'woff': 'binary', 'woff2': 'binary', 'ttf': 'binary', 'eot': 'binary', 'pdf': 'binary', 'zip': 'binary',
+    };
+    return extMap[ext] || 'unknown';
+  }
+  
+  if (contentType.includes('html')) return 'html';
+  if (contentType.includes('javascript') || contentType.includes('ecmascript')) return 'script';
+  if (contentType.includes('xml')) return 'xml';
+  if (contentType.includes('css')) return 'css';
+  if (contentType.includes('image')) return 'image';
+  if (contentType.includes('flash') || contentType.includes('shockwave')) return 'flash';
+  if (contentType.includes('text') || contentType.includes('json')) return 'text';
+  if (contentType.includes('octet-stream') || contentType.includes('binary') || 
+      contentType.includes('font') || contentType.includes('application')) return 'binary';
+  
+  return 'unknown';
+}
+
+// 检查是否有激活的筛选器
+const hasActiveFilters = computed(() => {
+  const config = appliedFilterConfig.value;
+  const def = defaultFilterConfig();
+  
+  // 检查是否与默认配置不同
+  return (
+    config.requestType.showOnlyWithParams !== def.requestType.showOnlyWithParams ||
+    config.requestType.hideWithoutResponse !== def.requestType.hideWithoutResponse ||
+    !config.statusCode.s2xx || !config.statusCode.s3xx || !config.statusCode.s4xx || !config.statusCode.s5xx ||
+    !config.mimeType.html || !config.mimeType.script || !config.mimeType.xml ||
+    config.mimeType.css || config.mimeType.images || !config.mimeType.otherText ||
+    config.mimeType.otherBinary ||
+    config.search.term !== '' ||
+    config.extension.showOnlyEnabled ||
+    config.listener.port !== ''
+  );
+});
+
+// 筛选器摘要
+const filterSummary = computed(() => {
+  const config = appliedFilterConfig.value;
+  const parts: string[] = [];
+  
+  // MIME 类型过滤
+  const hiddenMime: string[] = [];
+  if (!config.mimeType.css) hiddenMime.push('CSS');
+  if (!config.mimeType.images) hiddenMime.push('image');
+  if (!config.mimeType.otherBinary) hiddenMime.push('binary');
+  
+  if (hiddenMime.length > 0) {
+    parts.push(`Hiding ${hiddenMime.join(', ')}`);
+  }
+  
+  // 扩展名过滤
+  if (config.extension.hideEnabled && config.extension.hide) {
+    parts.push(`hiding extensions`);
+  }
+  
+  if (config.search.term) {
+    parts.push(`search: "${config.search.term}"`);
+  }
+  
+  if (parts.length === 0) {
+    return 'Filter settings: Showing all content';
+  }
+  
+  return `Filter settings: ${parts.join(' and ')}`;
 });
 
 const visibleColumns = computed(() => {
@@ -837,11 +1169,25 @@ function getMethodClass(method: string) {
 }
 
 function getStatusClass(statusCode: number) {
+  if (statusCode === -1) return 'badge-warning'; // 等待响应（CONNECT 隧道）
+  if (statusCode === 0) return 'badge-error'; // TLS 握手失败
   if (statusCode >= 200 && statusCode < 300) return 'badge-success';
   if (statusCode >= 300 && statusCode < 400) return 'badge-info';
   if (statusCode >= 400 && statusCode < 500) return 'badge-warning';
   if (statusCode >= 500) return 'badge-error';
   return 'badge-ghost';
+}
+
+function getStatusText(statusCode: number): string {
+  if (statusCode === -1) return 'TUNNEL';
+  if (statusCode === 0) return 'TLS ERR';
+  return String(statusCode);
+}
+
+function getStatusTitle(statusCode: number): string {
+  if (statusCode === -1) return 'HTTPS Tunnel (CONNECT) - TLS handshake may have failed';
+  if (statusCode === 0) return 'TLS Handshake Failed';
+  return '';
 }
 
 function formatBytes(bytes: number) {
@@ -996,16 +1342,81 @@ function applyFilters() {
   }
 }
 
-function resetFilters() {
-  filters.value = {
-    protocol: '',
-    method: '',
-    statusCode: '',
-    search: '',
+
+// 筛选器弹窗相关方法
+function openFilterDialog() {
+  // 备份当前配置
+  backupFilterConfig.value = JSON.parse(JSON.stringify(appliedFilterConfig.value));
+  // 复制应用的配置到编辑配置
+  filterConfig.value = JSON.parse(JSON.stringify(appliedFilterConfig.value));
+  filterDialog.value?.showModal();
+}
+
+function closeFilterDialog() {
+  filterDialog.value?.close();
+}
+
+function applyFilterConfig() {
+  // 应用配置
+  appliedFilterConfig.value = JSON.parse(JSON.stringify(filterConfig.value));
+  // 保存到 localStorage
+  localStorage.setItem('proxyHistory.filterConfig', JSON.stringify(appliedFilterConfig.value));
+  closeFilterDialog();
+  applyFilters();
+}
+
+function revertFilterChanges() {
+  filterConfig.value = JSON.parse(JSON.stringify(backupFilterConfig.value));
+}
+
+function showAllFilters() {
+  filterConfig.value.mimeType = {
+    html: true,
+    script: true,
+    xml: true,
+    css: true,
+    otherText: true,
+    images: true,
+    flash: true,
+    otherBinary: true,
   };
-  scrollTop.value = 0;
-  if (scrollContainer.value) {
-    scrollContainer.value.scrollTop = 0;
+  filterConfig.value.statusCode = {
+    s2xx: true,
+    s3xx: true,
+    s4xx: true,
+    s5xx: true,
+  };
+  filterConfig.value.extension.showOnlyEnabled = false;
+  filterConfig.value.extension.hideEnabled = false;
+  filterConfig.value.requestType.showOnlyWithParams = false;
+  filterConfig.value.requestType.hideWithoutResponse = false;
+}
+
+function hideAllFilters() {
+  filterConfig.value.mimeType = {
+    html: false,
+    script: false,
+    xml: false,
+    css: false,
+    otherText: false,
+    images: false,
+    flash: false,
+    otherBinary: false,
+  };
+}
+
+// 加载保存的筛选器配置
+function loadFilterConfig() {
+  try {
+    const saved = localStorage.getItem('proxyHistory.filterConfig');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // 合并默认配置和保存的配置
+      appliedFilterConfig.value = { ...defaultFilterConfig(), ...parsed };
+      filterConfig.value = JSON.parse(JSON.stringify(appliedFilterConfig.value));
+    }
+  } catch (e) {
+    console.error('Failed to load filter config:', e);
   }
 }
 
@@ -1147,6 +1558,11 @@ function openInBrowser() {
   
   window.open(contextMenu.value.request.url, '_blank');
   hideContextMenu();
+}
+
+function clearHistoryFromMenu() {
+  hideContextMenu();
+  clearHistory();
 }
 
 function formatRequest(request: ProxyRequest, tab: string): string {
@@ -1303,6 +1719,137 @@ function stringToHex(str: string): string {
   return hex;
 }
 
+// 行号和语法高亮辅助函数
+function getLineCount(text: string): number {
+  if (!text) return 1;
+  return text.split(/\r\n|\r|\n/).length;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function highlightHttpRequest(raw: string): string {
+  if (!raw) return '';
+  
+  const lines = raw.split(/\r\n|\r|\n/);
+  const result: string[] = [];
+  let inBody = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    if (i === 0) {
+      // 请求行: GET /path HTTP/1.1
+      const match = line.match(/^(\w+)\s+(.+?)\s+(HTTP\/[\d.]+)$/);
+      if (match) {
+        result.push(`<span class="http-method">${escapeHtml(match[1])}</span> <span class="http-path">${escapeHtml(match[2])}</span> <span class="http-version">${escapeHtml(match[3])}</span>`);
+      } else {
+        result.push(escapeHtml(line));
+      }
+    } else if (!inBody && line === '') {
+      inBody = true;
+      result.push('');
+    } else if (!inBody) {
+      // 请求头: Header-Name: value
+      const colonIndex = line.indexOf(':');
+      if (colonIndex > 0) {
+        const key = line.substring(0, colonIndex);
+        const value = line.substring(colonIndex + 1);
+        result.push(`<span class="http-header-key">${escapeHtml(key)}</span>:<span class="http-header-value">${escapeHtml(value)}</span>`);
+      } else {
+        result.push(escapeHtml(line));
+      }
+    } else {
+      // Body
+      result.push(escapeHtml(line));
+    }
+  }
+  
+  return result.join('\n');
+}
+
+function highlightHttpResponse(raw: string): string {
+  if (!raw) return '';
+  
+  const lines = raw.split(/\r\n|\r|\n/);
+  const result: string[] = [];
+  let inBody = false;
+  let contentType = '';
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    if (i === 0) {
+      // 状态行: HTTP/1.1 200 OK
+      const match = line.match(/^(HTTP\/[\d.]+)\s+(\d+)\s*(.*)$/);
+      if (match) {
+        const statusClass = getStatusColorClass(parseInt(match[2]));
+        result.push(`<span class="http-version">${escapeHtml(match[1])}</span> <span class="${statusClass}">${escapeHtml(match[2])}</span> <span class="http-status-text">${escapeHtml(match[3])}</span>`);
+      } else {
+        result.push(escapeHtml(line));
+      }
+    } else if (!inBody && line === '') {
+      inBody = true;
+      result.push('');
+    } else if (!inBody) {
+      // 响应头
+      const colonIndex = line.indexOf(':');
+      if (colonIndex > 0) {
+        const key = line.substring(0, colonIndex);
+        const value = line.substring(colonIndex + 1);
+        if (key.toLowerCase() === 'content-type') {
+          contentType = value.trim();
+        }
+        result.push(`<span class="http-header-key">${escapeHtml(key)}</span>:<span class="http-header-value">${escapeHtml(value)}</span>`);
+      } else {
+        result.push(escapeHtml(line));
+      }
+    } else {
+      // Body - 根据 Content-Type 高亮
+      if (contentType.includes('html')) {
+        result.push(highlightHtml(line));
+      } else if (contentType.includes('json')) {
+        result.push(highlightJson(line));
+      } else {
+        result.push(escapeHtml(line));
+      }
+    }
+  }
+  
+  return result.join('\n');
+}
+
+function getStatusColorClass(status: number): string {
+  if (status >= 200 && status < 300) return 'http-status-2xx';
+  if (status >= 300 && status < 400) return 'http-status-3xx';
+  if (status >= 400 && status < 500) return 'http-status-4xx';
+  if (status >= 500) return 'http-status-5xx';
+  return '';
+}
+
+function highlightHtml(line: string): string {
+  return line
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/&lt;(\/?)([\w-]+)/g, '&lt;$1<span class="html-tag">$2</span>')
+    .replace(/\s([\w-]+)=/g, ' <span class="html-attr">$1</span>=')
+    .replace(/="([^"]*)"/g, '="<span class="html-value">$1</span>"');
+}
+
+function highlightJson(line: string): string {
+  return escapeHtml(line)
+    .replace(/"([^"]+)":/g, '<span class="json-key">"$1"</span>:')
+    .replace(/:\s*"([^"]*)"/g, ': <span class="json-string">"$1"</span>')
+    .replace(/:\s*(\d+\.?\d*)/g, ': <span class="json-number">$1</span>')
+    .replace(/:\s*(true|false|null)/g, ': <span class="json-keyword">$1</span>');
+}
+
 async function setupEventListeners() {
   // 监听新的代理请求事件
   unlistenRequest = await listen<ProxyRequest>('proxy:request', (event) => {
@@ -1329,6 +1876,9 @@ async function setupEventListeners() {
 
 // 生命周期
 onMounted(async () => {
+  // 加载筛选器配置
+  loadFilterConfig();
+  
   await setupEventListeners();
   await refreshRequests();
   
@@ -1386,3 +1936,136 @@ watch(refreshTrigger, async () => {
   await refreshRequests();
 });
 </script>
+
+<style scoped>
+/* 表格行文字使用系统字体大小 */
+.table-row-text {
+  font-size: var(--font-size-base, 14px);
+}
+
+/* 行号 */
+.line-numbers {
+  background: oklch(var(--b2));
+  border-right: 1px solid oklch(var(--b3));
+  padding: 0.5rem 0;
+  min-width: 3rem;
+  text-align: right;
+  overflow: hidden;
+}
+.line-number {
+  padding: 0 0.5rem;
+  font-size: var(--font-size-base, 14px);
+  line-height: 1.5;
+  color: oklch(var(--bc) / 0.4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* HTTP 内容 */
+.http-content {
+  white-space: pre;
+  font-size: var(--font-size-base, 14px);
+  line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* HTTP 语法高亮 */
+.http-content :deep(.http-method) {
+  color: #c41a16;
+  font-weight: 600;
+}
+.http-content :deep(.http-path) {
+  color: #1c00cf;
+}
+.http-content :deep(.http-version) {
+  color: #5c5c5c;
+}
+.http-content :deep(.http-header-key) {
+  color: #c41a16;
+}
+.http-content :deep(.http-header-value) {
+  color: #000;
+}
+.http-content :deep(.http-status-2xx) {
+  color: #18794e;
+  font-weight: 600;
+}
+.http-content :deep(.http-status-3xx) {
+  color: #0550ae;
+  font-weight: 600;
+}
+.http-content :deep(.http-status-4xx) {
+  color: #cf222e;
+  font-weight: 600;
+}
+.http-content :deep(.http-status-5xx) {
+  color: #8250df;
+  font-weight: 600;
+}
+.http-content :deep(.http-status-text) {
+  color: #5c5c5c;
+}
+
+/* HTML 语法高亮 */
+.http-content :deep(.html-tag) {
+  color: #0550ae;
+}
+.http-content :deep(.html-attr) {
+  color: #c41a16;
+}
+.http-content :deep(.html-value) {
+  color: #0a3069;
+}
+
+/* JSON 语法高亮 */
+.http-content :deep(.json-key) {
+  color: #0550ae;
+}
+.http-content :deep(.json-string) {
+  color: #0a3069;
+}
+.http-content :deep(.json-number) {
+  color: #0550ae;
+}
+.http-content :deep(.json-keyword) {
+  color: #cf222e;
+}
+
+/* 暗色主题适配 */
+[data-theme="dark"] .http-content :deep(.http-method),
+[data-theme="dark"] .http-content :deep(.http-header-key),
+[data-theme="dark"] .http-content :deep(.html-attr) {
+  color: #ff7b72;
+}
+[data-theme="dark"] .http-content :deep(.http-path),
+[data-theme="dark"] .http-content :deep(.html-tag),
+[data-theme="dark"] .http-content :deep(.json-key),
+[data-theme="dark"] .http-content :deep(.json-number) {
+  color: #79c0ff;
+}
+[data-theme="dark"] .http-content :deep(.http-version),
+[data-theme="dark"] .http-content :deep(.http-status-text) {
+  color: #8b949e;
+}
+[data-theme="dark"] .http-content :deep(.http-header-value) {
+  color: #c9d1d9;
+}
+[data-theme="dark"] .http-content :deep(.http-status-2xx) {
+  color: #3fb950;
+}
+[data-theme="dark"] .http-content :deep(.http-status-3xx) {
+  color: #58a6ff;
+}
+[data-theme="dark"] .http-content :deep(.http-status-4xx) {
+  color: #f85149;
+}
+[data-theme="dark"] .http-content :deep(.http-status-5xx) {
+  color: #a371f7;
+}
+[data-theme="dark"] .http-content :deep(.html-value),
+[data-theme="dark"] .http-content :deep(.json-string) {
+  color: #a5d6ff;
+}
+[data-theme="dark"] .http-content :deep(.json-keyword) {
+  color: #ff7b72;
+}
+</style>

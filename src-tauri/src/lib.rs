@@ -36,7 +36,8 @@ use services::{
 use commands::{
     agent_commands, ai, ai_commands, asset, config, database as db_commands, dictionary,
     mcp as mcp_commands, passive_scan_commands::{self, PassiveScanState}, performance,
-    plan_execute_commands, rag_commands, scan, scan_commands, scan_session_commands, vulnerability,
+    plan_execute_commands, proxifier_commands::{self, ProxifierState}, rag_commands, 
+    scan, scan_commands, scan_session_commands, vulnerability,
     window, prompt_commands, rewoo_commands, unified_tools,
 };
 
@@ -154,6 +155,9 @@ pub fn run() {
                 .add_directive("sentinel_ai=info".parse().unwrap())
                 .add_directive("sentinel_plugins=info".parse().unwrap())
                 .add_directive("sentinel_workflow=info".parse().unwrap())
+                .add_directive("sentinel_passive=info".parse().unwrap())
+                // 完全屏蔽 hudsucker 的日志（WebSocket 断开连接等协议层错误是常见现象，不影响功能）
+                .add_directive("hudsucker=off".parse().unwrap())
                 // 屏蔽 rig crate 的 "Agent multi-turn stream finished" 日志
                 .add_directive("rig::agent::prompt_request::streaming=warn".parse().unwrap())
         )
@@ -421,6 +425,8 @@ pub fn run() {
                 handle.manage(asset_service);
                 // Manage passive scan state (created in setup hook above)
                 handle.manage(passive_state_for_manage);
+                // Manage proxifier state
+                handle.manage(ProxifierState::new());
                 // 工作流引擎实例
                 let workflow_engine = Arc::new(engines::intelligent_dispatcher::workflow_engine::WorkflowEngine::new());
                 handle.manage(workflow_engine.clone());
@@ -871,6 +877,7 @@ pub fn run() {
             
             // RAG相关命令
             rag_commands::rag_ingest_source,
+            rag_commands::rag_ingest_text,
             rag_commands::rag_query,
             rag_commands::rag_clear_collection,
             rag_commands::rag_initialize_service,
@@ -955,6 +962,25 @@ pub fn run() {
             // 请求重放（Repeater）相关命令
             passive_scan_commands::replay_request,
             passive_scan_commands::replay_raw_request,
+            // Proxifier 相关命令
+            proxifier_commands::get_proxifier_config,
+            proxifier_commands::start_proxifier,
+            proxifier_commands::stop_proxifier,
+            proxifier_commands::save_proxifier_proxies,
+            proxifier_commands::save_proxifier_rules,
+            proxifier_commands::get_proxifier_connections,
+            proxifier_commands::clear_proxifier_connections,
+            // pf 透明代理相关命令
+            proxifier_commands::get_transparent_proxy_status,
+            proxifier_commands::start_transparent_proxy,
+            proxifier_commands::stop_transparent_proxy,
+            proxifier_commands::add_transparent_redirect_port,
+            proxifier_commands::remove_transparent_redirect_port,
+            // 数据库持久化命令
+            proxifier_commands::load_proxifier_proxies_from_db,
+            proxifier_commands::save_proxifier_proxies_to_db,
+            proxifier_commands::load_proxifier_rules_from_db,
+            proxifier_commands::save_proxifier_rules_to_db,
             // Plugin review commands (Plan B)
             commands::plugin_review_commands::get_plugins_for_review,
             commands::plugin_review_commands::list_generated_plugins,

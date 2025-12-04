@@ -554,12 +554,11 @@ async fn execute_workflow_steps(
                     let model = step_def.inputs.get("model").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                     
                     // 调用 LLM 服务
-                    let llm_config = crate::llm_client::WorkflowLlmConfig {
-                        provider: provider.clone().unwrap_or_else(|| "openai".to_string()),
-                        model: model.clone().unwrap_or_else(|| "gpt-4".to_string()),
-                        timeout_secs: 120,
-                    };
-                    let llm_client = crate::llm_client::WorkflowLlmClient::new(llm_config);
+                    let llm_config = sentinel_llm::LlmConfig::new(
+                        provider.clone().unwrap_or_else(|| "openai".to_string()),
+                        model.clone().unwrap_or_else(|| "gpt-4".to_string()),
+                    ).with_timeout(120);
+                    let llm_client = sentinel_llm::LlmClient::new(llm_config);
                     
                     let result = match llm_client.completion(system_prompt.as_deref(), &prompt).await {
                         Ok(response) => {

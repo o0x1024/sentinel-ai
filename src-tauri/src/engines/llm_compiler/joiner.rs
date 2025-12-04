@@ -17,7 +17,7 @@ use tracing::{debug, info, warn, error};
 
 use super::types::EfficiencyMetrics;
 use super::types::*;
-use crate::engines::llm_client::LlmClient;
+use crate::engines::LlmClient;
 use crate::models::prompt::{ArchitectureType, StageType};
 use crate::services::ai::AiService;
 use crate::services::prompt_db::PromptRepository;
@@ -106,7 +106,7 @@ impl IntelligentJoiner {
         config: LlmCompilerConfig,
         prompt_repo: Option<PromptRepository>,
     ) -> Self {
-        let llm_client = LlmClient::from_ai_service(&ai_service);
+        let llm_client = crate::engines::create_client(&ai_service);
         Self {
             llm_client,
             config,

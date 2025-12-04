@@ -2,7 +2,7 @@
 //! 
 //! 基于 Prompt 驱动的通用规划逻辑，不针对特定任务类型做特殊处理
 
-use crate::engines::llm_client::LlmClient;
+use crate::engines::LlmClient;
 use crate::services::prompt_db::PromptRepository;
 use crate::services::mcp::McpService;
 use crate::services::ai::{AiService, AiServiceManager, SchedulerStage};
@@ -743,7 +743,7 @@ impl Planner {
         };
         
         // 使用公共 llm_client 模块进行 LLM 调用
-        let llm_client = LlmClient::from_ai_service(&ai_service);
+        let llm_client = crate::engines::create_client(&ai_service);
         let result = llm_client
             .completion(Some(system_prompt), user_prompt)
             .await

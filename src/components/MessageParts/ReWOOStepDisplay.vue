@@ -348,7 +348,7 @@ const hasObservationError = (obs: any) => {
   background: hsl(var(--p));
   color: hsl(var(--pc));
   border-radius: 50%;
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   font-weight: bold;
 }
 
@@ -363,7 +363,7 @@ const hasObservationError = (obs: any) => {
 }
 
 .plan-summary {
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
   line-height: 1.5;
 }
 
@@ -377,7 +377,7 @@ const hasObservationError = (obs: any) => {
 }
 
 .final-answer {
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.875);
   line-height: 1.6;
 }
 

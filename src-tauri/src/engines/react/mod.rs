@@ -23,5 +23,5 @@ pub use engine_adapter::ReactEngine;
 pub use memory_integration::{ReactMemoryIntegration, ReactMemoryConfig, ContextSummarizer};
 pub use message_emitter::{ReactMessageEmitter, ReactExecutionStats, ReactLlmClient};
 
-// 从公共 llm_client 导出
-pub use crate::engines::llm_client::{LlmConfig, LlmClient, create_llm_config, create_client};
+// 从 sentinel_llm 重新导出
+pub use sentinel_llm::{LlmConfig, LlmClient, create_llm_config, create_client};

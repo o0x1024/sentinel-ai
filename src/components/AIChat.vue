@@ -111,6 +111,16 @@
           <div v-else-if="isTravelMessageFn(message)" class="space-y-3">
             <TravelStepDisplay
               :message="message"
+              :chunks="orderedMessages.processor.chunks.get(message.id)"
+              :isExecuting="message.isStreaming"
+            />
+          </div>
+
+          <!-- VisionExplorer 步骤显示 -->
+          <div v-else-if="isVisionExplorerMessageFn(message)" class="space-y-3">
+            <VisionStepDisplay
+              :message="message"
+              :chunks="orderedMessages.processor.chunks.get(message.id)"
               :isExecuting="message.isStreaming"
             />
           </div>
@@ -132,8 +142,8 @@
             :stream-char-count="streamCharCount"
           />
 
-          <!-- 流式指示器（Travel 有自己的 loading，不重复显示） -->
-          <div v-if="message.isStreaming && !isTravelMessageFn(message)" class="flex items-center gap-2 mt-2 text-base-content/70">
+          <!-- 流式指示器（Travel/VisionExplorer 有自己的 loading，不重复显示） -->
+          <div v-if="message.isStreaming && !isTravelMessageFn(message) && !isVisionExplorerMessageFn(message)" class="flex items-center gap-2 mt-2 text-base-content/70">
             <span class="loading loading-dots loading-sm text-primary"></span>
             <span class="text-sm">{{ t('aiAssistant.generating', 'AI正在思考...') }}</span>
           </div>
@@ -324,6 +334,7 @@ import ReWOOStepDisplay from './MessageParts/ReWOOStepDisplay.vue'
 import LLMCompilerStepDisplay from './MessageParts/LLMCompilerStepDisplay.vue'
 import PlanAndExecuteStepDisplay from './MessageParts/PlanAndExecuteStepDisplay.vue'
 import TravelStepDisplay from './MessageParts/TravelStepDisplay.vue'
+import VisionStepDisplay from './MessageParts/VisionStepDisplay.vue'
 import MessageContentDisplay from './MessageParts/MessageContentDisplay.vue'
 import OrchestratorStepDisplay from './MessageParts/OrchestratorStepDisplay.vue'
 
@@ -572,6 +583,23 @@ const isTravelMessageFn = (message: ChatMessage) => {
   
   // 检查是否有 travelCycles 数据
   if ((message as any).travelCycles?.length > 0) return true
+  
+  // 如果已经是其他明确的架构类型，直接返回false
+  if (archType && archType !== 'Unknown') return false
+
+  return false
+}
+
+// VisionExplorer 消息检测函数
+const isVisionExplorerMessageFn = (message: ChatMessage) => {
+  if (message.role !== 'assistant') return false
+
+  // 优先检查架构元数据
+  const archType = getMessageArchitecture(message)
+  if (archType === 'VisionExplorer') return true
+  
+  // 检查是否有 visionIterations 数据
+  if ((message as any).visionIterations?.length > 0) return true
   
   // 如果已经是其他明确的架构类型，直接返回false
   if (archType && archType !== 'Unknown') return false
@@ -1602,7 +1630,7 @@ defineExpose({
 
 .typewriter-text:hover::after {
   content: ' ✋ 点击跳过';
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
   opacity: 0.7;
   color: hsl(var(--bc) / 0.6);
   background: hsl(var(--b1));

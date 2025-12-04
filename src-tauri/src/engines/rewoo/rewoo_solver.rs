@@ -3,7 +3,7 @@
 //! 负责根据工具执行结果生成最终答案
 
 use super::*;
-use crate::engines::llm_client::{LlmClient, StreamingLlmClient, StreamContent};
+use crate::engines::{LlmClient, StreamingLlmClient, StreamContent};
 use crate::services::ai::AiServiceManager;
 use crate::services::prompt_db::PromptRepository;
 use anyhow::{anyhow, Result};
@@ -161,7 +161,7 @@ impl ReWOOSolver {
         };
 
         // 使用公共 llm_client 模块
-        let llm_config = crate::engines::llm_client::create_llm_config(&ai_service);
+        let llm_config = crate::engines::create_llm_config(&ai_service);
         info!(
             "ReWOO Solver: Using provider={}, model={}, execution_id={}",
             llm_config.provider, llm_config.model, execution_id

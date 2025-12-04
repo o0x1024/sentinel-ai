@@ -3,7 +3,7 @@
 //! 实现混合判断机制:规则快速判断+LLM深度分析
 
 use super::types::{TaskComplexity, ComplexityConfig};
-use crate::engines::llm_client::{LlmClient, create_client as create_llm_client};
+use crate::engines::LlmClient;
 use crate::services::ai::AiService;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ impl ComplexityAnalyzer {
 
     /// 设置AI服务（创建内置 LlmClient）
     pub fn with_ai_service(mut self, ai_service: Arc<AiService>) -> Self {
-        self.llm_client = Some(create_llm_client(&ai_service));
+        self.llm_client = Some(crate::engines::create_client(ai_service.as_ref()));
         self
     }
 
@@ -203,11 +203,18 @@ impl ComplexityAnalyzer {
 **任务参数**: {}
 
 **复杂度分类**:
-1. **简单**: 单个工具执行, 直接操作 (例如: "扫描端口80", "检查网站是否正常")
-2. **中等**: 多个工具顺序调用, 中等分析 (例如: "扫描网站并识别技术", "测试常见漏洞")
-3. **复杂**: 多步骤推理, 攻击链构造, 需要规划 (例如: "执行渗透测试", "利用漏洞链", "红队评估")
+1. **简单(Simple)**: 单个工具执行, 直接操作 (例如: "扫描端口80", "检查网站是否正常", "发送一个HTTP请求")
+2. **中等(Medium)**: 多个工具顺序调用, 中等分析 (例如: "扫描网站并识别技术", "测试常见漏洞", "分析已有的网站流量")
+3. **复杂(Complex)**: 多步骤推理, 需要先收集数据再分析, 攻击链构造 (例如: "执行渗透测试", "获取网站所有接口信息", "发现并测试漏洞", "红队评估", "全面安全评估")
+
+**重要判断规则**:
+1. 如果任务需要**先访问网站收集数据**，然后再分析，这是 **Complex** 任务
+2. "获取所有接口/API"、"发现所有端点"、"全面分析网站" 这类任务需要：探索网站 → 收集流量 → 分析数据，是 **Complex** 任务
+3. 只有当数据已经存在，只需要分析时，才是 **Medium** 任务
+4. 单步操作（如发送请求、扫描端口）是 **Simple** 任务
 
 **指导**:
+- 考虑是否需要先收集数据（如访问网站、触发请求）
 - 考虑所需步骤数量
 - 评估是否需要推理/规划
 - 评估是否需要多个工具协同

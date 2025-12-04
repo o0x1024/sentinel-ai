@@ -210,73 +210,143 @@
 
     <!-- 文档摄取模态框 -->
     <div v-if="showIngestDocumentModal" class="modal modal-open">
-      <div class="modal-box">
+      <div class="modal-box max-w-2xl">
         <h3 class="font-bold text-lg mb-4">添加文档到 {{ selectedCollection?.name }}</h3>
         
+        <!-- 选项卡切换 -->
+        <div class="tabs tabs-boxed mb-4">
+          <a 
+            class="tab" 
+            :class="{ 'tab-active': ingestMode === 'file' }"
+            @click="ingestMode = 'file'"
+          >
+            <i class="fas fa-file-upload mr-2"></i>
+            选择文件
+          </a>
+          <a 
+            class="tab" 
+            :class="{ 'tab-active': ingestMode === 'manual' }"
+            @click="ingestMode = 'manual'"
+          >
+            <i class="fas fa-keyboard mr-2"></i>
+            手动输入
+          </a>
+        </div>
+        
         <form @submit.prevent="ingestDocument">
-          <div class="form-control mb-4">
-            <label class="label">
-              <span class="label-text">选择文件</span>
-            </label>
-            <div class="flex gap-2">
+          <!-- 文件选择模式 -->
+          <div v-if="ingestMode === 'file'">
+            <div class="form-control mb-4">
+              <label class="label">
+                <span class="label-text">选择文件</span>
+              </label>
+              <div class="flex gap-2">
+                <input 
+                  ref="fileInput"
+                  type="file" 
+                  class="file-input file-input-bordered flex-1" 
+                  accept=".txt,.md,.pdf,.docx"
+                  multiple
+                  @change="handleFileSelect"
+                >
+                <button 
+                  type="button"
+                  @click="selectFileWithDialog"
+                  class="btn btn-outline"
+                  title="选择单个文件"
+                >
+                  <i class="fas fa-file"></i>
+                </button>
+                <button 
+                  type="button"
+                  @click="selectFolderWithDialog"
+                  class="btn btn-outline"
+                  title="选择文件夹"
+                >
+                  <i class="fas fa-folder-open"></i>
+                </button>
+              </div>
+              <label class="label">
+                <span class="label-text-alt">支持格式: TXT, MD, PDF, DOCX</span>
+              </label>
+            </div>
+            
+            <div v-if="selectedFiles.length > 0" class="alert alert-info mb-4">
+              <i class="fas fa-info-circle"></i>
+              <div>
+                <span v-if="selectedFiles.length === 1">已选择文件: {{ selectedFiles[0].name }}</span>
+                <span v-else>已选择 {{ selectedFiles.length }} 个文件</span>
+                <div v-if="selectedFolder" class="text-sm mt-1">
+                  文件夹: {{ selectedFolder }}
+                </div>
+              </div>
+            </div>
+            
+            <!-- 文件列表 -->
+            <div v-if="selectedFiles.length > 1" class="mb-4">
+              <h5 class="font-semibold mb-2">文件列表:</h5>
+              <div class="max-h-32 overflow-y-auto bg-base-200 rounded p-2">
+                <div v-for="(file, index) in selectedFiles" :key="index" class="text-sm py-1">
+                  <i class="fas fa-file mr-2"></i>{{ file.name }}
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 手动输入模式 -->
+          <div v-else>
+            <div class="form-control mb-4">
+              <label class="label">
+                <span class="label-text">文档标题 <span class="text-error">*</span></span>
+              </label>
               <input 
-                ref="fileInput"
-                type="file" 
-                class="file-input file-input-bordered flex-1" 
-                accept=".txt,.md,.pdf,.docx"
-                multiple
-                @change="handleFileSelect"
+                v-model="manualInput.title"
+                type="text" 
+                class="input input-bordered" 
+                placeholder="输入文档标题..."
+                required
               >
-              <button 
-                type="button"
-                @click="selectFileWithDialog"
-                class="btn btn-outline"
-                title="选择单个文件"
-              >
-                <i class="fas fa-file"></i>
-              </button>
-              <button 
-                type="button"
-                @click="selectFolderWithDialog"
-                class="btn btn-outline"
-                title="选择文件夹"
-              >
-                <i class="fas fa-folder-open"></i>
-              </button>
             </div>
-            <label class="label">
-              <span class="label-text-alt">支持格式: TXT, MD, PDF, DOCX</span>
-            </label>
-          </div>
-          
-          <div v-if="selectedFiles.length > 0" class="alert alert-info mb-4">
-            <i class="fas fa-info-circle"></i>
-            <div>
-              <span v-if="selectedFiles.length === 1">已选择文件: {{ selectedFiles[0].name }}</span>
-              <span v-else>已选择 {{ selectedFiles.length }} 个文件</span>
-              <div v-if="selectedFolder" class="text-sm mt-1">
-                文件夹: {{ selectedFolder }}
-              </div>
-            </div>
-          </div>
-          
-          <!-- 文件列表 -->
-          <div v-if="selectedFiles.length > 1" class="mb-4">
-            <h5 class="font-semibold mb-2">文件列表:</h5>
-            <div class="max-h-32 overflow-y-auto bg-base-200 rounded p-2">
-              <div v-for="(file, index) in selectedFiles" :key="index" class="text-sm py-1">
-                <i class="fas fa-file mr-2"></i>{{ file.name }}
-              </div>
+            
+            <div class="form-control mb-4">
+              <label class="label">
+                <span class="label-text">文档内容 <span class="text-error">*</span></span>
+              </label>
+              <textarea 
+                v-model="manualInput.content"
+                class="textarea textarea-bordered h-48" 
+                placeholder="输入或粘贴文档内容..."
+                required
+              ></textarea>
+              <label class="label">
+                <span class="label-text-alt">
+                  字符数: {{ manualInput.content.length }}
+                </span>
+              </label>
             </div>
           </div>
           
           <div class="modal-action">
-            <button type="button" @click="showIngestDocumentModal = false" class="btn">
+            <button type="button" @click="closeIngestModal" class="btn">
               取消
             </button>
-            <button type="submit" class="btn btn-primary" :disabled="ingesting || selectedFiles.length === 0">
+            <button 
+              v-if="ingestMode === 'file'"
+              type="submit" 
+              class="btn btn-primary" 
+              :disabled="ingesting || selectedFiles.length === 0"
+            >
               <span v-if="ingesting" class="loading loading-spinner loading-sm"></span>
               {{ ingesting ? `处理中... ${batchProgress.current}/${batchProgress.total}` : (selectedFiles.length > 1 ? `添加 ${selectedFiles.length} 个文档` : '添加文档') }}
+            </button>
+            <button 
+              v-else
+              type="submit" 
+              class="btn btn-primary" 
+              :disabled="ingesting || !manualInput.title.trim() || !manualInput.content.trim()"
+            >
+              <span v-if="ingesting" class="loading loading-spinner loading-sm"></span>
+              {{ ingesting ? '处理中...' : '添加文档' }}
             </button>
           </div>
         </form>
@@ -587,6 +657,11 @@ const batchProgress = ref({
   total: 0,
   success: 0,
   failed: 0
+})
+const ingestMode = ref<'file' | 'manual'>('file')
+const manualInput = ref({
+  title: '',
+  content: ''
 })
 
 // 查询相关
@@ -914,25 +989,56 @@ const selectFolderWithDialog = async () => {
 }
 
 const ingestDocument = async () => {
-  if (selectedFiles.value.length === 0 || !selectedCollection.value) {
-    showToast('请选择文件', 'warning')
+  if (!selectedCollection.value) {
+    showToast('请选择集合', 'warning')
     return
+  }
+
+  // 根据模式验证输入
+  if (ingestMode.value === 'file') {
+    if (selectedFiles.value.length === 0) {
+      showToast('请选择文件', 'warning')
+      return
+    }
+  } else {
+    if (!manualInput.value.title.trim() || !manualInput.value.content.trim()) {
+      showToast('请填写文档标题和内容', 'warning')
+      return
+    }
   }
 
   ingesting.value = true
   
-  // 初始化批量处理进度
-  batchProgress.value = {
-    current: 0,
-    total: selectedFiles.value.length,
-    success: 0,
-    failed: 0
-  }
-  
-  const failedFiles = []
-  let totalChunks = 0
-  
   try {
+    if (ingestMode.value === 'manual') {
+      // 手动输入模式
+      const response = await invoke('rag_ingest_text', {
+        title: manualInput.value.title.trim(),
+        content: manualInput.value.content.trim(),
+        collectionId: selectedCollection.value.id,
+        metadata: {
+          source: 'manual_input',
+          createdAt: new Date().toISOString()
+        }
+      }) as any
+      
+      showToast(`文档添加成功！共处理了 ${response.chunks_created || 0} 个文本块`, 'success')
+      closeIngestModal()
+      await refreshCollections()
+      return
+    }
+    
+    // 文件选择模式
+    batchProgress.value = {
+      current: 0,
+      total: selectedFiles.value.length,
+      success: 0,
+      failed: 0
+    }
+    
+    const failedFiles = []
+    let totalChunks = 0
+    
     for (let i = 0; i < selectedFiles.value.length; i++) {
       const file = selectedFiles.value[i]
       batchProgress.value.current = i + 1
@@ -977,20 +1083,26 @@ const ingestDocument = async () => {
       console.warn('失败的文件:', failedFiles)
     }
     
-    showIngestDocumentModal.value = false
-    selectedFiles.value = []
-    selectedFolder.value = ''
-    if (fileInput.value) {
-      fileInput.value.value = ''
-    }
+    closeIngestModal()
     await refreshCollections()
     
   } catch (error) {
-    console.error('批量文档摄取失败:', error)
-    showToast('批量文档摄取失败: ' + error, 'error')
+    console.error('文档摄取失败:', error)
+    showToast('文档摄取失败: ' + error, 'error')
   } finally {
     ingesting.value = false
     batchProgress.value = { current: 0, total: 0, success: 0, failed: 0 }
+  }
+}
+
+const closeIngestModal = () => {
+  showIngestDocumentModal.value = false
+  selectedFiles.value = []
+  selectedFolder.value = ''
+  manualInput.value = { title: '', content: '' }
+  ingestMode.value = 'file'
+  if (fileInput.value) {
+    fileInput.value.value = ''
   }
 }
 
@@ -1095,7 +1207,7 @@ onMounted(() => {
 }
 
 .badge {
-  font-size: 0.75rem;
+  font-size: calc(var(--font-size-base, 14px) * 0.75);
 }
 
 .loading {

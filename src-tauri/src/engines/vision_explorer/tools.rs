@@ -43,18 +43,18 @@ impl BrowserTools {
             BrowserAction::Scroll { coordinates, direction, scroll_count } => {
                 self.scroll(coordinates.as_ref(), direction, *scroll_count).await
             }
-            BrowserAction::TypeText { text } => self.type_text(text).await,
-            BrowserAction::PasteText { text } => self.paste_text(text).await,
             BrowserAction::TypeKeys { keys } => self.type_keys(keys).await,
             BrowserAction::Wait { duration_ms } => self.wait(*duration_ms).await,
             BrowserAction::Navigate { url } => self.navigate(url).await,
-            BrowserAction::ClickElement { selector } => self.click_element(selector).await,
-            BrowserAction::FillInput { selector, value } => {
-                self.fill_input(selector, value).await
-            }
             BrowserAction::SelectOption { selector, value } => {
                 self.select_option(selector, value).await
             }
+            // 新增：元素标注相关操作
+            BrowserAction::AnnotateElements => self.annotate_elements_action().await,
+            BrowserAction::ClickByIndex { index } => self.click_by_index(*index).await,
+            BrowserAction::SetAutoAnnotation { enabled } => self.set_auto_annotation(*enabled).await,
+            BrowserAction::GetAnnotatedElements => self.get_annotated_elements_action().await,
+            BrowserAction::FillByIndex { index, value } => self.fill_by_index(*index, value).await,
         };
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -104,32 +104,44 @@ impl BrowserTools {
 
     /// 截图（返回base64）
     async fn take_screenshot_raw(&self) -> Result<String> {
-        let result = self.call_playwright_tool("playwright_screenshot", json!({})).await?;
+        // 参数说明：
+        // - name: 截图名称（必需）
+        // - storeBase64: 存储为 base64 格式（默认 true）
+        // - savePng: 保存为 PNG 文件（默认 false）
+        let result = self.call_playwright_tool("playwright_screenshot", json!({
+            "name": "vision_screenshot",
+            "storeBase64": true,
+            "savePng": false
+        })).await?;
         
-        // 解析截图结果，提取base64数据
-        if let Some(content) = result.get("content") {
-            if let Some(arr) = content.as_array() {
-                for item in arr {
-                    if item.get("type").and_then(|t| t.as_str()) == Some("image") {
-                        if let Some(data) = item.get("data").and_then(|d| d.as_str()) {
-                            return Ok(data.to_string());
-                        }
+        debug!("Screenshot response: {:?}", result);
+        
+        // 优先从 images 数组提取（MCP 响应中的图片数据）
+        if let Some(images) = result.get("images") {
+            if let Some(arr) = images.as_array() {
+                if let Some(first_image) = arr.first() {
+                    if let Some(base64) = first_image.as_str() {
+                        info!("Got screenshot from images array, length: {}", base64.len());
+                        return Ok(base64.to_string());
                     }
                 }
             }
         }
         
-        // 尝试直接获取base64
-        if let Some(base64) = result.get("base64").and_then(|b| b.as_str()) {
-            return Ok(base64.to_string());
-        }
-        
-        // 尝试从result字段获取
-        if let Some(res) = result.get("result") {
-            if let Some(base64) = res.as_str() {
-                return Ok(base64.to_string());
+        // 尝试从 output 字段提取
+        if let Some(output) = result.get("output") {
+            if let Some(base64) = extract_base64_from_value(output) {
+                return Ok(base64);
             }
         }
+        
+        // 尝试从整个响应提取
+        if let Some(base64) = extract_base64_from_value(&result) {
+            return Ok(base64);
+        }
+        
+        // 打印完整响应用于调试
+        warn!("Failed to extract screenshot. Response: {:?}", result);
         
         Err(anyhow!("Failed to extract screenshot data from response"))
     }
@@ -161,20 +173,65 @@ impl BrowserTools {
             MouseButton::Middle => "middle",
         };
         
-        let mut params = json!({
-            "button": button_str
-        });
-        
         if let Some(coords) = coordinates {
-            params["coordinate"] = json!([coords.x, coords.y]);
-        }
-        
-        // 执行点击
-        for _ in 0..click_count {
-            self.call_playwright_tool("playwright_click", params.clone()).await?;
-            if click_count > 1 {
-                sleep(Duration::from_millis(100)).await;
+            info!("Clicking at coordinates ({}, {}) with {} button", coords.x, coords.y, button_str);
+            
+            // 方法1：使用 JavaScript 找到坐标位置的元素并点击
+            // 这样可以确保链接等元素被正确触发
+            let click_js = format!(
+                r#"(function() {{
+                    const el = document.elementFromPoint({}, {});
+                    if (el) {{
+                        // 如果是链接，直接导航
+                        if (el.tagName === 'A' && el.href) {{
+                            window.location.href = el.href;
+                            return {{ success: true, type: 'navigation', href: el.href }};
+                        }}
+                        // 否则模拟点击
+                        el.click();
+                        return {{ success: true, type: 'click', tag: el.tagName }};
+                    }}
+                    return {{ success: false, error: 'No element at coordinates' }};
+                }})()"#,
+                coords.x, coords.y
+            );
+            
+            let js_result = self.call_playwright_tool("playwright_evaluate", json!({
+                "script": click_js
+            })).await;
+            
+            match js_result {
+                Ok(result) => {
+                    debug!("JS click result: {:?}", result);
+                    // 等待页面响应
+                    sleep(Duration::from_millis(300)).await;
+                    return Ok(ActionResult {
+                        success: true,
+                        error: None,
+                        screenshot: None,
+                        duration_ms: 0,
+                    });
+                }
+                Err(e) => {
+                    warn!("JS click failed: {}, falling back to mouse click", e);
+                }
             }
+            
+            // 方法2：回退到 playwright_click 的坐标点击
+            let mut params = json!({
+                "button": button_str,
+                "coordinate": [coords.x, coords.y]
+            });
+            
+            for i in 0..click_count {
+                let result = self.call_playwright_tool("playwright_click", params.clone()).await?;
+                debug!("Mouse click {} result: {:?}", i + 1, result);
+                if click_count > 1 {
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }
+        } else {
+            warn!("Click without coordinates - this may not work as expected");
         }
         
         Ok(ActionResult {
@@ -225,35 +282,6 @@ impl BrowserTools {
         })
     }
 
-    /// 输入文本
-    async fn type_text(&self, text: &str) -> Result<ActionResult> {
-        self.call_playwright_tool("playwright_type", json!({
-            "text": text
-        })).await?;
-        
-        Ok(ActionResult {
-            success: true,
-            error: None,
-            screenshot: None,
-            duration_ms: 0,
-        })
-    }
-
-    /// 粘贴文本
-    async fn paste_text(&self, text: &str) -> Result<ActionResult> {
-        // 使用fill来快速填充
-        self.call_playwright_tool("playwright_fill", json!({
-            "value": text
-        })).await?;
-        
-        Ok(ActionResult {
-            success: true,
-            error: None,
-            screenshot: None,
-            duration_ms: 0,
-        })
-    }
-
     /// 按键
     async fn type_keys(&self, keys: &[String]) -> Result<ActionResult> {
         for key in keys {
@@ -284,41 +312,26 @@ impl BrowserTools {
 
     /// 导航
     async fn navigate(&self, url: &str) -> Result<ActionResult> {
-        self.call_playwright_tool("playwright_navigate", json!({
-            "url": url
-        })).await?;
+        info!("Navigating to {} with viewport {}x{}, headless: {}, proxy: {:?}", 
+            url, self.config.viewport_width, self.config.viewport_height, 
+            self.config.headless, self.config.browser_proxy);
+        
+        let mut params = json!({
+            "url": url,
+            "width": self.config.viewport_width,
+            "height": self.config.viewport_height,
+            "headless": self.config.headless
+        });
+        
+        // 添加代理配置
+        if let Some(ref proxy_server) = self.config.browser_proxy {
+            params["proxy"] = json!({"server": proxy_server});
+        }
+        
+        self.call_playwright_tool("playwright_navigate", params).await?;
         
         // 等待页面加载
         sleep(Duration::from_millis(1000)).await;
-        
-        Ok(ActionResult {
-            success: true,
-            error: None,
-            screenshot: None,
-            duration_ms: 0,
-        })
-    }
-
-    /// 点击元素（通过选择器）
-    async fn click_element(&self, selector: &str) -> Result<ActionResult> {
-        self.call_playwright_tool("playwright_click", json!({
-            "selector": selector
-        })).await?;
-        
-        Ok(ActionResult {
-            success: true,
-            error: None,
-            screenshot: None,
-            duration_ms: 0,
-        })
-    }
-
-    /// 填写输入框
-    async fn fill_input(&self, selector: &str, value: &str) -> Result<ActionResult> {
-        self.call_playwright_tool("playwright_fill", json!({
-            "selector": selector,
-            "value": value
-        })).await?;
         
         Ok(ActionResult {
             success: true,
@@ -343,6 +356,167 @@ impl BrowserTools {
         })
     }
 
+    // ========== 新增：元素标注相关方法 ==========
+
+    /// 标注页面所有可交互元素 (BrowserAction 版本)
+    async fn annotate_elements_action(&self) -> Result<ActionResult> {
+        info!("Annotating all interactive elements on page");
+        let result = self.call_playwright_tool("playwright_annotate", json!({})).await?;
+        
+        // 解析返回的元素数量
+        let element_count = if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
+            content.iter()
+                .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+                .find(|t| t.contains("Found"))
+                .and_then(|t| t.split_whitespace().nth(1))
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        
+        info!("Annotated {} elements", element_count);
+        
+        Ok(ActionResult {
+            success: true,
+            error: None,
+            screenshot: None,
+            duration_ms: 0,
+        })
+    }
+
+    /// 通过索引点击元素
+    async fn click_by_index(&self, index: u32) -> Result<ActionResult> {
+        info!("Clicking element by index: {}", index);
+        
+        let result = self.call_playwright_tool("playwright_click_by_index", json!({
+            "index": index
+        })).await?;
+        
+        // 检查是否有错误
+        if let Some(is_error) = result.get("isError").and_then(|e| e.as_bool()) {
+            if is_error {
+                let error_msg = result.get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("text"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("Unknown error");
+                return Err(anyhow!("Click by index failed: {}", error_msg));
+            }
+        }
+        
+        Ok(ActionResult {
+            success: true,
+            error: None,
+            screenshot: None,
+            duration_ms: 0,
+        })
+    }
+
+    /// 通过索引填充输入框
+    async fn fill_by_index(&self, index: u32, value: &str) -> Result<ActionResult> {
+        info!("Filling element by index: {} with value: {}", index, value);
+        
+        let result = self.call_playwright_tool("playwright_fill_by_index", json!({
+            "index": index,
+            "value": value
+        })).await?;
+        
+        // 检查是否有错误
+        if let Some(is_error) = result.get("isError").and_then(|e| e.as_bool()) {
+            if is_error {
+                let error_msg = result.get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("text"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("Unknown error");
+                return Err(anyhow!("Fill by index failed: {}", error_msg));
+            }
+        }
+        
+        Ok(ActionResult {
+            success: true,
+            error: None,
+            screenshot: None,
+            duration_ms: 0,
+        })
+    }
+
+    /// 设置自动标注开关
+    async fn set_auto_annotation(&self, enabled: bool) -> Result<ActionResult> {
+        info!("Setting auto annotation: {}", enabled);
+        self.call_playwright_tool("playwright_set_auto_annotation", json!({
+            "enabled": enabled
+        })).await?;
+        
+        Ok(ActionResult {
+            success: true,
+            error: None,
+            screenshot: None,
+            duration_ms: 0,
+        })
+    }
+
+    /// 获取已标注元素列表 (BrowserAction 版本)
+    async fn get_annotated_elements_action(&self) -> Result<ActionResult> {
+        let _elements = self.get_annotated_elements().await?;
+        Ok(ActionResult {
+            success: true,
+            error: None,
+            screenshot: None,
+            duration_ms: 0,
+        })
+    }
+
+    /// 标注页面元素并返回元素列表
+    pub async fn annotate_elements(&self) -> Result<Vec<AnnotatedElement>> {
+        info!("Annotating elements and getting list");
+        let result = self.call_playwright_tool("playwright_annotate", json!({})).await?;
+        
+        // 从响应中提取元素列表
+        self.parse_annotated_elements(&result)
+    }
+
+    /// 获取已标注的元素列表
+    pub async fn get_annotated_elements(&self) -> Result<Vec<AnnotatedElement>> {
+        let result = self.call_playwright_tool("playwright_get_annotated_elements", json!({})).await?;
+        self.parse_annotated_elements(&result)
+    }
+
+    /// 解析标注元素响应
+    fn parse_annotated_elements(&self, result: &Value) -> Result<Vec<AnnotatedElement>> {
+        // MCP 返回格式: { "content": [{ "text": "Found N elements..." }, { "text": "{\"annotated_elements\": [...]}" }] }
+        if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
+            for item in content {
+                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                    // 尝试解析 JSON 格式的元素列表
+                    if text.contains("annotated_elements") {
+                        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                            if let Some(elements) = parsed.get("annotated_elements") {
+                                let elements: Vec<AnnotatedElement> = serde_json::from_value(elements.clone())
+                                    .unwrap_or_default();
+                                info!("Parsed {} annotated elements", elements.len());
+                                return Ok(elements);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 尝试直接解析
+        if let Some(elements) = result.get("annotated_elements") {
+            let elements: Vec<AnnotatedElement> = serde_json::from_value(elements.clone())
+                .unwrap_or_default();
+            return Ok(elements);
+        }
+        
+        warn!("Could not parse annotated elements from response: {:?}", result);
+        Ok(Vec::new())
+    }
+
     /// 获取页面可见HTML
     pub async fn get_page_html(&self) -> Result<String> {
         let result = self.call_playwright_tool("playwright_get_visible_html", json!({})).await?;
@@ -359,10 +533,49 @@ impl BrowserTools {
     }
 
     /// 执行JavaScript获取页面信息
-    pub async fn evaluate_js(&self, expression: &str) -> Result<Value> {
-        self.call_playwright_tool("playwright_evaluate", json!({
-            "expression": expression
-        })).await
+    pub async fn evaluate_js(&self, script: &str) -> Result<Value> {
+        let result = self.call_playwright_tool("playwright_evaluate", json!({
+            "script": script
+        })).await?;
+        
+        // MCP 返回格式: { "success": true, "output": "Executed JavaScript:\n...\nResult:\n..." }
+        // 需要从 "Result:\n" 后的文本中提取实际结果
+        if let Some(output) = result.get("output").and_then(|o| o.as_str()) {
+            // 查找 "Result:\n" 后面的内容
+            if let Some(result_idx) = output.find("Result:\n") {
+                let result_str = &output[result_idx + 8..]; // "Result:\n" 长度为 8
+                let result_str = result_str.trim();
+                
+                // 尝试解析为 JSON
+                if let Ok(parsed) = serde_json::from_str::<Value>(result_str) {
+                    return Ok(parsed);
+                }
+                // 如果不是 JSON，返回字符串（去掉可能的引号）
+                let cleaned = result_str.trim_matches('"');
+                return Ok(Value::String(cleaned.to_string()));
+            }
+        }
+        
+        // 旧格式兼容: { "content": [{ "type": "text", "text": "..." }], "isError": false }
+        if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
+            let mut found_result = false;
+            for item in content {
+                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                    if found_result {
+                        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                            return Ok(parsed);
+                        }
+                        return Ok(Value::String(text.to_string()));
+                    }
+                    if text == "Result:" {
+                        found_result = true;
+                    }
+                }
+            }
+        }
+        
+        // 直接返回结果
+        Ok(result)
     }
 
     /// 获取页面可交互元素
@@ -379,17 +592,18 @@ impl BrowserTools {
                     if (rect.width > 0 && rect.height > 0) {
                         const computedStyle = window.getComputedStyle(el);
                         if (computedStyle.display !== 'none' && computedStyle.visibility !== 'hidden') {
+                            const attrs = {};
+                            if (el.href) attrs.href = el.href;
+                            if (el.name) attrs.name = el.name;
+                            if (el.className) attrs.class = el.className;
+                            
                             elements.push({
                                 id: el.id || `element_${idx}`,
                                 tag: el.tagName.toLowerCase(),
                                 text: (el.innerText || el.value || el.placeholder || '').slice(0, 100),
                                 selector: el.id ? `#${el.id}` : `${el.tagName.toLowerCase()}:nth-of-type(${idx + 1})`,
                                 element_type: el.type || null,
-                                attributes: {
-                                    href: el.href || null,
-                                    name: el.name || null,
-                                    class: el.className || null
-                                },
+                                attributes: attrs,
                                 bounding_box: {
                                     x: rect.x,
                                     y: rect.y,
@@ -409,8 +623,19 @@ impl BrowserTools {
         
         let result = self.evaluate_js(js).await?;
         
-        let elements: Vec<PageElement> = serde_json::from_value(result)
-            .unwrap_or_else(|_| Vec::new());
+        // 记录原始返回值用于调试
+        debug!("get_interactable_elements raw result: {:?}", result);
+        
+        let elements: Vec<PageElement> = match serde_json::from_value::<Vec<PageElement>>(result.clone()) {
+            Ok(elems) => {
+                info!("Parsed {} interactable elements", elems.len());
+                elems
+            }
+            Err(e) => {
+                warn!("Failed to parse interactable elements: {}. Raw value: {:?}", e, result);
+                Vec::new()
+            }
+        };
         
         Ok(elements)
     }
@@ -445,8 +670,18 @@ impl BrowserTools {
         
         let result = self.evaluate_js(js).await?;
         
-        let forms: Vec<FormInfo> = serde_json::from_value(result)
-            .unwrap_or_else(|_| Vec::new());
+        debug!("get_forms raw result: {:?}", result);
+        
+        let forms: Vec<FormInfo> = match serde_json::from_value::<Vec<FormInfo>>(result.clone()) {
+            Ok(f) => {
+                info!("Parsed {} forms", f.len());
+                f
+            }
+            Err(e) => {
+                warn!("Failed to parse forms: {}. Raw value: {:?}", e, result);
+                Vec::new()
+            }
+        };
         
         Ok(forms)
     }
@@ -496,12 +731,23 @@ impl BrowserTools {
     async fn call_playwright_tool(&self, tool_name: &str, params: Value) -> Result<Value> {
         debug!("Calling Playwright tool: {} with params: {:?}", tool_name, params);
         
-        // 查找playwright连接
+        // 查找playwright连接（大小写不敏感）
         let connections = self.mcp_service.get_connection_info().await?;
+        
+        // 打印所有可用连接用于调试
+        debug!("Available MCP connections: {:?}", 
+            connections.iter().map(|c| format!("{}(status={})", c.name, c.status)).collect::<Vec<_>>());
+        
         let playwright_conn = connections.iter()
-            .find(|c| c.name.contains("playwright") && c.status == "connected");
+            .find(|c| c.name.to_lowercase().contains("playwright") && c.status == "connected");
         
         if playwright_conn.is_none() {
+            // 打印更详细的错误信息
+            let available = connections.iter()
+                .map(|c| format!("{}({})", c.name, c.status))
+                .collect::<Vec<_>>()
+                .join(", ");
+            warn!("Playwright MCP not found. Available connections: [{}]", available);
             return Err(anyhow!("Playwright MCP server not connected"));
         }
         
@@ -558,14 +804,6 @@ pub fn action_to_tool_call(action: &BrowserAction) -> (String, Value) {
                 "scroll_count": scroll_count
             })
         ),
-        BrowserAction::TypeText { text } => (
-            "computer_type_text".to_string(),
-            json!({ "text": text })
-        ),
-        BrowserAction::PasteText { text } => (
-            "computer_paste_text".to_string(),
-            json!({ "text": text })
-        ),
         BrowserAction::TypeKeys { keys } => (
             "computer_type_keys".to_string(),
             json!({ "keys": keys })
@@ -578,17 +816,30 @@ pub fn action_to_tool_call(action: &BrowserAction) -> (String, Value) {
             "computer_navigate".to_string(),
             json!({ "url": url })
         ),
-        BrowserAction::ClickElement { selector } => (
-            "computer_click_element".to_string(),
-            json!({ "selector": selector })
-        ),
-        BrowserAction::FillInput { selector, value } => (
-            "computer_fill_input".to_string(),
-            json!({ "selector": selector, "value": value })
-        ),
         BrowserAction::SelectOption { selector, value } => (
             "computer_select_option".to_string(),
             json!({ "selector": selector, "value": value })
+        ),
+        // 新增：元素标注相关操作
+        BrowserAction::AnnotateElements => (
+            "playwright_annotate".to_string(),
+            json!({})
+        ),
+        BrowserAction::ClickByIndex { index } => (
+            "playwright_click_by_index".to_string(),
+            json!({ "index": index })
+        ),
+        BrowserAction::SetAutoAnnotation { enabled } => (
+            "playwright_set_auto_annotation".to_string(),
+            json!({ "enabled": enabled })
+        ),
+        BrowserAction::GetAnnotatedElements => (
+            "playwright_get_annotated_elements".to_string(),
+            json!({})
+        ),
+        BrowserAction::FillByIndex { index, value } => (
+            "playwright_fill_by_index".to_string(),
+            json!({ "index": index, "value": value })
         ),
     }
 }
@@ -651,16 +902,6 @@ pub fn parse_tool_call_to_action(tool_name: &str, params: &Value) -> Result<Brow
             })
         }
         
-        "computer_type_text" => {
-            let text = params.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-            Ok(BrowserAction::TypeText { text })
-        }
-        
-        "computer_paste_text" => {
-            let text = params.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-            Ok(BrowserAction::PasteText { text })
-        }
-        
         "computer_type_keys" => {
             let keys = params.get("keys")
                 .and_then(|k| k.as_array())
@@ -679,7 +920,142 @@ pub fn parse_tool_call_to_action(tool_name: &str, params: &Value) -> Result<Brow
             Ok(BrowserAction::Navigate { url })
         }
         
+        // 新增：元素标注相关工具
+        "playwright_annotate" | "annotate" | "annotate_elements" => {
+            Ok(BrowserAction::AnnotateElements)
+        }
+        
+        "playwright_click_by_index" | "click_by_index" => {
+            let index = params.get("index")
+                .and_then(|i| i.as_u64())
+                .unwrap_or(0) as u32;
+            Ok(BrowserAction::ClickByIndex { index })
+        }
+        
+        "playwright_fill_by_index" | "fill_by_index" => {
+            let index = params.get("index")
+                .and_then(|i| i.as_u64())
+                .unwrap_or(0) as u32;
+            let value = params.get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok(BrowserAction::FillByIndex { index, value })
+        }
+        
+        "playwright_set_auto_annotation" | "set_auto_annotation" => {
+            let enabled = params.get("enabled")
+                .and_then(|e| e.as_bool())
+                .unwrap_or(true);
+            Ok(BrowserAction::SetAutoAnnotation { enabled })
+        }
+        
+        "playwright_get_annotated_elements" | "get_annotated_elements" | "get_elements" => {
+            Ok(BrowserAction::GetAnnotatedElements)
+        }
+        
         _ => Err(anyhow!("Unknown tool: {}", tool_name))
+    }
+}
+
+/// 从 JSON 值中提取 base64 数据
+/// 支持多种可能的响应格式
+fn extract_base64_from_value(value: &Value) -> Option<String> {
+    // 优先检查 screenshot_base64 字段（MCP playwright 工具返回格式）
+    if let Some(base64) = value.get("screenshot_base64").and_then(|v| v.as_str()) {
+        if base64.len() > 100 {
+            return Some(base64.to_string());
+        }
+    }
+    
+    // 直接是字符串
+    if let Some(s) = value.as_str() {
+        // 检查是否看起来像 base64（长度合理且只包含有效字符）
+        if s.len() > 100 && s.chars().all(|c| c.is_alphanumeric() || c == '+' || c == '/' || c == '=') {
+            return Some(s.to_string());
+        }
+        // 尝试从 RawImageContent 格式提取: [Non-text content: Image(RawImageContent { data: "...", ... })]
+        if let Some(base64) = extract_base64_from_raw_image_content(s) {
+            return Some(base64);
+        }
+    }
+    
+    // { "content": [{ "type": "image", "data": "base64..." }] }
+    if let Some(content) = value.get("content") {
+        if let Some(arr) = content.as_array() {
+            for item in arr {
+                if item.get("type").and_then(|t| t.as_str()) == Some("image") {
+                    if let Some(data) = item.get("data").and_then(|d| d.as_str()) {
+                        return Some(data.to_string());
+                    }
+                }
+                // { "source": { "type": "base64", "data": "..." } }
+                if let Some(source) = item.get("source") {
+                    if let Some(data) = source.get("data").and_then(|d| d.as_str()) {
+                        return Some(data.to_string());
+                    }
+                }
+            }
+        }
+        // content 直接是字符串
+        if let Some(data) = content.as_str() {
+            if data.len() > 100 {
+                return Some(data.to_string());
+            }
+        }
+    }
+    
+    // 从 output 字段提取
+    if let Some(output) = value.get("output").and_then(|v| v.as_str()) {
+        // 尝试解析 JSON 格式: {"screenshot_base64": "...", "mimeType": "..."}
+        if let Ok(json) = serde_json::from_str::<Value>(output) {
+            if let Some(base64) = json.get("screenshot_base64").and_then(|v| v.as_str()) {
+                if base64.len() > 100 {
+                    return Some(base64.to_string());
+                }
+            }
+        }
+        // 尝试从 RawImageContent 格式提取
+        if let Some(base64) = extract_base64_from_raw_image_content(output) {
+            return Some(base64);
+        }
+    }
+    
+    // 常见字段名
+    for key in &["base64", "data", "image", "screenshot", "result"] {
+        if let Some(val) = value.get(*key) {
+            if let Some(s) = val.as_str() {
+                if s.len() > 100 {
+                    return Some(s.to_string());
+                }
+            }
+            // 递归查找
+            if let Some(found) = extract_base64_from_value(val) {
+                return Some(found);
+            }
+        }
+    }
+    
+    None
+}
+
+/// 从 RawImageContent 格式字符串中提取 base64 数据
+/// 格式: [Non-text content: Image(RawImageContent { data: "...", mime_type: "...", meta: None })]
+fn extract_base64_from_raw_image_content(s: &str) -> Option<String> {
+    // 查找 data: " 开始位置
+    let data_marker = "data: \"";
+    let start_idx = s.find(data_marker)?;
+    let data_start = start_idx + data_marker.len();
+    
+    // 从 data_start 查找结束引号
+    let remaining = &s[data_start..];
+    let end_idx = remaining.find('"')?;
+    
+    let base64_data = &remaining[..end_idx];
+    if base64_data.len() > 100 {
+        Some(base64_data.to_string())
+    } else {
+        None
     }
 }
 
