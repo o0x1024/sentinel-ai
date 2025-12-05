@@ -62,12 +62,29 @@
           <input ref="import_file_input" type="file" accept=".json" class="hidden" @change="import_workflow_json" />
           <button class="btn btn-sm btn-outline" @click="refresh_catalog" title="刷新节点库">刷新节点库</button>
           <button class="btn btn-sm btn-outline" @click="reset_canvas" title="重置画布">重置画布</button>
-          <button class="btn btn-sm btn-success" @click="start_run" title="运行工作流">
+          <button 
+            v-if="!workflow_running" 
+            class="btn btn-sm btn-success" 
+            @click="start_run" 
+            title="运行工作流"
+          >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             运行
+          </button>
+          <button 
+            v-else 
+            class="btn btn-sm btn-error" 
+            @click="stop_run" 
+            title="停止工作流"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+            </svg>
+            停止
           </button>
           <!-- 定时调度按钮 -->
           <button 
@@ -193,7 +210,7 @@
       </div>
 
       <div :class="sidebar_collapsed ? 'col-span-11' : 'col-span-9'" class="transition-all duration-300">
-        <FlowchartVisualization ref="flow_ref" @nodeClick="on_node_click" :highlightedNodes="highlighted_nodes" />
+        <FlowchartVisualization ref="flow_ref" @nodeClick="on_node_click" @newWorkflow="on_new_workflow" :highlightedNodes="highlighted_nodes" />
       </div>
     </div>
 
@@ -318,6 +335,22 @@
           <button class="btn btn-sm" @click="show_template_dialog = false">关闭</button>
         </div>
       </div>
+    </dialog>
+
+    <!-- 新建工作流确认对话框 -->
+    <dialog :open="show_new_workflow_confirm" class="modal">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">新建工作流</h3>
+        <p class="text-base-content/80">当前工作流尚未保存，是否保存后再新建？</p>
+        <div class="modal-action">
+          <button class="btn btn-primary btn-sm" @click="confirm_new_workflow_save">保存并新建</button>
+          <button class="btn btn-warning btn-sm" @click="confirm_new_workflow_discard">直接新建</button>
+          <button class="btn btn-ghost btn-sm" @click="show_new_workflow_confirm = false">取消</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button @click="show_new_workflow_confirm = false">close</button>
+      </form>
     </dialog>
 
     <!-- 工作流元数据对话框 -->
@@ -480,7 +513,7 @@
           <!-- 字符串类型 -->
           <input 
             v-else-if="prop.type === 'string' && !prop.enum" 
-            class="input input-bordered input-sm" 
+            class="input input-bordered input-sm w-full" 
             v-model="param_values[key]"
             :placeholder="prop.default || `请输入${key}`"
             :class="{ 'input-error': selected_schema.required?.includes(key) && !param_values[key] }"
@@ -490,7 +523,7 @@
           <input 
             v-else-if="prop.type === 'integer' || prop.type === 'float' || prop.type === 'number'" 
             type="number" 
-            class="input input-bordered input-sm" 
+            class="input input-bordered input-sm w-full" 
             v-model.number="param_values[key]"
             :placeholder="prop.default?.toString() || '0'"
             :min="prop.minimum"
@@ -514,12 +547,25 @@
             <span class="text-xs">{{ param_values[key] ? '是' : '否' }}</span>
           </div>
           
-          <!-- 数组/对象类型 -->
-          <div v-else-if="prop.type === 'array' || prop.type === 'object'" class="space-y-1">
+          <!-- 数组类型：每行一个 -->
+          <div v-else-if="prop.type === 'array'" class="space-y-1">
+            <textarea 
+              class="textarea textarea-bordered textarea-sm font-mono text-xs w-full" 
+              v-model="param_values[key]"
+              placeholder="每行一个值，例如：
+https://example1.com/
+https://example2.com/"
+              rows="4"
+            ></textarea>
+            <div class="text-xs text-base-content/50">每行输入一个值</div>
+          </div>
+          
+          <!-- 对象类型：JSON格式 -->
+          <div v-else-if="prop.type === 'object'" class="space-y-1">
             <textarea 
               class="textarea textarea-bordered textarea-sm font-mono text-xs" 
               v-model="param_values[key]"
-              :placeholder="prop.type === 'array' ? '[\n  \n]' : '{\n  \n}'"
+              placeholder='{ "key": "value" }'
               rows="4"
               @blur="validate_json(String(key))"
             ></textarea>
@@ -535,7 +581,7 @@
           ></textarea>
           
           <!-- 参数说明 -->
-          <label v-if="prop.description" class="label py-0">
+          <label v-if="prop.description && prop.description.trim() && prop.description.trim() !== '/'" class="label py-0">
             <span class="label-text-alt text-xs opacity-60">{{ prop.description }}</span>
           </label>
           
@@ -692,6 +738,7 @@ const show_logs = ref(true) // 默认显示日志
 const show_load_dialog = ref(false)
 const show_meta_dialog = ref(false)
 const show_template_dialog = ref(false)
+const show_new_workflow_confirm = ref(false)
 const template_list = ref<any[]>([])
 const workflow_name = ref('未命名工作流')
 const workflow_id = ref(`wf_${Date.now()}`)
@@ -701,6 +748,8 @@ const workflow_version = ref('v1.0.0')
 const workflow_list = ref<any[]>([])
 const schedule_running = ref(false) // 定时调度是否运行中
 const schedule_info = ref<any>(null) // 当前调度信息
+const workflow_running = ref(false) // 工作流是否正在运行
+const current_exec_id = ref<string | null>(null) // 当前执行ID
 const favorites = ref<Set<string>>(new Set())
 const show_favorites_only = ref(false)
 const notification_rules = ref<any[]>([]) // 通知规则列表
@@ -711,6 +760,12 @@ const highlighted_nodes = ref<Set<string>>(new Set())
 const step_results = ref<Record<string, any>>({}) // 存储当前执行的步骤结果
 const show_result_panel = ref(false)
 const selected_step_result = ref<{ step_id: string, result: any } | null>(null)
+
+
+defineOptions({
+  name: 'WorkflowStudio'
+});
+
 
 // 执行历史
 interface ExecutionRecord {
@@ -837,6 +892,58 @@ const add_node = (item: NodeCatalogItem) => {
 
 const reset_canvas = () => {
   flow_ref.value?.resetFlowchart()
+}
+
+// 新建工作流
+const on_new_workflow = () => {
+  // 检查是否有未保存的更改
+  if (flow_ref.value?.hasUnsavedChanges()) {
+    show_new_workflow_confirm.value = true
+  } else {
+    do_new_workflow()
+  }
+}
+
+// 确认保存后新建
+const confirm_new_workflow_save = async () => {
+  const toast = useToast()
+  show_new_workflow_confirm.value = false
+  
+  if (!workflow_name.value.trim()) {
+    toast.error('请先输入工作流名称')
+    return
+  }
+  await save_workflow()
+  do_new_workflow()
+}
+
+// 确认直接新建（丢弃更改）
+const confirm_new_workflow_discard = () => {
+  show_new_workflow_confirm.value = false
+  do_new_workflow()
+}
+
+// 执行新建工作流
+const do_new_workflow = () => {
+  const toast = useToast()
+  
+  // 重置为新工作流
+  workflow_id.value = `wf_${Date.now()}`
+  workflow_name.value = '未命名工作流'
+  workflow_description.value = ''
+  workflow_tags.value = ''
+  workflow_version.value = 'v1.0.0'
+  flow_ref.value?.resetFlowchart()
+  execution_history.value = []
+  selected_execution.value = null
+  execution_logs.value = []
+  step_results.value = {}
+  schedule_running.value = false
+  schedule_info.value = null
+  localStorage.removeItem('last_run_workflow_id')
+  
+  add_log('INFO', '已新建工作流')
+  toast.success('已新建工作流')
 }
 
 const build_graph = (): WorkflowGraph => {
@@ -1130,7 +1237,9 @@ const start_run = async () => {
     
     add_log('INFO', `开始执行工作流: ${workflow_name.value}`)
     show_logs.value = true
+    workflow_running.value = true
     const exec_id = await invoke<string>('start_workflow_run', { graph })
+    current_exec_id.value = exec_id
     add_log('SUCCESS', `工作流已启动`, undefined, `执行ID: ${exec_id}`)
     toast.success(`已启动执行：${exec_id}`)
     
@@ -1140,6 +1249,34 @@ const start_run = async () => {
     add_log('ERROR', `启动失败: ${e}`)
     toast.error(`启动失败：${e}`)
     complete_execution(false)
+    workflow_running.value = false
+    current_exec_id.value = null
+  }
+}
+
+// 停止工作流执行
+const stop_run = async () => {
+  const toast = useToast()
+  
+  if (!current_exec_id.value) {
+    toast.error('没有正在运行的工作流')
+    return
+  }
+  
+  try {
+    add_log('INFO', `正在停止工作流...`)
+    await invoke('stop_workflow_run', { executionId: current_exec_id.value })
+    add_log('WARN', `工作流已停止`)
+    toast.success('工作流已停止')
+    workflow_running.value = false
+    current_exec_id.value = null
+    complete_execution(false)
+    
+    // 重置节点状态
+    reset_node_status()
+  } catch (e: any) {
+    add_log('ERROR', `停止失败: ${e}`)
+    toast.error(`停止失败：${e}`)
   }
 }
 
@@ -1468,12 +1605,18 @@ const wf_events = useWorkflowEvents()
 const setup_event_listeners = async () => {
   // 监听工作流开始事件（定时触发或其他外部触发时会收到此事件）
   await wf_events.on_run_start((p: any) => {
-    const exec_id = p?.exec_id || p?.execId
+    const exec_id = p?.exec_id || p?.execId || p?.execution_id || p?.executionId
     const workflow_id_from_event = p?.workflow_id || p?.workflowId
     
     // 只处理当前工作流的事件
     if (workflow_id_from_event && workflow_id_from_event !== workflow_id.value) {
       return
+    }
+    
+    // 设置运行状态
+    workflow_running.value = true
+    if (exec_id) {
+      current_exec_id.value = exec_id
     }
     
     // 如果是外部触发（定时等），需要创建执行记录
@@ -1516,6 +1659,8 @@ const setup_event_listeners = async () => {
   await wf_events.on_run_complete(() => {
     add_log('SUCCESS', '工作流执行完成')
     complete_execution(true)
+    workflow_running.value = false
+    current_exec_id.value = null
     
     // 自动打开执行历史面板并选中当前执行记录
     show_execution_history.value = true
@@ -1529,13 +1674,42 @@ const setup_event_listeners = async () => {
       reset_node_status()
     }, 1500)
   })
+  
+  // 监听工作流停止事件
+  await wf_events.on_run_stop((p: any) => {
+    add_log('WARN', '工作流执行已停止')
+    workflow_running.value = false
+    current_exec_id.value = null
+    complete_execution(false)
+    reset_node_status()
+  })
 }
 
 const on_node_click = (node: any) => {
   ignore_close_once.value = true
   selected_node.value = node
   const current = node.params || {}
-  param_values.value = JSON.parse(JSON.stringify(current))
+  
+  // 获取节点的参数 schema
+  const item = catalog.value.find(i => i.node_type === node.type)
+  const schema = item?.params_schema
+  
+  // 转换参数供编辑
+  const converted: Record<string, any> = {}
+  for (const [key, value] of Object.entries(current)) {
+    const prop = schema?.properties?.[key]
+    if (prop?.type === 'array' && Array.isArray(value)) {
+      // 数组类型：转换为每行一个的格式（更友好）
+      converted[key] = (value as any[]).map(v => typeof v === 'string' ? v : JSON.stringify(v)).join('\n')
+    } else if (prop?.type === 'object' && typeof value === 'object' && value !== null) {
+      // 对象类型：转换为格式化的 JSON 字符串
+      converted[key] = JSON.stringify(value, null, 2)
+    } else {
+      converted[key] = value
+    }
+  }
+  
+  param_values.value = converted
   // 打开参数编辑抽屉
   drawer_open.value = true
 }
@@ -1543,17 +1717,57 @@ const on_node_click = (node: any) => {
 const save_params = () => {
   if (!selected_node.value) return
   
-  // 如果是通知节点，需要附加通知规则的配置信息
-  if (selected_node.value.type === 'notify' && param_values.value.notification_rule_id) {
-    const rule = notification_rules.value.find(r => r.id === param_values.value.notification_rule_id)
-    if (rule) {
-      // 将通知规则的channel和config附加到参数中，供工作流执行时使用
-      param_values.value._notification_channel = rule.channel
-      param_values.value._notification_config = rule.config
+  // 解析参数
+  const parsed_params: Record<string, any> = {}
+  const schema = selected_schema.value
+  
+  for (const [key, value] of Object.entries(param_values.value)) {
+    const prop = schema?.properties?.[key]
+    if (prop?.type === 'array' && typeof value === 'string') {
+      // 数组类型：支持每行一个的格式，也支持 JSON 格式
+      const trimmed = (value as string).trim()
+      if (trimmed) {
+        // 首先尝试解析为 JSON 数组
+        if (trimmed.startsWith('[')) {
+          try {
+            parsed_params[key] = JSON.parse(trimmed)
+            continue
+          } catch { /* 不是有效 JSON，继续按行解析 */ }
+        }
+        // 按行解析：每行一个元素，过滤空行
+        const lines = trimmed.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+        parsed_params[key] = lines
+      } else {
+        parsed_params[key] = []
+      }
+    } else if (prop?.type === 'object' && typeof value === 'string') {
+      // 对象类型：解析 JSON
+      const trimmed = (value as string).trim()
+      if (trimmed) {
+        try {
+          parsed_params[key] = JSON.parse(trimmed)
+        } catch {
+          parsed_params[key] = value
+        }
+      } else {
+        parsed_params[key] = {}
+      }
+    } else {
+      parsed_params[key] = value
     }
   }
   
-  flow_ref.value?.updateNodeParams(selected_node.value.id, param_values.value)
+  // 如果是通知节点，需要附加通知规则的配置信息
+  if (selected_node.value.type === 'notify' && parsed_params.notification_rule_id) {
+    const rule = notification_rules.value.find(r => r.id === parsed_params.notification_rule_id)
+    if (rule) {
+      // 将通知规则的channel和config附加到参数中，供工作流执行时使用
+      parsed_params._notification_channel = rule.channel
+      parsed_params._notification_config = rule.config
+    }
+  }
+  
+  flow_ref.value?.updateNodeParams(selected_node.value.id, parsed_params)
 }
 
 const cancel_edit = () => {

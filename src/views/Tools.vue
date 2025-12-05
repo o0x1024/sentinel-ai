@@ -116,15 +116,25 @@
 
             <div class="card-actions justify-between items-center mt-4">
               <span class="text-xs text-base-content/60">v{{ tool.version }}</span>
-              <button 
-                @click="testBuiltinTool(tool)"
-                class="btn btn-success btn-sm"
-                :disabled="tool.is_testing"
-              >
-                <i v-if="tool.is_testing" class="fas fa-spinner fa-spin mr-1"></i>
-                <i v-else class="fas fa-play mr-1"></i>
-                {{ tool.is_testing ? '测试中...' : '测试工具' }}
-              </button>
+              <div class="flex gap-2">
+                <button 
+                  @click="testBuiltinTool(tool)"
+                  class="btn btn-success btn-sm"
+                  :disabled="tool.is_testing"
+                  title="快速测试（使用默认参数）"
+                >
+                  <i v-if="tool.is_testing" class="fas fa-spinner fa-spin mr-1"></i>
+                  <i v-else class="fas fa-play mr-1"></i>
+                  测试
+                </button>
+                <button 
+                  @click="openTestBuiltinToolModal(tool)"
+                  class="btn btn-outline btn-info btn-sm"
+                  title="高级测试（自定义参数）"
+                >
+                  <i class="fas fa-cog"></i>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -164,15 +174,24 @@
               <td class="text-sm">{{ tool.description }}</td>
               <td class="text-xs text-base-content/60">v{{ tool.version }}</td>
               <td>
-                <button 
-                  @click="testBuiltinTool(tool)"
-                  class="btn btn-success btn-xs"
-                  :disabled="tool.is_testing"
-                >
-                  <i v-if="tool.is_testing" class="fas fa-spinner fa-spin mr-1"></i>
-                  <i v-else class="fas fa-play mr-1"></i>
-                  {{ tool.is_testing ? '测试中...' : '测试' }}
-                </button>
+                <div class="flex gap-1">
+                  <button 
+                    @click="testBuiltinTool(tool)"
+                    class="btn btn-success btn-xs"
+                    :disabled="tool.is_testing"
+                    title="快速测试（使用默认参数）"
+                  >
+                    <i v-if="tool.is_testing" class="fas fa-spinner fa-spin mr-1"></i>
+                    <i v-else class="fas fa-play"></i>
+                  </button>
+                  <button 
+                    @click="openTestBuiltinToolModal(tool)"
+                    class="btn btn-outline btn-info btn-xs"
+                    title="高级测试（自定义参数）"
+                  >
+                    <i class="fas fa-cog"></i>
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -868,6 +887,105 @@
       </div>
     </dialog>
 
+    <!-- 内置工具测试模态框 -->
+    <dialog :class="['modal', { 'modal-open': showTestBuiltinToolModal }]">
+      <div v-if="testingBuiltinTool" class="modal-box w-11/12 max-w-5xl">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="font-bold text-lg">
+            测试内置工具: {{ testingBuiltinTool.name }}
+          </h3>
+          <button @click="closeTestBuiltinToolModal" class="btn btn-sm btn-ghost">✕</button>
+        </div>
+
+        <div class="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+          <div class="alert alert-info">
+            <i class="fas fa-info-circle"></i>
+            <span>输入测试参数后点击运行测试，可以验证工具是否正常工作。</span>
+          </div>
+
+          <!-- 工具描述 -->
+          <div class="bg-base-200 p-4 rounded-lg">
+            <p class="text-sm">{{ testingBuiltinTool.description }}</p>
+            <div class="flex gap-2 mt-2">
+              <span class="badge badge-success badge-sm">{{ testingBuiltinTool.category }}</span>
+              <span class="badge badge-ghost badge-sm">v{{ testingBuiltinTool.version }}</span>
+            </div>
+          </div>
+
+          <!-- 参数说明（仅当有 input_schema 时显示） -->
+          <div v-if="testingBuiltinTool.input_schema && testingBuiltinTool.input_schema.properties && Object.keys(testingBuiltinTool.input_schema.properties).length > 0" class="collapse collapse-arrow border border-base-300 bg-base-100">
+            <input type="checkbox" checked />
+            <div class="collapse-title text-md font-medium">
+              输入参数说明
+            </div>
+            <div class="collapse-content">
+              <div class="overflow-x-auto">
+                <table class="table table-sm w-full">
+                  <thead>
+                    <tr>
+                      <th>参数名</th>
+                      <th>类型</th>
+                      <th>必填</th>
+                      <th>描述</th>
+                      <th>约束</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="prop in getToolProperties(testingBuiltinTool.input_schema)" :key="prop.name">
+                      <td class="font-mono text-primary">{{ prop.name }}</td>
+                      <td><span class="badge badge-outline">{{ prop.type }}</span></td>
+                      <td>
+                        <span v-if="prop.required" class="badge badge-error badge-sm">必填</span>
+                      </td>
+                      <td>{{ prop.description }}</td>
+                      <td class="font-mono text-xs">{{ prop.constraints }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- 无参数工具提示 -->
+          <div v-else class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>此工具没有输入参数或参数信息暂未提供，可直接运行测试。</span>
+          </div>
+
+          <!-- 测试参数输入（始终显示） -->
+          <div class="form-control">
+            <label class="label"><span class="label-text">测试参数 (JSON)</span></label>
+            <textarea
+              v-model="testBuiltinToolParamsJson"
+              class="textarea textarea-bordered font-mono text-sm"
+              placeholder="输入 JSON 格式的测试参数，例如: {}"
+              rows="6"
+              spellcheck="false"
+            ></textarea>
+          </div>
+
+          <!-- 测试结果（始终显示） -->
+          <div class="form-control">
+            <label class="label"><span class="label-text">测试结果</span></label>
+            <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-40 bg-base-200 overflow-auto">{{ testBuiltinToolResult || '点击"运行测试"查看结果' }}</pre>
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button @click="closeTestBuiltinToolModal" class="btn">{{ $t('common.cancel') }}</button>
+          <button 
+            class="btn btn-primary"
+            :disabled="isTestingBuiltinTool"
+            @click="runTestBuiltinTool"
+          >
+            <i v-if="isTestingBuiltinTool" class="fas fa-spinner fa-spin mr-1"></i>
+            <i v-else class="fas fa-play mr-1"></i>
+            运行测试
+          </button>
+        </div>
+      </div>
+    </dialog>
+
     <!-- 服务器工具测试模态框 -->
     <dialog :class="['modal', { 'modal-open': showTestServerModal }]">
       <div v-if="showTestServerModal" class="modal-box w-11/12 max-w-5xl">
@@ -971,7 +1089,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, reactive, computed, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -1064,6 +1182,13 @@ const selectedTestToolName = ref('');
 const testToolParamsJson = ref('');
 const testToolResult = ref('');
 const isTestingTool = ref(false);
+
+// 内置工具测试相关状态
+const showTestBuiltinToolModal = ref(false);
+const testingBuiltinTool = ref<any>(null);
+const testBuiltinToolParamsJson = ref('');
+const testBuiltinToolResult = ref('');
+const isTestingBuiltinTool = ref(false);
 // const statusUpdateInterval = ref<NodeJS.Timeout | null>(null);
 
 const quickCreateForm = reactive({
@@ -1446,12 +1571,102 @@ function getToolIcon(toolName: string) {
   }
 }
 
+// 打开内置工具测试模态框
+function openTestBuiltinToolModal(tool: any) {
+  // 先设置工具数据
+  testingBuiltinTool.value = { ...tool };
+  testBuiltinToolResult.value = '';
+  
+  // 根据工具的 input_schema 生成默认参数
+  if (tool.input_schema) {
+    testBuiltinToolParamsJson.value = generateDefaultParams(tool.input_schema);
+  } else {
+    testBuiltinToolParamsJson.value = '{}';
+  }
+  
+  // 使用 nextTick 确保数据设置完成后再显示模态框，避免闪屏
+  nextTick(() => {
+    showTestBuiltinToolModal.value = true;
+  });
+}
+
+// 关闭内置工具测试模态框
+function closeTestBuiltinToolModal() {
+  // 先关闭模态框，延迟清空数据避免闪烁
+  showTestBuiltinToolModal.value = false;
+  // 使用较长的延迟确保动画完成后再清空数据
+  setTimeout(() => {
+    testingBuiltinTool.value = null;
+    testBuiltinToolParamsJson.value = '';
+    testBuiltinToolResult.value = '';
+  }, 350);
+}
+
+// 运行内置工具测试
+async function runTestBuiltinTool() {
+  if (!testingBuiltinTool.value) {
+    dialog.toast.error('请选择要测试的工具');
+    return;
+  }
+
+  let inputs: any = {};
+  if (testBuiltinToolParamsJson.value.trim()) {
+    try {
+      inputs = JSON.parse(testBuiltinToolParamsJson.value);
+    } catch (e) {
+      dialog.toast.error('参数 JSON 格式错误，请检查');
+      return;
+    }
+  }
+
+  isTestingBuiltinTool.value = true;
+  testBuiltinToolResult.value = '正在执行测试...';
+  
+  try {
+    const result = await invoke<any>('unified_execute_tool', {
+      toolName: testingBuiltinTool.value.name,
+      inputs,
+      context: null,
+      timeout: 60,
+    });
+
+    if (result.success) {
+      testBuiltinToolResult.value = typeof result.output === 'string'
+        ? result.output
+        : JSON.stringify(result.output, null, 2);
+      dialog.toast.success('工具测试完成');
+    } else {
+      testBuiltinToolResult.value = `测试失败: ${result.error || '未知错误'}`;
+      dialog.toast.error('工具测试失败');
+    }
+  } catch (error: any) {
+    console.error('Failed to test builtin tool:', error);
+    testBuiltinToolResult.value = `测试失败: ${error?.message || String(error)}`;
+    dialog.toast.error('工具测试失败');
+  } finally {
+    isTestingBuiltinTool.value = false;
+  }
+}
+
+// 快速测试内置工具（使用默认参数）
 async function testBuiltinTool(tool: any) {
   tool.is_testing = true;
   try {
-    // 调用后端真实测试接口，传递工具名称而不是ID
-    const result = await invoke('test_mcp_tools_registration', { toolId: tool.name }) as any;
-    dialog.toast.success(`工具 ${tool.name} 测试成功：${result && result.message ? result.message : '已完成'}`);
+    // 使用默认测试参数
+    const defaultParams = tool.input_schema ? JSON.parse(generateDefaultParams(tool.input_schema)) : {};
+    
+    const result = await invoke<any>('unified_execute_tool', {
+      toolName: tool.name,
+      inputs: defaultParams,
+      context: null,
+      timeout: 60,
+    });
+    
+    if (result.success) {
+      dialog.toast.success(`工具 ${tool.name} 测试成功`);
+    } else {
+      dialog.toast.error(`工具 ${tool.name} 测试失败：${result.error || '未知错误'}`);
+    }
   } catch (error: any) {
     console.error(`Failed to test tool ${tool.name}:`, error);
     dialog.toast.error(`工具 ${tool.name} 测试失败：${error && error.message ? error.message : error}`);

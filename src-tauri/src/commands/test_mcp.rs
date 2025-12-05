@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[tauri::command]
 pub async fn test_mcp_tools_registration(
     mcp_service: State<'_, Arc<McpService>>,
-    tool_system: State<'_, ToolSystem>,
+    tool_system: State<'_, Arc<ToolSystem>>,
     tool_id: Option<String>,
 ) -> Result<Value, String> {
     println!("🔧 开始测试MCP工具注册功能...");

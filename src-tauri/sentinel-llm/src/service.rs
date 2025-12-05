@@ -282,7 +282,30 @@ impl AiService {
         F: FnMut(StreamChunk),
     {
         use rig::providers::deepseek;
-        let client = deepseek::Client::from_env();
+        
+        // 使用 ClientBuilder 创建客户端，确保设置正确的 Content-Type
+        let api_key = std::env::var("DEEPSEEK_API_KEY")
+            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+            .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
+        
+        // 创建带有正确 Content-Type 的 HTTP 客户端
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+        
+        let client = deepseek::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
+        
         let agent = client.agent(model).preamble(preamble).build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
     }

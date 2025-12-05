@@ -416,7 +416,20 @@ fn ai_nodes() -> Vec<NodeCatalogItem> {
 
 fn tool_node_from_tool(info: &ToolInfo) -> NodeCatalogItem {
     // 简化映射：将工具参数schema直接用作节点参数schema
-    let params_schema = info.parameters.schema.clone();
+    // 添加 timeout 参数到 schema
+    let mut params_schema = info.parameters.schema.clone();
+    if let Some(obj) = params_schema.as_object_mut() {
+        if let Some(props) = obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
+            props.insert("timeout".to_string(), json!({
+                "type": "integer",
+                "title": "超时时间(秒)",
+                "description": "工具执行超时时间，默认60秒",
+                "default": 60,
+                "minimum": 1,
+                "maximum": 3600
+            }));
+        }
+    }
 
     NodeCatalogItem {
         node_type: format!("tool::{}", info.name),
@@ -433,7 +446,7 @@ fn plugin_tool_node_from_plugin(plugin: &sentinel_passive::PluginRecord) -> Node
     // 使用 plugin:: 前缀以区分普通工具
     
     // 尝试从全局工具系统获取插件的参数schema
-    let params_schema = if let Ok(tool_system) = get_global_tool_system() {
+    let mut params_schema = if let Ok(tool_system) = get_global_tool_system() {
         let tool_name = format!("plugin::{}", plugin.metadata.id);
         
         // 同步获取工具列表并查找对应的插件工具
@@ -474,6 +487,20 @@ fn plugin_tool_node_from_plugin(plugin: &sentinel_passive::PluginRecord) -> Node
             }
         })
     };
+    
+    // 添加 timeout 参数到 schema（插件默认300秒）
+    if let Some(obj) = params_schema.as_object_mut() {
+        if let Some(props) = obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
+            props.insert("timeout".to_string(), json!({
+                "type": "integer",
+                "title": "超时时间(秒)",
+                "description": "插件执行超时时间，默认300秒（插件通常需要更长时间）",
+                "default": 300,
+                "minimum": 1,
+                "maximum": 3600
+            }));
+        }
+    }
 
     NodeCatalogItem {
         node_type: format!("plugin::{}", plugin.metadata.id),

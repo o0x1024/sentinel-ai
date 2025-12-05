@@ -34,6 +34,16 @@ pub struct TravelConfig {
     pub parallel_config: ParallelExecutionConfig,
     /// 上下文管理配置
     pub context_config: ContextManagerConfig,
+    /// 是否启用多模态模式（截图）
+    /// true: 多模态模式，VisionExplorer 发送截图给 VLM
+    /// false: 文本模式，发送元素列表给 LLM
+    #[serde(default = "default_true")]
+    pub enable_multimodal: bool,
+}
+
+/// 返回 true 的辅助函数 (用于 serde default)
+fn default_true() -> bool {
+    true
 }
 
 /// 精简模式配置 - 用于节省Token
@@ -569,6 +579,7 @@ impl Default for TravelConfig {
             lite_mode: LiteModeConfig::default(),
             parallel_config: ParallelExecutionConfig::default(),
             context_config: ContextManagerConfig::default(),
+            enable_multimodal: true, // 默认启用多模态
         }
     }
 }
@@ -771,12 +782,12 @@ pub struct DagPlan {
     pub estimated_tokens: u32,
 }
 
-/// DAG任务节点
+/// DAG任务节点 - 增强版支持条件分支和循环
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DagTask {
     /// 任务ID (如 "1", "2", "3")
     pub id: String,
-    /// 工具名称
+    /// 工具名称 (特殊值: "_condition", "_loop", "_join")
     pub tool_name: String,
     /// 工具参数 (支持 $1, $2 等变量引用)
     pub arguments: HashMap<String, serde_json::Value>,
@@ -794,6 +805,105 @@ pub struct DagTask {
     pub started_at: Option<SystemTime>,
     /// 完成时间
     pub completed_at: Option<SystemTime>,
+    
+    // ========== 增强功能 ==========
+    /// 条件表达式 (如 "$1.status == 'success'")
+    #[serde(default)]
+    pub condition: Option<ConditionExpr>,
+    /// 循环配置 (如 "for each $1.urls")
+    #[serde(default)]
+    pub loop_config: Option<LoopConfig>,
+    /// 错误处理策略
+    #[serde(default)]
+    pub on_error: ErrorStrategy,
+    /// 重试配置
+    #[serde(default)]
+    pub retry_config: Option<RetryConfig>,
+    /// 任务优先级 (用于调度)
+    #[serde(default)]
+    pub priority: TaskPriority,
+    /// 是否为动态生成的任务
+    #[serde(default)]
+    pub is_dynamic: bool,
+    /// 父任务ID (如果是循环展开生成的)
+    #[serde(default)]
+    pub parent_task_id: Option<String>,
+}
+
+/// 条件表达式
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConditionExpr {
+    /// 条件表达式字符串 (如 "$1.status == 'success'")
+    pub expr: String,
+    /// 条件为真时执行的分支任务ID
+    pub then_branch: Option<String>,
+    /// 条件为假时执行的分支任务ID
+    pub else_branch: Option<String>,
+}
+
+/// 循环配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopConfig {
+    /// 循环类型
+    pub loop_type: LoopType,
+    /// 迭代变量名 (在循环体内可用 $item 引用)
+    pub item_var: String,
+    /// 循环体任务模板
+    pub body_template: Box<DagTask>,
+    /// 最大迭代次数 (防止无限循环)
+    pub max_iterations: u32,
+    /// 并行执行循环迭代
+    pub parallel: bool,
+}
+
+/// 循环类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LoopType {
+    /// 遍历数组: for each item in $1.items
+    ForEach { source: String },
+    /// 范围循环: for i in 0..10
+    Range { start: i32, end: i32 },
+    /// While 循环: while $1.has_more
+    While { condition: String },
+}
+
+/// 错误处理策略
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum ErrorStrategy {
+    /// 失败时中止整个计划
+    #[default]
+    Abort,
+    /// 跳过当前任务，继续执行
+    Skip,
+    /// 重试指定次数后跳过
+    RetryThenSkip,
+    /// 重试指定次数后中止
+    RetryThenAbort,
+    /// 执行回退任务
+    Fallback { task_id: String },
+    /// 触发重规划
+    Replan,
+}
+
+/// 重试配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryConfig {
+    /// 最大重试次数
+    pub max_retries: u32,
+    /// 重试延迟 (毫秒)
+    pub delay_ms: u64,
+    /// 延迟倍增因子
+    pub backoff_factor: f32,
+}
+
+/// 任务优先级
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority {
+    Low,
+    #[default]
+    Normal,
+    High,
+    Critical,
 }
 
 /// DAG任务状态
@@ -813,7 +923,7 @@ pub enum DagTaskStatus {
     Skipped,
 }
 
-/// DAG执行结果
+/// DAG执行结果 - 增强版支持重规划
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DagExecutionResult {
     /// 计划ID
@@ -828,6 +938,59 @@ pub struct DagExecutionResult {
     pub metrics: DagExecutionMetrics,
     /// 最终输出
     pub final_output: Option<serde_json::Value>,
+    
+    // ========== 重规划支持 ==========
+    /// 是否需要重规划
+    #[serde(default)]
+    pub needs_replanning: bool,
+    /// 重规划原因
+    #[serde(default)]
+    pub replan_reason: Option<ReplanReason>,
+    /// 执行状态快照 (用于重规划时恢复)
+    #[serde(default)]
+    pub execution_snapshot: Option<ExecutionSnapshot>,
+}
+
+/// 重规划原因
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ReplanReason {
+    /// 任务失败且策略为 Replan
+    TaskFailed { task_id: String, error: String },
+    /// 发现新的目标/信息需要调整计划
+    NewDiscovery { description: String, data: serde_json::Value },
+    /// 目标不可达，需要替代方案
+    TargetUnreachable { original_target: String },
+    /// 资源不足，需要调整策略
+    ResourceExhausted { resource: String },
+    /// 用户请求重规划
+    UserRequested { reason: String },
+    /// 循环检测到无效操作
+    IneffectiveLoop { iterations: u32 },
+}
+
+/// 执行快照 (用于重规划时恢复上下文)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExecutionSnapshot {
+    /// 已完成的任务及其结果
+    pub completed_tasks: HashMap<String, serde_json::Value>,
+    /// 收集到的信息
+    pub gathered_info: HashMap<String, serde_json::Value>,
+    /// 当前目标状态
+    pub target_state: Option<serde_json::Value>,
+    /// 已尝试的方法
+    pub attempted_approaches: Vec<String>,
+    /// 错误历史
+    pub error_history: Vec<ErrorRecord>,
+}
+
+/// 错误记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorRecord {
+    pub task_id: String,
+    pub tool_name: String,
+    pub error: String,
+    pub timestamp: SystemTime,
+    pub context: Option<serde_json::Value>,
 }
 
 /// DAG执行指标
@@ -860,6 +1023,151 @@ pub enum ExecutionMode {
     LiteDag,
     /// 混合模式(根据复杂度自动切换)
     Hybrid,
+    /// 流式DAG模式 (边规划边执行)
+    StreamingDag,
+    /// 自适应重规划模式
+    AdaptiveReplan,
+}
+
+// ========== 自主 Observe 类型 ==========
+
+/// 自主 Observe 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutonomousObserveConfig {
+    /// 最大探索深度
+    pub max_depth: u32,
+    /// 最大工具调用次数
+    pub max_tool_calls: u32,
+    /// 信息充分性阈值 (0-1)
+    pub sufficiency_threshold: f32,
+    /// 启用自适应策略选择
+    pub adaptive_strategy: bool,
+    /// 优先探索的信息类型
+    pub priority_info_types: Vec<InfoType>,
+}
+
+/// 信息类型 (用于自主 Observe)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum InfoType {
+    /// 目标结构信息
+    TargetStructure,
+    /// API 端点
+    ApiEndpoints,
+    /// 表单和输入
+    FormsAndInputs,
+    /// 技术栈
+    TechStack,
+    /// 认证机制
+    Authentication,
+    /// 错误信息
+    ErrorMessages,
+    /// 配置信息
+    Configuration,
+    /// 自定义类型
+    Custom(String),
+}
+
+/// 观察策略
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObserveStrategy {
+    /// 策略名称
+    pub name: String,
+    /// 需要收集的信息类型
+    pub required_info: Vec<InfoType>,
+    /// 建议使用的工具
+    pub suggested_tools: Vec<String>,
+    /// 收集顺序
+    pub collection_order: Vec<ObserveStep>,
+    /// 成功条件
+    pub success_criteria: String,
+}
+
+/// 观察步骤
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObserveStep {
+    /// 步骤ID
+    pub id: String,
+    /// 步骤目标
+    pub objective: String,
+    /// 使用的工具
+    pub tool: String,
+    /// 参数模板
+    pub args_template: HashMap<String, serde_json::Value>,
+    /// 依赖的步骤
+    pub depends_on: Vec<String>,
+    /// 是否可选
+    pub optional: bool,
+}
+
+/// 观察结果评估
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObserveAssessment {
+    /// 信息充分性得分 (0-1)
+    pub sufficiency_score: f32,
+    /// 已收集的信息类型
+    pub collected_info: Vec<InfoType>,
+    /// 缺失的信息类型
+    pub missing_info: Vec<InfoType>,
+    /// 建议的下一步
+    pub suggested_next_steps: Vec<String>,
+    /// 是否可以进入 Orient 阶段
+    pub ready_for_orient: bool,
+}
+
+impl Default for AutonomousObserveConfig {
+    fn default() -> Self {
+        Self {
+            max_depth: 3,
+            max_tool_calls: 10,
+            sufficiency_threshold: 0.7,
+            adaptive_strategy: true,
+            priority_info_types: vec![
+                InfoType::TargetStructure,
+                InfoType::ApiEndpoints,
+                InfoType::TechStack,
+            ],
+        }
+    }
+}
+
+// ========== 流式执行类型 ==========
+
+/// 流式任务事件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum StreamingTaskEvent {
+    /// 新任务被规划
+    TaskPlanned { task: DagTask },
+    /// 任务开始执行
+    TaskStarted { task_id: String },
+    /// 任务执行中 (进度更新)
+    TaskProgress { task_id: String, progress: f32, message: String },
+    /// 任务完成
+    TaskCompleted { task_id: String, result: serde_json::Value },
+    /// 任务失败
+    TaskFailed { task_id: String, error: String },
+    /// 触发重规划
+    ReplanTriggered { reason: ReplanReason },
+    /// 新计划生成
+    PlanUpdated { new_tasks: Vec<DagTask> },
+    /// 执行完成
+    ExecutionComplete { result: DagExecutionResult },
+}
+
+/// 流式执行状态
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingExecutionState {
+    /// 当前计划版本
+    pub plan_version: u32,
+    /// 已完成任务
+    pub completed: Vec<String>,
+    /// 正在执行任务
+    pub running: Vec<String>,
+    /// 待执行任务
+    pub pending: Vec<String>,
+    /// 累积结果
+    pub results: HashMap<String, serde_json::Value>,
+    /// 重规划次数
+    pub replan_count: u32,
 }
 
 /// 资源信息(用于追踪)
@@ -981,6 +1289,14 @@ impl DagTask {
             error: None,
             started_at: None,
             completed_at: None,
+            // 增强功能默认值
+            condition: None,
+            loop_config: None,
+            on_error: ErrorStrategy::default(),
+            retry_config: None,
+            priority: TaskPriority::default(),
+            is_dynamic: false,
+            parent_task_id: None,
         }
     }
 
@@ -991,6 +1307,82 @@ impl DagTask {
 
     pub fn with_description(mut self, desc: String) -> Self {
         self.description = Some(desc);
+        self
+    }
+    
+    pub fn with_condition(mut self, condition: ConditionExpr) -> Self {
+        self.condition = Some(condition);
+        self
+    }
+    
+    pub fn with_loop(mut self, loop_config: LoopConfig) -> Self {
+        self.loop_config = Some(loop_config);
+        self
+    }
+    
+    pub fn with_error_strategy(mut self, strategy: ErrorStrategy) -> Self {
+        self.on_error = strategy;
+        self
+    }
+    
+    pub fn with_retry(mut self, max_retries: u32, delay_ms: u64) -> Self {
+        self.retry_config = Some(RetryConfig {
+            max_retries,
+            delay_ms,
+            backoff_factor: 2.0,
+        });
+        self
+    }
+    
+    pub fn with_priority(mut self, priority: TaskPriority) -> Self {
+        self.priority = priority;
+        self
+    }
+    
+    /// 创建条件任务
+    pub fn condition_task(id: String, expr: String, then_branch: Option<String>, else_branch: Option<String>) -> Self {
+        Self::new(id, "_condition".to_string(), HashMap::new())
+            .with_condition(ConditionExpr {
+                expr,
+                then_branch,
+                else_branch,
+            })
+    }
+    
+    /// 创建循环任务
+    pub fn loop_task(id: String, loop_type: LoopType, item_var: String, body_template: DagTask) -> Self {
+        let mut task = Self::new(id, "_loop".to_string(), HashMap::new());
+        task.loop_config = Some(LoopConfig {
+            loop_type,
+            item_var,
+            body_template: Box::new(body_template),
+            max_iterations: 100,
+            parallel: false,
+        });
+        task
+    }
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            delay_ms: 1000,
+            backoff_factor: 2.0,
+        }
+    }
+}
+
+impl DagExecutionResult {
+    /// 检查是否需要重规划
+    pub fn should_replan(&self) -> bool {
+        self.needs_replanning
+    }
+    
+    /// 创建需要重规划的结果
+    pub fn with_replan_needed(mut self, reason: ReplanReason) -> Self {
+        self.needs_replanning = true;
+        self.replan_reason = Some(reason);
         self
     }
 }

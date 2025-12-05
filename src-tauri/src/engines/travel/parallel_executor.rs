@@ -271,6 +271,10 @@ impl ParallelExecutor {
             failed_tasks: failed,
             metrics,
             final_output: self.build_final_output(plan).await,
+            // v3.0 增强字段
+            needs_replanning: false,
+            replan_reason: None,
+            execution_snapshot: None,
         })
     }
 

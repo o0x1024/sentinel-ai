@@ -7,6 +7,14 @@
                     <h3 class="card-title text-lg">执行流程图</h3>
 
                     <div class="flex gap-2">
+                        <!-- 新建按钮 -->
+                        <button class="btn btn-sm btn-outline" @click="onNewWorkflow" title="新建工作流">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                            </svg>
+                            新建
+                        </button>
+
                         <!-- 缩放控制 -->
                         <div class="join">
                             <button class="btn btn-sm join-item" @click="zoomOut">
@@ -235,6 +243,12 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { CSSProperties } from 'vue'
 
+
+defineOptions({
+  name: 'flowchartvisualization'
+});
+
+
 // 节点状态枚举
 type NodeStatus = 'pending' | 'planning' | 'running' | 'completed' | 'failed' | 'paused' | 'cancelled'
 
@@ -280,6 +294,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
     nodeClick: [node: FlowchartNode]
     connectionClick: [connection: FlowchartConnection]
+    newWorkflow: []
 }>()
 
 // 响应式数据
@@ -578,6 +593,10 @@ const onNodeLeave = (_node: FlowchartNode) => {
 }
 
 const updateConnections = () => {
+    const nodeIds = new Set(nodes.value.map(n => n.id))
+    // 清理引用了不存在节点的无效边
+    customEdges.value = customEdges.value.filter(e => nodeIds.has(e.from_node) && nodeIds.has(e.to_node))
+    
     const newConnections: FlowchartConnection[] = []
     customEdges.value.forEach(edge => {
         const fromNode = nodes.value.find(n => n.id === edge.from_node)
@@ -1002,6 +1021,16 @@ const get_node_icon = (node_type: string): string => {
     return ''
 }
 
+// 检查是否有未保存的更改
+const hasUnsavedChanges = (): boolean => {
+    return nodes.value.length > 0 || customEdges.value.length > 0
+}
+
+// 新建工作流
+const onNewWorkflow = () => {
+    emit('newWorkflow')
+}
+
 // 开始拖拽连接
 const start_drag_connection = (nodeId: string, portId: string, portType: 'input' | 'output', event: PointerEvent) => {
     // 只允许从输出端口开始拖拽
@@ -1169,25 +1198,42 @@ defineExpose({
         return [...nodes.value]
     },
     getFlowchartEdges: (): Array<{ from_node: string, to_node: string }> => {
+        const nodeIds = new Set(nodes.value.map(n => n.id))
         if (customEdges.value.length) {
-            return customEdges.value.map(e => ({ from_node: e.from_node, to_node: e.to_node }))
+            // 过滤掉引用了不存在节点的无效边
+            return customEdges.value
+                .filter(e => nodeIds.has(e.from_node) && nodeIds.has(e.to_node))
+                .map(e => ({ from_node: e.from_node, to_node: e.to_node }))
         }
         const edges: Array<{ from_node: string, to_node: string }> = []
         nodes.value.forEach(n => {
-            n.dependencies.forEach(dep => edges.push({ from_node: dep, to_node: n.id }))
+            n.dependencies.forEach(dep => {
+                if (nodeIds.has(dep)) {
+                    edges.push({ from_node: dep, to_node: n.id })
+                }
+            })
         })
         return edges
     },
     getFlowchartEdgesDetailed: (): Array<{ from_node: string, to_node: string, from_port: string, to_port: string }> => {
+        const nodeIds = new Set(nodes.value.map(n => n.id))
         if (customEdges.value.length) {
-            return customEdges.value.map(e => ({ ...e }))
+            // 过滤掉引用了不存在节点的无效边
+            return customEdges.value
+                .filter(e => nodeIds.has(e.from_node) && nodeIds.has(e.to_node))
+                .map(e => ({ ...e }))
         }
         const edges: Array<{ from_node: string, to_node: string, from_port: string, to_port: string }> = []
         nodes.value.forEach(n => {
-            n.dependencies.forEach(dep => edges.push({ from_node: dep, to_node: n.id, from_port: 'out', to_port: 'in' }))
+            n.dependencies.forEach(dep => {
+                if (nodeIds.has(dep)) {
+                    edges.push({ from_node: dep, to_node: n.id, from_port: 'out', to_port: 'in' })
+                }
+            })
         })
         return edges
-    }
+    },
+    hasUnsavedChanges
 })
 </script>
 

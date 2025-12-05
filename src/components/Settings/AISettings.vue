@@ -125,6 +125,24 @@
               </div>
             </div>
             
+            <!-- 多模态选项 -->
+            <div class="form-control mt-4">
+              <label class="label cursor-pointer justify-start gap-4">
+                <input type="checkbox" class="toggle toggle-primary" 
+                       v-model="enableMultimodalLocal"
+                       @change="onChangeEnableMultimodal">
+                <div class="flex flex-col">
+                  <span class="label-text font-medium flex items-center gap-2">
+                    <i class="fas fa-image text-accent"></i>
+                    多模态模式
+                  </span>
+                  <span class="label-text-alt text-base-content/60">
+                    启用后，视觉探索引擎将发送截图给模型；关闭后使用文本元素列表（适用于非多模态模型）
+                  </span>
+                </div>
+              </label>
+            </div>
+            
             <!-- 提示信息 -->
             <div class="flex items-center gap-2 mt-3 text-sm text-base-content/70">
               <i class="fas fa-info-circle"></i>
@@ -714,6 +732,7 @@ interface Emits {
   'applyManualConfig': [config: any]
   'setDefaultProvider': [provider: string]
   'setDefaultChatModel': [model: string]
+  'setEnableMultimodal': [enabled: boolean]
 }
 
 const emit = defineEmits<Emits>()
@@ -785,6 +804,8 @@ const selectedProviderConfig = computed(() => {
 const defaultProviderLocal = ref('')
 // 默认 Chat 模型选择
 const defaultChatModelLocal = ref('')
+// 多模态模式开关
+const enableMultimodalLocal = ref(true)
 
 watch(() => props.aiConfig, (cfg: any) => {
   
@@ -808,6 +829,10 @@ watch(() => props.aiConfig, (cfg: any) => {
   } else {
     defaultChatModelLocal.value = String(dcm)
   }
+  
+  // 初始化多模态模式设置
+  const em = (cfg && (cfg as any).enable_multimodal)
+  enableMultimodalLocal.value = em !== false // 默认为 true
 }, { immediate: true, deep: true })
 
 const onChangeDefaultProvider = async () => {
@@ -830,6 +855,15 @@ const onChangeDefaultChatModel = async () => {
     emit('setDefaultChatModel', model)
   } catch (e) {
     console.error('Failed to set default chat model', e)
+  }
+}
+
+const onChangeEnableMultimodal = async () => {
+  try {
+    const enabled = enableMultimodalLocal.value
+    emit('setEnableMultimodal', enabled)
+  } catch (e) {
+    console.error('Failed to set enable multimodal', e)
   }
 }
 

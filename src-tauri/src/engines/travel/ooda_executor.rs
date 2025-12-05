@@ -1687,9 +1687,9 @@ impl OodaExecutor {
 
         Ok(ActionPlan {
             id: Uuid::new_v4().to_string(),
-            name: "Security Assessment Plan".to_string(),
+            name: "安全评估计划".to_string(),
             description: format!(
-                "Plan to assess {} with {} steps (complexity: {:?})",
+                "计划评估 {} 进行 {} 步 (复杂度: {:?})",
                 target,
                 steps.len(),
                 task_complexity

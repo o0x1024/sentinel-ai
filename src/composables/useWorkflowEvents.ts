@@ -33,6 +33,12 @@ export function useWorkflowEvents() {
     return u
   }
 
+  const on_run_stop = async (handler: (payload: any) => void) => {
+    const u = await listen('workflow:run-stop', (e: any) => handler(e?.payload))
+    unsubs.push(u)
+    return u
+  }
+
   const unsubscribe_all = () => {
     unsubs.forEach(u => { try { u() } catch {} })
     unsubs.length = 0
@@ -44,6 +50,7 @@ export function useWorkflowEvents() {
     on_step_complete,
     on_progress,
     on_run_complete,
+    on_run_stop,
     unsubscribe_all,
   }
 }

@@ -391,9 +391,15 @@ impl VisionExplorer {
             state.record_action(navigate_action, result, vec![]);
         }
 
-        // 第2步：初始截图
-        info!("Step 2: Taking initial screenshot");
-        let page_state = self.browser_tools.capture_page_state().await?;
+        // 第2步：获取初始页面状态（根据多模态配置选择方式）
+        info!("Step 2: Capturing initial page state (multimodal={})", self.config.enable_multimodal);
+        let page_state = if self.config.enable_multimodal {
+            // 多模态模式：获取截图
+            self.browser_tools.capture_page_state().await?
+        } else {
+            // 文本模式：获取标注元素列表，不截图
+            self.browser_tools.capture_page_state_text_mode().await?
+        };
         
         {
             let mut state = self.state_manager.write().await;
@@ -503,10 +509,16 @@ impl VisionExplorer {
         
         debug!("Running iteration {}, consecutive_screenshots: {}", iteration, consecutive_screenshots);
 
-        // 1. 获取当前页面状态
-        let page_state = self.browser_tools.capture_page_state().await?;
+        // 1. 获取当前页面状态 (根据多模态配置选择不同方式)
+        let page_state = if self.config.enable_multimodal {
+            // 多模态模式：获取截图
+            self.browser_tools.capture_page_state().await?
+        } else {
+            // 文本模式：获取标注元素列表，不截图
+            self.browser_tools.capture_page_state_text_mode().await?
+        };
         
-        // 发送截图消息到前端
+        // 发送截图消息到前端 (仅多模态模式有截图)
         if let Some(emitter) = &self.message_emitter {
             emitter.emit_screenshot(
                 iteration,
@@ -608,21 +620,25 @@ impl VisionExplorer {
         Ok((false, is_screenshot))
     }
 
-    /// 多模态VLM调用 (支持图片输入)
+    /// VLM/LLM 调用 (根据配置决定是否发送图片)
     async fn call_vlm_multimodal(&self, system_prompt: &str, user_prompt: &str, screenshot_base64: Option<&str>) -> Result<String> {
         let llm_client = LlmClient::new(self.llm_config.clone());
         
-        // 构建图片附件
-        let image = if self.config.enable_multimodal {
-            screenshot_base64.map(|s| ImageAttachment::new(s, "png"))
+        // 根据多模态配置决定调用方式
+        let response = if self.config.enable_multimodal {
+            // 多模态模式：发送截图
+            let image = screenshot_base64.map(|s| ImageAttachment::new(s, "png"));
+            info!("VisionExplorer: Using multimodal mode, image={}", image.is_some());
+            llm_client
+                .completion_with_image(Some(system_prompt), user_prompt, image.as_ref())
+                .await?
         } else {
-            None
+            // 文本模式：不发送任何图片，使用纯文本调用
+            info!("VisionExplorer: Using text mode (no image)");
+            llm_client
+                .completion(Some(system_prompt), user_prompt)
+                .await?
         };
-        
-        // 调用LLM (使用completion_with_image支持多模态)
-        let response = llm_client
-            .completion_with_image(Some(system_prompt), user_prompt, image.as_ref())
-            .await?;
 
         Ok(response)
     }
@@ -768,9 +784,51 @@ impl VisionExplorer {
         let action_history = state.format_action_history(5);
         
         // 统计信息
-        let visited_count = state.state().visited_urls.len();
+        let visited_count = state.state().visited_pages.len();
         let api_count = state.state().discovered_apis.len();
         let interacted_count = state.state().interacted_elements.len();
+        
+        // 格式化已访问页面列表（最多显示 10 个，包含标题）
+        let visited_urls_list = {
+            let pages: Vec<_> = state.state().visited_pages.iter()
+                .take(10)
+                .map(|(url, title)| {
+                    if title.is_empty() {
+                        format!("  - {}", url)
+                    } else {
+                        // 截断过长的标题
+                        let display_title = if title.len() > 40 {
+                            format!("{}...", &title[..40])
+                        } else {
+                            title.clone()
+                        };
+                        format!("  - {} ({})", url, display_title)
+                    }
+                })
+                .collect();
+            if pages.is_empty() {
+                "  (无)".to_string()
+            } else if visited_count > 10 {
+                format!("{}\n  ...及其他 {} 个页面", pages.join("\n"), visited_count - 10)
+            } else {
+                pages.join("\n")
+            }
+        };
+        
+        // 格式化已发现 API 列表（最多显示 15 个）
+        let discovered_apis_list = {
+            let apis: Vec<_> = state.state().discovered_apis.iter()
+                .take(15)
+                .map(|api| format!("  - {} {}", api.method, api.path))
+                .collect();
+            if apis.is_empty() {
+                "  (无)".to_string()
+            } else if api_count > 15 {
+                format!("{}\n  ...及其他 {} 个 API", apis.join("\n"), api_count - 15)
+            } else {
+                apis.join("\n")
+            }
+        };
         
         // 获取上下文摘要
         let context_summary = if self.config.enable_context_summary {
@@ -785,19 +843,36 @@ impl VisionExplorer {
             String::new()
         };
         
-        // 可选：包含可交互元素 JSON（用于非多模态模型）
-        let elements_section = if self.config.include_elements_in_prompt {
-            let elements_to_show: Vec<_> = page_state.interactable_elements.iter()
-                .take(50)
-                .collect();
-            let elements_json = serde_json::to_string_pretty(&elements_to_show)
-                .unwrap_or_else(|_| "[]".to_string());
+        // 根据模态模式选择元素展示方式
+        let elements_section = if !self.config.enable_multimodal {
+            // 文本模式：必须包含标注元素列表，这是模型理解页面的唯一方式
+            // 使用CSV格式以节省token
+            let elements_csv = Self::format_elements_as_csv(&page_state.annotated_elements, 100);
             format!(
-                "\n可交互元素（{}，最多显示 50 个）：\n{}\n",
-                page_state.interactable_elements.len(),
-                elements_json
+                r#"
+────────────────────────
+页面元素列表（共 {} 个，显示前 100 个）
+────────────────────────
+
+**注意**：你正在使用文本模式（无截图），必须根据以下元素列表进行操作。
+每个元素都有一个 `index` 索引号，使用 `click_by_index` 或 `fill_by_index` 时需要指定这个索引。
+
+格式: index,type,tag,text,href,name,value,placeholder
+{}
+"#,
+                page_state.annotated_elements.len(),
+                elements_csv
+            )
+        } else if self.config.include_elements_in_prompt {
+            // 多模态模式但配置了包含元素：作为补充信息（CSV格式）
+            let elements_csv = Self::format_elements_as_csv(&page_state.annotated_elements, 50);
+            format!(
+                "\n可交互元素（{}，最多显示 50 个）：\n格式: index,type,tag,text,href,name,value,placeholder\n{}\n",
+                page_state.annotated_elements.len(),
+                elements_csv
             )
         } else {
+            // 多模态模式：通过截图查看元素，不需要元素列表
             String::new()
         };
         
@@ -807,11 +882,13 @@ impl VisionExplorer {
             .replace("{viewport_width}", &self.config.viewport_width.to_string())
             .replace("{viewport_height}", &self.config.viewport_height.to_string());
         
-        // 根据是否包含元素信息，调整提示语
-        let action_hint = if self.config.include_elements_in_prompt {
-            "请根据上述元素信息，决定下一步操作。"
+        // 根据模态模式调整提示语
+        let action_hint = if !self.config.enable_multimodal {
+            // 文本模式：必须根据元素列表操作
+            "**文本模式**：请根据上述「页面元素列表」中的 index 索引号，使用 click_by_index 或 fill_by_index 进行操作。"
         } else {
-            "请查看截图中的元素标注（索引号），决定下一步操作。"
+            // 多模态模式：根据截图中的标注操作
+            "**多模态模式**：请查看截图中的元素标注（索引号），决定下一步操作。"
         };
         
         // 构建 user_prompt
@@ -827,6 +904,12 @@ impl VisionExplorer {
 - 访问页面数: {}
 - 已发现 API 数: {}
 - 已交互元素数: {}
+
+已访问页面（避免重复访问）：
+{}
+
+已发现 API（避免重复触发）：
+{}
 
 最近操作（最近 5 次）：
 {}
@@ -845,6 +928,8 @@ URL: {}
             visited_count,
             api_count,
             interacted_count,
+            visited_urls_list,
+            discovered_apis_list,
             action_history,
             page_state.url,
             page_state.title,
@@ -981,12 +1066,62 @@ URL: {}
         Err(anyhow!("No JSON found in response"))
     }
 
+    /// 将元素列表格式化为CSV格式（节省token）
+    /// 格式: index,type,tag,text,href,name,value,placeholder
+    fn format_elements_as_csv(elements: &[AnnotatedElement], limit: usize) -> String {
+        let mut lines = Vec::with_capacity(limit + 1);
+        
+        for e in elements.iter().take(limit) {
+            // 获取常用属性
+            let href = e.attributes.get("href").map(|s| s.as_str()).unwrap_or("");
+            let name = e.attributes.get("name").map(|s| s.as_str()).unwrap_or("");
+            let value = e.attributes.get("value").map(|s| s.as_str()).unwrap_or("");
+            let placeholder = e.attributes.get("placeholder").map(|s| s.as_str()).unwrap_or("");
+            let input_type = e.attributes.get("type").map(|s| s.as_str()).unwrap_or("");
+            
+            // 截断过长文本并转义逗号
+            let text = if e.text.len() > 30 { 
+                format!("{}...", &e.text[..30]) 
+            } else { 
+                e.text.clone() 
+            };
+            let text = text.replace(',', ";").replace('\n', " ");
+            let href = if href.len() > 50 { format!("{}...", &href[..50]) } else { href.to_string() };
+            let href = href.replace(',', ";");
+            
+            // 构建CSV行
+            let line = format!(
+                "{},{},{},{},{},{},{},{}",
+                e.index,
+                e.element_type,
+                e.tag_name.to_lowercase(),
+                text,
+                href,
+                name,
+                if !value.is_empty() { value } else { input_type },
+                placeholder
+            );
+            lines.push(line);
+        }
+        
+        lines.join("\n")
+    }
+
     /// 根据分析结果构建浏览器操作
     fn build_action_from_analysis(&self, analysis: &VlmAnalysisResult) -> Result<BrowserAction> {
         let action = &analysis.next_action;
         
         match action.action_type.as_str() {
-            "screenshot" => Ok(BrowserAction::Screenshot),
+            "screenshot" => {
+                // 文本模式下，将 screenshot 请求自动转换为 get_elements
+                // 因为非多模态模型没有视觉能力，截图对它没有意义
+                if !self.config.enable_multimodal {
+                    warn!("Text mode: converting screenshot request to get_elements");
+                    Ok(BrowserAction::GetAnnotatedElements)
+                } else {
+                    Ok(BrowserAction::Screenshot)
+                }
+            }
             
             // 新增：通过索引点击（推荐方式）
             "click_by_index" => {

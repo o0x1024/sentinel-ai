@@ -89,7 +89,7 @@ export class VisionExplorerMessageProcessor {
   static extractIterationsFromChunks(chunks: OrderedMessageChunk[]): VisionIterationDisplay[] {
     const iterationMap = new Map<number, VisionIterationDisplay>()
 
-    // 按序列号排序
+    // 按序列号排序，确保增量更新顺序正确
     const sortedChunks = [...chunks].sort((a, b) => a.sequence - b.sequence)
 
     for (const chunk of sortedChunks) {
@@ -108,6 +108,19 @@ export class VisionExplorerMessageProcessor {
 
     // 转换为数组并按 iteration 排序
     return Array.from(iterationMap.values()).sort((a, b) => a.iteration - b.iteration)
+  }
+  
+  /**
+   * 检查 chunks 中是否包含 VisionExplorer 数据
+   * 用于快速判断是否需要显示 VisionExplorer 组件
+   */
+  static hasVisionData(chunks: OrderedMessageChunk[]): boolean {
+    return chunks.some(chunk => {
+      if (chunk.chunk_type !== 'Meta') return false
+      if (!chunk.structured_data) return false
+      const sd = chunk.structured_data as any
+      return sd.type === 'vision_step'
+    })
   }
 
   /**

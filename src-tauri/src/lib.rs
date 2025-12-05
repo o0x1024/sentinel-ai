@@ -392,6 +392,19 @@ pub fn run() {
 
                 // 为异步任务创建 mcp_service 的克隆（在 manage 之前）
                 let mcp_service_for_tools = Arc::new(mcp_service.clone());
+                // 克隆用于 VisionExplorer 提供者
+                let mcp_service_for_vision = mcp_service_for_tools.clone();
+                // 获取默认 LLM 配置用于 VisionExplorer
+                let (vision_llm_provider, vision_llm_model) = {
+                    let default_service = ai_manager.get_service("default");
+                    if let Some(svc) = default_service {
+                        let cfg = svc.get_config();
+                        (cfg.provider.clone(), cfg.model.clone())
+                    } else {
+                        // 回退到默认值
+                        ("anthropic".to_string(), "claude-sonnet-4-20250514".to_string())
+                    }
+                };
 
                 // 克隆 db_service 供调度器使用
                 let db_service_for_scheduler = db_service.clone();
@@ -467,6 +480,15 @@ pub fn run() {
                                 tracing::error!("Failed to register MCP provider to global tool system: {}", e);
                             } else {
                                 tracing::info!("MCP provider registered to global tool system successfully");
+                            }
+                            
+                            // 注册 VisionExplorer 工具提供者（使所有架构都能使用 vision_explore 工具）
+                            if let Err(e) = tool_system.add_vision_explorer_provider(
+                                mcp_service_for_vision,
+                                vision_llm_provider,
+                                vision_llm_model,
+                            ).await {
+                                tracing::warn!("Failed to register VisionExplorer provider: {} (this is expected if Playwright is not connected)", e);
                             }
                         }
                     }
@@ -861,6 +883,7 @@ pub fn run() {
             commands::workflow_catalog::list_node_catalog,
             // 工作流运行相关命令
             sentinel_workflow::commands::start_workflow_run,
+            sentinel_workflow::commands::stop_workflow_run,
             sentinel_workflow::commands::get_workflow_run_status,
             sentinel_workflow::commands::list_workflow_runs,
             // 工作流定义相关命令

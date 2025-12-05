@@ -27,6 +27,8 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   }>()
   // 新增：流完成状态跟踪
   private streamCompleteFlags = new Map<string, boolean>()
+  // 新增：chunk更新版本号（用于触发Vue响应式更新）
+  private chunkVersions = new Map<string, number>()
 
   addChunk(chunk: OrderedMessageChunk): void {
     const messageId = chunk.message_id
@@ -37,13 +39,17 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       this.chunkArrivalOrder.set(messageId, new Map())
     }
 
-    if (chunk.architecture && !this.architectureInfo.has(messageId)) {
+    // 更新架构信息（允许后续 chunk 覆盖 Unknown 类型）
+    if (chunk.architecture) {
+      const existing = this.architectureInfo.get(messageId)
+      if (!existing || existing.type === 'Unknown') {
       const info: any = { type: chunk.architecture }
       const sd = chunk.structured_data as any
       if (sd && sd.plan_summary) {
         info.planSummary = sd.plan_summary
       }
       this.architectureInfo.set(messageId, info)
+      }
     }
 
     if (chunk.chunk_type === 'StreamComplete') {
@@ -58,7 +64,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       }
     }
 
-    const chunks = this.chunks.get(messageId)!
+    let chunks = this.chunks.get(messageId)!
     // 去重与幂等：同一 execution_id + sequence + chunk_type(+tool_name) 视为同一块
     const existingIndex = chunks.findIndex(
       c =>
@@ -67,6 +73,8 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
         c.execution_id === chunk.execution_id &&
         (c.tool_name || '') === (chunk.tool_name || '')
     )
+    
+    let needsUpdate = false
     if (existingIndex !== -1) {
       const existed = chunks[existingIndex]
       const prev = (existed.content ?? '').toString()
@@ -76,6 +84,7 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       } else {
         // 内容更新：替换原有项，保证顺序不变
         chunks[existingIndex] = { ...existed, ...chunk }
+        needsUpdate = true
       }
     } else {
       // 按 sequence 插入，保持有序
@@ -85,6 +94,15 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       } else {
         chunks.splice(insertIndex, 0, chunk)
       }
+      needsUpdate = true
+    }
+    
+    // 🔥 关键：创建新的数组引用以触发 Vue 响应式更新
+    if (needsUpdate) {
+      this.chunks.set(messageId, [...chunks])
+      // 更新版本号
+      const currentVersion = this.chunkVersions.get(messageId) || 0
+      this.chunkVersions.set(messageId, currentVersion + 1)
     }
 
     // 解析 Meta 事件中的步骤信息
@@ -523,12 +541,29 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
     const chunks = this.chunks.get(messageId) || []
     const archInfo = this.architectureInfo.get(messageId)
     
+    // 从 chunks 中获取架构类型（优先）
+    const archFromChunks = chunks.find(c => c.architecture)?.architecture
+    const archType = archFromChunks || archInfo?.type
+    
     // ReAct 架构：只有 stage === "complete" 才算完成
-    if (archInfo?.type === 'ReAct') {
+    if (archType === 'ReAct') {
       return chunks.some(chunk => 
         chunk.chunk_type === 'Meta' && 
         chunk.stage === 'complete'
       )
+    }
+    
+    // Travel 架构：检查 StreamComplete 或 stage === "complete"
+    if (archType === 'Travel') {
+      return chunks.some(chunk => 
+        chunk.chunk_type === 'StreamComplete' ||
+        (chunk.chunk_type === 'Meta' && chunk.stage === 'complete')
+      )
+    }
+    
+    // VisionExplorer 架构：检查 StreamComplete
+    if (archType === 'VisionExplorer') {
+      return chunks.some(chunk => chunk.chunk_type === 'StreamComplete')
     }
     
     // 其他架构：检查 is_final 标志
@@ -549,6 +584,16 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
   // 新增：获取架构信息（持久化，不随cleanup清除）
   getArchitectureInfo(messageId: string) {
     return this.architectureInfo.get(messageId)
+  }
+
+  // 获取消息的 chunks（返回新数组以支持 Vue 响应式）
+  getChunks(messageId: string): OrderedMessageChunk[] {
+    return this.chunks.get(messageId) || []
+  }
+  
+  // 获取 chunk 版本号（用于 Vue 依赖追踪）
+  getChunkVersion(messageId: string): number {
+    return this.chunkVersions.get(messageId) || 0
   }
 
   // 解析步骤 Meta 事件
@@ -686,7 +731,9 @@ export const useOrderedMessages = (
       architecture: chunk.architecture,
       stage: chunk.stage,
       sequence: chunk.sequence,
-      message_id: chunk.message_id
+      message_id: chunk.message_id,
+      has_structured_data: !!chunk.structured_data,
+      structured_data_type: (chunk.structured_data as any)?.type
     })
     
     // 规范化 message_id：优先将新ID映射到当前streaming消息，避免产生新消息或覆盖旧消息

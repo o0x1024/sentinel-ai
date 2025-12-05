@@ -81,6 +81,33 @@ impl ToolSystem {
         Ok(())
     }
 
+    /// 添加 VisionExplorer 工具提供者
+    /// 
+    /// 将 VisionExplorer 作为通用工具注册到工具系统，使所有架构都能使用
+    pub async fn add_vision_explorer_provider(
+        &self,
+        mcp_service: Arc<crate::services::mcp::McpService>,
+        llm_provider: String,
+        llm_model: String,
+    ) -> Result<()> {
+        debug!("Adding VisionExplorer tool provider to system");
+
+        // 尝试创建 VisionExplorer 工具提供者
+        if let Some(vision_provider) = crate::tools::create_vision_explorer_provider(
+            mcp_service,
+            llm_provider,
+            llm_model,
+        ).await? {
+            let mut manager = self.manager.write().await;
+            manager.register_provider(vision_provider).await?;
+            info!("VisionExplorer tool provider registered successfully");
+        } else {
+            debug!("VisionExplorer provider not available (Playwright not connected), skipping registration");
+        }
+
+        Ok(())
+    }
+
     /// 添加MCP提供者（已简化）
     pub async fn add_mcp_provider(&self, _name: String, _config: Option<McpConfig>) -> Result<()> {
         // MCP功能已简化，暂时返回成功

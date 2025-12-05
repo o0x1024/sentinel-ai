@@ -111,7 +111,7 @@
           <div v-else-if="isTravelMessageFn(message)" class="space-y-3">
             <TravelStepDisplay
               :message="message"
-              :chunks="orderedMessages.processor.chunks.get(message.id)"
+              :chunks="getMessageChunks(message)"
               :isExecuting="message.isStreaming"
             />
           </div>
@@ -120,7 +120,7 @@
           <div v-else-if="isVisionExplorerMessageFn(message)" class="space-y-3">
             <VisionStepDisplay
               :message="message"
-              :chunks="orderedMessages.processor.chunks.get(message.id)"
+              :chunks="getMessageChunks(message)"
               :isExecuting="message.isStreaming"
             />
           </div>
@@ -573,16 +573,44 @@ const parseReWOOMessageData = (message: ChatMessage): ReWOOMessageData => {
   return parseReWOOMessage(content, chunks)
 }
 
-// Travel 消息检测函数：检查是否有 travelCycles 数据
+// Travel 消息检测函数：检查是否有 travelCycles 数据、ooda_step 或 vision_step(Travel架构) chunks
 const isTravelMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
 
   // 优先检查架构元数据
   const archType = getMessageArchitecture(message)
-  if (archType === 'Travel') return true
+  if (archType === 'Travel') {
+    console.log('[isTravelMessageFn] Matched by archType:', archType)
+    return true
+  }
   
-  // 检查是否有 travelCycles 数据
-  if ((message as any).travelCycles?.length > 0) return true
+  // 检查是否有 travelCycles 数据（已保存的消息）
+  if ((message as any).travelCycles?.length > 0) {
+    console.log('[isTravelMessageFn] Matched by travelCycles')
+    return true
+  }
+  
+  // 检查是否有 visionIterations 数据（Travel 嵌入的 VisionExplorer）
+  if ((message as any).visionIterations?.length > 0 && archType !== 'VisionExplorer') {
+    console.log('[isTravelMessageFn] Matched by visionIterations')
+    return true
+  }
+  
+  // 检查 chunks 中是否有 Travel 架构的数据（流式消息）
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  console.log('[isTravelMessageFn] Checking chunks:', chunks.length, 'for message:', message.id)
+  const hasTravelData = chunks.some(c => {
+    // 检查是否有 Travel 架构标识
+    if (c.architecture === 'Travel') {
+      console.log('[isTravelMessageFn] Found Travel architecture in chunk')
+      return true
+    }
+    // 检查 Meta 块中是否有 ooda_step 或 vision_step
+    if (c.chunk_type !== 'Meta') return false
+    const sd = c.structured_data as any
+    return sd?.type === 'ooda_step' || sd?.type === 'vision_step'
+  })
+  if (hasTravelData) return true
   
   // 如果已经是其他明确的架构类型，直接返回false
   if (archType && archType !== 'Unknown') return false
@@ -590,7 +618,7 @@ const isTravelMessageFn = (message: ChatMessage) => {
   return false
 }
 
-// VisionExplorer 消息检测函数
+// VisionExplorer 消息检测函数：独立运行时使用（非嵌入在 Travel 中）
 const isVisionExplorerMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
 
@@ -598,13 +626,37 @@ const isVisionExplorerMessageFn = (message: ChatMessage) => {
   const archType = getMessageArchitecture(message)
   if (archType === 'VisionExplorer') return true
   
-  // 检查是否有 visionIterations 数据
+  // 如果是 Travel 架构，VisionExplorer 数据会嵌入其中，不单独显示
+  if (archType === 'Travel') return false
+  
+  // 检查是否有 visionIterations 数据（已保存的消息）
   if ((message as any).visionIterations?.length > 0) return true
+  
+  // 检查 chunks 中是否有 vision_step 类型且架构为 VisionExplorer（流式消息）
+  const chunks = orderedMessages.processor.chunks.get(message.id) || []
+  const hasVisionStep = chunks.some(c => {
+    if (c.chunk_type !== 'Meta') return false
+    if (c.architecture && c.architecture !== 'VisionExplorer') return false
+    const sd = c.structured_data as any
+    return sd?.type === 'vision_step'
+  })
+  if (hasVisionStep) return true
   
   // 如果已经是其他明确的架构类型，直接返回false
   if (archType && archType !== 'Unknown') return false
 
   return false
+}
+
+// 获取消息的 chunks（通过访问 message.content 建立响应式依赖）
+// 这样当 message.content 更新时，组件会重新计算 chunks
+const getMessageChunks = (message: ChatMessage) => {
+  // 访问 message.content 以建立 Vue 响应式依赖
+  // 每次 content 更新时，这个函数会被重新调用
+  const _trigger = message.content?.length || 0
+  const _streaming = message.isStreaming
+  // 返回最新的 chunks
+  return orderedMessages.processor.getChunks(message.id)
 }
 
 // Orchestrator 消息检测函数（增强版：优先使用架构元数据）

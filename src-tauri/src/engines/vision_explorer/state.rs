@@ -4,7 +4,6 @@
 
 use super::types::*;
 use chrono::Utc;
-use std::collections::HashSet;
 use tracing::{debug, info};
 
 /// 探索状态管理器
@@ -34,8 +33,11 @@ impl StateManager {
 
     /// 更新当前页面状态
     pub fn update_page_state(&mut self, page_state: PageState) {
-        // 记录已访问URL
-        self.state.visited_urls.insert(page_state.url.clone());
+        // 记录已访问页面 (URL -> 标题)
+        self.state.visited_pages.insert(
+            page_state.url.clone(),
+            page_state.title.clone(),
+        );
         
         // 更新当前页面
         self.state.current_page = Some(page_state);
@@ -58,12 +60,12 @@ impl StateManager {
 
     /// 标记元素已交互
     pub fn mark_element_interacted(&mut self, element_id: &str) {
-        self.state.interacted_elements.insert(element_id.to_string());
+        self.state.interacted_elements.insert(element_id.to_string(), ());
     }
 
     /// 检查元素是否已交互
     pub fn is_element_interacted(&self, element_id: &str) -> bool {
-        self.state.interacted_elements.contains(element_id)
+        self.state.interacted_elements.contains_key(element_id)
     }
 
     /// 添加发现的API
@@ -149,7 +151,7 @@ impl StateManager {
     pub fn get_unexplored_elements(&self) -> Vec<&PageElement> {
         if let Some(page) = &self.state.current_page {
             page.interactable_elements.iter()
-                .filter(|e| !self.state.interacted_elements.contains(&e.id))
+                .filter(|e| !self.state.interacted_elements.contains_key(&e.id))
                 .collect()
         } else {
             Vec::new()
@@ -194,18 +196,51 @@ impl StateManager {
 
     /// 获取统计摘要
     pub fn get_summary(&self) -> ExplorationSummary {
+        // 计算实时进度（不修改 self，使用当前状态计算）
+        let progress = self.calculate_progress_readonly();
+        
         ExplorationSummary {
             session_id: self.state.session_id.clone(),
             target_url: self.state.target_url.clone(),
             status: self.state.status.clone(),
             total_iterations: self.state.iteration_count,
-            pages_visited: self.state.visited_urls.len(),
+            pages_visited: self.state.visited_pages.len(),
             elements_interacted: self.state.interacted_elements.len(),
             apis_discovered: self.state.discovered_apis.len(),
             forms_discovered: self.state.discovered_forms.len(),
-            exploration_progress: self.state.exploration_progress,
+            exploration_progress: progress,
             duration_seconds: (Utc::now() - self.state.start_time).num_seconds() as u64,
         }
+    }
+    
+    /// 计算探索进度（只读版本，不修改状态）
+    fn calculate_progress_readonly(&self) -> f32 {
+        // 优先使用已存储的进度（如果已被更新）
+        if self.state.exploration_progress > 0.0 {
+            return self.state.exploration_progress;
+        }
+        
+        // 基于多个维度计算进度
+        let mut progress = 0.0;
+        
+        // 1. 基于访问页面数（权重30%）
+        let pages_weight = (self.state.visited_pages.len() as f32 / 10.0).min(1.0) * 30.0;
+        
+        // 2. 基于发现的API数（权重40%）
+        let apis_weight = (self.state.discovered_apis.len() as f32 / 20.0).min(1.0) * 40.0;
+        
+        // 3. 基于交互元素数（权重20%）
+        let elements_weight = (self.state.interacted_elements.len() as f32 / 50.0).min(1.0) * 20.0;
+        
+        // 4. 基于迭代次数（权重10%）
+        let iteration_weight = if self.state.max_iterations > 0 {
+            (self.state.iteration_count as f32 / self.state.max_iterations as f32).min(1.0) * 10.0
+        } else {
+            0.0
+        };
+        
+        progress = pages_weight + apis_weight + elements_weight + iteration_weight;
+        progress.min(100.0)
     }
 
     /// 标记探索完成

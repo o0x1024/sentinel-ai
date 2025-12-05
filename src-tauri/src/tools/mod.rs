@@ -20,6 +20,7 @@ pub mod passive_provider; // 被动扫描工具提供者
 pub mod agent_plugin_provider; // Agent插件工具提供者
 pub mod plugin_parser; // 插件代码解析器
 pub mod passive_integration; // 被动扫描工具集成
+pub mod vision_explorer_provider; // VisionExplorer 工具提供者
 // plugin_generator (方案A) 已删除，使用 generator_tools (方案B)
 pub mod protocol;
 pub mod server; // 重新启用 // MCP工具提供者
@@ -59,6 +60,11 @@ pub use mcp_provider::{create_mcp_tool_provider, McpToolProvider};
 pub use passive_provider::PassiveToolProvider;
 pub use agent_plugin_provider::AgentPluginProvider;
 pub use passive_integration::register_passive_tools;
+pub use vision_explorer_provider::{
+    VisionExplorerProvider, VisionExploreTool, VisionExploreRuntimeConfig,
+    create_vision_explorer_provider, initialize_global_vision_explore_tool,
+    get_global_vision_explore_tool, set_global_vision_explore_runtime_config,
+};
 
 // 重新导出增强型客户端组件
 pub use batch_progress_manager::{

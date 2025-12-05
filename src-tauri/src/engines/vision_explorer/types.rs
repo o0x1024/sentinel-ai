@@ -3,7 +3,7 @@
 //! 定义VLM驱动的网站全流量发现所需的核心数据结构
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 
 // ============================================================================
@@ -186,10 +186,12 @@ pub struct PageState {
     pub url: String,
     /// 页面标题
     pub title: String,
-    /// 截图 (base64)
+    /// 截图 (base64) - 多模态模式使用
     pub screenshot: Option<String>,
     /// 可交互元素列表
     pub interactable_elements: Vec<PageElement>,
+    /// 标注元素列表 (带索引) - 文本模式使用
+    pub annotated_elements: Vec<AnnotatedElement>,
     /// 表单列表
     pub forms: Vec<FormInfo>,
     /// 链接列表
@@ -273,10 +275,10 @@ pub struct ExplorationState {
     pub start_time: DateTime<Utc>,
     /// 当前状态
     pub status: ExplorationStatus,
-    /// 已访问URL
-    pub visited_urls: HashSet<String>,
+    /// 已访问页面 (URL -> 标题)
+    pub visited_pages: HashMap<String, String>,
     /// 已交互元素
-    pub interacted_elements: HashSet<String>,
+    pub interacted_elements: HashMap<String, ()>,
     /// 操作历史
     pub action_history: Vec<ActionRecord>,
     /// 发现的API
@@ -302,8 +304,8 @@ impl Default for ExplorationState {
             target_url: String::new(),
             start_time: Utc::now(),
             status: ExplorationStatus::Initializing,
-            visited_urls: HashSet::new(),
-            interacted_elements: HashSet::new(),
+            visited_pages: HashMap::new(),
+            interacted_elements: HashMap::new(),
             action_history: Vec::new(),
             discovered_apis: Vec::new(),
             discovered_forms: Vec::new(),

@@ -53,7 +53,8 @@
                 @refresh-models="refreshModels"
                 @apply-manual-config="applyManualConfig"
                 @set-default-provider="setDefaultProvider"
-                @set-default-chat-model="setDefaultChatModel" />
+                @set-default-chat-model="setDefaultChatModel"
+                @set-enable-multimodal="setEnableMultimodal" />
 
     <!-- 知识库配置 -->
     <RAGSettings v-if="activeCategory === 'rag'"
@@ -294,6 +295,21 @@ const loadAiConfig = async () => {
   try {
     const aiConfigData = await invoke('get_ai_config')
     aiConfig.value = aiConfigData as any
+    
+    // 加载 enable_multimodal 配置
+    try {
+      const configs = await invoke('get_config', { request: { category: 'ai', key: 'enable_multimodal' } }) as Array<{ key: string, value: string }>
+      if (configs && configs.length > 0) {
+        aiConfig.value.enable_multimodal = configs[0].value === 'true'
+      } else {
+        // 默认启用多模态
+        aiConfig.value.enable_multimodal = true
+      }
+    } catch {
+      // 默认启用多模态
+      aiConfig.value.enable_multimodal = true
+    }
+    
     console.log('Reloaded AI config:', aiConfig.value)
   } catch (e) {
     console.error('Failed to load AI config', e)
@@ -380,6 +396,21 @@ const loadSettings = async () => {
     // 先加载AI配置
     const aiConfigData = await invoke('get_ai_config')
     aiConfig.value = aiConfigData as any
+    
+    // 加载 enable_multimodal 配置
+    try {
+      const configs = await invoke('get_config', { request: { category: 'ai', key: 'enable_multimodal' } }) as Array<{ key: string, value: string }>
+      if (configs && configs.length > 0) {
+        aiConfig.value.enable_multimodal = configs[0].value === 'true'
+      } else {
+        // 默认启用多模态
+        aiConfig.value.enable_multimodal = true
+      }
+    } catch {
+      // 默认启用多模态
+      aiConfig.value.enable_multimodal = true
+    }
+    
     console.log('Loaded AI config:', aiConfig.value)
     
     // 等待一个 tick 确保 aiConfig 更新完成
@@ -704,6 +735,27 @@ const setDefaultChatModel = async (model: string) => {
   } catch (e) {
     console.error('Failed to set default chat model', e)
     dialog.toast.error('设置默认 Chat 模型失败')
+  }
+}
+
+const setEnableMultimodal = async (enabled: boolean) => {
+  try {
+    // 保存到数据库配置
+    await invoke('save_config_batch', {
+      configs: [{
+        category: 'ai',
+        key: 'enable_multimodal',
+        value: String(enabled),
+        description: '是否启用多模态模式（截图）',
+        is_encrypted: false
+      }]
+    })
+    // 同步前端状态
+    aiConfig.value.enable_multimodal = enabled
+    dialog.toast.success(enabled ? '已启用多模态模式' : '已切换到文本模式')
+  } catch (e) {
+    console.error('Failed to set enable multimodal', e)
+    dialog.toast.error('设置多模态模式失败')
   }
 }
 

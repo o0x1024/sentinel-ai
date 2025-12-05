@@ -75,6 +75,20 @@ pub struct CompressedContext {
     pub current_state: String,
 }
 
+/// 找到不超过 max_bytes 的最后一个有效 UTF-8 字符边界
+/// 用于安全截取字符串，避免在多字节字符中间截断
+fn find_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() {
+        return s.len();
+    }
+    // 从 max_bytes 位置向前查找有效的字符边界
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
 impl ContextManager {
     pub fn new(config: ContextManagerConfig) -> Self {
         let cache_size = NonZeroUsize::new(100).unwrap();
@@ -175,10 +189,12 @@ impl ContextManager {
                     // 压缩长字符串
                     if let serde_json::Value::String(s) = value {
                         if s.len() > self.config.max_tool_result_length {
+                            // 找到安全的字符边界，避免在多字节字符中间截断
+                            let safe_end = find_char_boundary(s, self.config.max_tool_result_length);
                             let truncated = format!(
-                                "{}...(truncated {} chars)",
-                                &s[..self.config.max_tool_result_length],
-                                s.len() - self.config.max_tool_result_length
+                                "{}...(truncated {} bytes)",
+                                &s[..safe_end],
+                                s.len() - safe_end
                             );
                             compressed.insert(key.clone(), serde_json::Value::String(truncated));
                             continue;

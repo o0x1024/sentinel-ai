@@ -1544,6 +1544,9 @@ pub async fn get_builtin_tools_with_status(
             "category": info.category.to_string(),
             "version": info.version,
             "enabled": enabled,
+            "input_schema": info.parameters.schema,
+            "parameters": info.parameters.parameters,
+            "required": info.parameters.required,
         });
         result.push(tool_json);
     }

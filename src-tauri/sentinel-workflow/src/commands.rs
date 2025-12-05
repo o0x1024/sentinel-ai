@@ -237,10 +237,15 @@ async fn execute_workflow_steps(
                         tool_name = stripped.to_string();
                     }
 
+                    // 从节点参数读取超时配置，默认 60 秒
+                    let timeout_secs = step_def.inputs.get("timeout")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(60);
+
                     let params = ToolExecutionParams {
                         inputs: step_def.inputs.clone(),
                         context: HashMap::new(),
-                        timeout: Some(std::time::Duration::from_secs(30)),
+                        timeout: Some(std::time::Duration::from_secs(timeout_secs)),
                         execution_id: None,
                     };
 
@@ -265,11 +270,16 @@ async fn execute_workflow_steps(
                     
                     tracing::info!("Executing agent plugin tool '{}' with inputs: {:?}", tool_name, step_def.inputs);
                     
+                    // 从节点参数读取超时配置，默认 300 秒（插件可能需要更长时间）
+                    let timeout_secs = step_def.inputs.get("timeout")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(300);
+                    
                     // 直接使用step_def.inputs作为工具参数（已经是HashMap<String, Value>格式）
                     let params = ToolExecutionParams {
                         inputs: step_def.inputs.clone(),
                         context: HashMap::new(),
-                        timeout: Some(std::time::Duration::from_secs(60)),
+                        timeout: Some(std::time::Duration::from_secs(timeout_secs)),
                         execution_id: None,
                     };
                     
@@ -678,6 +688,26 @@ pub async fn get_workflow_run_status(
         Ok(s) => Ok(serde_json::to_value(s).unwrap_or_default()),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// 停止工作流执行
+#[tauri::command]
+pub async fn stop_workflow_run(
+    execution_id: String,
+    app_handle: AppHandle,
+    engine: State<'_, Arc<WorkflowEngine>>,
+) -> Result<(), String> {
+    tracing::info!("Stopping workflow run: {}", execution_id);
+    
+    engine.cancel_execution(&execution_id).await.map_err(|e| e.to_string())?;
+    
+    // 发送停止事件
+    let _ = app_handle.emit("workflow:run-stop", &serde_json::json!({
+        "execution_id": execution_id,
+        "status": "cancelled"
+    }));
+    
+    Ok(())
 }
 
 #[tauri::command]

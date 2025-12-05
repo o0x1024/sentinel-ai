@@ -10082,6 +10082,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures",
+ "reqwest 0.12.24",
  "rig-core 0.25.0",
  "serde",
  "serde_json",

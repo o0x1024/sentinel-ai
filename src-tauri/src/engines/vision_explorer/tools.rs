@@ -486,35 +486,114 @@ impl BrowserTools {
     }
 
     /// 解析标注元素响应
+    /// 支持多种返回格式：
+    /// 1. MCP content 格式: { "content": [{ "text": "{\"annotated_elements\": [...]}" }] }
+    /// 2. MCP output 格式: { "success": true, "output": "...{\"annotated_elements\": [...]}..." }
+    /// 3. 直接格式: { "annotated_elements": [...] }
     fn parse_annotated_elements(&self, result: &Value) -> Result<Vec<AnnotatedElement>> {
-        // MCP 返回格式: { "content": [{ "text": "Found N elements..." }, { "text": "{\"annotated_elements\": [...]}" }] }
+        // 格式1: MCP content 数组格式
         if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
             for item in content {
                 if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                    // 尝试解析 JSON 格式的元素列表
-                    if text.contains("annotated_elements") {
-                        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-                            if let Some(elements) = parsed.get("annotated_elements") {
-                                let elements: Vec<AnnotatedElement> = serde_json::from_value(elements.clone())
-                                    .unwrap_or_default();
-                                info!("Parsed {} annotated elements", elements.len());
-                                return Ok(elements);
-                            }
-                        }
+                    if let Some(elements) = self.extract_elements_from_text(text) {
+                        return Ok(elements);
                     }
                 }
             }
         }
         
-        // 尝试直接解析
-        if let Some(elements) = result.get("annotated_elements") {
-            let elements: Vec<AnnotatedElement> = serde_json::from_value(elements.clone())
-                .unwrap_or_default();
+        // 格式2: MCP output 字符串格式 { "success": true, "output": "..." }
+        if let Some(output) = result.get("output").and_then(|o| o.as_str()) {
+            if let Some(elements) = self.extract_elements_from_text(output) {
+                return Ok(elements);
+            }
+        }
+        
+        // 格式3: 直接包含 annotated_elements
+        if let Some(elements_arr) = result.get("annotated_elements").and_then(|e| e.as_array()) {
+            let elements = self.convert_elements_array(elements_arr);
+            info!("Parsed {} annotated elements (direct format)", elements.len());
             return Ok(elements);
         }
         
         warn!("Could not parse annotated elements from response: {:?}", result);
         Ok(Vec::new())
+    }
+    
+    /// 从文本中提取 annotated_elements JSON
+    fn extract_elements_from_text(&self, text: &str) -> Option<Vec<AnnotatedElement>> {
+        // 查找 {"annotated_elements": 开始的位置
+        if let Some(start) = text.find("{\"annotated_elements\"") {
+            // 从这个位置开始查找对应的闭合括号
+            let json_start = start;
+            let remaining = &text[json_start..];
+            
+            // 简单的括号匹配找到完整的 JSON 对象
+            let mut depth = 0;
+            let mut end_pos = 0;
+            for (i, ch) in remaining.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end_pos = i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            
+            if end_pos > 0 {
+                let json_str = &remaining[..end_pos];
+                if let Ok(parsed) = serde_json::from_str::<Value>(json_str) {
+                    if let Some(elements_arr) = parsed.get("annotated_elements").and_then(|e| e.as_array()) {
+                        let elements = self.convert_elements_array(elements_arr);
+                        info!("Parsed {} annotated elements from text", elements.len());
+                        return Some(elements);
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    /// 将元素数组转换为 AnnotatedElement 列表
+    /// 支持完整格式和紧凑格式
+    fn convert_elements_array(&self, arr: &[Value]) -> Vec<AnnotatedElement> {
+        arr.iter().filter_map(|el| {
+            // 尝试检测格式：紧凑格式使用 "i" 而非 "index"
+            let is_compact = el.get("i").is_some();
+            
+            if is_compact {
+                // 紧凑格式: { i, t, x?, h?, p? }
+                let index = el.get("i").and_then(|v| v.as_u64())? as u32;
+                let element_type = el.get("t").and_then(|v| v.as_str())?.to_string();
+                let text = el.get("x").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                
+                let mut attributes = std::collections::HashMap::new();
+                if let Some(href) = el.get("h").and_then(|v| v.as_str()) {
+                    attributes.insert("href".to_string(), href.to_string());
+                }
+                if let Some(placeholder) = el.get("p").and_then(|v| v.as_str()) {
+                    attributes.insert("placeholder".to_string(), placeholder.to_string());
+                }
+                
+                Some(AnnotatedElement {
+                    index,
+                    element_type,
+                    tag_name: String::new(), // 紧凑格式不包含
+                    text,
+                    selector: String::new(), // 紧凑格式不包含
+                    bounding_box: BoundingBox { x: 0.0, y: 0.0, width: 0.0, height: 0.0 },
+                    attributes,
+                })
+            } else {
+                // 完整格式：直接反序列化
+                serde_json::from_value(el.clone()).ok()
+            }
+        }).collect()
     }
 
     /// 获取页面可见HTML
@@ -698,7 +777,7 @@ impl BrowserTools {
         Ok(result.as_str().unwrap_or("").to_string())
     }
 
-    /// 采集当前页面状态
+    /// 采集当前页面状态 (多模态模式 - 包含截图)
     pub async fn capture_page_state(&self) -> Result<PageState> {
         // 并行获取各种信息
         let (url, title, screenshot, elements, forms) = tokio::try_join!(
@@ -720,6 +799,43 @@ impl BrowserTools {
             title,
             screenshot: Some(screenshot),
             interactable_elements: elements,
+            annotated_elements: Vec::new(), // 多模态模式不需要标注元素列表
+            forms,
+            links,
+            visible_text_summary: None,
+            captured_at: Utc::now(),
+        })
+    }
+
+    /// 采集当前页面状态 (文本模式 - 不含截图，包含标注元素列表)
+    /// 用于非多模态模型，通过元素列表而非截图来理解页面
+    pub async fn capture_page_state_text_mode(&self) -> Result<PageState> {
+        // 先标注元素，annotate_elements() 会返回标注后的元素列表
+        // 同时也会将元素存储到 window.__playwrightAnnotatedElements 供后续操作使用
+        let annotated_elements = self.annotate_elements().await?;
+        
+        // 并行获取其他页面信息（不截图）
+        let (url, title, elements, forms) = tokio::try_join!(
+            self.get_current_url(),
+            self.get_page_title(),
+            self.get_interactable_elements(),
+            self.get_forms()
+        )?;
+        
+        // 提取链接
+        let links: Vec<PageElement> = elements.iter()
+            .filter(|e| e.tag == "a")
+            .cloned()
+            .collect();
+        
+        info!("Text mode: captured {} annotated elements", annotated_elements.len());
+        
+        Ok(PageState {
+            url,
+            title,
+            screenshot: None, // 文本模式不需要截图
+            interactable_elements: elements,
+            annotated_elements,
             forms,
             links,
             visible_text_summary: None,

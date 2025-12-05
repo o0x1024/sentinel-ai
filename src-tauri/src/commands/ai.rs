@@ -2286,6 +2286,13 @@ pub async fn get_ai_config(
         }
     }
 
+    // 读取多模态模式配置
+    if let Ok(Some(enable_multimodal_str)) = db.get_config("ai", "enable_multimodal").await {
+        if let Ok(enable_multimodal) = enable_multimodal_str.parse::<bool>() {
+            ai_config["enable_multimodal"] = serde_json::Value::Bool(enable_multimodal);
+        }
+    }
+
     tracing::info!("Successfully retrieved AI configuration");
     Ok(ai_config)
 }

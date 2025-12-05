@@ -16,6 +16,12 @@
 //! - 上下文压缩: 智能压缩历史和结果
 //! - 规划缓存: 相似任务复用计划
 //! - 资源追踪: 自动清理浏览器/代理等资源
+//!
+//! ## 增强特性 (v3.0)
+//! - 条件分支和循环: DAG支持条件判断和循环结构
+//! - 自适应重规划: Plan-and-Execute风格的动态计划调整
+//! - 流式执行: 边规划边执行,实时反馈
+//! - 自主Observe: LLM驱动的自主信息收集策略
 
 pub mod types;
 pub mod complexity_analyzer;
@@ -36,6 +42,11 @@ pub mod resource_integration;
 
 // Vision Explorer 集成
 pub mod vision_integration;
+
+// 增强模块 (v3.0)
+pub mod streaming_executor;
+pub mod replanning_engine;
+pub mod autonomous_observe;
 
 #[cfg(test)]
 mod tests;
@@ -69,4 +80,9 @@ pub use vision_integration::{
     VisionExplorerToolAdapter, ObservePhaseEnhancer,
     ReconEnhancementResult, ApiEndpointInfo, AttackSurface,
 };
+
+// 增强模块导出 (v3.0)
+pub use streaming_executor::StreamingDagExecutor;
+pub use replanning_engine::ReplanningEngine;
+pub use autonomous_observe::AutonomousObserver;
 

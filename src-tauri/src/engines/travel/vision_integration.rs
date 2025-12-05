@@ -66,6 +66,10 @@ pub struct VisionIntegrationConfig {
     pub viewport_width: u32,
     /// 视口高度
     pub viewport_height: u32,
+    /// 是否启用多模态模式（截图）
+    /// true: 多模态模式，发送截图给 VLM
+    /// false: 文本模式，发送元素列表给 LLM
+    pub enable_multimodal: bool,
     /// 执行 ID (用于前端消息)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_id: Option<String>,
@@ -88,6 +92,7 @@ impl Default for VisionIntegrationConfig {
             auto_observe: true,
             viewport_width: 1920,
             viewport_height: 1080,
+            enable_multimodal: true, // 默认启用多模态
             execution_id: None,
             message_id: None,
             conversation_id: None,
@@ -330,6 +335,8 @@ impl VisionIntegration {
             conversation_id: conv_id,
             // 作为 Travel 的子流，不终结整个消息流
             finalize_on_complete: false,
+            // 从配置读取多模态模式
+            enable_multimodal: self.config.enable_multimodal,
             ..Default::default()
         };
 

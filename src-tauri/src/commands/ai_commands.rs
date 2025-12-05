@@ -1693,6 +1693,14 @@ async fn dispatch_with_travel(
     let options = request.options.unwrap_or_default();
     let mut config = TravelConfig::default();
 
+    // 从数据库读取多模态模式配置
+    if let Ok(Some(enable_multimodal_str)) = db_service.get_config("ai", "enable_multimodal").await {
+        if let Ok(enable_multimodal) = enable_multimodal_str.parse::<bool>() {
+            config.enable_multimodal = enable_multimodal;
+            log::info!("Travel dispatch: enable_multimodal = {} (from database)", enable_multimodal);
+        }
+    }
+
     // 提取Travel特定配置
     if let Some(max_cycles) = options.get("max_ooda_cycles").and_then(|v| v.as_u64()) {
         config.max_ooda_cycles = max_cycles as u32;

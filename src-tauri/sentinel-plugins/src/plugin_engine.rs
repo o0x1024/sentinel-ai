@@ -292,8 +292,14 @@ impl PluginEngine {
     ) -> Result<()> {
         let plugin_id = metadata.id.clone();
 
+        // 对 plugin_id 进行 URL 安全化处理（替换特殊字符）
+        let safe_id: String = plugin_id
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .collect();
+
         // 确定模块 URL（使用 sentinel:// 协议）
-        let module_specifier = format!("sentinel://plugin_{}.ts", plugin_id);
+        let module_specifier = format!("sentinel://plugin_{}.ts", safe_id);
 
         // 注册模块到加载器
         self.loader
@@ -520,6 +526,82 @@ impl PluginEngine {
                         }
                     }
                     globalThis.URL = SimpleURL;
+                }
+
+                // setTimeout/clearTimeout polyfill
+                if (typeof setTimeout === "undefined") {
+                    const _timers = new Map();
+                    let _timerId = 0;
+                    globalThis.setTimeout = function(callback, delay = 0, ...args) {
+                        const id = ++_timerId;
+                        const startTime = Date.now();
+                        _timers.set(id, { callback, delay, args, startTime, cleared: false });
+                        // Use queueMicrotask for async execution simulation
+                        (async () => {
+                            const timer = _timers.get(id);
+                            if (timer && !timer.cleared) {
+                                // Simple delay simulation - not accurate but functional
+                                const elapsed = Date.now() - timer.startTime;
+                                if (elapsed < timer.delay) {
+                                    await new Promise(r => queueMicrotask(r));
+                                }
+                                if (!timer.cleared) {
+                                    timer.callback(...timer.args);
+                                }
+                                _timers.delete(id);
+                            }
+                        })();
+                        return id;
+                    };
+                    globalThis.clearTimeout = function(id) {
+                        const timer = _timers.get(id);
+                        if (timer) {
+                            timer.cleared = true;
+                            _timers.delete(id);
+                        }
+                    };
+                    globalThis.setInterval = function(callback, delay = 0, ...args) {
+                        // Simplified: just run once like setTimeout
+                        return globalThis.setTimeout(callback, delay, ...args);
+                    };
+                    globalThis.clearInterval = globalThis.clearTimeout;
+                }
+
+                // AbortController polyfill
+                if (typeof AbortController === "undefined") {
+                    class SimpleAbortSignal {
+                        constructor() {
+                            this.aborted = false;
+                            this.reason = undefined;
+                            this._listeners = [];
+                        }
+                        addEventListener(type, listener) {
+                            if (type === 'abort') this._listeners.push(listener);
+                        }
+                        removeEventListener(type, listener) {
+                            if (type === 'abort') {
+                                this._listeners = this._listeners.filter(l => l !== listener);
+                            }
+                        }
+                        throwIfAborted() {
+                            if (this.aborted) throw this.reason;
+                        }
+                    }
+                    class SimpleAbortController {
+                        constructor() {
+                            this.signal = new SimpleAbortSignal();
+                        }
+                        abort(reason) {
+                            if (this.signal.aborted) return;
+                            this.signal.aborted = true;
+                            this.signal.reason = reason || new Error('AbortError');
+                            for (const listener of this.signal._listeners) {
+                                try { listener({ type: 'abort', target: this.signal }); } catch (_) {}
+                            }
+                        }
+                    }
+                    globalThis.AbortController = SimpleAbortController;
+                    globalThis.AbortSignal = SimpleAbortSignal;
                 }
 
                 // Fetch API polyfill using Deno.core.ops.op_fetch

@@ -1,7 +1,11 @@
 //! Travel引擎适配器
 //!
 //! 实现BaseExecutionEngine trait,对接AI服务、工具调用等
-//! 支持双模式执行: 精简DAG模式(Token优化) / 完整OODA模式
+//! 支持多模式执行:
+//! - 精简DAG模式 (Token优化)
+//! - 完整OODA模式
+//! - 流式DAG模式 (边规划边执行) [v3.0]
+//! - 自适应重规划模式 [v3.0]
 
 use super::types::*;
 use super::complexity_analyzer::ComplexityAnalyzer;
@@ -13,6 +17,10 @@ use super::context_manager::ContextManager;
 use super::resource_integration::ResourceTracker;
 use super::vision_integration::{VisionIntegration, VisionIntegrationConfig};
 use super::memory_integration::TravelMemoryIntegration;
+// v3.0 增强模块
+use super::streaming_executor::{StreamingDagExecutor, StreamingExecutorConfig};
+use super::replanning_engine::{ReplanningEngine, ReplanningConfig, TaskExecutionSummary};
+use super::autonomous_observe::{AutonomousObserver};
 use crate::engines::memory::get_global_memory;
 use crate::agents::traits::{
     AgentExecutionResult, AgentSession, AgentTask, PerformanceCharacteristics,
@@ -99,6 +107,26 @@ impl TravelEngine {
             return false;
         }
         self.config.lite_mode.applicable_complexity.contains(complexity)
+    }
+    
+    /// 判断是否应使用流式执行模式
+    fn should_use_streaming_mode(&self, task: &AgentTask) -> bool {
+        // 如果任务参数中明确指定使用流式模式
+        if let Some(mode) = task.parameters.get("execution_mode").and_then(|v| v.as_str()) {
+            return mode == "streaming" || mode == "streaming_dag";
+        }
+        // 如果配置中启用了流式模式且任务可能需要重规划
+        task.parameters.get("enable_replan").and_then(|v| v.as_bool()).unwrap_or(false)
+    }
+    
+    /// 判断是否应使用自适应重规划模式
+    fn should_use_adaptive_replan(&self, task: &AgentTask, complexity: &TaskComplexity) -> bool {
+        // 复杂任务默认启用自适应重规划
+        if matches!(complexity, TaskComplexity::Complex) {
+            return true;
+        }
+        // 或者任务参数中明确指定
+        task.parameters.get("adaptive_replan").and_then(|v| v.as_bool()).unwrap_or(false)
     }
 
     /// 发送消息到前端
@@ -195,6 +223,8 @@ impl TravelEngine {
                 auto_observe: true,
                 viewport_width: 1920,
                 viewport_height: 1080,
+                // 从 TravelConfig 读取多模态配置
+                enable_multimodal: self.config.enable_multimodal,
                 // 消息参数会在运行时通过 set_message_info 动态设置
                 execution_id: None,
                 message_id: None,
@@ -293,22 +323,47 @@ impl TravelEngine {
         // 4. 清理之前的资源追踪
         self.resource_tracker.clear_all().await;
 
-        // 5. 根据复杂度选择执行模式
-        let result = if self.should_use_lite_mode(&task_complexity) {
-            log::info!("Travel: Using LITE DAG mode for task (Token optimized)");
+        // 5. 根据复杂度和配置选择执行模式
+        let result = if self.should_use_streaming_mode(task) {
+            // 流式执行模式 - 边规划边执行，支持实时重规划
+            log::info!("Travel: Using STREAMING DAG mode with replanning");
             self.emit_message(
                 &execution_id,
                 &message_id,
                 conversation_id.as_deref(),
                 ChunkType::Thinking,
-                "[MODE] 使用优化后的DAG执行模式",
+                "[MODE] 使用流式DAG执行模式 (支持动态重规划)",
                 Some(serde_json::json!({
-                    "mode": "lite_dag",
-                    "complexity": format!("{:?}", task_complexity)
+                    "mode": "streaming_dag",
+                    "complexity": format!("{:?}", task_complexity),
+                    "features": ["streaming", "replanning", "parallel"]
                 })),
             );
             
-            self.execute_lite_mode(task, &mut context, &execution_id, &message_id, conversation_id.as_deref()).await
+            self.execute_streaming_mode(task, &mut context, &execution_id, &message_id, conversation_id.as_deref()).await
+        } else if self.should_use_lite_mode(&task_complexity) {
+            // 优化后的 DAG 模式
+            let use_adaptive = self.should_use_adaptive_replan(task, &task_complexity);
+            log::info!("Travel: Using LITE DAG mode (adaptive_replan={})", use_adaptive);
+            self.emit_message(
+                &execution_id,
+                &message_id,
+                conversation_id.as_deref(),
+                ChunkType::Thinking,
+                &format!("[MODE] 使用优化后的DAG执行模式{}", 
+                    if use_adaptive { " (启用自适应重规划)" } else { "" }),
+                Some(serde_json::json!({
+                    "mode": "lite_dag",
+                    "complexity": format!("{:?}", task_complexity),
+                    "adaptive_replan": use_adaptive
+                })),
+            );
+            
+            if use_adaptive {
+                self.execute_lite_mode_with_replan(task, &mut context, &execution_id, &message_id, conversation_id.as_deref()).await
+            } else {
+                self.execute_lite_mode(task, &mut context, &execution_id, &message_id, conversation_id.as_deref()).await
+            }
         } else {
             log::info!("Travel: Using FULL OODA mode for complex task");
             self.emit_message(
@@ -680,6 +735,302 @@ impl TravelEngine {
             resources_used: HashMap::new(),
             artifacts: Vec::new(),
         })
+    }
+
+    /// 流式DAG模式执行 - 边规划边执行，支持实时重规划
+    async fn execute_streaming_mode(
+        &self,
+        task: &AgentTask,
+        context: &mut HashMap<String, serde_json::Value>,
+        execution_id: &str,
+        message_id: &str,
+        conversation_id: Option<&str>,
+    ) -> Result<AgentExecutionResult> {
+        let start_time = Instant::now();
+        
+        let ai_service = self.ai_service.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("AI service not available"))?;
+        
+        // 创建流式执行器配置
+        let streaming_config = StreamingExecutorConfig {
+            max_concurrency: self.config.parallel_config.max_concurrency as usize,
+            task_timeout: self.config.parallel_config.task_timeout,
+            enable_streaming_plan: true,
+            plan_batch_size: 3,
+            max_replan_count: 5,
+            condition_eval_timeout: 5000,
+        };
+        
+        // 创建流式执行器
+        let mut executor = StreamingDagExecutor::new(ai_service.clone(), streaming_config);
+        
+        if let Some(adapter) = &self.framework_adapter {
+            executor = executor.with_tool_adapter(adapter.clone());
+        }
+        
+        if let Some(app) = &self.app_handle {
+            executor = executor.with_message_context(
+                Arc::new(app.clone()),
+                execution_id.to_string(),
+                message_id.to_string(),
+                conversation_id.map(|s| s.to_string()),
+            );
+        }
+        
+        // 获取取消令牌
+        if let Some(token) = crate::managers::cancellation_manager::get_token(execution_id).await {
+            executor = executor.with_cancellation_token(token);
+        }
+        
+        // 执行流式任务
+        let result = executor.execute_streaming(&task.description, context).await?;
+        
+        let duration = start_time.elapsed().as_millis() as u64;
+        
+        self.emit_message(
+            execution_id,
+            message_id,
+            conversation_id,
+            ChunkType::Content,
+            &format!(
+                "📊 流式执行完成: {} 成功, {} 失败, {} 次重规划 ({}ms)",
+                result.metrics.completed_tasks,
+                result.metrics.failed_tasks,
+                result.execution_snapshot.as_ref()
+                    .map(|s| s.error_history.len())
+                    .unwrap_or(0),
+                duration
+            ),
+            Some(serde_json::json!({
+                "metrics": result.metrics,
+                "replan_count": result.execution_snapshot.as_ref()
+                    .map(|s| s.attempted_approaches.len())
+                    .unwrap_or(0)
+            })),
+        );
+        
+        Ok(AgentExecutionResult {
+            id: result.plan_id,
+            success: result.success,
+            data: Some(serde_json::json!({
+                "output": result.final_output,
+                "mode": "streaming_dag",
+                "metrics": result.metrics,
+                "task_results": result.task_results,
+            })),
+            error: if result.success { None } else { Some("Some tasks failed".to_string()) },
+            execution_time_ms: duration,
+            resources_used: HashMap::new(),
+            artifacts: Vec::new(),
+        })
+    }
+
+    /// 带自适应重规划的 Lite DAG 模式
+    async fn execute_lite_mode_with_replan(
+        &self,
+        task: &AgentTask,
+        context: &mut HashMap<String, serde_json::Value>,
+        execution_id: &str,
+        message_id: &str,
+        conversation_id: Option<&str>,
+    ) -> Result<AgentExecutionResult> {
+        let start_time = Instant::now();
+        
+        let ai_service = self.ai_service.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("AI service not available"))?;
+        
+        // 先执行前置探索
+        let target = context.get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let task_type = context.get("task_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        let needs_vision = self.should_use_vision_exploration(&target, &task_type, context).await;
+        if needs_vision {
+            let _ = self.execute_vision_exploration(&target, execution_id, message_id, conversation_id, context).await;
+        }
+        
+        // 生成初始计划
+        let mut planner = DagPlanner::new(ai_service.clone(), self.config.lite_mode.clone());
+        if let Some(repo) = &self.prompt_repo {
+            planner = planner.with_prompt_repo(repo.clone());
+        }
+        if let Some(adapter) = &self.framework_adapter {
+            planner = planner.with_tool_adapter(adapter.clone());
+        }
+        
+        let mut plan = planner.generate_plan(&task.description, context).await?;
+        
+        // 创建重规划引擎
+        let replan_config = ReplanningConfig::default();
+        let mut replan_engine = ReplanningEngine::new(ai_service.clone(), replan_config);
+        if let Some(repo) = &self.prompt_repo {
+            replan_engine = replan_engine.with_prompt_repo(repo.clone());
+        }
+        if let Some(adapter) = &self.framework_adapter {
+            replan_engine = replan_engine.with_tool_adapter(adapter.clone());
+        }
+        
+        // 创建执行快照
+        let mut snapshot = ExecutionSnapshot::default();
+        let mut task_summaries: Vec<TaskExecutionSummary> = Vec::new();
+        let mut total_replan_count = 0u32;
+        let max_replans = 5u32;
+        
+        loop {
+            // 执行当前计划
+            self.emit_message(
+                execution_id,
+                message_id,
+                conversation_id,
+                ChunkType::PlanInfo,
+                &format!("[PLAN v{}] 执行计划: {} 个任务", total_replan_count + 1, plan.tasks.len()),
+                None,
+            );
+            
+            let result = self.execute_dag_plan_with_tracking(
+                &mut plan,
+                context,
+                execution_id,
+                message_id,
+                conversation_id,
+                &mut task_summaries,
+                &mut snapshot,
+            ).await?;
+            
+            // 评估是否需要重规划
+            if result.success || total_replan_count >= max_replans {
+                let duration = start_time.elapsed().as_millis() as u64;
+                return Ok(AgentExecutionResult {
+                    id: plan.id,
+                    success: result.success,
+                    data: Some(serde_json::json!({
+                        "output": result.final_output,
+                        "mode": "lite_dag_adaptive",
+                        "metrics": result.metrics,
+                        "replan_count": total_replan_count,
+                    })),
+                    error: if result.success { None } else { Some("Max replans reached".to_string()) },
+                    execution_time_ms: duration,
+                    resources_used: HashMap::new(),
+                    artifacts: Vec::new(),
+                });
+            }
+            
+            // 评估重规划需求
+            let evaluation = replan_engine.evaluate_replan_need(&plan, &snapshot, &task_summaries).await?;
+            
+            if !evaluation.should_replan {
+                let duration = start_time.elapsed().as_millis() as u64;
+                return Ok(AgentExecutionResult {
+                    id: plan.id,
+                    success: result.success,
+                    data: Some(serde_json::json!({
+                        "output": result.final_output,
+                        "mode": "lite_dag_adaptive",
+                        "metrics": result.metrics,
+                        "replan_count": total_replan_count,
+                    })),
+                    error: if result.success { None } else { Some("Tasks failed but no replan triggered".to_string()) },
+                    execution_time_ms: duration,
+                    resources_used: HashMap::new(),
+                    artifacts: Vec::new(),
+                });
+            }
+            
+            // 执行重规划
+            self.emit_message(
+                execution_id,
+                message_id,
+                conversation_id,
+                ChunkType::Thinking,
+                &format!("[REPLAN] 触发重规划: {:?}", evaluation.reason),
+                Some(serde_json::json!({
+                    "reason": format!("{:?}", evaluation.reason),
+                    "progress_score": evaluation.progress_score,
+                })),
+            );
+            
+            plan = replan_engine.replan(&task.description, context, &snapshot, &evaluation).await?;
+            total_replan_count += 1;
+            
+            self.emit_message(
+                execution_id,
+                message_id,
+                conversation_id,
+                ChunkType::PlanInfo,
+                &format!("[REPLAN] 新计划生成: {} 个任务", plan.tasks.len()),
+                None,
+            );
+        }
+    }
+
+    /// 执行 DAG 计划并跟踪状态 (用于重规划)
+    async fn execute_dag_plan_with_tracking(
+        &self,
+        plan: &mut DagPlan,
+        context: &mut HashMap<String, serde_json::Value>,
+        execution_id: &str,
+        message_id: &str,
+        conversation_id: Option<&str>,
+        task_summaries: &mut Vec<TaskExecutionSummary>,
+        snapshot: &mut ExecutionSnapshot,
+    ) -> Result<DagExecutionResult> {
+        let start_time = Instant::now();
+        
+        let mut executor = ParallelExecutor::new(self.config.parallel_config.clone());
+        
+        if let Some(adapter) = &self.framework_adapter {
+            executor = executor.with_tool_adapter(adapter.clone());
+        }
+        
+        if let Some(app) = &self.app_handle {
+            executor = executor.with_message_context(
+                Arc::new(app.clone()),
+                execution_id.to_string(),
+                message_id.to_string(),
+                conversation_id.map(|s| s.to_string()),
+            );
+        }
+        
+        let result = executor.execute_dag(plan).await?;
+        
+        // 更新任务摘要
+        for (task_id, task_result) in &result.task_results {
+            let task = plan.tasks.iter().find(|t| t.id == *task_id);
+            task_summaries.push(TaskExecutionSummary {
+                task_id: task_id.clone(),
+                tool_name: task.map(|t| t.tool_name.clone()).unwrap_or_default(),
+                success: !result.failed_tasks.contains(task_id),
+                duration_ms: 0,
+                result_summary: Some(task_result.to_string().chars().take(200).collect()),
+            });
+        }
+        
+        // 更新快照
+        for (task_id, task_result) in &result.task_results {
+            if !result.failed_tasks.contains(task_id) {
+                snapshot.completed_tasks.insert(task_id.clone(), task_result.clone());
+            }
+        }
+        
+        for failed_id in &result.failed_tasks {
+            if let Some(task) = plan.tasks.iter().find(|t| t.id == *failed_id) {
+                snapshot.error_history.push(ErrorRecord {
+                    task_id: failed_id.clone(),
+                    tool_name: task.tool_name.clone(),
+                    error: task.error.clone().unwrap_or_default(),
+                    timestamp: std::time::SystemTime::now(),
+                    context: None,
+                });
+            }
+        }
+        
+        Ok(result)
     }
 
     /// 完整OODA模式执行

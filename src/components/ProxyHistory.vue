@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col h-screen bg-base-200">
+  <div class="flex flex-col h-full bg-base-200 overflow-hidden">
     <!-- 右键菜单 -->
     <div 
       v-if="contextMenu.visible"
@@ -222,12 +222,12 @@
     </div>
 
     <!-- 可调整大小的上下分割布局 -->
-    <div class="flex-1 flex flex-col min-h-0 relative">
+    <div ref="mainContainer" class="flex-1 flex flex-col min-h-0 overflow-hidden">
       <!-- 上半部分：请求历史列表 -->
       <div 
         ref="topPanel"
-        class="bg-base-100 border-b border-base-300 overflow-hidden flex flex-col"
-        :style="{ height: topPanelHeight + 'px' }"
+        class="bg-base-100 border-b border-base-300 overflow-hidden flex flex-col flex-shrink-0"
+        :style="{ height: selectedRequest ? topPanelHeight + 'px' : '100%' }"
       >
         <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
           <h3 class="font-semibold text-sm">
@@ -347,8 +347,7 @@
       <div 
         v-if="selectedRequest"
         ref="bottomPanel"
-        class="bg-base-100 overflow-hidden flex flex-col"
-        :style="{ height: bottomPanelHeight + 'px' }"
+        class="bg-base-100 overflow-hidden flex flex-col flex-1 min-h-0"
       >
         <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
           <h3 class="font-semibold text-sm">请求详情 - ID: {{ selectedRequest.id }}</h3>
@@ -383,14 +382,19 @@
                 </button>
               </div>
             </div>
-            <div class="flex-1 overflow-hidden flex min-h-0">
-              <div class="line-numbers select-none">
-                <div v-for="n in getLineCount(formatRequest(selectedRequest, requestTab))" :key="n" class="line-number">{{ n }}</div>
-              </div>
-              <div 
-                class="flex-1 overflow-auto p-2 http-content"
-                v-html="highlightHttpRequest(formatRequest(selectedRequest, requestTab))"
-              ></div>
+            <div class="flex-1 overflow-hidden min-h-0">
+              <template v-if="requestTab !== 'hex'">
+                <HttpCodeEditor
+                  :modelValue="formatRequest(selectedRequest, requestTab)"
+                  :readonly="true"
+                  height="100%"
+                />
+              </template>
+              <template v-else>
+                <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
+                  <pre>{{ stringToHex(formatRequestRaw(selectedRequest)) }}</pre>
+                </div>
+              </template>
             </div>
           </div>
 
@@ -431,14 +435,19 @@
                 </button>
               </div>
             </div>
-            <div class="flex-1 overflow-hidden flex min-h-0">
-              <div class="line-numbers select-none">
-                <div v-for="n in getLineCount(formatResponse(selectedRequest, responseTab))" :key="n" class="line-number">{{ n }}</div>
-              </div>
-              <div 
-                class="flex-1 overflow-auto p-2 http-content"
-                v-html="highlightHttpResponse(formatResponse(selectedRequest, responseTab))"
-              ></div>
+            <div class="flex-1 overflow-hidden min-h-0">
+              <template v-if="responseTab !== 'hex'">
+                <HttpCodeEditor
+                  :modelValue="formatResponse(selectedRequest, responseTab)"
+                  :readonly="true"
+                  height="100%"
+                />
+              </template>
+              <template v-else>
+                <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
+                  <pre>{{ stringToHex(formatResponseRaw(selectedRequest)) }}</pre>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -452,6 +461,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch, inject } from '
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
+import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0));
@@ -519,19 +529,18 @@ const isLoading = ref(false);
 const scrollContainer = ref<HTMLElement | null>(null);
 
 // 面板引用
+const mainContainer = ref<HTMLElement | null>(null);
 const topPanel = ref<HTMLElement | null>(null);
 const bottomPanel = ref<HTMLElement | null>(null);
 const horizontalResizer = ref<HTMLElement | null>(null);
 const verticalResizer = ref<HTMLElement | null>(null);
+let mainContainerResizeObserver: ResizeObserver | null = null;
 
 // 面板尺寸（从 localStorage 恢复或使用默认值）
-// 20条记录 × 32px + 表头34px + 标题栏42px = 714px，向上取整到720
 const STORAGE_KEY_TOP_HEIGHT = 'proxyHistory.topPanelHeight';
-const STORAGE_KEY_BOTTOM_HEIGHT = 'proxyHistory.bottomPanelHeight';
 const STORAGE_KEY_LEFT_WIDTH = 'proxyHistory.leftPanelWidth';
 
-const topPanelHeight = ref(parseInt(localStorage.getItem(STORAGE_KEY_TOP_HEIGHT) || '720')); // 默认上面板高度（显示约20条记录）
-const bottomPanelHeight = ref(parseInt(localStorage.getItem(STORAGE_KEY_BOTTOM_HEIGHT) || '400')); // 默认下面板高度
+const topPanelHeight = ref(300); // 上面板高度（会在 onMounted 中初始化）
 const leftPanelWidth = ref(parseInt(localStorage.getItem(STORAGE_KEY_LEFT_WIDTH) || '600')); // 默认左面板宽度
 
 // 拖拽状态
@@ -991,13 +1000,10 @@ function startHorizontalResize(event: MouseEvent) {
 function handleHorizontalResize(event: MouseEvent) {
   if (!isResizingHorizontal.value) return;
   
+  const containerHeight = mainContainer.value?.clientHeight || 600;
   const diffY = event.clientY - resizeStartY.value;
-  const newTopHeight = Math.max(200, Math.min(resizeStartTopHeight.value + diffY, window.innerHeight - 300));
+  const newTopHeight = Math.max(150, Math.min(resizeStartTopHeight.value + diffY, containerHeight - 200));
   topPanelHeight.value = newTopHeight;
-  
-  // 计算下面板高度
-  const availableHeight = window.innerHeight - topPanelHeight.value - 120; // 120 为工具栏和分割条高度
-  bottomPanelHeight.value = Math.max(200, availableHeight);
 }
 
 function stopHorizontalResize() {
@@ -1009,7 +1015,6 @@ function stopHorizontalResize() {
   
   // 保存尺寸到 localStorage
   localStorage.setItem(STORAGE_KEY_TOP_HEIGHT, String(topPanelHeight.value));
-  localStorage.setItem(STORAGE_KEY_BOTTOM_HEIGHT, String(bottomPanelHeight.value));
 }
 
 // 垂直分割条调整（左右面板）
@@ -1447,8 +1452,6 @@ function closeDetails() {
   selectedRequest.value = null;
   requestTab.value = 'pretty';
   responseTab.value = 'pretty';
-  // 重置面板高度
-  topPanelHeight.value = window.innerHeight - 120;
 }
 
 function selectRequest(request: ProxyRequest) {
@@ -1461,10 +1464,9 @@ function selectRequest(request: ProxyRequest) {
     requestTab.value = 'pretty';
     responseTab.value = 'pretty';
     
-    // 自动调整面板高度比例
-    const availableHeight = window.innerHeight - 120; // 减去工具栏高度
-    topPanelHeight.value = Math.floor(availableHeight * 0.4);
-    bottomPanelHeight.value = Math.floor(availableHeight * 0.6);
+    // 自动调整面板高度比例（基于容器高度）
+    const containerHeight = mainContainer.value?.clientHeight || 600;
+    topPanelHeight.value = Math.floor(containerHeight * 0.4);
   }
 }
 
@@ -1719,137 +1721,6 @@ function stringToHex(str: string): string {
   return hex;
 }
 
-// 行号和语法高亮辅助函数
-function getLineCount(text: string): number {
-  if (!text) return 1;
-  return text.split(/\r\n|\r|\n/).length;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function highlightHttpRequest(raw: string): string {
-  if (!raw) return '';
-  
-  const lines = raw.split(/\r\n|\r|\n/);
-  const result: string[] = [];
-  let inBody = false;
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    if (i === 0) {
-      // 请求行: GET /path HTTP/1.1
-      const match = line.match(/^(\w+)\s+(.+?)\s+(HTTP\/[\d.]+)$/);
-      if (match) {
-        result.push(`<span class="http-method">${escapeHtml(match[1])}</span> <span class="http-path">${escapeHtml(match[2])}</span> <span class="http-version">${escapeHtml(match[3])}</span>`);
-      } else {
-        result.push(escapeHtml(line));
-      }
-    } else if (!inBody && line === '') {
-      inBody = true;
-      result.push('');
-    } else if (!inBody) {
-      // 请求头: Header-Name: value
-      const colonIndex = line.indexOf(':');
-      if (colonIndex > 0) {
-        const key = line.substring(0, colonIndex);
-        const value = line.substring(colonIndex + 1);
-        result.push(`<span class="http-header-key">${escapeHtml(key)}</span>:<span class="http-header-value">${escapeHtml(value)}</span>`);
-      } else {
-        result.push(escapeHtml(line));
-      }
-    } else {
-      // Body
-      result.push(escapeHtml(line));
-    }
-  }
-  
-  return result.join('\n');
-}
-
-function highlightHttpResponse(raw: string): string {
-  if (!raw) return '';
-  
-  const lines = raw.split(/\r\n|\r|\n/);
-  const result: string[] = [];
-  let inBody = false;
-  let contentType = '';
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    if (i === 0) {
-      // 状态行: HTTP/1.1 200 OK
-      const match = line.match(/^(HTTP\/[\d.]+)\s+(\d+)\s*(.*)$/);
-      if (match) {
-        const statusClass = getStatusColorClass(parseInt(match[2]));
-        result.push(`<span class="http-version">${escapeHtml(match[1])}</span> <span class="${statusClass}">${escapeHtml(match[2])}</span> <span class="http-status-text">${escapeHtml(match[3])}</span>`);
-      } else {
-        result.push(escapeHtml(line));
-      }
-    } else if (!inBody && line === '') {
-      inBody = true;
-      result.push('');
-    } else if (!inBody) {
-      // 响应头
-      const colonIndex = line.indexOf(':');
-      if (colonIndex > 0) {
-        const key = line.substring(0, colonIndex);
-        const value = line.substring(colonIndex + 1);
-        if (key.toLowerCase() === 'content-type') {
-          contentType = value.trim();
-        }
-        result.push(`<span class="http-header-key">${escapeHtml(key)}</span>:<span class="http-header-value">${escapeHtml(value)}</span>`);
-      } else {
-        result.push(escapeHtml(line));
-      }
-    } else {
-      // Body - 根据 Content-Type 高亮
-      if (contentType.includes('html')) {
-        result.push(highlightHtml(line));
-      } else if (contentType.includes('json')) {
-        result.push(highlightJson(line));
-      } else {
-        result.push(escapeHtml(line));
-      }
-    }
-  }
-  
-  return result.join('\n');
-}
-
-function getStatusColorClass(status: number): string {
-  if (status >= 200 && status < 300) return 'http-status-2xx';
-  if (status >= 300 && status < 400) return 'http-status-3xx';
-  if (status >= 400 && status < 500) return 'http-status-4xx';
-  if (status >= 500) return 'http-status-5xx';
-  return '';
-}
-
-function highlightHtml(line: string): string {
-  return line
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/&lt;(\/?)([\w-]+)/g, '&lt;$1<span class="html-tag">$2</span>')
-    .replace(/\s([\w-]+)=/g, ' <span class="html-attr">$1</span>=')
-    .replace(/="([^"]*)"/g, '="<span class="html-value">$1</span>"');
-}
-
-function highlightJson(line: string): string {
-  return escapeHtml(line)
-    .replace(/"([^"]+)":/g, '<span class="json-key">"$1"</span>:')
-    .replace(/:\s*"([^"]*)"/g, ': <span class="json-string">"$1"</span>')
-    .replace(/:\s*(\d+\.?\d*)/g, ': <span class="json-number">$1</span>')
-    .replace(/:\s*(true|false|null)/g, ': <span class="json-keyword">$1</span>');
-}
-
 async function setupEventListeners() {
   // 监听新的代理请求事件
   unlistenRequest = await listen<ProxyRequest>('proxy:request', (event) => {
@@ -1874,6 +1745,43 @@ async function setupEventListeners() {
   });
 }
 
+// 初始化面板高度（基于容器实际高度）
+function initPanelHeights() {
+  const containerHeight = mainContainer.value?.clientHeight || 600;
+  const savedTopHeight = localStorage.getItem(STORAGE_KEY_TOP_HEIGHT);
+  
+  if (savedTopHeight) {
+    // 确保保存的值不超过容器高度
+    topPanelHeight.value = Math.min(parseInt(savedTopHeight), containerHeight - 200);
+  } else {
+    topPanelHeight.value = Math.floor(containerHeight * 0.4);
+  }
+  
+  // 初始化左面板宽度
+  const containerWidth = mainContainer.value?.clientWidth || 1200;
+  if (!localStorage.getItem(STORAGE_KEY_LEFT_WIDTH)) {
+    leftPanelWidth.value = Math.floor(containerWidth * 0.5);
+  }
+}
+
+// 设置主容器的 ResizeObserver
+function setupMainContainerResizeObserver() {
+  if (mainContainer.value) {
+    mainContainerResizeObserver = new ResizeObserver(() => {
+      // 当容器大小改变时，重新初始化面板高度
+      if (selectedRequest.value) {
+        const containerHeight = mainContainer.value?.clientHeight || 600;
+        // 确保 topPanelHeight 不超过容器高度
+        if (topPanelHeight.value > containerHeight - 200) {
+          topPanelHeight.value = Math.floor(containerHeight * 0.4);
+        }
+      }
+      updateContainerHeight();
+    });
+    mainContainerResizeObserver.observe(mainContainer.value);
+  }
+}
+
 // 生命周期
 onMounted(async () => {
   // 加载筛选器配置
@@ -1886,20 +1794,8 @@ onMounted(async () => {
   await nextTick();
   updateContainerHeight();
   setupResizeObserver();
-  
-  // 初始化面板高度（仅在没有保存值时使用默认值）
-  const availableHeight = window.innerHeight - 120;
-  if (!localStorage.getItem(STORAGE_KEY_TOP_HEIGHT)) {
-    topPanelHeight.value = availableHeight;
-  }
-  if (!localStorage.getItem(STORAGE_KEY_BOTTOM_HEIGHT)) {
-    bottomPanelHeight.value = Math.floor(availableHeight * 0.6);
-  }
-  
-  // 初始化左面板宽度（仅在没有保存值时使用默认值）
-  if (!localStorage.getItem(STORAGE_KEY_LEFT_WIDTH)) {
-    leftPanelWidth.value = Math.floor(window.innerWidth * 0.5);
-  }
+  setupMainContainerResizeObserver();
+  initPanelHeights();
 });
 
 onUnmounted(() => {
@@ -1907,6 +1803,9 @@ onUnmounted(() => {
   if (resizeObserver && scrollContainer.value) {
     resizeObserver.unobserve(scrollContainer.value);
     resizeObserver.disconnect();
+  }
+  if (mainContainerResizeObserver) {
+    mainContainerResizeObserver.disconnect();
   }
   // 清理定时器
   if (updateTimer !== null) {
@@ -1943,129 +1842,9 @@ watch(refreshTrigger, async () => {
   font-size: var(--font-size-base, 14px);
 }
 
-/* 行号 */
-.line-numbers {
-  background: oklch(var(--b2));
-  border-right: 1px solid oklch(var(--b3));
-  padding: 0.5rem 0;
-  min-width: 3rem;
-  text-align: right;
-  overflow: hidden;
-}
-.line-number {
-  padding: 0 0.5rem;
-  font-size: var(--font-size-base, 14px);
-  line-height: 1.5;
-  color: oklch(var(--bc) / 0.4);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-/* HTTP 内容 */
-.http-content {
-  white-space: pre;
-  font-size: var(--font-size-base, 14px);
-  line-height: 1.5;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-/* HTTP 语法高亮 */
-.http-content :deep(.http-method) {
-  color: #c41a16;
-  font-weight: 600;
-}
-.http-content :deep(.http-path) {
-  color: #1c00cf;
-}
-.http-content :deep(.http-version) {
-  color: #5c5c5c;
-}
-.http-content :deep(.http-header-key) {
-  color: #c41a16;
-}
-.http-content :deep(.http-header-value) {
-  color: #000;
-}
-.http-content :deep(.http-status-2xx) {
-  color: #18794e;
-  font-weight: 600;
-}
-.http-content :deep(.http-status-3xx) {
-  color: #0550ae;
-  font-weight: 600;
-}
-.http-content :deep(.http-status-4xx) {
-  color: #cf222e;
-  font-weight: 600;
-}
-.http-content :deep(.http-status-5xx) {
-  color: #8250df;
-  font-weight: 600;
-}
-.http-content :deep(.http-status-text) {
-  color: #5c5c5c;
-}
-
-/* HTML 语法高亮 */
-.http-content :deep(.html-tag) {
-  color: #0550ae;
-}
-.http-content :deep(.html-attr) {
-  color: #c41a16;
-}
-.http-content :deep(.html-value) {
-  color: #0a3069;
-}
-
-/* JSON 语法高亮 */
-.http-content :deep(.json-key) {
-  color: #0550ae;
-}
-.http-content :deep(.json-string) {
-  color: #0a3069;
-}
-.http-content :deep(.json-number) {
-  color: #0550ae;
-}
-.http-content :deep(.json-keyword) {
-  color: #cf222e;
-}
-
-/* 暗色主题适配 */
-[data-theme="dark"] .http-content :deep(.http-method),
-[data-theme="dark"] .http-content :deep(.http-header-key),
-[data-theme="dark"] .http-content :deep(.html-attr) {
-  color: #ff7b72;
-}
-[data-theme="dark"] .http-content :deep(.http-path),
-[data-theme="dark"] .http-content :deep(.html-tag),
-[data-theme="dark"] .http-content :deep(.json-key),
-[data-theme="dark"] .http-content :deep(.json-number) {
-  color: #79c0ff;
-}
-[data-theme="dark"] .http-content :deep(.http-version),
-[data-theme="dark"] .http-content :deep(.http-status-text) {
-  color: #8b949e;
-}
-[data-theme="dark"] .http-content :deep(.http-header-value) {
-  color: #c9d1d9;
-}
-[data-theme="dark"] .http-content :deep(.http-status-2xx) {
-  color: #3fb950;
-}
-[data-theme="dark"] .http-content :deep(.http-status-3xx) {
-  color: #58a6ff;
-}
-[data-theme="dark"] .http-content :deep(.http-status-4xx) {
-  color: #f85149;
-}
-[data-theme="dark"] .http-content :deep(.http-status-5xx) {
-  color: #a371f7;
-}
-[data-theme="dark"] .http-content :deep(.html-value),
-[data-theme="dark"] .http-content :deep(.json-string) {
-  color: #a5d6ff;
-}
-[data-theme="dark"] .http-content :deep(.json-keyword) {
-  color: #ff7b72;
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

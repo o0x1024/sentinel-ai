@@ -8,11 +8,8 @@ use crate::utils::ordered_message::{emit_message_chunk_with_arch, ArchitectureTy
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use sentinel_llm::{StreamingLlmClient, StreamContent};
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
-use chrono::Utc;
 use tracing::{debug, error, info};
 
 /// Travel 消息发送器
@@ -446,8 +443,8 @@ impl TravelLlmClient {
             provider, model, iteration
         );
         
-        // 记录 prompt 到日志
-        log_prompts_travel("TravelLlmClient", system_prompt, user_prompt);
+        // 注意：请求日志由 sentinel_llm 的 streaming_client 自动记录
+        // 不需要在这里重复记录
 
         // 使用 sentinel_llm 流式客户端
         // 创建 ReAct 解析器和状态容器
@@ -500,8 +497,8 @@ impl TravelLlmClient {
                     content.len(), iteration
                 );
                 
-                // 记录响应到日志文件
-                log_response_travel("TravelLlmClient", &content);
+                // 注意：响应日志由 sentinel_llm 的 streaming_client 自动记录
+                // 不需要在这里重复记录
 
                 Ok(content)
             }
@@ -683,88 +680,4 @@ impl ReActParser {
         self.flush_current();
     }
 }
-
-/// 记录 prompts 到 LLM 日志文件
-fn log_prompts_travel(client_name: &str, system_prompt: Option<&str>, user_prompt: &str) {
-    write_llm_log_travel(client_name, "REQUEST", system_prompt, user_prompt, None);
-}
-
-/// 记录 LLM 响应到日志文件
-fn log_response_travel(client_name: &str, response: &str) {
-    write_llm_log_travel(client_name, "RESPONSE", None, "", Some(response));
-}
-
-/// 写入 LLM 日志到文件
-fn write_llm_log_travel(
-    client_name: &str,
-    log_type: &str,
-    system_prompt: Option<&str>,
-    user_prompt: &str,
-    response: Option<&str>,
-) {
-    let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
-    
-    let content = if let Some(resp) = response {
-        // 安全截断，确保不在 UTF-8 字符中间切断
-        let truncated = if resp.len() > 2000 {
-            let mut end = 2000;
-            while end > 0 && !resp.is_char_boundary(end) {
-                end -= 1;
-            }
-            &resp[..end]
-        } else {
-            resp
-        };
-        format!(
-            "Response ({} chars):\n{}\n",
-            resp.len(),
-            truncated
-        )
-    } else {
-        // format!(
-        //     "System Prompt:\n{}\n\nUser Prompt:\n{}\n",
-        //     system_prompt.unwrap_or("(none)"),
-        //     user_prompt
-        // )
-        format!(
-            "User Prompt:\n{}\n",
-            user_prompt
-        )
-    };
-    
-    let log_entry = format!(
-        "\n{}\n[{}] [{}] [Client: {}]\n{}\n{}\n",
-        "=".repeat(80), timestamp, log_type, client_name, "=".repeat(80), content
-    );
-
-    // 确保日志目录存在
-    if let Err(e) = std::fs::create_dir_all("logs") {
-        error!("Failed to create logs directory: {}", e);
-        return;
-    }
-
-    // 写入专门的 LLM 请求日志文件
-    let log_file_path = format!(
-        "logs/llm-http-requests-{}.log",
-        Utc::now().format("%Y-%m-%d")
-    );
-
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-    {
-        Ok(mut file) => {
-            if let Err(e) = file.write_all(log_entry.as_bytes()) {
-                error!("Failed to write to LLM log file {}: {}", log_file_path, e);
-            } else {
-                let _ = file.flush();
-            }
-        }
-        Err(e) => {
-            error!("Failed to open LLM log file {}: {}", log_file_path, e);
-        }
-    }
-}
-
 
