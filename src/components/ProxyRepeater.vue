@@ -1,5 +1,64 @@
 <template>
-  <div class="flex flex-col h-full bg-base-100">
+  <div class="flex flex-col h-full bg-base-100" @contextmenu.prevent>
+    <!-- 右键菜单 -->
+    <div 
+      v-if="contextMenu.visible"
+      class="fixed z-50 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-48"
+      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+      @click.stop
+    >
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuSend"
+      >
+        <i class="fas fa-paper-plane text-primary"></i>
+        Send Request
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuSendToNewTab"
+      >
+        <i class="fas fa-plus text-success"></i>
+        Send to New Tab
+      </button>
+      <div class="divider my-1 h-0"></div>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuCopyUrl"
+      >
+        <i class="fas fa-link text-info"></i>
+        Copy URL
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuCopyRequest"
+      >
+        <i class="fas fa-copy text-secondary"></i>
+        Copy Request
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuCopyCurl"
+      >
+        <i class="fas fa-terminal text-warning"></i>
+        Copy as cURL
+      </button>
+      <div class="divider my-1 h-0"></div>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuPaste"
+      >
+        <i class="fas fa-paste text-accent"></i>
+        Paste
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuClear"
+      >
+        <i class="fas fa-eraser text-error"></i>
+        Clear
+      </button>
+    </div>
     <!-- Tabs Header -->
     <div class="bg-base-200 border-b border-base-300 px-2 py-1 flex items-center gap-2">
       <div class="flex items-center gap-1 overflow-x-auto flex-1">
@@ -13,7 +72,7 @@
           <span class="truncate" :title="tab.name">{{ index + 1 }}</span>
           <button 
             @click.stop="closeTab(index)"
-            class="w-4 h-4 flex items-center justify-center rounded opacity-40 hover:opacity-100 hover:bg-base-300 transition-opacity"
+            class="w-4 h-4 ml-2 flex items-center justify-center rounded opacity-40 hover:opacity-100 hover:bg-base-300 transition-opacity"
             title="关闭"
           >
             <i class="fas fa-times text-[10px]"></i>
@@ -189,7 +248,7 @@
           </div>
 
           <!-- Request Content -->
-          <div class="flex-1 overflow-hidden">
+          <div class="flex-1 overflow-hidden" @contextmenu.prevent="showContextMenu($event)">
             <template v-if="currentTab.requestTab !== 'hex'">
               <HttpCodeEditor
                 ref="requestEditor"
@@ -250,7 +309,7 @@
           </div>
 
           <!-- Response Content -->
-          <div class="flex-1 overflow-hidden">
+          <div class="flex-1 overflow-hidden" @contextmenu.prevent>
             <template v-if="currentTab.response || currentTab.rawResponse">
               <!-- Pretty/Raw View -->
               <template v-if="currentTab.responseTab === 'pretty' || currentTab.responseTab === 'raw'">
@@ -345,6 +404,13 @@ const requestEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
 const responseEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
 
 let requestCancelled = false;
+
+// 右键菜单状态
+const contextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+});
 
 // Layout
 const STORAGE_KEY_LAYOUT = 'proxyRepeater.layoutMode';
@@ -609,6 +675,150 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+}
+
+// 右键菜单
+function showContextMenu(event: MouseEvent) {
+  contextMenu.value = {
+    visible: true,
+    x: Math.min(event.clientX, window.innerWidth - 200),
+    y: Math.min(event.clientY, window.innerHeight - 300),
+  };
+  
+  setTimeout(() => {
+    document.addEventListener('click', hideContextMenu);
+  }, 0);
+}
+
+function hideContextMenu() {
+  contextMenu.value.visible = false;
+  document.removeEventListener('click', hideContextMenu);
+}
+
+function contextMenuSend() {
+  hideContextMenu();
+  sendRequest();
+}
+
+function contextMenuSendToNewTab() {
+  hideContextMenu();
+  if (!currentTab.value) return;
+  
+  const newTab = createTab();
+  newTab.targetHost = currentTab.value.targetHost;
+  newTab.targetPort = currentTab.value.targetPort;
+  newTab.useTls = currentTab.value.useTls;
+  newTab.rawRequest = currentTab.value.rawRequest;
+  tabs.value.push(newTab);
+  activeTabIndex.value = tabs.value.length - 1;
+}
+
+function contextMenuCopyUrl() {
+  hideContextMenu();
+  const url = buildFullUrl();
+  if (url) {
+    navigator.clipboard.writeText(url)
+      .then(() => dialog.toast.success('URL 已复制'))
+      .catch(() => dialog.toast.error('复制失败'));
+  }
+}
+
+function contextMenuCopyRequest() {
+  hideContextMenu();
+  if (!currentTab.value?.rawRequest) return;
+  
+  navigator.clipboard.writeText(currentTab.value.rawRequest)
+    .then(() => dialog.toast.success('请求已复制'))
+    .catch(() => dialog.toast.error('复制失败'));
+}
+
+function contextMenuCopyCurl() {
+  hideContextMenu();
+  const curl = buildCurlCommand();
+  if (curl) {
+    navigator.clipboard.writeText(curl)
+      .then(() => dialog.toast.success('cURL 命令已复制'))
+      .catch(() => dialog.toast.error('复制失败'));
+  }
+}
+
+async function contextMenuPaste() {
+  hideContextMenu();
+  if (!currentTab.value) return;
+  
+  try {
+    const text = await navigator.clipboard.readText();
+    currentTab.value.rawRequest += text;
+    dialog.toast.success('已粘贴');
+  } catch {
+    dialog.toast.error('无法读取剪贴板');
+  }
+}
+
+function contextMenuClear() {
+  hideContextMenu();
+  if (!currentTab.value) return;
+  currentTab.value.rawRequest = '';
+}
+
+function buildFullUrl(): string {
+  if (!currentTab.value) return '';
+  
+  const protocol = currentTab.value.useTls ? 'https' : 'http';
+  const host = currentTab.value.targetHost;
+  const port = currentTab.value.targetPort;
+  const defaultPort = currentTab.value.useTls ? 443 : 80;
+  const portStr = port !== defaultPort ? `:${port}` : '';
+  
+  // 从 rawRequest 提取路径
+  const firstLine = currentTab.value.rawRequest.split(/\r\n|\r|\n/)[0];
+  const match = firstLine.match(/^\w+\s+(\S+)/);
+  const path = match ? match[1] : '/';
+  
+  return `${protocol}://${host}${portStr}${path}`;
+}
+
+function buildCurlCommand(): string {
+  if (!currentTab.value) return '';
+  
+  const lines = currentTab.value.rawRequest.split(/\r\n|\r|\n/);
+  const firstLine = lines[0];
+  const methodMatch = firstLine.match(/^(\w+)\s+(\S+)/);
+  const method = methodMatch ? methodMatch[1] : 'GET';
+  
+  const url = buildFullUrl();
+  let curl = `curl -X ${method} '${url}'`;
+  
+  // 解析 headers
+  let inBody = false;
+  const bodyLines: string[] = [];
+  
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!inBody && line === '') {
+      inBody = true;
+      continue;
+    }
+    if (!inBody) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex > 0) {
+        const key = line.substring(0, colonIndex).trim();
+        const value = line.substring(colonIndex + 1).trim();
+        if (key.toLowerCase() !== 'host' && key.toLowerCase() !== 'content-length') {
+          curl += ` \\\n  -H '${key}: ${value}'`;
+        }
+      }
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  
+  const body = bodyLines.join('\n').trim();
+  if (body) {
+    curl += ` \\\n  -d '${body.replace(/'/g, "'\\''")}'`;
+  }
+  
+  return curl;
 }
 
 // Resize

@@ -1,6 +1,6 @@
 <template>
-  <div class="flex flex-col h-full bg-base-200 overflow-hidden">
-    <!-- 右键菜单 -->
+  <div class="flex flex-col h-full bg-base-200 overflow-hidden" @contextmenu.prevent>
+    <!-- 历史列表右键菜单 -->
     <div 
       v-if="contextMenu.visible"
       ref="contextMenuRef"
@@ -44,6 +44,44 @@
       >
         <i class="fas fa-trash"></i>
         Clear History
+      </button>
+    </div>
+
+    <!-- 请求详情区域右键菜单 -->
+    <div 
+      v-if="detailContextMenu.visible"
+      class="fixed z-50 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-48"
+      :style="{ left: detailContextMenu.x + 'px', top: detailContextMenu.y + 'px' }"
+      @click.stop
+    >
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="detailSendToRepeater"
+      >
+        <i class="fas fa-redo text-primary"></i>
+        Send to Repeater
+      </button>
+      <div class="divider my-1 h-0"></div>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="detailCopyUrl"
+      >
+        <i class="fas fa-link text-info"></i>
+        Copy URL
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="detailCopyRequest"
+      >
+        <i class="fas fa-copy text-secondary"></i>
+        Copy Request
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="detailCopyAsCurl"
+      >
+        <i class="fas fa-terminal text-warning"></i>
+        Copy as cURL
       </button>
     </div>
 
@@ -382,7 +420,7 @@
                 </button>
               </div>
             </div>
-            <div class="flex-1 overflow-hidden min-h-0">
+            <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event)">
               <template v-if="requestTab !== 'hex'">
                 <HttpCodeEditor
                   :modelValue="formatRequest(selectedRequest, requestTab)"
@@ -435,7 +473,7 @@
                 </button>
               </div>
             </div>
-            <div class="flex-1 overflow-hidden min-h-0">
+            <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent>
               <template v-if="responseTab !== 'hex'">
                 <HttpCodeEditor
                   :modelValue="formatResponse(selectedRequest, responseTab)"
@@ -476,7 +514,7 @@ const emit = defineEmits<{
   (e: 'sendToRepeater', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
 }>();
 
-// 右键菜单状态
+// 历史列表右键菜单状态
 const contextMenu = ref({
   visible: false,
   x: 0,
@@ -484,6 +522,13 @@ const contextMenu = ref({
   request: null as ProxyRequest | null,
 });
 const contextMenuRef = ref<HTMLElement | null>(null);
+
+// 请求详情区域右键菜单状态
+const detailContextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+});
 
 // 类型定义
 interface ProxyRequest {
@@ -1491,6 +1536,97 @@ function hideContextMenu() {
   contextMenu.value.request = null;
   document.removeEventListener('click', hideContextMenu);
   document.removeEventListener('contextmenu', hideContextMenu);
+}
+
+// 请求详情区域右键菜单
+function showDetailContextMenu(event: MouseEvent) {
+  if (!selectedRequest.value) return;
+  
+  detailContextMenu.value = {
+    visible: true,
+    x: Math.min(event.clientX, window.innerWidth - 200),
+    y: Math.min(event.clientY, window.innerHeight - 200),
+  };
+  
+  setTimeout(() => {
+    document.addEventListener('click', hideDetailContextMenu);
+    document.addEventListener('contextmenu', hideDetailContextMenu);
+  }, 0);
+}
+
+function hideDetailContextMenu() {
+  detailContextMenu.value.visible = false;
+  document.removeEventListener('click', hideDetailContextMenu);
+  document.removeEventListener('contextmenu', hideDetailContextMenu);
+}
+
+function detailSendToRepeater() {
+  hideDetailContextMenu();
+  if (!selectedRequest.value) return;
+  
+  const req = selectedRequest.value;
+  let headers: Record<string, string> = {};
+  
+  if (req.request_headers) {
+    try {
+      headers = JSON.parse(req.request_headers);
+    } catch {
+      // ignore
+    }
+  }
+  
+  emit('sendToRepeater', {
+    method: req.method,
+    url: req.url,
+    headers,
+    body: req.request_body || undefined,
+  });
+}
+
+function detailCopyUrl() {
+  hideDetailContextMenu();
+  if (!selectedRequest.value) return;
+  
+  navigator.clipboard.writeText(selectedRequest.value.url)
+    .then(() => dialog.toast.success('URL 已复制'))
+    .catch(() => dialog.toast.error('复制失败'));
+}
+
+function detailCopyRequest() {
+  hideDetailContextMenu();
+  if (!selectedRequest.value) return;
+  
+  const requestText = formatRequest(selectedRequest.value, requestTab.value);
+  navigator.clipboard.writeText(requestText)
+    .then(() => dialog.toast.success('请求已复制'))
+    .catch(() => dialog.toast.error('复制失败'));
+}
+
+function detailCopyAsCurl() {
+  hideDetailContextMenu();
+  if (!selectedRequest.value) return;
+  
+  const req = selectedRequest.value;
+  let curl = `curl -X ${req.method} '${req.url}'`;
+  
+  if (req.request_headers) {
+    try {
+      const headers = JSON.parse(req.request_headers);
+      for (const [key, value] of Object.entries(headers)) {
+        curl += ` \\\n  -H '${key}: ${value}'`;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  
+  if (req.request_body) {
+    curl += ` \\\n  -d '${req.request_body.replace(/'/g, "'\\''")}'`;
+  }
+  
+  navigator.clipboard.writeText(curl)
+    .then(() => dialog.toast.success('cURL 命令已复制'))
+    .catch(() => dialog.toast.error('复制失败'));
 }
 
 function sendToRepeater() {
