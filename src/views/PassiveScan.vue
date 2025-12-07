@@ -23,6 +23,11 @@
                 <i class="fas fa-network-wired mr-2"></i>
                 Proxifier
             </button>
+            <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'capture'"
+                :class="{ 'tab-active': activeTab === 'capture' }" @click="activeTab = 'capture'">
+                <i class="fas fa-broadcast-tower mr-2"></i>
+                Cap
+            </button>
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'proxyconfig'"
                 :class="{ 'tab-active': activeTab === 'proxyconfig' }" @click="activeTab = 'proxyconfig'">
                 <i class="fas fa-cog mr-2"></i>
@@ -52,6 +57,10 @@
                 v-show="activeTab === 'proxifier'" 
                 class="h-full absolute inset-0"
             />
+            <PacketCapture 
+                v-show="activeTab === 'capture'" 
+                class="h-full absolute inset-0"
+            />
             <ProxyConfiguration v-show="activeTab === 'proxyconfig'" class="h-full absolute inset-0 overflow-auto" />
         </div>
     </div>
@@ -65,6 +74,7 @@ import ProxyHistory from '../components/ProxyHistory.vue'
 import ProxyRepeater from '../components/ProxyRepeater.vue'
 import ProxyConfiguration from '../components/ProxyConfiguration.vue'
 import ProxifierPanel from '../components/ProxifierPanel.vue'
+import PacketCapture from '../components/PacketCapture.vue'
 
 // Types
 interface RepeaterRequest {
@@ -74,7 +84,7 @@ interface RepeaterRequest {
     body?: string;
 }
 
-const activeTab = ref<'control' | 'proxyhistory' | 'repeater' | 'proxifier' | 'proxyconfig'>('control')
+const activeTab = ref<'control' | 'proxyhistory' | 'repeater' | 'proxifier' | 'capture' | 'proxyconfig'>('control')
 const isDevelopment = ref(import.meta.env.DEV)
 const componentError = ref<string | null>(null)
 const refreshTrigger = ref(0)

@@ -22,6 +22,7 @@ pub mod database;
 pub mod error;
 pub mod types;
 pub mod system_proxy;
+pub mod packet_capture;
 
 pub use error::{PassiveError, Result};
 pub use types::*;
@@ -38,6 +39,7 @@ pub use database::{
 };
 pub use certificate::CertificateService;
 pub use certificate_authority::ChainedCertificateAuthority;
+pub use packet_capture::{PacketCaptureService, InterfaceInfo, CapturedPacket, ProtocolLayer};
 
 // 重导出插件系统（来自 sentinel-plugins）
 pub use sentinel_plugins::{

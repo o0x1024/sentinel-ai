@@ -594,22 +594,21 @@ pub async fn start_passive_scan(
     }
 }
 
-/// 停止被动扫描代理
-#[tauri::command]
-pub async fn stop_passive_scan(
-    app: AppHandle,
-    state: State<'_, PassiveScanState>,
-) -> Result<CommandResponse<String>, String> {
+/// 内部停止函数（可在内部和外部复用）
+pub async fn stop_passive_scan_internal(
+    app: &AppHandle,
+    state: &PassiveScanState,
+) -> Result<(), String> {
     let mut is_running = state.is_running.write().await;
     if !*is_running {
-        return Ok(CommandResponse::err("Proxy not running".to_string()));
+        return Err("Proxy not running".to_string());
     }
 
     let mut proxy = state.proxy_service.write().await;
     if let Some(p) = proxy.take() {
         if let Err(e) = p.stop().await {
             tracing::error!("Failed to stop proxy: {}", e);
-            return Ok(CommandResponse::err(format!("Failed to stop proxy: {}", e)));
+            return Err(format!("Failed to stop proxy: {}", e));
         }
     }
 
@@ -617,7 +616,7 @@ pub async fn stop_passive_scan(
 
     // 发射代理停止事件
     emit_proxy_status(
-        &app,
+        app,
         ProxyStatusEvent {
             running: false,
             port: 0,
@@ -627,7 +626,19 @@ pub async fn stop_passive_scan(
     );
 
     tracing::info!("Passive scan stopped");
-    Ok(CommandResponse::ok("Proxy stopped".to_string()))
+    Ok(())
+}
+
+/// 停止被动扫描代理
+#[tauri::command]
+pub async fn stop_passive_scan(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<String>, String> {
+    match stop_passive_scan_internal(&app, &state).await {
+        Ok(_) => Ok(CommandResponse::ok("Proxy stopped".to_string())),
+        Err(e) => Ok(CommandResponse::err(e)),
+    }
 }
 
 /// 重载插件（在运行时热更新插件代码）

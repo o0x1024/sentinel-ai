@@ -352,4 +352,90 @@ impl CertificateService {
         tracing::info!("Root CA trusted in macOS Keychain");
         Ok(())
     }
+
+    /// Windows 证书存储信任 Root CA
+    #[cfg(target_os = "windows")]
+    pub async fn trust_root_ca_windows(&self) -> Result<()> {
+        let cert_path = self.export_root_ca()?;
+
+        let cert_path_str = cert_path.to_str().ok_or_else(|| {
+            PassiveError::Certificate("Invalid certificate path encoding".to_string())
+        })?;
+
+        // 使用 certutil 命令添加到用户级受信任根证书存储
+        // -user 表示当前用户, "Root" 表示受信任的根证书颁发机构
+        let output = tokio::process::Command::new("certutil")
+            .args(["-addstore", "-user", "Root", cert_path_str])
+            .output()
+            .await
+            .map_err(|e| {
+                PassiveError::Certificate(format!("Failed to execute certutil: {}", e))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(PassiveError::Certificate(format!(
+                "Failed to trust CA: {} {}",
+                stderr, stdout
+            )));
+        }
+
+        tracing::info!("Root CA trusted in Windows Certificate Store (Current User)");
+        Ok(())
+    }
+
+    /// Windows 检测 Root CA 是否已受信
+    #[cfg(target_os = "windows")]
+    pub async fn is_root_ca_trusted_windows(&self) -> Result<bool> {
+        let subject_cn = "Sentinel AI Passive Scan CA";
+
+        // 使用 certutil 查找证书
+        let output = tokio::process::Command::new("certutil")
+            .args(["-store", "-user", "Root"])
+            .output()
+            .await
+            .map_err(|e| {
+                PassiveError::Certificate(format!("Failed to execute certutil: {}", e))
+            })?;
+
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let trusted = stdout.contains(subject_cn);
+        
+        tracing::debug!("Windows trust check for root CA: trusted={}", trusted);
+        Ok(trusted)
+    }
+
+    /// Windows 移除已信任的 Root CA
+    #[cfg(target_os = "windows")]
+    pub async fn untrust_root_ca_windows(&self) -> Result<()> {
+        let subject_cn = "Sentinel AI Passive Scan CA";
+
+        // 使用 certutil 删除证书
+        let output = tokio::process::Command::new("certutil")
+            .args(["-delstore", "-user", "Root", subject_cn])
+            .output()
+            .await
+            .map_err(|e| {
+                PassiveError::Certificate(format!("Failed to execute certutil: {}", e))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // 如果证书不存在，不算错误
+            if !stderr.contains("找不到") && !stderr.contains("not found") {
+                return Err(PassiveError::Certificate(format!(
+                    "Failed to remove CA: {}",
+                    stderr
+                )));
+            }
+        }
+
+        tracing::info!("Root CA removed from Windows Certificate Store");
+        Ok(())
+    }
 }

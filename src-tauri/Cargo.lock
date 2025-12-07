@@ -10129,6 +10129,8 @@ dependencies = [
  "log",
  "moka",
  "pem",
+ "pnet",
+ "pnet_datalink",
  "rand 0.8.5",
  "rcgen 0.13.2",
  "regex",

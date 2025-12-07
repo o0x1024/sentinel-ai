@@ -1051,6 +1051,27 @@ impl ProxyService {
             }
         }
 
+        // Windows: 启动前检查是否已受信；未受信则尝试自动导入
+        #[cfg(target_os = "windows")]
+        {
+            match ca_service.is_root_ca_trusted_windows().await {
+                Ok(true) => info!("Root CA is trusted in Windows Certificate Store"),
+                Ok(false) => {
+                    warn!("Root CA not trusted in Windows Certificate Store. Attempting to add trust...");
+                    if let Err(e) = ca_service.trust_root_ca_windows().await {
+                        warn!(
+                            "Auto trust failed: {}. You may need to manually import {} into 'Trusted Root Certification Authorities'.",
+                            e,
+                            ca_service.export_root_ca().map(|p| p.display().to_string()).unwrap_or_else(|_| "<unknown>".into())
+                        );
+                    } else {
+                        info!("Root CA added to Windows Certificate Store");
+                    }
+                }
+                Err(e) => warn!("Failed to check Windows trust status: {}", e),
+            }
+        }
+
         // 获取 CA authority（使用完整证书链版本）
         let ca = ca_service.get_chained_ca()?;
 

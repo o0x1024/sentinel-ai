@@ -18,6 +18,7 @@ use crate::services::mcp::McpService;
 use std::sync::Arc;
 use tauri::{
     generate_handler,
+    menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
@@ -25,6 +26,9 @@ use tokio::sync::RwLock;
 use tracing_subscriber;
 use tracing_appender;
 use std::fs;
+
+/// 托盘代理菜单项包装器（用于更新菜单文本）
+struct TrayProxyMenuItem(MenuItem<tauri::Wry>);
 
 // 导入服务
 use services::{
@@ -35,7 +39,8 @@ use services::{
 // 导入命令
 use commands::{
     agent_commands, ai, ai_commands, asset, config, database as db_commands, dictionary,
-    mcp as mcp_commands, passive_scan_commands::{self, PassiveScanState}, performance,
+    mcp as mcp_commands, packet_capture_commands::{self, PacketCaptureState},
+    passive_scan_commands::{self, PassiveScanState}, performance,
     plan_execute_commands, proxifier_commands::{self, ProxifierState}, rag_commands, 
     scan, scan_commands, scan_session_commands, vulnerability,
     window, prompt_commands, rewoo_commands, unified_tools,
@@ -217,9 +222,45 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
+            // 创建托盘菜单项
+            let show_item = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
+            let proxy_item = MenuItem::with_id(app, "proxy", "开启代理", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            
+            // 保存代理菜单项引用以便后续更新文本
+            handle.manage(TrayProxyMenuItem(proxy_item.clone()));
+            
+            // 创建托盘菜单
+            let tray_menu = Menu::with_items(app, &[&show_item, &proxy_item, &quit_item])?;
+
             // 创建系统托盘图标
             let _tray_icon = TrayIconBuilder::with_id("main")
                 .tooltip("Sentinel AI")
+                .menu(&tray_menu)
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "proxy" => {
+                            let app_clone = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                toggle_proxy(&app_clone).await;
+                            });
+                        }
+                        "quit" => {
+                            // 执行清理并退出
+                            let app_clone = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                cleanup_and_exit(&app_clone).await;
+                            });
+                        }
+                        _ => {}
+                    }
+                })
                 .on_tray_icon_event(|tray, event| match event {
                     TrayIconEvent::Click {
                         button,
@@ -440,6 +481,8 @@ pub fn run() {
                 handle.manage(passive_state_for_manage);
                 // Manage proxifier state
                 handle.manage(ProxifierState::new());
+                // Manage packet capture state
+                handle.manage(PacketCaptureState::default());
                 // 工作流引擎实例
                 let workflow_engine = Arc::new(engines::intelligent_dispatcher::workflow_engine::WorkflowEngine::new());
                 handle.manage(workflow_engine.clone());
@@ -1034,9 +1077,87 @@ pub fn run() {
             commands::notifications::list_notification_rules,
             commands::notifications::get_notification_rule,
             commands::notifications::test_notification_rule_connection,
+            // Packet capture
+            packet_capture_commands::get_network_interfaces,
+            packet_capture_commands::start_packet_capture,
+            packet_capture_commands::stop_packet_capture,
+            packet_capture_commands::is_capture_running,
         ])
         .run(context)
         .expect("Failed to start Tauri application");
+}
+
+/// 切换代理状态
+async fn toggle_proxy(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<PassiveScanState>() {
+        let is_running_arc = state.get_is_running();
+        let is_running = *is_running_arc.read().await;
+        
+        if is_running {
+            // 停止代理
+            match passive_scan_commands::stop_passive_scan_internal(app, &state).await {
+                Ok(_) => {
+                    tracing::info!("Proxy stopped from tray menu");
+                    update_proxy_menu_text(app, false);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to stop proxy: {}", e);
+                }
+            }
+        } else {
+            // 启动代理
+            match passive_scan_commands::start_passive_scan_internal(app, &state, None).await {
+                Ok(port) => {
+                    tracing::info!("Proxy started from tray menu on port {}", port);
+                    update_proxy_menu_text(app, true);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to start proxy: {}", e);
+                }
+            }
+        }
+    } else {
+        tracing::error!("PassiveScanState not found in app state");
+    }
+}
+
+/// 更新托盘菜单中代理项的文本
+fn update_proxy_menu_text(app: &tauri::AppHandle, is_running: bool) {
+    // 通过 app state 获取代理菜单项并更新文本
+    if let Some(proxy_item) = app.try_state::<TrayProxyMenuItem>() {
+        let text = if is_running { "关闭代理" } else { "开启代理" };
+        let _ = proxy_item.0.set_text(text);
+    }
+}
+
+/// 清理资源并退出应用
+async fn cleanup_and_exit(app: &tauri::AppHandle) {
+    // 停止代理
+    if let Some(state) = app.try_state::<PassiveScanState>() {
+        let is_running_arc = state.get_is_running();
+        let is_running = *is_running_arc.read().await;
+        if is_running {
+            let _ = passive_scan_commands::stop_passive_scan_internal(app, &state).await;
+        }
+    }
+    
+    // 保存MCP服务器状态
+    if let Some(mcp_service) = app.try_state::<Arc<McpService>>() {
+        let is_running = mcp_service.is_server_running().await;
+        if let Err(e) = mcp_service.save_server_state("builtin_security_tools", is_running).await {
+            tracing::error!("Failed to save MCP server state on exit: {}", e);
+        }
+    }
+    
+    // 关闭MCP进程
+    if let Some(mcp_manager) = app.try_state::<Arc<crate::tools::client::McpClientManager>>() {
+        if let Err(e) = mcp_manager.shutdown_all().await {
+            tracing::error!("Failed to shutdown MCP processes: {}", e);
+        }
+    }
+    
+    tracing::info!("Application cleanup completed, exiting");
+    std::process::exit(0);
 }
 
 /// Initialize global proxy configuration from database
