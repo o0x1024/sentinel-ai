@@ -229,7 +229,8 @@ fn map_engine_to_arch(engine: &str) -> ArchitectureType {
     match engine {
         "rewoo" => ArchitectureType::ReWOO,
         "llm-compiler" => ArchitectureType::LLMCompiler,
-        "travel" => ArchitectureType::Travel,
+        // travel 向后兼容映射到 react
+        "travel" => ArchitectureType::ReAct,
         "react" => ArchitectureType::ReAct,
         _ => ArchitectureType::PlanExecute,
     }
@@ -371,13 +372,12 @@ pub async fn get_default_prompt_content(
     use std::fs;
     use std::path::PathBuf;
     
-    // Map architecture to directory name
+    // Map architecture to directory name (统一使用 react)
     let arch_dir = match architecture {
         ArchitectureType::ReWOO => "rewoo",
         ArchitectureType::LLMCompiler => "llm_compiler",
         ArchitectureType::PlanExecute => "plan_and_execute",
         ArchitectureType::ReAct => "react",
-        ArchitectureType::Travel => "travel",
     };
     
     // Get app data directory

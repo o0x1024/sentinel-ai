@@ -3,20 +3,9 @@ pub mod types;
 
 pub mod memory;
 
-// ReWOO 架构模块
-pub mod rewoo;
-// LLMCompiler 架构模块
-pub mod llm_compiler;
-
-pub mod plan_and_execute;
-
-// ReAct 架构模块
+// ReAct 架构模块（泛化版本，统一引擎）
+// 包含所有任务类型支持，任务特性通过 Prompt 配置
 pub mod react;
-
-// Orchestrator 架构模块已删除,使用Travel替代
-
-// Travel 架构模块 (OODA循环)
-pub mod travel;
 
 // 视觉探索引擎 (VLM驱动的网站全流量发现)
 pub mod vision_explorer;
@@ -67,11 +56,8 @@ pub use types::{
     StepExecutionResult,
 };
 
-// 导出 ReAct 核心类型
+// 导出 ReAct 核心类型（统一引擎）
 pub use react::{ReactConfig, ReactEngine, ReactStatus, ReactTrace};
-
-// 导出 Travel 核心类型
-pub use travel::{TravelConfig, TravelEngine, OodaCycle, OodaPhase, TaskComplexity};
 
 // 导出 VisionExplorer 核心类型
 pub use vision_explorer::{

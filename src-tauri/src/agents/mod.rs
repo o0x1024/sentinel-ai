@@ -1,7 +1,7 @@
 pub mod traits;
 pub mod manager;
 pub mod session;
-// pub mod orchestrator; // 已删除,使用Travel替代
+// pub mod orchestrator; // 已删除,使用 ReAct 替代
 
 #[cfg(test)]
 pub mod test_cancellation;

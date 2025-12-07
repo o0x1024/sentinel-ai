@@ -48,7 +48,6 @@
             <button class="icon-btn" title="附件" @click="triggerFileSelect"><i class="fas fa-paperclip"></i></button>
             <button class="icon-btn" :class="{ active: searchEnabled }" title="联网搜索" @click="toggleWebSearch"><i class="fas fa-globe"></i></button>
             <button class="icon-btn" :class="{ active: ragEnabled }" title="知识检索增强" @click="toggleRAG"><i class="fas fa-brain"></i></button>
-            <button class="icon-btn" :class="{ active: taskModeEnabled }" title="任务模式" @click="toggleTaskMode"><i class="fas fa-tasks"></i></button>
             <button class="icon-btn " title="@ 引用"><i class="fas fa-at"></i></button>
             <button class="icon-btn" title="快速指令"><i class="fas fa-bolt"></i></button>
             <button class="icon-btn" title="工具库"><i class="fas fa-box"></i></button>
@@ -112,7 +111,6 @@ const emit = defineEmits([
   'toggle-debug',
   'create-new-conversation',
   'clear-conversation',
-  'toggle-task-mode',
   'toggle-rag',
   'add-attachments',
   'remove-attachment'
@@ -129,7 +127,6 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const STORAGE_KEYS = {
   search: 'sentinel:input:searchEnabled',
   rag: 'sentinel:input:ragEnabled',
-  task: 'sentinel:input:taskModeEnabled',
 } as const
 
 const getBool = (key: string, fallback = false) => {
@@ -154,9 +151,6 @@ const setBool = (key: string, value: boolean) => {
 const showSearch = ref(false)
 const searchEnabled = ref(false)
 
-// task mode state
-const taskModeEnabled = ref(false)
-
 // RAG state (controlled by parent via prop, with persistence)
 const ragEnabled = ref<boolean>(!!props.ragEnabled)
 
@@ -178,11 +172,7 @@ const updatePopoverPosition = () => {
   }
 }
 
-const placeholderText = computed(() => 
-  taskModeEnabled.value 
-    ? '任务模式：输入任务描述，系统将自动规划和执行步骤' 
-    : '普通聊天模式：在这里输入消息，按 Enter 发送'
-)
+const placeholderText = computed(() => '在这里输入消息，按 Enter 发送')
 
 const autoResize = () => {
   const el = textareaRef.value
@@ -251,12 +241,6 @@ const toggleRAG = () => {
   setBool(STORAGE_KEYS.rag, ragEnabled.value)
   // 通知父组件RAG状态变化
   emit('toggle-rag', ragEnabled.value)
-}
-
-const toggleTaskMode = () => {
-  taskModeEnabled.value = !taskModeEnabled.value
-  setBool(STORAGE_KEYS.task, taskModeEnabled.value)
-  emit('toggle-task-mode', taskModeEnabled.value)
 }
 
 // 点击外部区域关闭弹层
@@ -335,11 +319,6 @@ onMounted(() => {
   try {
     // search (local only)
     searchEnabled.value = getBool(STORAGE_KEYS.search, searchEnabled.value)
-
-    // task mode (notify parent)
-    const savedTask = getBool(STORAGE_KEYS.task, taskModeEnabled.value)
-    taskModeEnabled.value = savedTask
-    emit('toggle-task-mode', savedTask)
 
     // RAG: prefer persisted value if exists, otherwise use prop
     const hasPersistedRag = localStorage.getItem(STORAGE_KEYS.rag) !== null

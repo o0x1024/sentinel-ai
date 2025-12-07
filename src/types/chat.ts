@@ -81,8 +81,6 @@ export interface ChatMessage {
     solvingData?: any
     answeringData?: any
   }
-  // Travel架构数据
-  travelData?: any
   segments?: Array<{
     id: string
     type: 'reasoning' | 'plan' | 'tool' | 'content' | 'error' | 'meta'

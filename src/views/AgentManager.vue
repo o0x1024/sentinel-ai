@@ -37,16 +37,11 @@
           </div>
         </div>
 
-        <!-- 引擎筛选 -->
+        <!-- 引擎筛选（已简化：所有任务统一使用 ReAct 引擎） -->
         <div class="form-control">
           <select v-model="selectedEngine" class="select select-sm select-bordered w-full">
             <option value="">全部引擎</option>
-            <option value="auto">auto</option>
-            <option value="travel">travel</option>
-            <option value="plan-execute">plan-execute</option>
             <option value="react">react</option>
-            <option value="rewoo">rewoo</option>
-            <option value="llm-compiler">llm-compiler</option>
           </select>
         </div>
 
@@ -237,13 +232,9 @@
           <div class="form-control">
             <label class="label"><span class="label-text">引擎</span></label>
             <select v-model="editingAgent.engine" class="select select-sm select-bordered w-full">
-              <option value="auto">auto</option>
-              <option value="travel">travel</option>
-              <option value="plan-execute">plan-execute</option>
-              <option value="react">react</option>
-              <option value="rewoo">rewoo</option>
-              <option value="llm-compiler">llm-compiler</option>
+              <option value="react">react（泛化引擎）</option>
             </select>
+            <label class="label"><span class="label-text-alt text-base-content/60">任务类型通过 Prompt 配置</span></label>
           </div>
           <div class="form-control">
             <label class="label"><span class="label-text">版本</span></label>
@@ -706,42 +697,20 @@ const stageLabels: Record<StageKey, string> = {
   replanner: '重规划器',
   evaluator: '评估器',
 }
-const computeStages = (engine: string | null | undefined): StageKey[] => {
-  switch (engine) {
-    case 'react':
-      return ['system', 'planner'] // ReAct 使用 system 和 planner（作为主循环提示）
-    case 'rewoo':
-      return ['system', 'planner', 'executor', 'evaluator']
-    case 'llm-compiler':
-      return ['system', 'planner', 'executor', 'replanner', 'evaluator']
-    case 'plan-execute':
-    default:
-      // 默认走Plan-Execute
-      return ['system', 'planner', 'executor', 'replanner']
-  }
+// 所有任务统一使用泛化的 ReAct 引擎，任务特性通过 Prompt 配置
+const computeStages = (_engine: string | null | undefined): StageKey[] => {
+  // 统一的 ReAct 阶段
+  return ['system', 'planner', 'executor']
 }
 
-const mapArchToEngine = (arch?: string | null): string | null => {
-  switch (arch) {
-    case 'ReAct': return 'react'
-    case 'ReWOO': return 'rewoo'
-    case 'LLMCompiler': return 'llm-compiler'
-    case 'PlanExecute': return 'plan-execute'
-    case 'Travel': return 'travel'
-    default: return null
-  }
+// 所有架构统一映射到 react
+const mapArchToEngine = (_arch?: string | null): string => {
+  return 'react'
 }
 
-const getEffectiveEngineForAgent = (agent: AgentProfile): string => {
-  if (agent.prompt_strategy === 'follow_group' && agent.group_id) {
-    const group = promptGroups.value.find(g => g.id === agent.group_id)
-    const mapped = mapArchToEngine(group?.architecture)
-    if (mapped) return mapped
-  }
-  if (!agent.engine || agent.engine === 'auto') {
-    return 'plan-execute'
-  }
-  return agent.engine
+// 所有 Agent 统一使用 react 引擎
+const getEffectiveEngineForAgent = (_agent: AgentProfile): string => {
+  return 'react'
 }
 const isCreating = ref(false)
 const toolsCatalog = ref<any[]>([])
@@ -906,16 +875,9 @@ const loadPromptTemplates = async () => {
 }
 
 // 将前端 engine 字符串映射为后端 ArchitectureType
-const mapEngineToArchitectureType = (engine: string | null | undefined): string | null => {
-  if (!engine || engine === 'auto') return null
-  switch (engine) {
-    case 'plan-execute': return 'PlanExecute'
-    case 'react': return 'ReAct'
-    case 'rewoo': return 'ReWOO'
-    case 'llm-compiler': return 'LLMCompiler'
-    case 'travel': return 'Travel'
-    default: return null
-  }
+// 所有任务统一使用 ReAct 架构
+const mapEngineToArchitectureType = (_engine: string | null | undefined): string => {
+  return 'ReAct'
 }
 
 const loadPromptGroups = async (engine?: string) => {

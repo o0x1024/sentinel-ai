@@ -15,6 +15,7 @@ use super::types::*;
 use crate::services::prompt_db::PromptRepository;
 use anyhow::{anyhow, Context, Result};
 use sentinel_core::models::prompt::{ArchitectureType, StageType};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
@@ -165,6 +166,13 @@ impl ReactExecutor {
             }
         }
 
+        // 跟踪连续失败的计划执行次数
+        let mut consecutive_plan_failures = 0;
+        const MAX_CONSECUTIVE_PLAN_FAILURES: u32 = 3;
+        
+        // 跟踪上次失败的计划描述（用于检测重复失败）
+        let mut last_failed_plan: Option<String> = None;
+        
         loop {
             iteration += 1;
 
@@ -463,6 +471,311 @@ impl ReactExecutor {
                                 "Thought: {}\nAction: {}\nObservation: Tool execution failed: {}",
                                 llm_output,
                                 serde_json::to_string(&action).unwrap_or_default(),
+                                e
+                            ));
+                        }
+                    }
+                }
+                
+                // ========== 新增执行模式 ==========
+                
+                ActionInstruction::ParallelTools { tools, aggregation } => {
+                    // 并行执行多个工具
+                    tracing::info!("ReAct: Executing {} parallel tools", tools.len());
+                    let parallel_start = SystemTime::now();
+                    
+                    let result = self.execute_parallel_tools(&tools, &aggregation, &tool_executor).await;
+                    
+                    let parallel_duration = parallel_start
+                        .elapsed()
+                        .unwrap_or(Duration::from_secs(0))
+                        .as_millis() as u64;
+                    
+                    match result {
+                        Ok(parallel_result) => {
+                            // 记录步骤
+                            {
+                                let mut trace = self.trace.write().await;
+                                trace.add_step(ReactStep {
+                                    id: format!("parallel_{}", iteration),
+                                    step_type: ReactStepType::ParallelExecution {
+                                        tool_calls: tools.clone(),
+                                        results: parallel_result.clone(),
+                                    },
+                                    timestamp: parallel_start,
+                                    duration_ms: Some(parallel_duration),
+                                    token_usage: None,
+                                    error: None,
+                                });
+                                trace.metrics.tool_calls_count += tools.len() as u32;
+                                trace.metrics.successful_tool_calls += parallel_result.success_count as u32;
+                                trace.metrics.failed_tool_calls += parallel_result.failure_count as u32;
+                            }
+                            
+                            // 构建观察结果
+                            context_history.push(format!(
+                                "Thought: {}\nParallel Execution: {} tools ({} success, {} failed)\nResults: {}",
+                                llm_output,
+                                tools.len(),
+                                parallel_result.success_count,
+                                parallel_result.failure_count,
+                                serde_json::to_string_pretty(&parallel_result.results).unwrap_or_default()
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::error!("ReAct: Parallel execution failed: {}", e);
+                            context_history.push(format!(
+                                "Thought: {}\nParallel Execution Failed: {}",
+                                llm_output,
+                                e
+                            ));
+                        }
+                    }
+                }
+                
+                ActionInstruction::ReasoningChain { steps, solve_prompt } => {
+                    // 执行推理链
+                    tracing::info!("ReAct: Executing reasoning chain with {} steps", steps.len());
+                    let chain_start = SystemTime::now();
+                    
+                    let result = self.execute_reasoning_chain(&steps, solve_prompt.as_deref(), &tool_executor, &llm_call).await;
+                    
+                    let chain_duration = chain_start
+                        .elapsed()
+                        .unwrap_or(Duration::from_secs(0))
+                        .as_millis() as u64;
+                    
+                    match result {
+                        Ok(chain_result) => {
+                            // 记录步骤
+                            {
+                                let mut trace = self.trace.write().await;
+                                trace.add_step(ReactStep {
+                                    id: format!("reasoning_{}", iteration),
+                                    step_type: ReactStepType::ReasoningChainExecution {
+                                        steps: steps.clone(),
+                                        result: chain_result.clone(),
+                                    },
+                                    timestamp: chain_start,
+                                    duration_ms: Some(chain_duration),
+                                    token_usage: None,
+                                    error: None,
+                                });
+                                trace.metrics.tool_calls_count += steps.len() as u32;
+                            }
+                            
+                            context_history.push(format!(
+                                "Thought: {}\nReasoning Chain: {} steps\nVariables: {:?}\nFinal: {}",
+                                llm_output,
+                                steps.len(),
+                                chain_result.variables.keys().collect::<Vec<_>>(),
+                                chain_result.final_result.as_deref().unwrap_or("N/A")
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::error!("ReAct: Reasoning chain failed: {}", e);
+                            context_history.push(format!(
+                                "Thought: {}\nReasoning Chain Failed: {}",
+                                llm_output,
+                                e
+                            ));
+                        }
+                    }
+                }
+                
+                ActionInstruction::PhaseExecution { phase, next_phase_hint } => {
+                    // 执行阶段
+                    tracing::info!("ReAct: Executing phase '{}'", phase.name);
+                    let phase_start = SystemTime::now();
+                    
+                    let result = self.execute_phase(&phase, &tool_executor).await;
+                    
+                    let phase_duration = phase_start
+                        .elapsed()
+                        .unwrap_or(Duration::from_secs(0))
+                        .as_millis() as u64;
+                    
+                    match result {
+                        Ok(phase_result) => {
+                            // 记录步骤
+                            {
+                                let mut trace = self.trace.write().await;
+                                trace.add_step(ReactStep {
+                                    id: format!("phase_{}_{}", phase.name, iteration),
+                                    step_type: ReactStepType::PhaseExecution {
+                                        phase: phase.clone(),
+                                        result: phase_result.clone(),
+                                    },
+                                    timestamp: phase_start,
+                                    duration_ms: Some(phase_duration),
+                                    token_usage: None,
+                                    error: None,
+                                });
+                                trace.metrics.tool_calls_count += phase.tool_calls.len() as u32;
+                            }
+                            
+                            // 将阶段结果和下一步提示添加到上下文
+                            let mut observation = format!(
+                                "Phase '{}' completed with status: {:?}\nFindings: {} items\nHandoff data: {}",
+                                phase.name,
+                                phase_result.status,
+                                phase_result.findings.len(),
+                                serde_json::to_string_pretty(&phase_result.handoff_data).unwrap_or_default()
+                            );
+                            if let Some(hint) = next_phase_hint {
+                                observation.push_str(&format!("\nNext phase hint: {}", hint));
+                            }
+                            
+                            context_history.push(format!(
+                                "Thought: {}\n{}",
+                                llm_output,
+                                observation
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::error!("ReAct: Phase execution failed: {}", e);
+                            context_history.push(format!(
+                                "Thought: {}\nPhase '{}' Failed: {}",
+                                llm_output,
+                                phase.name,
+                                e
+                            ));
+                        }
+                    }
+                }
+                
+                ActionInstruction::SubPlan { plan_description, steps, allow_replanning } => {
+                    // 检查是否重复失败同一个计划
+                    if let Some(ref last_plan) = last_failed_plan {
+                        if last_plan == &plan_description {
+                            consecutive_plan_failures += 1;
+                            tracing::warn!(
+                                "ReAct: Same plan '{}' failed again, consecutive failures: {}/{}",
+                                plan_description, consecutive_plan_failures, MAX_CONSECUTIVE_PLAN_FAILURES
+                            );
+                        } else {
+                            // 新计划，重置计数
+                            consecutive_plan_failures = 1;
+                        }
+                    }
+                    
+                    // 检查是否超过最大连续失败次数
+                    if consecutive_plan_failures >= MAX_CONSECUTIVE_PLAN_FAILURES {
+                        tracing::error!(
+                            "ReAct: Exceeded max consecutive plan failures ({}), stopping execution",
+                            MAX_CONSECUTIVE_PLAN_FAILURES
+                        );
+                        
+                        // 发送错误消息到前端
+                        if let Some(ref emitter) = emitter {
+                            emitter.emit_error(&format!(
+                                "任务执行失败：计划 '{}' 连续失败 {} 次。可能的原因：\n\
+                                - 所需工具不可用或连接已断开\n\
+                                - 工具参数配置错误\n\
+                                - 网络连接问题\n\n\
+                                请检查工具配置后重试。",
+                                plan_description, MAX_CONSECUTIVE_PLAN_FAILURES
+                            ));
+                        }
+                        
+                        // 更新 trace 状态
+                        let mut trace = self.trace.write().await;
+                        trace.complete(ReactStatus::Failed);
+                        return Err(anyhow!(
+                            "Exceeded max consecutive plan failures ({}) for plan: {}",
+                            MAX_CONSECUTIVE_PLAN_FAILURES,
+                            plan_description
+                        ));
+                    }
+                    
+                    // 执行子计划
+                    tracing::info!("ReAct: Executing sub-plan '{}' with {} steps", plan_description, steps.len());
+                    let plan_start = SystemTime::now();
+                    
+                    let result = self.execute_sub_plan(&plan_description, &steps, allow_replanning, &tool_executor, emitter.as_ref()).await;
+                    
+                    let plan_duration = plan_start
+                        .elapsed()
+                        .unwrap_or(Duration::from_secs(0))
+                        .as_millis() as u64;
+                    
+                    match result {
+                        Ok(completed_count) => {
+                            // 记录步骤
+                            {
+                                let mut trace = self.trace.write().await;
+                                trace.add_step(ReactStep {
+                                    id: format!("subplan_{}", iteration),
+                                    step_type: ReactStepType::SubPlanExecution {
+                                        plan: plan_description.clone(),
+                                        steps_completed: completed_count,
+                                        steps_total: steps.len(),
+                                        current_step: None,
+                                    },
+                                    timestamp: plan_start,
+                                    duration_ms: Some(plan_duration),
+                                    token_usage: None,
+                                    error: None,
+                                });
+                            }
+                            
+                            // 检查是否全部完成
+                            if completed_count == steps.len() {
+                                // 全部完成，重置失败计数
+                                consecutive_plan_failures = 0;
+                                last_failed_plan = None;
+                                
+                                context_history.push(format!(
+                                    "Thought: {}\nSub-plan '{}' completed successfully: {}/{} steps done",
+                                    llm_output,
+                                    plan_description,
+                                    completed_count,
+                                    steps.len()
+                                ));
+                            } else {
+                                // 部分完成（有步骤失败）
+                                last_failed_plan = Some(plan_description.clone());
+                                
+                                // 获取失败步骤的信息
+                                let failed_step_idx = completed_count;
+                                let failed_step_info = if failed_step_idx < steps.len() {
+                                    let step = &steps[failed_step_idx];
+                                    format!(
+                                        "步骤 {} ('{}') 使用工具 '{}' 失败",
+                                        step.id,
+                                        step.description,
+                                        step.tool.as_ref().map(|t| t.tool.as_str()).unwrap_or("unknown")
+                                    )
+                                } else {
+                                    "未知步骤失败".to_string()
+                                };
+                                
+                                context_history.push(format!(
+                                    "Thought: {}\n\n⚠️ Sub-plan '{}' PARTIALLY FAILED:\n\
+                                    - Completed: {}/{} steps\n\
+                                    - Failed at: {}\n\n\
+                                    ⚠️ IMPORTANT: The tool used in the failed step is not working. \
+                                    You MUST create a NEW DIFFERENT plan using ALTERNATIVE tools. \
+                                    Do NOT retry the same tool. Consider using playwright_navigate + playwright_get_visible_text instead.",
+                                    llm_output,
+                                    plan_description,
+                                    completed_count,
+                                    steps.len(),
+                                    failed_step_info
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            last_failed_plan = Some(plan_description.clone());
+                            
+                            tracing::error!("ReAct: Sub-plan execution failed: {}", e);
+                            context_history.push(format!(
+                                "Thought: {}\n\n❌ Sub-plan '{}' FAILED: {}\n\n\
+                                ⚠️ IMPORTANT: You MUST create a COMPLETELY DIFFERENT plan using ALTERNATIVE tools. \
+                                The previously used tool is not available. \
+                                Use playwright tools (playwright_navigate, playwright_get_visible_text, etc.) as an alternative.",
+                                llm_output,
+                                plan_description,
                                 e
                             ));
                         }
@@ -934,6 +1247,581 @@ impl ReactExecutor {
     /// 获取当前轨迹快照
     pub async fn get_trace(&self) -> ReactTrace {
         self.trace.read().await.clone()
+    }
+
+    // ========== 新增执行模式方法 ==========
+
+    /// 并行执行多个工具
+    async fn execute_parallel_tools<Ft>(
+        &self,
+        tools: &[ParallelToolCall],
+        aggregation: &AggregationStrategy,
+        tool_executor: &Ft,
+    ) -> Result<ParallelExecutionResult>
+    where
+        Ft: Fn(ReactToolCall)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>>
+            + Send
+            + Sync,
+    {
+        use std::time::Instant;
+        
+        let start = Instant::now();
+        let mut results = HashMap::new();
+        let mut success_count = 0;
+        let mut failure_count = 0;
+        
+        // 构建依赖图并按依赖顺序执行
+        let mut completed: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut pending: Vec<&ParallelToolCall> = tools.iter().collect();
+        
+        while !pending.is_empty() {
+            // 找出可以执行的任务（依赖已满足）
+            let (ready, not_ready): (Vec<_>, Vec<_>) = pending.into_iter()
+                .partition(|t| t.depends_on.iter().all(|dep| completed.contains_key(dep)));
+            
+            if ready.is_empty() && !not_ready.is_empty() {
+                // 存在循环依赖或无法满足的依赖
+                return Err(anyhow!("Circular or unsatisfiable dependencies detected"));
+            }
+            
+            // 并行执行所有就绪的任务
+            let mut futures = Vec::new();
+            
+            for call in &ready {
+                let args = self.substitute_variables(&call.args, &completed);
+                let tool_call = ReactToolCall {
+                    tool: call.tool.clone(),
+                    args,
+                    call_id: call.id.clone(),
+                    is_parallel: true,
+                };
+                
+                let call_id = call.id.clone();
+                let tool_name = call.tool.clone();
+                let future = tool_executor(tool_call);
+                
+                futures.push(async move {
+                    let call_start = Instant::now();
+                    let result = future.await;
+                    let duration = call_start.elapsed().as_millis() as u64;
+                    (call_id, tool_name, result, duration)
+                });
+            }
+            
+            // 等待所有并行任务完成
+            let task_results = futures::future::join_all(futures).await;
+            
+            for (id, tool_name, result, duration) in task_results {
+                match result {
+                    Ok(value) => {
+                        completed.insert(id.clone(), value.clone());
+                        results.insert(id, ToolExecutionResult {
+                            tool_name,
+                            success: true,
+                            result: value,
+                            error: None,
+                            duration_ms: duration,
+                        });
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        results.insert(id, ToolExecutionResult {
+                            tool_name,
+                            success: false,
+                            result: serde_json::Value::Null,
+                            error: Some(e.to_string()),
+                            duration_ms: duration,
+                        });
+                        failure_count += 1;
+                        
+                        // 根据聚合策略决定是否继续
+                        if matches!(aggregation, AggregationStrategy::WaitAll) {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            
+            pending = not_ready;
+        }
+        
+        Ok(ParallelExecutionResult {
+            results,
+            total_duration_ms: start.elapsed().as_millis() as u64,
+            success_count,
+            failure_count,
+        })
+    }
+
+    /// 执行推理链（ReWOO 风格）
+    async fn execute_reasoning_chain<F, Ft>(
+        &self,
+        steps: &[ReasoningStep],
+        solve_prompt: Option<&str>,
+        tool_executor: &Ft,
+        llm_call: &F,
+    ) -> Result<ReasoningChainResult>
+    where
+        F: Fn(Option<String>, String, bool, String)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
+            + Send
+            + Sync,
+        Ft: Fn(ReactToolCall)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>>
+            + Send
+            + Sync,
+    {
+        let mut variables: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut trace = Vec::new();
+        
+        // 按顺序执行每个步骤
+        for step in steps {
+            let start = std::time::Instant::now();
+            
+            // 替换参数中的变量引用
+            let substituted_args = self.substitute_variables_in_string(&step.args, &variables);
+            
+            // 解析参数为 JSON
+            let args: serde_json::Value = serde_json::from_str(&substituted_args)
+                .unwrap_or_else(|_| serde_json::json!({ "input": substituted_args }));
+            
+            // 执行工具
+            let tool_call = ReactToolCall {
+                tool: step.tool.clone(),
+                args,
+                call_id: step.variable.clone(),
+                is_parallel: false,
+            };
+            
+            tracing::info!("ReAct: Executing reasoning step {} with tool {}", step.variable, step.tool);
+            let result = tool_executor(tool_call).await;
+            let duration = start.elapsed().as_millis() as u64;
+            
+            match result {
+                Ok(value) => {
+                    variables.insert(step.variable.clone(), value.clone());
+                    trace.push(ReasoningStepResult {
+                        variable: step.variable.clone(),
+                        tool: step.tool.clone(),
+                        substituted_args,
+                        result: value,
+                        success: true,
+                        duration_ms: duration,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("ReAct: Reasoning step {} failed: {}", step.variable, e);
+                    trace.push(ReasoningStepResult {
+                        variable: step.variable.clone(),
+                        tool: step.tool.clone(),
+                        substituted_args,
+                        result: serde_json::json!({"error": e.to_string()}),
+                        success: false,
+                        duration_ms: duration,
+                    });
+                    // 继续执行，让后续步骤可以处理错误
+                    variables.insert(step.variable.clone(), serde_json::json!({"error": e.to_string()}));
+                }
+            }
+        }
+        
+        // 如果有 solve_prompt，调用 LLM 生成最终结果
+        let final_result = if let Some(prompt) = solve_prompt {
+            let context = format!(
+                "Based on the following reasoning chain results:\n{}\n\n{}",
+                serde_json::to_string_pretty(&variables).unwrap_or_default(),
+                prompt
+            );
+            
+            match llm_call(None, context, true, String::new()).await {
+                Ok(answer) => Some(answer),
+                Err(e) => {
+                    tracing::warn!("ReAct: Solve step failed: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        Ok(ReasoningChainResult {
+            variables,
+            final_result,
+            trace,
+        })
+    }
+
+    /// 执行阶段
+    async fn execute_phase<Ft>(
+        &self,
+        phase: &PhaseDefinition,
+        tool_executor: &Ft,
+    ) -> Result<PhaseExecutionResult>
+    where
+        Ft: Fn(ReactToolCall)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>>
+            + Send
+            + Sync,
+    {
+        let start = std::time::Instant::now();
+        
+        // 并行执行阶段内的所有工具
+        let parallel_result = self.execute_parallel_tools(
+            &phase.tool_calls,
+            &AggregationStrategy::Merge,
+            tool_executor,
+        ).await?;
+        
+        // 从结果中提取发现
+        let findings = self.extract_findings_from_results(&parallel_result, &phase.phase_type);
+        
+        // 构建 handoff 数据
+        let handoff_data = self.build_handoff_data(&parallel_result, &phase.phase_type);
+        
+        let status = if parallel_result.failure_count == 0 {
+            PhaseStatus::Completed
+        } else if parallel_result.success_count > 0 {
+            PhaseStatus::PartiallyCompleted
+        } else {
+            PhaseStatus::Failed
+        };
+        
+        Ok(PhaseExecutionResult {
+            phase_name: phase.name.clone(),
+            phase_type: phase.phase_type.clone(),
+            status,
+            findings,
+            duration_ms: start.elapsed().as_millis() as u64,
+            handoff_data,
+        })
+    }
+
+    /// 执行子计划
+    async fn execute_sub_plan<Ft>(
+        &self,
+        plan_description: &str,
+        steps: &[SubPlanStep],
+        allow_replanning: bool,
+        tool_executor: &Ft,
+        emitter: Option<&Arc<ReactMessageEmitter>>,
+    ) -> Result<usize>
+    where
+        Ft: Fn(ReactToolCall)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>>
+            + Send
+            + Sync,
+    {
+        let mut completed_steps = 0;
+        let mut step_results: HashMap<String, serde_json::Value> = HashMap::new();
+        let total_steps = steps.len();
+        
+        for step in steps {
+            // 检查依赖
+            let deps_satisfied = step.depends_on.iter()
+                .all(|dep| step_results.contains_key(dep));
+            
+            if !deps_satisfied {
+                if step.skippable {
+                    tracing::info!("ReAct: Skipping step '{}' due to unsatisfied dependencies", step.id);
+                    continue;
+                } else {
+                    return Err(anyhow!("Dependencies not satisfied for step: {}", step.id));
+                }
+            }
+            
+            // 执行步骤
+            if let Some(tool_call) = &step.tool {
+                tracing::info!("ReAct: Executing sub-plan step '{}': {}", step.id, step.description);
+                
+                // 发送步骤开始执行的进度更新
+                if let Some(em) = emitter {
+                    em.emit_step_progress(
+                        &step.id,
+                        &step.description,
+                        "running",
+                        completed_steps,
+                        total_steps,
+                    );
+                }
+                
+                // 替换工具参数中的变量
+                let args = self.substitute_variables(&tool_call.args, &step_results);
+                let actual_call = ReactToolCall {
+                    tool: tool_call.tool.clone(),
+                    args,
+                    call_id: step.id.clone(),
+                    is_parallel: false,
+                };
+                
+                match tool_executor(actual_call).await {
+                    Ok(result) => {
+                        step_results.insert(step.id.clone(), result);
+                        completed_steps += 1;
+                        tracing::info!(
+                            "ReAct: Step '{}' ({}) completed successfully",
+                            step.id, step.description
+                        );
+                        
+                        // 发送步骤进度更新
+                        if let Some(em) = emitter {
+                            em.emit_step_progress(
+                                &step.id,
+                                &step.description,
+                                "completed",
+                                completed_steps,
+                                total_steps,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        let error_msg = e.to_string();
+                        tracing::error!(
+                            "ReAct: Step '{}' ({}) failed with tool '{}': {}",
+                            step.id, step.description, tool_call.tool, error_msg
+                        );
+                        
+                        // 发送步骤失败的进度更新
+                        if let Some(em) = emitter {
+                            em.emit_step_progress(
+                                &step.id,
+                                &format!("{} - 失败: {}", step.description, error_msg),
+                                "failed",
+                                completed_steps,
+                                total_steps,
+                            );
+                        }
+                        
+                        if step.skippable {
+                            tracing::warn!("ReAct: Skippable step '{}' failed, continuing: {}", step.id, error_msg);
+                            continue;
+                        } else if allow_replanning {
+                            tracing::info!(
+                                "ReAct: Step '{}' failed (tool: '{}'), returning to main loop for replanning. Error: {}",
+                                step.id, tool_call.tool, error_msg
+                            );
+                            // 返回当前完成的步骤数，让主循环决定是否重规划
+                            return Ok(completed_steps);
+                        } else {
+                            return Err(anyhow!(
+                                "Step '{}' failed: tool '{}' returned error: {}",
+                                step.id, tool_call.tool, error_msg
+                            ));
+                        }
+                    }
+                }
+            } else {
+                // 无工具的步骤直接标记完成
+                step_results.insert(step.id.clone(), serde_json::Value::Null);
+                completed_steps += 1;
+                
+                // 发送步骤进度更新（无工具步骤）
+                if let Some(em) = emitter {
+                    em.emit_step_progress(
+                        &step.id,
+                        &step.description,
+                        "completed",
+                        completed_steps,
+                        total_steps,
+                    );
+                }
+            }
+        }
+        
+        // 发送计划完成的总体进度
+        if completed_steps == total_steps {
+            if let Some(em) = emitter {
+                em.emit_content(
+                    &format!("\n✅ **计划完成**: '{}' - 所有 {} 个步骤已成功执行\n", plan_description, total_steps),
+                    false,
+                );
+            }
+        }
+        
+        Ok(completed_steps)
+    }
+
+    /// 变量替换（用于并行执行）
+    fn substitute_variables(
+        &self,
+        args: &serde_json::Value,
+        completed: &HashMap<String, serde_json::Value>,
+    ) -> serde_json::Value {
+        let args_str = serde_json::to_string(args).unwrap_or_default();
+        let substituted = self.substitute_variables_in_string(&args_str, completed);
+        serde_json::from_str(&substituted).unwrap_or_else(|_| args.clone())
+    }
+
+    /// 字符串中的变量替换
+    fn substitute_variables_in_string(
+        &self,
+        input: &str,
+        variables: &HashMap<String, serde_json::Value>,
+    ) -> String {
+        let mut result = input.to_string();
+        
+        // 替换 #E1, #E2 等变量引用
+        for (var_name, value) in variables {
+            let placeholder = var_name.clone();
+            let value_str = match value {
+                serde_json::Value::String(s) => s.clone(),
+                _ => serde_json::to_string(&value).unwrap_or_default(),
+            };
+            result = result.replace(&placeholder, &value_str);
+        }
+        
+        // 替换 $1, $2 等变量引用
+        for (var_name, value) in variables {
+            if var_name.starts_with("#E") {
+                if let Some(num) = var_name.strip_prefix("#E") {
+                    let dollar_placeholder = format!("${}", num);
+                    let value_str = match value {
+                        serde_json::Value::String(s) => s.clone(),
+                        _ => serde_json::to_string(&value).unwrap_or_default(),
+                    };
+                    result = result.replace(&dollar_placeholder, &value_str);
+                }
+            }
+        }
+        
+        // 替换 $step_id 形式的变量
+        for (var_name, value) in variables {
+            let dollar_placeholder = format!("${}", var_name);
+            let value_str = match value {
+                serde_json::Value::String(s) => s.clone(),
+                _ => serde_json::to_string(&value).unwrap_or_default(),
+            };
+            result = result.replace(&dollar_placeholder, &value_str);
+        }
+        
+        result
+    }
+
+    /// 从结果中提取发现
+    fn extract_findings_from_results(
+        &self,
+        results: &ParallelExecutionResult,
+        phase_type: &PhaseType,
+    ) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        
+        for (_id, result) in &results.results {
+            if !result.success {
+                continue;
+            }
+            
+            // 根据阶段类型解析结果
+            match phase_type {
+                PhaseType::Reconnaissance => {
+                    // 提取域名、IP 等
+                    if let Some(domains) = result.result.get("domains") {
+                        if let Some(arr) = domains.as_array() {
+                            for domain in arr {
+                                if let Some(d) = domain.as_str() {
+                                    findings.push(Finding {
+                                        finding_type: "subdomain".to_string(),
+                                        target: d.to_string(),
+                                        details: serde_json::json!({}),
+                                        severity: "info".to_string(),
+                                        source_tool: result.tool_name.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if let Some(ips) = result.result.get("ips") {
+                        if let Some(arr) = ips.as_array() {
+                            for ip in arr {
+                                if let Some(i) = ip.as_str() {
+                                    findings.push(Finding {
+                                        finding_type: "ip_address".to_string(),
+                                        target: i.to_string(),
+                                        details: serde_json::json!({}),
+                                        severity: "info".to_string(),
+                                        source_tool: result.tool_name.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                PhaseType::Scanning => {
+                    // 提取开放端口、漏洞等
+                    if let Some(ports) = result.result.get("open_ports") {
+                        if let Some(arr) = ports.as_array() {
+                            for port in arr {
+                                findings.push(Finding {
+                                    finding_type: "open_port".to_string(),
+                                    target: port.to_string(),
+                                    details: port.clone(),
+                                    severity: "info".to_string(),
+                                    source_tool: result.tool_name.clone(),
+                                });
+                            }
+                        }
+                    }
+                    if let Some(vulns) = result.result.get("vulnerabilities") {
+                        if let Some(arr) = vulns.as_array() {
+                            for vuln in arr {
+                                findings.push(Finding {
+                                    finding_type: "vulnerability".to_string(),
+                                    target: vuln.get("target")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string(),
+                                    details: vuln.clone(),
+                                    severity: vuln.get("severity")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("medium")
+                                        .to_string(),
+                                    source_tool: result.tool_name.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+                PhaseType::Validation | PhaseType::Exploitation => {
+                    // 直接将成功的结果作为发现
+                    findings.push(Finding {
+                        finding_type: format!("{:?}_result", phase_type),
+                        target: result.tool_name.clone(),
+                        details: result.result.clone(),
+                        severity: "info".to_string(),
+                        source_tool: result.tool_name.clone(),
+                    });
+                }
+                _ => {
+                    // 通用处理
+                    findings.push(Finding {
+                        finding_type: "generic".to_string(),
+                        target: result.tool_name.clone(),
+                        details: result.result.clone(),
+                        severity: "info".to_string(),
+                        source_tool: result.tool_name.clone(),
+                    });
+                }
+            }
+        }
+        
+        findings
+    }
+
+    /// 构建 handoff 数据
+    fn build_handoff_data(
+        &self,
+        results: &ParallelExecutionResult,
+        _phase_type: &PhaseType,
+    ) -> serde_json::Value {
+        // 将所有成功结果聚合
+        let mut handoff = serde_json::Map::new();
+        
+        for (id, result) in &results.results {
+            if result.success {
+                handoff.insert(id.clone(), result.result.clone());
+            }
+        }
+        
+        serde_json::Value::Object(handoff)
     }
 }
 

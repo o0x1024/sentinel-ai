@@ -235,9 +235,10 @@
                 <input v-model="editingTemplate.is_system" type="checkbox" class="checkbox checkbox-xs" />
                 <span class="label-text text-xs ml-2">系统级模板</span>
               </label>
-              <label class="cursor-pointer label">
+              <!-- 启用选项仅在非LLM架构分类时显示，LLM架构使用"激活"按钮 -->
+              <label v-if="selectedCategory !== 'LlmArchitecture'" class="cursor-pointer label">
                 <input v-model="editingTemplate.is_active" type="checkbox" class="checkbox checkbox-xs checkbox-success" />
-                <span class="label-text text-xs ml-2">激活此模板</span>
+                <span class="label-text text-xs ml-2">启用此模板</span>
               </label>
             </div>
             
@@ -351,8 +352,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 
-type ArchitectureType = 'ReWOO' | 'LLMCompiler' | 'PlanExecute' | 'ReAct' | 'Travel'
-type StageType = 'Planner' | 'Worker' | 'Solver' | 'Planning' | 'Execution' | 'Evaluation' | 'Replan' | 'Observe' | 'Orient' | 'Decide' | 'Act'
+// 统一使用泛化的 ReAct 引擎，其他架构类型保留用于向后兼容
+type ArchitectureType = 'ReAct' | 'ReWOO' | 'LLMCompiler' | 'PlanExecute'
+type StageType = 'System' | 'Planning' | 'Execution' | 'Planner' | 'Worker' | 'Solver' | 'Evaluation' | 'Replan'
 type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
 type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'VisionExplorerSystem'
 
@@ -404,35 +406,17 @@ const promptCategories = [
   { value: 'UserDefined', label: '用户自定义', description: '用户创建的自定义模板' },
 ]
 
+// 统一使用泛化的 ReAct 引擎
+// 任务类型（安全测试、数据分析等）通过 Prompt 内容配置，而非代码写死流程
 const groups = [
-  { value: 'ReWOO', label: 'ReWOO', stages: [
-    { value: 'Planner', label: 'Planner (规划器)' },
-    { value: 'Solver', label: 'Solver (求解器)' },
-  ]},
-  { value: 'LLMCompiler', label: 'LLMCompiler', stages: [
+  { value: 'ReAct', label: 'ReAct（泛化引擎）', stages: [
+    { value: 'System', label: 'System (系统提示)' },
     { value: 'Planning', label: 'Planning (规划)' },
     { value: 'Execution', label: 'Execution (执行)' },
-    { value: 'Evaluation', label: 'Evaluation (评估)' },
-    { value: 'Replan', label: 'Replan (重规划)' },
-  ]},
-  { value: 'PlanExecute', label: 'Plan&Execute', stages: [
-    { value: 'Planning', label: 'Planning (规划)' },
-    { value: 'Execution', label: 'Execution (执行)' },
-    { value: 'Replan', label: 'Replan (重规划)' },
-  ]},
-  { value: 'ReAct', label: 'ReAct', stages: [
-    { value: 'Planning', label: 'Planning (规划)' },
-    { value: 'Execution', label: 'Execution (执行)' },
-  ]},
-  { value: 'Travel', label: 'Travel (OODA)', stages: [
-    { value: 'Observe', label: 'Observe (侦察)' },
-    { value: 'Orient', label: 'Orient (分析)' },
-    { value: 'Decide', label: 'Decide (决策)' },
-    { value: 'Act', label: 'Act (执行)' },
   ]},
 ]
 
-const selected = ref<{ architecture: ArchitectureType, stage: StageType }>({ architecture: 'ReWOO', stage: 'Planner' })
+const selected = ref<{ architecture: ArchitectureType, stage: StageType }>({ architecture: 'ReAct', stage: 'Planning' })
 const templates = ref<PromptTemplate[]>([])
 const editingTemplate = ref<PromptTemplate | null>(null)
 const activePromptId = ref<number | null>(null)
@@ -513,21 +497,14 @@ const filteredTemplates = computed(() => {
 })
 
 const stagesOfSelectedArch = computed<StageType[]>(() => {
-  if (selected.value.architecture === 'ReWOO') return ['Planner','Solver'] as StageType[]
-  if (selected.value.architecture === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
-  if (selected.value.architecture === 'ReAct') return ['Planning','Execution'] as StageType[]
-  if (selected.value.architecture === 'Travel') return ['Observe','Orient','Decide','Act'] as StageType[]
-  return ['Planning','Execution','Replan'] as StageType[]
+  // 统一使用 ReAct 泛化引擎的阶段
+  return ['System', 'Planning', 'Execution'] as StageType[]
 })
 
 // 按当前选中分组的架构计算阶段（用于分组映射区）
 const stagesOfGroupArch = computed<StageType[]>(() => {
-  const arch = selectedGroup.value?.architecture || selected.value.architecture
-  if (arch === 'ReWOO') return ['Planner','Solver'] as StageType[]
-  if (arch === 'LLMCompiler') return ['Planning','Execution','Evaluation','Replan'] as StageType[]
-  if (arch === 'ReAct') return ['Planning','Execution'] as StageType[]
-  if (arch === 'Travel') return ['Observe','Orient','Decide','Act'] as StageType[]
-  return ['Planning','Execution','Replan'] as StageType[]
+  // 统一使用 ReAct 泛化引擎的阶段
+  return ['System', 'Planning', 'Execution'] as StageType[]
 })
 
 const allTemplatesByStage = computed<Record<string, PromptTemplate[]>>(() => {
@@ -554,8 +531,12 @@ const allTemplates = ref<PromptTemplate[]>([])
 
 async function select(architecture: ArchitectureType, stage: StageType) {
   console.log('[select] Selecting:', { architecture, stage })
+  const archChanged = selected.value.architecture !== architecture
   selected.value = { architecture, stage }
-  selectedGroupId.value = null
+  // 仅在架构变更时清空分组选择，阶段切换时保留
+  if (archChanged) {
+    selectedGroupId.value = null
+  }
   console.log('[select] Calling refresh...')
   await refresh()
   console.log('[select] Refresh complete, calling loadDefaultStagePrompt...')
@@ -801,8 +782,8 @@ async function activateTemplate() {
   await invoke('update_user_prompt_config_api', {
     architecture: selected.value.architecture,
     stage: selected.value.stage,
-    template_id: editingTemplate.value.id,
-  } as any)
+    templateId: editingTemplate.value.id,
+  })
   activePromptId.value = editingTemplate.value.id ?? null
   originalTemplateHash.value = calcTemplateHash(editingTemplate.value)
   toast.success(t('promptMgmt.activatedToast') as unknown as string)
@@ -1573,8 +1554,8 @@ Remember: **accuracy over speed, systematic over random**. Explore every element
   editingTemplate.value = {
     name: `VisionExplorer系统提示-${Date.now()}`,
     description: 'VisionExplorer视觉探索引擎的系统提示模板，定义AI代理如何操作浏览器发现API',
-    architecture: 'Travel' as ArchitectureType,
-    stage: 'Observe' as StageType,
+    architecture: 'ReAct' as ArchitectureType,
+    stage: 'Execution' as StageType,
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -1635,7 +1616,7 @@ async function evaluatePreview() {
     }
     
     const result = await invoke<string>('evaluate_prompt_api', {
-      template_id: editingTemplate.value.id,
+      templateId: editingTemplate.value.id,
       context
     })
     evaluatedContent.value = result

@@ -130,6 +130,76 @@ impl ReactMessageEmitter {
         );
     }
 
+    /// 发送错误消息
+    pub fn emit_error(&self, error_message: &str) {
+        let content = format!(
+            "\n\n---\n❌ **执行错误**\n\n{}\n",
+            error_message
+        );
+        
+        // 发送内容
+        emit_message_chunk_with_arch(
+            &self.app_handle,
+            &self.execution_id,
+            &self.message_id,
+            self.conversation_id.as_deref(),
+            ChunkType::Error,
+            &content,
+            true, // is_final
+            Some("error"),
+            None,
+            Some(ArchitectureType::ReAct),
+            None,
+        );
+        
+        // 收集到完整内容
+        if let Ok(mut collector) = self.content_collector.lock() {
+            collector.push_str(&content);
+        }
+    }
+
+    /// 发送步骤进度更新
+    pub fn emit_step_progress(
+        &self,
+        step_id: &str,
+        step_description: &str,
+        status: &str,  // "running", "completed", "failed", "skipped"
+        completed_count: usize,
+        total_count: usize,
+    ) {
+        let status_icon = match status {
+            "completed" => "✅",
+            "failed" => "❌",
+            "running" => "🔄",
+            "skipped" => "⏭️",
+            _ => "⏳",
+        };
+        
+        let progress_percent = if total_count > 0 {
+            (completed_count * 100) / total_count
+        } else {
+            0
+        };
+        
+        let content = format!(
+            "\n📊 **进度更新**: [{}] {} {} ({}/{}，{}%)\n",
+            step_id, status_icon, step_description, completed_count, total_count, progress_percent
+        );
+        
+        self.emit_content(&content, false);
+        
+        // 发送结构化进度数据
+        self.emit_step("progress", serde_json::json!({
+            "type": "progress",
+            "step_id": step_id,
+            "step_description": step_description,
+            "status": status,
+            "completed": completed_count,
+            "total": total_count,
+            "percent": progress_percent
+        }));
+    }
+
     /// 发送工具调用信息（内联 markdown 格式 + 结构化数据）
     pub fn emit_tool_call(&self, iteration: u32, tool_name: &str, args: &serde_json::Value) {
         let args_str = serde_json::to_string_pretty(args).unwrap_or_default();
@@ -395,7 +465,30 @@ impl ReactLlmClient {
         timeout: std::time::Duration,
     ) -> Result<String> {
         use rig::providers::deepseek;
-        let client = deepseek::Client::from_env();
+        
+        // 获取 API Key
+        let api_key = std::env::var("DEEPSEEK_API_KEY")
+            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+            .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
+        
+        // 创建带有正确 Content-Type 的 HTTP 客户端（DeepSeek API 要求）
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+        
+        let client = deepseek::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
+        
         let agent = client.agent(model).preamble(preamble).build();
         self.execute_stream(agent, user_message, timeout).await
     }
@@ -544,8 +637,8 @@ fn write_llm_log_react(
         )
     } else {
         format!(
-            "System Prompt:\n{}\n\nUser Prompt:\n{}\n",
-            system_prompt.unwrap_or("(none)"),
+            "\nUser Prompt:\n{}\n",
+            // system_prompt.unwrap_or("(none)"),
             user_prompt
         )
     };

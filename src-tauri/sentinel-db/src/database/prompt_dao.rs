@@ -7,33 +7,28 @@ use sentinel_core::models::prompt::{
 
 fn arch_str(a: &ArchitectureType) -> &'static str {
     match a {
-        ArchitectureType::Travel => "travel",
+        ArchitectureType::ReAct => "react",
         ArchitectureType::ReWOO => "rewoo",
         ArchitectureType::LLMCompiler => "llmcompiler",
         ArchitectureType::PlanExecute => "planexecute",
-        ArchitectureType::ReAct => "react",
     }
 }
 
 fn stage_str(s: &StageType) -> &'static str {
     match s {
+        StageType::System => "system",
+        StageType::Planning => "planning",
+        StageType::Execution => "execution",
         StageType::Planner => "planner",
         StageType::Worker => "worker",
         StageType::Solver => "solver",
-        StageType::Planning => "planning",
-        StageType::Execution => "execution",
         StageType::Evaluation => "evaluation",
         StageType::Replan => "replan",
-        StageType::Observe => "observe",
-        StageType::Orient => "orient",
-        StageType::Decide => "decide",
-        StageType::Act => "act",
     }
 }
 
 fn parse_arch(s: &str) -> ArchitectureType {
     match s.to_lowercase().as_str() {
-        "travel" => ArchitectureType::Travel,
         "rewoo" => ArchitectureType::ReWOO,
         "llmcompiler" => ArchitectureType::LLMCompiler,
         "react" => ArchitectureType::ReAct,
@@ -43,18 +38,15 @@ fn parse_arch(s: &str) -> ArchitectureType {
 
 fn parse_stage(s: &str) -> StageType {
     match s.to_lowercase().as_str() {
+        "system" => StageType::System,
+        "planning" => StageType::Planning,
+        "execution" => StageType::Execution,
         "planner" => StageType::Planner,
         "worker" => StageType::Worker,
         "solver" => StageType::Solver,
-        "planning" => StageType::Planning,
-        "execution" => StageType::Execution,
         "evaluation" => StageType::Evaluation,
         "replan" => StageType::Replan,
-        "observe" => StageType::Observe,
-        "orient" => StageType::Orient,
-        "decide" => StageType::Decide,
-        "act" => StageType::Act,
-        _ => StageType::Replan,
+        _ => StageType::Planning, // 默认使用 Planning
     }
 }
 

@@ -1,15 +1,12 @@
 // 简化的有序消息处理composable
 // 替代复杂的useEventListeners和segments处理
+// 注：LLMCompiler、ReWOO、PlanAndExecute 能力已内嵌到泛化的 ReAct 引擎
 
 import { ref, Ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import type { OrderedMessageChunk, ChunkType, MessageChunkProcessor } from '../types/ordered-chat'
 import type { ChatMessage } from '../types/chat'
-import { parseLLMCompilerMessage } from './useLLMCompilerMessage'
-import { parsePlanAndExecuteMessage } from './usePlanAndExecuteMessage'
-import { parseReWOOMessage } from './useReWOOMessage'
 import { ReActMessageProcessor } from './processors/ReActMessageProcessor'
-import { TravelMessageProcessor } from './processors/TravelMessageProcessor'
 import { VisionExplorerMessageProcessor } from './processors/VisionExplorerMessageProcessor'
 
 class MessageChunkProcessorImpl implements MessageChunkProcessor {
@@ -553,14 +550,6 @@ class MessageChunkProcessorImpl implements MessageChunkProcessor {
       )
     }
     
-    // Travel 架构：检查 StreamComplete 或 stage === "complete"
-    if (archType === 'Travel') {
-      return chunks.some(chunk => 
-        chunk.chunk_type === 'StreamComplete' ||
-        (chunk.chunk_type === 'Meta' && chunk.stage === 'complete')
-      )
-    }
-    
     // VisionExplorer 架构：检查 StreamComplete
     if (archType === 'VisionExplorer') {
       return chunks.some(chunk => chunk.chunk_type === 'StreamComplete')
@@ -838,18 +827,6 @@ export const useOrderedMessages = (
         // 必须从 chunks 提取步骤，否则前端无法显示过程
         const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
         ;(message as any).reactSteps = steps
-      } else if (archType === 'Travel') {
-        // Travel架构：使用 TravelMessageProcessor 提取 OODA 循环数据
-        const cycles = TravelMessageProcessor.extractCyclesFromChunks(allChunks)
-        ;(message as any).travelCycles = cycles
-        console.log('[useOrderedMessages] Travel cycles extracted:', cycles.length)
-        
-        // 同时提取嵌入的 VisionExplorer 迭代数据（Travel 可能包含 VisionExplorer 子任务）
-        const visionIterations = VisionExplorerMessageProcessor.extractIterationsFromChunks(allChunks)
-        if (visionIterations.length > 0) {
-          ;(message as any).visionIterations = visionIterations
-          console.log('[useOrderedMessages] Travel embedded vision iterations:', visionIterations.length)
-        }
       } else if (archType === 'VisionExplorer') {
         // VisionExplorer架构：使用 VisionExplorerMessageProcessor 提取迭代数据
         const iterations = VisionExplorerMessageProcessor.extractIterationsFromChunks(allChunks)
@@ -857,59 +834,14 @@ export const useOrderedMessages = (
         console.log('[useOrderedMessages] Vision iterations extracted:', iterations.length)
       } else if (archType === 'LLMCompiler') {
         // LLMCompiler架构（简化版）
-        try {
-          // 详细日志：记录chunks信息
-          console.log('[useOrderedMessages] LLMCompiler chunks summary:', {
-            totalChunks: allChunks.length,
-            chunkTypes: allChunks.map(c => ({ type: c.chunk_type, stage: c.stage, tool_name: c.tool_name })),
-            toolResultCount: allChunks.filter(c => c.chunk_type === 'ToolResult').length,
-            thinkingCount: allChunks.filter(c => c.chunk_type === 'Thinking').length,
-            metaCount: allChunks.filter(c => c.chunk_type === 'Meta').length,
-            planInfoCount: allChunks.filter(c => c.chunk_type === 'PlanInfo').length
-          })
-          
-          const parsedData = parseLLMCompilerMessage(message.content, allChunks)
-          
-          console.log('[useOrderedMessages] LLMCompiler parsed data:', {
-            hasPlanningData: !!parsedData.planningData,
-            hasExecutionData: !!parsedData.executionData,
-            hasJoinerData: !!parsedData.joinerData,
-            hasSummaryData: !!parsedData.summaryData,
-            planningTasks: parsedData.planningData?.tasks?.length,
-            executionRounds: parsedData.executionData?.rounds?.length
-          })
-          
-          ;(message as any).llmCompilerData = parsedData
-
-          // 保存Content类型的最终响应（后端直接发送的）
-          const contentChunks = allChunks.filter(c =>
-            c.chunk_type === 'Content' && c.architecture === 'LLMCompiler'
-          )
-          if (contentChunks.length > 0) {
-            const finalResponse = contentChunks.map(c => c.content?.toString() || '').join('')
-            if (finalResponse.length > 50) {
-              ;(message as any).llmCompilerFinalResponse = finalResponse
-            }
-          }
-        } catch (e) {
-          console.warn('[useOrderedMessages] Failed to parse LLMCompiler data:', e)
-        }
-      } else if (archType === 'PlanAndExecute') {
-        // PlanAndExecute架构
-        try {
-          const parsedData = parsePlanAndExecuteMessage(message.content, allChunks)
-            ; (message as any).planAndExecuteData = parsedData
-        } catch (e) {
-          console.warn('[useOrderedMessages] Failed to parse PlanAndExecute data:', e)
-        }
-      } else if (archType === 'ReWOO') {
-        // ReWOO架构
-        try {
-          const parsedData = parseReWOOMessage(message.content, allChunks)
-            ; (message as any).rewooData = parsedData
-        } catch (e) {
-          console.warn('[useOrderedMessages] Failed to parse ReWOO data:', e)
-        }
+        // LLMCompiler、PlanAndExecute、ReWOO 能力已内嵌到泛化的 ReAct 引擎
+        // 使用 ReAct 的步骤处理方式
+        const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
+        ;(message as any).reactSteps = steps
+      } else if (archType === 'PlanAndExecute' || archType === 'ReWOO') {
+        // 这些架构现在都通过泛化的 ReAct 引擎执行
+        const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
+        ;(message as any).reactSteps = steps
       }
 
       processor.cleanup(canonicalId)
@@ -932,46 +864,14 @@ export const useOrderedMessages = (
         // 必须从 chunks 提取步骤，否则前端无法显示过程
         const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
         ;(message as any).reactSteps = steps
-      } else if (archType === 'Travel') {
-        // Travel架构：使用 TravelMessageProcessor 实时提取 OODA 循环数据
-        const cycles = TravelMessageProcessor.extractCyclesFromChunks(allChunks)
-        ;(message as any).travelCycles = cycles
-        // 同时提取嵌入的 VisionExplorer 迭代数据
-        const visionIterations = VisionExplorerMessageProcessor.extractIterationsFromChunks(allChunks)
-        if (visionIterations.length > 0) {
-          ;(message as any).visionIterations = visionIterations
-        }
       } else if (archType === 'VisionExplorer') {
         // VisionExplorer架构：实时提取迭代数据
         const iterations = VisionExplorerMessageProcessor.extractIterationsFromChunks(allChunks)
         ;(message as any).visionIterations = iterations
-      } else if (archType === 'LLMCompiler') {
-        // LLMCompiler架构实时解析
-        const allChunks = processor.chunks.get(canonicalId) || []
-        try {
-          const parsedData = parseLLMCompilerMessage(message.content, allChunks)
-            ; (message as any).llmCompilerData = parsedData
-        } catch (e) {
-          // ignore parsing errors during streaming
-        }
-      } else if (archType === 'PlanAndExecute') {
-        // PlanAndExecute架构实时解析
-        const allChunks = processor.chunks.get(canonicalId) || []
-        try {
-          const parsedData = parsePlanAndExecuteMessage(message.content, allChunks)
-            ; (message as any).planAndExecuteData = parsedData
-        } catch (e) {
-          // ignore parsing errors during streaming
-        }
-      } else if (archType === 'ReWOO') {
-        // ReWOO架构实时解析
-        const allChunks = processor.chunks.get(canonicalId) || []
-        try {
-          const parsedData = parseReWOOMessage(message.content, allChunks)
-            ; (message as any).rewooData = parsedData
-        } catch (e) {
-          // ignore parsing errors during streaming
-        }
+      } else if (archType === 'LLMCompiler' || archType === 'PlanAndExecute' || archType === 'ReWOO') {
+        // 这些架构现在都通过泛化的 ReAct 引擎执行，使用 ReAct 的步骤处理
+        const steps = ReActMessageProcessor.extractStepsFromChunks(allChunks)
+        ;(message as any).reactSteps = steps
       }
     }
   }

@@ -122,106 +122,27 @@ impl AgentManager {
     }
 
     /// 注册默认的执行引擎
+    /// 注：Plan-Execute、ReWOO、LLMCompiler 能力已内嵌到泛化的 ReAct 引擎
+    /// AgentManager 现在不再直接注册独立引擎，而是通过 dispatch 函数使用泛化的 ReAct
     async fn register_default_engines(&self) -> Result<()> {
-        let mut engines = self.engines.write().await;
-
-        // 注册引擎适配器（使用统一的ExecutionEngine trait）
-        // 这些适配器封装了原始引擎的复杂性，提供统一接口
-
-        // 注册Plan-and-Execute引擎适配器
-        match crate::engines::plan_and_execute::engine_adapter::PlanAndExecuteEngine::new().await {
-            Ok(engine) => {
-                engines.insert("plan_execute".to_string(), Arc::new(engine));
-                debug!("Registered Plan-and-Execute engine adapter");
-            }
-            Err(e) => {
-                warn!("Failed to register Plan-and-Execute engine: {}", e);
-            }
-        }
-
-        // 注册ReWOO引擎适配器
-        // Note: ReWOO engine requires full dependencies, so this is a placeholder
-        // The actual registration happens in register_engines_with_dependencies
-        debug!("ReWOO engine will be registered with full dependencies");
-
-        // 注册LLMCompiler引擎适配器
-        match crate::engines::llm_compiler::engine_adapter::LlmCompilerEngine::new().await {
-            Ok(engine) => {
-                engines.insert("llm_compiler".to_string(), Arc::new(engine));
-                info!("Registered LLMCompiler engine adapter");
-            }
-            Err(e) => {
-                warn!("Failed to register LLMCompiler engine: {}", e);
-            }
-        }
-
-        info!("Registered {} execution engines", engines.len());
+        let engines = self.engines.write().await;
+        info!("Engine registration skipped - using generalized ReAct engine via dispatch functions");
+        info!("Available engines via dispatch: ReAct (includes Plan-Execute, ReWOO, LLMCompiler capabilities)");
+        drop(engines);
         Ok(())
     }
 
     /// 注册具有完整依赖的执行引擎
+    /// 注：Plan-Execute、ReWOO、LLMCompiler 能力已内嵌到泛化的 ReAct 引擎
     async fn register_engines_with_dependencies(
         &self,
-        ai_service_manager: Arc<crate::services::AiServiceManager>,
-        db_service: Arc<crate::services::database::DatabaseService>,
+        _ai_service_manager: Arc<crate::services::AiServiceManager>,
+        _db_service: Arc<crate::services::database::DatabaseService>,
     ) -> Result<()> {
-        let mut engines = self.engines.write().await;
-
-        // 注册Plan-and-Execute引擎适配器（带完整依赖）
-        let plan_execute_config = crate::engines::plan_and_execute::types::PlanAndExecuteConfig::default();
-        match crate::engines::plan_and_execute::engine_adapter::PlanAndExecuteEngine::new_with_dependencies(
-            ai_service_manager.clone(),
-            plan_execute_config,
-            db_service.clone(),
-            None, // 在AgentManager上下文中，没有直接的AppHandle
-        ).await {
-            Ok(engine) => {
-                engines.insert("plan_execute".to_string(), Arc::new(engine));
-                debug!("Registered Plan-and-Execute engine adapter with full dependencies");
-            }
-            Err(e) => {
-                warn!("Failed to register Plan-and-Execute engine with dependencies: {}", e);
-            }
-        }
-
-        // 注册ReWOO引擎适配器（带完整依赖）
-        // ReWOO需要AI Provider和配置
-        let rewoo_config = crate::engines::rewoo::rewoo_types::ReWOOConfig::default();
-
-        match crate::engines::rewoo::engine_adapter::ReWooEngine::new_with_dependencies(
-            ai_service_manager.clone(),
-            rewoo_config,
-            db_service.clone(),
-        ).await {
-            Ok(engine) => {
-                engines.insert("rewoo".to_string(), Arc::new(engine));
-                info!("Registered ReWOO engine adapter with full dependencies");
-            }
-            Err(e) => {
-                warn!("Failed to register ReWOO engine with dependencies: {}", e);
-
-            }
-        }
-
-        // 注册LLMCompiler引擎适配器（带完整依赖）
-        let llm_config = crate::engines::llm_compiler::types::LlmCompilerConfig::default();
-
-        match crate::engines::llm_compiler::engine_adapter::LlmCompilerEngine::new_with_dependencies(
-            ai_service_manager.clone(),
-            llm_config,
-            db_service.clone(),
-        ).await {
-            Ok(engine) => {
-                engines.insert("llm_compiler".to_string(), Arc::new(engine));
-                info!("Registered LLMCompiler engine adapter with full dependencies");
-            }
-            Err(e) => {
-                warn!("Failed to register LLMCompiler engine with dependencies: {}", e);
-
-            }
-        }
-
-        info!("Registered {} execution engines with dependencies", engines.len());
+        let engines = self.engines.write().await;
+        info!("Engine registration with dependencies skipped - using generalized ReAct engine");
+        info!("All execution modes (Plan-Execute, ReWOO, LLMCompiler) are now embedded in ReAct");
+        drop(engines);
         Ok(())
     }
 

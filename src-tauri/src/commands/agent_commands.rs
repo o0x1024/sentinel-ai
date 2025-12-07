@@ -1,8 +1,7 @@
 //! Agent管理相关命令
 
 use crate::agents::{AgentManager, AgentSelectionStrategy, MultiAgentRequest, TaskPriority};
-use crate::services::database::{Database, DatabaseService};
-use crate::engines::plan_and_execute::repository::PlanExecuteRepository;
+// 已删除 plan_and_execute 独立模块，能力内嵌到泛化的 ReAct 引擎中
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

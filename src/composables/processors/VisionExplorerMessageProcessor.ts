@@ -84,7 +84,6 @@ export class VisionExplorerMessageProcessor {
 
   /**
    * 从 chunks 提取迭代数据（流式更新时使用）
-   * 支持独立运行 (architecture: VisionExplorer) 和作为 Travel 子流运行 (architecture: Travel)
    */
   static extractIterationsFromChunks(chunks: OrderedMessageChunk[]): VisionIterationDisplay[] {
     const iterationMap = new Map<number, VisionIterationDisplay>()
@@ -97,7 +96,6 @@ export class VisionExplorerMessageProcessor {
       if (chunk.chunk_type !== 'Meta') continue
       if (!chunk.structured_data) continue
       
-      // 支持 VisionExplorer 独立运行或作为 Travel 子流运行
       // 关键是 structured_data.type === 'vision_step'
       const sd = chunk.structured_data as any
       if (sd.type !== 'vision_step' || !sd.step) continue
@@ -125,11 +123,10 @@ export class VisionExplorerMessageProcessor {
 
   /**
    * 从 chunks 提取统计数据
-   * 支持独立运行和作为 Travel 子流运行
    */
   static extractStatsFromChunks(chunks: OrderedMessageChunk[]): VisionExplorationStats | null {
     for (const chunk of chunks) {
-      // 只检查 StreamComplete 类型，不限制架构（支持作为 Travel 子流）
+      // 只检查 StreamComplete 类型
       if (chunk.chunk_type !== 'StreamComplete') continue
       if (!chunk.structured_data) continue
 

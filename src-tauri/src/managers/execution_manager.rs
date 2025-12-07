@@ -3,19 +3,13 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::engines::plan_and_execute::engine_adapter::PlanAndExecuteEngine;
-use crate::engines::rewoo::engine_adapter::ReWooEngine;
-use crate::engines::llm_compiler::engine_adapter::LlmCompilerEngine;
-use crate::agents::traits::{AgentTask, AgentExecutionResult, AgentSession, ExecutionProgress, ExecutionPlan as AgentExecutionPlan, ExecutionEngine};
+use crate::agents::traits::{AgentTask, AgentExecutionResult, ExecutionProgress, ExecutionPlan as AgentExecutionPlan};
 
 /// 执行引擎类型
+/// 所有任务统一使用泛化的 ReAct 引擎
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EngineType {
-    // Orchestrator, // 已删除,使用Travel替代
-    PlanExecute,
-    ReWOO,
-    LLMCompiler,
-    Travel, // 新增Travel架构
+    React,   // 泛化后的 ReAct（唯一引擎，任务特性通过 Prompt 配置）
 }
 
 /// 执行上下文
@@ -29,49 +23,36 @@ pub struct ExecutionContext {
 }
 
 /// 存储的引擎实例
+/// 注：由于引擎执行现在主要通过 ReAct 直接进行，此枚举简化为占位
 pub enum EngineInstance {
-    // Orchestrator(Box<crate::engines::orchestrator::OrchestratorEngineAdapter>), // 已删除
-    PlanExecute(PlanAndExecuteEngine),
-    ReWOO(ReWooEngine),
-    LLMCompiler(LlmCompilerEngine),
-    // Travel(crate::engines::travel::TravelEngine), // TODO: 需要实现ExecutionEngine trait
+    /// 占位符，实际执行通过 dispatch_with_react 直接进行
+    Placeholder,
 }
 
 impl EngineInstance {
-    /// 执行计划
+    /// 执行计划（占位实现）
     pub async fn execute_plan(
         &self,
-        plan: &AgentExecutionPlan,
+        _plan: &AgentExecutionPlan,
     ) -> Result<AgentExecutionResult> {
-        match self {
-            // EngineInstance::Orchestrator(engine) => engine.execute_plan(plan).await,
-            EngineInstance::PlanExecute(engine) => engine.execute_plan(plan).await,
-            EngineInstance::ReWOO(engine) => engine.execute_plan(plan).await,
-            EngineInstance::LLMCompiler(engine) => engine.execute_plan(plan).await,
-            // EngineInstance::Travel(engine) => engine.execute_plan(plan).await,
-        }
+        // 实际执行现在通过 dispatch_with_react 直接进行
+        Err(anyhow::anyhow!("Direct execution via EngineInstance is deprecated. Use dispatch_with_react instead."))
     }
 
-    /// 获取进度
-    pub async fn get_progress(&self, session_id: &str) -> Result<ExecutionProgress> {
-        match self {
-            // EngineInstance::Orchestrator(engine) => engine.get_progress(session_id).await,
-            EngineInstance::PlanExecute(engine) => engine.get_progress(session_id).await,
-            EngineInstance::ReWOO(engine) => engine.get_progress(session_id).await,
-            EngineInstance::LLMCompiler(engine) => engine.get_progress(session_id).await,
-            // EngineInstance::Travel(engine) => engine.get_progress(session_id).await,
-        }
+    /// 获取进度（占位实现）
+    pub async fn get_progress(&self, _session_id: &str) -> Result<ExecutionProgress> {
+        Ok(ExecutionProgress {
+            total_steps: 0,
+            completed_steps: 0,
+            current_step: None,
+            progress_percentage: 0.0,
+            estimated_remaining_seconds: None,
+        })
     }
 
-    /// 停止执行
-    pub async fn stop_execution(&self, session_id: &str) -> Result<()> {
-        match self {
-            // EngineInstance::Orchestrator(engine) => engine.cancel_execution(session_id).await,
-            EngineInstance::PlanExecute(engine) => engine.cancel_execution(session_id).await,
-            EngineInstance::ReWOO(engine) => engine.cancel_execution(session_id).await,
-            EngineInstance::LLMCompiler(engine) => engine.cancel_execution(session_id).await,
-            // EngineInstance::Travel(engine) => engine.cancel_execution(session_id).await,
-        }
+    /// 停止执行（占位实现）
+    pub async fn stop_execution(&self, _session_id: &str) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -137,8 +118,6 @@ impl ExecutionManager {
     /// 获取引擎实例（由于所有权问题，暂不实现此方法）
     #[allow(dead_code)]
     async fn _get_engine_instance(&self, _execution_id: &str) -> Option<()> {
-        // 由于引擎实例的所有权问题，此方法暂不实现
-        // 在 execute_plan 方法中直接访问引擎实例
         None
     }
 

@@ -22,6 +22,7 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use tokio::sync::RwLock;
 use tracing_subscriber;
 use tracing_appender;
@@ -41,9 +42,9 @@ use commands::{
     agent_commands, ai, ai_commands, asset, config, database as db_commands, dictionary,
     mcp as mcp_commands, packet_capture_commands::{self, PacketCaptureState},
     passive_scan_commands::{self, PassiveScanState}, performance,
-    plan_execute_commands, proxifier_commands::{self, ProxifierState}, rag_commands, 
+    proxifier_commands::{self, ProxifierState}, rag_commands, 
     scan, scan_commands, scan_session_commands, vulnerability,
-    window, prompt_commands, rewoo_commands, unified_tools,
+    window, prompt_commands, unified_tools,
 };
 
 // Re-export global proxy types and functions
@@ -179,6 +180,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
         }))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -186,8 +188,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
-                // 检查是否是最后一个窗口
                 let app_handle = window.app_handle();
+                
+                // 保存窗口状态
+                if let Err(e) = app_handle.save_window_state(StateFlags::all()) {
+                    tracing::error!("Failed to save window state: {}", e);
+                }
+                
                 let windows = app_handle.webview_windows();
                 
                 if windows.len() <= 1 {
@@ -196,7 +203,6 @@ pub fn run() {
                     tauri::async_runtime::spawn(async move {
                         // 保存MCP服务器状态
                         if let Some(mcp_service) = app_handle_clone.try_state::<Arc<McpService>>() {
-                            // 检查当前状态并保存
                             let is_running = mcp_service.is_server_running().await;
                             if let Err(e) = mcp_service.save_server_state("builtin_security_tools", is_running).await {
                                 eprintln!("Failed to save MCP server state on exit: {}", e);
@@ -547,21 +553,11 @@ pub fn run() {
                 Arc::new(tokio::sync::RwLock::new(None));
             handle.manage(prompt_service_state);
 
-            // DISABLED: ReWOO测试状态 (引擎已禁用)
-            let rewoo_test_state = Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::<String, String>::new()
-            ));
-            handle.manage(rewoo_test_state);
-
             // 初始化Agent管理器状态
             let agent_manager_state: commands::agent_commands::GlobalAgentManager = 
                 Arc::new(tokio::sync::RwLock::new(None));
             handle.manage(agent_manager_state);
 
-            // 初始化Plan-Execute引擎状态
-            let plan_execute_engine_state: commands::plan_execute_commands::PlanExecuteEngineState = 
-                Arc::new(tokio::sync::RwLock::new(None));
-            handle.manage(plan_execute_engine_state);
                 });
             });
 
@@ -847,12 +843,6 @@ pub fn run() {
             commands::prompt_api::get_default_prompt_content,
             commands::prompt_api::initialize_default_prompts,
 
-            // ReWOO测试相关命令 - DISABLED
-            rewoo_commands::test_rewoo_engine,
-            rewoo_commands::get_rewoo_test_result,
-            rewoo_commands::stop_rewoo_test,
-            rewoo_commands::cleanup_rewoo_test_state,
-
             ai_commands::dispatch_scenario_task,
             ai_commands::stop_execution,
             ai_commands::get_ai_assistant_settings,
@@ -886,26 +876,7 @@ pub fn run() {
             agent_commands::get_agent_task_logs,
             agent_commands::add_test_session_data,
             
-            plan_execute_commands::execute_plan_and_execute_task,
-            plan_execute_commands::get_plan_execute_statistics,
-            plan_execute_commands::list_plan_execute_architectures,
-            plan_execute_commands::get_plan_execute_sessions,
-            plan_execute_commands::get_plan_execute_session_detail,
-            plan_execute_commands::cancel_plan_execute_session,
-
-            // Plan-Execute引擎相关命令
-            plan_execute_commands::start_plan_execute_engine,
-            plan_execute_commands::stop_plan_execute_engine,
-            plan_execute_commands::get_plan_execute_engine_status,
-            plan_execute_commands::dispatch_plan_execute_task,
-            plan_execute_commands::get_plan_execute_task_status,
-            plan_execute_commands::get_plan_execute_task_result,
-            plan_execute_commands::cancel_plan_execute_task,
-            plan_execute_commands::get_plan_execute_active_tasks,
-            plan_execute_commands::get_plan_execute_task_history,
-            plan_execute_commands::execute_generic_prompt_task,
-            
-            // ReAct引擎相关命令
+            // ReAct引擎相关命令（泛化版本，包含所有执行模式）
             commands::react_commands::execute_react_task,
             commands::react_commands::get_react_config,
             commands::react_commands::update_react_config,
@@ -1132,6 +1103,11 @@ fn update_proxy_menu_text(app: &tauri::AppHandle, is_running: bool) {
 
 /// 清理资源并退出应用
 async fn cleanup_and_exit(app: &tauri::AppHandle) {
+    // 保存窗口状态
+    if let Err(e) = app.save_window_state(StateFlags::all()) {
+        tracing::error!("Failed to save window state on exit: {}", e);
+    }
+    
     // 停止代理
     if let Some(state) = app.try_state::<PassiveScanState>() {
         let is_running_arc = state.get_is_running();

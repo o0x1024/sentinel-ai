@@ -240,12 +240,33 @@ impl McpSessionImpl {
             .as_ref()
             .ok_or_else(|| anyhow!("Command is required for child process transport"))?;
 
-        let mut cmd = Command::new(command);
-        for arg in &self.config.args {
+        // Windows 下需要特殊处理 npx/npm 命令
+        #[cfg(windows)]
+        let (actual_command, actual_args) = {
+            if command == "npx" || command == "npm" || command == "node" || command == "pnpm" {
+                // 在 Windows 下，npx/npm 需要通过 cmd.exe 执行
+                let mut args = vec!["/c".to_string(), command.clone()];
+                args.extend(self.config.args.clone());
+                ("cmd.exe".to_string(), args)
+            } else if command.ends_with(".js") {
+                // JavaScript 文件需要通过 node 执行
+                let mut args = vec!["/c".to_string(), "node".to_string(), command.clone()];
+                args.extend(self.config.args.clone());
+                ("cmd.exe".to_string(), args)
+            } else {
+                (command.clone(), self.config.args.clone())
+            }
+        };
+
+        #[cfg(not(windows))]
+        let (actual_command, actual_args) = (command.clone(), self.config.args.clone());
+
+        let mut cmd = Command::new(&actual_command);
+        for arg in &actual_args {
             cmd.arg(arg);
         }
 
-        info!("Starting child process: {} with args: {:?}", command, self.config.args);
+        info!("Starting child process: {} with args: {:?} (original command: {})", actual_command, actual_args, command);
 
         // 配置子进程以避免信号传播问题，增加错误处理
         let mut child_cmd_builder = cmd;
@@ -281,11 +302,17 @@ impl McpSessionImpl {
         #[cfg(windows)]
         {
             use std::process::Stdio;
+            use std::os::windows::process::CommandExt;
+            
+            // Windows 下需要使用 CREATE_NO_WINDOW 来避免弹出控制台窗口
+            // 并且正确配置 stdin/stdout/stderr
             child_cmd_builder
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::inherit()) // Use inherit to see errors in terminal
-                .kill_on_drop(true);
+                .stderr(Stdio::null()) // 忽略 stderr，避免干扰 stdout
+                .kill_on_drop(true)
+                .creation_flags(0x08000000); // CREATE_NO_WINDOW
+            
             child_cmd_builder.env("NO_COLOR", "1");
             child_cmd_builder.env("FORCE_COLOR", "0");
             child_cmd_builder.env("CLICOLOR", "0");
@@ -344,10 +371,33 @@ impl McpSessionImpl {
             .as_ref()
             .ok_or_else(|| anyhow!("STDIO transport requires a command to be specified"))?;
 
-        let mut cmd = Command::new(command);
-        for arg in &self.config.args {
+        // Windows 下需要特殊处理 npx/npm 命令
+        #[cfg(windows)]
+        let (actual_command, actual_args) = {
+            if command == "npx" || command == "npm" || command == "node" || command == "pnpm" {
+                // 在 Windows 下，npx/npm 需要通过 cmd.exe 执行
+                let mut args = vec!["/c".to_string(), command.clone()];
+                args.extend(self.config.args.clone());
+                ("cmd.exe".to_string(), args)
+            } else if command.ends_with(".js") {
+                // JavaScript 文件需要通过 node 执行
+                let mut args = vec!["/c".to_string(), "node".to_string(), command.clone()];
+                args.extend(self.config.args.clone());
+                ("cmd.exe".to_string(), args)
+            } else {
+                (command.clone(), self.config.args.clone())
+            }
+        };
+
+        #[cfg(not(windows))]
+        let (actual_command, actual_args) = (command.clone(), self.config.args.clone());
+
+        let mut cmd = Command::new(&actual_command);
+        for arg in &actual_args {
             cmd.arg(arg);
         }
+        
+        info!("Starting STDIO process: {} with args: {:?} (original command: {})", actual_command, actual_args, command);
 
         // 配置子进程以避免信号传播问题（与connect_child_process相同）
         let transport = TokioChildProcess::new(cmd.configure(|child_cmd| {
@@ -376,10 +426,14 @@ impl McpSessionImpl {
             #[cfg(windows)]
             {
                 use std::process::Stdio;
+                use std::os::windows::process::CommandExt;
+                
                 child_cmd
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit()); // Use inherit to see errors in terminal
+                    .stderr(Stdio::null()) // 忽略 stderr，避免干扰 stdout
+                    .creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    
                 child_cmd.env("NO_COLOR", "1");
                 child_cmd.env("FORCE_COLOR", "0");
                 child_cmd.env("CLICOLOR", "0");

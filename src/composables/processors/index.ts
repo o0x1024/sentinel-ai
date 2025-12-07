@@ -51,11 +51,10 @@ export class ArchitectureProcessorFactory {
         return new ReActProcessorAdapter()
       case 'VisionExplorer':
         return new VisionExplorerProcessorAdapter()
-      // 未来可以添加其他架构
+      // ReWOO、LLMCompiler、PlanAndExecute 已内嵌到 ReAct
       case 'ReWOO':
       case 'LLMCompiler':
       case 'PlanAndExecute':
-      case 'Travel':
       default:
         return null
     }

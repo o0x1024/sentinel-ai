@@ -1,30 +1,28 @@
 use serde::{Deserialize, Serialize};
 
+/// 架构类型
+/// 注：所有架构统一使用 ReAct 泛化引擎
+/// ReWOO, LLMCompiler, PlanExecute 保留用于向后兼容（实际执行都通过 ReAct）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ArchitectureType {
-    Travel,
-    ReWOO,
-    LLMCompiler,
-    PlanExecute,
-    ReAct,
+    ReAct,       // 泛化引擎（推荐）
+    ReWOO,       // 已内嵌到 ReAct
+    LLMCompiler, // 已内嵌到 ReAct
+    PlanExecute, // 已内嵌到 ReAct
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StageType {
-    // ReWOO stages
+    // ReAct 泛化引擎阶段
+    System,      // 系统提示阶段
+    Planning,    // 规划阶段
+    Execution,   // 执行阶段
+    // 以下保留用于向后兼容
     Planner,
     Worker,
     Solver,
-    // LLMCompiler & Plan&Execute stages
-    Planning,
-    Execution,
-    Evaluation,  // LLMCompiler Joiner/Evaluator stage
+    Evaluation,
     Replan,
-    // Travel OODA stages
-    Observe,
-    Orient,
-    Decide,
-    Act,
 }
 
 /// Prompt category defines the scope and level of the template

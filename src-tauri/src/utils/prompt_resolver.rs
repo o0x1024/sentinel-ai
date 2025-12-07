@@ -54,11 +54,6 @@ impl CanonicalStage {
             (CanonicalStage::Executor, ArchitectureType::PlanExecute) => Some(StageType::Execution),
             (CanonicalStage::Replanner, ArchitectureType::PlanExecute) => Some(StageType::Replan),
             
-            (CanonicalStage::Planner, ArchitectureType::Travel) => Some(StageType::Observe),
-            (CanonicalStage::Executor, ArchitectureType::Travel) => Some(StageType::Act),
-            (CanonicalStage::Evaluator, ArchitectureType::Travel) => Some(StageType::Orient),
-            (CanonicalStage::Replanner, ArchitectureType::Travel) => Some(StageType::Decide),
-            
             // System和IntentClassifier不映射到具体架构阶段
             _ => None,
         }

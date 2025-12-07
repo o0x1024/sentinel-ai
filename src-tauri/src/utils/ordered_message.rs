@@ -9,14 +9,15 @@ use std::time::SystemTime;
 use tauri::{AppHandle, Emitter};
 
 /// 架构类型标识
+/// 注：所有架构统一使用 ReAct 泛化引擎
+/// ReWOO, LLMCompiler, PlanAndExecute, Travel 保留用于向后兼容（实际执行都通过 ReAct）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ArchitectureType {
-    ReAct,
-    ReWOO,
-    LLMCompiler,
-    PlanAndExecute,
-    Travel,
-    VisionExplorer,
+    ReAct,           // 泛化引擎（推荐）
+    ReWOO,           // 已内嵌到 ReAct
+    LLMCompiler,     // 已内嵌到 ReAct
+    PlanAndExecute,  // 已内嵌到 ReAct
+    VisionExplorer,  // 视觉探索引擎
     Unknown,
 }
 

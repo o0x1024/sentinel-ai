@@ -81,43 +81,8 @@
           ]"
         >
          
-
-          <!-- Plan-and-Execute 步骤显示 -->
-          <div v-if="isPlanAndExecuteMessageFn(message)" class="space-y-3">
-            <PlanAndExecuteStepDisplay
-              v-bind="parsePlanAndExecuteMessageData(message)"
-            />
-          </div>
-
-          <!-- LLM Compiler 步骤显示 -->
-          <div v-else-if="isLLMCompilerMessageFn(message)" class="space-y-3">
-            <LLMCompilerStepDisplay
-              v-bind="parseLLMCompilerMessageData(message)"
-            />
-            <!-- 显示最终响应：直接使用message.content中的纯文本部分 -->
-            <div v-if="getLLMCompilerTextContent(message)" class="llm-compiler-final-response mt-4 p-4 bg-base-100 rounded-lg border border-base-300">
-              <div class="prose prose-sm max-w-none" v-html="renderMarkdown(getLLMCompilerTextContent(message))"></div>
-            </div>
-          </div>
-
-          <!-- ReWOO 步骤显示 -->
-          <div v-else-if="isReWOOMessageFn(message)" class="space-y-3">
-            <ReWOOStepDisplay
-              v-bind="parseReWOOMessageData(message)"
-            />
-          </div>
-
-          <!-- Travel 步骤显示 -->
-          <div v-else-if="isTravelMessageFn(message)" class="space-y-3">
-            <TravelStepDisplay
-              :message="message"
-              :chunks="getMessageChunks(message)"
-              :isExecuting="message.isStreaming"
-            />
-          </div>
-
           <!-- VisionExplorer 步骤显示 -->
-          <div v-else-if="isVisionExplorerMessageFn(message)" class="space-y-3">
+          <div v-if="isVisionExplorerMessageFn(message)" class="space-y-3">
             <VisionStepDisplay
               :message="message"
               :chunks="getMessageChunks(message)"
@@ -142,8 +107,8 @@
             :stream-char-count="streamCharCount"
           />
 
-          <!-- 流式指示器（Travel/VisionExplorer 有自己的 loading，不重复显示） -->
-          <div v-if="message.isStreaming && !isTravelMessageFn(message) && !isVisionExplorerMessageFn(message)" class="flex items-center gap-2 mt-2 text-base-content/70">
+          <!-- 流式指示器（VisionExplorer 有自己的 loading，不重复显示） -->
+          <div v-if="message.isStreaming && !isVisionExplorerMessageFn(message)" class="flex items-center gap-2 mt-2 text-base-content/70">
             <span class="loading loading-dots loading-sm text-primary"></span>
             <span class="text-sm">{{ t('aiAssistant.generating', 'AI正在思考...') }}</span>
           </div>
@@ -273,7 +238,6 @@
       @toggle-debug="showDebugInfo = !showDebugInfo"
       @create-new-conversation="handleCreateNewConversation"
       @clear-conversation="handleClearConversation"
-      @toggle-task-mode="handleToggleTaskMode"
       @toggle-rag="handleToggleRAG"
       @add-attachments="handleAddAttachments"
       @remove-attachment="handleRemoveAttachment"
@@ -320,20 +284,11 @@ import { useConversation } from '../composables/useConversation'
 import { useMessageUtils } from '../composables/useMessageUtils'
 import { useOrderedMessages } from '../composables/useOrderedMessages'
 import { ReActMessageProcessor } from '../composables/processors/ReActMessageProcessor'
-import { isReWOOMessage, parseReWOOMessage } from '../composables/useReWOOMessage'
-import type { ReWOOMessageData } from '../composables/useReWOOMessage'
-import { isLLMCompilerMessage, parseLLMCompilerMessage } from '../composables/useLLMCompilerMessage'
-import type { LLMCompilerMessageData } from '../composables/useLLMCompilerMessage'
-import { isPlanAndExecuteMessage, parsePlanAndExecuteMessage } from '../composables/usePlanAndExecuteMessage'
-import type { PlanAndExecuteMessageData } from '../composables/usePlanAndExecuteMessage'
+// 注：ReWOO、LLMCompiler、PlanAndExecute 能力已内嵌到泛化的 ReAct 引擎
 
 // Components
 import InputAreaComponent from './InputAreaComponent.vue'
 import ReActStepDisplay from './MessageParts/ReActStepDisplay.vue'
-import ReWOOStepDisplay from './MessageParts/ReWOOStepDisplay.vue'
-import LLMCompilerStepDisplay from './MessageParts/LLMCompilerStepDisplay.vue'
-import PlanAndExecuteStepDisplay from './MessageParts/PlanAndExecuteStepDisplay.vue'
-import TravelStepDisplay from './MessageParts/TravelStepDisplay.vue'
 import VisionStepDisplay from './MessageParts/VisionStepDisplay.vue'
 import MessageContentDisplay from './MessageParts/MessageContentDisplay.vue'
 import OrchestratorStepDisplay from './MessageParts/OrchestratorStepDisplay.vue'
@@ -446,188 +401,16 @@ const isReActMessage = (message: ChatMessage) => {
   return /(?:Thought:|Action:|Observation:|Final Answer:)/i.test(content)
 }
 
-// Plan-and-Execute 消息检测函数（增强版：优先使用架构元数据）
-const isPlanAndExecuteMessageFn = (message: ChatMessage) => {
-  if (message.role !== 'assistant') return false
+// 注：PlanAndExecute、LLMCompiler、ReWOO、Travel 消息检测/解析函数已移除
+// 这些架构的能力现在内嵌在泛化的 ReAct 引擎中，使用 ReAct 的消息处理
 
-  // 优先检查架构元数据
-  const archType = getMessageArchitecture(message)
-  if (archType === 'PlanAndExecute') return true
-  // 如果已经是其他明确的架构类型，直接返回false
-  if (archType && archType !== 'Unknown') return false
-
-  // 回退到内容匹配（向后兼容，仅用于Unknown架构）
-  const content = message.content || ''
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  return isPlanAndExecuteMessage(content, chunks)
-}
-
-// Plan-and-Execute 消息解析函数
-const parsePlanAndExecuteMessageData = (message: ChatMessage): PlanAndExecuteMessageData => {
-  // 优先使用预解析的数据
-  if ((message as any).planAndExecuteData) {
-    return (message as any).planAndExecuteData
-  }
-  const content = message.content || ''
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  return parsePlanAndExecuteMessage(content, chunks)
-}
-
-// LLM Compiler 消息检测函数（增强版：优先使用架构元数据）
-const isLLMCompilerMessageFn = (message: ChatMessage) => {
-  if (message.role !== 'assistant') return false
-
-  // 优先检查架构元数据
-  const archType = getMessageArchitecture(message)
-  if (archType === 'LLMCompiler') return true
-  // 如果已经是其他明确的架构类型，直接返回false
-  if (archType && archType !== 'Unknown') return false
-
-  // 回退到内容匹配（向后兼容，仅用于Unknown架构）
-  const content = message.content || ''
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  return isLLMCompilerMessage(content, chunks)
-}
-
-// LLM Compiler 消息解析函数
-const parseLLMCompilerMessageData = (message: ChatMessage): LLMCompilerMessageData => {
-  // 优先使用预解析的数据
-  if ((message as any).llmCompilerData) {
-    return (message as any).llmCompilerData
-  }
-  const content = message.content || ''
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  return parseLLMCompilerMessage(content, chunks)
-}
-
-// LLM Compiler 获取纯文本内容
-const getLLMCompilerTextContent = (message: ChatMessage): string => {
-  // 1. 首先检查已保存的最终响应
-  if ((message as any).llmCompilerFinalResponse) {
-    return (message as any).llmCompilerFinalResponse
-  }
-
-  // 2. 从chunks获取Content类型的文本（流式过程中）
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  const contentChunks = chunks.filter(c =>
-    c.chunk_type === 'Content' && c.architecture === 'LLMCompiler'
-  )
-  if (contentChunks.length > 0) {
-    return contentChunks.map(c => c.content?.toString() || '').join('')
-  }
-
-  // 3. 从message.content中提取[DECISION]部分的response（历史消息fallback）
-  const content = message.content || ''
-  if (content.includes('[DECISION]')) {
-    // 尝试从[DECISION]后的JSON中提取response字段
-    const decisionIdx = content.indexOf('[DECISION]')
-    const afterDecision = content.substring(decisionIdx + 10)
-    
-    // 查找JSON代码块
-    const jsonMatch = afterDecision.match(/```json\s*([\s\S]*?)```/)
-    if (jsonMatch) {
-      try {
-        const json = JSON.parse(jsonMatch[1])
-        if (json.response) {
-          return json.response
-        }
-      } catch (e) {
-        // JSON解析失败，尝试正则提取
-      }
-    }
-    
-    // 正则提取response字段
-    const responseMatch = afterDecision.match(/"response"\s*:\s*"([\s\S]*?)(?:"\s*,|\"\s*\})/i)
-    if (responseMatch && responseMatch[1]) {
-      return responseMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')
-    }
-  }
-
-  return ''
-}
-
-// ReWOO 消息检测函数（增强版：优先使用架构元数据）
-const isReWOOMessageFn = (message: ChatMessage) => {
-  if (message.role !== 'assistant') return false
-
-  // 优先检查架构元数据
-  const archType = getMessageArchitecture(message)
-  if (archType === 'ReWOO') return true
-  // 如果已经是其他明确的架构类型，直接返回false
-  if (archType && archType !== 'Unknown') return false
-
-  // 回退到内容匹配（向后兼容，仅用于Unknown架构）
-  const content = message.content || ''
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  return isReWOOMessage(content, chunks)
-}
-
-// ReWOO 消息解析函数
-const parseReWOOMessageData = (message: ChatMessage): ReWOOMessageData => {
-  // 优先使用预解析的数据
-  if ((message as any).rewooData) {
-    return (message as any).rewooData
-  }
-  const content = message.content || ''
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  return parseReWOOMessage(content, chunks)
-}
-
-// Travel 消息检测函数：检查是否有 travelCycles 数据、ooda_step 或 vision_step(Travel架构) chunks
-const isTravelMessageFn = (message: ChatMessage) => {
-  if (message.role !== 'assistant') return false
-
-  // 优先检查架构元数据
-  const archType = getMessageArchitecture(message)
-  if (archType === 'Travel') {
-    console.log('[isTravelMessageFn] Matched by archType:', archType)
-    return true
-  }
-  
-  // 检查是否有 travelCycles 数据（已保存的消息）
-  if ((message as any).travelCycles?.length > 0) {
-    console.log('[isTravelMessageFn] Matched by travelCycles')
-    return true
-  }
-  
-  // 检查是否有 visionIterations 数据（Travel 嵌入的 VisionExplorer）
-  if ((message as any).visionIterations?.length > 0 && archType !== 'VisionExplorer') {
-    console.log('[isTravelMessageFn] Matched by visionIterations')
-    return true
-  }
-  
-  // 检查 chunks 中是否有 Travel 架构的数据（流式消息）
-  const chunks = orderedMessages.processor.chunks.get(message.id) || []
-  console.log('[isTravelMessageFn] Checking chunks:', chunks.length, 'for message:', message.id)
-  const hasTravelData = chunks.some(c => {
-    // 检查是否有 Travel 架构标识
-    if (c.architecture === 'Travel') {
-      console.log('[isTravelMessageFn] Found Travel architecture in chunk')
-      return true
-    }
-    // 检查 Meta 块中是否有 ooda_step 或 vision_step
-    if (c.chunk_type !== 'Meta') return false
-    const sd = c.structured_data as any
-    return sd?.type === 'ooda_step' || sd?.type === 'vision_step'
-  })
-  if (hasTravelData) return true
-  
-  // 如果已经是其他明确的架构类型，直接返回false
-  if (archType && archType !== 'Unknown') return false
-
-  return false
-}
-
-// VisionExplorer 消息检测函数：独立运行时使用（非嵌入在 Travel 中）
+// VisionExplorer 消息检测函数
 const isVisionExplorerMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
 
   // 优先检查架构元数据
   const archType = getMessageArchitecture(message)
   if (archType === 'VisionExplorer') return true
-  
-  // 如果是 Travel 架构，VisionExplorer 数据会嵌入其中，不单独显示
-  if (archType === 'Travel') return false
   
   // 检查是否有 visionIterations 数据（已保存的消息）
   if ((message as any).visionIterations?.length > 0) return true
@@ -662,10 +445,6 @@ const getMessageChunks = (message: ChatMessage) => {
 // Orchestrator 消息检测函数（增强版：优先使用架构元数据）
 const isOrchestratorMessageFn = (message: ChatMessage) => {
   if (message.role !== 'assistant') return false
-  
-  // 优先检查架构元数据
-  const archType = getMessageArchitecture(message)
-  if (archType === 'Travel') return false // Travel now handled by isTravelMessageFn
   
   // 回退到内容匹配（向后兼容）
   const content = message.content || ''
@@ -927,7 +706,6 @@ const saveState = () => {
         inputMessage: inputMessage.value,
         ragEnabled: ragEnabled.value,
         showDebugInfo: showDebugInfo.value,
-        isTaskMode: isTaskMode.value,
         webSearchEnabled: webSearchEnabled.value,
         webSearchEngine: webSearchEngine.value,
       }
@@ -952,8 +730,8 @@ const streamStartTime = ref<number | null>(null)
 const streamCharCount = ref(0)
 const showDebugInfo = ref(savedState.showDebugInfo ?? false)
 const loadingTimeoutId = ref<number | null>(null)
-// Task mode state (controlled by toolbar button)
-const isTaskMode = ref(savedState.isTaskMode ?? false)
+// Task mode: 始终启用，所有消息都走 ReAct 引擎
+const isTaskMode = ref(true)
 // RAG reranking toggle from backend config
 const rerankingEnabled = ref(false)
 
@@ -1471,13 +1249,6 @@ const handleClearConversation = async () => {
   }
 }
 
-const handleToggleTaskMode = (enabled: boolean) => {
-  isTaskMode.value = enabled
-  console.log(`Task mode ${enabled ? 'enabled' : 'disabled'}`)
-  // 保存状态到本地存储
-  saveState()
-}
-
 const handleToggleRAG = (enabled: boolean) => {
   ragEnabled.value = enabled
   console.log('RAG模式:', enabled ? '开启' : '关闭')
@@ -1589,7 +1360,6 @@ onUnmounted(() => {
       inputMessage: inputMessage.value,
       ragEnabled: ragEnabled.value,
       showDebugInfo: showDebugInfo.value,
-      isTaskMode: isTaskMode.value,
       webSearchEnabled: webSearchEnabled.value,
       webSearchEngine: webSearchEngine.value,
     }

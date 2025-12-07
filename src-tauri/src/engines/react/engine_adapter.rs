@@ -340,6 +340,30 @@ impl ReactEngine {
                                 "retryable": retryable,
                             }
                         }),
+                        // 新增的执行模式步骤类型
+                        ReactStepType::ParallelExecution { results, .. } => serde_json::json!({
+                            "parallelExecution": {
+                                "success_count": results.success_count,
+                                "failure_count": results.failure_count,
+                            }
+                        }),
+                        ReactStepType::ReasoningChainExecution { result, .. } => serde_json::json!({
+                            "reasoningChain": {
+                                "final_answer": result.final_result,
+                            }
+                        }),
+                        ReactStepType::PhaseExecution { result, .. } => serde_json::json!({
+                            "phaseExecution": {
+                                "phase_type": format!("{:?}", result.phase_type),
+                                "findings_count": result.findings.len(),
+                            }
+                        }),
+                        ReactStepType::SubPlanExecution { steps_completed, steps_total, .. } => serde_json::json!({
+                            "subPlanExecution": {
+                                "completed_steps": steps_completed,
+                                "total_steps": steps_total,
+                            }
+                        }),
                     }
                 }).collect::<Vec<_>>(),
             });
@@ -388,6 +412,30 @@ impl ReactEngine {
                                         "type": error_type,
                                         "message": message,
                                         "retryable": retryable,
+                                    }
+                                }),
+                                // 新增的执行模式步骤类型
+                                ReactStepType::ParallelExecution { results, .. } => serde_json::json!({
+                                    "parallelExecution": {
+                                        "success_count": results.success_count,
+                                        "failure_count": results.failure_count,
+                                    }
+                                }),
+                                ReactStepType::ReasoningChainExecution { result, .. } => serde_json::json!({
+                                    "reasoningChain": {
+                                        "final_answer": result.final_result,
+                                    }
+                                }),
+                                ReactStepType::PhaseExecution { result, .. } => serde_json::json!({
+                                    "phaseExecution": {
+                                        "phase_type": format!("{:?}", result.phase_type),
+                                        "findings_count": result.findings.len(),
+                                    }
+                                }),
+                                ReactStepType::SubPlanExecution { steps_completed, steps_total, .. } => serde_json::json!({
+                                    "subPlanExecution": {
+                                        "completed_steps": steps_completed,
+                                        "total_steps": steps_total,
                                     }
                                 }),
                             }

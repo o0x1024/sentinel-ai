@@ -116,7 +116,7 @@ pub struct ReactStep {
     pub error: Option<String>,
 }
 
-/// ReAct 步骤类型
+/// ReAct 步骤类型 - 扩展版本
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ReactStepType {
@@ -126,7 +126,7 @@ pub enum ReactStepType {
         /// 是否包含 RAG 证据
         has_rag_context: bool,
     },
-    /// 行动（工具调用）
+    /// 行动（单工具调用）
     Action {
         tool_call: ReactToolCall,
     },
@@ -146,6 +146,28 @@ pub enum ReactStepType {
         error_type: String,
         message: String,
         retryable: bool,
+    },
+    /// 并行执行
+    ParallelExecution {
+        tool_calls: Vec<ParallelToolCall>,
+        results: ParallelExecutionResult,
+    },
+    /// 推理链执行
+    ReasoningChainExecution {
+        steps: Vec<ReasoningStep>,
+        result: ReasoningChainResult,
+    },
+    /// 阶段执行
+    PhaseExecution {
+        phase: PhaseDefinition,
+        result: PhaseExecutionResult,
+    },
+    /// 子计划执行
+    SubPlanExecution {
+        plan: String,
+        steps_completed: usize,
+        steps_total: usize,
+        current_step: Option<String>,
     },
 }
 
@@ -225,21 +247,236 @@ pub struct ReactMetrics {
     pub retry_count: u32,
 }
 
-/// Action 指令（LLM 输出的 JSON 结构）
+/// Action 指令（LLM 输出的 JSON 结构）- 泛化版本
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "type")]
 pub enum ActionInstruction {
-    /// 工具调用
+    /// 单工具调用（现有逻辑）
+    #[serde(rename = "tool_call")]
     ToolCall {
         action: ReactToolCall,
         #[serde(default)]
         final_answer: bool,
     },
-    /// 最终答案
+    /// 最终答案（现有逻辑）
+    #[serde(rename = "final_answer")]
     FinalAnswer {
         #[serde(rename = "final")]
         final_answer: FinalAnswer,
     },
+    /// 并行工具调用（内嵌 LLMCompiler 能力）
+    #[serde(rename = "parallel_tools")]
+    ParallelTools {
+        tools: Vec<ParallelToolCall>,
+        #[serde(default)]
+        aggregation: AggregationStrategy,
+    },
+    /// 推理链执行（内嵌 ReWOO 能力）
+    #[serde(rename = "reasoning_chain")]
+    ReasoningChain {
+        steps: Vec<ReasoningStep>,
+        #[serde(default)]
+        solve_prompt: Option<String>,
+    },
+    /// 阶段执行（多阶段任务，如渗透测试）
+    #[serde(rename = "phase_execution")]
+    PhaseExecution {
+        phase: PhaseDefinition,
+        #[serde(default)]
+        next_phase_hint: Option<String>,
+    },
+    /// 子任务规划（内嵌 Plan-Execute 能力）
+    #[serde(rename = "sub_plan")]
+    SubPlan {
+        plan_description: String,
+        steps: Vec<SubPlanStep>,
+        #[serde(default)]
+        allow_replanning: bool,
+    },
+}
+
+// ========== 并行执行相关类型 ==========
+
+/// 并行工具调用
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParallelToolCall {
+    /// 调用 ID（用于结果引用）
+    pub id: String,
+    /// 工具名称
+    pub tool: String,
+    /// 工具参数
+    pub args: serde_json::Value,
+    /// 依赖的其他调用 ID（空表示无依赖，可立即执行）
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+}
+
+/// 聚合策略
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub enum AggregationStrategy {
+    /// 合并所有结果
+    #[default]
+    Merge,
+    /// 只保留成功的
+    FilterSuccess,
+    /// 等待全部完成
+    WaitAll,
+    /// 任一完成即可
+    WaitAny,
+}
+
+/// 并行执行结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParallelExecutionResult {
+    /// 各工具调用的结果
+    pub results: HashMap<String, ToolExecutionResult>,
+    /// 总执行时间
+    pub total_duration_ms: u64,
+    /// 成功数
+    pub success_count: usize,
+    /// 失败数
+    pub failure_count: usize,
+}
+
+/// 单个工具执行结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecutionResult {
+    pub tool_name: String,
+    pub success: bool,
+    pub result: serde_json::Value,
+    pub error: Option<String>,
+    pub duration_ms: u64,
+}
+
+// ========== 推理链相关类型 ==========
+
+/// 推理步骤（ReWOO 风格）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningStep {
+    /// 步骤变量名（如 #E1）
+    pub variable: String,
+    /// 工具名称
+    pub tool: String,
+    /// 工具参数（可包含变量引用如 #E1）
+    pub args: String,
+    /// 推理说明
+    #[serde(default)]
+    pub reasoning: String,
+}
+
+/// 推理链执行结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningChainResult {
+    /// 各步骤变量的值
+    pub variables: HashMap<String, serde_json::Value>,
+    /// 最终求解结果
+    pub final_result: Option<String>,
+    /// 执行轨迹
+    pub trace: Vec<ReasoningStepResult>,
+}
+
+/// 推理步骤结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningStepResult {
+    pub variable: String,
+    pub tool: String,
+    pub substituted_args: String,
+    pub result: serde_json::Value,
+    pub success: bool,
+    pub duration_ms: u64,
+}
+
+// ========== 阶段执行相关类型 ==========
+
+/// 阶段定义
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseDefinition {
+    /// 阶段名称
+    pub name: String,
+    /// 阶段描述
+    #[serde(default)]
+    pub description: String,
+    /// 阶段类型
+    pub phase_type: PhaseType,
+    /// 该阶段的工具调用（可并行）
+    pub tool_calls: Vec<ParallelToolCall>,
+    /// 阶段超时（秒）
+    #[serde(default = "default_phase_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_phase_timeout() -> u64 {
+    600
+}
+
+/// 阶段类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PhaseType {
+    /// 信息收集
+    Reconnaissance,
+    /// 扫描探测
+    Scanning,
+    /// 漏洞验证
+    Validation,
+    /// 分析
+    Analysis,
+    /// 利用
+    Exploitation,
+    /// 报告
+    Reporting,
+    /// 自定义
+    Custom(String),
+}
+
+/// 阶段执行结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseExecutionResult {
+    pub phase_name: String,
+    pub phase_type: PhaseType,
+    pub status: PhaseStatus,
+    pub findings: Vec<Finding>,
+    pub duration_ms: u64,
+    /// 传递给下一阶段的数据
+    pub handoff_data: serde_json::Value,
+}
+
+/// 阶段状态
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PhaseStatus {
+    Completed,
+    PartiallyCompleted,
+    Failed,
+    Skipped,
+}
+
+/// 发现（用于安全任务）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Finding {
+    pub finding_type: String,
+    pub target: String,
+    pub details: serde_json::Value,
+    pub severity: String,
+    pub source_tool: String,
+}
+
+// ========== 子计划相关类型 ==========
+
+/// 子计划步骤
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubPlanStep {
+    /// 步骤 ID
+    pub id: String,
+    /// 步骤描述
+    pub description: String,
+    /// 依赖的步骤 ID
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    /// 工具配置
+    #[serde(default)]
+    pub tool: Option<ReactToolCall>,
+    /// 是否可跳过
+    #[serde(default)]
+    pub skippable: bool,
 }
 
 /// 最终答案结构

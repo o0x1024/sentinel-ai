@@ -98,14 +98,14 @@ pub enum TestStepType {
     SummarizeFindings,
 }
 
-/// Sub-agent type
+/// Sub-agent type (统一使用 ReAct 泛化引擎)
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum SubAgentKind {
-    Travel,
-    ReWOO,
-    PlanAndExecute,
-    LLMCompiler,
+    ReAct,           // 泛化引擎（推荐）
+    ReWOO,           // 已内嵌到 ReAct
+    PlanAndExecute,  // 已内嵌到 ReAct
+    LLMCompiler,     // 已内嵌到 ReAct
     Copilot,
     Other,
 }
