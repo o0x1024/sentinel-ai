@@ -384,6 +384,23 @@ pub async fn delete_rag_collection(collection_id: String) -> Result<bool, String
     Ok(true)
 }
 
+/// 更新RAG集合
+#[tauri::command]
+pub async fn update_rag_collection(
+    database: State<'_, Arc<DatabaseService>>,
+    collection_id: String,
+    name: String,
+    description: Option<String>,
+) -> Result<bool, String> {
+    info!("更新RAG集合: {} -> {}", collection_id, name);
+    
+    database.update_rag_collection(&collection_id, &name, description.as_deref())
+        .await
+        .map_err(|e| format!("Failed to update collection: {}", e))?;
+    
+    Ok(true)
+}
+
 /// 获取RAG配置
 #[tauri::command]
 pub async fn get_rag_config(

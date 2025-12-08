@@ -233,6 +233,7 @@
       :show-debug-info="showDebugInfo"
       :rag-enabled="ragEnabled"
       :pending-attachments="pendingAttachments"
+      :referenced-traffic="referencedTraffic"
       @send-message="sendMessage"
       @stop-execution="stopExecution"
       @toggle-debug="showDebugInfo = !showDebugInfo"
@@ -241,6 +242,8 @@
       @toggle-rag="handleToggleRAG"
       @add-attachments="handleAddAttachments"
       @remove-attachment="handleRemoveAttachment"
+      @remove-traffic="handleRemoveTraffic"
+      @clear-traffic="handleClearTraffic"
     />
 
     <!-- Citation Detail Modal -->
@@ -344,6 +347,22 @@ const messages = ref<ChatMessage[]>([])
 // 待发送的附件（上传完成后存为后端返回的Attachment JSON）
 const pendingAttachments = ref<any[]>([])
 
+// 引用的流量数据
+type TrafficSendType = 'request' | 'response' | 'both'
+interface ReferencedTraffic {
+  id: number
+  url: string
+  method: string
+  host: string
+  status_code: number
+  request_headers?: string
+  request_body?: string
+  response_headers?: string
+  response_body?: string
+  sendType?: TrafficSendType  // 发送类型：请求/响应/全部
+}
+const referencedTraffic = ref<ReferencedTraffic[]>([])
+
 const { formatTime, renderMarkdown } = useMessageUtils()
 
 // 处理来自输入区的附件选择（默认按 Tauri 环境处理）
@@ -368,6 +387,107 @@ const handleRemoveAttachment = (index: number) => {
     pendingAttachments.value.splice(index, 1)
     console.log('[AIChat] 已移除附件，剩余:', pendingAttachments.value.length)
   }
+}
+
+// 流量引用管理
+const handleRemoveTraffic = (index: number) => {
+  if (index >= 0 && index < referencedTraffic.value.length) {
+    referencedTraffic.value.splice(index, 1)
+    console.log('[AIChat] 已移除流量引用，剩余:', referencedTraffic.value.length)
+  }
+}
+
+const handleClearTraffic = () => {
+  referencedTraffic.value = []
+  console.log('[AIChat] 已清除所有流量引用')
+}
+
+// 添加流量引用（供外部调用）
+const addReferencedTraffic = (traffic: ReferencedTraffic[], type: TrafficSendType = 'both') => {
+  // 合并去重，并设置 sendType
+  const existingIds = new Set(referencedTraffic.value.map(t => t.id))
+  const newTraffic = traffic
+    .filter(t => !existingIds.has(t.id))
+    .map(t => ({ ...t, sendType: type }))
+  referencedTraffic.value.push(...newTraffic)
+  console.log('[AIChat] 添加流量引用:', newTraffic.length, '条，类型:', type, '当前共:', referencedTraffic.value.length)
+}
+
+// 聚焦到输入框
+const focusInput = () => {
+  nextTick(() => {
+    // 通过 InputAreaComponent 的 ref 或直接找 textarea
+    const textarea = document.querySelector('.chat-input textarea') as HTMLTextAreaElement
+    if (textarea) {
+      textarea.focus()
+    }
+  })
+}
+
+// 构建流量上下文信息
+const buildTrafficContext = (traffic: ReferencedTraffic[]): string => {
+  const parts: string[] = ['以下是用户引用的 HTTP 流量数据，请基于这些数据回答用户的问题：\n']
+  
+  traffic.forEach((t, index) => {
+    const sendType = t.sendType || 'both'
+    const typeLabel = sendType === 'request' ? '请求' : sendType === 'response' ? '响应' : '流量'
+    parts.push(`\n--- ${typeLabel} #${index + 1} ---`)
+    parts.push(`URL: ${t.url}`)
+    parts.push(`Method: ${t.method}`)
+    parts.push(`Host: ${t.host}`)
+    
+    // 根据 sendType 决定显示内容
+    const showRequest = sendType === 'request' || sendType === 'both'
+    const showResponse = sendType === 'response' || sendType === 'both'
+    
+    if (showResponse) {
+      parts.push(`Status: ${t.status_code || 'N/A'}`)
+    }
+    
+    // 请求头
+    if (showRequest && t.request_headers) {
+      try {
+        const headers = JSON.parse(t.request_headers)
+        const headerStr = Object.entries(headers)
+          .map(([k, v]) => `  ${k}: ${v}`)
+          .join('\n')
+        parts.push(`\nRequest Headers:\n${headerStr}`)
+      } catch {
+        parts.push(`\nRequest Headers: ${t.request_headers}`)
+      }
+    }
+    
+    // 请求体
+    if (showRequest && t.request_body) {
+      const body = t.request_body.length > 2000 
+        ? t.request_body.substring(0, 2000) + '... [truncated]'
+        : t.request_body
+      parts.push(`\nRequest Body:\n${body}`)
+    }
+    
+    // 响应头
+    if (showResponse && t.response_headers) {
+      try {
+        const headers = JSON.parse(t.response_headers)
+        const headerStr = Object.entries(headers)
+          .map(([k, v]) => `  ${k}: ${v}`)
+          .join('\n')
+        parts.push(`\nResponse Headers:\n${headerStr}`)
+      } catch {
+        parts.push(`\nResponse Headers: ${t.response_headers}`)
+      }
+    }
+    
+    // 响应体
+    if (showResponse && t.response_body) {
+      const body = t.response_body.length > 3000 
+        ? t.response_body.substring(0, 3000) + '... [truncated]'
+        : t.response_body
+      parts.push(`\nResponse Body:\n${body}`)
+    }
+  })
+  
+  return parts.join('\n')
 }
 
 // 新增：从架构元数据判断架构类型
@@ -820,9 +940,20 @@ const sendMessage = async () => {
 
   const rawInput = inputMessage.value
   const trimmed = rawInput.trim()
-  const userInput = rawInput
+  
+  // 如果有引用的流量，构建包含流量信息的消息
+  let userInput = rawInput
+  if (referencedTraffic.value.length > 0) {
+    const trafficContext = buildTrafficContext(referencedTraffic.value)
+    userInput = `${trafficContext}\n\n用户问题：${rawInput}`
+  }
+  
   inputMessage.value = ''
   isLoading.value = true
+  
+  // 清除已使用的流量引用
+  const usedTraffic = [...referencedTraffic.value]
+  referencedTraffic.value = []
 
   // Start timeout mechanism
   resetLoadingWithTimeout()
@@ -1380,6 +1511,10 @@ defineExpose({
   deleteConversation,
   clearCurrentConversation,
   getCurrentConversationTitle,
+  // 流量引用
+  addReferencedTraffic,
+  referencedTraffic,
+  focusInput,
 })
 </script>
 

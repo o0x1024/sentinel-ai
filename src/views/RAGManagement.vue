@@ -135,6 +135,13 @@
                       <i class="fas fa-eye"></i>
                     </button>
                     <button 
+                      @click="editCollection(collection)"
+                      class="btn btn-ghost btn-xs"
+                      title="编辑集合"
+                    >
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button 
                       @click="showIngestModal(collection)"
                       class="btn btn-ghost btn-xs"
                       title="添加文档"
@@ -202,6 +209,50 @@
             <button type="submit" class="btn btn-primary" :disabled="creating">
               <span v-if="creating" class="loading loading-spinner loading-sm"></span>
               {{ creating ? '创建中...' : '创建' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 编辑集合模态框 -->
+    <div v-if="showEditCollectionModal" class="modal modal-open">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">编辑集合</h3>
+        
+        <form @submit.prevent="updateCollection">
+          <div class="form-control mb-4">
+            <label class="label">
+              <span class="label-text">集合名称</span>
+            </label>
+            <input 
+              v-model="editingCollection.name"
+              type="text" 
+              class="input input-bordered" 
+              placeholder="输入集合名称"
+              required
+            >
+          </div>
+          
+          <div class="form-control mb-4">
+            <label class="label">
+              <span class="label-text">描述</span>
+            </label>
+            <textarea 
+              v-model="editingCollection.description"
+              class="textarea textarea-bordered" 
+              placeholder="输入集合描述"
+              rows="3"
+            ></textarea>
+          </div>
+          
+          <div class="modal-action">
+            <button type="button" @click="showEditCollectionModal = false" class="btn">
+              取消
+            </button>
+            <button type="submit" class="btn btn-primary" :disabled="updating">
+              <span v-if="updating" class="loading loading-spinner loading-sm"></span>
+              {{ updating ? '保存中...' : '保存' }}
             </button>
           </div>
         </form>
@@ -616,10 +667,12 @@ const collections = ref([])
 const searchQuery = ref('')
 const statusFilter = ref('')
 const showCreateCollectionModal = ref(false)
+const showEditCollectionModal = ref(false)
 const showIngestDocumentModal = ref(false)
 const showQueryModal = ref(false)
 const showCollectionDetailsModal = ref(false)
 const creating = ref(false)
+const updating = ref(false)
 const ingesting = ref(false)
 const querying = ref(false)
 const loadingDetails = ref(false)
@@ -643,6 +696,13 @@ const onActiveToggle = async (collection: any, ev: Event) => {
 
 // 新集合表单
 const newCollection = ref({
+  name: '',
+  description: ''
+})
+
+// 编辑集合表单
+const editingCollection = ref({
+  id: '',
   name: '',
   description: ''
 })
@@ -799,6 +859,41 @@ const createCollection = async () => {
     showToast('创建集合失败: ' + error, 'error')
   } finally {
     creating.value = false
+  }
+}
+
+const editCollection = (collection: any) => {
+  editingCollection.value = {
+    id: collection.id,
+    name: collection.name,
+    description: collection.description || ''
+  }
+  showEditCollectionModal.value = true
+}
+
+const updateCollection = async () => {
+  if (!editingCollection.value.name) {
+    showToast('请填写集合名称', 'warning')
+    return
+  }
+
+  updating.value = true
+  try {
+    await invoke('update_rag_collection', {
+      collectionId: editingCollection.value.id,
+      name: editingCollection.value.name,
+      description: editingCollection.value.description || null
+    })
+    
+    showToast('集合更新成功', 'success')
+    showEditCollectionModal.value = false
+    editingCollection.value = { id: '', name: '', description: '' }
+    await refreshCollections()
+  } catch (error) {
+    console.error('更新集合失败:', error)
+    showToast('更新集合失败: ' + error, 'error')
+  } finally {
+    updating.value = false
   }
 }
 

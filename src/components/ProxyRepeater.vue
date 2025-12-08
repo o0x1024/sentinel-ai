@@ -46,6 +46,22 @@
       <div class="divider my-1 h-0"></div>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuSendRequestToAssistant"
+      >
+        <i class="fas fa-upload text-accent"></i>
+        Send Request to Assistant
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="contextMenuSendResponseToAssistant"
+        :disabled="!currentTab?.response"
+      >
+        <i class="fas fa-download text-accent"></i>
+        Send Response to Assistant
+      </button>
+      <div class="divider my-1 h-0"></div>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="contextMenuPaste"
       >
         <i class="fas fa-paste text-accent"></i>
@@ -359,8 +375,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { emit as tauriEmit } from '@tauri-apps/api/event';
+import { useRouter } from 'vue-router';
 import { dialog } from '@/composables/useDialog';
 import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
+
+const router = useRouter();
 
 // Props
 const props = defineProps<{
@@ -759,6 +779,82 @@ function contextMenuClear() {
   hideContextMenu();
   if (!currentTab.value) return;
   currentTab.value.rawRequest = '';
+}
+
+// 发送到 AI 助手
+type SendType = 'request' | 'response' | 'both';
+
+async function sendToAssistant(type: SendType) {
+  if (!currentTab.value) return;
+  
+  // 从 rawRequest 解析请求信息
+  const lines = currentTab.value.rawRequest.split(/\r\n|\r|\n/);
+  const firstLine = lines[0];
+  const methodMatch = firstLine.match(/^(\w+)\s+(\S+)/);
+  const method = methodMatch ? methodMatch[1] : 'GET';
+  const path = methodMatch ? methodMatch[2] : '/';
+  
+  // 解析请求头
+  const requestHeaders: Record<string, string> = {};
+  let inBody = false;
+  const bodyLines: string[] = [];
+  
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!inBody && line === '') {
+      inBody = true;
+      continue;
+    }
+    if (!inBody) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex > 0) {
+        const key = line.substring(0, colonIndex).trim();
+        const value = line.substring(colonIndex + 1).trim();
+        requestHeaders[key] = value;
+      }
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  
+  const requestBody = bodyLines.join('\n').trim();
+  const url = buildFullUrl();
+  
+  // 构建流量数据
+  const trafficData = {
+    id: Date.now(),
+    url,
+    method,
+    host: currentTab.value.targetHost,
+    status_code: currentTab.value.response?.statusCode || 0,
+    request_headers: JSON.stringify(requestHeaders),
+    request_body: requestBody || undefined,
+    response_headers: currentTab.value.response ? JSON.stringify(currentTab.value.response.headers) : undefined,
+    response_body: currentTab.value.response?.body || undefined,
+  };
+  
+  // 发送全局事件
+  await tauriEmit('traffic:send-to-assistant', { requests: [trafficData], type });
+  
+  const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量';
+  dialog.toast.success(`已发送${typeText}到 AI 助手`);
+  
+  // 跳转到 AI 助手页面
+  router.push('/ai-assistant');
+}
+
+function contextMenuSendRequestToAssistant() {
+  hideContextMenu();
+  sendToAssistant('request');
+}
+
+function contextMenuSendResponseToAssistant() {
+  hideContextMenu();
+  if (!currentTab.value?.response) {
+    dialog.toast.warning('暂无响应数据');
+    return;
+  }
+  sendToAssistant('response');
 }
 
 function buildFullUrl(): string {

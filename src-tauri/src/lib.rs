@@ -366,6 +366,37 @@ pub fn run() {
                     tracing::error!("Cannot register agent plugin provider: global tool system not available");
                 }
                 
+                // 注册工作流工具到全局工具系统
+                if let Ok(tool_system) = crate::tools::get_global_tool_system() {
+                    let tool_manager = tool_system.get_manager();
+                    let workflow_provider = Box::new(
+                        crate::tools::WorkflowToolProvider::new(db_service.clone(), tool_manager.clone())
+                            .with_app_handle(handle.clone())
+                    );
+                    let mut manager_guard = tool_manager.write().await;
+                    if let Err(e) = manager_guard.register_provider(workflow_provider).await {
+                        tracing::error!("Failed to register workflow tool provider: {}", e);
+                    } else {
+                        tracing::info!("Workflow tool provider registered successfully");
+                    }
+                    drop(manager_guard);
+
+                    // 调试：列出已注册的工作流工具
+                    let all_tools = tool_system.list_tools().await;
+                    let workflow_tools: Vec<String> = all_tools
+                        .iter()
+                        .filter(|t| t.name.starts_with("workflow::"))
+                        .map(|t| format!("{}(available={})", t.name, t.available))
+                        .collect();
+                    tracing::info!(
+                        "Debug: After WorkflowToolProvider registration, discovered {} workflow tools => {:?}",
+                        workflow_tools.len(),
+                        workflow_tools
+                    );
+                } else {
+                    tracing::error!("Cannot register workflow tool provider: global tool system not available");
+                }
+                
                 // 将 passive_state 保存以便后续 manage
                 let passive_state_for_manage = (*passive_state).clone();
 
@@ -904,6 +935,7 @@ pub fn run() {
             sentinel_workflow::commands::save_workflow_definition,
             sentinel_workflow::commands::get_workflow_definition,
             sentinel_workflow::commands::list_workflow_definitions,
+            sentinel_workflow::commands::list_workflow_tools,
             sentinel_workflow::commands::delete_workflow_definition,
             sentinel_workflow::commands::validate_workflow_graph,
             // 工作流调度相关命令
@@ -923,6 +955,7 @@ pub fn run() {
             // 前端兼容的RAG命令
             rag_commands::get_rag_status,
             rag_commands::create_rag_collection,
+            rag_commands::update_rag_collection,
             rag_commands::query_rag,
             rag_commands::delete_rag_collection,
             // RAG配置命令

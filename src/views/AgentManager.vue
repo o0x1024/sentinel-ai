@@ -499,6 +499,30 @@
               <div v-if="pluginTools.length === 0" class="text-xs opacity-60 col-span-3">暂无插件工具，可前往插件管理创建</div>
             </div>
           </div>
+
+          <!-- 工作流工具分组 -->
+          <div class="pt-2 border-t border-base-300">
+            <div class="flex items-center gap-2 text-xs font-semibold opacity-70 mb-2">
+              <button type="button" class="btn btn-ghost btn-xs px-1" @click="toggleWorkflowToolsCollapse">
+                <i :class="['fas', showWorkflowTools ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
+              </button>
+              <input type="checkbox" class="checkbox checkbox-xs"
+                     :checked="workflowToolsAllSelected"
+                     :indeterminate="workflowToolsSomeSelected && !workflowToolsAllSelected"
+                     @change="toggleWorkflowToolsGroup($event)"/>
+              <span>工作流工具</span>
+              <span class="text-xs opacity-50">({{ workflowTools.length }})</span>
+            </div>
+            <div v-show="showWorkflowTools" class="grid grid-cols-3 gap-2">
+              <label v-for="wf in workflowTools" :key="'workflow-' + wf.id" class="label cursor-pointer gap-2 text-sm px-3 py-2 rounded hover:bg-base-200">
+                <input type="checkbox" class="checkbox checkbox-sm"
+                       :checked="editingAgent.tools.allow.includes('workflow::' + wf.id)"
+                       @change="toggleWorkflowTool(wf.id, $event)"/>
+                <span class="flex-1" :title="wf.description || wf.name">{{ wf.name }}</span>
+              </label>
+              <div v-if="workflowTools.length === 0" class="text-xs opacity-60 col-span-3">暂无工作流工具，可在工作流工作室中设置</div>
+            </div>
+          </div>
         </div>
 
         <div v-if="!isCreating" class="text-xs opacity-60">ID: {{ editingAgent.id }}</div>
@@ -717,8 +741,10 @@ const toolsCatalog = ref<any[]>([])
 const builtinTools = ref<any[]>([])
 const mcpToolGroups = ref<Array<{ connection: string, tools: any[] }>>([])
 const pluginTools = ref<any[]>([]) // 插件工具列表
+const workflowTools = ref<any[]>([]) // 工作流工具列表
 const showBuiltin = ref(true)
 const showPluginTools = ref(true) // 插件工具展开状态
+const showWorkflowTools = ref(true) // 工作流工具展开状态
 const collapsedGroups = ref<Record<string, boolean>>({})
 const promptTemplates = ref<any[]>([])
 const selectedPlannerTemplateEdit = ref<number | null>(null)
@@ -868,6 +894,17 @@ const loadPluginTools = async () => {
   }
 }
 
+// 加载工作流工具（设为工具的工作流）
+const loadWorkflowTools = async () => {
+  try {
+    const list = await invoke<any[]>('list_workflow_tools')
+    workflowTools.value = list || []
+  } catch (error) {
+    console.error('Failed to load workflow tools:', error)
+    workflowTools.value = []
+  }
+}
+
 const loadPromptTemplates = async () => {
   try {
     promptTemplates.value = await invoke<any[]>('list_prompt_templates_api').catch(() => [])
@@ -894,7 +931,8 @@ const openCreateModal = async () => {
   selectedExecutorTemplateEdit.value = null
   // 刷新工具列表以获取最新数据
   await loadTools()
-  await loadPluginTools() // 确保插件工具列表最新
+  await loadPluginTools()
+  await loadWorkflowTools()
   showEditModal.value = true
 }
 
@@ -905,7 +943,8 @@ const editAgent = async (agent: AgentProfile) => {
   selectedExecutorTemplateEdit.value = agent.prompt_ids?.executor ?? null
   // 刷新工具列表以获取最新数据
   await loadTools()
-  await loadPluginTools() // 确保插件工具列表最新
+  await loadPluginTools()
+  await loadWorkflowTools()
   showEditModal.value = true
 }
 
@@ -1005,6 +1044,12 @@ const getToolTitle = (toolName: string) => {
     const plugin = pluginTools.value.find(p => p.metadata.id === pluginId)
     return plugin ? `${plugin.metadata.name} (插件)` : toolName
   }
+  // 检查是否是工作流工具
+  if (toolName.startsWith('workflow::')) {
+    const workflowId = toolName.substring(10) // 移除 'workflow::' 前缀
+    const workflow = workflowTools.value.find(wf => wf.id === workflowId)
+    return workflow ? `${workflow.name} (工作流)` : toolName
+  }
   // 普通工具
   const tool = toolsCatalog.value.find(t => t.name === toolName)
   return tool?.title || toolName
@@ -1015,7 +1060,8 @@ const allToolsSelected = computed(() => {
   if (!editingAgent.value) return false
   const total = builtinTools.value.length + 
                 mcpToolGroups.value.reduce((acc, g) => acc + g.tools.length, 0) +
-                pluginTools.value.length
+                pluginTools.value.length +
+                workflowTools.value.length
   return total > 0 && editingAgent.value.tools.allow.length >= total
 })
 const someToolsSelected = computed(() => {
@@ -1055,7 +1101,8 @@ const toggleAllTools = (e: Event) => {
     const all = [
       ...builtinTools.value.map(t => t.name),
       ...mcpToolGroups.value.flatMap(g => g.tools.map(t => t.name)),
-      ...pluginTools.value.map(p => `plugin::${p.metadata.id}`)
+      ...pluginTools.value.map(p => `plugin::${p.metadata.id}`),
+      ...workflowTools.value.map(wf => `workflow::${wf.id}`)
     ]
     editingAgent.value.tools.allow = Array.from(new Set(all))
   } else {
@@ -1132,9 +1179,52 @@ const togglePluginTool = (pluginId: string, e: Event) => {
   editingAgent.value.tools.allow = Array.from(set)
 }
 
+// 工作流工具相关计算属性
+const workflowToolsAllSelected = computed(() => {
+  if (!editingAgent.value || workflowTools.value.length === 0) return false
+  const workflowNames = workflowTools.value.map(wf => `workflow::${wf.id}`)
+  return workflowNames.every(n => editingAgent.value!.tools.allow.includes(n))
+})
+
+const workflowToolsSomeSelected = computed(() => {
+  if (!editingAgent.value || workflowTools.value.length === 0) return false
+  const workflowNames = workflowTools.value.map(wf => `workflow::${wf.id}`)
+  return workflowNames.some(n => editingAgent.value!.tools.allow.includes(n))
+})
+
+// 工作流工具切换方法
+const toggleWorkflowToolsCollapse = () => { showWorkflowTools.value = !showWorkflowTools.value }
+
+const toggleWorkflowToolsGroup = (e: Event) => {
+  if (!editingAgent.value) return
+  const checked = (e.target as HTMLInputElement).checked
+  const workflowNames = workflowTools.value.map(wf => `workflow::${wf.id}`)
+  const set = new Set(editingAgent.value.tools.allow)
+  if (checked) {
+    workflowNames.forEach(n => set.add(n))
+  } else {
+    workflowNames.forEach(n => set.delete(n))
+  }
+  editingAgent.value.tools.allow = Array.from(set)
+}
+
+const toggleWorkflowTool = (workflowId: string, e: Event) => {
+  if (!editingAgent.value) return
+  const checked = (e.target as HTMLInputElement).checked
+  const toolName = `workflow::${workflowId}`
+  const set = new Set(editingAgent.value.tools.allow)
+  if (checked) {
+    set.add(toolName)
+  } else {
+    set.delete(toolName)
+  }
+  editingAgent.value.tools.allow = Array.from(set)
+}
+
 const expandAllTools = () => {
   showBuiltin.value = true
   showPluginTools.value = true
+  showWorkflowTools.value = true
   const map: Record<string, boolean> = {}
   for (const g of mcpToolGroups.value) map[g.connection] = false
   collapsedGroups.value = map
@@ -1142,6 +1232,7 @@ const expandAllTools = () => {
 const collapseAllTools = () => {
   showBuiltin.value = false
   showPluginTools.value = false
+  showWorkflowTools.value = false
   const map: Record<string, boolean> = {}
   for (const g of mcpToolGroups.value) map[g.connection] = true
   collapsedGroups.value = map
@@ -1151,7 +1242,7 @@ const collapseAllTools = () => {
 const refreshTools = async () => {
   isRefreshingTools.value = true
   try {
-    await Promise.all([loadTools(), loadPluginTools()])
+    await Promise.all([loadTools(), loadPluginTools(), loadWorkflowTools()])
   } finally {
     isRefreshingTools.value = false
   }
@@ -1175,7 +1266,7 @@ const resetAgent = (agent: AgentProfile) => {
 }
 
 onMounted(async () => {
-  await Promise.all([loadAgents(), loadTools(), loadPluginTools(), loadPromptTemplates(), loadPromptGroups()])
+  await Promise.all([loadAgents(), loadTools(), loadPluginTools(), loadWorkflowTools(), loadPromptTemplates(), loadPromptGroups()])
   
   // 监听插件变化事件
   listen('plugin:changed', async () => {
@@ -1187,6 +1278,12 @@ onMounted(async () => {
     console.log('AgentManager: MCP tools changed, refreshing tools...')
     await loadTools()
     await loadPluginTools()
+  })
+  
+  // 监听工作流变更事件
+  listen('workflow:changed', async () => {
+    console.log('AgentManager: Workflow tools changed, refreshing...')
+    await loadWorkflowTools()
   })
 })
 

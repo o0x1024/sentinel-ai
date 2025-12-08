@@ -80,7 +80,7 @@ pub struct WorkflowGraph {
     pub credentials: Vec<CredentialRef>,
 }
 
-fn graph_to_definition(graph: &WorkflowGraph) -> WorkflowDefinition {
+pub fn graph_to_definition(graph: &WorkflowGraph) -> WorkflowDefinition {
     let mut depends_map: HashMap<String, Vec<String>> = HashMap::new();
     for e in &graph.edges {
         depends_map.entry(e.to_node.clone()).or_default().push(e.from_node.clone());
@@ -120,7 +120,7 @@ fn graph_to_definition(graph: &WorkflowGraph) -> WorkflowDefinition {
     }
 }
 
-fn topo_order(nodes: &[NodeDef], edges: &[(String, String)]) -> Vec<String> {
+pub fn topo_order(nodes: &[NodeDef], edges: &[(String, String)]) -> Vec<String> {
     let mut indeg: HashMap<String, usize> = nodes.iter().map(|n| (n.id.clone(), 0)).collect();
     let mut adj: HashMap<String, Vec<String>> = nodes.iter().map(|n| (n.id.clone(), vec![])).collect();
     for (u, v) in edges {
@@ -175,7 +175,7 @@ fn convert_core_to_rag(core: CoreRagConfig) -> RagConfig {
 }
 
 /// 执行工作流步骤（供 start_workflow_run 和调度器共用）
-async fn execute_workflow_steps(
+pub async fn execute_workflow_steps(
     execution_id: String,
     graph: WorkflowGraph,
     def: WorkflowDefinition,
@@ -723,6 +723,7 @@ pub async fn save_workflow_definition(
     description: Option<String>,
     tags: Option<String>,
     is_template: bool,
+    is_tool: Option<bool>,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let graph_json = serde_json::to_string(&graph).map_err(|e| e.to_string())?;
@@ -734,6 +735,7 @@ pub async fn save_workflow_definition(
         &graph_json,
         tags.as_deref(),
         is_template,
+        is_tool.unwrap_or(false),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -754,6 +756,14 @@ pub async fn list_workflow_definitions(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<serde_json::Value>, String> {
     db.list_workflow_definitions(is_template).await.map_err(|e| e.to_string())
+}
+
+/// 列出所有标记为工具的工作流
+#[tauri::command]
+pub async fn list_workflow_tools(
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    db.list_workflow_tools().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

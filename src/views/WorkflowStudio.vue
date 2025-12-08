@@ -210,7 +210,7 @@
       </div>
 
       <div :class="sidebar_collapsed ? 'col-span-11' : 'col-span-9'" class="transition-all duration-300">
-        <FlowchartVisualization ref="flow_ref" @nodeClick="on_node_click" @newWorkflow="on_new_workflow" :highlightedNodes="highlighted_nodes" />
+        <FlowchartVisualization ref="flow_ref" @nodeClick="on_node_click" @newWorkflow="on_new_workflow" @change="on_flowchart_change" :highlightedNodes="highlighted_nodes" />
       </div>
     </div>
 
@@ -384,6 +384,17 @@
               <span class="label-text">版本</span>
             </label>
             <input v-model="workflow_version" class="input input-bordered" placeholder="v1.0.0" />
+          </div>
+          
+          <!-- 设置为工具 -->
+          <div class="form-control">
+            <label class="label cursor-pointer">
+              <span class="label-text">设为AI工具</span>
+              <input type="checkbox" v-model="workflow_is_tool" class="toggle toggle-primary" />
+            </label>
+            <label class="label py-0">
+              <span class="label-text-alt text-base-content/60">启用后，此工作流可作为AI助手的工具被调用</span>
+            </label>
           </div>
           
           <div class="stats shadow w-full">
@@ -745,6 +756,7 @@ const workflow_id = ref(`wf_${Date.now()}`)
 const workflow_description = ref('')
 const workflow_tags = ref('')
 const workflow_version = ref('v1.0.0')
+const workflow_is_tool = ref(false) // 是否设为AI工具
 const workflow_list = ref<any[]>([])
 const schedule_running = ref(false) // 定时调度是否运行中
 const schedule_info = ref<any>(null) // 当前调度信息
@@ -760,7 +772,9 @@ const highlighted_nodes = ref<Set<string>>(new Set())
 const step_results = ref<Record<string, any>>({}) // 存储当前执行的步骤结果
 const show_result_panel = ref(false)
 const selected_step_result = ref<{ step_id: string, result: any } | null>(null)
-
+const auto_save_timer = ref<ReturnType<typeof setTimeout> | null>(null)
+const is_auto_saving = ref(false)
+const AUTO_SAVE_DELAY = 2000 // 2秒防抖延迟
 
 defineOptions({
   name: 'WorkflowStudio'
@@ -933,6 +947,7 @@ const do_new_workflow = () => {
   workflow_description.value = ''
   workflow_tags.value = ''
   workflow_version.value = 'v1.0.0'
+  workflow_is_tool.value = false
   flow_ref.value?.resetFlowchart()
   execution_history.value = []
   selected_execution.value = null
@@ -1357,7 +1372,7 @@ const check_schedule_status = async () => {
   }
 }
 
-const save_workflow = async () => {
+const save_workflow = async (silent = false) => {
   const toast = useToast()
   const graph = build_graph()
   graph.id = workflow_id.value
@@ -1368,14 +1383,45 @@ const save_workflow = async () => {
       graph,
       description: workflow_description.value || null,
       tags: workflow_tags.value || null,
-      isTemplate: false
+      isTemplate: false,
+      isTool: workflow_is_tool.value
     })
-    add_log('SUCCESS', `工作流已保存: ${workflow_name.value}`)
-    toast.success('工作流已保存')
+    if (!silent) {
+      add_log('SUCCESS', `工作流已保存: ${workflow_name.value}${workflow_is_tool.value ? ' (已设为工具)' : ''}`)
+      toast.success('工作流已保存')
+    }
   } catch (e: any) {
     add_log('ERROR', `保存失败: ${e}`)
-    toast.error(`保存失败：${e}`)
+    if (!silent) {
+      toast.error(`保存失败：${e}`)
+    }
   }
+}
+
+// 自动保存（防抖）
+const trigger_auto_save = () => {
+  // 如果工作流名称为空，不自动保存
+  if (!workflow_name.value.trim()) return
+  
+  // 如果工作流正在运行，不自动保存
+  if (workflow_running.value) return
+  
+  // 清除之前的定时器
+  if (auto_save_timer.value) {
+    clearTimeout(auto_save_timer.value)
+  }
+  
+  // 设置新的定时器
+  auto_save_timer.value = setTimeout(async () => {
+    is_auto_saving.value = true
+    await save_workflow(true) // 静默保存
+    is_auto_saving.value = false
+  }, AUTO_SAVE_DELAY)
+}
+
+// 流程图变化处理
+const on_flowchart_change = () => {
+  trigger_auto_save()
 }
 
 const load_workflow = async (id: string) => {
@@ -1388,6 +1434,7 @@ const load_workflow = async (id: string) => {
       workflow_name.value = graph.name
       workflow_description.value = data.description || ''
       workflow_tags.value = data.tags || ''
+      workflow_is_tool.value = data.is_tool || false
       
       // 清空画布
       flow_ref.value?.resetFlowchart()
@@ -1493,6 +1540,7 @@ const export_workflow_json = () => {
       metadata: {
         description: workflow_description.value,
         tags: workflow_tags.value,
+        is_tool: workflow_is_tool.value,
         exported_at: new Date().toISOString(),
         exported_by: 'Sentinel AI Workflow Studio'
       }
@@ -1547,6 +1595,7 @@ const import_workflow_json = async (event: Event) => {
     workflow_description.value = data.metadata?.description || ''
     workflow_tags.value = data.metadata?.tags || ''
     workflow_version.value = graph.version || 'v1.0.0'
+    workflow_is_tool.value = data.metadata?.is_tool || false
     
     // 清空画布
     flow_ref.value?.resetFlowchart()
@@ -1817,7 +1866,8 @@ const save_current_as_template = async () => {
       graph,
       description: workflow_description.value || null,
       tags: workflow_tags.value || null,
-      isTemplate: true
+      isTemplate: true,
+      isTool: false // 模板不设为工具
     })
     add_log('SUCCESS', `已保存为模板: ${workflow_name.value}`)
     toast.success('已保存为模板')
@@ -1894,6 +1944,11 @@ watch(show_template_dialog, (newVal) => {
     load_template_list()
   }
 })
+
+// 监听工作流元数据变化，触发自动保存
+watch([workflow_name, workflow_description, workflow_tags, workflow_version, workflow_is_tool], () => {
+  trigger_auto_save()
+}, { deep: true })
 
 // 搜索变化时清除高亮
 const on_search_change = () => {
@@ -2003,7 +2058,13 @@ onMounted(async () => {
   })
 })
 
-onUnmounted(() => { wf_events.unsubscribe_all() })
+onUnmounted(() => {
+  wf_events.unsubscribe_all()
+  // 清除自动保存定时器
+  if (auto_save_timer.value) {
+    clearTimeout(auto_save_timer.value)
+  }
+})
 </script>
 
 <style scoped>

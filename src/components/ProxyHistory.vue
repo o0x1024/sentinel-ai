@@ -17,6 +17,21 @@
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="sendRequestToAssistantFromMenu"
+      >
+        <i class="fas fa-upload text-accent"></i>
+        Send Request to Assistant
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="sendResponseToAssistantFromMenu"
+      >
+        <i class="fas fa-download text-accent"></i>
+        Send Response to Assistant
+      </button>
+      <div class="divider my-1 h-0"></div>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="copyUrl"
       >
         <i class="fas fa-link text-info"></i>
@@ -60,6 +75,20 @@
       >
         <i class="fas fa-redo text-primary"></i>
         Send to Repeater
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="detailSendRequestToAssistant"
+      >
+        <i class="fas fa-upload text-accent"></i>
+        Send Request to Assistant
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="detailSendResponseToAssistant"
+      >
+        <i class="fas fa-download text-accent"></i>
+        Send Response to Assistant
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -252,6 +281,60 @@
           <span class="text-xs truncate">{{ filterSummary }}</span>
         </button>
         
+        <!-- 多选模式按钮 -->
+        <button 
+          @click="toggleMultiSelectMode" 
+          class="btn btn-sm btn-ghost"
+          :class="{ 'btn-active btn-primary': isMultiSelectMode }"
+          title="多选模式"
+        >
+          <i class="fas fa-check-square"></i>
+        </button>
+        
+        <!-- 多选模式下的操作按钮 -->
+        <template v-if="isMultiSelectMode">
+          <button 
+            @click="selectAllVisible" 
+            class="btn btn-sm btn-ghost"
+            title="全选"
+          >
+            <i class="fas fa-check-double"></i>
+          </button>
+          <button 
+            @click="clearSelection" 
+            class="btn btn-sm btn-ghost"
+            title="取消选择"
+            :disabled="selectedRequests.size === 0"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+          <div class="dropdown dropdown-end">
+            <label 
+              tabindex="0" 
+              class="btn btn-sm btn-accent gap-1"
+              :class="{ 'btn-disabled': selectedRequests.size === 0 }"
+            >
+              <i class="fas fa-brain"></i>
+              <span class="text-xs">发送 ({{ selectedRequests.size }})</span>
+              <i class="fas fa-chevron-down text-xs"></i>
+            </label>
+            <ul tabindex="0" class="dropdown-content z-[100] menu p-2 shadow bg-base-100 rounded-box w-48">
+              <li>
+                <a @click="sendSelectedToAssistant('request')" class="flex items-center gap-2">
+                  <i class="fas fa-upload text-accent"></i>
+                  发送请求
+                </a>
+              </li>
+              <li>
+                <a @click="sendSelectedToAssistant('response')" class="flex items-center gap-2">
+                  <i class="fas fa-download text-accent"></i>
+                  发送响应
+                </a>
+              </li>
+            </ul>
+          </div>
+        </template>
+        
         <!-- 快捷操作按钮 -->
         <button @click="refreshRequests" class="btn btn-sm btn-ghost" title="刷新">
           <i :class="['fas fa-sync-alt', { 'fa-spin': isLoading }]"></i>
@@ -305,6 +388,20 @@
               class="sticky top-0 z-10 flex bg-base-200 border-b-2 border-base-300 font-semibold table-row-text"
               :style="{ height: headerHeight + 'px', minWidth: 'max-content' }"
             >
+              <!-- 多选复选框列 -->
+              <div 
+                v-if="isMultiSelectMode"
+                class="flex items-center justify-center px-2 border-r border-base-300"
+                style="width: 40px; min-width: 40px;"
+              >
+                <input 
+                  type="checkbox" 
+                  class="checkbox checkbox-xs checkbox-primary"
+                  :checked="selectedRequests.size > 0 && selectedRequests.size === filteredRequests.length"
+                  :indeterminate="selectedRequests.size > 0 && selectedRequests.size < filteredRequests.length"
+                  @change="selectedRequests.size === filteredRequests.length ? clearSelection() : selectAllVisible()"
+                />
+              </div>
               <div 
                 v-for="col in visibleColumns" 
                 :key="col.id"
@@ -324,15 +421,33 @@
               v-for="item in visibleItems" 
               :key="item.data.id"
               class="absolute left-0 right-0 flex hover:bg-base-200 cursor-pointer border-b border-base-300 table-row-text"
-              :class="{ 'bg-primary/10': selectedRequest?.id === item.data.id }"
+              :class="{ 
+                'bg-primary/10': selectedRequest?.id === item.data.id,
+                'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data)
+              }"
               :style="{ 
                 top: (item.offset + headerHeight) + 'px', 
                 height: itemHeight + 'px',
                 minWidth: 'max-content'
               }"
-              @click="selectRequest(item.data)"
+              @click="isMultiSelectMode ? toggleSelectRequest(item.data) : selectRequest(item.data)"
               @contextmenu.prevent="showContextMenu($event, item.data)"
             >
+              <!-- 多选复选框列 -->
+              <div 
+                v-if="isMultiSelectMode"
+                class="flex items-center justify-center px-2 border-r border-base-300"
+                style="width: 40px; min-width: 40px;"
+                @click.stop="toggleSelectRequest(item.data)"
+              >
+                <input 
+                  type="checkbox" 
+                  class="checkbox checkbox-xs checkbox-accent"
+                  :checked="isRequestSelected(item.data)"
+                  @click.stop
+                  @change="toggleSelectRequest(item.data)"
+                />
+              </div>
               <div 
                 v-for="col in visibleColumns" 
                 :key="col.id"
@@ -497,9 +612,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, inject } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
+import { useRouter } from 'vue-router';
 import { dialog } from '@/composables/useDialog';
 import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
+
+const router = useRouter();
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0));
@@ -512,7 +630,12 @@ defineOptions({
 // Emit 声明
 const emit = defineEmits<{
   (e: 'sendToRepeater', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
+  (e: 'sendToAssistant', requests: ProxyRequest[]): void
 }>();
+
+// 多选状态
+const selectedRequests = ref<Set<number>>(new Set());
+const isMultiSelectMode = ref(false);
 
 // 历史列表右键菜单状态
 const contextMenu = ref({
@@ -1701,6 +1824,97 @@ function openInBrowser() {
 function clearHistoryFromMenu() {
   hideContextMenu();
   clearHistory();
+}
+
+// 多选相关方法
+function toggleMultiSelectMode() {
+  isMultiSelectMode.value = !isMultiSelectMode.value;
+  if (!isMultiSelectMode.value) {
+    selectedRequests.value.clear();
+  }
+}
+
+function toggleSelectRequest(request: ProxyRequest) {
+  if (selectedRequests.value.has(request.id)) {
+    selectedRequests.value.delete(request.id);
+  } else {
+    selectedRequests.value.add(request.id);
+  }
+}
+
+function selectAllVisible() {
+  filteredRequests.value.forEach(req => {
+    selectedRequests.value.add(req.id);
+  });
+}
+
+function clearSelection() {
+  selectedRequests.value.clear();
+}
+
+function isRequestSelected(request: ProxyRequest): boolean {
+  return selectedRequests.value.has(request.id);
+}
+
+// 发送到 AI 助手 - type: 'request' | 'response' | 'both'
+type SendType = 'request' | 'response' | 'both';
+
+async function sendSelectedToAssistant(type: SendType = 'both') {
+  const selected = filteredRequests.value.filter(req => selectedRequests.value.has(req.id));
+  if (selected.length === 0) {
+    dialog.toast.warning('请先选择要发送的请求');
+    return;
+  }
+  
+  // 发送全局事件通知 AI 助手
+  await tauriEmit('traffic:send-to-assistant', { requests: selected, type });
+  emit('sendToAssistant', selected);
+  
+  const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量';
+  dialog.toast.success(`已发送 ${selected.length} 条${typeText}到 AI 助手`);
+  
+  // 清除选择
+  selectedRequests.value.clear();
+  isMultiSelectMode.value = false;
+  
+  // 跳转到 AI 助手页面
+  router.push('/ai-assistant');
+}
+
+async function sendSingleToAssistant(request: ProxyRequest, type: SendType = 'both') {
+  // 发送全局事件通知 AI 助手
+  await tauriEmit('traffic:send-to-assistant', { requests: [request], type });
+  emit('sendToAssistant', [request]);
+  
+  const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量';
+  dialog.toast.success(`已发送${typeText}到 AI 助手`);
+  
+  // 跳转到 AI 助手页面
+  router.push('/ai-assistant');
+}
+
+function sendRequestToAssistantFromMenu() {
+  if (!contextMenu.value.request) return;
+  sendSingleToAssistant(contextMenu.value.request, 'request');
+  hideContextMenu();
+}
+
+function sendResponseToAssistantFromMenu() {
+  if (!contextMenu.value.request) return;
+  sendSingleToAssistant(contextMenu.value.request, 'response');
+  hideContextMenu();
+}
+
+function detailSendRequestToAssistant() {
+  hideDetailContextMenu();
+  if (!selectedRequest.value) return;
+  sendSingleToAssistant(selectedRequest.value, 'request');
+}
+
+function detailSendResponseToAssistant() {
+  hideDetailContextMenu();
+  if (!selectedRequest.value) return;
+  sendSingleToAssistant(selectedRequest.value, 'response');
 }
 
 function formatRequest(request: ProxyRequest, tab: string): string {

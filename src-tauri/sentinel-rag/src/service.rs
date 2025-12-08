@@ -360,7 +360,7 @@ impl<D: RagDatabase> RagService<D> {
             &target_collection_id,
             &format!("manual://{}", title),
             title,
-            "", // 内容在chunks中
+            content, // 传入实际内容用于计算大小
             metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()).as_deref().unwrap_or(""),
         ).await {
             Ok(id) => id,

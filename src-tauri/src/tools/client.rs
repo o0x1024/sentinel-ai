@@ -791,7 +791,83 @@ impl McpSessionImpl {
         Ok(())
     }
 
+    /// Extract MCP error code from error message (e.g., -32602 from "Mcp error: -32602: ...")
+    fn extract_mcp_error_code(error_msg: &str) -> Option<i32> {
+        // Match patterns like "-32602", "error: -32602", "code -32602"
+        let patterns = [
+            r"-32\d{3}",  // Standard JSON-RPC error codes
+            r"error[:\s]+(-?\d+)",
+            r"code[:\s]+(-?\d+)",
+        ];
+        
+        for pattern in &patterns {
+            if let Ok(re) = regex::Regex::new(pattern) {
+                if let Some(captures) = re.captures(error_msg) {
+                    let code_str = captures.get(1).map(|m| m.as_str())
+                        .or_else(|| captures.get(0).map(|m| m.as_str()));
+                    if let Some(code_str) = code_str {
+                        if let Ok(code) = code_str.parse::<i32>() {
+                            return Some(code);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
 
+    /// Try to kill stale MCP server process by command name
+    #[cfg(unix)]
+    async fn try_kill_stale_process(cmd: &str) {
+        use std::process::Command as StdCommand;
+        
+        // Extract the actual process name from the command
+        let process_name = cmd.split('/').last().unwrap_or(cmd);
+        
+        // Use pkill to try to terminate processes (best effort, ignore errors)
+        let result = StdCommand::new("pkill")
+            .args(["-f", process_name])
+            .output();
+        
+        match result {
+            Ok(output) => {
+                if output.status.success() {
+                    info!("Successfully sent kill signal to stale process matching: {}", process_name);
+                } else {
+                    debug!("No stale process found matching: {} (this is normal)", process_name);
+                }
+            }
+            Err(e) => {
+                debug!("Failed to run pkill (this is usually fine): {}", e);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    async fn try_kill_stale_process(cmd: &str) {
+        use std::process::Command as StdCommand;
+        
+        // Extract the actual process name from the command
+        let process_name = cmd.split(['/', '\\']).last().unwrap_or(cmd);
+        
+        // Use taskkill to try to terminate processes (best effort, ignore errors)
+        let result = StdCommand::new("taskkill")
+            .args(["/F", "/IM", &format!("{}*", process_name)])
+            .output();
+        
+        match result {
+            Ok(output) => {
+                if output.status.success() {
+                    info!("Successfully terminated stale process matching: {}", process_name);
+                } else {
+                    debug!("No stale process found matching: {} (this is normal)", process_name);
+                }
+            }
+            Err(e) => {
+                debug!("Failed to run taskkill (this is usually fine): {}", e);
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -861,13 +937,15 @@ impl McpSession for McpSessionImpl {
                             }
                             
                             // 使用智能错误分类器进行错误分析
+                            // 从错误消息中提取 MCP 错误代码（如 -32602）
+                            let error_code = Self::extract_mcp_error_code(&err_str);
                             let error_context = ErrorContext {
                                 error_message: e.to_string(),
-                                error_code: None, // TODO: 提取实际错误代码
+                                error_code,
                                 error_type: None,
                                 tool_name: params.name.to_string(),
                                 connection_name: self.config.name.clone(),
-                                retry_count: 0, // TODO: 跟踪实际重试次数
+                                retry_count: 0,
                                 metadata: std::collections::HashMap::new(),
                             };
                             
@@ -976,9 +1054,11 @@ impl McpSession for McpSessionImpl {
                             warn!("Failed to call tool via MCP server (type 2): {}", e);
                             
                             // 使用智能错误分类器进行错误分析
+                            let err_str = e.to_string();
+                            let error_code = Self::extract_mcp_error_code(&err_str);
                             let error_context = ErrorContext {
-                                error_message: e.to_string(),
-                                error_code: None,
+                                error_message: err_str,
+                                error_code,
                                 error_type: None,
                                 tool_name: params.name.to_string(),
                                 connection_name: self.config.name.clone(),
@@ -1013,9 +1093,11 @@ impl McpSession for McpSessionImpl {
                             warn!("Failed to call tool via HTTP MCP server: {}", e);
                             
                             // 使用智能错误分类器进行错误分析
+                            let err_str = e.to_string();
+                            let error_code = Self::extract_mcp_error_code(&err_str);
                             let error_context = ErrorContext {
-                                error_message: e.to_string(),
-                                error_code: None,
+                                error_message: err_str,
+                                error_code,
                                 error_type: None,
                                 tool_name: params.name.to_string(),
                                 connection_name: self.config.name.clone(),
@@ -1108,25 +1190,55 @@ impl McpSession for McpSessionImpl {
             self.config.name
         );
 
-        // 强制关闭现有连接并清理资源
-        {
+        // 对于子进程类型，先检测进程状态
+        if matches!(self.config.transport_type, TransportType::ChildProcess | TransportType::Stdio) {
+            // 检查当前服务是否存在且健康
+            let needs_restart = {
+                let service = self.service.read().await;
+                if service.is_none() {
+                    info!("No existing service for {}, will start new process", self.config.name);
+                    true
+                } else {
+                    // 服务存在，检查是否响应
+                    drop(service); // 释放读锁
+                    !self.check_connection_health().await
+                }
+            };
+
+            if needs_restart {
+                info!("MCP server {} needs restart, cleaning up and starting new process", self.config.name);
+                
+                // 清理现有连接
+                {
+                    let mut service = self.service.write().await;
+                    if service.is_some() {
+                        info!("Cleaning up existing connection for: {}", self.config.name);
+                        *service = None;
+                    }
+                }
+                
+                // 等待进程完全退出
+                tokio::time::sleep(Duration::from_millis(800)).await;
+                
+                // 尝试终止可能残留的进程（通过命令名）
+                if let Some(cmd) = &self.config.command {
+                    Self::try_kill_stale_process(cmd).await;
+                }
+                
+                // 额外等待确保系统资源释放
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        } else {
+            // 非子进程类型，直接清理连接
             let mut service = self.service.write().await;
             if service.is_some() {
                 info!("Cleaning up existing connection for: {}", self.config.name);
-                // 强制设置为None，触发Drop清理
                 *service = None;
-                // 等待资源清理
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
         }
         
         *self.connection_status.write().await = ConnectionStatus::Disconnected;
-
-        // 对于子进程类型的连接，额外等待确保进程完全退出
-        if matches!(self.config.transport_type, TransportType::ChildProcess | TransportType::Stdio) {
-            info!("Waiting for child process cleanup for: {}", self.config.name);
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
 
         // 智能重试机制
         let mut retry_count = 0;

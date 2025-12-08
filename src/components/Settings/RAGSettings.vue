@@ -61,6 +61,20 @@
               </select>
             </div>
 
+            <!-- 嵌入服务地址 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">嵌入服务地址</span>
+              </label>
+              <input type="url" class="input input-bordered" 
+                     v-model="ragConfig.embedding_base_url"
+                     @blur="saveRagConfig"
+                     placeholder="http://localhost:1234">
+              <label class="label">
+                <span class="label-text-alt">LM Studio 默认: http://localhost:1234, Ollama 默认: http://localhost:11434</span>
+              </label>
+            </div>
+
             <!-- 嵌入维度 -->
             <div class="form-control">
               <label class="label">
@@ -621,6 +635,27 @@ const availableProviders = computed(() => {
   return props.availableProviders || []
 })
 
+// 获取提供商默认 base_url
+const getDefaultBaseUrl = (provider: string): string => {
+  const providerLower = provider.toLowerCase()
+  switch (providerLower) {
+    case 'lm studio':
+      return 'http://localhost:1234'
+    case 'ollama':
+      return 'http://localhost:11434'
+    case 'openai':
+      return 'https://api.openai.com'
+    case 'deepseek':
+      return 'https://api.deepseek.com'
+    case 'moonshot':
+      return 'https://api.moonshot.cn'
+    case 'zhipu':
+      return 'https://open.bigmodel.cn'
+    default:
+      return ''
+  }
+}
+
 // 提供商变更处理
 const onProviderChange = (stage: string, evt: Event) => {
   const target = evt?.target as HTMLSelectElement | null
@@ -629,6 +664,11 @@ const onProviderChange = (stage: string, evt: Event) => {
   // 当提供商改变时，重置对应的模型选择
   if (stage === 'rag_embedding') {
     ragConfig.value.embedding_model = ''
+    // 自动设置默认 base_url
+    const defaultUrl = getDefaultBaseUrl(provider)
+    if (defaultUrl) {
+      ragConfig.value.embedding_base_url = defaultUrl
+    }
   } else if (stage === 'rag_reranking') {
     ragConfig.value.reranking_model = ''
   }

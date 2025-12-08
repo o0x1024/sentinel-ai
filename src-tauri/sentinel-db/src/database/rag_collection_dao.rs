@@ -98,6 +98,18 @@ pub async fn delete_rag_collection(pool: &SqlitePool, collection_id: &str) -> Re
     Ok(())
 }
 
+pub async fn update_rag_collection(pool: &SqlitePool, collection_id: &str, name: &str, description: Option<&str>) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE rag_collections SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+        .bind(name)
+        .bind(description)
+        .bind(&now)
+        .bind(collection_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn set_rag_collection_active(pool: &SqlitePool, collection_id: &str, active: bool) -> Result<()> {
     sqlx::query("UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?")
         .bind(if active { 1 } else { 0 })

@@ -18,6 +18,7 @@ pub mod mapping {
 pub mod mcp_provider;
 pub mod passive_provider; // 被动扫描工具提供者
 pub mod agent_plugin_provider; // Agent插件工具提供者
+pub mod workflow_provider; // 工作流工具提供者
 pub mod plugin_parser; // 插件代码解析器
 pub mod passive_integration; // 被动扫描工具集成
 pub mod vision_explorer_provider; // VisionExplorer 工具提供者
@@ -59,6 +60,7 @@ pub use builtin::BuiltinToolProvider;
 pub use mcp_provider::{create_mcp_tool_provider, McpToolProvider};
 pub use passive_provider::PassiveToolProvider;
 pub use agent_plugin_provider::AgentPluginProvider;
+pub use workflow_provider::WorkflowToolProvider;
 pub use passive_integration::register_passive_tools;
 pub use vision_explorer_provider::{
     VisionExplorerProvider, VisionExploreTool, VisionExploreRuntimeConfig,

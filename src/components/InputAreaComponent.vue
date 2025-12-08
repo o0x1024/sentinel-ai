@@ -4,6 +4,52 @@
 
     <!-- Input area (refactored) -->
     <div class="px-4 pb-3 pt-2">
+      <!-- 流量引用显示区 -->
+      <div v-if="props.referencedTraffic && props.referencedTraffic.length > 0" class="mb-2">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs text-base-content/60 flex items-center gap-1">
+            <i class="fas fa-network-wired text-accent"></i>
+            引用的流量 ({{ props.referencedTraffic.length }})
+          </span>
+          <button 
+            @click="emit('clear-traffic')"
+            class="btn btn-xs btn-ghost text-base-content/60 hover:text-error"
+            title="清除所有引用"
+          >
+            <i class="fas fa-times"></i>
+            清除
+          </button>
+        </div>
+        <div class="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+          <div
+            v-for="(traffic, idx) in props.referencedTraffic"
+            :key="traffic.id"
+            class="group relative flex items-center gap-2 px-2 py-1 bg-accent/10 border border-accent/30 rounded-lg text-xs"
+          >
+            <!-- 类型标签 -->
+            <span :class="['badge badge-xs', getTypeBadgeClass(traffic.sendType)]">
+              {{ getTypeLabel(traffic.sendType) }}
+            </span>
+            <span :class="['badge badge-xs', getMethodBadgeClass(traffic.method)]">
+              {{ traffic.method }}
+            </span>
+            <span class="text-base-content/80 truncate max-w-40" :title="traffic.url">
+              {{ traffic.host }}{{ getUrlPath(traffic.url) }}
+            </span>
+            <span v-if="traffic.sendType !== 'request'" :class="['badge badge-xs', getStatusBadgeClass(traffic.status_code)]">
+              {{ traffic.status_code || 'N/A' }}
+            </span>
+            <button
+              @click="emit('remove-traffic', idx)"
+              class="w-4 h-4 rounded-full bg-error/80 text-error-content opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs ml-1"
+              title="移除"
+            >
+              <i class="fas fa-times text-[10px]"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- 附件预览区（如果有待发附件） -->
       <div v-if="pendingAttachments && pendingAttachments.length > 0" class="mb-2 flex flex-wrap gap-2">
         <div
@@ -96,12 +142,28 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
 
+// 流量引用类型
+type TrafficSendType = 'request' | 'response' | 'both'
+interface ReferencedTraffic {
+  id: number
+  url: string
+  method: string
+  host: string
+  status_code: number
+  request_headers?: string
+  request_body?: string
+  response_headers?: string
+  response_body?: string
+  sendType?: TrafficSendType
+}
+
 const props = defineProps<{
   inputMessage: string
   isLoading: boolean
   showDebugInfo: boolean
   ragEnabled?: boolean
   pendingAttachments?: any[]
+  referencedTraffic?: ReferencedTraffic[]
 }>()
 
 const emit = defineEmits([
@@ -113,7 +175,9 @@ const emit = defineEmits([
   'clear-conversation',
   'toggle-rag',
   'add-attachments',
-  'remove-attachment'
+  'remove-attachment',
+  'remove-traffic',
+  'clear-traffic'
 ])
 
 // removed architecture utilities
@@ -310,6 +374,53 @@ const toMimeType = (mediaType?: string): string => {
 // 移除附件
 const removeAttachment = (index: number) => {
   emit('remove-attachment', index)
+}
+
+// 流量显示辅助函数
+const getMethodBadgeClass = (method: string): string => {
+  switch (method?.toUpperCase()) {
+    case 'GET': return 'badge-info'
+    case 'POST': return 'badge-success'
+    case 'PUT': return 'badge-warning'
+    case 'DELETE': return 'badge-error'
+    case 'PATCH': return 'badge-accent'
+    default: return 'badge-ghost'
+  }
+}
+
+const getStatusBadgeClass = (status: number): string => {
+  if (!status || status === 0) return 'badge-ghost'
+  if (status >= 200 && status < 300) return 'badge-success'
+  if (status >= 300 && status < 400) return 'badge-info'
+  if (status >= 400 && status < 500) return 'badge-warning'
+  if (status >= 500) return 'badge-error'
+  return 'badge-ghost'
+}
+
+const getUrlPath = (url: string): string => {
+  try {
+    const urlObj = new URL(url)
+    const path = urlObj.pathname + urlObj.search
+    return path.length > 30 ? path.substring(0, 30) + '...' : path
+  } catch {
+    return url.length > 30 ? url.substring(0, 30) + '...' : url
+  }
+}
+
+const getTypeBadgeClass = (type?: TrafficSendType): string => {
+  switch (type) {
+    case 'request': return 'badge-primary'
+    case 'response': return 'badge-secondary'
+    default: return 'badge-accent'
+  }
+}
+
+const getTypeLabel = (type?: TrafficSendType): string => {
+  switch (type) {
+    case 'request': return 'REQ'
+    case 'response': return 'RES'
+    default: return 'ALL'
+  }
 }
 
 onMounted(() => {

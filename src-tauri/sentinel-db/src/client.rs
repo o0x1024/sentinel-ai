@@ -206,6 +206,9 @@ impl DatabaseClient {
     pub async fn delete_rag_collection(&self, id: &str) -> Result<()> {
         rag_collection_dao::delete_rag_collection(self.pool(), id).await
     }
+    pub async fn update_rag_collection(&self, id: &str, name: &str, description: Option<&str>) -> Result<()> {
+        rag_collection_dao::update_rag_collection(self.pool(), id, name, description).await
+    }
     pub async fn set_rag_collection_active(&self, id: &str, active: bool) -> Result<()> {
         rag_collection_dao::set_rag_collection_active(self.pool(), id, active).await
     }

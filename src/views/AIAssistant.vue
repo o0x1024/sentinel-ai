@@ -207,10 +207,23 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import AIChat from '@/components/AIChat.vue'
 import RoleManagement from '@/components/RoleManagement.vue'
 import { useRoleManagement } from '@/composables/useRoleManagement'
+
+// 流量引用类型
+interface ReferencedTraffic {
+  id: number
+  url: string
+  method: string
+  host: string
+  status_code: number
+  request_headers?: string
+  request_body?: string
+  response_headers?: string
+  response_body?: string
+}
 
 
 defineOptions({
@@ -416,6 +429,9 @@ const handleExecutionCompleted = async (result) => {
 // 定时刷新统计数据
 let statsRefreshTimer: number | null = null
 
+// 流量事件监听器
+let unlistenTraffic: UnlistenFn | null = null
+
 const refreshAgentStatistics = async () => {
   try {
     const agentStats = await invoke<AgentStats>('get_agent_statistics')
@@ -490,6 +506,17 @@ onMounted(async () => {
       }
     })
 
+    // 监听流量发送到助手事件
+    unlistenTraffic = await listen<{ requests: ReferencedTraffic[], type?: 'request' | 'response' | 'both' }>('traffic:send-to-assistant', (event) => {
+      console.log('AIAssistant: Received traffic data:', event.payload)
+      if (event.payload?.requests && aiChatRef.value?.addReferencedTraffic) {
+        const type = event.payload.type || 'both'
+        aiChatRef.value.addReferencedTraffic(event.payload.requests, type)
+        // 自动聚焦到输入框
+        aiChatRef.value.focusInput?.()
+      }
+    })
+
     // 启动定时刷新（每5秒刷新一次统计数据）
     // statsRefreshTimer = window.setInterval(refreshAgentStatistics, 5000)
   } catch (error) {
@@ -497,11 +524,15 @@ onMounted(async () => {
   }
 })
 
-// 清理定时器
+// 清理定时器和事件监听
 onUnmounted(() => {
   if (statsRefreshTimer !== null) {
     clearInterval(statsRefreshTimer)
     statsRefreshTimer = null
+  }
+  if (unlistenTraffic) {
+    unlistenTraffic()
+    unlistenTraffic = null
   }
 })
 </script>

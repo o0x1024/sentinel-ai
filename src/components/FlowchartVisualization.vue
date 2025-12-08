@@ -295,6 +295,7 @@ const emit = defineEmits<{
     nodeClick: [node: FlowchartNode]
     connectionClick: [connection: FlowchartConnection]
     newWorkflow: []
+    change: [] // 流程图发生变化时触发
 }>()
 
 // 响应式数据
@@ -567,6 +568,7 @@ const duplicateNode = (node: FlowchartNode) => {
     saveHistory()
     nodes.value.push(newNode)
     updateConnections()
+    emit('change')
 }
 
 // 删除节点
@@ -582,6 +584,7 @@ const removeNode = (nodeId: string) => {
         }
     })
     updateConnections()
+    emit('change')
 }
 
 const onNodeEnter = (node: FlowchartNode) => {
@@ -881,6 +884,7 @@ const on_pointer_up = (event: PointerEvent) => {
     
     if (isDragging.value && dragMoved.value) {
         saveHistory()
+        emit('change') // 节点位置变化
     }
     
     isDragging.value = false
@@ -898,6 +902,7 @@ const onConnectionClick = (connection: FlowchartConnection) => {
         }
         updateConnections()
         emit('connectionClick', connection)
+        emit('change') // 连接删除
     } else {
         emit('connectionClick', connection)
     }
@@ -952,24 +957,36 @@ onMounted(() => {
             }
         }
         
+        // 检查焦点是否在输入框内，如果是则不拦截快捷键
+        const activeEl = document.activeElement
+        const isInInput = activeEl && (
+            activeEl.tagName === 'INPUT' || 
+            activeEl.tagName === 'TEXTAREA' || 
+            (activeEl as HTMLElement).isContentEditable
+        )
+        
         // 撤销/重做快捷键
         if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+            if (isInInput) return
             e.preventDefault()
             undo()
         }
         if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+            if (isInInput) return
             e.preventDefault()
             redo()
         }
         
         // 删除选中节点
         if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodes.value.size > 0) {
+            if (isInInput) return
             e.preventDefault()
             deleteSelectedNodes()
         }
         
         // 全选
         if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+            if (isInInput) return
             e.preventDefault()
             selectAllNodes()
         }
@@ -1002,6 +1019,7 @@ const deleteSelectedNodes = () => {
     })
     selectedNodes.value.clear()
     updateConnections()
+    emit('change')
 }
 
 const selectAllNodes = () => {
@@ -1097,6 +1115,7 @@ const end_drag_connection = (targetNodeId: string, targetPortId: string, targetP
     })
     
     updateConnections()
+    emit('change') // 连接创建
     
     isDraggingConnection.value = false
     dragConnectionStart.value = null
@@ -1152,10 +1171,12 @@ defineExpose({
         saveHistory()
         nodes.value.push(node)
         updateConnections()
+        emit('change')
     },
     removeNode: (nodeId: string) => {
         nodes.value = nodes.value.filter(n => n.id !== nodeId)
         updateConnections()
+        emit('change')
     },
     addConnection: (fromId: string, toId: string) => {
         saveHistory()
@@ -1168,6 +1189,7 @@ defineExpose({
         }
         customEdges.value.push({ from_node: fromId, to_node: toId, from_port: 'out', to_port: 'in' })
         updateConnections()
+        emit('change')
     },
     addConnectionWithPorts: (fromId: string, toId: string, fromPort: string, toPort: string) => {
         const target = nodes.value.find(n => n.id === toId)
@@ -1179,18 +1201,21 @@ defineExpose({
         }
         customEdges.value.push({ from_node: fromId, to_node: toId, from_port: fromPort, to_port: toPort })
         updateConnections()
+        emit('change')
     },
     removeConnection: (fromId: string, toId: string) => {
         const target = nodes.value.find(n => n.id === toId)
         if (target && target.dependencies) {
             target.dependencies = target.dependencies.filter(d => d !== fromId)
             updateConnections()
+            emit('change')
         }
     },
     updateNodeParams: (nodeId: string, params: Record<string, any>) => {
         const node = nodes.value.find(n => n.id === nodeId)
         if (node) {
             node.params = { ...params }
+            emit('change')
         }
     },
     resetFlowchart: initializeFlowchart,

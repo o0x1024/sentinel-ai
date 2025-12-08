@@ -700,7 +700,7 @@ impl ReactExecutor {
                         .as_millis() as u64;
                     
                     match result {
-                        Ok(completed_count) => {
+                        Ok((completed_count, step_results)) => {
                             // 记录步骤
                             {
                                 let mut trace = self.trace.write().await;
@@ -725,12 +725,31 @@ impl ReactExecutor {
                                 consecutive_plan_failures = 0;
                                 last_failed_plan = None;
                                 
+                                // 构建工具执行结果摘要
+                                let mut results_summary = String::new();
+                                for (step_id, result) in &step_results {
+                                    let result_preview = match result {
+                                        serde_json::Value::String(s) => {
+                                            if s.len() > 500 { format!("{}...", &s[..500]) } else { s.clone() }
+                                        }
+                                        serde_json::Value::Null => "null".to_string(),
+                                        other => {
+                                            let s = serde_json::to_string_pretty(other).unwrap_or_default();
+                                            if s.len() > 500 { format!("{}...", &s[..500]) } else { s }
+                                        }
+                                    };
+                                    results_summary.push_str(&format!("\n- Step {} result:\n{}\n", step_id, result_preview));
+                                }
+                                
                                 context_history.push(format!(
-                                    "Thought: {}\nSub-plan '{}' completed successfully: {}/{} steps done",
+                                    "思考：{}\n\n✅ 子计划 '{}' 成功完成: {}/{} 步骤完成\n\
+                                    === 执行结果 ==={}\n\n\
+                                    ⚠️ 重要：任务已完成。你应该提供一个 FinalAnswer 总结上述结果。不要创建另一个计划。",
                                     llm_output,
                                     plan_description,
                                     completed_count,
-                                    steps.len()
+                                    steps.len(),
+                                    results_summary
                                 ));
                             } else {
                                 // 部分完成（有步骤失败）
@@ -751,12 +770,10 @@ impl ReactExecutor {
                                 };
                                 
                                 context_history.push(format!(
-                                    "Thought: {}\n\n⚠️ Sub-plan '{}' PARTIALLY FAILED:\n\
-                                    - Completed: {}/{} steps\n\
-                                    - Failed at: {}\n\n\
-                                    ⚠️ IMPORTANT: The tool used in the failed step is not working. \
-                                    You MUST create a NEW DIFFERENT plan using ALTERNATIVE tools. \
-                                    Do NOT retry the same tool. Consider using playwright_navigate + playwright_get_visible_text instead.",
+                                    "思考：{}\n\n⚠️ 子计划 '{}' 部分失败:\n\
+                                    - 完成: {}/{} 步骤\n\
+                                    - 失败: {}\n\n\
+                                    ⚠️ 重要：失败步骤中使用的工具不可用。你必须创建一个全新的不同的计划使用替代工具。不要重试相同的工具。",
                                     llm_output,
                                     plan_description,
                                     completed_count,
@@ -770,10 +787,8 @@ impl ReactExecutor {
                             
                             tracing::error!("ReAct: Sub-plan execution failed: {}", e);
                             context_history.push(format!(
-                                "Thought: {}\n\n❌ Sub-plan '{}' FAILED: {}\n\n\
-                                ⚠️ IMPORTANT: You MUST create a COMPLETELY DIFFERENT plan using ALTERNATIVE tools. \
-                                The previously used tool is not available. \
-                                Use playwright tools (playwright_navigate, playwright_get_visible_text, etc.) as an alternative.",
+                                "思考：{}\n\n❌ 子计划 '{}' 失败: {}\n\n\
+                                ⚠️ 重要：你必须创建一个全新的不同的计划使用替代工具。之前使用的工具不可用。",
                                 llm_output,
                                 plan_description,
                                 e
@@ -797,7 +812,7 @@ impl ReactExecutor {
 
                     // 调用 LLM 生成摘要
                     match llm_call(
-                        Some("You are a helpful assistant that summarizes reasoning steps.".to_string()),
+                        Some("你是一个有用的助手，总结推理步骤。".to_string()),
                         summary_prompt,
                         true, // skip_save
                         String::new(),
@@ -912,21 +927,21 @@ impl ReactExecutor {
         // 构建默认的 system prompt（包含工具列表和说明）
         let tools_block = self.build_tools_information().await;
         system_prompt = format!(
-            "You are a helpful AI assistant using the ReAct (Reasoning + Acting) framework.\n\
-            You can use the following tools:\n{}\n\n\
-            Response Format:\n\
-            You should respond with your thoughts and actions in the following format:\n\n\
-            Thought: [Your reasoning about what to do next]\n\
-            Action: [tool_name]\n\
-            Action Input: {{\"key\": \"value\"}}\n\n\
-            When you have enough information to answer, respond with:\n\
-            Thought: [Your final reasoning]\n\
-            Final Answer: [Your complete answer to the task]\n\n\
-            Important Notes:\n\
-            - Think step-by-step before taking action\n\
-            - Use tools when you need external information or capabilities\n\
-            - Cite sources when available\n\
-            - Provide clear final answers",
+            "你是一个有用的 AI 助手，使用 ReAct（推理 + 行动）框架。\n\
+            你可以使用以下工具：\n{}\n\n\
+            响应格式：\n\
+            你应该以以下格式回应你的思考和行动：\n\n\
+            思考：[你的思考过程 - 分析当前情况，思考下一步该做什么，为什么要这样做]\n\
+            行动：[工具名称]\n\
+            行动输入：{{\"key\": \"value\"}}\n\n\
+            当你有足够的信息回答时，回应：\n\
+            思考：[你的最终推理]\n\
+            最终答案：[你对任务的完整答案]\n\n\
+            重要笔记：\n\
+            - 在采取行动前，逐步思考\n\
+            - 当你需要外部信息或能力时，使用工具\n\
+            - 当有可用来源时，引用来源\n\
+            - 提供清晰的最终答案",
             tools_block
         );
 
@@ -1497,7 +1512,7 @@ impl ReactExecutor {
         })
     }
 
-    /// 执行子计划
+    /// 执行子计划，返回 (完成的步骤数, 步骤结果)
     async fn execute_sub_plan<Ft>(
         &self,
         plan_description: &str,
@@ -1505,7 +1520,7 @@ impl ReactExecutor {
         allow_replanning: bool,
         tool_executor: &Ft,
         emitter: Option<&Arc<ReactMessageEmitter>>,
-    ) -> Result<usize>
+    ) -> Result<(usize, HashMap<String, serde_json::Value>)>
     where
         Ft: Fn(ReactToolCall)
             -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value>> + Send>>
@@ -1600,8 +1615,8 @@ impl ReactExecutor {
                                 "ReAct: Step '{}' failed (tool: '{}'), returning to main loop for replanning. Error: {}",
                                 step.id, tool_call.tool, error_msg
                             );
-                            // 返回当前完成的步骤数，让主循环决定是否重规划
-                            return Ok(completed_steps);
+                            // 返回当前完成的步骤数和结果，让主循环决定是否重规划
+                            return Ok((completed_steps, step_results));
                         } else {
                             return Err(anyhow!(
                                 "Step '{}' failed: tool '{}' returned error: {}",
@@ -1638,7 +1653,7 @@ impl ReactExecutor {
             }
         }
         
-        Ok(completed_steps)
+        Ok((completed_steps, step_results))
     }
 
     /// 变量替换（用于并行执行）
@@ -1653,6 +1668,10 @@ impl ReactExecutor {
     }
 
     /// 字符串中的变量替换
+    /// 支持的占位符格式：
+    /// - `#E1`, `#E2` 等：显式步骤引用
+    /// - `$1`, `$2` 等：简短步骤引用（需要前缀 $）
+    /// - `${step_id}` 或 `$step_id`：步骤 ID 引用（仅当后面不是数字时）
     fn substitute_variables_in_string(
         &self,
         input: &str,
@@ -1660,38 +1679,63 @@ impl ReactExecutor {
     ) -> String {
         let mut result = input.to_string();
         
-        // 替换 #E1, #E2 等变量引用
+        // 1. 替换 #E1, #E2 等显式变量引用（安全，有明确前缀）
         for (var_name, value) in variables {
-            let placeholder = var_name.clone();
+            // 只处理 #E 前缀的引用，避免替换裸数字
+            if var_name.starts_with("#E") || var_name.starts_with("step_") {
+                let value_str = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => serde_json::to_string(&value).unwrap_or_default(),
+                };
+                result = result.replace(var_name, &value_str);
+            }
+        }
+        
+        // 2. 替换 ${N} 格式的变量引用（花括号形式，安全）
+        for (var_name, value) in variables {
+            let braced_placeholder = format!("${{{}}}", var_name);
             let value_str = match value {
                 serde_json::Value::String(s) => s.clone(),
                 _ => serde_json::to_string(&value).unwrap_or_default(),
             };
-            result = result.replace(&placeholder, &value_str);
+            result = result.replace(&braced_placeholder, &value_str);
         }
         
-        // 替换 $1, $2 等变量引用
+        // 3. 替换 $N 格式的变量引用（仅当 N 后面不是数字时，避免误替换）
+        // 使用正则表达式确保不会误替换 JSON 中的数字
         for (var_name, value) in variables {
-            if var_name.starts_with("#E") {
-                if let Some(num) = var_name.strip_prefix("#E") {
-                    let dollar_placeholder = format!("${}", num);
-                    let value_str = match value {
-                        serde_json::Value::String(s) => s.clone(),
-                        _ => serde_json::to_string(&value).unwrap_or_default(),
-                    };
-                    result = result.replace(&dollar_placeholder, &value_str);
+            // 只处理纯数字的步骤 ID（如 "1", "2"）
+            if var_name.chars().all(|c| c.is_ascii_digit()) {
+                let value_str = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => serde_json::to_string(&value).unwrap_or_default(),
+                };
+                
+                // 使用正则确保 $N 后面不是数字（避免 $1 匹配 $10 的前缀）
+                // 同时确保 $N 前面不是字母数字（避免误匹配）
+                let pattern = format!(r"\${}(?!\d)", regex::escape(var_name));
+                if let Ok(re) = regex::Regex::new(&pattern) {
+                    result = re.replace_all(&result, value_str.as_str()).to_string();
                 }
             }
         }
         
-        // 替换 $step_id 形式的变量
+        // 4. 替换 #EN 形式到 $N 的映射（兼容旧格式）
         for (var_name, value) in variables {
-            let dollar_placeholder = format!("${}", var_name);
-            let value_str = match value {
-                serde_json::Value::String(s) => s.clone(),
-                _ => serde_json::to_string(&value).unwrap_or_default(),
-            };
-            result = result.replace(&dollar_placeholder, &value_str);
+            if var_name.starts_with("#E") {
+                if let Some(num) = var_name.strip_prefix("#E") {
+                    let value_str = match value {
+                        serde_json::Value::String(s) => s.clone(),
+                        _ => serde_json::to_string(&value).unwrap_or_default(),
+                    };
+                    
+                    // 使用正则确保 $N 后面不是数字
+                    let pattern = format!(r"\${}(?!\d)", regex::escape(num));
+                    if let Ok(re) = regex::Regex::new(&pattern) {
+                        result = re.replace_all(&result, value_str.as_str()).to_string();
+                    }
+                }
+            }
         }
         
         result

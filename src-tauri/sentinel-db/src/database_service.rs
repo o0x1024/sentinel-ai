@@ -1345,6 +1345,7 @@ impl DatabaseService {
                 graph_json TEXT NOT NULL,
                 tags TEXT,
                 is_template BOOLEAN DEFAULT 0,
+                is_tool BOOLEAN DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -1352,6 +1353,12 @@ impl DatabaseService {
         )
         .execute(&mut *tx)
         .await?;
+
+        // 添加 is_tool 字段（兼容旧表）
+        sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN is_tool BOOLEAN DEFAULT 0")
+            .execute(&mut *tx)
+            .await
+            .ok(); // 忽略已存在的错误
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_definitions_name ON workflow_definitions(name)")
             .execute(&mut *tx)
@@ -4380,6 +4387,19 @@ impl DatabaseService {
         Ok(())
     }
 
+    pub async fn update_rag_collection(&self, collection_id: &str, name: &str, description: Option<&str>) -> Result<()> {
+        let pool = self.get_pool()?;
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("UPDATE rag_collections SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+            .bind(name)
+            .bind(description)
+            .bind(&now)
+            .bind(collection_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_rag_collection_by_id(&self, collection_id: &str) -> Result<Option<CollectionInfo>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
@@ -5430,14 +5450,14 @@ impl sentinel_rag::db::RagDatabase for DatabaseService {
 
 // Workflow definition methods - separate impl block
 impl DatabaseService {
-    pub async fn save_workflow_definition(&self, id: &str, name: &str, description: Option<&str>, version: &str, graph_json: &str, tags: Option<&str>, is_template: bool) -> Result<()> {
+    pub async fn save_workflow_definition(&self, id: &str, name: &str, description: Option<&str>, version: &str, graph_json: &str, tags: Option<&str>, is_template: bool, is_tool: bool) -> Result<()> {
         let pool = self.get_pool()?;
         let now = chrono::Utc::now().to_rfc3339();
         
         sqlx::query(
             r#"
-            INSERT INTO workflow_definitions (id, name, description, version, graph_json, tags, is_template, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO workflow_definitions (id, name, description, version, graph_json, tags, is_template, is_tool, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -5445,6 +5465,7 @@ impl DatabaseService {
                 graph_json = excluded.graph_json,
                 tags = excluded.tags,
                 is_template = excluded.is_template,
+                is_tool = excluded.is_tool,
                 updated_at = excluded.updated_at
             "#
         )
@@ -5455,6 +5476,7 @@ impl DatabaseService {
         .bind(graph_json)
         .bind(tags)
         .bind(is_template)
+        .bind(is_tool)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -5466,7 +5488,7 @@ impl DatabaseService {
     pub async fn get_workflow_definition(&self, id: &str) -> Result<Option<serde_json::Value>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
-            "SELECT id, name, description, version, graph_json, tags, is_template, created_at, updated_at FROM workflow_definitions WHERE id = ?"
+            "SELECT id, name, description, version, graph_json, tags, is_template, is_tool, created_at, updated_at FROM workflow_definitions WHERE id = ?"
         )
         .bind(id)
         .fetch_optional(pool)
@@ -5482,6 +5504,7 @@ impl DatabaseService {
                     "version": row.get::<String, _>("version"),
                     "tags": row.get::<Option<String>, _>("tags"),
                     "is_template": row.get::<bool, _>("is_template"),
+                    "is_tool": row.try_get::<bool, _>("is_tool").unwrap_or(false),
                     "created_at": row.get::<String, _>("created_at"),
                     "updated_at": row.get::<String, _>("updated_at"),
                 });
@@ -5500,12 +5523,12 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         let query = if let Some(template_filter) = is_template {
             sqlx::query(
-                "SELECT id, name, description, version, tags, is_template, created_at, updated_at FROM workflow_definitions WHERE is_template = ? ORDER BY updated_at DESC"
+                "SELECT id, name, description, version, tags, is_template, is_tool, created_at, updated_at FROM workflow_definitions WHERE is_template = ? ORDER BY updated_at DESC"
             )
             .bind(template_filter)
         } else {
             sqlx::query(
-                "SELECT id, name, description, version, tags, is_template, created_at, updated_at FROM workflow_definitions ORDER BY updated_at DESC"
+                "SELECT id, name, description, version, tags, is_template, is_tool, created_at, updated_at FROM workflow_definitions ORDER BY updated_at DESC"
             )
         };
 
@@ -5520,6 +5543,32 @@ impl DatabaseService {
                 "version": row.get::<String, _>("version"),
                 "tags": row.get::<Option<String>, _>("tags"),
                 "is_template": row.get::<bool, _>("is_template"),
+                "is_tool": row.try_get::<bool, _>("is_tool").unwrap_or(false),
+                "created_at": row.get::<String, _>("created_at"),
+                "updated_at": row.get::<String, _>("updated_at"),
+            }));
+        }
+
+        Ok(results)
+    }
+
+    /// 列出所有标记为工具的工作流
+    pub async fn list_workflow_tools(&self) -> Result<Vec<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        let rows = sqlx::query(
+            "SELECT id, name, description, version, tags, created_at, updated_at FROM workflow_definitions WHERE is_tool = 1 ORDER BY updated_at DESC"
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(serde_json::json!({
+                "id": row.get::<String, _>("id"),
+                "name": row.get::<String, _>("name"),
+                "description": row.get::<Option<String>, _>("description"),
+                "version": row.get::<String, _>("version"),
+                "tags": row.get::<Option<String>, _>("tags"),
                 "created_at": row.get::<String, _>("created_at"),
                 "updated_at": row.get::<String, _>("updated_at"),
             }));
