@@ -88,8 +88,27 @@
               </li>
             </ul>
           </div>
+          <!-- 模式切换 -->
+          <div class="btn-group btn-group-horizontal mr-2">
+            <button 
+              @click="viewMode = 'chat'" 
+              class="btn btn-xs"
+              :class="viewMode === 'chat' ? 'btn-primary' : 'btn-ghost'"
+              title="普通聊天模式"
+            >
+              <i class="fas fa-comments"></i>
+            </button>
+            <button 
+              @click="viewMode = 'agent'" 
+              class="btn btn-xs"
+              :class="viewMode === 'agent' ? 'btn-primary' : 'btn-ghost'"
+              title="Agent 执行模式"
+            >
+              <i class="fas fa-robot"></i>
+            </button>
+          </div>
           <!-- 会话管理 -->
-          <div class="flex items-center gap-1 ml-2">
+          <div class="flex items-center gap-1 ml-2" v-if="viewMode === 'chat'">
             <button @click="handleCreateConversation" class="btn btn-xs btn-ghost" :disabled="isLoadingConversations">
               <i class="fas fa-plus"></i>
             </button>
@@ -109,8 +128,8 @@
 
     <!-- 主内容区 -->
     <div class="flex-1 overflow-hidden min-h-0">
-      <!-- 聊天区域 -->
-      <div class="h-full flex flex-col">
+      <!-- 普通聊天模式 -->
+      <div v-if="viewMode === 'chat'" class="h-full flex flex-col">
         <AIChat 
           ref="aiChatRef"
           :selected-agent="selectedAgent"
@@ -118,6 +137,17 @@
           @execution-started="handleExecutionStarted"
           @execution-progress="handleExecutionProgress"
           @execution-completed="handleExecutionCompleted"
+        />
+      </div>
+      
+      <!-- Agent 执行模式 -->
+      <div v-else-if="viewMode === 'agent'" class="h-full">
+        <AgentView 
+          ref="agentViewRef"
+          :show-todos="true"
+          @submit="handleAgentSubmit"
+          @complete="handleAgentComplete"
+          @error="handleAgentError"
         />
       </div>
     </div>
@@ -210,6 +240,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import AIChat from '@/components/AIChat.vue'
 import RoleManagement from '@/components/RoleManagement.vue'
+import { AgentView } from '@/components/Agent'
 import { useRoleManagement } from '@/composables/useRoleManagement'
 
 // 流量引用类型
@@ -287,6 +318,12 @@ const editingAgents = ref<CustomAgent[]>([])
 
 // 角色管理状态
 const showRoleManagement = ref(false)
+
+// 视图模式: 'chat' 普通聊天 | 'agent' Agent执行模式
+const viewMode = ref<'chat' | 'agent'>('chat')
+
+// --- AgentView 相关 ---
+const agentViewRef = ref<any>(null)
 
 // --- 会话管理 from AIChat ---
 const aiChatRef = ref<any>(null)
@@ -424,6 +461,20 @@ const handleExecutionCompleted = async (result) => {
       currentExecution.value = null
     }
   }, 3000)
+}
+
+// --- AgentView 事件处理 ---
+const handleAgentSubmit = (task: string) => {
+  console.log('Agent task submitted:', task)
+}
+
+const handleAgentComplete = async (result: any) => {
+  console.log('Agent task completed:', result)
+  await refreshAgentStatistics()
+}
+
+const handleAgentError = (error: string) => {
+  console.error('Agent task error:', error)
 }
 
 // 定时刷新统计数据

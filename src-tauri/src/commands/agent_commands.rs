@@ -319,3 +319,167 @@ pub async fn add_test_session_data(
     
     Ok("Test session data added successfully".to_string())
 }
+
+// ============ 简化的 Agent Commands (文档定义) ============
+
+use crate::tools::{AgentToolInfo, ToolRegistry};
+use crate::services::ai::AiServiceManager;
+use crate::services::database::DatabaseService;
+use tracing::{info, error};
+
+/// Agent 执行配置（前端传入）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentExecuteConfig {
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub force_todos: bool,
+    #[serde(default)]
+    pub enable_rag: bool,
+    pub conversation_id: Option<String>,
+    pub message_id: Option<String>,
+}
+
+fn default_max_iterations() -> u32 { 10 }
+fn default_timeout() -> u64 { 300 }
+
+impl Default for AgentExecuteConfig {
+    fn default() -> Self {
+        Self {
+            max_iterations: 10,
+            timeout_secs: 300,
+            force_todos: false,
+            enable_rag: false,
+            conversation_id: None,
+            message_id: None,
+        }
+    }
+}
+
+/// 简化的 Agent 执行接口
+#[command]
+pub async fn agent_execute(
+    app: tauri::AppHandle,
+    task: String,
+    config: Option<AgentExecuteConfig>,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<serde_json::Value, String> {
+    use crate::agents::{AgentOrchestrator, OrchestratorConfig, PlannerConfig};
+    use crate::engines::react::ReactConfig;
+    
+    let cfg = config.unwrap_or_default();
+    let execution_id = uuid::Uuid::new_v4().to_string();
+    
+    info!("Agent execute task: {}, execution_id: {}", task, execution_id);
+    
+    // Build ReAct config
+    let mut react_config = ReactConfig::default();
+    react_config.max_iterations = cfg.max_iterations;
+    react_config.enable_rag = cfg.enable_rag;
+    react_config.verbose = true;
+    
+    // Create orchestrator with custom config
+    let orchestrator_config = OrchestratorConfig {
+        auto_create_todos: true,
+        force_todos: cfg.force_todos,
+        planner_config: PlannerConfig::default(),
+        react_config,
+        max_iterations: cfg.max_iterations,
+    };
+    
+    let orchestrator = AgentOrchestrator::new(orchestrator_config, Some(app.clone()));
+    
+    // Get AI service
+    let ai_service = match ai_manager.get_default_chat_model().await {
+        Ok(Some((provider, model))) => {
+            match ai_manager.get_provider_config(&provider).await {
+                Ok(Some(mut provider_config)) => {
+                    provider_config.model = model;
+                    let mcp_service = ai_manager.get_mcp_service();
+                    Arc::new(crate::services::ai::AiService::new(
+                        provider_config,
+                        db.inner().clone(),
+                        Some(app.clone()),
+                        mcp_service,
+                    ))
+                }
+                _ => return Err("Failed to get AI provider config".to_string()),
+            }
+        }
+        _ => return Err("No default AI model configured".to_string()),
+    };
+    
+    // Execute through orchestrator (this handles Todos, ReAct engine, and events)
+    let result = orchestrator.execute(
+        &execution_id,
+        &task,
+        ai_service,
+        ai_manager.get_mcp_service(),
+        Some(db.inner().clone()),
+    ).await.map_err(|e| e.to_string())?;
+    
+    // Cleanup
+    orchestrator.cleanup(&execution_id).await;
+    
+    // Return result as JSON
+    Ok(serde_json::json!({
+        "execution_id": result.execution_id,
+        "task": task,
+        "complexity": format!("{:?}", result.complexity),
+        "status": if result.success { "completed" } else { "failed" },
+        "success": result.success,
+        "output": result.output,
+        "error": result.error,
+        "iterations": result.iterations,
+        "tool_calls": result.tool_calls,
+        "duration_ms": result.duration_ms,
+    }))
+}
+
+/// Agent 取消执行
+#[command]
+pub async fn agent_cancel_execution(
+    execution_id: String,
+    manager: State<'_, GlobalAgentManager>,
+) -> Result<String, String> {
+    let manager_guard = manager.read().await;
+    
+    let agent_manager = match manager_guard.as_ref() {
+        Some(m) => m,
+        None => return Err("Agent manager not initialized".to_string()),
+    };
+    
+    agent_manager.cancel_task(&execution_id).await
+        .map_err(|e| e.to_string())?;
+    
+    Ok(format!("Execution {} cancelled", execution_id))
+}
+
+/// 列出所有可用工具
+#[command]
+pub async fn agent_list_tools() -> Result<Vec<AgentToolInfo>, String> {
+    // 创建一个基础的工具注册表并返回内置工具信息
+    let registry = ToolRegistry::new();
+    
+    // 返回工具列表（当前为空，后续可添加内置工具）
+    Ok(registry.list_all())
+}
+
+/// 获取工具详情
+#[command]
+pub async fn agent_get_tool(name: String) -> Result<Option<AgentToolInfo>, String> {
+    let registry = ToolRegistry::new();
+    
+    Ok(registry.get(&name).map(|t| AgentToolInfo::from(t.definition())))
+}
+
+/// 搜索工具
+#[command]
+pub async fn agent_search_tools(query: String) -> Result<Vec<AgentToolInfo>, String> {
+    let registry = ToolRegistry::new();
+    
+    Ok(registry.search(&query))
+}

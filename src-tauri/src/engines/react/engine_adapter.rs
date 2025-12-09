@@ -177,6 +177,7 @@ impl ReactEngine {
             memory_integration, // ✅ Memory 集成
             summarization_threshold: 8, // 超过 8 步时进行摘要
             emitter: emitter.clone(), // ✅ 共享消息发送器
+            todo_manager: None, // TODO: 后续集成 TodoManager
         };
 
         let executor = ReactExecutor::new(task.description.clone(), executor_config.clone());

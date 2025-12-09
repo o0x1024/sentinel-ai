@@ -3,6 +3,7 @@ pub mod ordered_message;
 pub mod message_emitter;
 pub mod prompt_resolver;
 pub mod aliyun_oss;
+pub mod streaming_optimizer;
 
 // macOS 系统代理模块已移至 sentinel_passive::system_proxy
 

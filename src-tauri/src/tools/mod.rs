@@ -11,6 +11,7 @@
 pub mod analyzer_tools; // 网站分析工具（Plan B）
 pub mod builtin;
 pub mod generator_tools; // AI插件生成工具（Plan B）
+pub mod registry; // 工具注册系统
 pub mod mapping {
     pub use sentinel_tools::mapping::*;
 }
@@ -100,6 +101,11 @@ pub use framework_adapters::{
 
 // 导出服务器组件
 pub use server::{McpServerManager, SentinelMcpServer};
+
+// 导出工具注册系统
+pub use registry::{
+    AgentToolCategory, AgentToolInfo, Tool, ToolDefinition, ToolParameter, ToolRegistry, ToolReturn,
+};
 
 // 模块别名
 pub mod mcp {

@@ -1,0 +1,194 @@
+/**
+ * Agent 样式变量
+ * 定义 Agent 组件使用的 CSS 变量
+ */
+
+:root {
+  /* ============ 颜色系统 ============ */
+  
+  /* 主色调 */
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f46e5;
+  --color-primary-light: rgba(99, 102, 241, 0.1);
+  
+  /* 状态颜色 */
+  --color-success: #22c55e;
+  --color-success-light: rgba(34, 197, 94, 0.1);
+  --color-warning: #f59e0b;
+  --color-warning-light: rgba(245, 158, 11, 0.1);
+  --color-error: #ef4444;
+  --color-error-light: rgba(239, 68, 68, 0.1);
+  --color-info: #3b82f6;
+  --color-info-light: rgba(59, 130, 246, 0.1);
+  
+  /* ============ 背景色 ============ */
+  --color-bg-primary: #0f0f0f;
+  --color-bg-secondary: #1a1a1a;
+  --color-bg-tertiary: #262626;
+  --color-code-bg: #1e1e1e;
+  
+  /* ============ 文字颜色 ============ */
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+  --color-code-text: #e5c07b;
+  
+  /* ============ 边框 ============ */
+  --color-border: #27272a;
+  --color-border-hover: #3f3f46;
+  --color-border-focus: #6366f1;
+  
+  /* ============ 字体 ============ */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+  
+  /* ============ 间距 ============ */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 0.75rem;
+  --spacing-lg: 1rem;
+  --spacing-xl: 1.5rem;
+  --spacing-2xl: 2rem;
+  
+  /* ============ 圆角 ============ */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-full: 9999px;
+  
+  /* ============ 阴影 ============ */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  
+  /* ============ 动画 ============ */
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+  --transition-slow: 300ms ease;
+  
+  /* ============ Z-Index ============ */
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 300;
+  --z-tooltip: 400;
+  --z-toast: 500;
+}
+
+/* ============ 消息类型颜色 ============ */
+
+/* Thinking */
+.agent-thinking {
+  --message-border-color: var(--color-info);
+  --message-bg-color: var(--color-info-light);
+}
+
+/* Planning */
+.agent-planning {
+  --message-border-color: var(--color-primary);
+  --message-bg-color: var(--color-primary-light);
+}
+
+/* Tool Call */
+.agent-tool-call {
+  --message-border-color: var(--color-warning);
+  --message-bg-color: var(--color-warning-light);
+}
+
+/* Tool Result */
+.agent-tool-result {
+  --message-border-color: var(--color-success);
+  --message-bg-color: var(--color-success-light);
+}
+
+/* Error */
+.agent-error {
+  --message-border-color: var(--color-error);
+  --message-bg-color: var(--color-error-light);
+}
+
+/* Final Answer */
+.agent-final {
+  --message-border-color: var(--color-success);
+  --message-bg-color: rgba(34, 197, 94, 0.05);
+}
+
+/* ============ Todo 状态颜色 ============ */
+
+.todo-status-pending {
+  --todo-indicator-color: var(--color-text-secondary);
+}
+
+.todo-status-in-progress {
+  --todo-indicator-color: var(--color-primary);
+}
+
+.todo-status-completed {
+  --todo-indicator-color: var(--color-success);
+}
+
+.todo-status-cancelled {
+  --todo-indicator-color: var(--color-error);
+}
+
+/* ============ 动画关键帧 ============ */
+
+@keyframes agent-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes agent-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes agent-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes agent-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes agent-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ============ 工具类 ============ */
+
+.agent-animate-pulse {
+  animation: agent-pulse 1.5s infinite;
+}
+
+.agent-animate-spin {
+  animation: agent-spin 1s linear infinite;
+}
+
+.agent-animate-blink {
+  animation: agent-blink 1s infinite;
+}
+
+.agent-animate-fade-in {
+  animation: agent-fade-in 0.2s ease-out;
+}
+
+.agent-animate-slide-in {
+  animation: agent-slide-in 0.2s ease-out;
+}
+

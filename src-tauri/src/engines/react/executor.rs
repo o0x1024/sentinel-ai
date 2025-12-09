@@ -49,6 +49,8 @@ pub struct ReactExecutorConfig {
     pub summarization_threshold: usize,
     /// 消息发送器（外部创建，确保 llm_call 和 executor 使用同一个）
     pub emitter: Option<Arc<ReactMessageEmitter>>,
+    /// Todo 管理器（用于任务进度追踪）
+    pub todo_manager: Option<Arc<crate::agents::TodoManager>>,
 }
 
 impl std::fmt::Debug for ReactExecutorConfig {
@@ -66,6 +68,7 @@ impl std::fmt::Debug for ReactExecutorConfig {
             .field("has_memory_integration", &self.memory_integration.is_some())
             .field("summarization_threshold", &self.summarization_threshold)
             .field("has_emitter", &self.emitter.is_some())
+            .field("has_todo_manager", &self.todo_manager.is_some())
             .finish()
     }
 }
@@ -890,7 +893,7 @@ impl ReactExecutor {
                 }
 
                 // 构建 user prompt
-                user_prompt.push_str(&format!("用户问题: {}", task));
+                user_prompt.push_str(&format!("User: {}", task));
 
                 // 注入 Few-shot 示例（来自 Memory）
                 if !few_shot_examples.is_empty() {
@@ -899,24 +902,21 @@ impl ReactExecutor {
 
                 // 注入 RAG 证据到 user prompt
                 if !rag_context.is_empty() {
-                    user_prompt.push_str("\n=== Evidence from Knowledge Base ===\n");
+                    user_prompt.push_str("\n\n=== Evidence from Knowledge Base ===\n");
                     user_prompt.push_str(rag_context);
-                    user_prompt.push_str("\n\n");
                 }
 
                 // 添加历史上下文到 user prompt
                 if !history.is_empty() {
-                    user_prompt.push_str("\n=== 前置步骤 ===\n");
+                    user_prompt.push_str("\n\n=== Previous Steps ===\n");
                     for (idx, h) in history.iter().enumerate() {
                         user_prompt.push_str(&format!("Step {}:\n{}\n\n", idx + 1, h));
                     }
-                    // 在有历史时，添加明确的提示引导下一步思考
-                    user_prompt.push_str(
-                        "=== Your Turn ===\n基于之前的步骤，你的下一步思考和行动是什么？\n",
-                    );
+                    // 在有历史时，引导下一步行动
+                    user_prompt.push_str("Based on the above results, output your next action as JSON:\n");
                 } else {
-                    // 首次思考时的提示
-                    user_prompt.push_str("\n=== Your Turn ===\n你有什么想法和行动？\n");
+                    // 首次执行时的提示
+                    user_prompt.push_str("\n\nOutput your action as JSON:\n");
                 }
 
                 return (Some(system_prompt), user_prompt);
@@ -924,33 +924,85 @@ impl ReactExecutor {
         }
 
         // 没有找到数据库模板时的默认行为
-        // 构建默认的 system prompt（包含工具列表和说明）
+        // 使用智能复杂度判断的 system prompt
         let tools_block = self.build_tools_information().await;
         system_prompt = format!(
-            "你是一个有用的 AI 助手，使用 ReAct（推理 + 行动）框架。\n\
-            你可以使用以下工具：\n{}\n\n\
-            响应格式：\n\
-            你应该以以下格式回应你的思考和行动：\n\n\
-            思考：[你的思考过程 - 分析当前情况，思考下一步该做什么，为什么要这样做]\n\
-            行动：[工具名称]\n\
-            行动输入：{{\"key\": \"value\"}}\n\n\
-            当你有足够的信息回答时，回应：\n\
-            思考：[你的最终推理]\n\
-            最终答案：[你对任务的完整答案]\n\n\
-            重要笔记：\n\
-            - 在采取行动前，逐步思考\n\
-            - 当你需要外部信息或能力时，使用工具\n\
-            - 当有可用来源时，引用来源\n\
-            - 提供清晰的最终答案",
+            r#"You are an AI assistant. Assess task complexity and respond appropriately.
+
+## Available Tools
+
+{}
+
+## Response Strategy
+
+**First, assess task complexity:**
+- Simple (1-2 tools needed) → Direct tool_call
+- Complex (3+ coordinated steps) → Create plan first
+
+## Response Formats
+
+**CRITICAL**: Output ONE JSON object per response.
+
+### 1. Direct Tool Call (Simple Tasks)
+
+```json
+{{
+  "type": "tool_call",
+  "thinking": "Simple task, calling tool directly",
+  "tool": "tool_name",
+  "args": {{"param": "value"}}
+}}
+```
+
+### 2. Plan (Complex Tasks - 3+ steps)
+
+```json
+{{
+  "type": "plan",
+  "thinking": "Complex task requiring multiple steps",
+  "plan": {{
+    "description": "Goal",
+    "steps": [
+      {{"id": "1", "description": "Step 1", "tool": {{"name": "tool", "args": {{}}}}, "depends_on": []}}
+    ]
+  }}
+}}
+```
+
+### 3. Final Answer
+
+```json
+{{
+  "type": "final_answer",
+  "thinking": "Task complete",
+  "answer": "Formatted response"
+}}
+```
+
+## Key Rules
+
+1. Assess complexity before responding
+2. Simple tasks → direct tool_call (preferred)
+3. Complex tasks (3+ steps with dependencies) → plan
+4. Output valid JSON only"#,
             tools_block
         );
 
-        // User prompt 只包含任务
-        user_prompt.push_str(&format!("Task: {}\n\n", task));
+        // User prompt 只包含任务和历史
+        user_prompt.push_str(&format!("User: {}\n", task));
 
         // 注入 Few-shot 示例
         if !few_shot_examples.is_empty() {
             user_prompt.push_str(few_shot_examples);
+        }
+
+        // 添加历史上下文
+        if !history.is_empty() {
+            user_prompt.push_str("\n=== Previous Steps ===\n");
+            for (idx, h) in history.iter().enumerate() {
+                user_prompt.push_str(&format!("Step {}:\n{}\n\n", idx + 1, h));
+            }
+            user_prompt.push_str("Based on the above, what is your next action?\n");
         }
 
         return (Some(system_prompt), user_prompt);
@@ -1889,6 +1941,7 @@ mod tests {
             memory_integration: None,
             summarization_threshold: 0,
             emitter: None,
+            todo_manager: None,
         };
         let executor = ReactExecutor::new("Test task".to_string(), config);
         let trace = executor.get_trace().await;
@@ -1917,6 +1970,7 @@ mod tests {
             memory_integration: Some(memory_integration),
             summarization_threshold: 8,
             emitter: None,
+            todo_manager: None,
         };
         let executor = ReactExecutor::new("Test task with memory".to_string(), config);
         let trace = executor.get_trace().await;

@@ -907,6 +907,13 @@ pub fn run() {
             agent_commands::get_agent_task_logs,
             agent_commands::add_test_session_data,
             
+            // 简化的 Agent 执行命令（新架构）
+            agent_commands::agent_execute,
+            agent_commands::agent_cancel_execution,
+            agent_commands::agent_list_tools,
+            agent_commands::agent_get_tool,
+            agent_commands::agent_search_tools,
+            
             // ReAct引擎相关命令（泛化版本，包含所有执行模式）
             commands::react_commands::execute_react_task,
             commands::react_commands::get_react_config,

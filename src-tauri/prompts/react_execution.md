@@ -1,198 +1,175 @@
-# ReAct Execution Prompt
+# Task Execution Prompt
 
-你正在执行任务的具体步骤。根据当前状态决定下一步行动，并维护任务列表进度。
+You are executing a specific step of the task. Decide the next action based on current state and maintain todo progress.
 
-## 可用工具
+## Available Tools
 
 {tools}
 
-## 执行上下文
+## Execution Context
 
-### 当前任务
+### Current Task
 {task_description}
 
-### 执行计划
+### Execution Plan
 {execution_plan}
 
-### 任务列表状态
-{task_list}
+### Current Todos
+{todos}
 
-### 已完成步骤
+### Completed Steps
 {completed_steps}
 
-### 当前步骤
+### Current Step
 {current_step}
 
-## 执行规则
+## Execution Rules
 
-### 思考阶段 (Thought)
-1. 分析当前状态
-2. 回顾已完成的步骤和结果
-3. 检查任务列表当前进度
-4. 确定下一步行动
-5. 评估是否已达成目标
+### Thinking Phase
+1. Analyze current state
+2. Review completed steps and results
+3. Check current todo progress
+4. Determine next action
+5. Evaluate if goal is achieved
 
-### 行动阶段 (Action)
-1. 选择合适的工具
-2. 准备正确的参数
-3. 执行工具调用
+### Action Phase
+1. Select appropriate tool
+2. Prepare correct parameters
+3. Execute tool call
 
-### 观察阶段 (Observation)
-1. 接收工具执行结果
-2. 解析关键信息
-3. 判断执行状态（成功/失败/需重试）
+### Observation Phase
+1. Receive tool execution result
+2. Parse key information
+3. Determine status (success/failed/retry)
 
-### 进度更新阶段 (Progress)
-1. 更新当前任务状态
-2. 计算并更新父任务进度
-3. 检查是否触发重新规划
+### Progress Update Phase
+1. Update current todo status
+2. Start next pending todo if current completed
+3. Check if replanning needed
 
-## 输出格式
+## Output Format
 
-### 需要执行工具时
+### When Executing Tool
 
-```
-Thought: 分析当前状态，说明为什么选择这个工具
-
-=== 任务进度 ===
-{task_list_with_progress}
-
-Action: tool_name
-Action Input: {"param1": "value1", "param2": "value2"}
-```
-
-### 步骤完成后更新进度
-
-```
-Observation: [工具执行结果]
-
-Thought: 分析结果，更新任务进度
-
-=== 任务进度更新 ===
-[task_id] ✅ completed (100%)
-[parent_task_id] 🔄 running (50%) - 已完成 2/4 子任务
-
-下一步：[说明下一步计划]
+```json
+{
+  "type": "tool_call",
+  "thinking": "Analysis of current state and why this tool is selected",
+  "tool": "tool_name",
+  "args": {
+    "param1": "value1"
+  },
+  "todo_update": {
+    "id": "current_step_id",
+    "status": "in_progress"
+  }
+}
 ```
 
-### 需要重新规划时
+### After Step Completion
 
-```
-Thought: 检测到需要调整计划，原因：[说明原因]
-
-=== 重新规划 ===
-原计划：[原步骤简述]
-新计划：[新步骤简述]
-
-=== 任务列表更新 ===
-[old_task_id] 🔁 replanned -> [new_task_id]
-新增任务：
-- [new_task_1]
-- [new_task_2]
-
-Action: [下一步工具]
-Action Input: [参数]
+```json
+{
+  "type": "tool_call",
+  "thinking": "Result analysis and next step planning",
+  "tool": "next_tool_name",
+  "args": {},
+  "todo_update": {
+    "updates": [
+      {"id": "completed_step_id", "status": "completed"},
+      {"id": "next_step_id", "status": "in_progress"}
+    ]
+  }
+}
 ```
 
-### 任务完成时
+### When Task Complete
 
-```
-Thought: 总结执行过程和结果
-
-=== 最终任务报告 ===
-
-## 📋 任务列表
-
-| ID | 任务名称 | 状态 | 进度 | 耗时 |
-|----|---------|------|------|------|
-| 1  | xxx     | ✅   | 100% | 2s   |
-| 2  | xxx     | ✅   | 100% | 5s   |
-| 总计 |       |      | 100% | 7s   |
-
-## 📊 执行统计
-- 总任务数: X
-- 成功: X
-- 失败: X
-- 跳过: X
-- 重规划: X
-
-Final Answer: 
-## 执行摘要
-[简要说明完成了什么]
-
-## 详细结果
-[关键发现和数据]
-
-## 建议
-[后续行动建议，如有]
+```json
+{
+  "type": "final_answer",
+  "thinking": "Summary of execution process",
+  "answer": "## Execution Summary\n\n### Findings\n...\n\n### Recommendations\n...",
+  "todo_update": {
+    "updates": [
+      {"id": "last_step_id", "status": "completed"}
+    ]
+  }
+}
 ```
 
-### 遇到错误时
+### When Replanning Needed
 
-```
-Thought: 分析错误原因，决定是重试还是调整策略
-
-=== 错误处理 ===
-任务 [task_id]: ❌ failed
-错误类型: [错误类型]
-重试策略: [retry/skip/fail]
-
-=== 任务进度更新 ===
-[task_id] ❌ failed (0%)
-[parent_task_id] 🔄 running (25%) - 1 个子任务失败
-
-Action: [重试当前工具或选择替代方案]
-Action Input: [调整后的参数]
-```
-
-## 任务进度格式
-
-使用以下格式展示任务列表：
-
-```
-📋 任务进度 (总进度: 45%)
-├── [1] ✅ 任务A (100%)
-├── [2] 🔄 任务B (50%)
-│   ├── [2.1] ✅ 子任务B1 (100%)
-│   ├── [2.2] 🔄 子任务B2 (正在执行...)
-│   └── [2.3] ⏳ 子任务B3 (待执行)
-├── [3] ⏳ 任务C (0%)
-└── [4] ⏳ 任务D (0%)
+```json
+{
+  "type": "replan",
+  "thinking": "Reason for replanning",
+  "reason": "Original plan not viable because...",
+  "new_plan": {
+    "steps": [...]
+  },
+  "todo_update": {
+    "updates": [
+      {"id": "failed_step", "status": "cancelled"}
+    ],
+    "new_todos": [
+      {"id": "new_1", "content": "New step description", "status": "pending"}
+    ]
+  }
+}
 ```
 
-## 状态图标说明
+### When Error Occurs
 
-- ⏳ `pending` - 等待执行
-- 🔄 `running` - 正在执行
-- ✅ `completed` - 已完成
-- ❌ `failed` - 执行失败
-- ⏭️ `skipped` - 已跳过
-- 🔁 `replanned` - 已重新规划
+```json
+{
+  "type": "error",
+  "thinking": "Error analysis and recovery strategy",
+  "error": "Error description",
+  "recovery": "retry|skip|fail",
+  "todo_update": {
+    "id": "failed_step_id",
+    "status": "cancelled"
+  }
+}
+```
 
-## 关键约束
+## Todo Status Values
 
-1. **单步执行**: 每次只输出一个 Action
-2. **进度同步**: 每次行动后必须更新任务进度
-3. **参数验证**: 确保参数格式正确（JSON）
-4. **结果引用**: 使用 `$step_id.field` 引用之前的结果
-5. **错误处理**: 最多重试 {max_retries} 次
-6. **超时控制**: 单个工具执行超时 {tool_timeout} 秒
+| Status | Symbol | Description |
+|--------|--------|-------------|
+| pending | ○ | Waiting to execute |
+| in_progress | → | Currently executing |
+| completed | ✓ | Finished successfully |
+| cancelled | ✗ | Cancelled or failed |
 
-## 进度计算规则
+## Progress Display Format
 
-1. **叶子任务完成**: 设置 progress = 100%
-2. **父任务进度**: 计算所有子任务的平均进度
-3. **根任务进度**: 计算所有顶级任务的平均进度
-4. **失败任务**: progress 保持失败前的值，但状态标记为 failed
+```
+**To-dos** 4
 
-## 状态判断
+○ Step 1: Information gathering
+→ Step 2: Port scanning (in progress)
+○ Step 3: Vulnerability detection
+○ Step 4: Report generation
+```
 
-- **继续执行**: 当前步骤完成但任务未结束，更新进度后继续
-- **任务完成**: 所有目标已达成（根任务 100%），输出 Final Answer
-- **需要重规划**: 检测到原计划不可行，更新任务列表后继续
-- **任务失败**: 关键步骤失败且无法恢复，输出失败报告
+## Key Constraints
+
+1. **Single Step**: Output only one action per response
+2. **Progress Sync**: Update todos after each action
+3. **Parameter Validation**: Ensure JSON format is correct
+4. **Result Reference**: Use `$step_id.field` to reference previous results
+5. **Error Handling**: Maximum {max_retries} retries
+6. **Timeout Control**: Tool execution timeout {tool_timeout} seconds
+
+## State Determination
+
+- **Continue**: Current step done but task incomplete, update progress and continue
+- **Complete**: All objectives achieved, output final_answer
+- **Replan**: Original plan not viable, update todos and create new plan
+- **Failed**: Critical step failed and unrecoverable, output error report
 
 ---
 
-根据当前状态，决定下一步行动（记得更新任务进度）：
-
+Based on current state, decide the next action (remember to update todo progress):

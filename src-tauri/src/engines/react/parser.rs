@@ -27,6 +27,11 @@ impl ActionParser {
         // 尝试提取 ```json 代码块
         let json_content = Self::extract_json_block(output).unwrap_or_else(|| output.to_string());
         
+        // 尝试解析 type-based JSON 格式（来自 react_planning.md / react_execution.md）
+        if let Ok(instruction) = Self::parse_typed_json(&json_content) {
+            return Ok(instruction);
+        }
+        
         // 尝试解析为计划 JSON 格式（goal + steps）
         if let Ok(plan_instruction) = Self::parse_plan_json(&json_content) {
             return Ok(plan_instruction);
@@ -64,6 +69,162 @@ impl ActionParser {
 
         // 兜底：自然语言解析
         Self::parse_natural_language(output)
+    }
+    
+    /// 解析 type-based JSON 格式（来自 prompt 模板输出）
+    /// 支持格式：
+    /// - {"type": "plan", "thinking": "...", "plan": {...}}
+    /// - {"type": "tool_call", "thinking": "...", "tool": "...", "args": {...}}
+    /// - {"type": "final_answer", "thinking": "...", "answer": "..."}
+    /// - {"type": "error", "thinking": "...", "error": "..."}
+    /// - {"type": "replan", "thinking": "...", "reason": "...", "new_plan": {...}}
+    fn parse_typed_json(text: &str) -> Result<ActionInstruction> {
+        let json: serde_json::Value = serde_json::from_str(text)
+            .context("Failed to parse as JSON")?;
+        
+        let type_field = json.get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'type' field"))?;
+        
+        match type_field {
+            "plan" => {
+                // 解析计划格式
+                let plan = json.get("plan")
+                    .ok_or_else(|| anyhow!("Missing 'plan' field"))?;
+                
+                let description = plan.get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Execute plan")
+                    .to_string();
+                
+                let steps = plan.get("steps")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| anyhow!("Missing 'steps' array"))?;
+                
+                if steps.is_empty() {
+                    return Err(anyhow!("Plan has no steps"));
+                }
+                
+                let sub_plan_steps: Vec<SubPlanStep> = steps.iter().map(|s| {
+                    let id = s.get("id")
+                        .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|i| i.to_string())))
+                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                    
+                    let step_desc = s.get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Execute step")
+                        .to_string();
+                    
+                    // 工具信息可能在 "tool" 对象中或直接在 step 中
+                    let tool = if let Some(tool_obj) = s.get("tool") {
+                        let tool_name = tool_obj.get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let tool_args = tool_obj.get("args")
+                            .cloned()
+                            .unwrap_or(serde_json::json!({}));
+                        Some(ReactToolCall::new(tool_name, tool_args))
+                    } else {
+                        None
+                    };
+                    
+                    let depends_on = s.get("depends_on")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|i| i.to_string())))
+                            .collect())
+                        .unwrap_or_default();
+                    
+                    SubPlanStep {
+                        id,
+                        description: step_desc,
+                        tool,
+                        depends_on,
+                        skippable: false,
+                    }
+                }).collect();
+                
+                tracing::info!("Parsed type:plan JSON: {} steps", sub_plan_steps.len());
+                
+                Ok(ActionInstruction::SubPlan {
+                    plan_description: description,
+                    steps: sub_plan_steps,
+                    allow_replanning: true,
+                })
+            }
+            
+            "tool_call" => {
+                // 解析工具调用格式
+                let tool_name = json.get("tool")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'tool' field"))?
+                    .to_string();
+                
+                let args = json.get("args")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                
+                tracing::info!("Parsed type:tool_call JSON: tool={}", tool_name);
+                
+                Ok(ActionInstruction::ToolCall {
+                    action: ReactToolCall::new(tool_name, args),
+                    final_answer: false,
+                })
+            }
+            
+            "final_answer" => {
+                // 解析最终答案格式
+                let answer = json.get("answer")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'answer' field"))?
+                    .to_string();
+                
+                tracing::info!("Parsed type:final_answer JSON: {} chars", answer.len());
+                
+                Ok(ActionInstruction::FinalAnswer {
+                    final_answer: FinalAnswer {
+                        answer,
+                        citations: Vec::new(),
+                    },
+                })
+            }
+            
+            "error" | "replan" => {
+                // 错误或重规划 - 当作需要继续处理
+                let reason = json.get("reason")
+                    .or_else(|| json.get("error"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown error")
+                    .to_string();
+                
+                // 如果有新计划，解析它
+                if let Some(new_plan) = json.get("new_plan") {
+                    if let Some(steps) = new_plan.get("steps").and_then(|v| v.as_array()) {
+                        if !steps.is_empty() {
+                            // 递归解析新计划
+                            let new_json = serde_json::json!({
+                                "type": "plan",
+                                "plan": new_plan
+                            });
+                            return Self::parse_typed_json(&new_json.to_string());
+                        }
+                    }
+                }
+                
+                tracing::warn!("Parsed type:{} JSON: {}", type_field, reason);
+                
+                // 返回错误作为最终答案
+                Ok(ActionInstruction::FinalAnswer {
+                    final_answer: FinalAnswer {
+                        answer: format!("Error: {}", reason),
+                        citations: Vec::new(),
+                    },
+                })
+            }
+            
+            _ => Err(anyhow!("Unknown type: {}", type_field)),
+        }
     }
 
     /// 纯 JSON 解析
