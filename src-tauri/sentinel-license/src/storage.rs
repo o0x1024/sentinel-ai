@@ -3,7 +3,6 @@
 use std::fs;
 use std::path::PathBuf;
 use crate::crypto::LicenseKey;
-use crate::obfuscate;
 
 /// License file name (obfuscated)
 const LICENSE_FILE: &str = ".sentinel_auth";

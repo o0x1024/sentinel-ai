@@ -947,12 +947,24 @@ impl PassiveDatabaseService {
 
     /// 清空所有代理请求历史
     pub async fn clear_proxy_requests(&self) -> Result<u64> {
+        let mut tx = self.pool.begin().await
+            .map_err(|e| PassiveError::Database(format!("Failed to begin transaction: {}", e)))?;
+
         let result = sqlx::query("DELETE FROM proxy_requests")
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| PassiveError::Database(format!("Failed to clear proxy requests: {}", e)))?;
 
-        info!("Cleared {} proxy request records", result.rows_affected());
+        // 重置自增 ID
+        sqlx::query("DELETE FROM sqlite_sequence WHERE name='proxy_requests'")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| PassiveError::Database(format!("Failed to reset auto increment: {}", e)))?;
+
+        tx.commit().await
+            .map_err(|e| PassiveError::Database(format!("Failed to commit transaction: {}", e)))?;
+
+        info!("Cleared {} proxy request records and reset ID", result.rows_affected());
         Ok(result.rows_affected())
     }
 

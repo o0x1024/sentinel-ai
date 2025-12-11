@@ -12,17 +12,31 @@ impl McpService {
     }
 
     pub async fn get_connection_info(&self) -> Result<Vec<McpConnection>> {
-        // TODO: Implement actual connection retrieval
-        Ok(vec![])
+        // Retrieve active connections from the global state
+        let connections = crate::commands::mcp_commands::get_active_mcp_connections().await;
+        Ok(connections)
     }
 
     pub async fn execute_client_tool(
         &self,
-        _conn_name: &str,
-        _tool_name: &str,
-        _params: Value,
+        conn_name: &str,
+        tool_name: &str,
+        params: Value,
     ) -> Result<Value> {
-        // TODO: Implement actual tool execution
-        Ok(Value::Null)
+        // Get connection ID first
+        let conn_id = crate::commands::mcp_commands::get_connection_id_by_name(conn_name)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("MCP server '{}' is not connected", conn_name))?;
+            
+        // Execute tool through the command function
+        let result = crate::commands::mcp_commands::mcp_call_tool(
+            conn_id,
+            tool_name.to_string(),
+            params
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("MCP tool execution failed: {}", e))?;
+        
+        Ok(result)
     }
 }

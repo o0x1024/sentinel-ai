@@ -58,6 +58,12 @@ pub fn get_machine_id() -> String {
     sentinel_license::get_machine_id()
 }
 
+/// Get full machine ID hash (for license generation)
+#[tauri::command]
+pub fn get_machine_id_full() -> String {
+    sentinel_license::get_machine_id_full()
+}
+
 /// Deactivate license (remove stored license)
 #[tauri::command]
 pub fn deactivate_license() -> ActivationResult {

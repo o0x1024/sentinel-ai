@@ -58,6 +58,54 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         tracing::info!("Refreshing MCP tools before execution...");
         mcp_adapter::refresh_mcp_tools(&tool_server).await;
 
+        // Register VisionExplorerTool if enabled
+        if tool_config.enabled && !tool_config.disabled_tools.contains(&"vision_explorer".to_string()) {
+           if let Some(mcp_service) = app_handle.try_state::<std::sync::Arc<crate::services::mcp::McpService>>() {
+                use crate::engines::vision_explorer::VisionExplorerTool;
+                use sentinel_tools::dynamic_tool::{DynamicToolBuilder, ToolSource};
+                use rig::tool::Tool;
+
+                let rig_provider = params.rig_provider.to_lowercase();
+                let llm_config = sentinel_llm::LlmConfig::new(&rig_provider, &params.model)
+                   .with_timeout(params.timeout_secs)
+                   .with_rig_provider(&rig_provider);
+
+                let ve_tool = VisionExplorerTool::new(mcp_service.inner().clone(), llm_config)
+                   .with_app_handle(app_handle.clone());
+                
+                // Get definition
+                let def = ve_tool.definition(String::new()).await;
+                
+                let tool_def = DynamicToolBuilder::new(def.name)
+                   .description(def.description)
+                   .input_schema(def.parameters)
+                   .source(ToolSource::Builtin)
+                   .executor(move |args| {
+                       let tool = ve_tool.clone();
+                       async move {
+                           // Deserialize args
+                           let tool_args: crate::engines::vision_explorer::tool::VisionExplorerArgs = 
+                               serde_json::from_value(args).map_err(|e| e.to_string())?;
+                           
+                           let result = tool.call(tool_args).await
+                               .map_err(|e| e.to_string())?;
+                           
+                           Ok(serde_json::Value::String(result))
+                       }
+                   })
+                   .build();
+                
+                if let Ok(tool_def) = tool_def {
+                    tool_server.register_tool(tool_def).await;
+                    tracing::info!("Registered VisionExplorerTool");
+                } else if let Err(e) = tool_def {
+                     tracing::warn!("Failed to build VisionExplorerTool definition: {}", e);
+                }
+           } else {
+               tracing::warn!("McpService not found, skipping VisionExplorerTool registration");
+           }
+        }
+
         // 打印当前注册的工具列表
         let registered_tools = tool_server.list_tools().await;
         tracing::info!(

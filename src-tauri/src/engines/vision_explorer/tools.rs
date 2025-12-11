@@ -855,7 +855,7 @@ impl BrowserTools {
             connections.iter().map(|c| format!("{}(status={})", c.name, c.status)).collect::<Vec<_>>());
         
         let playwright_conn = connections.iter()
-            .find(|c| c.name.to_lowercase().contains("playwright") && c.status == "connected");
+            .find(|c| c.name.to_lowercase().contains("playwright") && c.status.to_lowercase() == "connected");
         
         if playwright_conn.is_none() {
             // 打印更详细的错误信息

@@ -133,6 +133,31 @@ pub async fn mcp_get_connection_status() -> Result<HashMap<String, String>, Stri
     Ok(status_map)
 }
 
+/// Helper to get connection ID by server name (used by internal services)
+pub async fn get_connection_id_by_name(name: &str) -> Option<String> {
+    let active = ACTIVE_CONNECTIONS.read().await;
+    active.get(name).map(|c| c.connection_id.clone())
+}
+
+/// Get all active MCP connections (used by internal services like VisionExplorer)
+pub async fn get_active_mcp_connections() -> Vec<McpConnection> {
+    let active = ACTIVE_CONNECTIONS.read().await;
+    active
+        .values()
+        .map(|conn| McpConnection {
+            db_id: String::new(), // Not available from active connection
+            id: Some(conn.connection_id.clone()),
+            name: conn.name.clone(),
+            description: None,
+            transport_type: "stdio".to_string(),
+            endpoint: String::new(),
+            status: conn.status.clone(),
+            command: conn.command.clone(),
+            args: conn.args.clone(),
+        })
+        .collect()
+}
+
 /// Connect to an MCP server via stdio (child process)
 #[tauri::command]
 pub async fn add_child_process_mcp_server(

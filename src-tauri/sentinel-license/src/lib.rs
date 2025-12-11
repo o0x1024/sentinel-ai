@@ -13,14 +13,15 @@ mod anti_debug;
 mod obfuscate;
 mod validator;
 mod storage;
+mod integrity;
 
 pub use machine_id::MachineId;
 pub use crypto::{LicenseKey, generate_keypair, sign_license, KeyPair};
 pub use validator::{LicenseValidator, LicenseStatus, ValidationResult};
 pub use storage::LicenseStorage;
 pub use anti_debug::is_debugger_present;
+pub use integrity::{verify_integrity, is_integrity_ok, function_checksum, verify_function_checksum};
 
-use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Global license state
@@ -39,13 +40,19 @@ pub fn initialize() -> ValidationResult {
 
     #[cfg(not(debug_assertions))]
     {
-        // Check for debugger in release mode
-        if anti_debug::is_debugger_present() {
-            tracing::warn!("Debugger detected during license initialization");
-            return ValidationResult::Invalid(obfuscate::decrypt_str("Abnormal environment detected"));
+        // Check 1: Code integrity
+        if !integrity::verify_integrity() {
+            tracing::warn!("Code integrity check failed");
+            return ValidationResult::Invalid(obfuscate::decrypt_str("tampered"));
         }
 
-        // Load and validate license
+        // Check 2: Anti-debugging
+        if anti_debug::is_debugger_present() {
+            tracing::warn!("Debugger detected during license initialization");
+            return ValidationResult::Invalid(obfuscate::decrypt_str("debug_detected"));
+        }
+
+        // Check 3: Load and validate license
         match LicenseStorage::load() {
             Some(license_key) => {
                 let validator = LicenseValidator::new();
@@ -114,9 +121,14 @@ pub fn activate(license_key: &str) -> ValidationResult {
     result
 }
 
-/// Get current machine ID
+/// Get current machine ID (display format: XXXX-XXXX-XXXX-XXXX)
 pub fn get_machine_id() -> String {
     MachineId::generate().to_display_string()
+}
+
+/// Get full machine ID hash (64-char hex, for license generation)
+pub fn get_machine_id_full() -> String {
+    MachineId::generate().to_full_hex()
 }
 
 /// Check if application needs activation
@@ -151,6 +163,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn test_debug_mode_licensed() {
         // In debug mode, should always be licensed
         assert!(is_licensed());

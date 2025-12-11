@@ -232,6 +232,17 @@ pub async fn unified_execute_tool(
 ) -> Result<ToolExecutionResult, String> {
     let start = std::time::Instant::now();
 
+    // License check for tool execution
+    #[cfg(not(debug_assertions))]
+    if !sentinel_license::is_licensed() {
+        return Ok(ToolExecutionResult {
+            success: false,
+            output: None,
+            error: Some("License required for tool execution".to_string()),
+            execution_time_ms: start.elapsed().as_millis() as u64,
+        });
+    }
+
     // Check tool enabled status for builtin tools
     if !tool_name.contains("::") {
         let states = TOOL_STATES.read().await;
@@ -890,6 +901,18 @@ pub async fn execute_tool_server_tool(
     tool_name: String,
     args: serde_json::Value,
 ) -> Result<sentinel_tools::ToolResult, String> {
+    // License check
+    #[cfg(not(debug_assertions))]
+    if !sentinel_license::is_licensed() {
+        return Ok(sentinel_tools::ToolResult {
+            success: false,
+            tool_name: tool_name.clone(),
+            output: None,
+            error: Some("License required for tool execution".to_string()),
+            execution_time_ms: 0,
+        });
+    }
+
     let server = get_tool_server();
     server.init_builtin_tools().await;
     Ok(server.execute(&tool_name, args).await)

@@ -155,23 +155,38 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
     
     let signing_key = SigningKey::from_bytes(&key_array);
     
-    // Parse machine ID (remove dashes and convert to hash)
+    // Parse machine ID - support both display format (XXXX-XXXX-XXXX-XXXX) and full hash
     let machine_id_clean = machine_id.replace("-", "").to_lowercase();
-    let machine_id_hash = if machine_id_clean.len() == 64 {
-        // Already a full hash
-        hex::decode(&machine_id_clean).unwrap_or_else(|_| {
-            // Treat as display string, hash it
-            let mut hasher = Sha256::new();
-            hasher.update(machine_id.as_bytes());
-            hasher.finalize().to_vec()
-        })
+    let machine_id_hash: Vec<u8> = if machine_id_clean.len() == 64 {
+        // Full 64-char hex hash (32 bytes)
+        match hex::decode(&machine_id_clean) {
+            Ok(h) => h,
+            Err(_) => {
+                eprintln!("Error: Invalid hex in machine ID");
+                return;
+            }
+        }
+    } else if machine_id_clean.len() == 16 {
+        // Display format without dashes: 16 hex chars (first 8 bytes of hash)
+        // We need to reconstruct - use the display hash as prefix, pad with zeros
+        eprintln!("⚠️  Warning: Using partial machine ID (display format).");
+        eprintln!("   For exact match, use the full 64-char hash.");
+        eprintln!("   The license will work if the first 16 hex chars match.\n");
+        
+        let mut hash = match hex::decode(&machine_id_clean) {
+            Ok(h) => h,
+            Err(_) => {
+                eprintln!("Error: Invalid hex in machine ID");
+                return;
+            }
+        };
+        // Pad to 32 bytes
+        hash.resize(32, 0);
+        hash
     } else {
-        // Display format, need to reconstruct (this is a limitation)
-        // In practice, user should provide full hash
-        eprintln!("Note: Using display format machine ID. For best results, provide full hash.");
-        let mut hasher = Sha256::new();
-        hasher.update(machine_id.as_bytes());
-        hasher.finalize().to_vec()
+        eprintln!("Error: Invalid machine ID format. Got {} chars.", machine_id_clean.len());
+        eprintln!("Expected: XXXX-XXXX-XXXX-XXXX (16 hex chars) or 64-char hex (full hash)");
+        return;
     };
     
     // Create message to sign
@@ -198,7 +213,7 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
     
     println!("=== LICENSE KEY ===");
     println!("{}\n", license_key);
-    println!("Machine ID: {}", license.machine_id);
+    println!("Machine ID (full): {}", license.machine_id);
     if let Some(meta) = &license.metadata {
         println!("Metadata: {}", meta);
     }

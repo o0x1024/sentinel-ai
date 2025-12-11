@@ -199,6 +199,9 @@ pub fn run() {
                     tracing::warn!("Failed to initialize global proxy configuration: {}", e);
                 }
 
+                let mcp_service = Arc::new(crate::services::mcp::McpService::new());
+                handle.manage(mcp_service.clone());
+
                 let mut ai_manager = AiServiceManager::new(db_service.clone());
                 ai_manager.set_app_handle(handle.clone());
 
@@ -713,6 +716,7 @@ pub fn run() {
             commands::license_commands::activate_license,
             commands::license_commands::check_license,
             commands::license_commands::get_machine_id,
+            commands::license_commands::get_machine_id_full,
             commands::license_commands::deactivate_license,
             // Workflow commands
             sentinel_workflow::commands::start_workflow_run,

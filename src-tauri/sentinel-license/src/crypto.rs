@@ -6,9 +6,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 
-/// Embedded public key for license verification (replace with your actual public key)
-/// This is a placeholder - generate your own key pair and embed the public key here
-const EMBEDDED_PUBLIC_KEY: &str = "REPLACE_WITH_YOUR_PUBLIC_KEY_BASE64";
+/// Embedded public key for license verification
+const EMBEDDED_PUBLIC_KEY: &str = "yzCNnuh1Mj0rXdWqvjvWRS6bxXp3Kw9GPu5gDDxrSsk=";
 
 #[derive(Error, Debug)]
 pub enum CryptoError {

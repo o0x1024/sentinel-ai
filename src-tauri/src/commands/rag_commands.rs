@@ -363,6 +363,12 @@ pub async fn create_rag_collection(
 /// 前端兼容的查询命令
 #[tauri::command]
 pub async fn query_rag(request: RagQueryRequest) -> Result<RagQueryResponse, String> {
+    // License check
+    #[cfg(not(debug_assertions))]
+    if !sentinel_license::is_licensed() {
+        return Err("License required for RAG feature".to_string());
+    }
+
     let service = get_global_rag_service().await?;
 
     service
@@ -531,6 +537,12 @@ pub async fn assistant_rag_answer(
     app: AppHandle,
 ) -> Result<AssistantRagResponse, String> {
     use AssistantRagResponse;
+
+    // License check
+    #[cfg(not(debug_assertions))]
+    if !sentinel_license::is_licensed() {
+        return Err("License required for RAG assistant".to_string());
+    }
 
     let start_time = std::time::Instant::now();
     info!("AI助手RAG查询: {}", request.query);

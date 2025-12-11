@@ -2,8 +2,10 @@
 
 use crate::machine_id::MachineId;
 use crate::crypto::{LicenseKey, verify_license};
-use crate::anti_debug;
 use crate::obfuscate;
+
+#[cfg(not(debug_assertions))]
+use crate::anti_debug;
 
 /// License validation result
 #[derive(Debug, Clone, PartialEq)]
@@ -68,14 +70,31 @@ impl LicenseValidator {
         let machine_hash = self.machine_id.to_hash();
         let expected_id = hex::encode(&machine_hash);
         
-        if license.machine_id != expected_id {
+        // Support both full hash and partial hash (display format + zeros)
+        let id_match = if license.machine_id == expected_id {
+            true
+        } else if license.machine_id.len() == 64 {
+            // Check if first 16 chars match (display format: 8 bytes = 16 hex chars)
+            license.machine_id[..16] == expected_id[..16] && 
+            license.machine_id[16..].chars().all(|c| c == '0')
+        } else {
+            false
+        };
+        
+        if !id_match {
             return ValidationResult::Invalid(
                 obfuscate::decrypt_str("machine_mismatch")
             );
         }
         
-        // Check 3: Signature verification
-        match verify_license(license, &machine_hash) {
+        // Get the machine_id bytes from license for signature verification
+        let license_machine_bytes: [u8; 32] = match hex::decode(&license.machine_id) {
+            Ok(bytes) if bytes.len() == 32 => bytes.try_into().unwrap(),
+            _ => return ValidationResult::Invalid(obfuscate::decrypt_str("license_invalid")),
+        };
+        
+        // Check 3: Signature verification (use the machine_id from license)
+        match verify_license(license, &license_machine_bytes) {
             Ok(true) => {}
             Ok(false) => {
                 return ValidationResult::Invalid(

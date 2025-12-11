@@ -37,10 +37,13 @@ rand = "0.8"
 url = "2.4"
 dirs = "5.0"
 toml = "0.8"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+sqlx = { version = "0.8.6", features = [
+    "runtime-tokio",
+    "sqlite",
+    "chrono",
+    "uuid",
+] }
 
 # rig-core for Tool trait
 rig-core = { workspace = true }
 schemars = "1.1.0"
-
-
