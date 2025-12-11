@@ -7,8 +7,8 @@ use chrono::Utc;
 use crate::engine::{WorkflowEngine, WorkflowDefinition, WorkflowMetadata, WorkflowStep};
 use sentinel_db::DatabaseService;
 use sentinel_db::Database;
-use sentinel_tools::UnifiedToolManager;
-use sentinel_tools::unified_types::ToolExecutionParams;
+use sentinel_passive::PluginManager;
+use rig::tool::ToolSet;
 use serde::{Deserialize, Serialize};
 use sentinel_rag::{RagService, RagQueryRequest, IngestRequest, config::RagConfig};
 use sentinel_prompt::{PromptBuilder, PromptConfigManager, PromptBuildContext, TargetInfo, ExecutionContext, HistoryItem};
@@ -182,14 +182,16 @@ pub async fn execute_workflow_steps(
     db: Arc<DatabaseService>,
     app_handle: AppHandle,
     engine: Arc<WorkflowEngine>,
-    tool_manager: Arc<tokio::sync::RwLock<UnifiedToolManager>>,
+    toolset: Arc<ToolSet>,
+    plugin_manager: Option<Arc<PluginManager>>,
 ) {
     let execution_id_for_spawn = execution_id;
     let db_clone = db;
     let app_handle_clone = app_handle;
     let engine_clone = engine;
     let def_clone = def;
-    let tool_manager_clone = tool_manager;
+    let toolset_clone = toolset;
+    let plugin_manager_clone = plugin_manager;
         if let Err(e) = db_clone.create_workflow_run(&execution_id_for_spawn, &def_clone.metadata.id, &def_clone.metadata.name, &def_clone.metadata.version, "running", Utc::now()).await {
             tracing::warn!("Failed to create workflow_run: {}", e);
         }
@@ -237,25 +239,16 @@ pub async fn execute_workflow_steps(
                         tool_name = stripped.to_string();
                     }
 
-                    // 从节点参数读取超时配置，默认 60 秒
-                    let timeout_secs = step_def.inputs.get("timeout")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(60);
-
-                    let params = ToolExecutionParams {
-                        inputs: step_def.inputs.clone(),
-                        context: HashMap::new(),
-                        timeout: Some(std::time::Duration::from_secs(timeout_secs)),
-                        execution_id: None,
-                    };
-
-                    match tool_manager_clone.read().await.call_tool(&tool_name, params).await {
-                        Ok(exec_result) => {
+                    // 使用 rig-core ToolSet 调用工具
+                    let params_json = serde_json::to_string(&step_def.inputs).unwrap_or_default();
+                    match toolset_clone.call(&tool_name, params_json).await {
+                        Ok(result) => {
+                            let result_value = serde_json::from_str(&result).unwrap_or(serde_json::json!({"result": result}));
                             engine_clone
                                 .mark_step_completed_with_result(
                                     &execution_id_for_spawn,
                                     &node_id,
-                                    exec_result.output,
+                                    result_value,
                                 )
                                 .await;
                             wrote_result = true;
@@ -265,52 +258,104 @@ pub async fn execute_workflow_steps(
                         }
                     }
                 } else if action.starts_with("plugin::") {
-                    // 处理Agent插件工具节点 - 通过全局工具系统执行
-                    let tool_name = action; // plugin::xxx 格式的工具名
+                    // 处理Agent插件工具节点 - 通过 PluginManager.execute_agent 执行
+                    let plugin_id = action.strip_prefix("plugin::").unwrap_or(&action);
+                    tracing::info!("Executing Agent plugin '{}' with inputs: {:?}", plugin_id, step_def.inputs);
                     
-                    tracing::info!("Executing agent plugin tool '{}' with inputs: {:?}", tool_name, step_def.inputs);
-                    
-                    // 从节点参数读取超时配置，默认 300 秒（插件可能需要更长时间）
-                    let timeout_secs = step_def.inputs.get("timeout")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(300);
-                    
-                    // 直接使用step_def.inputs作为工具参数（已经是HashMap<String, Value>格式）
-                    let params = ToolExecutionParams {
-                        inputs: step_def.inputs.clone(),
-                        context: HashMap::new(),
-                        timeout: Some(std::time::Duration::from_secs(timeout_secs)),
-                        execution_id: None,
-                    };
-                    
-                    // 通过工具系统执行（Agent插件已注册为 plugin::xxx 工具）
-                    match tool_manager_clone.read().await.call_tool(&tool_name, params).await {
-                        Ok(exec_result) => {
-                            engine_clone
-                                .mark_step_completed_with_result(
-                                    &execution_id_for_spawn,
-                                    &node_id,
-                                    exec_result.output,
-                                )
-                                .await;
-                            wrote_result = true;
-                            tracing::info!("Agent plugin tool '{}' executed successfully", tool_name);
+                    if let Some(ref pm) = plugin_manager_clone {
+                        // 确保插件已注册到内存中（从数据库加载）
+                        if pm.get_plugin(plugin_id).await.is_none() {
+                            tracing::info!("Plugin '{}' not in memory, loading from database...", plugin_id);
+                            
+                            // 从数据库加载插件元数据和代码
+                            if let Ok(Some(plugin_data)) = db_clone.get_plugin_from_registry(plugin_id).await {
+                                let enabled = plugin_data.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let name = plugin_data.get("name").and_then(|v| v.as_str()).unwrap_or(plugin_id);
+                                let version = plugin_data.get("version").and_then(|v| v.as_str()).unwrap_or("1.0.0");
+                                let author = plugin_data.get("author").and_then(|v| v.as_str());
+                                let main_category = plugin_data.get("main_category").and_then(|v| v.as_str()).unwrap_or("agent");
+                                let category = plugin_data.get("category").and_then(|v| v.as_str()).unwrap_or("scanner");
+                                let description = plugin_data.get("description").and_then(|v| v.as_str());
+                                let tags: Vec<String> = plugin_data.get("tags")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                    .unwrap_or_default();
+                                let code = plugin_data.get("plugin_code").and_then(|v| v.as_str()).unwrap_or("");
+                                
+                                let metadata = sentinel_passive::PluginMetadata {
+                                    id: plugin_id.to_string(),
+                                    name: name.to_string(),
+                                    version: version.to_string(),
+                                    author: author.map(|s| s.to_string()),
+                                    main_category: main_category.to_string(),
+                                    category: category.to_string(),
+                                    description: description.map(|s| s.to_string()),
+                                    default_severity: sentinel_passive::types::Severity::Medium,
+                                    tags,
+                                };
+                                
+                                // 注册到内存并缓存代码
+                                let _ = pm.register_plugin(plugin_id.to_string(), metadata, enabled).await;
+                                let _ = pm.set_plugin_code(plugin_id.to_string(), code.to_string()).await;
+                                tracing::info!("Plugin '{}' loaded from database and registered", plugin_id);
+                            } else {
+                                tracing::warn!("Plugin '{}' not found in database", plugin_id);
+                            }
                         }
-                        Err(err) => {
-                            tracing::warn!("Agent plugin tool '{}' execution failed: {}", tool_name, err);
-                            let error_result = serde_json::json!({
-                                "success": false,
-                                "error": err.to_string()
-                            });
-                            engine_clone
-                                .mark_step_completed_with_result(
-                                    &execution_id_for_spawn,
-                                    &node_id,
-                                    error_result,
-                                )
-                                .await;
-                            wrote_result = true;
+                        
+                        // 构建输入参数
+                        let input_value = serde_json::json!(step_def.inputs);
+                        
+                        match pm.execute_agent(plugin_id, &input_value).await {
+                            Ok((findings, output)) => {
+                                let result_value = serde_json::json!({
+                                    "success": true,
+                                    "findings": findings.len(),
+                                    "output": output,
+                                    "plugin_id": plugin_id
+                                });
+                                engine_clone
+                                    .mark_step_completed_with_result(
+                                        &execution_id_for_spawn,
+                                        &node_id,
+                                        result_value,
+                                    )
+                                    .await;
+                                wrote_result = true;
+                                tracing::info!("Agent plugin '{}' executed successfully, {} findings", plugin_id, findings.len());
+                            }
+                            Err(err) => {
+                                tracing::warn!("Agent plugin '{}' execution failed: {}", plugin_id, err);
+                                let error_result = serde_json::json!({
+                                    "success": false,
+                                    "error": err.to_string(),
+                                    "plugin_id": plugin_id
+                                });
+                                engine_clone
+                                    .mark_step_completed_with_result(
+                                        &execution_id_for_spawn,
+                                        &node_id,
+                                        error_result,
+                                    )
+                                    .await;
+                                wrote_result = true;
+                            }
                         }
+                    } else {
+                        tracing::warn!("PluginManager not available for executing plugin '{}'", plugin_id);
+                        let error_result = serde_json::json!({
+                            "success": false,
+                            "error": "PluginManager not available",
+                            "plugin_id": plugin_id
+                        });
+                        engine_clone
+                            .mark_step_completed_with_result(
+                                &execution_id_for_spawn,
+                                &node_id,
+                                error_result,
+                            )
+                            .await;
+                        wrote_result = true;
                     }
                 } else if action == "branch" {
                     let expr = step_def.inputs.get("expr").and_then(|v| v.as_str()).unwrap_or("true");
@@ -335,16 +380,15 @@ pub async fn execute_workflow_steps(
                     let times = step_def.inputs.get("times").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(3);
                     let delay_ms = step_def.inputs.get("delay_ms").and_then(|v| v.as_u64()).unwrap_or(500);
                     let tool_name = step_def.inputs.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
-                    let tool_params = step_def.inputs.get("tool_params").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+                    let tool_params = step_def.inputs.get("tool_params").cloned().unwrap_or_default();
                     if !tool_name.is_empty() {
                         let mut last_err: Option<String> = None;
                         for _attempt in 0..times {
-                            let mut inputs_map: HashMap<String, serde_json::Value> = HashMap::new();
-                            for (k, v) in tool_params.iter() { inputs_map.insert(k.clone(), v.clone()); }
-                            let params = ToolExecutionParams { inputs: inputs_map, context: HashMap::new(), timeout: Some(std::time::Duration::from_secs(30)), execution_id: None };
-                            match tool_manager_clone.read().await.call_tool(tool_name, params).await {
-                                Ok(exec_result) => {
-                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, exec_result.output).await;
+                            let params_json = serde_json::to_string(&tool_params).unwrap_or_default();
+                            match toolset_clone.call(tool_name, params_json).await {
+                                Ok(result) => {
+                                    let result_value = serde_json::from_str(&result).unwrap_or(serde_json::json!({"result": result}));
+                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result_value).await;
                                     wrote_result = true;
                                     break;
                                 }
@@ -643,8 +687,14 @@ pub async fn start_workflow_run(
     app_handle: AppHandle,
     engine: State<'_, Arc<WorkflowEngine>>,
     db: State<'_, Arc<DatabaseService>>,
-    tool_manager: State<'_, Arc<tokio::sync::RwLock<UnifiedToolManager>>>,
+    plugin_manager: State<'_, Arc<PluginManager>>,
 ) -> Result<String, String> {
+    // Multi-point license verification
+    #[cfg(not(debug_assertions))]
+    if !sentinel_license::is_licensed() {
+        return Err("License required for this feature".to_string());
+    }
+
     let def = graph_to_definition(&graph);
     let execution_id = engine.execute_workflow(&def, None).await.map_err(|e| e.to_string())?;
 
@@ -661,8 +711,11 @@ pub async fn start_workflow_run(
     let app_handle_clone = app_handle.clone();
     let engine_clone = engine.inner().clone();
     let def_clone = def.clone();
-    let tool_manager_clone = tool_manager.inner().clone();
     let graph_clone = graph.clone();
+    let plugin_manager_clone = Some(plugin_manager.inner().clone());
+    
+    // 使用 rig-core ToolSet
+    let toolset = Arc::new(sentinel_tools::create_buildin_toolset());
 
     tokio::spawn(async move {
         execute_workflow_steps(
@@ -672,7 +725,8 @@ pub async fn start_workflow_run(
             db_clone,
             app_handle_clone,
             engine_clone,
-            tool_manager_clone,
+            toolset,
+            plugin_manager_clone,
         ).await;
     });
 
@@ -949,7 +1003,7 @@ pub struct WorkflowScheduleExecutor {
     engine: Arc<WorkflowEngine>,
     db: Arc<DatabaseService>,
     app_handle: AppHandle,
-    tool_manager: Arc<tokio::sync::RwLock<UnifiedToolManager>>,
+    plugin_manager: Option<Arc<PluginManager>>,
 }
 
 impl WorkflowScheduleExecutor {
@@ -957,9 +1011,13 @@ impl WorkflowScheduleExecutor {
         engine: Arc<WorkflowEngine>,
         db: Arc<DatabaseService>,
         app_handle: AppHandle,
-        tool_manager: Arc<tokio::sync::RwLock<UnifiedToolManager>>,
     ) -> Self {
-        Self { engine, db, app_handle, tool_manager }
+        Self { engine, db, app_handle, plugin_manager: None }
+    }
+    
+    pub fn with_plugin_manager(mut self, pm: Arc<PluginManager>) -> Self {
+        self.plugin_manager = Some(pm);
+        self
     }
 }
 
@@ -996,7 +1054,8 @@ impl ScheduleExecutor for WorkflowScheduleExecutor {
         let app_handle_clone = self.app_handle.clone();
         let engine_clone = self.engine.clone();
         let def_clone = def.clone();
-        let tool_manager_clone = self.tool_manager.clone();
+        let toolset = Arc::new(sentinel_tools::create_buildin_toolset());
+        let plugin_manager_clone = self.plugin_manager.clone();
         
         tokio::spawn(async move {
             execute_workflow_steps(
@@ -1006,7 +1065,8 @@ impl ScheduleExecutor for WorkflowScheduleExecutor {
                 db_clone,
                 app_handle_clone,
                 engine_clone,
-                tool_manager_clone,
+                toolset,
+                plugin_manager_clone,
             ).await;
         });
         

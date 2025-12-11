@@ -16,7 +16,6 @@ use crate::core::models::agent::{
     AgentTask, AgentSessionData, AgentExecutionResult, SessionLog, TaskPriority, LogLevel,
 };
 use crate::core::models::workflow::WorkflowStepDetail;
-use crate::core::models::scenario_agent::ScenarioAgentProfile;
 use crate::core::models::rag::{DocumentChunk, ChunkMetadata, DocumentSource, QueryResult, CollectionInfo, IngestionStatusEnum};
 use crate::core::models::rag_config::RagConfig;
 
@@ -96,7 +95,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
 
     async fn get_plugins_from_registry(&self) -> Result<Vec<serde_json::Value>>;
     async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()>;
-    async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()>;
+    async fn update_plugin(&self, metadata: &serde_json::Value, code: &str) -> Result<()>;
     async fn get_plugin_from_registry(&self, plugin_id: &str) -> Result<Option<serde_json::Value>>;
     async fn delete_plugin_from_registry(&self, plugin_id: &str) -> Result<()>;
     async fn get_plugins_paginated(
@@ -142,6 +141,7 @@ impl DatabaseService {
     pub async fn initialize(&mut self) -> Result<()> {
         tracing::info!("Database path: {}", self.db_path.display());
 
+        println!("----1");
         // 确保数据库目录存在
         if let Some(parent) = self.db_path.parent() {
             if !parent.exists() {
@@ -231,14 +231,14 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
+
+
         // 提示词模板表
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS prompt_templates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 description TEXT,
-                architecture TEXT NOT NULL,
-                stage TEXT NOT NULL,
                 content TEXT NOT NULL,
                 is_default INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
@@ -353,6 +353,7 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
+                println!("----2");
         // 创建扫描阶段表
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS scan_stages (
@@ -374,17 +375,9 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
-        // 索引优化（提示词相关）
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_prompt_templates_arch_stage ON prompt_templates(architecture, stage)")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_prompt_templates_is_active ON prompt_templates(is_active)")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_user_prompt_configs_arch_stage ON user_prompt_configs(architecture, stage)")
-            .execute(&mut *tx)
-            .await?;
 
+
+                        println!("----3");
         // 创建资产表
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS assets (
@@ -446,7 +439,7 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
-
+        println!("----4");
 
         // 创建MCP工具表
         sqlx::query(
@@ -482,6 +475,7 @@ impl DatabaseService {
         )
         .execute(&mut *tx)
         .await?;
+
 
         // 创建MCP连接表
         sqlx::query(
@@ -591,6 +585,7 @@ impl DatabaseService {
                 total_tokens INTEGER DEFAULT 0,
                 cost REAL DEFAULT 0.0,
                 tags TEXT,
+                tool_config TEXT,
                 is_archived BOOLEAN DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1258,25 +1253,6 @@ impl DatabaseService {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding_model ON rag_chunks(embedding_model)").execute(&mut *tx).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_rag_query_history_collection_id ON rag_query_history(collection_id)").execute(&mut *tx).await?;
 
-        // 创建scenario_agents表
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS scenario_agents (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                enabled BOOLEAN DEFAULT 1,
-                profile_json TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )"
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        // scenario_agents表的索引
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_scenario_agents_name ON scenario_agents(name)")
-            .execute(&mut *tx)
-            .await?;
-
         // 工作流运行记录表
         sqlx::query(
             r#"
@@ -1477,11 +1453,9 @@ impl DatabaseService {
         ];
 
         for (arch, stage, name, content) in defaults {
-            sqlx::query(r#"INSERT INTO prompt_templates (name, description, architecture, stage, content, is_default, is_active, category, template_type) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)"#)
+            sqlx::query(r#"INSERT INTO prompt_templates (name, description, content, is_default, is_active, category, template_type) VALUES (?, ?, ?, 1, 1, ?, ?)"#)
                 .bind(*name)
                 .bind(Option::<&str>::None)
-                .bind(*arch)
-                .bind(*stage)
                 .bind(*content)
                 .bind("LlmArchitecture")
                 .bind(match *stage {
@@ -1505,15 +1479,13 @@ impl DatabaseService {
         // 插件生成主模板（任务说明和指导原则）
         sqlx::query(r#"
             INSERT INTO prompt_templates (
-                name, description, architecture, stage, content, 
+                name, description, content, 
                 is_default, is_active, category, template_type, 
                 is_system, priority, tags, variables, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#)
         .bind("Plugin Generation Template")
         .bind("Task overview and guiding principles for plugin generation")
-        .bind("rewoo")
-        .bind("planner")
         .bind(include_str!("../../src/generators/templates/plugin_generation.txt"))
         .bind(1)
         .bind(1)
@@ -1530,15 +1502,13 @@ impl DatabaseService {
         // 插件修复模板
         sqlx::query(r#"
             INSERT INTO prompt_templates (
-                name, description, architecture, stage, content, 
+                name, description, content, 
                 is_default, is_active, category, template_type, 
                 is_system, priority, tags, variables, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#)
         .bind("Plugin Fix Template")
         .bind("Template for fixing broken plugin code")
-        .bind("rewoo")
-        .bind("planner")
         .bind(include_str!("../../src/generators/templates/plugin_fix.txt"))
         .bind(1)
         .bind(1)
@@ -1555,15 +1525,13 @@ impl DatabaseService {
         // Agent 插件生成模板（已包含接口和输出格式）
         sqlx::query(r#"
             INSERT INTO prompt_templates (
-                name, description, architecture, stage, content, 
+                name, description, content, 
                 is_default, is_active, category, template_type, 
                 is_system, priority, tags, variables, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#)
         .bind("Agent Plugin Generation Template")
         .bind("Task overview and guiding principles for Agent tool plugin generation")
-        .bind("rewoo")
-        .bind("planner")
         .bind(include_str!("../../src/generators/templates/agent_plugin_generation.txt"))
         .bind(1)
         .bind(1)
@@ -1580,15 +1548,13 @@ impl DatabaseService {
         // Agent 插件修复模板
         sqlx::query(r#"
             INSERT INTO prompt_templates (
-                name, description, architecture, stage, content, 
+                name, description, content, 
                 is_default, is_active, category, template_type, 
                 is_system, priority, tags, variables, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#)
         .bind("Agent Plugin Fix Template")
         .bind("Template for fixing broken Agent tool plugin code")
-        .bind("rewoo")
-        .bind("planner")
         .bind(include_str!("../../src/generators/templates/agent_plugin_fix.txt"))
         .bind(1)
         .bind(1)
@@ -1736,14 +1702,35 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()> {
+    pub async fn update_plugin(&self, metadata: &serde_json::Value, code: &str) -> Result<()> {
         let pool = self.get_pool()?;
+        let id = metadata.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+        let name = metadata.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+        let version = metadata.get("version").and_then(|v| v.as_str()).unwrap_or("1.0.0");
+        let author = metadata.get("author").and_then(|v| v.as_str());
+        let main_category = metadata.get("main_category").and_then(|v| v.as_str()).unwrap_or("passive");
+        let category = metadata.get("category").and_then(|v| v.as_str()).unwrap_or("vulnerability");
+        let description = metadata.get("description").and_then(|v| v.as_str());
+        let default_severity = metadata.get("default_severity").and_then(|v| v.as_str()).unwrap_or("medium");
+        let tags = metadata.get("tags").map(|v| v.to_string()).unwrap_or_else(|| "[]".to_string());
+        
         sqlx::query(
-            r#"UPDATE plugin_registry SET plugin_code = ?, updated_at = ? WHERE id = ?"#,
+            r#"UPDATE plugin_registry 
+               SET name = ?, version = ?, author = ?, main_category = ?, category = ?,
+                   description = ?, default_severity = ?, tags = ?, plugin_code = ?, updated_at = ?
+               WHERE id = ?"#,
         )
+        .bind(name)
+        .bind(version)
+        .bind(author)
+        .bind(main_category)
+        .bind(category)
+        .bind(description)
+        .bind(default_severity)
+        .bind(&tags)
         .bind(code)
         .bind(chrono::Utc::now())
-        .bind(plugin_id)
+        .bind(id)
         .execute(pool)
         .await?;
         Ok(())
@@ -2508,6 +2495,35 @@ impl DatabaseService {
         Ok(())
     }
 
+    /// 删除会话的所有消息
+    pub async fn delete_messages_by_conversation(&self, conversation_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+
+        // 删除该会话的所有消息
+        sqlx::query("DELETE FROM ai_messages WHERE conversation_id = ?")
+            .bind(conversation_id)
+            .execute(pool)
+            .await?;
+
+        // 重置会话统计
+        sqlx::query(
+            r#"
+            UPDATE ai_conversations
+            SET total_messages = 0,
+                total_tokens = 0,
+                cost = 0.0,
+                updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(Utc::now())
+        .bind(conversation_id)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// 配置相关操作
     pub async fn get_config(&self, category: &str, key: &str) -> Result<Option<String>> {
         let pool = self.get_pool()?;
@@ -2833,11 +2849,31 @@ impl DatabaseService {
     pub async fn get_all_mcp_server_configs(&self) -> Result<Vec<McpServerConfig>> {
         let pool = self.get_pool()?;
         let configs = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, created_at, updated_at FROM mcp_server_configs"
+            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, 0) as auto_connect, created_at, updated_at FROM mcp_server_configs"
         )
         .fetch_all(pool)
         .await?;
         Ok(configs)
+    }
+    
+    pub async fn get_auto_connect_mcp_servers(&self) -> Result<Vec<McpServerConfig>> {
+        let pool = self.get_pool()?;
+        let configs = sqlx::query_as::<_, McpServerConfig>(
+            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, 0) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = 1"
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(configs)
+    }
+    
+    pub async fn update_mcp_server_auto_connect(&self, id: &str, auto_connect: bool) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("UPDATE mcp_server_configs SET auto_connect = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(auto_connect)
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn update_mcp_server_config_enabled(&self, id: &str, enabled: bool) -> Result<()> {
@@ -4062,14 +4098,35 @@ impl Database for DatabaseService {
         Ok(())
     }
 
-    async fn update_plugin_code(&self, plugin_id: &str, code: &str) -> Result<()> {
+    async fn update_plugin(&self, metadata: &serde_json::Value, code: &str) -> Result<()> {
         let pool = self.get_pool()?;
+        let id = metadata.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+        let name = metadata.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+        let version = metadata.get("version").and_then(|v| v.as_str()).unwrap_or("1.0.0");
+        let author = metadata.get("author").and_then(|v| v.as_str());
+        let main_category = metadata.get("main_category").and_then(|v| v.as_str()).unwrap_or("passive");
+        let category = metadata.get("category").and_then(|v| v.as_str()).unwrap_or("vulnerability");
+        let description = metadata.get("description").and_then(|v| v.as_str());
+        let default_severity = metadata.get("default_severity").and_then(|v| v.as_str()).unwrap_or("medium");
+        let tags = metadata.get("tags").map(|v| v.to_string()).unwrap_or_else(|| "[]".to_string());
+        
         sqlx::query(
-            r#"UPDATE plugin_registry SET plugin_code = ?, updated_at = ? WHERE id = ?"#,
+            r#"UPDATE plugin_registry 
+               SET name = ?, version = ?, author = ?, main_category = ?, category = ?,
+                   description = ?, default_severity = ?, tags = ?, plugin_code = ?, updated_at = ?
+               WHERE id = ?"#,
         )
+        .bind(name)
+        .bind(version)
+        .bind(author)
+        .bind(main_category)
+        .bind(category)
+        .bind(description)
+        .bind(default_severity)
+        .bind(&tags)
         .bind(code)
         .bind(chrono::Utc::now())
-        .bind(plugin_id)
+        .bind(id)
         .execute(pool)
         .await?;
         Ok(())
@@ -5274,50 +5331,6 @@ impl DatabaseService {
         Ok(())
     }
 
-    // Scenario agent methods
-    pub async fn list_scenario_agents(&self) -> Result<Vec<ScenarioAgentProfile>> {
-        let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT * FROM scenario_agents ORDER BY name")
-            .fetch_all(pool)
-            .await?;
-
-        let mut agents = Vec::new();
-        for row in rows {
-            let profile_json: String = row.get("profile_json");
-            let profile: ScenarioAgentProfile = serde_json::from_str(&profile_json)?;
-            agents.push(profile);
-        }
-        Ok(agents)
-    }
-
-    pub async fn upsert_scenario_agent(&self, profile: &ScenarioAgentProfile) -> Result<()> {
-        let pool = self.get_pool()?;
-        let profile_json = serde_json::to_string(profile)?;
-        let now = chrono::Utc::now().to_rfc3339();
-
-        sqlx::query(
-            "INSERT OR REPLACE INTO scenario_agents (id, name, profile_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
-        )
-        .bind(&profile.id)
-        .bind(&profile.name)
-        .bind(&profile_json)
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
-
-        Ok(())
-    }
-
-    pub async fn delete_scenario_agent(&self, id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM scenario_agents WHERE id = ?")
-            .bind(id)
-            .execute(pool)
-            .await?;
-        Ok(())
-    }
-
     async fn set_current_ai_role(&self, role_id: Option<&str>) -> Result<()> {
         match role_id {
             Some(id) => {
@@ -5523,12 +5536,12 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         let query = if let Some(template_filter) = is_template {
             sqlx::query(
-                "SELECT id, name, description, version, tags, is_template, is_tool, created_at, updated_at FROM workflow_definitions WHERE is_template = ? ORDER BY updated_at DESC"
+                "SELECT id, name, description, version, graph_json, tags, is_template, is_tool, created_at, updated_at FROM workflow_definitions WHERE is_template = ? ORDER BY updated_at DESC"
             )
             .bind(template_filter)
         } else {
             sqlx::query(
-                "SELECT id, name, description, version, tags, is_template, is_tool, created_at, updated_at FROM workflow_definitions ORDER BY updated_at DESC"
+                "SELECT id, name, description, version, graph_json, tags, is_template, is_tool, created_at, updated_at FROM workflow_definitions ORDER BY updated_at DESC"
             )
         };
 
@@ -5536,7 +5549,9 @@ impl DatabaseService {
         let mut results = Vec::new();
 
         for row in rows {
-            results.push(serde_json::json!({
+            // Parse graph_json to extract the full definition
+            let graph_json_str = row.get::<Option<String>, _>("graph_json");
+            let mut result = serde_json::json!({
                 "id": row.get::<String, _>("id"),
                 "name": row.get::<String, _>("name"),
                 "description": row.get::<Option<String>, _>("description"),
@@ -5546,7 +5561,28 @@ impl DatabaseService {
                 "is_tool": row.try_get::<bool, _>("is_tool").unwrap_or(false),
                 "created_at": row.get::<String, _>("created_at"),
                 "updated_at": row.get::<String, _>("updated_at"),
-            }));
+            });
+            
+            // Parse and merge graph_json into the result for input schema extraction
+            if let Some(graph_str) = graph_json_str {
+                if let Ok(graph_value) = serde_json::from_str::<serde_json::Value>(&graph_str) {
+                    // Merge graph_json fields into result
+                    if let Some(obj) = result.as_object_mut() {
+                        if let Some(graph_obj) = graph_value.as_object() {
+                            for (key, value) in graph_obj {
+                                // Don't overwrite existing metadata fields
+                                if !obj.contains_key(key) {
+                                    obj.insert(key.clone(), value.clone());
+                                }
+                            }
+                        }
+                        // Also store the raw graph_json for reference
+                        obj.insert("graph_json".to_string(), graph_value);
+                    }
+                }
+            }
+            
+            results.push(result);
         }
 
         Ok(results)
@@ -5556,14 +5592,16 @@ impl DatabaseService {
     pub async fn list_workflow_tools(&self) -> Result<Vec<serde_json::Value>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query(
-            "SELECT id, name, description, version, tags, created_at, updated_at FROM workflow_definitions WHERE is_tool = 1 ORDER BY updated_at DESC"
+            "SELECT id, name, description, version, graph_json, tags, created_at, updated_at FROM workflow_definitions WHERE is_tool = 1 ORDER BY updated_at DESC"
         )
         .fetch_all(pool)
         .await?;
 
         let mut results = Vec::new();
         for row in rows {
-            results.push(serde_json::json!({
+            // Parse graph_json to extract the full definition
+            let graph_json_str = row.get::<Option<String>, _>("graph_json");
+            let mut result = serde_json::json!({
                 "id": row.get::<String, _>("id"),
                 "name": row.get::<String, _>("name"),
                 "description": row.get::<Option<String>, _>("description"),
@@ -5571,7 +5609,28 @@ impl DatabaseService {
                 "tags": row.get::<Option<String>, _>("tags"),
                 "created_at": row.get::<String, _>("created_at"),
                 "updated_at": row.get::<String, _>("updated_at"),
-            }));
+            });
+            
+            // Parse and merge graph_json into the result for input schema extraction
+            if let Some(graph_str) = graph_json_str {
+                if let Ok(graph_value) = serde_json::from_str::<serde_json::Value>(&graph_str) {
+                    // Merge graph_json fields into result
+                    if let Some(obj) = result.as_object_mut() {
+                        if let Some(graph_obj) = graph_value.as_object() {
+                            for (key, value) in graph_obj {
+                                // Don't overwrite existing metadata fields
+                                if !obj.contains_key(key) {
+                                    obj.insert(key.clone(), value.clone());
+                                }
+                            }
+                        }
+                        // Also store the raw graph_json for reference
+                        obj.insert("graph_json".to_string(), graph_value);
+                    }
+                }
+            }
+            
+            results.push(result);
         }
 
         Ok(results)

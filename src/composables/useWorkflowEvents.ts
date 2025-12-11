@@ -40,7 +40,7 @@ export function useWorkflowEvents() {
   }
 
   const unsubscribe_all = () => {
-    unsubs.forEach(u => { try { u() } catch {} })
+    unsubs.forEach(u => { try { u() } catch (_e) { void 0 } })
     unsubs.length = 0
   }
 
@@ -54,4 +54,3 @@ export function useWorkflowEvents() {
     unsubscribe_all,
   }
 }
-

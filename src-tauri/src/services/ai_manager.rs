@@ -12,7 +12,6 @@ use uuid::Uuid;
 
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::database::Database;
-use crate::services::mcp::McpService;
 use crate::utils::ordered_message::ChunkType;
 use sentinel_llm::{AiConfig, AiService, SchedulerConfig, SchedulerStage};
 
@@ -22,7 +21,6 @@ pub struct AiServiceManager {
     services: Arc<std::sync::RwLock<HashMap<String, AiServiceWrapper>>>,
     db: Arc<dyn Database + Send + Sync>,
     app_handle: Arc<std::sync::RwLock<Option<AppHandle>>>,
-    mcp_service: Option<Arc<McpService>>,
 }
 
 /// 包装 AiService 并添加应用特定功能
@@ -32,7 +30,6 @@ pub struct AiServiceWrapper {
     pub config: AiConfig,
     pub db: Arc<dyn Database + Send + Sync>,
     pub app_handle: Option<AppHandle>,
-    pub mcp_service: Option<Arc<McpService>>,
 }
 
 impl std::fmt::Debug for AiServiceWrapper {
@@ -40,7 +37,6 @@ impl std::fmt::Debug for AiServiceWrapper {
         f.debug_struct("AiServiceWrapper")
             .field("config", &self.config)
             .field("app_handle", &self.app_handle.is_some())
-            .field("mcp_service", &self.mcp_service.is_some())
             .finish()
     }
 }
@@ -50,14 +46,12 @@ impl AiServiceWrapper {
         config: AiConfig,
         db: Arc<dyn Database + Send + Sync>,
         app_handle: Option<AppHandle>,
-        mcp_service: Option<Arc<McpService>>,
     ) -> Self {
         Self {
             service: AiService::new(config.clone()),
             config,
             db,
             app_handle,
-            mcp_service,
         }
     }
 
@@ -67,10 +61,6 @@ impl AiServiceWrapper {
 
     pub fn set_app_handle(&mut self, app_handle: AppHandle) {
         self.app_handle = Some(app_handle);
-    }
-
-    pub fn set_mcp_service(&mut self, mcp_service: Arc<McpService>) {
-        self.mcp_service = Some(mcp_service);
     }
 
     // 对话管理方法
@@ -171,7 +161,6 @@ impl AiServiceManager {
             services: Arc::new(std::sync::RwLock::new(HashMap::new())),
             db,
             app_handle: Arc::new(std::sync::RwLock::new(None)),
-            mcp_service: None,
         }
     }
 
@@ -210,6 +199,10 @@ impl AiServiceManager {
                                     .get("organization")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
+                                let rig_provider = provider_obj
+                                    .get("rig_provider")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
 
                                 return Ok(Some(AiConfig {
                                     provider: provider_name.to_string(),
@@ -219,6 +212,7 @@ impl AiServiceManager {
                                     organization,
                                     temperature: Some(0.7),
                                     max_tokens: Some(4096),
+                                    rig_provider,
                                 }));
                             }
                         }
@@ -256,6 +250,25 @@ impl AiServiceManager {
             }
             .to_string();
 
+            // 根据 provider 推断 rig_provider
+            let rig_provider = match provider.to_lowercase().as_str() {
+                "openai" => Some("openai".to_string()),
+                "anthropic" => Some("anthropic".to_string()),
+                "deepseek" => Some("deepseek".to_string()),
+                "google" | "gemini" => Some("gemini".to_string()),
+                "ollama" => Some("ollama".to_string()),
+                "moonshot" => Some("moonshot".to_string()),
+                "modelscope" => Some("openai".to_string()), // OpenAI 兼容
+                "openrouter" => Some("openrouter".to_string()),
+                "groq" => Some("groq".to_string()),
+                "xai" => Some("xai".to_string()),
+                "cohere" => Some("cohere".to_string()),
+                "perplexity" => Some("perplexity".to_string()),
+                "togetherai" => Some("togetherai".to_string()),
+                "hyperbolic" => Some("hyperbolic".to_string()),
+                _ => Some("openai".to_string()), // 默认 OpenAI 兼容
+            };
+
             return Ok(Some(AiConfig {
                 provider: provider.to_string(),
                 model: default_model,
@@ -264,22 +277,11 @@ impl AiServiceManager {
                 organization: None,
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
+                rig_provider,
             }));
         }
 
         Ok(None)
-    }
-
-    pub fn set_mcp_service(&mut self, mcp_service: Arc<McpService>) {
-        self.mcp_service = Some(mcp_service.clone());
-        let mut services = self.services.write().unwrap();
-        for service in services.values_mut() {
-            service.set_mcp_service(mcp_service.clone());
-        }
-    }
-
-    pub fn get_mcp_service(&self) -> Option<Arc<McpService>> {
-        self.mcp_service.clone()
     }
 
     pub fn set_app_handle(&self, app_handle: AppHandle) {
@@ -296,7 +298,6 @@ impl AiServiceManager {
             config,
             self.db.clone(),
             self.app_handle.read().unwrap().clone(),
-            self.mcp_service.clone(),
         );
         let mut services = self.services.write().unwrap();
         services.insert(name, wrapper);
@@ -368,13 +369,14 @@ impl AiServiceManager {
                         );
 
                         let config = AiConfig {
-                            provider: rig_provider,
+                            provider: rig_provider.clone(),
                             model: default_model,
                             api_key,
                             api_base,
                             organization,
                             temperature: Some(0.7),
                             max_tokens: Some(4096),
+                            rig_provider: Some(rig_provider),
                         };
 
                         if let Err(e) = self.add_service(provider_config.name.clone(), config).await
@@ -504,6 +506,7 @@ impl AiServiceManager {
             organization: None,
             temperature: Some(0.7),
             max_tokens: Some(1000),
+            rig_provider: None,
         };
         self.add_service("default".to_string(), config).await?;
         Ok(())
@@ -595,7 +598,6 @@ impl AiServiceManager {
             dynamic_cfg,
             self.db.clone(),
             app_handle,
-            self.mcp_service.clone(),
         );
         Ok(Some(wrapper))
     }

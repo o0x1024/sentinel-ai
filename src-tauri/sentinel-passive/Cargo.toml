@@ -89,6 +89,9 @@ url = "2"
 pnet = "0.35"
 pnet_datalink = "0.35"
 
+# PCAP 文件读写
+pcap-file = "2.0"
+
  # 随机数，用于序列号等
  rand = "0.8"
 [dev-dependencies]

@@ -1166,7 +1166,7 @@ export default {
     },
     serversTitle: '应用工具',
     serversDescription: '管理和连接到模型上下文协议（MCP）服务器，以扩展AI的功能。',
-    myServers: '我的服务器',
+    mcpServers: 'MCP服务器',
     marketplace: '市场',
     endpoint: '端点/命令',
     importSuccess: '从JSON导入服务器成功！',
@@ -1790,5 +1790,21 @@ export default {
       reporter: '报告生成',
       custom: '自定义'
     }
+  },
+  license: {
+    title: '软件激活',
+    subtitle: '请输入许可证密钥以激活软件',
+    machineId: '机器码',
+    machineIdHint: '请将此机器码发送给授权方获取许可证',
+    licenseKey: '许可证密钥',
+    enterKey: '请输入许可证密钥',
+    enterKeyPlaceholder: '粘贴您的许可证密钥...',
+    activate: '激活',
+    activating: '激活中...',
+    activated: '已激活',
+    needHelp: '需要帮助？联系技术支持',
+    invalid: '许可证无效',
+    expired: '许可证已过期',
+    machineMismatch: '机器码不匹配'
   }
 }

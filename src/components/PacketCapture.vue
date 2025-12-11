@@ -26,6 +26,26 @@
 
             <div class="divider divider-horizontal mx-0"></div>
 
+            <!-- 打开文件按钮 -->
+            <button class="btn btn-sm btn-ghost" @click="openPcapFile" :disabled="isCapturing">
+                <i class="fas fa-folder-open mr-1"></i>
+                打开
+            </button>
+
+            <!-- 保存文件按钮 -->
+            <button class="btn btn-sm btn-ghost" @click="savePcapFile" :disabled="packets.length === 0">
+                <i class="fas fa-save mr-1"></i>
+                保存
+            </button>
+
+            <!-- 导出文件按钮 -->
+            <button class="btn btn-sm btn-ghost" @click="showExtractDialog = true" :disabled="packets.length === 0">
+                <i class="fas fa-file-export mr-1"></i>
+                导出文件
+            </button>
+
+            <div class="divider divider-horizontal mx-0"></div>
+
             <!-- 高级过滤按钮 -->
             <button class="btn btn-sm btn-ghost" @click="showFilterDialog = true">
                 <i class="fas fa-sliders-h mr-1"></i>
@@ -59,50 +79,65 @@
 
         <!-- 主内容区 -->
         <div class="flex-1 flex flex-col min-h-0">
-            <!-- 数据包列表 -->
-            <div class="min-h-0 overflow-auto border-b border-base-300" 
-                 :style="{ flex: `0 0 ${listHeight}px` }">
-                <table class="table table-xs table-pin-rows packet-table">
-                    <thead>
-                        <tr class="bg-base-200">
-                            <th class="w-12"></th>
-                            <th class="w-16">No.</th>
-                            <th class="w-24">时间</th>
-                            <th class="w-40">源地址</th>
-                            <th class="w-40">目标地址</th>
-                            <th class="w-20">协议</th>
-                            <th class="w-16">长度</th>
-                            <th>信息</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="packet in filteredPackets" :key="packet.id"
-                            class="cursor-pointer packet-row"
-                            :class="[
-                                getProtocolRowClass(packet.protocol),
-                                { 'selected-row': selectedPacket?.id === packet.id },
-                                { 'marked-row': markedPackets.has(packet.id) },
-                                { 'ignored-row': ignoredPackets.has(packet.id) }
-                            ]"
-                            @click="selectPacket(packet)"
-                            @contextmenu.prevent="showContextMenu($event, packet)">
-                            <td class="text-center">
-                                <i v-if="markedPackets.has(packet.id)" class="fas fa-bookmark text-warning text-xs"></i>
-                            </td>
-                            <td class="font-mono text-xs">{{ packet.id }}</td>
-                            <td class="font-mono text-xs">{{ formatTime(packet.timestamp) }}</td>
-                            <td class="font-mono text-xs">{{ packet.src }}</td>
-                            <td class="font-mono text-xs">{{ packet.dst }}</td>
-                            <td>
-                                <span class="badge badge-sm" :class="getProtocolBadgeClass(packet.protocol)">
-                                    {{ packet.protocol }}
-                                </span>
-                            </td>
-                            <td class="font-mono text-xs">{{ packet.length }}</td>
-                            <td class="text-xs truncate max-w-md">{{ packet.info }}</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <!-- 数据包列表 - 虚拟滚动 -->
+            <div 
+                ref="scrollContainer"
+                class="min-h-0 overflow-auto border-b border-base-300 relative" 
+                :style="{ flex: `0 0 ${listHeight}px` }"
+                @scroll="handleScroll"
+            >
+                <!-- 虚拟滚动容器 -->
+                <div 
+                    v-if="filteredPackets.length > 0"
+                    class="relative"
+                    :style="{ height: totalHeight + 'px', minWidth: '900px' }"
+                >
+                    <!-- 表头 -->
+                    <div class="sticky top-0 z-10 flex bg-base-200 border-b border-base-300" :style="{ height: headerHeight + 'px' }">
+                        <div class="w-12 flex items-center justify-center px-2 border-r border-base-300"></div>
+                        <div class="w-16 flex items-center px-2 border-r border-base-300 text-xs font-semibold">No.</div>
+                        <div class="w-24 flex items-center px-2 border-r border-base-300 text-xs font-semibold">时间</div>
+                        <div class="w-40 flex items-center px-2 border-r border-base-300 text-xs font-semibold">源地址</div>
+                        <div class="w-40 flex items-center px-2 border-r border-base-300 text-xs font-semibold">目标地址</div>
+                        <div class="w-20 flex items-center px-2 border-r border-base-300 text-xs font-semibold">协议</div>
+                        <div class="w-16 flex items-center px-2 border-r border-base-300 text-xs font-semibold">长度</div>
+                        <div class="flex-1 flex items-center px-2 text-xs font-semibold">信息</div>
+                    </div>
+
+                    <!-- 数据行 - 虚拟渲染 -->
+                    <div 
+                        v-for="item in visibleItems" 
+                        :key="item.data.id"
+                        class="absolute left-0 right-0 flex cursor-pointer packet-row"
+                        :class="[
+                            getProtocolRowClass(item.data.protocol),
+                            { 'selected-row': selectedPacket?.id === item.data.id },
+                            { 'marked-row': markedPackets.has(item.data.id) },
+                            { 'ignored-row': ignoredPackets.has(item.data.id) }
+                        ]"
+                        :style="{ 
+                            top: (item.offset + headerHeight) + 'px', 
+                            height: rowHeight + 'px'
+                        }"
+                        @click="selectPacket(item.data)"
+                        @contextmenu.prevent="showContextMenu($event, item.data)"
+                    >
+                        <div class="w-12 flex items-center justify-center px-2 border-r border-base-300">
+                            <i v-if="markedPackets.has(item.data.id)" class="fas fa-bookmark text-warning text-xs"></i>
+                        </div>
+                        <div class="w-16 flex items-center px-2 border-r border-base-300 font-mono text-xs">{{ item.data.id }}</div>
+                        <div class="w-24 flex items-center px-2 border-r border-base-300 font-mono text-xs">{{ formatTime(item.data.timestamp) }}</div>
+                        <div class="w-40 flex items-center px-2 border-r border-base-300 font-mono text-xs truncate">{{ item.data.src }}</div>
+                        <div class="w-40 flex items-center px-2 border-r border-base-300 font-mono text-xs truncate">{{ item.data.dst }}</div>
+                        <div class="w-20 flex items-center px-2 border-r border-base-300">
+                            <span class="badge badge-sm" :class="getProtocolBadgeClass(item.data.protocol)">
+                                {{ item.data.protocol }}
+                            </span>
+                        </div>
+                        <div class="w-16 flex items-center px-2 border-r border-base-300 font-mono text-xs">{{ item.data.length }}</div>
+                        <div class="flex-1 flex items-center px-2 text-xs truncate">{{ item.data.info }}</div>
+                    </div>
+                </div>
 
                 <!-- 空状态 -->
                 <div v-if="filteredPackets.length === 0" class="flex flex-col items-center justify-center h-full text-base-content/50 py-12">
@@ -394,13 +429,220 @@
             </div>
             <div class="modal-backdrop" @click="closeStreamDialog"></div>
         </div>
+
+        <!-- 导出文件对话框 -->
+        <div v-if="showExtractDialog" class="modal modal-open">
+            <div class="modal-box max-w-5xl max-h-[90vh]">
+                <h3 class="font-bold text-lg mb-4 flex items-center justify-between">
+                    <span><i class="fas fa-file-export mr-2"></i>从流量中提取文件</span>
+                    <span v-if="!extractLoading && extractedFiles.length > 0" class="text-sm font-normal text-base-content/70">
+                        共发现 {{ extractedFiles.length }} 个文件
+                    </span>
+                </h3>
+                
+                <div v-if="extractLoading" class="flex flex-col items-center py-8">
+                    <span class="loading loading-spinner loading-lg mb-4"></span>
+                    <p>正在分析流量数据...</p>
+                    <p class="text-sm text-base-content/50 mt-2">扫描 HTTP/FTP/邮件/DNS隧道等流量中的文件...</p>
+                </div>
+                
+                <div v-else-if="extractedFiles.length === 0" class="text-center py-8 text-base-content/50">
+                    <i class="fas fa-inbox text-4xl mb-4"></i>
+                    <p>未在流量中发现可提取的文件</p>
+                    <p class="text-sm mt-2">支持从多种协议流量中提取：</p>
+                    <p class="text-xs mt-1">HTTP、FTP、SMTP/POP3邮件附件、DNS隧道、ICMP隧道、Base64编码等</p>
+                </div>
+                
+                <div v-else>
+                    <!-- 过滤器面板 -->
+                    <div class="bg-base-200 rounded-lg p-3 mb-3">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fas fa-filter text-sm text-base-content/50"></i>
+                            <span class="text-sm font-medium">过滤条件</span>
+                            <button v-if="hasExtractFilter" class="btn btn-xs btn-ghost text-error" @click="clearExtractFilter">
+                                <i class="fas fa-times mr-1"></i>清除
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <!-- 文件名搜索 -->
+                            <div class="form-control">
+                                <label class="label py-0"><span class="label-text text-xs">文件名</span></label>
+                                <input type="text" v-model="extractFilter.filename" 
+                                       class="input input-xs input-bordered" placeholder="搜索文件名..." />
+                            </div>
+                            
+                            <!-- 文件类型 -->
+                            <div class="form-control">
+                                <label class="label py-0"><span class="label-text text-xs">文件类型</span></label>
+                                <select v-model="extractFilter.fileType" class="select select-xs select-bordered">
+                                    <option value="">全部类型</option>
+                                    <option value="image">图片</option>
+                                    <option value="video">视频</option>
+                                    <option value="audio">音频</option>
+                                    <option value="archive">压缩包</option>
+                                    <option value="document">文档</option>
+                                    <option value="executable">可执行文件</option>
+                                    <option value="other">其他</option>
+                                </select>
+                            </div>
+                            
+                            <!-- 来源协议 -->
+                            <div class="form-control">
+                                <label class="label py-0"><span class="label-text text-xs">来源协议</span></label>
+                                <select v-model="extractFilter.sourceType" class="select select-xs select-bordered">
+                                    <option value="">全部来源</option>
+                                    <option v-for="st in availableSourceTypes" :key="st" :value="st">{{ st }}</option>
+                                </select>
+                            </div>
+                            
+                            <!-- 文件大小 -->
+                            <div class="form-control">
+                                <label class="label py-0"><span class="label-text text-xs">文件大小</span></label>
+                                <select v-model="extractFilter.sizeRange" class="select select-xs select-bordered">
+                                    <option value="">不限大小</option>
+                                    <option value="tiny">< 1KB</option>
+                                    <option value="small">1KB - 100KB</option>
+                                    <option value="medium">100KB - 1MB</option>
+                                    <option value="large">1MB - 10MB</option>
+                                    <option value="huge">> 10MB</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- 快捷过滤按钮 -->
+                        <div class="flex flex-wrap gap-1 mt-2">
+                            <button class="btn btn-xs" :class="extractFilter.fileType === 'image' ? 'btn-success' : 'btn-ghost'" 
+                                    @click="extractFilter.fileType = extractFilter.fileType === 'image' ? '' : 'image'">
+                                <i class="fas fa-image mr-1"></i>图片
+                            </button>
+                            <button class="btn btn-xs" :class="extractFilter.fileType === 'archive' ? 'btn-info' : 'btn-ghost'" 
+                                    @click="extractFilter.fileType = extractFilter.fileType === 'archive' ? '' : 'archive'">
+                                <i class="fas fa-file-archive mr-1"></i>压缩包
+                            </button>
+                            <button class="btn btn-xs" :class="extractFilter.fileType === 'document' ? 'btn-error' : 'btn-ghost'" 
+                                    @click="extractFilter.fileType = extractFilter.fileType === 'document' ? '' : 'document'">
+                                <i class="fas fa-file-pdf mr-1"></i>文档
+                            </button>
+                            <button class="btn btn-xs" :class="extractFilter.fileType === 'executable' ? 'btn-warning' : 'btn-ghost'" 
+                                    @click="extractFilter.fileType = extractFilter.fileType === 'executable' ? '' : 'executable'">
+                                <i class="fas fa-cog mr-1"></i>可执行
+                            </button>
+                            <span class="divider divider-horizontal mx-0"></span>
+                            <button class="btn btn-xs" :class="extractFilter.sourceType === 'HTTP' ? 'btn-success' : 'btn-ghost'" 
+                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'HTTP' ? '' : 'HTTP'">HTTP</button>
+                            <button class="btn btn-xs" :class="extractFilter.sourceType === 'FTP' ? 'btn-info' : 'btn-ghost'" 
+                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'FTP' ? '' : 'FTP'">FTP</button>
+                            <button class="btn btn-xs" :class="extractFilter.sourceType === 'EMAIL' ? 'btn-warning' : 'btn-ghost'" 
+                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'EMAIL' ? '' : 'EMAIL'">邮件</button>
+                            <button class="btn btn-xs" :class="extractFilter.sourceType === 'DNS_TUNNEL' ? 'btn-error' : 'btn-ghost'" 
+                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'DNS_TUNNEL' ? '' : 'DNS_TUNNEL'">DNS隧道</button>
+                        </div>
+                    </div>
+
+                    <!-- 文件列表 -->
+                    <div class="overflow-x-auto max-h-[45vh]">
+                        <table class="table table-sm table-pin-rows">
+                            <thead>
+                                <tr>
+                                    <th class="w-10">
+                                        <input type="checkbox" class="checkbox checkbox-sm" 
+                                               v-model="selectAllFilteredFiles" @change="toggleSelectAllFilteredFiles" />
+                                    </th>
+                                    <th>文件名</th>
+                                    <th class="w-20">类型</th>
+                                    <th class="w-20">大小</th>
+                                    <th class="w-20">来源</th>
+                                    <th class="w-36">流量</th>
+                                    <th class="w-28">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="file in filteredExtractedFiles" :key="file.id" 
+                                    class="hover" :class="{ 'bg-base-200': selectedExtractFileIds.has(file.id) }">
+                                    <td>
+                                        <input type="checkbox" class="checkbox checkbox-sm" 
+                                               :checked="selectedExtractFileIds.has(file.id)"
+                                               @change="toggleFileSelection(file.id)" />
+                                    </td>
+                                    <td class="font-mono text-sm max-w-48 truncate" :title="file.filename">
+                                        {{ file.filename }}
+                                    </td>
+                                    <td>
+                                        <span class="badge badge-sm" :class="getFileTypeBadgeClass(file.content_type)">
+                                            {{ getFileTypeLabel(file.content_type) }}
+                                        </span>
+                                    </td>
+                                    <td class="font-mono text-sm">{{ formatFileSize(file.size) }}</td>
+                                    <td>
+                                        <span class="badge badge-sm" :class="getSourceTypeBadgeClass(file.source_type)">
+                                            {{ file.source_type }}
+                                        </span>
+                                    </td>
+                                    <td class="text-xs text-base-content/70 truncate max-w-36" :title="`${file.src} → ${file.dst}`">
+                                        {{ file.src.split(':')[0] }} → {{ file.dst.split(':')[0] }}
+                                    </td>
+                                    <td class="flex gap-1">
+                                        <button class="btn btn-xs btn-ghost" @click="downloadSingleFile(file)" title="下载文件">
+                                            <i class="fas fa-download"></i>
+                                        </button>
+                                        <button class="btn btn-xs btn-ghost" @click="followFileStream(file)" title="追踪流量">
+                                            <i class="fas fa-stream"></i>
+                                        </button>
+                                        <button class="btn btn-xs btn-ghost" @click="locateFilePackets(file)" title="定位数据包">
+                                            <i class="fas fa-crosshairs"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        
+                        <!-- 过滤后无结果 -->
+                        <div v-if="filteredExtractedFiles.length === 0 && extractedFiles.length > 0" 
+                             class="text-center py-6 text-base-content/50">
+                            <i class="fas fa-filter text-2xl mb-2"></i>
+                            <p>没有符合过滤条件的文件</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 状态栏 -->
+                    <div class="flex items-center justify-between mt-3 pt-3 border-t border-base-300">
+                        <div class="flex items-center gap-4">
+                            <span class="text-sm text-base-content/70">
+                                已选择 {{ selectedExtractFileIds.size }} 个文件
+                                <span v-if="hasExtractFilter" class="text-xs">(显示 {{ filteredExtractedFiles.length }}/{{ extractedFiles.length }})</span>
+                            </span>
+                            <div class="flex flex-wrap gap-1 text-xs text-base-content/50">
+                                <template v-for="st in sourceTypeStats" :key="st.type">
+                                    <span class="badge badge-xs" :class="getSourceTypeBadgeClass(st.type)">{{ st.type }}</span>
+                                    <span class="mr-2">{{ st.count }}</span>
+                                </template>
+                            </div>
+                        </div>
+                        <div class="text-sm text-base-content/50">
+                            选中大小: {{ formatFileSize(selectedFilesTotalSize) }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-action">
+                    <button class="btn btn-ghost" @click="closeExtractDialog">关闭</button>
+                    <button class="btn btn-primary" @click="saveExtractedFiles" 
+                            :disabled="selectedExtractFileIds.size === 0 || extractLoading">
+                        <i class="fas fa-folder-open mr-1"></i>
+                        保存选中文件 ({{ selectedExtractFileIds.size }})
+                    </button>
+                </div>
+            </div>
+            <div class="modal-backdrop" @click="closeExtractDialog"></div>
+        </div>
     </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, reactive } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { open, save } from '@tauri-apps/plugin-dialog'
 
 interface NetworkInterface {
     name: string
@@ -446,6 +688,24 @@ interface AdvancedFilter {
     tcpFlags: string[]
 }
 
+interface ExtractedFileInfo {
+    id: string
+    filename: string
+    content_type: string
+    size: number
+    src: string
+    dst: string
+    packet_ids: number[]
+    stream_key: string
+    source_type: string
+}
+
+// 虚拟列表类型
+interface VirtualItem {
+    data: Packet
+    offset: number
+}
+
 // 状态
 const interfaces = ref<NetworkInterface[]>([])
 const selectedInterface = ref('')
@@ -463,6 +723,28 @@ const markedPackets = reactive(new Set<number>())
 const ignoredPackets = reactive(new Set<number>())
 const hexViewMode = ref<'hex' | 'ascii' | 'raw'>('hex')
 const showFilterDialog = ref(false)
+const showExtractDialog = ref(false)
+const extractedFiles = ref<ExtractedFileInfo[]>([])
+const selectedExtractFileIds = reactive(new Set<string>())
+const selectAllFilteredFiles = ref(false)
+const extractLoading = ref(false)
+
+// Extract filter state
+const extractFilter = reactive({
+    filename: '',
+    fileType: '',
+    sourceType: '',
+    sizeRange: ''
+})
+
+// 虚拟滚动相关
+const scrollContainer = ref<HTMLElement | null>(null)
+const rowHeight = 28 // 每行高度
+const headerHeight = 32 // 表头高度
+const scrollTop = ref(0)
+const containerHeight = ref(300)
+const bufferSize = 5 // 缓冲区大小
+let scrollTimer: number | null = null
 
 // 高级过滤
 const advancedFilter = reactive<AdvancedFilter>({
@@ -579,6 +861,50 @@ const filteredPackets = computed(() => {
     return result
 })
 
+// 虚拟滚动 - 总高度
+const totalHeight = computed(() => {
+    return filteredPackets.value.length * rowHeight + headerHeight
+})
+
+// 虚拟滚动 - 可见项
+const visibleItems = computed((): VirtualItem[] => {
+    const startIndex = Math.max(0, Math.floor(scrollTop.value / rowHeight) - bufferSize)
+    const visibleCount = Math.ceil(containerHeight.value / rowHeight)
+    const endIndex = Math.min(filteredPackets.value.length, startIndex + visibleCount + bufferSize * 2)
+    
+    const items: VirtualItem[] = []
+    for (let i = startIndex; i < endIndex; i++) {
+        items.push({
+            data: filteredPackets.value[i],
+            offset: i * rowHeight
+        })
+    }
+    return items
+})
+
+// 滚动处理
+function handleScroll(e: Event) {
+    const target = e.target as HTMLElement
+    if (!target) return
+    
+    // 节流处理
+    if (scrollTimer !== null) {
+        window.clearTimeout(scrollTimer)
+    }
+    
+    scrollTimer = window.setTimeout(() => {
+        scrollTop.value = target.scrollTop
+        scrollTimer = null
+    }, 16) // ~60fps
+}
+
+// 更新容器高度
+function updateContainerHeight() {
+    if (scrollContainer.value) {
+        containerHeight.value = scrollContainer.value.clientHeight
+    }
+}
+
 // 端口匹配
 function matchPort(addr: string, portFilter: string): boolean {
     const port = parseInt(addr.split(':')[1] || '0')
@@ -666,6 +992,10 @@ function clearPackets() {
     packetCounter = 0
     markedPackets.clear()
     ignoredPackets.clear()
+    scrollTop.value = 0
+    if (scrollContainer.value) {
+        scrollContainer.value.scrollTop = 0
+    }
 }
 
 function selectPacket(packet: Packet) {
@@ -686,6 +1016,11 @@ function toggleField(key: string) {
 // 过滤
 function applyFilter() {
     appliedFilter.value = filterText.value
+    // 重置滚动位置
+    scrollTop.value = 0
+    if (scrollContainer.value) {
+        scrollContainer.value.scrollTop = 0
+    }
 }
 
 function clearAllFilters() {
@@ -865,6 +1200,402 @@ async function copyStreamContent() {
     await navigator.clipboard.writeText(getStreamContent())
 }
 
+// PCAP file operations
+async function openPcapFile() {
+    try {
+        const selected = await open({
+            multiple: false,
+            filters: [{
+                name: '流量文件',
+                extensions: ['pcap', 'pcapng', 'cap']
+            }]
+        })
+        
+        if (selected) {
+            const filePath = typeof selected === 'string' ? selected : selected
+            const loadedPackets = await invoke<Packet[]>('open_pcap_file', { filePath })
+            
+            // Clear existing and load new packets
+            packets.value = []
+            packetCounter = 0
+            markedPackets.clear()
+            ignoredPackets.clear()
+            
+            for (const pkt of loadedPackets) {
+                packetCounter++
+                packets.value.push({ ...pkt, id: packetCounter })
+            }
+            
+            scrollTop.value = 0
+            if (scrollContainer.value) {
+                scrollContainer.value.scrollTop = 0
+            }
+        }
+    } catch (e) {
+        console.error('Failed to open pcap file:', e)
+        alert('打开文件失败: ' + e)
+    }
+}
+
+async function savePcapFile() {
+    try {
+        const selected = await save({
+            filters: [{
+                name: 'PCAP',
+                extensions: ['pcap']
+            }, {
+                name: 'PCAPNG',
+                extensions: ['pcapng']
+            }],
+            defaultPath: `capture_${Date.now()}.pcap`
+        })
+        
+        if (selected) {
+            await invoke('save_pcap_file', { 
+                filePath: selected, 
+                packets: packets.value 
+            })
+            alert('保存成功')
+        }
+    } catch (e) {
+        console.error('Failed to save pcap file:', e)
+        alert('保存文件失败: ' + e)
+    }
+}
+
+// File extraction
+async function showExtractDialogFn() {
+    showExtractDialog.value = true
+    extractLoading.value = true
+    extractedFiles.value = []
+    selectedExtractFileIds.clear()
+    selectAllFilteredFiles.value = false
+    clearExtractFilter()
+    
+    try {
+        extractedFiles.value = await invoke<ExtractedFileInfo[]>('extract_files_preview', {
+            packets: packets.value
+        })
+    } catch (e) {
+        console.error('Failed to extract files:', e)
+    } finally {
+        extractLoading.value = false
+    }
+}
+
+// Watch showExtractDialog to trigger file extraction
+watch(showExtractDialog, (val) => {
+    if (val && extractedFiles.value.length === 0 && !extractLoading.value) {
+        showExtractDialogFn()
+    }
+})
+
+// Watch selectAllFilteredFiles to update selection
+watch(selectAllFilteredFiles, (val) => {
+    if (val) {
+        for (const file of filteredExtractedFiles.value) {
+            selectedExtractFileIds.add(file.id)
+        }
+    }
+})
+
+function toggleSelectAllFilteredFiles() {
+    if (selectAllFilteredFiles.value) {
+        for (const file of filteredExtractedFiles.value) {
+            selectedExtractFileIds.add(file.id)
+        }
+    } else {
+        for (const file of filteredExtractedFiles.value) {
+            selectedExtractFileIds.delete(file.id)
+        }
+    }
+}
+
+function toggleFileSelection(fileId: string) {
+    if (selectedExtractFileIds.has(fileId)) {
+        selectedExtractFileIds.delete(fileId)
+    } else {
+        selectedExtractFileIds.add(fileId)
+    }
+}
+
+function clearExtractFilter() {
+    extractFilter.filename = ''
+    extractFilter.fileType = ''
+    extractFilter.sourceType = ''
+    extractFilter.sizeRange = ''
+}
+
+async function saveExtractedFiles() {
+    try {
+        const selected = await open({
+            directory: true,
+            multiple: false,
+            title: '选择保存目录'
+        })
+        
+        if (selected) {
+            const outputDir = typeof selected === 'string' ? selected : selected
+            const fileIds = Array.from(selectedExtractFileIds)
+            const result = await invoke<string[]>('save_selected_files', {
+                fileIds,
+                outputDir
+            })
+            
+            alert(`成功导出 ${result.length} 个文件到:\n${outputDir}`)
+        }
+    } catch (e) {
+        console.error('Failed to save extracted files:', e)
+        alert('导出文件失败: ' + e)
+    }
+}
+
+// Download a single file
+async function downloadSingleFile(file: ExtractedFileInfo) {
+    try {
+        const selected = await save({
+            defaultPath: file.filename,
+            filters: [{
+                name: '所有文件',
+                extensions: ['*']
+            }]
+        })
+        
+        if (selected) {
+            await invoke('save_extracted_file', {
+                fileId: file.id,
+                savePath: selected
+            })
+            alert('文件已保存')
+        }
+    } catch (e) {
+        console.error('Failed to download file:', e)
+        alert('下载失败: ' + e)
+    }
+}
+
+// Follow the stream that contains the file
+async function followFileStream(file: ExtractedFileInfo) {
+    try {
+        const streamPackets = await invoke<Packet[]>('get_file_stream_packets', {
+            fileId: file.id,
+            packets: packets.value
+        })
+        
+        if (streamPackets.length === 0) {
+            alert('未找到相关流量')
+            return
+        }
+        
+        // Show stream dialog
+        const firstPkt = streamPackets[0]
+        streamDialog.visible = true
+        streamDialog.type = 'tcp'
+        streamDialog.title = `文件流量 - ${file.filename}`
+        streamDialog.packets = streamPackets
+        streamDialog.displayMode = 'ascii'
+        streamDialog.srcEndpoint = firstPkt.src
+        
+        closeExtractDialog()
+    } catch (e) {
+        console.error('Failed to get stream packets:', e)
+        alert('获取流量失败: ' + e)
+    }
+}
+
+// Locate and highlight packets related to the file
+async function locateFilePackets(file: ExtractedFileInfo) {
+    try {
+        // Filter to show only packets related to this file
+        const packetIdSet = new Set(file.packet_ids)
+        
+        // Find first related packet
+        const firstPacketIdx = packets.value.findIndex(p => packetIdSet.has(p.id))
+        
+        if (firstPacketIdx === -1) {
+            alert('未找到相关数据包')
+            return
+        }
+        
+        // Mark related packets
+        for (const id of file.packet_ids) {
+            markedPackets.add(id)
+        }
+        
+        // Select first packet
+        const firstPacket = packets.value[firstPacketIdx]
+        selectPacket(firstPacket)
+        
+        // Scroll to the packet
+        scrollTop.value = firstPacketIdx * rowHeight
+        if (scrollContainer.value) {
+            scrollContainer.value.scrollTop = scrollTop.value
+        }
+        
+        closeExtractDialog()
+        
+    } catch (e) {
+        console.error('Failed to locate packets:', e)
+        alert('定位失败: ' + e)
+    }
+}
+
+// Computed: filtered extracted files
+const filteredExtractedFiles = computed(() => {
+    return extractedFiles.value.filter(file => {
+        // Filename filter
+        if (extractFilter.filename && !file.filename.toLowerCase().includes(extractFilter.filename.toLowerCase())) {
+            return false
+        }
+        
+        // File type filter
+        if (extractFilter.fileType) {
+            const type = file.content_type.split(';')[0].trim().toLowerCase()
+            const typeCategory = getFileTypeCategory(type)
+            if (typeCategory !== extractFilter.fileType) return false
+        }
+        
+        // Source type filter
+        if (extractFilter.sourceType && file.source_type !== extractFilter.sourceType) {
+            return false
+        }
+        
+        // Size range filter
+        if (extractFilter.sizeRange) {
+            const size = file.size
+            switch (extractFilter.sizeRange) {
+                case 'tiny': if (size >= 1024) return false; break
+                case 'small': if (size < 1024 || size >= 100 * 1024) return false; break
+                case 'medium': if (size < 100 * 1024 || size >= 1024 * 1024) return false; break
+                case 'large': if (size < 1024 * 1024 || size >= 10 * 1024 * 1024) return false; break
+                case 'huge': if (size < 10 * 1024 * 1024) return false; break
+            }
+        }
+        
+        return true
+    })
+})
+
+// Has active filter
+const hasExtractFilter = computed(() => {
+    return extractFilter.filename !== '' || extractFilter.fileType !== '' || 
+           extractFilter.sourceType !== '' || extractFilter.sizeRange !== ''
+})
+
+// Available source types
+const availableSourceTypes = computed(() => {
+    const types = new Set<string>()
+    for (const file of extractedFiles.value) {
+        types.add(file.source_type)
+    }
+    return Array.from(types).sort()
+})
+
+// Computed: total size of selected files
+const selectedFilesTotalSize = computed(() => {
+    return extractedFiles.value
+        .filter(f => selectedExtractFileIds.has(f.id))
+        .reduce((sum, f) => sum + f.size, 0)
+})
+
+// Computed: source type statistics
+const sourceTypeStats = computed(() => {
+    const stats: Record<string, number> = {}
+    for (const file of extractedFiles.value) {
+        stats[file.source_type] = (stats[file.source_type] || 0) + 1
+    }
+    return Object.entries(stats).map(([type, count]) => ({ type, count }))
+})
+
+function getFileTypeCategory(mimeType: string): string {
+    if (mimeType.startsWith('image/')) return 'image'
+    if (mimeType.startsWith('video/')) return 'video'
+    if (mimeType.startsWith('audio/')) return 'audio'
+    if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z') || 
+        mimeType.includes('tar') || mimeType.includes('gzip') || mimeType.includes('bzip')) return 'archive'
+    if (mimeType.includes('pdf') || mimeType.includes('msword') || mimeType.includes('document') ||
+        mimeType.includes('rtf') || mimeType.includes('text/')) return 'document'
+    if (mimeType.includes('executable') || mimeType.includes('msdownload') || 
+        mimeType.includes('x-mach') || mimeType.includes('shellscript')) return 'executable'
+    return 'other'
+}
+
+function closeExtractDialog() {
+    showExtractDialog.value = false
+    clearExtractFilter()
+    selectedExtractFileIds.clear()
+    selectAllFilteredFiles.value = false
+}
+
+function getFileTypeLabel(contentType: string): string {
+    const type = contentType.split(';')[0].trim()
+    const typeMap: Record<string, string> = {
+        'image/jpeg': 'JPG',
+        'image/png': 'PNG',
+        'image/gif': 'GIF',
+        'image/webp': 'WebP',
+        'image/bmp': 'BMP',
+        'image/x-icon': 'ICO',
+        'application/pdf': 'PDF',
+        'application/msword': 'DOC',
+        'application/zip': 'ZIP',
+        'application/x-gzip': 'GZ',
+        'application/gzip': 'GZ',
+        'application/x-rar-compressed': 'RAR',
+        'application/x-7z-compressed': '7Z',
+        'application/x-tar': 'TAR',
+        'application/x-bzip2': 'BZ2',
+        'application/json': 'JSON',
+        'application/javascript': 'JS',
+        'text/css': 'CSS',
+        'video/mp4': 'MP4',
+        'video/webm': 'WebM',
+        'video/x-flv': 'FLV',
+        'video/quicktime': 'MOV',
+        'audio/mpeg': 'MP3',
+        'audio/ogg': 'OGG',
+        'audio/flac': 'FLAC',
+        'application/x-msdownload': 'EXE',
+        'application/x-executable': 'ELF',
+        'font/ttf': 'TTF',
+        'font/woff': 'WOFF',
+        'font/woff2': 'WOFF2',
+    }
+    return typeMap[type] || type.split('/')[1]?.toUpperCase() || '文件'
+}
+
+function getFileTypeBadgeClass(contentType: string): string {
+    const type = contentType.split(';')[0].trim()
+    if (type.startsWith('image/')) return 'badge-success'
+    if (type.startsWith('video/')) return 'badge-warning'
+    if (type.startsWith('audio/')) return 'badge-accent'
+    if (type.includes('zip') || type.includes('rar') || type.includes('7z') || type.includes('tar') || type.includes('gzip')) return 'badge-info'
+    if (type.includes('pdf') || type.includes('msword')) return 'badge-error'
+    if (type.includes('executable') || type.includes('msdownload')) return 'badge-neutral'
+    return 'badge-ghost'
+}
+
+function getSourceTypeBadgeClass(sourceType: string): string {
+    const classMap: Record<string, string> = {
+        'HTTP': 'badge-success',
+        'FTP': 'badge-info',
+        'EMAIL': 'badge-warning',
+        'STREAM': 'badge-secondary',
+        'BASE64': 'badge-accent',
+        'DNS_TUNNEL': 'badge-error',
+        'ICMP_TUNNEL': 'badge-error',
+        'TCP': 'badge-primary',
+        'UDP': 'badge-info',
+    }
+    return classMap[sourceType] || 'badge-ghost'
+}
+
+function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB'
+}
+
 // 格式化
 function formatTime(ts: number): string {
     return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as Intl.DateTimeFormatOptions)
@@ -940,22 +1671,49 @@ function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') hideMenus()
 }
 
+let resizeObserver: ResizeObserver | null = null
+
+// 监听列表高度变化
+watch(listHeight, () => {
+    nextTick(() => {
+        updateContainerHeight()
+    })
+})
+
 onMounted(() => {
     loadInterfaces()
     document.addEventListener('click', hideMenus)
     document.addEventListener('keydown', handleKeydown)
+    
+    // 监听容器大小变化
+    if (scrollContainer.value) {
+        updateContainerHeight()
+        resizeObserver = new ResizeObserver(() => {
+            updateContainerHeight()
+        })
+        resizeObserver.observe(scrollContainer.value)
+    }
 })
 
 onUnmounted(() => {
     if (isCapturing.value) stopCapture()
     document.removeEventListener('click', hideMenus)
     document.removeEventListener('keydown', handleKeydown)
+    if (resizeObserver) {
+        resizeObserver.disconnect()
+        resizeObserver = null
+    }
+    if (scrollTimer !== null) {
+        window.clearTimeout(scrollTimer)
+    }
 })
 </script>
 
 <style scoped>
-.packet-table th { @apply sticky top-0 z-10 bg-base-200; }
-.packet-row { transition: background-color 0.1s; }
+.packet-row { 
+    transition: background-color 0.1s;
+    border-bottom: 1px solid oklch(var(--bc) / 0.1);
+}
 .row-tcp { background-color: rgba(168, 162, 217, 0.15); }
 .row-udp { background-color: rgba(125, 211, 252, 0.15); }
 .row-http { background-color: rgba(134, 239, 172, 0.2); }

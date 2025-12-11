@@ -5,8 +5,8 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use crate::services::prompt_db::PromptRepository;
-use crate::models::prompt::{ArchitectureType, StageType};
 use serde_json::Value;
+use sentinel_core::models::prompt::{PromptCategory, TemplateType};
 
 #[derive(Debug, Clone)]
 pub enum PromptStrategy {
@@ -26,38 +26,11 @@ impl From<String> for PromptStrategy {
     }
 }
 
-/// 阶段类型枚举 - 规范阶段
+/// 阶段类型枚举 - 规范阶段（已精简）
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CanonicalStage {
     System,
     IntentClassifier,
-    Planner,
-    Executor,
-    Replanner,
-    Evaluator,
-}
-
-impl CanonicalStage {
-    /// 映射到特定架构的阶段
-    pub fn to_architecture_stage(&self, arch: &ArchitectureType) -> Option<StageType> {
-        match (self, arch) {
-            (CanonicalStage::Planner, ArchitectureType::ReWOO) => Some(StageType::Planner),
-            (CanonicalStage::Executor, ArchitectureType::ReWOO) => Some(StageType::Worker),
-            (CanonicalStage::Evaluator, ArchitectureType::ReWOO) => Some(StageType::Solver),
-            
-            (CanonicalStage::Planner, ArchitectureType::LLMCompiler) => Some(StageType::Planning),
-            (CanonicalStage::Executor, ArchitectureType::LLMCompiler) => Some(StageType::Execution),
-            (CanonicalStage::Evaluator, ArchitectureType::LLMCompiler) => Some(StageType::Evaluation),
-            (CanonicalStage::Replanner, ArchitectureType::LLMCompiler) => Some(StageType::Replan),
-            
-            (CanonicalStage::Planner, ArchitectureType::PlanExecute) => Some(StageType::Planning),
-            (CanonicalStage::Executor, ArchitectureType::PlanExecute) => Some(StageType::Execution),
-            (CanonicalStage::Replanner, ArchitectureType::PlanExecute) => Some(StageType::Replan),
-            
-            // System和IntentClassifier不映射到具体架构阶段
-            _ => None,
-        }
-    }
 }
 
 /// Agent提示词配置
@@ -99,13 +72,10 @@ impl PromptResolver {
     /// 2) Agent 指定模板  
     /// 3) Agent 绑定分组
     /// 4) 用户全局配置
-    /// 5) 架构默认分组
-    /// 6) 阶段活动模板
-    /// 7) 内置引擎默认模板
+    /// 5) 阶段活动模板
     pub async fn resolve_prompt(
         &self,
         agent_config: &AgentPromptConfig,
-        architecture: ArchitectureType,
         stage: CanonicalStage,
         fallback_prompt: Option<&str>,
     ) -> Result<String> {
@@ -125,33 +95,27 @@ impl PromptResolver {
             }
         }
 
-        // 3) Agent 绑定分组：若strategy=follow_group且选定group_id
-        if matches!(agent_config.strategy, PromptStrategy::FollowGroup) {
-            if let Some(group_id) = agent_config.group_id {
-                if let Some(arch_stage) = stage.to_architecture_stage(&architecture) {
-                    let items = self.prompt_repo.list_group_items(group_id).await?;
-                    if let Some(item) = items.iter().find(|item| item.stage == arch_stage) {
-                        if let Ok(Some(template)) = self.prompt_repo.get_template(item.template_id).await {
-                            let content = self.render_variables(&template.content, &HashMap::new())?;
-                            return Ok(content);
-                        }
-                    }
-                }
+        // 3) 用户全局配置：仅在对应阶段的允许类型内选择激活模板
+        // System 阶段仅允许使用 System 分类下的 SystemPrompt 或 IntentClassifier
+        // IntentClassifier 阶段仅允许 IntentClassifier 类型
+        let (category_filter, type_filter) = match stage {
+            CanonicalStage::System => (Some(PromptCategory::System), None),
+            CanonicalStage::IntentClassifier => (Some(PromptCategory::System), Some(TemplateType::IntentClassifier)),
+        };
+
+        if let Ok(templates) = self
+            .prompt_repo
+            .list_templates_filtered(category_filter, type_filter, None)
+            .await
+        {
+            // 只在允许范围内选择激活模板
+            if let Some(active) = templates.iter().find(|t| t.is_active) {
+                let rendered = self.render_variables(&active.content, &HashMap::new())?;
+                return Ok(rendered);
             }
         }
 
-        // 4) 用户全局配置：查user_prompt_configs
-        if let Some(arch_stage) = stage.to_architecture_stage(&architecture) {
-            if let Ok(prompt) = self.prompt_repo.get_active_prompt(architecture, arch_stage).await {
-                if let Some(content) = prompt {
-                    let rendered = self.render_variables(&content, &HashMap::new())?;
-                    return Ok(rendered);
-                }
-            }
-        }
-
-        // 5-6) 架构默认分组 + 阶段活动模板
-        // get_active_prompt 已经包含了这两个逻辑
+        // 4-5) 架构默认 + 阶段活动模板
 
         // 7) 内置引擎默认模板
         if let Some(fallback) = fallback_prompt {
@@ -243,10 +207,6 @@ impl PromptResolver {
         match stage_str {
             "system" => Some(CanonicalStage::System),
             "intent_classifier" => Some(CanonicalStage::IntentClassifier),
-            "planner" => Some(CanonicalStage::Planner),
-            "executor" => Some(CanonicalStage::Executor),
-            "replanner" => Some(CanonicalStage::Replanner),
-            "evaluator" => Some(CanonicalStage::Evaluator),
             _ => None,
         }
     }

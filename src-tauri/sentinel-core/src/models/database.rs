@@ -293,6 +293,7 @@ pub struct AiConversation {
     pub total_tokens: i32,
     pub cost: f64,
     pub tags: Option<String>, // JSON数组
+    pub tool_config: Option<String>, // JSON工具配置
     pub is_archived: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -317,6 +318,7 @@ impl AiConversation {
             total_tokens: 0,
             cost: 0.0,
             tags: None,
+            tool_config: None,
             is_archived: false,
             created_at: now,
             updated_at: now,
@@ -480,6 +482,7 @@ pub struct McpServerConfig {
     pub command: String,
     pub args: String,
     pub enabled: bool,
+    pub auto_connect: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }

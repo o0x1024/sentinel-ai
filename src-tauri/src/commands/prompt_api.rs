@@ -3,7 +3,7 @@ use tauri::State;
 use anyhow::Result;
 use crate::services::{DatabaseService};
 use crate::services::prompt_db::PromptRepository;
-use crate::models::prompt::{PromptTemplate, UserPromptConfig, ArchitectureType, StageType, PromptGroup, PromptGroupItem, PromptCategory, TemplateType};
+use crate::models::prompt::{PromptTemplate, PromptCategory, TemplateType};
 use crate::utils::prompt_resolver::{PromptResolver, AgentPromptConfig, CanonicalStage};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -42,7 +42,6 @@ pub async fn update_prompt_template_api(db: State<'_, Arc<DatabaseService>>, id:
         let all_templates = repo.list_templates_filtered(
             template.category.clone(),
             Some(template_type.clone()),
-            None,
             None
         ).await.map_err(|e| e.to_string())?;
         
@@ -68,135 +67,17 @@ pub async fn delete_prompt_template_api(db: State<'_, Arc<DatabaseService>>, id:
     repo.delete_template(id).await.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn get_user_prompt_configs_api(db: State<'_, Arc<DatabaseService>>) -> Result<Vec<UserPromptConfig>, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.get_user_configs().await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn update_user_prompt_config_api(
-    db: State<'_, Arc<DatabaseService>>,
-    architecture: ArchitectureType,
-    stage: StageType,
-    template_id: i64,
-) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.update_user_config(architecture, stage, template_id).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn get_active_prompt_api(
-    db: State<'_, Arc<DatabaseService>>,
-    architecture: ArchitectureType,
-    stage: StageType,
-) -> Result<Option<String>, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.get_active_prompt(architecture, stage).await.map_err(|e| e.to_string())
-}
-
-// ===== Prompt Groups APIs =====
-#[tauri::command]
-pub async fn list_prompt_groups_api(
-    db: State<'_, Arc<DatabaseService>>,
-    architecture: Option<ArchitectureType>,
-) -> Result<Vec<PromptGroup>, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.list_groups(architecture).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn create_prompt_group_api(
-    db: State<'_, Arc<DatabaseService>>,
-    group: PromptGroup,
-) -> Result<i64, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.create_group(&group).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn update_prompt_group_api(
-    db: State<'_, Arc<DatabaseService>>,
-    id: i64,
-    group: PromptGroup,
-) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.update_group(id, &group).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn delete_prompt_group_api(
-    db: State<'_, Arc<DatabaseService>>,
-    id: i64,
-) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.delete_group(id).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn set_arch_default_group_api(
-    db: State<'_, Arc<DatabaseService>>,
-    architecture: ArchitectureType,
-    group_id: i64,
-) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.set_arch_default_group(architecture, group_id).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn upsert_prompt_group_item_api(
-    db: State<'_, Arc<DatabaseService>>,
-    group_id: i64,
-    stage: StageType,
-    template_id: i64,
-) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.upsert_group_item(group_id, stage, template_id).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn list_prompt_group_items_api(
-    db: State<'_, Arc<DatabaseService>>,
-    group_id: i64,
-) -> Result<Vec<PromptGroupItem>, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.list_group_items(group_id).await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn remove_prompt_group_item_api(
-    db: State<'_, Arc<DatabaseService>>,
-    group_id: i64,
-    stage: StageType,
-) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.remove_group_item(group_id, stage).await.map_err(|e| e.to_string())
-}
-
-// ===== Extended APIs for Unified Prompt System =====
 
 #[tauri::command]
 pub async fn list_prompt_templates_filtered_api(
     db: State<'_, Arc<DatabaseService>>,
     category: Option<PromptCategory>,
     template_type: Option<TemplateType>,
-    architecture: Option<ArchitectureType>,
     is_system: Option<bool>,
 ) -> Result<Vec<PromptTemplate>, String> {
     let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
     let repo = PromptRepository::new(pool);
-    repo.list_templates_filtered(category, template_type, architecture, is_system)
+    repo.list_templates_filtered(category, template_type, is_system)
         .await
         .map_err(|e| e.to_string())
 }
@@ -225,25 +106,10 @@ pub async fn evaluate_prompt_api(
 
 // ===== Preview resolved prompt for AgentManager =====
 
-fn map_engine_to_arch(engine: &str) -> ArchitectureType {
-    match engine {
-        "rewoo" => ArchitectureType::ReWOO,
-        "llm-compiler" => ArchitectureType::LLMCompiler,
-        // travel 向后兼容映射到 react
-        "travel" => ArchitectureType::ReAct,
-        "react" => ArchitectureType::ReAct,
-        _ => ArchitectureType::PlanExecute,
-    }
-}
-
 fn map_stage_to_canonical(stage: &str) -> Option<CanonicalStage> {
     match stage {
         "system" => Some(CanonicalStage::System),
         "intent_classifier" => Some(CanonicalStage::IntentClassifier),
-        "planner" => Some(CanonicalStage::Planner),
-        "executor" => Some(CanonicalStage::Executor),
-        "replanner" => Some(CanonicalStage::Replanner),
-        "evaluator" => Some(CanonicalStage::Evaluator),
         _ => None,
     }
 }
@@ -259,7 +125,6 @@ pub async fn preview_resolved_prompt_api(
     let repo = PromptRepository::new(pool);
 
     let resolver = PromptResolver::new(repo);
-    let arch = map_engine_to_arch(&engine);
     let canonical = map_stage_to_canonical(&stage).ok_or_else(|| format!("Invalid stage: {}", stage))?;
 
     let params: HashMap<String, JsonValue> = agent_config.as_object()
@@ -271,7 +136,7 @@ pub async fn preview_resolved_prompt_api(
     let cfg = AgentPromptConfig::parse_agent_config(&params);
 
     resolver
-        .resolve_prompt(&cfg, arch, canonical, None)
+        .resolve_prompt(&cfg, canonical, None)
         .await
         .map_err(|e| e.to_string())
 }
@@ -292,23 +157,17 @@ pub async fn get_plugin_generation_prompt_api(
         _ => return Err(format!("Unknown template type: {}", template_type)),
     };
     
-    // 获取该类型的模板（优先获取激活的，否则获取第一个）
+    // 获取该类型的模板（只获取激活的模板）
     let templates = repo.list_templates_filtered(
         Some(PromptCategory::Application),
         Some(t_type),
-        None,
         None
     ).await.map_err(|e| e.to_string())?;
     
-    if templates.is_empty() {
-        return Err("No plugin generation template found in database".to_string());
-    }
-    
-    // 返回第一个激活的模板，如果没有激活的则返回第一个
+    // 只返回激活的模板，如果没有激活的则返回错误
     let template = templates.iter()
         .find(|t| t.is_active)
-        .or_else(|| templates.first())
-        .ok_or_else(|| "No suitable template found".to_string())?;
+        .ok_or_else(|| format!("No active template found for type: {}", template_type))?;
     
     Ok(template.content.clone())
 }
@@ -339,20 +198,14 @@ pub async fn get_combined_plugin_prompt_api(
     let templates = repo.list_templates_filtered(
         Some(PromptCategory::Application),
         Some(template_type),
-        None,
         None
     ).await.map_err(|e| e.to_string())?;
     
-    // 获取激活的模板，如果没有激活的则使用第一个
-    let template = if templates.is_empty() {
-        return Err(format!("No plugin generation template found for type: {}", plugin_type));
-    } else {
-        templates.iter()
-            .find(|t| t.is_active)
-            .or_else(|| templates.first())
-            .map(|t| t.content.clone())
-            .ok_or_else(|| format!("No suitable template found for type: {}", plugin_type))?
-    };
+    // 只获取激活的模板，如果没有激活的模板则返回错误
+    let template = templates.iter()
+        .find(|t| t.is_active)
+        .map(|t| t.content.clone())
+        .ok_or_else(|| format!("No active template found for type: {}", plugin_type))?;
     
     // 进行变量替换
     let mut content = template;
@@ -365,20 +218,12 @@ pub async fn get_combined_plugin_prompt_api(
 
 /// Get default prompt content from prompt.md files in app data directory
 #[tauri::command]
-pub async fn get_default_prompt_content(
-    architecture: ArchitectureType,
-    stage: StageType,
-) -> Result<String, String> {
+pub async fn get_default_prompt_content() -> Result<String, String> {
     use std::fs;
     use std::path::PathBuf;
     
-    // Map architecture to directory name (统一使用 react)
-    let arch_dir = match architecture {
-        ArchitectureType::ReWOO => "rewoo",
-        ArchitectureType::LLMCompiler => "llm_compiler",
-        ArchitectureType::PlanExecute => "plan_and_execute",
-        ArchitectureType::ReAct => "react",
-    };
+    // Use default react directory
+    let arch_dir = "react";
     
     // Get app data directory
     let app_data_dir = dirs::data_dir()
@@ -393,8 +238,7 @@ pub async fn get_default_prompt_content(
     let content = fs::read_to_string(&prompt_path)
         .map_err(|e| format!("Failed to read prompt file for {} at {:?}: {}", arch_dir, prompt_path, e))?;
     
-    // For architectures with multiple stages, try to extract the relevant section
-    // For now, return the full content - frontend can handle stage-specific extraction if needed
+    // Return the full content
     Ok(content)
 }
 

@@ -84,7 +84,7 @@ export const DetailedExecutionStatus = {
 }
 
 export type ExecutionStatusType = typeof DetailedExecutionStatus[keyof typeof DetailedExecutionStatus]
-export type DetailedExecutionStatus = ExecutionStatusType
+export type DetailedExecutionStatusType = ExecutionStatusType
 
 export interface ExecutionContext {
   executionId: string

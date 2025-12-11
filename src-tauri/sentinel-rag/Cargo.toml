@@ -32,8 +32,12 @@ md5 = "0.7"
 rand = "0.9"
 log = "0.4"
 dirs = "5.0"
-rig-core = { version = "0.24.0", features = ["derive"] }
-rig-lancedb = "0.2.27"
+# rig-core = { version = "0.26.0", features = ["derive"] }
+
+rig-core = { workspace = true }
+rig-lancedb = { workspace = true }
+
+#  rig-lancedb= "0.2.29"
 regex = "1.11"
 pulldown-cmark = "0.12"
 futures-util = "0.3"

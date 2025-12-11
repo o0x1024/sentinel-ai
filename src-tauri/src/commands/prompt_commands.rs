@@ -300,7 +300,6 @@ pub async fn save_prompt_template(
                     .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
                     .collect(),
                 category: None,
-                target_architecture: None,
                 is_system: false,
                 priority: 0,
             };
@@ -349,10 +348,6 @@ pub async fn search_prompt_templates(
                 .and_then(|v| v.as_str())
                 .and_then(|t| {
                     match t {
-                        "Planner" => Some(TemplateType::Planner),
-                        "Executor" => Some(TemplateType::Executor),
-                        "Replanner" => Some(TemplateType::Replanner),
-                        "ReportGenerator" => Some(TemplateType::ReportGenerator),
                         "Custom" => Some(TemplateType::Custom),
                         _ => None,
                     }

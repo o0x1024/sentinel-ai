@@ -29,8 +29,8 @@ pub async fn create_ai_conversation(pool: &SqlitePool, conversation: &AiConversa
         INSERT INTO ai_conversations (
             id, title, service_name, model_name, model_provider, context_type, project_id,
             vulnerability_id, scan_task_id, conversation_data, summary, total_messages,
-            total_tokens, cost, tags, is_archived, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            total_tokens, cost, tags, tool_config, is_archived, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&conversation.id)
@@ -48,6 +48,7 @@ pub async fn create_ai_conversation(pool: &SqlitePool, conversation: &AiConversa
     .bind(conversation.total_tokens)
     .bind(conversation.cost)
     .bind(&conversation.tags)
+    .bind(&conversation.tool_config)
     .bind(conversation.is_archived)
     .bind(conversation.created_at)
     .bind(conversation.updated_at)
@@ -104,7 +105,7 @@ pub async fn update_ai_conversation(pool: &SqlitePool, conversation: &AiConversa
         SET title = ?, service_name = ?, model_name = ?, model_provider = ?, context_type = ?,
             project_id = ?, vulnerability_id = ?, scan_task_id = ?, conversation_data = ?,
             summary = ?, total_messages = ?, total_tokens = ?, cost = ?, tags = ?,
-            is_archived = ?, updated_at = ?
+            tool_config = ?, is_archived = ?, updated_at = ?
         WHERE id = ?
         "#,
     )
@@ -122,6 +123,7 @@ pub async fn update_ai_conversation(pool: &SqlitePool, conversation: &AiConversa
     .bind(conversation.total_tokens)
     .bind(conversation.cost)
     .bind(&conversation.tags)
+    .bind(&conversation.tool_config)
     .bind(conversation.is_archived)
     .bind(chrono::Utc::now())
     .bind(&conversation.id)

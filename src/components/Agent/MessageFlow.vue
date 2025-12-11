@@ -4,9 +4,15 @@
       <MessageBlock :message="msg" />
     </div>
     
-    <!-- Streaming indicator -->
-    <div v-if="isStreaming" class="streaming-indicator inline-flex items-center px-4 py-2 bg-base-200 rounded-lg text-sm">
-      <span class="streaming-content text-base-content whitespace-pre-wrap" v-if="streamingContent">{{ streamingContent }}</span>
+    <!-- Loading indicator (waiting for response) -->
+    <div v-if="isStreaming && !streamingContent" class="loading-indicator flex items-center gap-3 px-4 py-3 bg-base-200/50 rounded-lg">
+      <span class="loading loading-dots loading-md text-primary"></span>
+      <span class="text-sm text-base-content/70">AI 正在思考...</span>
+    </div>
+    
+    <!-- Streaming indicator (receiving content) -->
+    <div v-if="isStreaming && streamingContent" class="streaming-indicator inline-flex items-center px-4 py-2 bg-base-200 rounded-lg text-sm">
+      <span class="streaming-content text-base-content whitespace-pre-wrap">{{ streamingContent }}</span>
       <span class="cursor text-primary ml-0.5 animate-blink">▊</span>
     </div>
     
@@ -18,7 +24,7 @@
         </div>
       </div>
       <h3 class="text-lg font-semibold mb-2 text-base-content">Agent Ready</h3>
-      <p class="max-w-xs text-base-content/70">Start a conversation to see the agent's responses and task execution.</p>
+      <p class="max-w-xs text-base-content/70">开始对话，查看Agent的响应和任务执行。</p>
     </div>
   </div>
 </template>

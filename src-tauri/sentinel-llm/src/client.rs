@@ -60,19 +60,24 @@ impl LlmClient {
         image: Option<&ImageAttachment>,
     ) -> Result<String> {
         let provider = self.config.provider.to_lowercase();
+        // 使用 rig_provider（如果设置了）来选择正确的 client
+        let provider_for_agent = self.config.get_effective_rig_provider();
         let model = &self.config.model;
         let session_id = uuid::Uuid::new_v4().to_string();
 
         info!(
-            "LlmClient chat - Provider: {}, Model: {}, History: {} messages, Image: {}",
+            "LlmClient chat - Provider: {}, rig_provider: {}, Model: {}, History: {} messages, Image: {}",
             provider,
+            provider_for_agent,
             model,
             history.len(),
             image.is_some()
         );
 
+        let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
+
         // 记录请求日志（含图片标记）
-        log_request_with_image(&session_id, None, &provider, model, system_prompt, user_prompt, image.is_some());
+        log_request_with_image(&session_id, None, &provider, model, Some(preamble), user_prompt, image.is_some());
 
         // 设置环境变量
         self.config.setup_env_vars();
@@ -83,11 +88,10 @@ impl LlmClient {
         // 转换历史消息
         let chat_history = convert_chat_history(history);
 
-        let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
         let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
 
-        // 根据 provider 创建 agent 并执行
-        let content = match provider.as_str() {
+        // 根据 rig_provider 创建 agent 并执行
+        let content = match provider_for_agent.as_str() {
             "openai" | "lm studio" | "lmstudio" | "lm_studio" => {
                 self.chat_with_openai(model, preamble, user_message, chat_history, timeout).await?
             }
@@ -114,13 +118,13 @@ impl LlmClient {
             }
             _ => {
                 // 未知 provider 尝试使用 openai 兼容方式
-                info!("Unknown provider '{}', trying OpenAI compatible mode", provider);
+                info!("Unknown rig_provider '{}', trying OpenAI compatible mode", provider_for_agent);
                 self.chat_with_openai(model, preamble, user_message, chat_history, timeout).await?
             }
         };
 
         // 记录响应日志
-        log_response(&session_id, None, &provider, model, &content);
+        log_response(&session_id, None, &provider_for_agent, model, &content);
 
         info!("LlmClient: Response length: {} chars", content.len());
         Ok(content)
@@ -149,7 +153,37 @@ impl LlmClient {
         timeout: std::time::Duration,
     ) -> Result<String> {
         use rig::providers::anthropic;
-        let client = anthropic::Client::from_env();
+        
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
+        
+        // 创建带有正确 Content-Type 的 HTTP 客户端
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+        
+        let mut builder = anthropic::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client);
+        
+        // 检查是否设置了自定义 base_url
+        if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
+            if !base_url.is_empty() {
+                info!("Using custom Anthropic base URL: {}", base_url);
+                builder = builder.base_url(&base_url);
+            }
+        }
+        
+        let client = builder.build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {:?}", e))?;
+        
         let agent = client.agent(model).preamble(preamble).max_tokens(4096).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }

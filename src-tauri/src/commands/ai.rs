@@ -1,24 +1,22 @@
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::{Database, DatabaseService};
-use crate::utils::ordered_message::ChunkType;
+use crate::services::prompt_db::PromptRepository;
 use crate::utils::global_proxy::create_client_with_proxy;
+use crate::utils::ordered_message::ChunkType;
+use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
 use anyhow::Result;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use sentinel_llm::{
-    log_request, log_response, parse_image_from_json, ChatMessage as LlmChatMessage,
-    StreamContent, StreamingLlmClient,
+    parse_image_from_json, ChatMessage as LlmChatMessage, StreamContent, StreamingLlmClient,
 };
+use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use sqlx::Row;
-use crate::services::prompt_db::PromptRepository;
-use crate::utils::prompt_resolver::{PromptResolver, AgentPromptConfig, CanonicalStage};
-use crate::models::prompt::ArchitectureType;
 
 // DTO for Tauri command argument to avoid CommandArg bound issues
 #[derive(Debug, Clone, Deserialize)]
@@ -42,6 +40,7 @@ impl From<CommandAiConfig> for AiConfig {
             organization: c.organization,
             temperature: c.temperature,
             max_tokens: c.max_tokens,
+            rig_provider: None,
         }
     }
 }
@@ -117,29 +116,7 @@ async fn stream_chat_with_llm(
         .map(|c| c.is_some())
         .unwrap_or(false);
 
-    // 保存用户消息
-    if has_conversation && !user_message.trim().is_empty() {
-        let user_msg = AiMessage {
-            id: Uuid::new_v4().to_string(),
-            conversation_id: conversation_id.to_string(),
-            role: "user".to_string(),
-            content: user_message.to_string(),
-            metadata: None,
-            token_count: Some(user_message.len() as i32),
-            cost: None,
-            tool_calls: None,
-            attachments: attachments
-                .as_ref()
-                .and_then(|v| serde_json::to_string(v).ok()),
-            timestamp: chrono::Utc::now(),
-            architecture_type: None,
-            architecture_meta: None,
-            structured_data: None,
-        };
-        if let Err(e) = db.create_ai_message(&user_msg).await {
-            tracing::warn!("Failed to save user message: {}", e);
-        }
-    }
+    // 注意：用户消息已经在 agent_execute 中保存，这里不需要重复保存
 
     // 解析图片附件
     let image = parse_image_from_json(attachments.as_ref());
@@ -158,20 +135,6 @@ async fn stream_chat_with_llm(
     let provider = service.get_config().provider.to_lowercase();
     let model = service.get_config().model.clone();
 
-    // 记录请求日志
-    log_request(
-        message_id,
-        if has_conversation {
-            Some(conversation_id)
-        } else {
-            None
-        },
-        &provider,
-        &model,
-        system_prompt,
-        user_message,
-    );
-
     // 流式调用
     let execution_id = message_id.to_string();
     let msg_id = message_id.to_string();
@@ -179,41 +142,104 @@ async fn stream_chat_with_llm(
     let app = app_handle.clone();
 
     let content = streaming_client
-        .stream_chat(system_prompt, user_message, &history, image.as_ref(), move |chunk| {
-            match chunk {
-                StreamContent::Text(text) => {
-                    crate::utils::ordered_message::emit_message_chunk_with_arch(
-                        &app,
-                        &execution_id,
-                        &msg_id,
-                        Some(&conv_id),
-                        ChunkType::Content,
-                        &text,
-                        false,
-                        None,
-                        None,
-                        None,
-                        None,
-                    );
+        .stream_chat(
+            system_prompt,
+            user_message,
+            &history,
+            image.as_ref(),
+            move |chunk| {
+                match chunk {
+                    StreamContent::Text(text) => {
+                        tracing::debug!("Stream chunk received: {} chars", text.len());
+                        crate::utils::ordered_message::emit_message_chunk_with_arch(
+                            &app,
+                            &execution_id,
+                            &msg_id,
+                            Some(&conv_id),
+                            ChunkType::Content,
+                            &text,
+                            false,
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
+                    }
+                    StreamContent::Reasoning(text) => {
+                        tracing::debug!("Stream reasoning received: {} chars", text.len());
+                        crate::utils::ordered_message::emit_message_chunk_with_arch(
+                            &app,
+                            &execution_id,
+                            &msg_id,
+                            Some(&conv_id),
+                            ChunkType::Thinking,
+                            &text,
+                            false,
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
+                    }
+                    StreamContent::ToolCallStart { id, name } => {
+                        tracing::info!("Tool call started: id={}, name={}", id, name);
+                        // 发送工具调用开始事件
+                        let _ = app.emit(
+                            "agent:tool_call_start",
+                            serde_json::json!({
+                                "execution_id": &execution_id,
+                                "tool_call_id": id,
+                                "tool_name": name,
+                            }),
+                        );
+                    }
+                    StreamContent::ToolCallDelta { id, delta } => {
+                        tracing::debug!("Tool call delta: id={}, delta_len={}", id, delta.len());
+                        // 发送工具调用参数增量
+                        let _ = app.emit(
+                            "agent:tool_call_delta",
+                            serde_json::json!({
+                                "execution_id": &execution_id,
+                                "tool_call_id": id,
+                                "delta": delta,
+                            }),
+                        );
+                    }
+                    StreamContent::ToolCallComplete {
+                        id,
+                        name,
+                        arguments,
+                    } => {
+                        tracing::info!("Tool call complete: id={}, name={}", id, name);
+                        // 发送工具调用完成事件
+                        let _ = app.emit(
+                            "agent:tool_call_complete",
+                            serde_json::json!({
+                                "execution_id": &execution_id,
+                                "tool_call_id": id,
+                                "tool_name": name,
+                                "arguments": arguments,
+                            }),
+                        );
+                    }
+                    StreamContent::ToolResult { id, result } => {
+                        tracing::info!("Tool result: id={}, result_len={}", id, result.len());
+                        // 发送工具执行结果事件
+                        let _ = app.emit(
+                            "agent:tool_result",
+                            serde_json::json!({
+                                "execution_id": &execution_id,
+                                "tool_call_id": id,
+                                "result": result,
+                            }),
+                        );
+                    }
+                    StreamContent::Done => {
+                        tracing::debug!("Stream done received");
+                    }
                 }
-                StreamContent::Reasoning(text) => {
-                    crate::utils::ordered_message::emit_message_chunk_with_arch(
-                        &app,
-                        &execution_id,
-                        &msg_id,
-                        Some(&conv_id),
-                        ChunkType::Thinking,
-                        &text,
-                        false,
-                        None,
-                        None,
-                        None,
-                        None,
-                    );
-                }
-                StreamContent::Done => {}
-            }
-        })
+            },
+        )
         .await
         .map_err(|e| format!("LLM stream error: {}", e))?;
 
@@ -234,22 +260,10 @@ async fn stream_chat_with_llm(
         );
     }
 
-    // 记录响应日志
-    log_response(
-        message_id,
-        if has_conversation {
-            Some(conversation_id)
-        } else {
-            None
-        },
-        &provider,
-        &model,
-        &content,
-    );
-
     // 保存助手消息
     if has_conversation && !content.is_empty() {
-        let msg = AiMessage {
+        use sentinel_core::models::database as core_db;
+        let msg = core_db::AiMessage {
             id: message_id.to_string(),
             conversation_id: conversation_id.to_string(),
             role: "assistant".to_string(),
@@ -266,6 +280,17 @@ async fn stream_chat_with_llm(
         };
         if let Err(e) = db.upsert_ai_message_append(&msg).await {
             tracing::warn!("Failed to save assistant message: {}", e);
+        } else {
+            // 发送助手消息保存成功事件到前端
+            let _ = app_handle.emit(
+                "agent:assistant_message_saved",
+                &serde_json::json!({
+                    "execution_id": conversation_id,
+                    "message_id": message_id,
+                    "content": content,
+                    "timestamp": msg.timestamp.timestamp_millis(),
+                }),
+            );
         }
     }
 
@@ -295,20 +320,6 @@ pub struct SaveMessageRequest {
     pub architecture_type: Option<String>,
     pub architecture_meta: Option<String>,
     pub structured_data: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SendStreamMessageRequest {
-    pub conversation_id: String,
-    pub message: String,
-    pub service_name: String,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u32>,
-    pub system_prompt: Option<String>,
-    pub message_id: Option<String>, // 前端传递的消息ID
-    pub attachments: Option<serde_json::Value>, // 前端传递的附件数组(JSON)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -342,6 +353,8 @@ pub struct AiProviderConfig {
     pub enabled: bool,
     pub default_model: String,
     pub models: Vec<serde_json::Value>,
+    /// rig 库使用的提供商类型，决定后端 API 调用方式
+    pub rig_provider: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -404,476 +417,6 @@ pub async fn list_ai_services(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<Vec<String>, String> {
     Ok(ai_manager.list_services())
-}
-
-// 发送流式聊天消息
-#[tauri::command]
-pub async fn send_ai_stream_message(
-    request: SendStreamMessageRequest,
-    app_handle: AppHandle,
-    ai_manager: State<'_, Arc<AiServiceManager>>,
-) -> Result<String, String> {
-    tracing::info!(
-        "Starting stream message for conversation: {}",
-        request.conversation_id
-    );
-
-    // 普通聊天模式：强制使用默认 Provider/Model，不接受前端覆盖，也不做任何回退
-    let (provider, model_name) = match ai_manager.get_default_chat_model().await {
-        Ok(Some((p, m))) => {
-            tracing::info!("Using default chat model: {}/{}", p, m);
-            (p, m)
-        }
-        Ok(None) => {
-            return Err("Default chat model is not configured. Please set it in Settings > AI.".to_string())
-        }
-        Err(e) => {
-            return Err(format!("Failed to read default chat model: {}", e))
-        }
-    };
-
-    // 读取 provider 配置并构建一次性服务实例（内部用 Rig 直连）
-    let provider_config = ai_manager
-        .get_provider_config(&provider)
-        .await
-        .map_err(|e| format!("Failed to load provider config '{}': {}", provider, e))?
-        .ok_or_else(|| format!("Provider '{}' configuration not found", provider))?;
-
-    let mut dynamic_config = provider_config;
-    dynamic_config.model = model_name.clone();
-    if let Some(temp) = request.temperature { dynamic_config.temperature = Some(temp); }
-    if let Some(max_tokens) = request.max_tokens { dynamic_config.max_tokens = Some(max_tokens); }
-
-    let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
-    let mcp_service = ai_manager.get_mcp_service();
-    let mut service = crate::services::ai::AiService::new(
-        dynamic_config,
-        db_service.inner().clone(),
-        Some(app_handle.clone()),
-        mcp_service,
-    );
-    service.set_app_handle(app_handle.clone());
-
-    // 使用前端传递的消息ID，如果没有则生成新的
-    let message_id = request
-        .message_id
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-
-    // 创建取消令牌
-    let _cancellation_token = create_cancellation_token(&request.conversation_id);
-
-    // 在后台执行流式聊天，直接使用AI服务的流式响应
-    let conversation_id = request.conversation_id.clone();
-    let message = request.message.clone();
-    let attachments = request.attachments.clone();
-    let service_clone = service.clone();
-    let mut system_prompt = request.system_prompt.clone();
-    let message_id_clone = message_id.clone();
-
-    tokio::spawn(async move {
-        // First, get current role prompt if available
-        let mut role_prompt = String::new();
-        if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
-            if let Ok(Some(current_role)) = db.get_current_ai_role().await {
-                if !current_role.prompt.trim().is_empty() {
-                    role_prompt = current_role.prompt;
-                    tracing::info!("Using role prompt from: {}", current_role.title);
-                }
-            }
-        }
-
-        // If no system prompt provided, resolve from unified prompt system (System stage)
-        if system_prompt.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
-            if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
-                if let Ok(pool) = db.get_pool() {
-                    let repo = PromptRepository::new(pool.clone());
-                    let resolver = PromptResolver::new(repo);
-                    let cfg = AgentPromptConfig::default();
-                    match resolver
-                        .resolve_prompt(&cfg, ArchitectureType::PlanExecute, CanonicalStage::System, None)
-                        .await {
-                        Ok(content) if !content.trim().is_empty() => {
-                            system_prompt = Some(content);
-                        }
-                        _ => {
-                            if let Ok(Some(db_prompt)) = db.get_config("ai", "system_prompt").await {
-                                if !db_prompt.trim().is_empty() {
-                                    system_prompt = Some(db_prompt);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Combine role prompt with system prompt
-        if !role_prompt.is_empty() {
-            system_prompt = match system_prompt {
-                Some(existing) if !existing.trim().is_empty() => {
-                    Some(format!("{}\n\n{}", role_prompt, existing))
-                }
-                _ => Some(role_prompt)
-            };
-        }
-
-        // Conditionally augment with RAG evidence blocks when enabled
-        if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
-            // Read RAG config to check augmentation toggle
-            let mut rag_enabled = false;
-            if let Ok(Some(cfg)) = db.get_rag_config().await { rag_enabled = cfg.augmentation_enabled; }
-
-            if rag_enabled {
-                // Determine an active collection (fallback to default if none active)
-                let active_collection_id: Option<String> = match db.get_rag_collections().await {
-                    Ok(cols) => cols.into_iter().find(|c| c.is_active).map(|c| c.id),
-                    Err(_) => None,
-                };
-
-                // Try to get global RAG service
-                if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
-                    use tokio::time::{timeout, Duration};
-
-                    // Build brief conversation history for query context (last 3 user/assistant messages)
-                    let mut history_snippets: Vec<String> = Vec::new();
-                    if let Ok(msgs) = db.get_ai_messages_by_conversation(&conversation_id).await {
-                        for msg in msgs.iter().rev().take(6) { // last ~3 rounds
-                            let prefix = match msg.role.as_str() { "user" => "U:", "assistant" => "A:", _ => "" };
-                            let snippet: String = msg.content.chars().take(200).collect();
-                            history_snippets.push(format!("{} {}", prefix, snippet));
-                        }
-                    }
-
-                    let rag_req = sentinel_rag::models::AssistantRagRequest {
-                        query: message.clone(),
-                        collection_id: active_collection_id.clone(),
-                        conversation_history: if history_snippets.is_empty() { None } else { Some(history_snippets) },
-                        top_k: Some(5),
-                        use_mmr: Some(true),
-                        mmr_lambda: Some(0.7),
-                        similarity_threshold: Some(0.65),
-                        reranking_enabled: Some(false),
-                        model_provider: None,
-                        model_name: None,
-                        max_tokens: None,
-                        temperature: None,
-                        system_prompt: None, // 不需要传递，后端会自动获取当前角色
-                    };
-
-                    // Short timeout to avoid delaying stream start
-                    if let Ok(Ok((context, _citations))) = timeout(Duration::from_millis(1200), rag_service.query_for_assistant(&rag_req)).await {
-                        if !context.trim().is_empty() {
-                            let base = system_prompt.unwrap_or_else(|| "".to_string());
-                            let policy = "你必须严格基于证据回答问题。在回答中引用证据时，使用 [SOURCE n] 格式。如果证据不足，请直接回答并避免编造。";
-                            // Evidence blocks are already formatted with === SOURCE n ... ===
-                            let augmented = if base.trim().is_empty() {
-                                format!(
-                                    "[知识溯源规范]\n{}\n\n[证据块]\n{}",
-                                    policy, context
-                                )
-                            } else {
-                                format!(
-                                    "{}\n\n[知识溯源规范]\n{}\n\n[证据块]\n{}",
-                                    base, policy, context
-                                )
-                            };
-                            system_prompt = Some(augmented);
-
-                            // Optionally notify frontend RAG was applied
-                            let _ = app_handle.emit(
-                                "ai_meta_info",
-                                &serde_json::json!({
-                                    "conversation_id": conversation_id,
-                                    "message_id": message_id_clone,
-                                    "rag_applied": true
-                                })
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        // 发送开始事件（为了与前端配合）
-        if let Err(e) = app_handle.emit(
-            "ai_stream_start",
-            &serde_json::json!({
-                "conversation_id": conversation_id,
-                "message_id": message_id_clone
-            }),
-        ) {
-            tracing::error!("Failed to emit stream start event: {}", e);
-        }
-
-        // 使用 sentinel-llm 流式调用 LLM
-        match stream_chat_with_llm(
-            &service_clone,
-            &app_handle,
-            &conversation_id,
-            &message_id_clone,
-            &message,
-            system_prompt.as_deref(),
-            attachments,
-            true,
-        )
-        .await
-        {
-            Ok(_response_content) => {
-                tracing::info!(
-                    "Stream chat completed successfully for conversation: {}",
-                    conversation_id
-                );
-            }
-            Err(e) => {
-                tracing::error!("Stream chat failed: {}", e);
-            }
-        }
-
-        // 清理取消令牌
-        remove_cancellation_token(&conversation_id);
-    });
-
-    Ok(message_id)
-}
-
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SendStreamWithSearchRequest {
-    pub conversation_id: String,
-    pub message: String,
-    pub service_name: String,
-    pub max_results: Option<u32>,   // Tavily: 0..=20
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u32>,
-    pub message_id: Option<String>,
-}
-
-/// 发送消息前先根据用户输入执行联网搜索，并将搜索结果注入到提示中再进行流式总结
-#[tauri::command]
-pub async fn send_ai_stream_with_search(
-    request: SendStreamWithSearchRequest,
-    app_handle: AppHandle,
-    ai_manager: State<'_, Arc<AiServiceManager>>,
-) -> Result<String, String> {
-    use std::time::Duration;
-    let max_results = request.max_results.unwrap_or(5).min(20);
-
-    // 读取 Tavily API Key（优先环境变量，其次数据库配置 ai/tavily_api_key）
-    let tavily_api_key = std::env::var("TAVILY_API_KEY").ok()
-        .or_else(|| {
-            if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
-                futures::executor::block_on(db.get_config("ai", "tavily_api_key")).ok().flatten()
-            } else { None }
-        })
-        .ok_or_else(|| "TAVILY_API_KEY not configured".to_string())?;
-
-    // 使用全局代理构建客户端
-    // 重要：reqwest 不会自动读取环境变量代理，必须手动应用
-    let client = {
-        let builder = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30));
-        let builder = crate::utils::global_proxy::apply_proxy_to_client(builder).await;
-        builder.build()
-            .map_err(|e| format!("Failed to build HTTP client: {}", e))?
-    };
-    let tavily_url = "https://api.tavily.com/search";
-    let payload = serde_json::json!({
-        "query": request.message,
-        "max_results": max_results,
-        "include_answer": false,
-        "include_raw_content": false,
-        "search_depth": "basic"
-    });
-    let tavily_resp = client
-        .post(tavily_url)
-        .bearer_auth(tavily_api_key)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to call Tavily: {}", e))?;
-    if !tavily_resp.status().is_success() {
-        let err_txt = tavily_resp.text().await.unwrap_or_default();
-        return Err(format!("Tavily error: {}", err_txt));
-    }
-    let tavily_json: serde_json::Value = tavily_resp.json().await
-        .map_err(|e| format!("Failed to parse Tavily response: {}", e))?;
-
-    // 整理 Tavily 结果给 LLM
-    let mut lines: Vec<String> = Vec::new();
-    if let Some(results) = tavily_json.get("results").and_then(|r| r.as_array()) {
-        for (idx, item) in results.iter().enumerate() {
-            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
-            let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let line = format!("{}. {}\n{}\n{}", idx + 1, title, url, content);
-            lines.push(line);
-        }
-    }
-    let search_block = if lines.is_empty() { String::new() } else { format!(
-        "[Web Search]\nsource: Tavily\nresults:\n{}\n\n",
-        lines.join("\n\n")
-    )};
-
-    // 为LLM增加系统提示，并组装用户内容
-    let system_prompt = Some("你是一个AI总结助手，你擅长对信息进行总结，请对用户输入的信息进行总结".to_string());
-    let augmented_user_content = if search_block.is_empty() {
-        request.message.clone()
-    } else {
-        format!(
-            "{}\n请基于上面的最新搜索结果，对下述用户问题进行客观、结构化总结，最后附上 Sources 列表（列出最相关链接）。用户问题：{}",
-            search_block, request.message
-        )
-    };
-
-    // 复用 send_ai_stream_message 的服务创建逻辑
-    let service = if let (Some(provider), Some(model)) = (&request.provider, &request.model) {
-        if let Ok(Some(provider_config)) = ai_manager.get_provider_config(provider).await {
-            let mut dynamic_config = provider_config;
-            dynamic_config.model = model.clone();
-            if let Some(temp) = request.temperature { dynamic_config.temperature = Some(temp); }
-            if let Some(max_tokens) = request.max_tokens { dynamic_config.max_tokens = Some(max_tokens); }
-            let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
-            let mcp_service = ai_manager.get_mcp_service();
-            let mut temp_service = crate::services::ai::AiService::new(
-                dynamic_config,
-                db_service.inner().clone(),
-                Some(app_handle.clone()),
-                mcp_service,
-            );
-            temp_service.set_app_handle(app_handle.clone());
-            temp_service
-        } else {
-            let mut default_service = ai_manager
-                .get_service(&request.service_name)
-                .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
-            default_service.set_app_handle(app_handle.clone());
-            default_service
-        }
-    } else {
-        match ai_manager.get_default_chat_model().await {
-            Ok(Some((provider, model_name))) => {
-                // 直接基于默认配置构建服务
-                if let Ok(Some(provider_config)) = ai_manager.get_provider_config(&provider).await {
-                    let mut dynamic_config = provider_config;
-                    dynamic_config.model = model_name;
-                    let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
-                    let mcp_service = ai_manager.get_mcp_service();
-                    let mut temp_service = crate::services::ai::AiService::new(
-                        dynamic_config,
-                        db_service.inner().clone(),
-                        Some(app_handle.clone()),
-                        mcp_service,
-                    );
-                    temp_service.set_app_handle(app_handle.clone());
-                    temp_service
-                } else {
-                    let mut default_service = ai_manager
-                        .get_service(&request.service_name)
-                        .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
-                    default_service.set_app_handle(app_handle.clone());
-                    default_service
-                }
-            }
-            _ => {
-                let mut service = ai_manager
-                    .get_service(&request.service_name)
-                    .ok_or_else(|| format!("AI service not found: {}", request.service_name))?;
-                service.set_app_handle(app_handle.clone());
-                service
-            }
-        }
-    };
-
-    // 消息ID与取消令牌
-    let message_id = request
-        .message_id
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let _cancellation_token = create_cancellation_token(&request.conversation_id);
-
-    // 后台流式
-    let conversation_id = request.conversation_id.clone();
-    let service_clone = service.clone();
-    let message_id_clone = message_id.clone();
-    let content_to_send = augmented_user_content.clone();
-    let mut resolved_system_prompt = system_prompt.clone();
-
-    tokio::spawn(async move {
-        // First, get current role prompt if available
-        let mut role_prompt = String::new();
-        if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
-            if let Ok(Some(current_role)) = db.get_current_ai_role().await {
-                if !current_role.prompt.trim().is_empty() {
-                    role_prompt = current_role.prompt;
-                    tracing::info!("Using role prompt from: {}", current_role.title);
-                }
-            }
-        }
-
-        // Resolve system prompt if empty via unified prompt system
-        if resolved_system_prompt.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
-            if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
-                if let Ok(pool) = db.get_pool() {
-                    let repo = PromptRepository::new(pool.clone());
-                    let resolver = PromptResolver::new(repo);
-                    let cfg = AgentPromptConfig::default();
-                    match resolver
-                        .resolve_prompt(&cfg, ArchitectureType::PlanExecute, CanonicalStage::System, None)
-                        .await {
-                        Ok(content) if !content.trim().is_empty() => {
-                            resolved_system_prompt = Some(content);
-                        }
-                        _ => {
-                            if let Ok(Some(db_prompt)) = db.get_config("ai", "system_prompt").await {
-                                if !db_prompt.trim().is_empty() {
-                                    resolved_system_prompt = Some(db_prompt);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Combine role prompt with system prompt
-        if !role_prompt.is_empty() {
-            resolved_system_prompt = match resolved_system_prompt {
-                Some(existing) if !existing.trim().is_empty() => {
-                    Some(format!("{}\n\n{}", role_prompt, existing))
-                }
-                _ => Some(role_prompt)
-            };
-        }
-        if let Err(e) = app_handle.emit(
-            "ai_stream_start",
-            &serde_json::json!({
-                "conversation_id": conversation_id,
-                "message_id": message_id_clone
-            }),
-        ) {
-            tracing::error!("Failed to emit stream start event: {}", e);
-        }
-
-        // 使用 sentinel-llm 流式调用 LLM
-        if let Err(e) = stream_chat_with_llm(
-            &service_clone,
-            &app_handle,
-            &conversation_id,
-            &message_id_clone,
-            &content_to_send,
-            resolved_system_prompt.as_deref(),
-            None,
-            false,
-        )
-        .await
-        {
-            tracing::error!("Stream chat with search failed: {}", e);
-        }
-
-        remove_cancellation_token(&conversation_id);
-    });
-
-    Ok(message_id)
 }
 
 // 取消流式聊天
@@ -1101,14 +644,14 @@ pub async fn create_ai_conversation(
     }
 }
 
-
 // 仅保存AI消息到对话（不触发模型回复）
 #[tauri::command]
 pub async fn save_ai_message(
     request: SaveMessageRequest,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let message = AiMessage {
+    use sentinel_core::models::database as core_db;
+    let message = core_db::AiMessage {
         id: request.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
         conversation_id: request.conversation_id,
         role: request.role,
@@ -1184,7 +727,6 @@ pub async fn archive_ai_conversation(
     Err("AI service not found".to_string())
 }
 
-
 // 获取AI对话列表
 #[tauri::command]
 pub async fn get_ai_conversations(
@@ -1234,6 +776,56 @@ pub async fn delete_ai_message(
         .map_err(|e| format!("Failed to delete AI message {}: {}", message_id, e))
 }
 
+// 获取会话的所有消息
+#[tauri::command]
+pub async fn get_ai_messages_by_conversation(
+    conversation_id: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<AiMessage>, String> {
+    db_service
+        .get_ai_messages_by_conversation(&conversation_id)
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to get messages for conversation {}: {}",
+                conversation_id, e
+            )
+        })
+}
+
+// 清空会话的所有消息
+#[tauri::command]
+pub async fn clear_conversation_messages(
+    conversation_id: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    db_service
+        .delete_messages_by_conversation(&conversation_id)
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to clear messages for conversation {}: {}",
+                conversation_id, e
+            )
+        })
+}
+
+/// 保存全局工具配置（不与会话绑定）
+#[tauri::command]
+pub async fn save_tool_config(
+    tool_config: crate::agents::ToolConfig,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    save_tool_config_to_db(&app_handle, &tool_config).await
+}
+
+/// 获取全局工具配置
+#[tauri::command]
+pub async fn get_tool_config(
+    app_handle: AppHandle,
+) -> Result<Option<crate::agents::ToolConfig>, String> {
+    Ok(load_tool_config_from_db(&app_handle).await)
+}
 
 // 获取AI提供商的实时模型列表
 #[tauri::command]
@@ -1307,7 +899,8 @@ async fn test_modelscope_connection(
         });
     }
 
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
@@ -1392,7 +985,8 @@ pub async fn test_openrouter_connection(
         });
     }
 
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
@@ -1477,7 +1071,8 @@ async fn test_openai_connection(
         });
     }
 
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
@@ -1562,7 +1157,8 @@ async fn test_anthropic_connection(
         });
     }
 
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
@@ -1641,7 +1237,8 @@ async fn test_gemini_connection(
         });
     }
 
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_key = request.api_key.unwrap();
 
@@ -1713,7 +1310,8 @@ async fn test_deepseek_connection(
         });
     }
 
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
@@ -1784,7 +1382,8 @@ async fn test_deepseek_connection(
 async fn test_lm_studio_connection(
     request: TestConnectionRequest,
 ) -> Result<TestConnectionResponse, String> {
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
@@ -1794,7 +1393,7 @@ async fn test_lm_studio_connection(
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("Content-Type", "application/json".parse().unwrap());
     headers.insert("Accept", "application/json".parse().unwrap());
-    
+
     // 如果提供了API密钥，添加Authorization头
     if let Some(api_key) = &request.api_key {
         if !api_key.is_empty() && api_key != "lm-studio" {
@@ -1864,7 +1463,8 @@ async fn test_ollama_connection(
         .unwrap_or_else(|| "http://localhost:11434".to_string());
 
     // 首先使用原始HTTP方式获取模型列表（更可靠）
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let response = client
         .get(format!("{}/api/tags", api_base))
@@ -1948,10 +1548,13 @@ async fn test_ollama_with_rig(model: &str) -> Result<String, String> {
             if response_text.is_empty() {
                 Ok("Connected but got empty response".to_string())
             } else {
-                Ok(format!("Connected and got response ({} chars)", response_text.len()))
+                Ok(format!(
+                    "Connected and got response ({} chars)",
+                    response_text.len()
+                ))
             }
         }
-        Err(e) => Err(format!("Rig connection failed: {}", e))
+        Err(e) => Err(format!("Rig connection failed: {}", e)),
     }
 }
 
@@ -1967,7 +1570,8 @@ async fn test_moonshot_connection(
         });
     }
 
-    let client = create_client_with_proxy().await
+    let client = create_client_with_proxy()
+        .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let api_base = request
         .api_base
@@ -2052,7 +1656,6 @@ pub async fn save_ai_config(
     let config_str = serde_json::to_string(&config.providers)
         .map_err(|e| format!("Failed to serialize providers config: {}", e))?;
 
-
     db_service
         .set_config(
             "ai",
@@ -2093,11 +1696,7 @@ pub async fn save_ai_config(
             tracing::info!("AI services reloaded after saving config");
         }
         // 尝试应用数据库中的默认 provider 到 default 别名
-        if let Ok(Some(default_provider)) = db
-            .inner()
-            .get_config("ai", "default_provider")
-            .await
-        {
+        if let Ok(Some(default_provider)) = db.inner().get_config("ai", "default_provider").await {
             if let Err(e) = ai_manager.set_default_alias_to(&default_provider).await {
                 tracing::warn!(
                     "Failed to set default alias to '{}': {}",
@@ -2109,7 +1708,6 @@ pub async fn save_ai_config(
             }
         }
     }
-
 
     // 验证配置是否正确加载
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
@@ -2169,8 +1767,6 @@ pub async fn set_default_provider(
         }
     }
 
-
-
     // 通知前端
     if let Err(e) = app.emit("ai_default_provider_updated", &provider) {
         tracing::warn!("Failed to emit ai_default_provider_updated event: {}", e);
@@ -2178,8 +1774,6 @@ pub async fn set_default_provider(
 
     Ok(())
 }
-
-
 
 /// 设置默认Chat模型（UI专用）
 #[tauri::command]
@@ -2211,10 +1805,6 @@ pub async fn set_default_chat_model(
     tracing::info!("Set default chat model to: {}", model);
     Ok(())
 }
-
-
-
-
 
 // 获取AI配置
 #[tauri::command]
@@ -2258,10 +1848,6 @@ pub async fn get_ai_config(
 
     if let Ok(Some(default_chat_model)) = db.get_config("ai", "default_chat_model").await {
         ai_config["default_chat_model"] = serde_json::Value::String(default_chat_model);
-    }
-
-    if let Ok(Some(system_prompt)) = db.get_config("ai", "system_prompt").await {
-        ai_config["system_prompt"] = serde_json::Value::String(system_prompt);
     }
 
     if let Ok(Some(temperature_str)) = db.get_config("ai", "temperature").await {
@@ -2779,14 +2365,13 @@ pub async fn test_lm_studio_provider_connection(
 #[tauri::command]
 pub async fn upload_image_attachment(file_path: String) -> Result<serde_json::Value, String> {
     use crate::models::attachment::{load_image_from_path, MessageAttachment};
-    
+
     tracing::info!("上传图片附件: {}", file_path);
-    
+
     match load_image_from_path(&file_path).await {
         Ok(image_attachment) => {
             let attachment = MessageAttachment::Image(image_attachment);
-            serde_json::to_value(&attachment)
-                .map_err(|e| format!("序列化图片附件失败: {}", e))
+            serde_json::to_value(&attachment).map_err(|e| format!("序列化图片附件失败: {}", e))
         }
         Err(e) => {
             tracing::error!("加载图片失败: {}", e);
@@ -2797,14 +2382,16 @@ pub async fn upload_image_attachment(file_path: String) -> Result<serde_json::Va
 
 /// 批量上传图片文件
 #[tauri::command]
-pub async fn upload_multiple_images(file_paths: Vec<String>) -> Result<Vec<serde_json::Value>, String> {
+pub async fn upload_multiple_images(
+    file_paths: Vec<String>,
+) -> Result<Vec<serde_json::Value>, String> {
     use crate::models::attachment::{load_image_from_path, MessageAttachment};
-    
+
     tracing::info!("批量上传 {} 个图片", file_paths.len());
-    
+
     let mut attachments = Vec::new();
     let mut errors = Vec::new();
-    
+
     for file_path in file_paths {
         match load_image_from_path(&file_path).await {
             Ok(image_attachment) => {
@@ -2820,14 +2407,588 @@ pub async fn upload_multiple_images(file_paths: Vec<String>) -> Result<Vec<serde
             }
         }
     }
-    
+
     if !errors.is_empty() {
         tracing::warn!("部分图片上传失败: {:?}", errors);
     }
-    
+
     if attachments.is_empty() {
         Err(format!("所有图片上传失败: {:?}", errors))
     } else {
         Ok(attachments)
+    }
+}
+
+// ============== Agent Execute Command ==============
+
+/// Agent执行配置
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentExecuteConfig {
+    pub conversation_id: Option<String>,
+    pub message_id: Option<String>,
+    pub enable_rag: Option<bool>,
+    pub enable_web_search: Option<bool>,
+    pub attachments: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tool_config: Option<crate::agents::ToolConfig>,
+    // 以下字段用于兼容前端，但在此函数中不使用
+    #[serde(default)]
+    pub max_iterations: Option<usize>,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub force_todos: Option<bool>,
+}
+
+/// Agent执行请求
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentExecuteRequest {
+    pub task: String,
+    pub config: Option<AgentExecuteConfig>,
+}
+
+/// Agent执行 - 统一的聊天入口，支持流式输出、联网搜索、RAG知识检索
+#[tauri::command]
+pub async fn agent_execute(
+    task: String,
+    config: Option<AgentExecuteConfig>,
+    app_handle: AppHandle,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<String, String> {
+    use std::time::Duration;
+
+    // Multi-point license verification
+    #[cfg(not(debug_assertions))]
+    if !sentinel_license::is_licensed() {
+        return Err("License required for this feature".to_string());
+    }
+
+    let config = config.unwrap_or(AgentExecuteConfig {
+        conversation_id: None,
+        message_id: None,
+        enable_rag: Some(false),
+        enable_web_search: Some(false),
+        attachments: None,
+        tool_config: None,
+        max_iterations: None,
+        timeout_secs: None,
+        force_todos: None,
+    });
+
+    let conversation_id = config
+        .conversation_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let message_id = config
+        .message_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let enable_rag = config.enable_rag.unwrap_or(false);
+    let enable_web_search = config.enable_web_search.unwrap_or(false);
+    let attachments = config.attachments.clone();
+
+    // 获取工具配置：优先使用前端传递的配置，否则从数据库加载
+    let mut effective_tool_config = if config.tool_config.is_some() {
+        tracing::info!("Using tool config from frontend request");
+        config.tool_config.clone()
+    } else {
+        load_tool_config_from_db(&app_handle).await
+    };
+
+    tracing::info!(
+        "Agent execute: conv={}, msg={}, rag={}, search={}, tools={}",
+        conversation_id,
+        message_id,
+        enable_rag,
+        enable_web_search,
+        effective_tool_config
+            .as_ref()
+            .map(|c| c.enabled)
+            .unwrap_or(false)
+    );
+
+    // 获取默认模型配置
+    let (provider, model_name) = match ai_manager.get_default_chat_model().await {
+        Ok(Some((p, m))) => {
+            tracing::info!("Using default chat model: {}/{}", p, m);
+            (p, m)
+        }
+        Ok(None) => return Err("Default chat model is not configured".to_string()),
+        Err(e) => return Err(format!("Failed to read default chat model: {}", e)),
+    };
+
+    // 获取provider配置
+    let provider_config = ai_manager
+        .get_provider_config(&provider)
+        .await
+        .map_err(|e| format!("Failed to load provider config '{}': {}", provider, e))?
+        .ok_or_else(|| format!("Provider '{}' configuration not found", provider))?;
+
+    let mut dynamic_config = provider_config.clone();
+    dynamic_config.model = model_name.clone();
+
+    let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
+    let mut service = crate::services::ai::AiService::new(
+        dynamic_config,
+        db_service.inner().clone(),
+        Some(app_handle.clone()),
+    );
+    service.set_app_handle(app_handle.clone());
+
+    // 创建取消令牌
+    let _cancellation_token = create_cancellation_token(&conversation_id);
+
+    let service_clone = service.clone();
+    let conv_id = conversation_id.clone();
+    let msg_id = message_id.clone();
+    let task_clone = task.clone();
+    // 从数据库直接读取系统提示词，不依赖前端传递
+    let mut base_system_prompt: Option<String> = None;
+
+    // 为了在闭包中使用，需要克隆这些值
+    let provider_for_closure = if provider_config.rig_provider.is_some() {
+        provider_config.rig_provider.clone().unwrap()
+    } else {
+        provider_config.provider.clone()
+    };
+
+    let model_name_for_closure = model_name.clone();
+    let provider_config_for_closure = provider_config.clone();
+
+    tokio::spawn(async move {
+        // 确保会话存在并保存用户消息
+        if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
+        {
+            // 检查会话是否存在
+            let conversation_exists = db
+                .get_ai_conversation(&conv_id)
+                .await
+                .map(|c| c.is_some())
+                .unwrap_or(false);
+
+            if !conversation_exists {
+                // 创建新会话
+                use sentinel_core::models::database as core_db;
+                let new_conv = core_db::AiConversation {
+                    id: conv_id.clone(),
+                    title: Some(task_clone.chars().take(50).collect::<String>()),
+                    service_name: "default".to_string(),
+                    model_name: "default".to_string(),
+                    model_provider: None,
+                    context_type: None,
+                    project_id: None,
+                    vulnerability_id: None,
+                    scan_task_id: None,
+                    conversation_data: None,
+                    summary: None,
+                    total_messages: 0,
+                    total_tokens: 0,
+                    cost: 0.0,
+                    tags: None,
+                    tool_config: None,
+                    is_archived: false,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                };
+                if let Err(e) = db.create_ai_conversation(&new_conv).await {
+                    tracing::warn!("Failed to create conversation: {}", e);
+                }
+            }
+
+            // 保存用户消息
+            use sentinel_core::models::database as core_db;
+            let user_msg_id = Uuid::new_v4().to_string();
+            let user_msg = core_db::AiMessage {
+                id: user_msg_id.clone(),
+                conversation_id: conv_id.clone(),
+                role: "user".to_string(),
+                content: task_clone.clone(),
+                metadata: attachments
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
+                token_count: Some(task_clone.len() as i32),
+                cost: None,
+                tool_calls: None,
+                attachments: attachments
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
+                timestamp: chrono::Utc::now(),
+                architecture_type: None,
+                architecture_meta: None,
+                structured_data: None,
+            };
+            if let Err(e) = db.create_ai_message(&user_msg).await {
+                tracing::warn!("Failed to save user message: {}", e);
+            } else {
+                // 发送用户消息到前端
+                let _ = app_handle.emit(
+                    "agent:user_message",
+                    &serde_json::json!({
+                        "execution_id": conv_id,
+                        "message_id": user_msg_id,
+                        "content": task_clone,
+                        "timestamp": user_msg.timestamp.timestamp_millis(),
+                    }),
+                );
+            }
+        }
+
+        // 获取当前角色提示
+        let mut role_prompt = String::new();
+        if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
+        {
+            if let Ok(Some(current_role)) = db.get_current_ai_role().await {
+                if !current_role.prompt.trim().is_empty() {
+                    role_prompt = current_role.prompt;
+                    tracing::info!("Using role prompt: {}", current_role.title);
+                }
+            }
+        }
+
+        // 解析系统提示
+        // 只有当 system_prompt 是 None 时才自动加载默认模板
+        // 如果是 Some("")（空字符串），说明用户明确不想使用系统提示
+        if base_system_prompt.is_none() {
+            if let Some(db) =
+                app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
+            {
+                if let Ok(pool) = db.get_pool() {
+                    let repo = PromptRepository::new(pool.clone());
+                    let resolver = PromptResolver::new(repo);
+                    let cfg = AgentPromptConfig::default();
+                    match resolver
+                        .resolve_prompt(&cfg, CanonicalStage::System, None)
+                        .await
+                    {
+                        Ok(content) if !content.trim().is_empty() => {
+                            base_system_prompt = Some(content);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // 合并角色提示和系统提示
+        if !role_prompt.is_empty() {
+            base_system_prompt = match base_system_prompt {
+                Some(existing) if !existing.trim().is_empty() => {
+                    Some(format!("{}\n\n{}", role_prompt, existing))
+                }
+                _ => Some(role_prompt),
+            };
+        }
+
+        let mut augmented_task = task_clone.clone();
+
+        // 联网搜索增强
+        if enable_web_search {
+            match perform_web_search(&app_handle, &task_clone).await {
+                Ok(search_block) if !search_block.is_empty() => {
+                    augmented_task = format!(
+                        "{}\n\n请基于上面的搜索结果回答用户问题：{}",
+                        search_block, task_clone
+                    );
+                    let _ = app_handle.emit(
+                        "ai_meta_info",
+                        &serde_json::json!({
+                            "conversation_id": conv_id,
+                            "message_id": msg_id,
+                            "web_search_applied": true
+                        }),
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Web search failed: {}", e);
+                }
+                _ => {}
+            }
+        }
+
+        // RAG知识检索增强
+        if enable_rag {
+            if let Some(db) =
+                app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
+            {
+                // 获取已激活的集合
+                let active_collection_id: Option<String> = match db.get_rag_collections().await {
+                    Ok(cols) => cols.into_iter().find(|c| c.is_active).map(|c| c.id),
+                    Err(_) => None,
+                };
+
+                if let Ok(rag_service) =
+                    crate::commands::rag_commands::get_global_rag_service().await
+                {
+                    let mut history_snippets: Vec<String> = Vec::new();
+                    if let Ok(msgs) = db.get_ai_messages_by_conversation(&conv_id).await {
+                        for msg in msgs.iter().rev().take(6) {
+                            let prefix = match msg.role.as_str() {
+                                "user" => "U:",
+                                "assistant" => "A:",
+                                _ => "",
+                            };
+                            let snippet: String = msg.content.chars().take(200).collect();
+                            history_snippets.push(format!("{} {}", prefix, snippet));
+                        }
+                    }
+
+                    let rag_req = sentinel_rag::models::AssistantRagRequest {
+                        query: task_clone.clone(),
+                        collection_id: active_collection_id,
+                        conversation_history: if history_snippets.is_empty() {
+                            None
+                        } else {
+                            Some(history_snippets)
+                        },
+                        top_k: Some(5),
+                        use_mmr: Some(true),
+                        mmr_lambda: Some(0.7),
+                        similarity_threshold: Some(0.65),
+                        reranking_enabled: Some(false),
+                        model_provider: None,
+                        model_name: None,
+                        max_tokens: None,
+                        temperature: None,
+                        system_prompt: None,
+                    };
+
+                    if let Ok(Ok((context, citations))) = tokio::time::timeout(
+                        Duration::from_millis(1200),
+                        rag_service.query_for_assistant(&rag_req),
+                    )
+                    .await
+                    {
+                        if !context.trim().is_empty() {
+                            let base = base_system_prompt.unwrap_or_default();
+                            let policy = "你必须严格基于证据回答问题。在回答中引用证据时，使用 [SOURCE n] 格式。如果证据不足，请直接回答并避免编造。";
+                            let augmented = if base.trim().is_empty() {
+                                format!("[知识溯源规范]\n{}\n\n[证据块]\n{}", policy, context)
+                            } else {
+                                format!(
+                                    "{}\n\n[知识溯源规范]\n{}\n\n[证据块]\n{}",
+                                    base, policy, context
+                                )
+                            };
+                            base_system_prompt = Some(augmented);
+
+                            let _ = app_handle.emit(
+                                "ai_meta_info",
+                                &serde_json::json!({
+                                    "conversation_id": conv_id,
+                                    "message_id": msg_id,
+                                    "rag_applied": true,
+                                    "rag_sources_used": !citations.is_empty(),
+                                    "source_count": citations.len()
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // 发送开始事件
+        if let Err(e) = app_handle.emit(
+            "ai_stream_start",
+            &serde_json::json!({
+                "conversation_id": conv_id,
+                "message_id": msg_id
+            }),
+        ) {
+            tracing::error!("Failed to emit stream start event: {}", e);
+        }
+
+        // 检查是否启用工具调用
+        if let Some(ref tool_cfg) = effective_tool_config {
+            if tool_cfg.enabled {
+                // 使用工具支持的代理执行器
+                tracing::info!(
+                    "Using tool-enabled agent executor for conversation: {}",
+                    conv_id
+                );
+
+                // 构建代理执行参数
+                let executor_params = crate::agents::executor::AgentExecuteParams {
+                    execution_id: conv_id.clone(),
+                    model: model_name_for_closure.clone(),
+                    system_prompt: base_system_prompt.unwrap_or_default(),
+                    task: augmented_task.clone(),
+                    rig_provider: provider_for_closure.clone(),
+                    api_key: provider_config_for_closure.api_key.clone(),
+                    api_base: provider_config_for_closure.api_base.clone(),
+                    max_iterations: config.max_iterations.unwrap_or(10),
+                    timeout_secs: config.timeout_secs.unwrap_or(300),
+                    tool_config: effective_tool_config.clone(),
+                };
+
+                // 调用工具支持的代理执行器
+                match crate::agents::executor::execute_agent(&app_handle, executor_params).await {
+                    Ok(_) => {
+                        tracing::info!("Agent with tools completed for conversation: {}", conv_id);
+                        let _ = app_handle.emit(
+                            "agent:complete",
+                            &serde_json::json!({
+                                "execution_id": conv_id,
+                                "success": true
+                            }),
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Agent with tools execution failed: {}", e);
+                        let _ = app_handle.emit(
+                            "agent:error",
+                            &serde_json::json!({
+                                "execution_id": conv_id,
+                                "error": e.to_string()
+                            }),
+                        );
+                    }
+                }
+
+                remove_cancellation_token(&conv_id);
+                return;
+            }
+        }
+
+        // 流式调用 LLM（不使用工具）
+        match stream_chat_with_llm(
+            &service_clone,
+            &app_handle,
+            &conv_id,
+            &msg_id,
+            &augmented_task,
+            base_system_prompt.as_deref(),
+            attachments,
+            true,
+        )
+        .await
+        {
+            Ok(_) => {
+                tracing::info!("Stream chat completed for conversation: {}", conv_id);
+            }
+            Err(e) => {
+                tracing::error!("Stream chat failed: {}", e);
+            }
+        }
+
+        remove_cancellation_token(&conv_id);
+    });
+
+    Ok(message_id)
+}
+
+/// 执行联网搜索
+async fn perform_web_search(app_handle: &AppHandle, query: &str) -> Result<String, String> {
+    use std::time::Duration;
+
+    // 读取 Tavily API Key
+    let tavily_api_key = std::env::var("TAVILY_API_KEY")
+        .ok()
+        .or_else(|| {
+            if let Some(db) =
+                app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
+            {
+                futures::executor::block_on(db.get_config("ai", "tavily_api_key"))
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| "TAVILY_API_KEY not configured".to_string())?;
+
+    let client = {
+        let builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
+        let builder = crate::utils::global_proxy::apply_proxy_to_client(builder).await;
+        builder
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {}", e))?
+    };
+
+    let payload = serde_json::json!({
+        "query": query,
+        "max_results": 5,
+        "include_answer": false,
+        "include_raw_content": false,
+        "search_depth": "basic"
+    });
+
+    let resp = client
+        .post("https://api.tavily.com/search")
+        .bearer_auth(tavily_api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to call Tavily: {}", e))?;
+
+    if !resp.status().is_success() {
+        let err_txt = resp.text().await.unwrap_or_default();
+        return Err(format!("Tavily error: {}", err_txt));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Tavily response: {}", e))?;
+
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(results) = json.get("results").and_then(|r| r.as_array()) {
+        for (idx, item) in results.iter().enumerate() {
+            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            lines.push(format!("{}. {}\n{}\n{}", idx + 1, title, url, content));
+        }
+    }
+
+    if lines.is_empty() {
+        return Ok(String::new());
+    }
+
+    Ok(format!(
+        "[Web Search]\nsource: Tavily\nresults:\n{}\n",
+        lines.join("\n\n")
+    ))
+}
+
+/// 从数据库加载全局工具配置
+async fn load_tool_config_from_db(app_handle: &AppHandle) -> Option<crate::agents::ToolConfig> {
+    if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
+        // 从 config 表中读取工具配置
+        if let Ok(Some(config_str)) = db.get_config("agent", "tool_config").await {
+            if let Ok(config) = serde_json::from_str::<crate::agents::ToolConfig>(&config_str) {
+                tracing::info!("Loaded global tool config from database");
+                return Some(config);
+            }
+        }
+    }
+
+    // 如果没有配置，返回默认值
+    tracing::info!("No global tool config found, using default");
+    None
+}
+
+/// 保存全局工具配置到数据库
+async fn save_tool_config_to_db(
+    app_handle: &AppHandle,
+    config: &crate::agents::ToolConfig,
+) -> Result<(), String> {
+    if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
+        let config_str = serde_json::to_string(config)
+            .map_err(|e| format!("Failed to serialize tool config: {}", e))?;
+
+        db.set_config(
+            "agent",
+            "tool_config",
+            &config_str,
+            Some("Global tool configuration"),
+        )
+        .await
+        .map_err(|e| format!("Failed to save tool config: {}", e))?;
+
+        tracing::info!("Saved global tool config to database");
+        Ok(())
+    } else {
+        Err("Database service not available".to_string())
     }
 }

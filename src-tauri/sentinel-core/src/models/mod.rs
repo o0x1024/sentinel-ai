@@ -11,7 +11,6 @@ pub mod agent;
 pub mod rag;
 pub mod workflow;
 pub mod rag_config;
-pub mod scenario_agent;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

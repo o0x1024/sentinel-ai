@@ -49,6 +49,7 @@ pub mod tools;
 pub mod explorer;
 pub mod state;
 pub mod integrations;
+pub mod tool;
 pub mod message_emitter;
 
 // 导出核心类型
@@ -84,4 +85,6 @@ pub use message_emitter::{
     VisionExplorerMessageEmitter, VisionStep, VisionAnalysis,
     VisionAction, VisionExplorationStats,
 };
+
+pub use tool::VisionExplorerTool;
 

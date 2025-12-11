@@ -13,6 +13,9 @@ pub struct AiConfig {
     pub organization: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    /// rig 提供商类型（用于选择正确的 client）
+    #[serde(default)]
+    pub rig_provider: Option<String>,
 }
 
 impl Default for AiConfig {
@@ -25,6 +28,7 @@ impl Default for AiConfig {
             organization: None,
             temperature: Some(0.7),
             max_tokens: Some(4096),
+            rig_provider: None,
         }
     }
 }

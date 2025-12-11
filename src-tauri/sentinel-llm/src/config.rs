@@ -15,6 +15,10 @@ pub struct LlmConfig {
     pub base_url: Option<String>,
     /// 请求超时（秒）
     pub timeout_secs: u64,
+    /// rig 提供商类型（决定使用哪个 client）
+    pub rig_provider: Option<String>,
+    /// 最大 token 数（用于 Anthropic 等需要显式设置 max_tokens 的提供商）
+    pub max_tokens: Option<u32>,
 }
 
 impl Default for LlmConfig {
@@ -25,6 +29,8 @@ impl Default for LlmConfig {
             api_key: None,
             base_url: None,
             timeout_secs: 120,
+            rig_provider: None,
+            max_tokens: Some(4096),
         }
     }
 }
@@ -57,9 +63,35 @@ impl LlmConfig {
         self
     }
 
+    /// 设置 rig_provider
+    pub fn with_rig_provider(mut self, rig_provider: impl Into<String>) -> Self {
+        self.rig_provider = Some(rig_provider.into());
+        self
+    }
+
+    /// 设置最大 token 数
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// 获取最大 token 数（默认 4096）
+    pub fn get_max_tokens(&self) -> u32 {
+        self.max_tokens.unwrap_or(4096)
+    }
+
+    /// 获取实际使用的 rig provider（优先使用 rig_provider，否则使用 provider）
+    pub fn get_effective_rig_provider(&self) -> String {
+        self.rig_provider
+            .clone()
+            .unwrap_or_else(|| self.provider.to_lowercase())
+    }
+
     /// 设置 rig 库所需的环境变量
     pub fn setup_env_vars(&self) {
-        let provider = self.provider.to_lowercase();
+        // 使用 rig_provider 来设置环境变量（如果设置了的话）
+        let rig_provider = self.get_effective_rig_provider();
+        let provider = rig_provider.to_lowercase();
 
         // 设置 API Key
         if let Some(api_key) = &self.api_key {
@@ -137,4 +169,3 @@ impl LlmConfig {
         }
     }
 }
-

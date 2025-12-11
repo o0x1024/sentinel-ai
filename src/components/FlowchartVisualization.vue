@@ -245,7 +245,7 @@ import type { CSSProperties } from 'vue'
 
 
 defineOptions({
-  name: 'flowchartvisualization'
+  name: 'Flowchartvisualization'
 });
 
 

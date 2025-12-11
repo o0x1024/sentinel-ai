@@ -8,6 +8,7 @@ use crate::config::EmbeddingConfig;
 use crate::models::{DocumentChunk, QueryResult};
 
 use rig::embeddings::EmbeddingModel;
+use rig::client::ProviderClient;
 use rig::client::EmbeddingsClient;
 use rig::vector_store::VectorStoreIndex;
 use rig::vector_store::VectorSearchRequest;
@@ -78,7 +79,8 @@ impl LanceDbManager {
         let api_key_str = self.embedding_config.api_key.clone()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
             .ok_or_else(|| anyhow!("OpenAI API key not configured"))?;
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model).await
     }
@@ -87,7 +89,8 @@ impl LanceDbManager {
         let api_key_str = self.embedding_config.api_key.clone()
             .or_else(|| std::env::var("COHERE_API_KEY").ok())
             .ok_or_else(|| anyhow!("Cohere API key not configured"))?;
-        let client = rig::providers::cohere::Client::new(&api_key_str);
+        std::env::set_var("COHERE_API_KEY", &api_key_str);
+        let client = rig::providers::cohere::Client::from_env();
         // Cohere requires input_type parameter: "search_document" for indexing
         let embedding_model = client.embedding_model(&self.embedding_config.model, "search_document");
         self.insert_chunks_impl(collection_name, chunks, embedding_model).await
@@ -104,7 +107,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
             .or_else(|| std::env::var("GEMINI_API_KEY").ok())
             .ok_or_else(|| anyhow!("Google/Gemini API key not configured"))?;
-        let client = rig::providers::gemini::Client::new(&api_key_str);
+        std::env::set_var("GOOGLE_API_KEY", &api_key_str);
+        let client = rig::providers::gemini::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model).await
     }
@@ -117,7 +121,8 @@ impl LanceDbManager {
         
         // For OpenAI-compatible APIs, we use OpenAI client
         // Note: Custom base URLs need to be set via environment or client configuration
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model).await
     }
@@ -128,7 +133,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
             .ok_or_else(|| anyhow!("Moonshot API key not configured"))?;
         
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model).await
     }
@@ -139,7 +145,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
             .ok_or_else(|| anyhow!("OpenRouter API key not configured"))?;
         
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model).await
     }
@@ -150,7 +157,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("MODELSCOPE_API_KEY").ok())
             .ok_or_else(|| anyhow!("ModelScope API key not configured"))?;
         
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model).await
     }
@@ -384,7 +392,8 @@ impl LanceDbManager {
         let api_key_str = self.embedding_config.api_key.clone()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
             .ok_or_else(|| anyhow!("OpenAI API key not configured"))?;
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model).await
     }
@@ -393,7 +402,8 @@ impl LanceDbManager {
         let api_key_str = self.embedding_config.api_key.clone()
             .or_else(|| std::env::var("COHERE_API_KEY").ok())
             .ok_or_else(|| anyhow!("Cohere API key not configured"))?;
-        let client = rig::providers::cohere::Client::new(&api_key_str);
+        std::env::set_var("COHERE_API_KEY", &api_key_str);
+        let client = rig::providers::cohere::Client::from_env();
         // Cohere requires input_type parameter: "search_query" for querying
         let embedding_model = client.embedding_model(&self.embedding_config.model, "search_query");
         self.search_similar_impl(collection_name, query, top_k, embedding_model).await
@@ -409,7 +419,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
             .or_else(|| std::env::var("GEMINI_API_KEY").ok())
             .ok_or_else(|| anyhow!("Google/Gemini API key not configured"))?;
-        let client = rig::providers::gemini::Client::new(&api_key_str);
+        std::env::set_var("GOOGLE_API_KEY", &api_key_str);
+        let client = rig::providers::gemini::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model).await
     }
@@ -419,7 +430,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
             .ok_or_else(|| anyhow!("DeepSeek API key not configured"))?;
         
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model).await
     }
@@ -429,7 +441,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
             .ok_or_else(|| anyhow!("Moonshot API key not configured"))?;
         
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model).await
     }
@@ -439,7 +452,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
             .ok_or_else(|| anyhow!("OpenRouter API key not configured"))?;
         
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model).await
     }
@@ -449,7 +463,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("MODELSCOPE_API_KEY").ok())
             .ok_or_else(|| anyhow!("ModelScope API key not configured"))?;
         
-        let client = rig::providers::openai::Client::new(&api_key_str);
+        std::env::set_var("OPENAI_API_KEY", &api_key_str);
+        let client = rig::providers::openai::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model).await
     }

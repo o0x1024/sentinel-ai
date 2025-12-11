@@ -539,7 +539,7 @@
               <template v-if="requestTab !== 'hex'">
                 <HttpCodeEditor
                   :modelValue="formatRequest(selectedRequest, requestTab)"
-                  :readonly="true"
+                  
                   height="100%"
                 />
               </template>
@@ -920,7 +920,7 @@ const filteredRequests = computed(() => {
     const isNegative = config.search.negative;
     
     result = result.filter(r => {
-      let text = r.url + ' ' + r.host;
+      const text = r.url + ' ' + r.host;
       let match = false;
       
       if (isRegex) {
@@ -1926,8 +1926,9 @@ function formatRequest(request: ProxyRequest, tab: string): string {
     return formatRequestRaw(request);
   }
   
-  // Pretty format
-  let result = `${request.method} ${request.url} HTTP/1.1\n`;
+  // Pretty format - 从完整URL提取路径
+  const requestPath = getRequestPath(request.url);
+  let result = `${request.method} ${requestPath} HTTP/1.1\n`;
   result += `Host: ${request.host}\n`;
   
   if (request.request_headers) {
@@ -1942,14 +1943,18 @@ function formatRequest(request: ProxyRequest, tab: string): string {
   }
   
   if (request.request_body) {
-    result += '\n' + request.request_body;
+    result += '\n';
+    // JSON body 格式化显示
+    result += formatJsonBody(request.request_body);
   }
   
   return result;
 }
 
 function formatRequestRaw(request: ProxyRequest): string {
-  let result = `${request.method} ${request.url} HTTP/1.1\n`;
+  // 从完整URL提取路径
+  const requestPath = getRequestPath(request.url);
+  let result = `${request.method} ${requestPath} HTTP/1.1\n`;
   result += `Host: ${request.host}\n`;
   
   if (request.request_headers) {
@@ -1961,6 +1966,32 @@ function formatRequestRaw(request: ProxyRequest): string {
   }
   
   return result;
+}
+
+// 从完整URL提取路径部分
+function getRequestPath(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.pathname + urlObj.search || '/';
+  } catch {
+    // 如果URL解析失败，尝试提取路径部分
+    const match = url.match(/^https?:\/\/[^\/]+(\/.*)?$/);
+    if (match) {
+      return match[1] || '/';
+    }
+    return url;
+  }
+}
+
+// 格式化JSON body
+function formatJsonBody(body: string): string {
+  if (!body) return '';
+  try {
+    const json = JSON.parse(body);
+    return JSON.stringify(json, null, 2);
+  } catch {
+    return body;
+  }
 }
 
 function formatResponse(request: ProxyRequest, tab: string): string {

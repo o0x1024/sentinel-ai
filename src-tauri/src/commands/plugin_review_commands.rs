@@ -140,7 +140,7 @@ pub async fn reject_plugin(
     }
 }
 
-/// Update plugin code
+/// Update plugin code (审核页面仅更新代码)
 #[tauri::command]
 pub async fn review_update_plugin_code(
     plugin_id: String,
@@ -149,8 +149,27 @@ pub async fn review_update_plugin_code(
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Updating plugin code: {}", plugin_id);
     
-    // Update plugin code in database
-    match db.inner().update_plugin_code(&plugin_id, &code).await {
+    // 先获取插件现有元数据
+    let plugin = match db.inner().get_plugin_from_registry(&plugin_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return Ok(PluginReviewResponse {
+                success: false,
+                message: format!("Plugin {} not found", plugin_id),
+                data: None,
+            });
+        }
+        Err(e) => {
+            return Ok(PluginReviewResponse {
+                success: false,
+                message: format!("Failed to get plugin: {}", e),
+                data: None,
+            });
+        }
+    };
+    
+    // 使用现有元数据 + 新代码更新
+    match db.inner().update_plugin(&plugin, &code).await {
         Ok(_) => {
             log::info!("Plugin {} code updated successfully", plugin_id);
             Ok(PluginReviewResponse {

@@ -35,11 +35,31 @@ pub async fn create_mcp_server_config(
 
 pub async fn get_all_mcp_server_configs(pool: &SqlitePool) -> Result<Vec<McpServerConfig>> {
     let configs = sqlx::query_as::<_, McpServerConfig>(
-        "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, created_at, updated_at FROM mcp_server_configs",
+        "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, 0) as auto_connect, created_at, updated_at FROM mcp_server_configs",
     )
     .fetch_all(pool)
     .await?;
     Ok(configs)
+}
+
+/// Get servers that should auto-connect on startup
+pub async fn get_auto_connect_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServerConfig>> {
+    let configs = sqlx::query_as::<_, McpServerConfig>(
+        "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, 0) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = 1",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(configs)
+}
+
+/// Update auto_connect setting for a server
+pub async fn update_mcp_server_auto_connect(pool: &SqlitePool, id: &str, auto_connect: bool) -> Result<()> {
+    sqlx::query("UPDATE mcp_server_configs SET auto_connect = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(auto_connect)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn update_mcp_server_config_enabled(pool: &SqlitePool, id: &str, enabled: bool) -> Result<()> {
@@ -61,7 +81,7 @@ pub async fn delete_mcp_server_config(pool: &SqlitePool, id: &str) -> Result<()>
 
 pub async fn get_mcp_server_config_by_name(pool: &SqlitePool, name: &str) -> Result<Option<McpServerConfig>> {
     let config = sqlx::query_as::<_, McpServerConfig>(
-        "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
+        "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, 0) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
     )
     .bind(name)
     .fetch_optional(pool)

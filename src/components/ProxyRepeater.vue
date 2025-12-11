@@ -265,7 +265,16 @@
 
           <!-- Request Content -->
           <div class="flex-1 overflow-hidden" @contextmenu.prevent="showContextMenu($event)">
-            <template v-if="currentTab.requestTab !== 'hex'">
+            <template v-if="currentTab.requestTab === 'pretty'">
+              <HttpCodeEditor
+                ref="requestEditor"
+                :modelValue="formatPrettyRequest()"
+                @update:modelValue="onPrettyRequestUpdate"
+                :readonly="false"
+                height="100%"
+              />
+            </template>
+            <template v-else-if="currentTab.requestTab === 'raw'">
               <HttpCodeEditor
                 ref="requestEditor"
                 v-model="currentTab.rawRequest"
@@ -512,7 +521,7 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
     sniHost: '',
     rawRequest,
     rawResponse: '',
-    requestTab: 'raw',
+    requestTab: 'pretty',
     responseTab: 'pretty',
     response: null,
   };
@@ -627,6 +636,79 @@ async function sendRequest() {
   } finally {
     isSending.value = false;
   }
+}
+
+function formatPrettyRequest(): string {
+  if (!currentTab.value?.rawRequest) return '';
+  
+  const raw = currentTab.value.rawRequest;
+  
+  // 查找 header 和 body 的分隔位置（支持 \r\n\r\n 和 \n\n）
+  let headerBodySplit = raw.indexOf('\r\n\r\n');
+  let separatorLen = 4;
+  
+  if (headerBodySplit === -1) {
+    headerBodySplit = raw.indexOf('\n\n');
+    separatorLen = 2;
+  }
+  
+  if (headerBodySplit === -1) {
+    // 没有 body，直接返回
+    return raw.replace(/\r\n/g, '\n');
+  }
+  
+  const headerPart = raw.substring(0, headerBodySplit);
+  const bodyPart = raw.substring(headerBodySplit + separatorLen);
+  
+  let result = headerPart.replace(/\r\n/g, '\n') + '\n\n';
+  
+  if (bodyPart && bodyPart.trim()) {
+    // 尝试格式化 JSON body
+    try {
+      const json = JSON.parse(bodyPart.trim());
+      result += JSON.stringify(json, null, 2);
+    } catch {
+      result += bodyPart;
+    }
+  }
+  
+  return result;
+}
+
+function onPrettyRequestUpdate(value: string) {
+  if (!currentTab.value) return;
+  
+  // 将格式化的内容转换回原始格式
+  const lines = value.split('\n');
+  let headerEnd = -1;
+  
+  // 查找空行分隔 headers 和 body
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === '') {
+      headerEnd = i;
+      break;
+    }
+  }
+  
+  if (headerEnd === -1) {
+    // 没有 body
+    currentTab.value.rawRequest = value.replace(/\n/g, '\r\n');
+    return;
+  }
+  
+  const headerPart = lines.slice(0, headerEnd).join('\r\n');
+  const bodyPart = lines.slice(headerEnd + 1).join('\n').trim();
+  
+  // 尝试压缩 JSON body（如果是 JSON 的话）
+  let finalBody = bodyPart;
+  try {
+    const json = JSON.parse(bodyPart);
+    finalBody = JSON.stringify(json);
+  } catch {
+    finalBody = bodyPart;
+  }
+  
+  currentTab.value.rawRequest = headerPart + '\r\n\r\n' + finalBody;
 }
 
 function formatPrettyResponse(): string {

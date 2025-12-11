@@ -7,7 +7,6 @@ import { performanceService } from './services/performance';
 import i18n from './i18n'; // 导入i18n配置
 import DialogPlugin from './composables/useDialog'; // 导入对话框插件
 import ToastPlugin from './composables/useToast'; // 导入Toast插件
-import { invoke } from '@tauri-apps/api/core'; // 导入Tauri API
 
 // 启动时应用已保存的通用设置（主题/字体/语言）
 const applyStartupSettings = () => {
@@ -67,7 +66,6 @@ const SecurityCenter = () => import('./views/SecurityCenter.vue');
 const McpTools = () => import('./views/Tools.vue');
 const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 
-const AgentManagerView = () => import('./views/AgentManager.vue');
 const WorkflowStudio = () => import('./views/WorkflowStudio.vue');
 const PromptManagement = () => import('./views/PromptManagement.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
@@ -116,12 +114,6 @@ const routes = [
     meta: { title: '字典管理' }
   },
 
-  { 
-    path: '/agent-manager', 
-    name: 'AgentManager', 
-    component: AgentManagerView,
-    meta: { title: 'Agent管理' }
-  },
   { 
     path: '/ai-assistant', 
     name: 'AIAssistant', 
@@ -246,23 +238,8 @@ app.use(i18n); // 使用i18n
 app.use(DialogPlugin); // 注册对话框插件
 app.use(ToastPlugin); // 注册Toast插件
 
-// 初始化核心系统组件
-const initializeCoreComponents = async () => {
-  try {
-    // 初始化Agent管理器
-    await invoke('initialize_agent_manager');
-  } catch (error) {
-    console.warn('Agent manager initialization warning:', error);
-  }
-};
-
 // 在应用挂载前应用本地持久化的通用设置
 applyStartupSettings();
 
 // 在应用挂载后初始化核心组件
 app.mount("#app");
-
-// 延迟初始化以确保应用已完全加载
-setTimeout(() => {
-  initializeCoreComponents();
-}, 1000);

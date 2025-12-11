@@ -716,12 +716,10 @@ pub async fn assistant_rag_answer(
         let mut dynamic_config = provider_config;
         dynamic_config.model = model.clone();
         let db_service = app.state::<Arc<crate::services::database::DatabaseService>>();
-        let mcp_service = ai_manager.get_mcp_service();
         crate::services::ai::AiService::new(
             dynamic_config,
             db_service.inner().clone(),
             Some(app.clone()),
-            mcp_service,
         )
     } else {
         let msg = format!("Provider config not found for: {}", provider);

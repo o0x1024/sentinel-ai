@@ -14,6 +14,7 @@ rustflags = [
 [env]
 # 禁用 Rust backtrace 以减少调试信息
 RUST_BACKTRACE = "0"
-# Protobuf 编译器路径 (Windows)
-PROTOC = "C:\\protoc\\bin\\protoc.exe"
-PROTOC_INCLUDE = "C:\\protoc\\include"
+# Protobuf 编译器路径 - 留空让系统自动查找
+# 如果在 Windows 上需要手动设置，请取消下面两行的注释并修改路径
+# PROTOC = "C:\\protoc\\bin\\protoc.exe"
+# PROTOC_INCLUDE = "C:\\protoc\\include"

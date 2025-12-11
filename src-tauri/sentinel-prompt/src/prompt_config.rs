@@ -6,7 +6,7 @@
 //! - 智能配置选择
 //! - A/B测试框架
 use super::*;
-use sentinel_core::models::prompt::ArchitectureType;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -112,8 +112,6 @@ pub struct CustomTemplate {
     pub template_type: TemplateType,
     /// Prompt分类
     pub category: Option<PromptCategory>,
-    /// 目标架构（如果是架构特定的）
-    pub target_architecture: Option<ArchitectureType>,
     /// 创建者
     pub creator: String,
     /// 创建时间
@@ -156,16 +154,14 @@ pub enum TemplateType {
     Custom,
 }
 
-/// Prompt类型 - 区分LLM架构和普通prompt
+/// Prompt分类 - 定义提示的范围和级别
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PromptCategory {
-    /// 系统级提示（跨架构通用）
+    /// 系统级提示（包含所有系统提示）
     System,
-    /// LLM架构特定（ReWOO、LLMCompiler、PlanExecute）
-    LlmArchitecture(ArchitectureType),
-    /// 应用级提示
+    /// 应用级提示（插件生成/修复等）
     Application,
-    /// 用户自定义
+    /// 用户自定义提示
     UserDefined,
 }
 

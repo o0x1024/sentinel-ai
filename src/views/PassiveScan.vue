@@ -84,7 +84,7 @@ interface RepeaterRequest {
     body?: string;
 }
 
-const activeTab = ref<'control' | 'proxyhistory' | 'repeater' | 'proxifier' | 'capture' | 'proxyconfig'>('control')
+const activeTab = ref<'control' | 'proxyhistory' | 'repeater' | 'proxifier' | 'capture' | 'proxyconfig'>('proxyhistory')
 const isDevelopment = ref(import.meta.env.DEV)
 const componentError = ref<string | null>(null)
 const refreshTrigger = ref(0)
@@ -93,7 +93,7 @@ const pendingRepeaterRequest = ref<RepeaterRequest | undefined>(undefined)
 const repeaterCount = ref(0)
 
 defineOptions({
-  name: 'passive'
+  name: 'Passive'
 });
 
 

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::models::prompt::{ArchitectureType, StageType};
+use crate::models::prompt::{StageType};
 
 /// 提示词策略
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,34 +23,20 @@ impl From<String> for PromptStrategy {
     }
 }
 
-/// 规范阶段类型
+/// 规范阶段类型（已精简，仅保留系统级与意图分类阶段）
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CanonicalStage {
     System,
     IntentClassifier,
-    Planner,
-    Executor,
-    Replanner,
-    Evaluator,
 }
 
 impl CanonicalStage {
-    /// 映射到特定架构的阶段
-    pub fn to_architecture_stage(&self, arch: &ArchitectureType) -> Option<StageType> {
-        match (self, arch) {
-            (CanonicalStage::Planner, ArchitectureType::ReWOO) => Some(StageType::Planner),
-            (CanonicalStage::Executor, ArchitectureType::ReWOO) => Some(StageType::Worker),
-            (CanonicalStage::Evaluator, ArchitectureType::ReWOO) => Some(StageType::Solver),
-            
-            (CanonicalStage::Planner, ArchitectureType::LLMCompiler) => Some(StageType::Planning),
-            (CanonicalStage::Executor, ArchitectureType::LLMCompiler) => Some(StageType::Execution),
-            (CanonicalStage::Replanner, ArchitectureType::LLMCompiler) => Some(StageType::Replan),
-            
-            (CanonicalStage::Planner, ArchitectureType::PlanExecute) => Some(StageType::Planning),
-            (CanonicalStage::Executor, ArchitectureType::PlanExecute) => Some(StageType::Execution),
-            (CanonicalStage::Replanner, ArchitectureType::PlanExecute) => Some(StageType::Replan),
-            
-            _ => None,
+    /// 映射到特定阶段
+    pub fn to_architecture_stage(&self) -> Option<StageType> {
+        // System 和 IntentClassifier 当前都映射到系统阶段
+        match self {
+            CanonicalStage::System => Some(StageType::System),
+            CanonicalStage::IntentClassifier => Some(StageType::System),
         }
     }
 }
@@ -98,12 +84,10 @@ impl AgentPromptConfig {
         if let Some(ids) = context.get("prompt_ids") {
             if let Some(obj) = ids.as_object() {
                 for (key, value) in obj {
-                    // Try to parse key as CanonicalStage
+                    // Try to parse key as CanonicalStage (仅支持系统级和意图分类)
                     let stage = match key.as_str() {
-                        "planner" | "planning" => CanonicalStage::Planner,
-                        "executor" | "execution" => CanonicalStage::Executor,
-                        "replanner" | "replan" => CanonicalStage::Replanner,
-                        "evaluator" => CanonicalStage::Evaluator,
+                        "system" => CanonicalStage::System,
+                        "intent_classifier" => CanonicalStage::IntentClassifier,
                         _ => continue,
                     };
                     config.prompt_ids.insert(stage, value.as_i64());
@@ -116,12 +100,11 @@ impl AgentPromptConfig {
     
     /// Create new config (backward compatibility)
     pub fn new(
-        architecture: ArchitectureType,
         model_name: Option<String>,
         params: HashMap<String, serde_json::Value>,
     ) -> Self {
         let mut config = Self::from_context(&params);
-        // Store architecture and model in params if needed
+        // Store model in params if needed
         config
     }
 }
@@ -133,7 +116,6 @@ pub trait PromptResolver: Send + Sync {
     async fn resolve_prompt(
         &self,
         agent_config: &AgentPromptConfig,
-        architecture: ArchitectureType,
         stage: CanonicalStage,
         fallback_prompt: Option<&str>,
     ) -> anyhow::Result<String>;

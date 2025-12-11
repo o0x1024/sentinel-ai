@@ -588,6 +588,12 @@ pub async fn start_passive_scan(
     state: State<'_, PassiveScanState>,
     config: Option<ProxyConfig>,
 ) -> Result<CommandResponse<u16>, String> {
+    // Multi-point license verification
+    #[cfg(not(debug_assertions))]
+    if !sentinel_license::is_licensed() {
+        return Ok(CommandResponse::err("License required for this feature".to_string()));
+    }
+
     match start_passive_scan_internal(&app, &state, config).await {
         Ok(port) => Ok(CommandResponse::ok(port)),
         Err(e) => Ok(CommandResponse::err(e)),
@@ -811,19 +817,6 @@ pub async fn enable_plugin(
                     },
                 );
                 
-                // 如果是Agent插件，刷新全局工具系统
-                if let Some(cat) = main_category {
-                    if cat == "agent" {
-                        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
-                            if let Err(e) = tool_system.refresh_all().await {
-                                tracing::warn!("Failed to refresh tool system after enabling agent plugin: {}", e);
-                            } else {
-                                tracing::info!("Tool system refreshed successfully after enabling agent plugin");
-                            }
-                        }
-                    }
-                }
-
                 Ok(CommandResponse::ok(()))
             } else {
                 Ok(CommandResponse::err(format!(
@@ -890,19 +883,6 @@ pub async fn disable_plugin(
                     },
                 );
                 
-                // 如果是Agent插件，刷新全局工具系统
-                if let Some(cat) = main_category {
-                    if cat == "agent" {
-                        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
-                            if let Err(e) = tool_system.refresh_all().await {
-                                tracing::warn!("Failed to refresh tool system after disabling agent plugin: {}", e);
-                            } else {
-                                tracing::info!("Tool system refreshed successfully after disabling agent plugin");
-                            }
-                        }
-                    }
-                }
-
                 Ok(CommandResponse::ok(()))
             } else {
                 Ok(CommandResponse::err(format!(
@@ -1013,12 +993,6 @@ pub async fn batch_enable_plugins(
         }
     }
 
-    if agent_toggled {
-        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
-            let _ = tool_system.refresh_all().await;
-        }
-    }
-
     Ok(CommandResponse::ok(BatchToggleResult {
         enabled_count,
         disabled_count: 0,
@@ -1090,12 +1064,6 @@ pub async fn batch_disable_plugins(
             Err(_) => {
                 failed_ids.push(plugin_id.clone());
             }
-        }
-    }
-
-    if agent_toggled {
-        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
-            let _ = tool_system.refresh_all().await;
         }
     }
 
@@ -1740,45 +1708,49 @@ pub async fn create_plugin_in_db(
         }
     }
     
-    // 如果是Agent插件，刷新全局工具系统
-    if main_category == "agent" {
-        if let Ok(tool_system) = crate::tools::get_global_tool_system() {
-            if let Err(e) = tool_system.refresh_all().await {
-                tracing::warn!("Failed to refresh tool system after creating agent plugin: {}", e);
-            } else {
-                tracing::info!("Tool system refreshed successfully after creating agent plugin");
-            }
-        }
-    }
-    
     Ok(CommandResponse::ok(plugin_id))
 }
 
-/// 更新插件代码
+/// 全量更新插件（元数据 + 代码）
 #[tauri::command]
-pub async fn update_plugin_code(
+pub async fn update_plugin(
     state: State<'_, PassiveScanState>,
-    plugin_id: String,
+    metadata: serde_json::Value,
     plugin_code: String,
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service().await?;
     
-    // 获取插件的main_category
-    let main_category: Option<String> = sqlx::query_scalar(
-        "SELECT main_category FROM plugin_registry WHERE id = ?"
-    )
-    .bind(&plugin_id)
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+    let plugin_id = metadata.get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing plugin id")?
+        .to_string();
     
-    db.update_plugin_code(&plugin_id, &plugin_code)
+    let plugin_name = metadata.get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&plugin_id)
+        .to_string();
+    
+    let plugin_description = metadata.get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    
+    let main_category = metadata.get("main_category")
+        .and_then(|v| v.as_str())
+        .unwrap_or("passive")
+        .to_string();
+    
+    // 解析为 PluginMetadata 用于数据库更新
+    let plugin: sentinel_passive::PluginMetadata = serde_json::from_value(metadata)
+        .map_err(|e| format!("Invalid plugin metadata: {}", e))?;
+    
+    db.update_plugin(&plugin, &plugin_code)
         .await
-        .map_err(|e| format!("Failed to update plugin code: {}", e))?;
+        .map_err(|e| format!("Failed to update plugin: {}", e))?;
     
-    tracing::info!("Plugin code updated in database: {}", plugin_id);
+    tracing::info!("Plugin updated in database: {}", plugin_id);
     
-    // **关键修复**：更新 PluginManager 的代码缓存
+    // 更新 PluginManager 的代码缓存
     let plugin_manager = state.get_plugin_manager();
     if let Err(e) = plugin_manager.set_plugin_code(plugin_id.clone(), plugin_code.clone()).await {
         tracing::warn!("Failed to update plugin code cache: {}", e);
@@ -1786,17 +1758,52 @@ pub async fn update_plugin_code(
         tracing::info!("Plugin code cache updated: {}", plugin_id);
     }
     
-    // 如果是Agent插件，刷新全局工具系统
-    if let Some(cat) = main_category {
-        if cat == "agent" {
-            if let Ok(tool_system) = crate::tools::get_global_tool_system() {
-                if let Err(e) = tool_system.refresh_all().await {
-                    tracing::warn!("Failed to refresh tool system after updating agent plugin: {}", e);
-                } else {
-                    tracing::info!("Tool system refreshed successfully after updating agent plugin");
+    // **关键修复**：如果是 Agent 工具类插件，重新注册到 ToolServer
+    if main_category == "agent" {
+        let tool_server = sentinel_tools::tool_server::get_tool_server();
+        
+        // 构造工具名称
+        let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+        let tool_name = format!("plugin__{}", sanitized_id);
+        
+        // 先注销旧的工具
+        tool_server.unregister_tool(&tool_name).await;
+        
+        // 解析新的 input_schema
+        let input_schema = sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(&plugin_code);
+        
+        // 创建执行器
+        let executor = sentinel_tools::dynamic_tool::create_executor({
+            let pid = plugin_id.clone();
+            move |args: serde_json::Value| {
+                let plugin_id = pid.clone();
+                async move {
+                    // 调用插件执行逻辑
+                    if let Some(ctx) = sentinel_tools::plugin_adapter::get_plugin_context(&plugin_id).await {
+                        tracing::info!("Executing plugin: {} (id: {})", ctx.name, ctx.plugin_id);
+                        Ok(serde_json::json!({
+                            "plugin_id": ctx.plugin_id,
+                            "plugin_name": ctx.name,
+                            "input": args,
+                            "status": "executed"
+                        }))
+                    } else {
+                        Err(format!("Plugin '{}' not registered", plugin_id))
+                    }
                 }
             }
-        }
+        });
+        
+        // 重新注册工具
+        tool_server.register_plugin_tool(
+            &plugin_id,
+            &plugin_name,
+            &plugin_description,
+            input_schema,
+            executor,
+        ).await;
+        
+        tracing::info!("Plugin tool re-registered to ToolServer: {}", tool_name);
     }
     
     Ok(CommandResponse::ok(()))
@@ -2182,6 +2189,234 @@ pub async fn test_plugin_advanced(
         error: None,
         outputs: None,
     }))
+}
+
+/// Agent 插件测试结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTestResult {
+    pub success: bool,
+    pub message: Option<String>,
+    pub output: Option<serde_json::Value>,
+    pub execution_time_ms: u128,
+    pub error: Option<String>,
+}
+
+/// 测试 Agent 类型插件
+#[tauri::command(rename_all = "camelCase")]
+pub async fn test_agent_plugin(
+    state: State<'_, PassiveScanState>,
+    plugin_id: String,
+    inputs: Option<serde_json::Value>,
+) -> Result<CommandResponse<AgentTestResult>, String> {
+    let db = state.get_db_service().await?;
+    
+    // 验证插件存在且是 Agent 类型
+    let row: Option<(String, String, bool)> = sqlx::query_as(
+        "SELECT id, main_category, enabled FROM plugin_registry WHERE id = ?"
+    )
+    .bind(&plugin_id)
+    .fetch_optional(db.pool())
+    .await
+    .map_err(|e| format!("Failed to query plugin: {}", e))?;
+    
+    let (id, main_category, enabled) = match row {
+        Some(r) => r,
+        None => {
+            return Ok(CommandResponse::ok(AgentTestResult {
+                success: false,
+                message: Some(format!("插件 '{}' 不存在", plugin_id)),
+                output: None,
+                execution_time_ms: 0,
+                error: Some("PluginNotFound".to_string()),
+            }));
+        }
+    };
+    
+    if main_category != "agent" {
+        return Ok(CommandResponse::ok(AgentTestResult {
+            success: false,
+            message: Some("该插件不是 Agent 工具类型，请使用被动扫描测试入口".to_string()),
+            output: None,
+            execution_time_ms: 0,
+            error: Some("WrongPluginType".to_string()),
+        }));
+    }
+    
+    if !enabled {
+        return Ok(CommandResponse::ok(AgentTestResult {
+            success: false,
+            message: Some(format!("插件 '{}' 未启用，请先启用", plugin_id)),
+            output: None,
+            execution_time_ms: 0,
+            error: Some("PluginDisabled".to_string()),
+        }));
+    }
+    
+    // 获取插件代码
+    let code: Option<String> = sqlx::query_scalar(
+        "SELECT plugin_code FROM plugin_registry WHERE id = ?"
+    )
+    .bind(&plugin_id)
+    .fetch_optional(db.pool())
+    .await
+    .map_err(|e| format!("Failed to query plugin code: {}", e))?
+    .flatten();
+    
+    let code = match code {
+        Some(c) => c,
+        None => {
+            return Ok(CommandResponse::ok(AgentTestResult {
+                success: false,
+                message: Some("插件代码不存在".to_string()),
+                output: None,
+                execution_time_ms: 0,
+                error: Some("NoPluginCode".to_string()),
+            }));
+        }
+    };
+    
+    // 获取插件名称
+    let name: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM plugin_registry WHERE id = ?"
+    )
+    .bind(&plugin_id)
+    .fetch_optional(db.pool())
+    .await
+    .map_err(|e| format!("Failed to query plugin name: {}", e))?
+    .flatten();
+    let name = name.unwrap_or_else(|| plugin_id.clone());
+    
+    // 注册插件上下文
+    let ctx = sentinel_tools::plugin_adapter::PluginContext {
+        plugin_id: plugin_id.clone(),
+        name: name.clone(),
+        code: code.clone(),
+    };
+    sentinel_tools::plugin_adapter::register_plugin_context(ctx).await;
+    
+    // 准备输入参数
+    let inputs = inputs.unwrap_or(serde_json::json!({}));
+    
+    // 执行插件
+    let start = std::time::Instant::now();
+    let name_for_result = name.clone();
+    
+    let result = tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+        
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&rt, async {
+            let mut engine = sentinel_plugins::PluginEngine::new()
+                .map_err(|e| format!("Failed to create plugin engine: {}", e))?;
+            
+            let metadata = sentinel_plugins::PluginMetadata {
+                id: plugin_id.clone(),
+                name: name.clone(),
+                version: "1.0.0".to_string(),
+                author: None,
+                main_category: "agent".to_string(),
+                category: "tool".to_string(),
+                default_severity: sentinel_plugins::Severity::Medium,
+                tags: vec![],
+                description: Some(format!("Agent tool plugin: {}", name)),
+            };
+            
+            engine.load_plugin_with_metadata(&code, metadata)
+                .await
+                .map_err(|e| format!("Failed to load plugin: {}", e))?;
+            
+            let (findings, result) = engine.execute_agent(&inputs)
+                .await
+                .map_err(|e| format!("Plugin execution failed: {}", e))?;
+            
+            // 构建输出
+            let output = if let Some(r) = result {
+                r
+            } else if !findings.is_empty() {
+                let findings_json: Vec<serde_json::Value> = findings.into_iter().map(|f| {
+                    serde_json::json!({
+                        "id": f.id,
+                        "vuln_type": f.vuln_type,
+                        "severity": format!("{:?}", f.severity).to_lowercase(),
+                        "title": f.title,
+                        "description": f.description,
+                    })
+                }).collect();
+                serde_json::json!({
+                    "findings": findings_json,
+                    "findings_count": findings_json.len()
+                })
+            } else {
+                serde_json::json!({
+                    "message": "Plugin executed successfully with no output"
+                })
+            };
+            
+            Ok::<serde_json::Value, String>(output)
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+    
+    let execution_time_ms = start.elapsed().as_millis();
+    
+    match result {
+        Ok(output) => {
+            Ok(CommandResponse::ok(AgentTestResult {
+                success: true,
+                message: Some(format!("插件 '{}' 执行成功 ({}ms)", name_for_result, execution_time_ms)),
+                output: Some(output),
+                execution_time_ms,
+                error: None,
+            }))
+        }
+        Err(e) => {
+            Ok(CommandResponse::ok(AgentTestResult {
+                success: false,
+                message: Some(format!("插件执行失败: {}", e)),
+                output: None,
+                execution_time_ms,
+                error: Some(e),
+            }))
+        }
+    }
+}
+
+/// 获取插件输入参数 Schema
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_plugin_input_schema(
+    state: State<'_, PassiveScanState>,
+    plugin_id: String,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    let db = state.get_db_service().await?;
+    
+    // 获取插件代码
+    let code: Option<String> = sqlx::query_scalar(
+        "SELECT plugin_code FROM plugin_registry WHERE id = ?"
+    )
+    .bind(&plugin_id)
+    .fetch_optional(db.pool())
+    .await
+    .map_err(|e| format!("Failed to query plugin code: {}", e))?
+    .flatten();
+    
+    let code = match code {
+        Some(c) => c,
+        None => {
+            return Ok(CommandResponse::ok(serde_json::json!({
+                "type": "object",
+                "properties": {}
+            })));
+        }
+    };
+    
+    // 解析 ToolInput interface
+    let schema = sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(&code);
+    
+    Ok(CommandResponse::ok(schema))
 }
 
 /// 删除插件

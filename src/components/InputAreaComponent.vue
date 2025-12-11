@@ -92,11 +92,19 @@
           <!-- Leading action icons -->
           <div class="flex items-center gap-2 text-base-content/60 shrink-0">
             <button class="icon-btn" title="附件" @click="triggerFileSelect"><i class="fas fa-paperclip"></i></button>
+            <button class="icon-btn" :class="{ active: toolsEnabled }" title="工具调用" @click="toggleTools"><i class="fas fa-tools"></i></button>
+            <button v-if="toolsEnabled" class="icon-btn" title="工具配置" @click="emit('open-tool-config')"><i class="fas fa-cog"></i></button>
             <button class="icon-btn" :class="{ active: searchEnabled }" title="联网搜索" @click="toggleWebSearch"><i class="fas fa-globe"></i></button>
-            <button class="icon-btn" :class="{ active: ragEnabled }" title="知识检索增强" @click="toggleRAG"><i class="fas fa-brain"></i></button>
+            <button 
+              class="icon-btn" 
+              :class="{ active: ragEnabled }" 
+              title="知识检索增强 - AI将使用 [SOURCE n] 格式引用知识库内容" 
+              @click="toggleRAG"
+            >
+              <i class="fas fa-brain"></i>
+            </button>
             <button class="icon-btn " title="@ 引用"><i class="fas fa-at"></i></button>
             <button class="icon-btn" title="快速指令"><i class="fas fa-bolt"></i></button>
-            <button class="icon-btn" title="工具库"><i class="fas fa-box"></i></button>
             <button class="icon-btn" title="选择"><i class="fas fa-border-all"></i></button>
             <button class="icon-btn" title="清空会话" @click="clearConversation"><i class="fas fa-eraser"></i></button>
           </div>
@@ -162,6 +170,8 @@ const props = defineProps<{
   isLoading: boolean
   showDebugInfo: boolean
   ragEnabled?: boolean
+  toolsEnabled?: boolean
+  webSearchEnabled?: boolean
   pendingAttachments?: any[]
   referencedTraffic?: ReferencedTraffic[]
 }>()
@@ -174,6 +184,9 @@ const emit = defineEmits([
   'create-new-conversation',
   'clear-conversation',
   'toggle-rag',
+  'toggle-tools',
+  'open-tool-config',
+  'toggle-web-search',
   'add-attachments',
   'remove-attachment',
   'remove-traffic',
@@ -189,8 +202,9 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // --- Persistence helpers ---
 const STORAGE_KEYS = {
-  search: 'sentinel:input:searchEnabled',
+  search: 'sentinel:input:webSearchEnabled',
   rag: 'sentinel:input:ragEnabled',
+  tools: 'sentinel:input:toolsEnabled',
 } as const
 
 const getBool = (key: string, fallback = false) => {
@@ -211,12 +225,11 @@ const setBool = (key: string, value: boolean) => {
   }
 }
 
-// search state
+// Feature states (controlled by parent via props, with persistence)
 const showSearch = ref(false)
 const searchEnabled = ref(false)
-
-// RAG state (controlled by parent via prop, with persistence)
 const ragEnabled = ref<boolean>(!!props.ragEnabled)
+const toolsEnabled = ref<boolean>(!!props.toolsEnabled)
 
 // init guard
 const initialized = ref(false)
@@ -298,6 +311,8 @@ const clearConversation = () => {
 const toggleWebSearch = () => {
   searchEnabled.value = !searchEnabled.value
   setBool(STORAGE_KEYS.search, searchEnabled.value)
+  // 通知父组件Web Search状态变化
+  emit('toggle-web-search', searchEnabled.value)
 }
 
 const toggleRAG = () => {
@@ -305,6 +320,13 @@ const toggleRAG = () => {
   setBool(STORAGE_KEYS.rag, ragEnabled.value)
   // 通知父组件RAG状态变化
   emit('toggle-rag', ragEnabled.value)
+}
+
+const toggleTools = () => {
+  toolsEnabled.value = !toolsEnabled.value
+  setBool(STORAGE_KEYS.tools, toolsEnabled.value)
+  // 通知父组件Tools状态变化
+  emit('toggle-tools', toolsEnabled.value)
 }
 
 // 点击外部区域关闭弹层
@@ -428,8 +450,12 @@ onMounted(() => {
   // 同步父组件传入的初始值
   // Initialize persistent states (persisted values take precedence)
   try {
-    // search (local only)
-    searchEnabled.value = getBool(STORAGE_KEYS.search, searchEnabled.value)
+    // Web Search: prefer persisted value if exists, otherwise use prop
+    const hasPersistedSearch = localStorage.getItem(STORAGE_KEYS.search) !== null
+    const savedSearch = hasPersistedSearch ? getBool(STORAGE_KEYS.search) : !!props.webSearchEnabled
+    searchEnabled.value = savedSearch
+    setBool(STORAGE_KEYS.search, savedSearch)
+    emit('toggle-web-search', savedSearch)
 
     // RAG: prefer persisted value if exists, otherwise use prop
     const hasPersistedRag = localStorage.getItem(STORAGE_KEYS.rag) !== null
@@ -437,9 +463,18 @@ onMounted(() => {
     ragEnabled.value = savedRag
     setBool(STORAGE_KEYS.rag, savedRag)
     emit('toggle-rag', savedRag)
+    
+    // Tools: prefer persisted value if exists, otherwise use prop
+    const hasPersistedTools = localStorage.getItem(STORAGE_KEYS.tools) !== null
+    const savedTools = hasPersistedTools ? getBool(STORAGE_KEYS.tools) : !!props.toolsEnabled
+    toolsEnabled.value = savedTools
+    setBool(STORAGE_KEYS.tools, savedTools)
+    emit('toggle-tools', savedTools)
   } catch {
-    // fallback to prop on any error
+    // fallback to props on any error
+    searchEnabled.value = !!props.webSearchEnabled
     ragEnabled.value = !!props.ragEnabled
+    toolsEnabled.value = !!props.toolsEnabled
   }
   initialized.value = true
   window.addEventListener('resize', updatePopoverPosition)
@@ -460,6 +495,17 @@ watch(
     if (typeof val === 'boolean') {
       ragEnabled.value = val
       setBool(STORAGE_KEYS.rag, val)
+    }
+  }
+)
+
+// 监听工具状态变化（父组件从数据库加载后会更新）
+watch(
+  () => props.toolsEnabled,
+  (val) => {
+    if (typeof val === 'boolean') {
+      toolsEnabled.value = val
+      setBool(STORAGE_KEYS.tools, val)
     }
   }
 )

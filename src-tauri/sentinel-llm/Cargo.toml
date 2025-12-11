@@ -32,3 +32,5 @@ rig-core = { workspace = true }
 # HTTP 客户端（用于自定义请求头）
 reqwest = { version = "0.12", features = ["json"] }
 
+# Tools (for native tool calling)
+sentinel-tools = { path = "../sentinel-tools" }

@@ -946,7 +946,7 @@ export default {
     },
     serversTitle: 'MCP Servers',
     serversDescription: 'Manage and connect to Model Context Protocol (MCP) servers to extend AI capabilities.',
-    myServers: 'My Servers',
+    mcpServers: 'My Servers',
     marketplace: 'Marketplace',
     endpoint: 'Endpoint/Command',
     importSuccess: 'Successfully imported server from JSON!',
@@ -1604,5 +1604,21 @@ export default {
       reporter: 'Reporter',
       custom: 'Custom'
     }
+  },
+  license: {
+    title: 'Software Activation',
+    subtitle: 'Please enter your license key to activate the software',
+    machineId: 'Machine ID',
+    machineIdHint: 'Send this machine ID to the vendor to get your license',
+    licenseKey: 'License Key',
+    enterKey: 'Please enter the license key',
+    enterKeyPlaceholder: 'Paste your license key here...',
+    activate: 'Activate',
+    activating: 'Activating...',
+    activated: 'Activated',
+    needHelp: 'Need help? Contact support',
+    invalid: 'Invalid license',
+    expired: 'License expired',
+    machineMismatch: 'Machine ID mismatch'
   }
 }

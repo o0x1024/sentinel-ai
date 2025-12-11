@@ -39,7 +39,7 @@ pub use database::{
 };
 pub use certificate::CertificateService;
 pub use certificate_authority::ChainedCertificateAuthority;
-pub use packet_capture::{PacketCaptureService, InterfaceInfo, CapturedPacket, ProtocolLayer};
+pub use packet_capture::{PacketCaptureService, InterfaceInfo, CapturedPacket, ProtocolLayer, ExtractedFile, PcapFileOps, FileExtractor};
 
 // 重导出插件系统（来自 sentinel-plugins）
 pub use sentinel_plugins::{

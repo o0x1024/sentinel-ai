@@ -615,21 +615,32 @@ impl PassiveDatabaseService {
         Ok(())
     }
 
-    /// 更新插件代码
-    pub async fn update_plugin_code(&self, plugin_id: &str, plugin_code: &str) -> Result<()> {
+    /// 全量更新插件（元数据 + 代码）
+    pub async fn update_plugin(&self, plugin: &PluginMetadata, plugin_code: &str) -> Result<()> {
+        let tags_json = serde_json::to_string(&plugin.tags).unwrap_or_default();
+        
         sqlx::query(
             r#"
             UPDATE plugin_registry 
-            SET plugin_code = ?, updated_at = ?
+            SET name = ?, version = ?, author = ?, main_category = ?, category = ?,
+                description = ?, default_severity = ?, tags = ?, plugin_code = ?, updated_at = ?
             WHERE id = ?
             "#,
         )
+        .bind(&plugin.name)
+        .bind(&plugin.version)
+        .bind(&plugin.author)
+        .bind(&plugin.main_category)
+        .bind(&plugin.category)
+        .bind(&plugin.description)
+        .bind(plugin.default_severity.to_string())
+        .bind(&tags_json)
         .bind(plugin_code)
         .bind(Utc::now())
-        .bind(plugin_id)
+        .bind(&plugin.id)
         .execute(&self.pool)
         .await
-        .map_err(|e| PassiveError::Database(format!("Failed to update plugin code: {}", e)))?;
+        .map_err(|e| PassiveError::Database(format!("Failed to update plugin: {}", e)))?;
 
         Ok(())
     }

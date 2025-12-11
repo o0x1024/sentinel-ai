@@ -1,37 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-/// 架构类型
-/// 注：所有架构统一使用 ReAct 泛化引擎
-/// ReWOO, LLMCompiler, PlanExecute 保留用于向后兼容（实际执行都通过 ReAct）
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ArchitectureType {
-    ReAct,       // 泛化引擎（推荐）
-    ReWOO,       // 已内嵌到 ReAct
-    LLMCompiler, // 已内嵌到 ReAct
-    PlanExecute, // 已内嵌到 ReAct
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum StageType {
-    // ReAct 泛化引擎阶段
-    System,      // 系统提示阶段
-    Planning,    // 规划阶段
-    Execution,   // 执行阶段
-    // 以下保留用于向后兼容
-    Planner,
-    Worker,
-    Solver,
-    Evaluation,
-    Replan,
-}
-
 /// Prompt category defines the scope and level of the template
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PromptCategory {
-    System,
-    LlmArchitecture,
-    Application,
-    UserDefined,
+    System,        // 系统级（包含所有系统提示）
+    Application,   // 应用级（插件生成/修复等）
+    UserDefined,   // 用户自定义
 }
 
 /// Template type defines the specific role within the architecture
@@ -39,11 +13,6 @@ pub enum PromptCategory {
 pub enum TemplateType {
     SystemPrompt,
     IntentClassifier,
-    Planner,
-    Executor,
-    Replanner,
-    Evaluator,
-    ReportGenerator,
     Domain,
     Custom,
     // Plugin generation templates (合并后的完整模板)
@@ -61,8 +30,6 @@ pub struct PromptTemplate {
     pub id: Option<i64>,
     pub name: String,
     pub description: Option<String>,
-    pub architecture: ArchitectureType,
-    pub stage: StageType,
     pub content: String,
     pub is_default: bool,
     pub is_active: bool,
@@ -71,7 +38,6 @@ pub struct PromptTemplate {
     // Extended fields for unified prompt system
     pub category: Option<PromptCategory>,
     pub template_type: Option<TemplateType>,
-    pub target_architecture: Option<ArchitectureType>,
     #[serde(default)]
     pub is_system: bool,
     #[serde(default = "default_priority")]
@@ -90,37 +56,6 @@ fn default_priority() -> i32 {
 
 fn default_version() -> String {
     "1.0.0".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserPromptConfig {
-    pub id: Option<i64>,
-    pub architecture: ArchitectureType,
-    pub stage: StageType,
-    pub template_id: i64,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromptGroup {
-    pub id: Option<i64>,
-    pub architecture: ArchitectureType,
-    pub name: String,
-    pub description: Option<String>,
-    pub is_default: bool,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromptGroupItem {
-    pub id: Option<i64>,
-    pub group_id: i64,
-    pub stage: StageType,
-    pub template_id: i64,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
 }
 
 #[cfg(test)]

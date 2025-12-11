@@ -18,7 +18,15 @@ marked.setOptions({
 
 const renderedHtml = computed(() => {
   try {
-    return marked(props.content)
+    let content = props.content
+    
+    // 高亮知识库引用 [SOURCE n]
+    content = content.replace(
+      /\[SOURCE\s+(\d+)\]/gi,
+      '<span class="source-citation" title="知识库引用 #$1">[SOURCE $1]</span>'
+    )
+    
+    return marked(content)
   } catch (e) {
     console.error('Markdown parsing error:', e)
     return props.content
@@ -168,5 +176,29 @@ const renderedHtml = computed(() => {
   height: auto;
   border-radius: 0.5rem;
   margin: 0.5rem 0;
+}
+
+/* Knowledge base source citations */
+.markdown-body :deep(.source-citation) {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  margin: 0 0.125rem;
+  background: hsl(var(--in) / 0.15);
+  color: hsl(var(--in));
+  border: 1px solid hsl(var(--in) / 0.3);
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  cursor: help;
+  transition: all 0.2s ease;
+}
+
+.markdown-body :deep(.source-citation:hover) {
+  background: hsl(var(--in) / 0.25);
+  border-color: hsl(var(--in) / 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px hsl(var(--in) / 0.2);
 }
 </style>

@@ -678,7 +678,6 @@ impl TemplateVersionManager {
             variables: vec![], // 需要重新解析
             metadata: HashMap::new(),
             category: None,
-            target_architecture: None,
             is_system: false,
             priority: 0,
         })
@@ -803,7 +802,6 @@ mod tests {
             variables: vec!["variable".to_string()],
             metadata: HashMap::new(),
             category: None,
-            target_architecture: None,
             is_system: false,
             priority: 0,
         };

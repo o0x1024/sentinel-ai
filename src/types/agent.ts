@@ -6,7 +6,8 @@
 // ============ 消息类型 ============
 
 // Agent 消息类型
-export type MessageType = 
+export type MessageType =
+  | 'user'          // 用户输入
   | 'thinking'      // 思考过程
   | 'planning'      // 任务规划
   | 'tool_call'     // 工具调用
@@ -14,15 +15,26 @@ export type MessageType =
   | 'progress'      // 进度更新
   | 'final'         // 最终答案
   | 'error'         // 错误信息
+  | 'system'        // 系统消息
 
 // 消息元数据
 export interface MessageMetadata {
   tool_name?: string
   tool_args?: Record<string, any>
+  tool_result?: string  // 工具执行结果（合并显示）
   duration_ms?: number
   step_index?: number
   total_steps?: number
   success?: boolean
+  iteration?: number
+  selected_tools?: string[]
+  tool_call_id?: string  // 工具调用 ID，用于关联调用和结果
+  status?: 'pending' | 'running' | 'completed' | 'failed'  // 工具调用状态
+  rag_info?: {
+    rag_applied: boolean
+    rag_sources_used: boolean
+    source_count: number
+  }
 }
 
 // Agent 消息
@@ -94,7 +106,7 @@ export interface StepResult {
 // ============ 反思与决策 ============
 
 // 决策类型
-export type Decision = 
+export type Decision =
   | { type: 'complete'; answer: string }
   | { type: 'continue' }
   | { type: 'replan'; reason: string }
@@ -191,7 +203,7 @@ export interface AgentBlock {
   id: string
   type: AgentBlockType
   timestamp: Date
-  
+
   // 各类型的专属数据
   task?: TaskData
   thinking?: ThinkingData
@@ -229,6 +241,7 @@ export function isToolMessage(message: AgentMessage): boolean {
 // 获取消息类型显示名称
 export function getMessageTypeName(type: MessageType): string {
   const names: Record<MessageType, string> = {
+    user: 'User',
     thinking: 'Thinking',
     planning: 'Planning',
     tool_call: 'Tool Call',
@@ -236,6 +249,7 @@ export function getMessageTypeName(type: MessageType): string {
     progress: 'Progress',
     final: 'Answer',
     error: 'Error',
+    system: 'System',
   }
   return names[type]
 }
@@ -243,6 +257,7 @@ export function getMessageTypeName(type: MessageType): string {
 // 获取消息类型图标（Unicode）
 export function getMessageTypeIcon(type: MessageType): string {
   const icons: Record<MessageType, string> = {
+    user: '👤',
     thinking: '💭',
     planning: '📋',
     tool_call: '🔧',
@@ -250,6 +265,7 @@ export function getMessageTypeIcon(type: MessageType): string {
     progress: '⏳',
     final: '✅',
     error: '❌',
+    system: 'ℹ️',
   }
   return icons[type]
 }

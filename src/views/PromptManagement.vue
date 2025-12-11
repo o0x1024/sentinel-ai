@@ -1,6 +1,7 @@
-<template>
+  
+  <template>
   <div class="page-content-padded safe-top h-full flex gap-4">
-    <!-- 第一列：分类选择 + 架构/阶段选择 -->
+    <!-- 第一列：分类选择 -->
     <div class="w-56 card bg-base-100 shadow-md overflow-hidden flex flex-col">
       <div class="card-body p-4 pb-3">
         <!-- Prompt分类选择器 -->
@@ -14,34 +15,16 @@
           <div class="text-xs opacity-60 mt-1">{{ promptCategories.find(c => c.value === selectedCategory)?.description }}</div>
         </div>
         
-        <!-- 架构/阶段选择 - 仅在LLM架构分类时显示 -->
-        <div v-if="selectedCategory === 'LlmArchitecture'" class="flex-1 overflow-auto">
-          <h3 class="card-title text-sm">{{ $t('promptMgmt.archStage') }}</h3>
-          <ul class="menu menu-sm rounded-box mt-2">
-            <li v-for="group in groups" :key="group.value">
-              <h2 class="menu-title">{{ group.label }}</h2>
-              <ul>
-                <li v-for="st in group.stages" :key="st.value">
-                  <a
-                    class="justify-start"
-                    :class="{ active: selected.architecture===group.value && selected.stage===st.value }"
-                    @click="onSelectWithGuard(group.value as ArchitectureType, st.value as StageType)"
-                  >
-                    {{ st.label }}
-                  </a>
-                </li>
-              </ul>
-            </li>
-          </ul>
-        </div>
-        
-        <!-- 系统级提示 - 仅在系统分类时显示 -->
-        <div v-if="selectedCategory === 'System'">
-          <h3 class="card-title text-sm">系统级提示模板</h3>
-          <div class="text-xs opacity-70 mt-1">管理跨架构通用的系统提示</div>
-          <div class="mt-2">
+        <!-- 系统级提示创建按钮 -->
+        <div v-if="selectedCategory === 'System'" class="mt-4 pt-4 border-t">
+          <h3 class="card-title text-sm">创建系统提示</h3>
+          <div class="text-xs opacity-70 mt-1">添加新的系统提示模板</div>
+          <div class="mt-2 flex flex-col gap-1">
             <button class="btn btn-xs btn-outline w-full" @click="createIntentClassifierTemplate">
-              创建意图分析器模板
+              意图分析器
+            </button>
+            <button class="btn btn-xs btn-outline w-full" @click="createSystemPromptTemplate">
+              通用系统提示
             </button>
           </div>
         </div>
@@ -85,44 +68,10 @@
         <input v-model.trim="searchQuery" class="input input-sm input-bordered w-full mb-3" :placeholder="$t('promptMgmt.searchTemplates') as string" />
         
         <!-- 当前激活状态 -->
-        <div class="text-xs opacity-60 flex items-center gap-2 mb-2" v-if="selectedCategory === 'LlmArchitecture'">
+        <div class="text-xs opacity-60 flex items-center gap-2 mb-2" v-if="selectedCategory === 'System'">
           <span>{{ $t('promptMgmt.active') }}:</span>
           <span v-if="activePromptId" class="badge badge-success badge-xs">#{{ activePromptId }}</span>
           <span v-else class="opacity-50">{{ $t('promptMgmt.none') }}</span>
-        </div>
-        
-        <!-- 分组管理 -->
-        <div v-if="selectedCategory === 'LlmArchitecture'" class="mb-3">
-          <div class="flex items-center justify-between mb-2">
-            <div class="text-xs font-medium">{{ $t('promptMgmt.groups') }}</div>
-            <div class="flex items-center gap-1">
-              <button class="btn btn-xs btn-ghost" @click="createGroup" title="新建分组">
-                <i class="fas fa-plus text-xs"></i>
-              </button>
-              <button class="btn btn-xs btn-ghost" :disabled="!selectedGroupId" @click="setDefaultGroup" title="设为默认">
-                <i class="fas fa-star text-xs"></i>
-              </button>
-              <button class="btn btn-xs btn-ghost text-error" :disabled="!selectedGroupId || selectedGroup?.is_default" @click="deleteGroup" title="删除">
-                <i class="fas fa-trash text-xs"></i>
-              </button>
-            </div>
-          </div>
-          <div class="flex flex-col gap-1 max-h-32 overflow-auto">
-            <button
-              v-for="g in promptGroups"
-              :key="g.id"
-              class="btn btn-outline btn-xs justify-start normal-case w-full"
-              :class="{ '!btn-primary text-white': selectedGroupId === g.id }"
-              @click="selectGroup(g.id!)"
-            >
-              <div class="w-full flex items-center gap-2">
-                <div class="truncate flex-1 text-left">
-                  <div class="font-medium text-[11px] truncate">{{ g.name }}</div>
-                </div>
-                <span v-if="g.is_default" class="badge badge-success badge-xs">默认</span>
-              </div>
-            </button>
-          </div>
         </div>
         
         <div class="divider my-1"></div>
@@ -150,13 +99,7 @@
                   {{ t.name }}
                 </div>
                 <div class="text-[10px] opacity-70 truncate">
-                  #{{ t.id }} · 
-                  <span v-if="t.category === 'Application' || t.category === 'System' || t.category === 'UserDefined'">
-                    {{ t.template_type || 'Custom' }}
-                  </span>
-                  <span v-else>
-                    {{ t.architecture }} / {{ t.stage }}
-                  </span>
+                  #{{ t.id }} · {{ t.template_type || 'Custom' }}
                 </div>
               </div>
               <span v-if="t.is_active" class="badge badge-success badge-xs">启用</span>
@@ -179,14 +122,12 @@
       <div class="card bg-base-100 shadow-md">
         <div class="card-body py-3 px-4">
           <div  class="flex flex-wrap items-center gap-3">
-            <div v-if="selectedCategory === 'LlmArchitecture'"  class="text-sm opacity-70">
-              {{ $t('promptMgmt.toolbarContext', { architecture: selected.architecture, stage: selected.stage }) }}
-              <span v-if="isDirty" class="ml-2 badge badge-warning badge-sm">{{ $t('promptMgmt.unsavedBadge') }}</span>
+            <div class="text-sm opacity-70" v-if="isDirty">
+              <span class="ml-2 badge badge-warning badge-sm">{{ $t('promptMgmt.unsavedBadge') }}</span>
             </div>
-            <div v-if="selectedCategory === 'LlmArchitecture'" class="divider divider-horizontal m-0"></div>
             <button class="btn btn-success btn-sm hover:brightness-95 active:brightness-90 shadow-sm" @click="onNewWithGuard">{{ $t('common.create') }}</button>
             <button class="btn btn-success btn-sm hover:brightness-95 active:brightness-90 shadow-sm" :disabled="!editingTemplate" @click="saveTemplate">{{ $t('common.save') }}</button>
-            <button v-if="selectedCategory === 'LlmArchitecture'" class="btn btn-outline btn-sm hover:brightness-95 active:brightness-90 shadow-sm" :disabled="!editingTemplate?.id" @click="activateTemplate">{{ $t('promptMgmt.active') }}</button>
+            <button v-if="selectedCategory === 'System'" class="btn btn-outline btn-sm hover:brightness-95 active:brightness-90 shadow-sm" :disabled="!editingTemplate?.id" @click="activateTemplate">{{ $t('promptMgmt.active') }}</button>
             <button class="btn btn-error btn-sm hover:brightness-95 active:brightness-90 shadow-sm" :disabled="!editingTemplate?.id" @click="removeTemplate">{{ $t('common.delete') }}</button>
             <div class="ml-auto flex items-center gap-2 text-sm opacity-70">
               <span v-if="statusText==='Loading...'" class="loading loading-spinner loading-xs"></span>
@@ -235,8 +176,7 @@
                 <input v-model="editingTemplate.is_system" type="checkbox" class="checkbox checkbox-xs" />
                 <span class="label-text text-xs ml-2">系统级模板</span>
               </label>
-              <!-- 启用选项仅在非LLM架构分类时显示，LLM架构使用"激活"按钮 -->
-              <label v-if="selectedCategory !== 'LlmArchitecture'" class="cursor-pointer label">
+              <label class="cursor-pointer label">
                 <input v-model="editingTemplate.is_active" type="checkbox" class="checkbox checkbox-xs checkbox-success" />
                 <span class="label-text text-xs ml-2">启用此模板</span>
               </label>
@@ -322,25 +262,6 @@
           </div>
         </div>
       </div>
-
-      <!-- 组阶段映射管理 -->
-      <div class="card bg-base-100 shadow-md" v-if="selectedCategory === 'LlmArchitecture'">
-        <div class="card-body p-4">
-          <div class="flex items-center justify-between mb-3">
-            <h4 class="card-title text-sm">{{ $t('promptMgmt.groupMapping') }}</h4>
-            <div class="text-xs opacity-70">{{ $t('promptMgmt.currentGroup') }}：<span class="font-medium">{{ selectedGroup?.name || $t('promptMgmt.notSelected') }}</span></div>
-          </div>
-          <div class="grid grid-cols-3 gap-3">
-            <div v-for="st in stagesOfGroupArch" :key="st" class="flex flex-col gap-1">
-              <div class="text-xs opacity-70">{{ st }}</div>
-              <select class="select select-bordered select-xs" :disabled="!selectedGroupId" v-model="groupMappingDraft[st]" @change="onChangeGroupItem(st)">
-                <option :value="null">{{ $t('promptMgmt.notSet') }}</option>
-                <option v-for="t in allTemplatesForGroupByStage[st] || []" :key="t.id" :value="t.id">#{{ t.id }} · {{ t.name }}</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -352,27 +273,22 @@ import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '@/composables/useToast'
 import { dialog } from '@/composables/useDialog'
 
-// 统一使用泛化的 ReAct 引擎，其他架构类型保留用于向后兼容
-type ArchitectureType = 'ReAct' | 'ReWOO' | 'LLMCompiler' | 'PlanExecute'
-type StageType = 'System' | 'Planning' | 'Execution' | 'Planner' | 'Worker' | 'Solver' | 'Evaluation' | 'Replan'
-type PromptCategory = 'System' | 'LlmArchitecture' | 'Application' | 'UserDefined'
+// 简化类型定义 - 仅保留必要的分类
+type PromptCategory = 'System' | 'Application' | 'UserDefined'
 type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'VisionExplorerSystem'
+type ArchitectureType = 'ReAct'
 
 interface PromptTemplate {
   id?: number
   name: string
   description?: string | null
-  architecture: ArchitectureType
-  stage: StageType
   content: string
   is_default: boolean
   is_active: boolean
   created_at?: string | null
   updated_at?: string | null
-  // 新增字段
   category?: PromptCategory
   template_type?: TemplateType
-  target_architecture?: ArchitectureType
   is_system?: boolean
   priority?: number
   tags?: string[]
@@ -380,43 +296,13 @@ interface PromptTemplate {
   version?: string
 }
 
-interface PromptGroup {
-  id?: number
-  architecture: ArchitectureType
-  name: string
-  description?: string | null
-  is_default: boolean
-  created_at?: string | null
-  updated_at?: string | null
-}
-
-interface PromptGroupItem {
-  id?: number
-  group_id: number
-  stage: StageType
-  template_id: number
-  created_at?: string | null
-  updated_at?: string | null
-}
-
+// 统一使用系统级提示，不再区分架构/阶段
 const promptCategories = [
-  { value: 'System', label: '系统级', description: '跨架构通用的系统提示' },
-  { value: 'LlmArchitecture', label: 'LLM架构', description: '特定架构的提示模板' },
+  { value: 'System', label: '系统级', description: '系统提示模板' },
   { value: 'Application', label: '应用级', description: '应用特定的提示模板' },
   { value: 'UserDefined', label: '用户自定义', description: '用户创建的自定义模板' },
 ]
 
-// 统一使用泛化的 ReAct 引擎
-// 任务类型（安全测试、数据分析等）通过 Prompt 内容配置，而非代码写死流程
-const groups = [
-  { value: 'ReAct', label: 'ReAct（泛化引擎）', stages: [
-    { value: 'System', label: 'System (系统提示)' },
-    { value: 'Planning', label: 'Planning (规划)' },
-    { value: 'Execution', label: 'Execution (执行)' },
-  ]},
-]
-
-const selected = ref<{ architecture: ArchitectureType, stage: StageType }>({ architecture: 'ReAct', stage: 'Planning' })
 const templates = ref<PromptTemplate[]>([])
 const editingTemplate = ref<PromptTemplate | null>(null)
 const activePromptId = ref<number | null>(null)
@@ -425,7 +311,7 @@ const searchQuery = ref('')
 const isDirty = ref(false)
 const toast = useToast()
 const { t } = useI18n()
-const selectedCategory = ref<PromptCategory>('LlmArchitecture')
+const selectedCategory = ref<PromptCategory>('System')
 const ignoreCategoryWatch = ref(false)
 
 // 新增响应式数据
@@ -449,20 +335,10 @@ function calcTemplateHash(t: PromptTemplate | null): string {
     tags: (t.tags || []).slice().sort(),
     variables: (t.variables || []).slice().sort(),
     category: t.category || null,
-    architecture: t.architecture,
-    stage: t.stage,
-    target_architecture: t.target_architecture || null,
     version: t.version || ''
   }
   return JSON.stringify(normalized)
 }
-
-// 组相关
-const promptGroups = ref<PromptGroup[]>([])
-const selectedGroupId = ref<number | null>(null)
-const groupItems = ref<Record<StageType, number | undefined>>({} as any)
-const groupMappingDraft = ref<Record<string, number | undefined>>({})
-const defaultGroupId = computed(() => promptGroups.value.find(g => g.is_default)?.id || null)
 
 const preview = computed(() => editingTemplate.value?.content ?? '')
 
@@ -478,9 +354,7 @@ const filteredTemplates = computed(() => {
   
   // 根据选择的分类过滤
   if (selectedCategory.value === 'System') {
-    list = list.filter(t => t.is_system || t.template_type === 'SystemPrompt' || t.template_type === 'IntentClassifier')
-  } else if (selectedCategory.value === 'LlmArchitecture') {
-    list = list.filter(t => t.category === 'LlmArchitecture' || (!t.category && t.architecture && t.stage))
+    list = list.filter(t => t.is_system || t.template_type === 'SystemPrompt' || t.template_type === 'IntentClassifier' || t.category === 'System')
   } else if (selectedCategory.value === 'Application') {
     list = list.filter(t => t.category === 'Application')
   } else if (selectedCategory.value === 'UserDefined') {
@@ -496,198 +370,29 @@ const filteredTemplates = computed(() => {
   return list
 })
 
-const stagesOfSelectedArch = computed<StageType[]>(() => {
-  // 统一使用 ReAct 泛化引擎的阶段
-  return ['System', 'Planning', 'Execution'] as StageType[]
-})
-
-// 按当前选中分组的架构计算阶段（用于分组映射区）
-const stagesOfGroupArch = computed<StageType[]>(() => {
-  // 统一使用 ReAct 泛化引擎的阶段
-  return ['System', 'Planning', 'Execution'] as StageType[]
-})
-
-const allTemplatesByStage = computed<Record<string, PromptTemplate[]>>(() => {
-  const map: Record<string, PromptTemplate[]> = {}
-  for (const st of stagesOfSelectedArch.value) {
-    map[st] = allTemplates.value.filter(t => t.stage === st)
-  }
-  return map
-})
-
-// 分组映射区可选模板：按分组架构过滤
-const allTemplatesForGroupByStage = computed<Record<string, PromptTemplate[]>>(() => {
-  const map: Record<string, PromptTemplate[]> = {}
-  const arch = selectedGroup.value?.architecture || selected.value.architecture
-  const list = allTemplates.value.filter(t => t.architecture === arch)
-  for (const st of stagesOfGroupArch.value) {
-    map[st] = list.filter(t => t.stage === st)
-  }
-  return map
-})
-
-// 从后端拿到所有模板后缓存一份，便于分组映射下拉使用
+// 从后端拿到所有模板后缓存一份
 const allTemplates = ref<PromptTemplate[]>([])
-
-async function select(architecture: ArchitectureType, stage: StageType) {
-  console.log('[select] Selecting:', { architecture, stage })
-  const archChanged = selected.value.architecture !== architecture
-  selected.value = { architecture, stage }
-  // 仅在架构变更时清空分组选择，阶段切换时保留
-  if (archChanged) {
-    selectedGroupId.value = null
-  }
-  console.log('[select] Calling refresh...')
-  await refresh()
-  console.log('[select] Refresh complete, calling loadDefaultStagePrompt...')
-  // 切换阶段后，自动加载并显示默认分组的默认提示词
-  await loadDefaultStagePrompt()
-  console.log('[select] loadDefaultStagePrompt complete')
-}
-
-async function onSelectWithGuard(architecture: ArchitectureType, stage: StageType) {
-  if (isDirty.value) {
-    const ok = await dialog.confirm(t('promptMgmt.confirmDiscardUnsaved'))
-    if (!ok) return
-  }
-  select(architecture, stage)
-  originalTemplateHash.value = calcTemplateHash(editingTemplate.value)
-  isDirty.value = false
-}
+let onBeforeUnload: ((e: BeforeUnloadEvent) => void) | null = null
 
 async function refresh() {
   statusText.value = 'Loading...'
   try {
     const list = await invoke<PromptTemplate[]>('list_prompt_templates_api')
-    // 缓存所有模板供组映射区域下拉使用
     allTemplates.value = list
-    // 根据分类填充左侧模板列表
-    if (selectedCategory.value === 'LlmArchitecture') {
-      templates.value = allTemplates.value.filter(t => 
-        t.architecture === selected.value.architecture && t.stage === selected.value.stage
-      )
-    } else {
-      // 非架构类分类展示全量，交由 filteredTemplates 再做二次过滤
-      templates.value = list
-    }
+    templates.value = list
   } catch (e) {
-    // Fallback: 使用旧命令（仅返回ID），构造占位模板以避免前端报错
-    try {
-      const ids = await invoke<string[]>('list_prompt_templates')
-      templates.value = ids.map((id, idx) => ({
-        id: idx as unknown as number,
-        name: id,
-        description: '',
-        architecture: selected.value.architecture,
-        stage: selected.value.stage,
-        content: '',
-        is_default: false,
-        is_active: true,
-      }))
-    } catch (_) {
-      templates.value = []
-    }
+    templates.value = []
   }
-  await loadGroups()
-  await loadActiveId()
   statusText.value = 'Ready'
-}
-
-async function loadActiveId() {
-  try {
-    const configs = await invoke<Array<{ architecture: ArchitectureType; stage: StageType; template_id: number }>>('get_user_prompt_configs_api')
-    const c = configs.find(c => c.architecture === selected.value.architecture && c.stage === selected.value.stage)
-    if (c) {
-      activePromptId.value = c.template_id as unknown as number
-      // 若当前编辑模板与激活不同，不应误判为脏
-      if (editingTemplate.value && editingTemplate.value.id === activePromptId.value) {
-        originalTemplateHash.value = calcTemplateHash(editingTemplate.value)
-        isDirty.value = false
-      }
-      return
-    }
-    // fallback: 默认组
-    const defId = defaultGroupId.value
-    if (defId) {
-      await loadGroupItems(defId)
-      const tid = groupItems.value[selected.value.stage]
-      activePromptId.value = tid ?? null
-    } else {
-      activePromptId.value = null
-    }
-  } catch (_) {
-    activePromptId.value = null
-  }
-}
-
-// 加载默认分组中当前阶段的默认提示词并显示在编辑器中
-async function loadDefaultStagePrompt() {
-  try {
-    console.log('[loadDefaultStagePrompt] Starting...', {
-      architecture: selected.value.architecture,
-      stage: selected.value.stage,
-      category: selectedCategory.value
-    })
-    
-    // 优先使用默认分组，如果没有默认分组则使用第一个分组
-    let defId = defaultGroupId.value
-    console.log('[loadDefaultStagePrompt] Default group ID:', defId)
-    console.log('[loadDefaultStagePrompt] All groups:', promptGroups.value)
-    
-    if (!defId && promptGroups.value.length > 0) {
-      defId = promptGroups.value[0].id || null
-      console.log('[loadDefaultStagePrompt] No default group, using first group:', defId)
-    }
-    
-    if (!defId) {
-      console.log('[loadDefaultStagePrompt] No group found')
-      editingTemplate.value = null
-      return
-    }
-    
-    // 加载默认分组的阶段映射
-    await loadGroupItems(defId)
-    console.log('[loadDefaultStagePrompt] Group items loaded:', groupItems.value)
-    
-    // 获取当前阶段对应的模板ID
-    const templateId = groupItems.value[selected.value.stage]
-    console.log('[loadDefaultStagePrompt] Template ID for stage:', templateId)
-    
-    if (!templateId) {
-      console.log('[loadDefaultStagePrompt] No template ID found for stage:', selected.value.stage)
-      editingTemplate.value = null
-      return
-    }
-    
-    // 从缓存的所有模板中查找对应的模板
-    console.log('[loadDefaultStagePrompt] All templates count:', allTemplates.value.length)
-    console.log('[loadDefaultStagePrompt] Looking for template with ID:', templateId)
-    const template = allTemplates.value.find(t => t.id === templateId)
-    console.log('[loadDefaultStagePrompt] Found template:', template)
-    
-    if (template) {
-      console.log('[loadDefaultStagePrompt] Loading template:', template.name)
-      loadTemplate(template)
-    } else {
-      console.log('[loadDefaultStagePrompt] Template not found in cache')
-      editingTemplate.value = null
-    }
-  } catch (error) {
-    console.error('[loadDefaultStagePrompt] Error:', error)
-    editingTemplate.value = null
-  }
 }
 
 function newTemplate() {
   const baseTemplate = {
-    name: selectedCategory.value === 'LlmArchitecture' 
-      ? `${selected.value.architecture}-${selected.value.stage}-${Date.now()}`
-      : `${selectedCategory.value}-${Date.now()}`,
+    name: `${selectedCategory.value}-${Date.now()}`,
     description: '',
     content: '',
     is_default: false,
     is_active: true,
-    // 新增字段
     category: selectedCategory.value,
     template_type: selectedCategory.value === 'System' ? 'SystemPrompt' as TemplateType : 'Custom' as TemplateType,
     is_system: selectedCategory.value === 'System',
@@ -697,21 +402,7 @@ function newTemplate() {
     version: '1.0.0',
   }
   
-  // 根据分类设置不同的字段
-  if (selectedCategory.value === 'LlmArchitecture') {
-    editingTemplate.value = {
-      ...baseTemplate,
-      architecture: selected.value.architecture,
-      stage: selected.value.stage,
-      target_architecture: selected.value.architecture,
-    }
-  } else {
-    editingTemplate.value = {
-      ...baseTemplate,
-      architecture: 'ReWOO' as ArchitectureType, // 默认值，可能不会使用
-      stage: 'Planner' as StageType, // 默认值，可能不会使用
-    }
-  }
+  editingTemplate.value = baseTemplate as PromptTemplate
   originalTemplateHash.value = calcTemplateHash(editingTemplate.value)
 }
 
@@ -762,6 +453,8 @@ async function saveTemplate() {
   // 如果激活了模板，提示用户同类型的其他模板已被自动取消激活
   if (tpl.is_active && tpl.template_type) {
     toast.success('模板已保存并激活，同类型的其他模板已自动取消激活')
+  } else if (selectedCategory.value === 'System' && tpl.is_active) {
+    toast.success('模板已保存并激活')
   } else {
     toast.success(t('promptMgmt.savedToast') as unknown as string)
   }
@@ -779,26 +472,14 @@ async function removeTemplate() {
 
 async function activateTemplate() {
   if (!editingTemplate.value?.id) return
-  await invoke('update_user_prompt_config_api', {
-    architecture: selected.value.architecture,
-    stage: selected.value.stage,
-    templateId: editingTemplate.value.id,
-  })
-  activePromptId.value = editingTemplate.value.id ?? null
-  originalTemplateHash.value = calcTemplateHash(editingTemplate.value)
+  // 激活模板逻辑已在saveTemplate中处理
   toast.success(t('promptMgmt.activatedToast') as unknown as string)
 }
 
 // Define variables outside onMounted for cleanup
 let onKey: (e: KeyboardEvent) => void
-let onBeforeUnload: (e: BeforeUnloadEvent) => void
-
 onMounted(async () => {
   await refresh()
-  // 初始加载时也显示默认分组的默认提示词
-  if (selectedCategory.value === 'LlmArchitecture') {
-    await loadDefaultStagePrompt()
-  }
   onKey = (e: KeyboardEvent) => {
     const isMac = navigator.platform.toLowerCase().includes('mac')
     const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey
@@ -808,7 +489,7 @@ onMounted(async () => {
     }
     if (ctrlOrCmd && e.key === 'Enter') {
       e.preventDefault()
-      if (selectedCategory.value === 'LlmArchitecture') activateTemplate()
+      if (selectedCategory.value === 'System') activateTemplate()
     }
     if (ctrlOrCmd && (e.key === 'Backspace' || e.key === 'Delete')) {
       e.preventDefault()
@@ -831,10 +512,6 @@ onBeforeUnmount(() => {
   if (onBeforeUnload) window.removeEventListener('beforeunload', onBeforeUnload)
 })
 
-watch(editingTemplate, () => {
-  // 外层对象切换时不设为脏
-}, { deep: false })
-
 // 精准监听：根据快照判断是否脏
 watch(
   () => [
@@ -847,9 +524,6 @@ watch(
     JSON.stringify((editingTemplate.value?.tags || []).slice().sort()),
     JSON.stringify((editingTemplate.value?.variables || []).slice().sort()),
     editingTemplate.value?.category,
-    editingTemplate.value?.architecture,
-    editingTemplate.value?.stage,
-    editingTemplate.value?.target_architecture,
     editingTemplate.value?.version,
   ],
   () => {
@@ -870,57 +544,9 @@ watch(selectedCategory, async (newVal, oldVal) => {
     }
   }
   editingTemplate.value = null
-  selectedGroupId.value = null
   await refresh()
   isDirty.value = false
 })
-
-// ===== Prompt Group helpers =====
-const selectedGroup = computed(() => promptGroups.value.find(g => g.id === selectedGroupId.value) || null)
-
-async function loadGroups() {
-  try {
-    console.log('[loadGroups] Loading groups for architecture:', selected.value.architecture)
-    const list = await invoke<PromptGroup[]>('list_prompt_groups_api', { architecture: selected.value.architecture })
-    console.log('[loadGroups] Loaded groups:', list)
-    promptGroups.value = list
-    if (!selectedGroupId.value && list.length) {
-      selectedGroupId.value = (list.find(g => g.is_default)?.id ?? list[0].id) || null
-      console.log('[loadGroups] Selected group ID:', selectedGroupId.value)
-      if (selectedGroupId.value) await loadGroupItems(selectedGroupId.value)
-    }
-  } catch (e) {
-    console.error('[loadGroups] Error loading groups:', e)
-    promptGroups.value = []
-  }
-}
-
-function selectGroup(id: number) {
-  selectedGroupId.value = id
-  loadGroupItems(id)
-}
-
-async function createGroup() {
-  const name = await dialog.input({
-    title: t('promptMgmt.groups') as unknown as string,
-    message: t('promptMgmt.groupNamePrompt') as unknown as string,
-    placeholder: t('promptMgmt.groupNamePlaceholder') as unknown as string,
-    variant: 'primary'
-  })
-  if (!name || !name.trim()) return
-  const group: PromptGroup = { name: name.trim(), description: '', architecture: selected.value.architecture, is_default: false }
-  const id = await invoke<number>('create_prompt_group_api', { group })
-  await loadGroups()
-  selectedGroupId.value = id as number
-  toast.success(t('promptMgmt.groupCreateSuccess') as unknown as string)
-}
-
-async function setDefaultGroup() {
-  if (!selectedGroupId.value) return
-  await invoke('set_arch_default_group_api', { architecture: selected.value.architecture, groupId: selectedGroupId.value } as any)
-  await loadGroups()
-  toast.success(t('promptMgmt.defaultGroupSet') as unknown as string)
-}
 
 // 导入默认prompt内容
 async function loadDefaultPrompt() {
@@ -932,10 +558,7 @@ async function loadDefaultPrompt() {
   try {
     statusText.value = '正在加载默认prompt...'
     
-    const content = await invoke<string>('get_default_prompt_content', {
-      architecture: editingTemplate.value.architecture,
-      stage: editingTemplate.value.stage
-    })
+    const content = await invoke<string>('get_default_prompt_content', {})
     
     // 确认是否覆盖当前内容
     if (editingTemplate.value.content && editingTemplate.value.content.trim()) {
@@ -956,86 +579,11 @@ async function loadDefaultPrompt() {
     isDirty.value = true
     
     statusText.value = ''
-    toast.success(`已导入 ${editingTemplate.value.architecture} 的默认prompt`)
+    toast.success('已导入默认prompt')
   } catch (error: any) {
     console.error('Failed to load default prompt:', error)
     statusText.value = ''
     toast.error(`导入失败: ${error.message || error}`)
-  }
-}
-
-async function deleteGroup() {
-  if (!selectedGroupId.value) return
-  
-  // 防止删除默认分组
-  const group = promptGroups.value.find(g => g.id === selectedGroupId.value)
-  if (group?.is_default) {
-    toast.error('不能删除默认分组')
-    return
-  }
-  
-  const confirmed = await dialog.confirm({
-    title: t('promptMgmt.groups') as unknown as string,
-    message: `确定要删除分组"${group?.name}"吗？此操作将删除该分组的所有阶段映射。`,
-    variant: 'error'
-  })
-  
-  if (!confirmed) return
-  
-  try {
-    await invoke('delete_prompt_group_api', { id: selectedGroupId.value } as any)
-    selectedGroupId.value = null
-    await loadGroups()
-    toast.success('分组已删除')
-  } catch (error) {
-    console.error('Failed to delete group:', error)
-    toast.error('删除分组失败: ' + (error as any).message)
-  }
-}
-
-async function loadGroupItems(groupId: number) {
-  try {
-    const items = await invoke<PromptGroupItem[]>('list_prompt_group_items_api', { groupId: groupId } as any)
-    console.log('Loaded group items:', items)
-    const map: Record<StageType, number | undefined> = {} as any
-    for (const it of items) { map[it.stage] = it.template_id }
-    groupItems.value = map
-    console.log('Group items map:', map)
-    
-    // 更新草稿 - 使用分组架构的阶段而不是当前选中架构的阶段
-    const draft: Record<string, number | undefined> = {}
-    const stages = stagesOfGroupArch.value
-    console.log('Group arch stages:', stages)
-    for (const st of stages) draft[st] = map[st as StageType]
-    groupMappingDraft.value = draft
-    console.log('Updated draft mapping:', draft)
-  } catch (error) {
-    console.error('Failed to load group items:', error)
-    groupItems.value = {} as any
-    groupMappingDraft.value = {}
-  }
-}
-
-async function onChangeGroupItem(stage: string) {
-  if (!selectedGroupId.value) return
-  const templateId = groupMappingDraft.value[stage]
-  console.log(`Changing group item for stage ${stage}, templateId: ${templateId}`)
-  
-  if (templateId == null) {
-    // 选择"未设置"时移除该映射
-    console.log('Removing group item mapping')
-    await invoke('remove_prompt_group_item_api', { groupId: selectedGroupId.value, stage } as any)
-  } else {
-    // 设置新的映射
-    console.log('Setting group item mapping')
-    await invoke('upsert_prompt_group_item_api', { groupId: selectedGroupId.value, stage, templateId: templateId } as any)
-  }
-  
-  // 重新加载分组项以刷新UI
-  await loadGroupItems(selectedGroupId.value)
-  
-  if (!activePromptId.value && defaultGroupId.value === selectedGroupId.value && stage === selected.value.stage) {
-    activePromptId.value = templateId as number
   }
 }
 
@@ -1065,8 +613,6 @@ function createIntentClassifierTemplate() {
   editingTemplate.value = {
     name: `意图分析器-${Date.now()}`,
     description: '用于分析用户输入意图的系统提示模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -1079,6 +625,34 @@ function createIntentClassifierTemplate() {
     version: '1.0.0',
   }
   isDirty.value = false // 这是新创建的模板，不算脏数据
+}
+
+// 创建通用系统提示模板
+function createSystemPromptTemplate() {
+  const defaultContent = `你是一个安全专家AI助手。
+
+你的职责是：
+1. 帮助用户进行安全相关的分析和测试
+2. 提供专业的安全建议和指导
+3. 执行安全相关的任务
+
+请根据用户的具体需求选择合适的工具和方法，确保操作的安全和有效性。`
+
+  editingTemplate.value = {
+    name: `系统提示-${Date.now()}`,
+    description: '通用系统提示模板',
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'System' as PromptCategory,
+    template_type: 'SystemPrompt' as TemplateType,
+    is_system: true,
+    priority: 80,
+    tags: ['system'],
+    variables: [],
+    version: '1.0.0',
+  }
+  isDirty.value = false
 }
 
 // 创建插件生成模板(被动扫描)
@@ -1217,8 +791,6 @@ Please generate a complete, production-ready TypeScript plugin that follows all 
   editingTemplate.value = {
     name: `被动扫描插件生成模板-${Date.now()}`,
     description: '用于生成被动扫描插件的AI提示模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -1256,8 +828,6 @@ Please generate a complete TypeScript Agent tool plugin that follows the standar
   editingTemplate.value = {
     name: `Agent插件生成模板-${Date.now()}`,
     description: '用于生成Agent工具插件的AI提示模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -1373,8 +943,6 @@ Do NOT include explanations, comments about the fix, or any other text outside t
   editingTemplate.value = {
     name: `插件修复模板-${Date.now()}`,
     description: '用于修复失败插件代码的AI提示模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -1407,8 +975,6 @@ Please analyze the error and provide a fixed version of the plugin code.`
   editingTemplate.value = {
     name: `Agent插件修复模板-${Date.now()}`,
     description: '用于修复失败Agent工具插件代码的AI提示模板',
-    architecture: 'ReWOO' as ArchitectureType,
-    stage: 'Planner' as StageType,
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -1554,8 +1120,6 @@ Remember: **accuracy over speed, systematic over random**. Explore every element
   editingTemplate.value = {
     name: `VisionExplorer系统提示-${Date.now()}`,
     description: 'VisionExplorer视觉探索引擎的系统提示模板，定义AI代理如何操作浏览器发现API',
-    architecture: 'ReAct' as ArchitectureType,
-    stage: 'Execution' as StageType,
     content: defaultContent,
     is_default: false,
     is_active: true,

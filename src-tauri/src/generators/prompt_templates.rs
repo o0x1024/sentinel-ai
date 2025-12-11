@@ -31,7 +31,6 @@ impl PromptTemplateBuilder {
                     None,
                     Some(template_type.clone()),
                     None,
-                    None,
                 ).await?;
                 
                 if let Some(template) = templates.into_iter()

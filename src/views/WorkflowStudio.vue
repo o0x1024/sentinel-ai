@@ -23,7 +23,7 @@
             </svg>
             模板
           </button>
-          <button class="btn btn-sm btn-primary" @click="save_workflow" :disabled="!workflow_name.trim()" title="保存工作流">
+          <button class="btn btn-sm btn-primary" @click="on_save_workflow_click" :disabled="!workflow_name.trim()" title="保存工作流">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
             </svg>
@@ -182,17 +182,18 @@
                     {{ group.label }} ({{ group.items.length }})
                   </div>
                 <div class="collapse-content">
-                  <div class="grid grid-cols-2 gap-2">
+                  <!-- MCP/Plugin 单列显示，其他双列 -->
+                  <div :class="['mcp', 'plugin'].includes(group.name) ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-2'">
                     <button
                       v-for="item in group.items"
                       :key="item.node_type"
-                        class="btn btn-xs relative"
+                        class="btn btn-xs relative text-left justify-start"
                       @click="add_node(item)"
                         :title="item.node_type"
                       >
-                        <span class="truncate">{{ item.label }}</span>
+                        <span class="truncate flex-1">{{ item.label }}</span>
                         <button 
-                          class="absolute top-0 right-0 btn btn-ghost btn-xs p-0 w-4 h-4"
+                          class="btn btn-ghost btn-xs p-0 w-4 h-4 ml-1 flex-shrink-0"
                           @click.stop="toggle_favorite(item.node_type)"
                           :title="is_favorite(item.node_type) ? '取消收藏' : '收藏'"
                         >
@@ -521,6 +522,18 @@
             rows="3"
           ></textarea>
           
+          <!-- Textarea-lines 类型（每行一个值） -->
+          <div v-else-if="prop['x-ui-widget'] === 'textarea-lines'" class="space-y-1">
+            <textarea 
+              class="textarea textarea-bordered textarea-sm font-mono text-xs w-full" 
+              v-model="param_values[key]"
+              :placeholder="prop.description || '每行输入一个值'"
+              :class="{ 'textarea-error': selected_schema.required?.includes(key) && !param_values[key] }"
+              rows="4"
+            ></textarea>
+            <div class="text-xs text-base-content/50">每行输入一个值</div>
+          </div>
+          
           <!-- 字符串类型 -->
           <input 
             v-else-if="prop.type === 'string' && !prop.enum" 
@@ -841,9 +854,12 @@ const filtered_groups = computed(() => {
 const group_label = (k: string) => {
   if (k === 'trigger') return '触发器'
   if (k === 'control') return '控制流'
+  if (k === 'ai') return 'AI'
   if (k === 'data') return '数据'
-  if (k === 'output') return '输出'
-  if (k === 'tool') return '工具'
+  if (k === 'output') return '输出/通知'
+  if (k === 'tool') return '内置工具'
+  if (k === 'mcp') return 'MCP工具'
+  if (k === 'plugin') return 'Agent插件'
   return k
 }
 
@@ -1396,6 +1412,10 @@ const save_workflow = async (silent = false) => {
       toast.error(`保存失败：${e}`)
     }
   }
+}
+
+const on_save_workflow_click = (_evt: MouseEvent) => {
+  void save_workflow(false)
 }
 
 // 自动保存（防抖）

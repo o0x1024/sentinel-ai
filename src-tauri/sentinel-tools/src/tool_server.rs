@@ -1,0 +1,531 @@
+//! Tool Server Module
+//!
+//! Manages all tools (builtin, MCP, plugin, workflow) in a unified way.
+//! Provides tool registration, execution, and lifecycle management.
+
+use std::sync::Arc;
+use once_cell::sync::Lazy;
+use rig::tool::ToolSet;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tokio::sync::RwLock;
+
+use crate::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
+use crate::dynamic_tool::{
+    DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolExecutor, ToolRegistry, ToolSource,
+};
+
+/// Global tool server instance
+static TOOL_SERVER: Lazy<Arc<ToolServer>> = Lazy::new(|| Arc::new(ToolServer::new()));
+
+/// Get the global tool server instance
+pub fn get_tool_server() -> Arc<ToolServer> {
+    TOOL_SERVER.clone()
+}
+
+/// Tool execution result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub success: bool,
+    pub tool_name: String,
+    pub output: Option<Value>,
+    pub error: Option<String>,
+    pub execution_time_ms: u64,
+}
+
+/// Tool info for frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+    pub input_schema: Value,
+    pub source: String,
+    pub category: String,
+    pub enabled: bool,
+}
+
+/// Tool server - manages all tools
+pub struct ToolServer {
+    registry: ToolRegistry,
+    builtin_initialized: RwLock<bool>,
+}
+
+impl ToolServer {
+    pub fn new() -> Self {
+        Self {
+            registry: ToolRegistry::new(),
+            builtin_initialized: RwLock::new(false),
+        }
+    }
+
+    /// Initialize builtin tools
+    pub async fn init_builtin_tools(&self) {
+        let mut initialized = self.builtin_initialized.write().await;
+        if *initialized {
+            return;
+        }
+
+        tracing::info!("Initializing builtin tools...");
+
+        // Register port_scan tool
+        let port_scan_def = DynamicToolBuilder::new("port_scan")
+            .description("High-performance TCP port scanner with service identification")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Target IP address to scan"
+                    },
+                    "ports": {
+                        "type": "string",
+                        "description": "Port range or list (e.g., '1-1000', '80,443,8080', or 'common')",
+                        "default": "common"
+                    },
+                    "threads": {
+                        "type": "integer",
+                        "description": "Number of concurrent threads",
+                        "default": 100
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Connection timeout in seconds",
+                        "default": 3
+                    }
+                },
+                "required": ["target"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::port_scan::PortScanArgs;
+                use rig::tool::Tool;
+                
+                let tool_args: PortScanArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = PortScanTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Port scan failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build port_scan tool");
+
+        self.registry.register(port_scan_def).await;
+
+        // Register http_request tool
+        let http_request_def = DynamicToolBuilder::new("http_request")
+            .description("Make HTTP requests to any URL with custom headers and body")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Target URL"
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method",
+                        "default": "GET",
+                        "enum": ["GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"]
+                    },
+                    "headers": {
+                        "type": "object",
+                        "description": "Request headers as key-value pairs"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Request body"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Request timeout in seconds",
+                        "default": 30
+                    }
+                },
+                "required": ["url"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::http_request::HttpRequestArgs;
+                use rig::tool::Tool;
+                
+                let tool_args: HttpRequestArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = HttpRequestTool::default();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("HTTP request failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build http_request tool");
+
+        self.registry.register(http_request_def).await;
+
+        // Register local_time tool
+        let local_time_def = DynamicToolBuilder::new("local_time")
+            .description("Get current local or UTC time in various formats")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "timezone": {
+                        "type": "string",
+                        "description": "Timezone: 'local' or 'utc'",
+                        "default": "local"
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Date format string (e.g., '%Y-%m-%d %H:%M:%S')",
+                        "default": "%Y-%m-%d %H:%M:%S"
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::local_time::LocalTimeArgs;
+                use rig::tool::Tool;
+                
+                let tool_args: LocalTimeArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = LocalTimeTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Local time failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build local_time tool");
+
+        self.registry.register(local_time_def).await;
+
+        // Register shell tool
+        let shell_def = DynamicToolBuilder::new("shell")
+            .description("Execute shell commands (use with caution)")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute"
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Command timeout in seconds",
+                        "default": 60
+                    }
+                },
+                "required": ["command"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::shell::ShellArgs;
+                use rig::tool::Tool;
+                
+                let tool_args: ShellArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = ShellTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Shell execution failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build shell tool");
+
+        self.registry.register(shell_def).await;
+
+        *initialized = true;
+        tracing::info!("Builtin tools initialized");
+    }
+
+    /// Register a dynamic tool
+    pub async fn register_tool(&self, def: DynamicToolDef) {
+        self.registry.register(def).await;
+    }
+
+    /// Unregister a tool
+    pub async fn unregister_tool(&self, name: &str) -> bool {
+        self.registry.unregister(name).await
+    }
+
+    /// Execute a tool by name
+    pub async fn execute(&self, name: &str, args: Value) -> ToolResult {
+        let start = std::time::Instant::now();
+
+        match self.registry.execute(name, args).await {
+            Ok(output) => ToolResult {
+                success: true,
+                tool_name: name.to_string(),
+                output: Some(output),
+                error: None,
+                execution_time_ms: start.elapsed().as_millis() as u64,
+            },
+            Err(e) => ToolResult {
+                success: false,
+                tool_name: name.to_string(),
+                output: None,
+                error: Some(e.to_string()),
+                execution_time_ms: start.elapsed().as_millis() as u64,
+            },
+        }
+    }
+
+    /// List all tools
+    pub async fn list_tools(&self) -> Vec<ToolInfo> {
+        self.registry
+            .list()
+            .await
+            .into_iter()
+            .map(|def| ToolInfo {
+                name: def.name.clone(),
+                description: def.description.clone(),
+                input_schema: def.input_schema.clone(),
+                source: match &def.source {
+                    ToolSource::Builtin => "builtin".to_string(),
+                    ToolSource::Mcp { server_name } => format!("mcp::{}", server_name),
+                    ToolSource::Plugin { plugin_id } => format!("plugin::{}", plugin_id),
+                    ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
+                },
+                category: match &def.source {
+                    ToolSource::Builtin => "builtin".to_string(),
+                    ToolSource::Mcp { .. } => "mcp".to_string(),
+                    ToolSource::Plugin { .. } => "plugin".to_string(),
+                    ToolSource::Workflow { .. } => "workflow".to_string(),
+                },
+                enabled: true,
+            })
+            .collect()
+    }
+
+    /// Get tool by name
+    pub async fn get_tool(&self, name: &str) -> Option<ToolInfo> {
+        self.registry.get(name).await.map(|def| ToolInfo {
+            name: def.name.clone(),
+            description: def.description.clone(),
+            input_schema: def.input_schema.clone(),
+            source: match &def.source {
+                ToolSource::Builtin => "builtin".to_string(),
+                ToolSource::Mcp { server_name } => format!("mcp::{}", server_name),
+                ToolSource::Plugin { plugin_id } => format!("plugin::{}", plugin_id),
+                ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
+            },
+            category: match &def.source {
+                ToolSource::Builtin => "builtin".to_string(),
+                ToolSource::Mcp { .. } => "mcp".to_string(),
+                ToolSource::Plugin { .. } => "plugin".to_string(),
+                ToolSource::Workflow { .. } => "workflow".to_string(),
+            },
+            enabled: true,
+        })
+    }
+
+    /// Get tool definitions for LLM
+    pub async fn get_tool_definitions(&self, tool_names: &[String]) -> Vec<rig::completion::ToolDefinition> {
+        self.registry.get_definitions(tool_names).await
+    }
+
+    /// Create a rig ToolSet from selected tools
+    pub async fn create_toolset(&self, tool_names: &[String]) -> ToolSet {
+        self.registry.create_toolset(tool_names).await
+    }
+
+    /// Get DynamicTool instances for selected tools
+    pub async fn get_dynamic_tools(&self, tool_names: &[String]) -> Vec<DynamicTool> {
+        self.registry.get_dynamic_tools(tool_names).await
+    }
+
+    /// Register MCP tool
+    pub async fn register_mcp_tool(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        description: &str,
+        input_schema: Value,
+        executor: ToolExecutor,
+    ) {
+        let full_name = format!("mcp__{}__{}", server_name, tool_name);
+        
+        let def = DynamicToolDef {
+            name: full_name,
+            description: description.to_string(),
+            input_schema,
+            source: ToolSource::Mcp {
+                server_name: server_name.to_string(),
+            },
+            executor,
+        };
+
+        self.registry.register(def).await;
+    }
+
+    /// Register plugin tool
+    pub async fn register_plugin_tool(
+        &self,
+        plugin_id: &str,
+        _tool_name: &str,
+        description: &str,
+        input_schema: Value,
+        executor: ToolExecutor,
+    ) {
+        let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+    let full_name = format!("plugin__{}", sanitized_id);
+        
+        let def = DynamicToolDef {
+            name: full_name,
+            description: description.to_string(),
+            input_schema,
+            source: ToolSource::Plugin {
+                plugin_id: plugin_id.to_string(),
+            },
+            executor,
+        };
+
+        self.registry.register(def).await;
+    }
+
+    /// Register workflow tool
+    pub async fn register_workflow_tool(
+        &self,
+        workflow_id: &str,
+        _workflow_name: &str,
+        description: &str,
+        input_schema: Value,
+        executor: ToolExecutor,
+    ) {
+        let full_name = format!("workflow__{}", workflow_id);
+        
+        let def = DynamicToolDef {
+            name: full_name,
+            description: description.to_string(),
+            input_schema,
+            source: ToolSource::Workflow {
+                workflow_id: workflow_id.to_string(),
+            },
+            executor,
+        };
+
+        self.registry.register(def).await;
+    }
+
+    /// Clear all MCP tools
+    pub async fn clear_mcp_tools(&self) {
+        let tools = self.registry.list().await;
+        for tool in tools {
+            if matches!(tool.source, ToolSource::Mcp { .. }) {
+                self.registry.unregister(&tool.name).await;
+            }
+        }
+    }
+
+    /// Clear all plugin tools
+    pub async fn clear_plugin_tools(&self) {
+        let tools = self.registry.list().await;
+        for tool in tools {
+            if matches!(tool.source, ToolSource::Plugin { .. }) {
+                self.registry.unregister(&tool.name).await;
+            }
+        }
+    }
+
+    /// Clear all workflow tools
+    pub async fn clear_workflow_tools(&self) {
+        let tools = self.registry.list().await;
+        for tool in tools {
+            if matches!(tool.source, ToolSource::Workflow { .. }) {
+                self.registry.unregister(&tool.name).await;
+            }
+        }
+    }
+
+    /// Get tool count
+    pub async fn tool_count(&self) -> usize {
+        self.registry.count().await
+    }
+
+    /// List tools by source type
+    pub async fn list_tools_by_source(&self, source_type: &str) -> Vec<ToolInfo> {
+        self.registry
+            .list()
+            .await
+            .into_iter()
+            .filter(|def| {
+                match source_type {
+                    "builtin" => matches!(def.source, ToolSource::Builtin),
+                    "mcp" => matches!(def.source, ToolSource::Mcp { .. }),
+                    "plugin" => matches!(def.source, ToolSource::Plugin { .. }),
+                    "workflow" => matches!(def.source, ToolSource::Workflow { .. }),
+                    _ => true,
+                }
+            })
+            .map(|def| ToolInfo {
+                name: def.name.clone(),
+                description: def.description.clone(),
+                input_schema: def.input_schema.clone(),
+                source: match &def.source {
+                    ToolSource::Builtin => "builtin".to_string(),
+                    ToolSource::Mcp { server_name } => format!("mcp::{}", server_name),
+                    ToolSource::Plugin { plugin_id } => format!("plugin::{}", plugin_id),
+                    ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
+                },
+                category: match &def.source {
+                    ToolSource::Builtin => "builtin".to_string(),
+                    ToolSource::Mcp { .. } => "mcp".to_string(),
+                    ToolSource::Plugin { .. } => "plugin".to_string(),
+                    ToolSource::Workflow { .. } => "workflow".to_string(),
+                },
+                enabled: true,
+            })
+            .collect()
+    }
+}
+
+impl Default for ToolServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_tool_server_init() {
+        let server = ToolServer::new();
+        server.init_builtin_tools().await;
+        
+        assert!(server.tool_count().await >= 4);
+        
+        // Check builtin tools exist
+        assert!(server.get_tool("port_scan").await.is_some());
+        assert!(server.get_tool("http_request").await.is_some());
+        assert!(server.get_tool("local_time").await.is_some());
+        assert!(server.get_tool("shell").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_local_time_execution() {
+        let server = ToolServer::new();
+        server.init_builtin_tools().await;
+        
+        let result = server.execute("local_time", serde_json::json!({
+            "timezone": "utc"
+        })).await;
+        
+        assert!(result.success);
+        assert!(result.output.is_some());
+    }
+}

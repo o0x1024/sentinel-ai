@@ -15,7 +15,7 @@ use rig::providers::gemini::completion::gemini_api_types::{
 use rig::streaming::{StreamedAssistantContent, StreamingChat};
 use tracing::{debug, error, info};
 
-use crate::agent::{get_rig_provider, validate_config};
+use crate::agent::validate_config;
 use crate::config::LlmConfig;
 use crate::log::{log_request, log_response};
 use crate::message::ChatMessage;
@@ -47,6 +47,9 @@ impl AiService {
         if let Some(ref url) = self.config.api_base {
             config = config.with_base_url(url);
         }
+        if let Some(ref rig_provider) = self.config.rig_provider {
+            config = config.with_rig_provider(rig_provider);
+        }
         config.with_timeout(120)
     }
 
@@ -76,7 +79,8 @@ impl AiService {
         }
 
         let provider = self.config.provider.to_lowercase();
-        let provider_for_agent = get_rig_provider(&provider);
+        // 使用 rig_provider（如果设置了）来选择正确的 client
+        let provider_for_agent = llm_config.get_effective_rig_provider();
         let model = self.config.model.clone();
 
         // 设置环境变量
@@ -223,7 +227,37 @@ impl AiService {
         F: FnMut(StreamChunk),
     {
         use rig::providers::anthropic;
-        let client = anthropic::Client::from_env();
+        
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
+        
+        // 创建带有正确 Content-Type 的 HTTP 客户端
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+        
+        let mut builder = anthropic::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client);
+        
+        // 检查是否设置了自定义 base_url
+        if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
+            if !base_url.is_empty() {
+                info!("Using custom Anthropic base URL: {}", base_url);
+                builder = builder.base_url(&base_url);
+            }
+        }
+        
+        let client = builder.build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {:?}", e))?;
+        
         let agent = client.agent(model).preamble(preamble).max_tokens(4096).build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
     }

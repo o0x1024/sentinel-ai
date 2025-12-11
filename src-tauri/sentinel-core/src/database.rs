@@ -80,14 +80,12 @@ pub trait Database: Send + Sync + std::fmt::Debug {
 #[async_trait]
 pub trait PromptRepository: Send + Sync {
     async fn get_template(&self, id: i64) -> Result<Option<crate::models::prompt::PromptTemplate>>;
-    async fn get_template_by_arch_stage(
+    async fn get_template_by_stage(
         &self,
-        arch: crate::models::prompt::ArchitectureType,
         stage: crate::models::prompt::StageType,
     ) -> Result<Option<crate::models::prompt::PromptTemplate>>;
     async fn get_active_prompt(
         &self,
-        arch: crate::models::prompt::ArchitectureType,
         stage: crate::models::prompt::StageType,
     ) -> Result<Option<String>>;
     async fn list_group_items(&self, group_id: i64) -> Result<Vec<crate::models::prompt::PromptGroupItem>>;

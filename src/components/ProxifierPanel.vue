@@ -407,7 +407,7 @@ const logs = ref<LogEntry[]>([
 let unlistenProxyRequest: UnlistenFn | null = null
 let unlistenConnection: UnlistenFn | null = null
 let unlistenLog: UnlistenFn | null = null
-let connectionIdCounter = 0
+const connectionIdCounter = 0
 
 // Methods
 function formatTime(date: Date): string {

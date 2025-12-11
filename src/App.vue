@@ -4,13 +4,18 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import TopNavbar from './components/Layout/TopNavbar.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
+import LicenseActivation from './components/LicenseActivation.vue'
 
 import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
 
 const router = useRouter()
+
+// License activation state
+const isLicensed = ref(true) // Default to true, check on mount
 
 // 初始化i18n
 const { t, locale } = useI18n()
@@ -81,8 +86,26 @@ const setupAIChatShortcut = () => {
 
 
 
+// Check license status
+async function checkLicenseStatus() {
+  try {
+    const info = await invoke<{ is_licensed: boolean; needs_activation: boolean }>('get_license_info')
+    isLicensed.value = info.is_licensed
+  } catch (e) {
+    console.error('Failed to check license:', e)
+    isLicensed.value = true // Fallback to licensed on error
+  }
+}
+
+function onLicenseActivated() {
+  isLicensed.value = true
+}
+
 // 在组件挂载时导航到Dashboard (如果当前在根路径)
 onMounted(async () => {
+  // Check license first
+  await checkLicenseStatus()
+  
   // 只有在根路径时才重定向，避免路由冲突
   if (router.currentRoute.value.path === '/') {
     router.replace('/dashboard')
@@ -213,6 +236,12 @@ window.updateUIScale = (newScale: number) => {
 
 <template>
   <div id="app" class="h-screen bg-base-100 overflow-hidden">
+    <!-- License Activation Dialog -->
+    <LicenseActivation 
+      v-if="!isLicensed"
+      @activated="onLicenseActivated" 
+    />
+
     <!-- 主应用窗口 -->
       <!-- 顶部导航栏 -->
       <TopNavbar 
@@ -243,7 +272,7 @@ window.updateUIScale = (newScale: number) => {
         >
           <!-- 使用 keep-alive 保持组件活跃，确保事件监听器不会丢失 -->
           <router-view v-slot="{ Component }">
-            <keep-alive :include="['ProxyHistory','AIAssistant', 'Vulnerabilities', 'passive']">
+            <keep-alive :include="['Passive', 'AIAssistant', 'Vulnerabilities']">
               <component :is="Component" class="min-h-full" />
             </keep-alive>
           </router-view>

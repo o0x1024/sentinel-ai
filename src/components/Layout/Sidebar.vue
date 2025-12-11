@@ -167,13 +167,6 @@ const mainMenuItems = computed(() => [
     badgeClass: 'badge-info'
   },
   {
-    path: '/agent-manager',
-    name: t('sidebar.agentManager', 'Agent管理'),
-    icon: 'fas fa-robot',
-    badge: null,
-    badgeClass: 'badge-accent'
-  },
-  {
     path: '/ai-assistant',
     name: t('sidebar.aiAssistant', 'AI助手'),
     icon: 'fas fa-brain',

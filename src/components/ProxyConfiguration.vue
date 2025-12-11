@@ -1399,9 +1399,38 @@ const loadConfig = async () => {
   }
 }
 
+// 自动启动代理监听器
+const autoStartProxy = async () => {
+  // 检查第一个监听器是否已经在运行
+  if (proxyListeners.value.length > 0 && !proxyListeners.value[0].running) {
+    console.log('[ProxyConfiguration] Auto-starting proxy listener...')
+    const listener = proxyListeners.value[0]
+    try {
+      const [host, port] = listener.interface.split(':')
+      const response = await invoke<any>('start_proxy_listener', { 
+        host,
+        port: parseInt(port),
+        index: 0
+      })
+      
+      if (response.success) {
+        listener.running = true
+        console.log(`[ProxyConfiguration] Proxy listener ${listener.interface} auto-started`)
+      } else {
+        console.warn(`[ProxyConfiguration] Failed to auto-start proxy: ${response.error || 'port may be in use'}`)
+      }
+    } catch (error: any) {
+      console.warn('[ProxyConfiguration] Failed to auto-start proxy:', error)
+    }
+  }
+}
+
 // 加载保存的配置
 onMounted(async () => {
   await loadConfig()
+  
+  // 自动启动代理监听器
+  await autoStartProxy()
   
   // 初始加载完成后，延迟启用自动保存
   setTimeout(() => {

@@ -3,7 +3,7 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::database::*;
 use sentinel_core::models::prompt::{
-    PromptTemplate, UserPromptConfig, ArchitectureType, StageType, PromptGroup, PromptGroupItem,
+    PromptTemplate,
     PromptCategory, TemplateType,
 };
 
@@ -63,6 +63,12 @@ impl DatabaseClient {
     }
     pub async fn update_mcp_server_config_enabled(&self, id: &str, enabled: bool) -> Result<()> {
         mcp_dao::update_mcp_server_config_enabled(self.pool(), id, enabled).await
+    }
+    pub async fn update_mcp_server_auto_connect(&self, id: &str, auto_connect: bool) -> Result<()> {
+        mcp_dao::update_mcp_server_auto_connect(self.pool(), id, auto_connect).await
+    }
+    pub async fn get_auto_connect_mcp_servers(&self) -> Result<Vec<sentinel_core::models::database::McpServerConfig>> {
+        mcp_dao::get_auto_connect_mcp_servers(self.pool()).await
     }
     pub async fn delete_mcp_server_config(&self, id: &str) -> Result<()> {
         mcp_dao::delete_mcp_server_config(self.pool(), id).await
@@ -324,13 +330,6 @@ impl DatabaseClient {
     pub async fn get_template(&self, id: i64) -> Result<Option<sentinel_core::models::prompt::PromptTemplate>> {
         prompt_dao::get_template(self.pool(), id).await
     }
-    pub async fn get_template_by_arch_stage(
-        &self,
-        arch: ArchitectureType,
-        stage: StageType,
-    ) -> Result<Option<PromptTemplate>> {
-        prompt_dao::get_template_by_arch_stage(self.pool(), arch, stage).await
-    }
     pub async fn create_template(&self, t: &PromptTemplate) -> Result<i64> {
         prompt_dao::create_template(self.pool(), t).await
     }
@@ -341,51 +340,13 @@ impl DatabaseClient {
         prompt_dao::delete_template(self.pool(), id).await
     }
 
-    // User prompt config
-    pub async fn get_user_configs(&self) -> Result<Vec<UserPromptConfig>> {
-        prompt_dao::get_user_configs(self.pool()).await
-    }
-    pub async fn update_user_config(&self, arch: ArchitectureType, stage: StageType, template_id: i64) -> Result<()> {
-        prompt_dao::update_user_config(self.pool(), arch, stage, template_id).await
-    }
-    pub async fn get_active_prompt(&self, arch: ArchitectureType, stage: StageType) -> Result<Option<String>> {
-        prompt_dao::get_active_prompt(self.pool(), arch, stage).await
-    }
-
-    // Groups
-    pub async fn list_groups(&self, arch: Option<ArchitectureType>) -> Result<Vec<PromptGroup>> {
-        prompt_dao::list_groups(self.pool(), arch).await
-    }
-    pub async fn create_group(&self, g: &PromptGroup) -> Result<i64> {
-        prompt_dao::create_group(self.pool(), g).await
-    }
-    pub async fn update_group(&self, id: i64, g: &PromptGroup) -> Result<()> {
-        prompt_dao::update_group(self.pool(), id, g).await
-    }
-    pub async fn delete_group(&self, id: i64) -> Result<()> {
-        prompt_dao::delete_group(self.pool(), id).await
-    }
-    pub async fn set_arch_default_group(&self, arch: ArchitectureType, group_id: i64) -> Result<()> {
-        prompt_dao::set_arch_default_group(self.pool(), arch, group_id).await
-    }
-    pub async fn upsert_group_item(&self, group_id: i64, stage: StageType, template_id: i64) -> Result<()> {
-        prompt_dao::upsert_group_item(self.pool(), group_id, stage, template_id).await
-    }
-    pub async fn list_group_items(&self, group_id: i64) -> Result<Vec<PromptGroupItem>> {
-        prompt_dao::list_group_items(self.pool(), group_id).await
-    }
-    pub async fn remove_group_item(&self, group_id: i64, stage: StageType) -> Result<()> {
-        prompt_dao::remove_group_item(self.pool(), group_id, stage).await
-    }
-
     pub async fn list_templates_filtered(
         &self,
         category: Option<PromptCategory>,
         template_type: Option<TemplateType>,
-        architecture: Option<ArchitectureType>,
         is_system: Option<bool>,
     ) -> Result<Vec<PromptTemplate>> {
-        prompt_dao::list_templates_filtered(self.pool(), category, template_type, architecture, is_system).await
+        prompt_dao::list_templates_filtered(self.pool(), category, template_type, is_system).await
     }
     pub async fn duplicate_template(&self, id: i64, new_name: Option<String>) -> Result<i64> {
         prompt_dao::duplicate_template(self.pool(), id, new_name).await

@@ -44,11 +44,18 @@
         工作流工具
       </button>
       <button 
+        @click="activeTab = 'plugin_tools'"
+        :class="['tab', { 'tab-active': activeTab === 'plugin_tools' }]"
+      >
+        <i class="fas fa-plug mr-2"></i>
+        插件工具
+      </button>
+      <button 
         @click="activeTab = 'my_servers'"
         :class="['tab', { 'tab-active': activeTab === 'my_servers' }]"
       >
         <i class="fas fa-server mr-2"></i>
-        {{ $t('Tools.myServers') }}
+        {{ $t('Tools.mcpServers') }}
       </button>
       <button 
         @click="activeTab = 'marketplace'"
@@ -57,21 +64,15 @@
         <i class="fas fa-store mr-2"></i>
         {{ $t('Tools.marketplace') }}
       </button>
-      <button 
-        @click="activeTab = 'plugin_tools'"
-        :class="['tab', { 'tab-active': activeTab === 'plugin_tools' }]"
-      >
-        <i class="fas fa-plug mr-2"></i>
-        插件工具
-      </button>
+
     </div>
 
     <!-- Tab 内容 -->
     <BuiltinToolsTab v-if="activeTab === 'builtin_tools'" ref="builtinToolsRef" />
     <WorkflowToolsTab v-if="activeTab === 'workflow_tools'" ref="workflowToolsRef" />
-    <MyServersTab 
+    <McpServersTab 
       v-if="activeTab === 'my_servers'" 
-      ref="myServersRef"
+      ref="mcpServersRef"
       @show-details="openDetailsModal"
       @test-server="openTestServerModal"
     />
@@ -158,7 +159,7 @@
                 <input type="checkbox" /> 
                 <div class="collapse-title text-md font-medium">
                   {{ tool.name }}
-                  <p class="text-sm text-base-content/60 font-normal">{{ tool.description }}</p>
+                  <p v-if="tool.description" class="text-sm text-base-content/60 font-normal">{{ tool.description }}</p>
                 </div>
                 <div class="collapse-content bg-base-200/50 p-0">
                   <div v-if="tool.input_schema && tool.input_schema.properties" class="overflow-x-auto">
@@ -307,7 +308,7 @@
             <label class="label"><span class="label-text">选择工具</span></label>
             <select v-model="selectedTestToolName" class="select select-bordered">
               <option v-for="tool in testServerTools" :key="tool.name" :value="tool.name">
-                {{ tool.name }} - {{ tool.description }}
+                {{ tool.name }}{{ tool.description ? ' - ' + tool.description : '' }}
               </option>
             </select>
           </div>
@@ -378,15 +379,16 @@ import { dialog } from '@/composables/useDialog'
 // 导入子组件
 import BuiltinToolsTab from '@/components/Tools/BuiltinToolsTab.vue'
 import WorkflowToolsTab from '@/components/Tools/WorkflowToolsTab.vue'
-import MyServersTab from '@/components/Tools/MyServersTab.vue'
 import MarketplaceTab from '@/components/Tools/MarketplaceTab.vue'
 import PluginToolsTab from '@/components/Tools/PluginToolsTab.vue'
+import McpServersTab from '@/components/Tools/McpServersTab.vue'
+
 
 const { t } = useI18n()
 
 // 类型定义
 interface McpConnection {
-  db_id: number
+  db_id: string
   id: string | null
   name: string
   description: string | null
@@ -399,14 +401,14 @@ interface McpConnection {
 
 interface FrontendTool {
   name: string
-  description: string
+  description: string | null
   input_schema: any
 }
 
 // 子组件引用
 const builtinToolsRef = ref<InstanceType<typeof BuiltinToolsTab> | null>(null)
 const workflowToolsRef = ref<InstanceType<typeof WorkflowToolsTab> | null>(null)
-const myServersRef = ref<InstanceType<typeof MyServersTab> | null>(null)
+const mcpServersRef = ref<InstanceType<typeof McpServersTab> | null>(null)
 const marketplaceRef = ref<InstanceType<typeof MarketplaceTab> | null>(null)
 const pluginToolsRef = ref<InstanceType<typeof PluginToolsTab> | null>(null)
 
@@ -444,7 +446,7 @@ const jsonImportConfig = ref('')
 
 // 计算属性
 const addedServerNames = computed(() => {
-  return myServersRef.value?.connections?.map(c => c.name) || []
+  return mcpServersRef.value?.connections?.map(c => c.name) || []
 })
 
 const selectedTestTool = computed(() => {
@@ -500,12 +502,12 @@ function getToolProperties(schema: any) {
 async function refreshAll() {
   builtinToolsRef.value?.refresh?.()
   workflowToolsRef.value?.refresh?.()
-  myServersRef.value?.refresh?.()
+  mcpServersRef.value?.refresh?.()
   pluginToolsRef.value?.refresh?.()
 }
 
 // 服务器详情模态框
-async function openDetailsModal(connection: McpConnection) {
+function openDetailsModal(connection: McpConnection) {
   selectedServer.value = { ...connection }
   Object.assign(editableServer, {
     db_id: connection.db_id,
@@ -578,12 +580,12 @@ async function saveServerDetails() {
       }
     } else { dialog.toast.success(t('Tools.updateSuccess')) }
     closeDetailsModal()
-    myServersRef.value?.fetchConnections?.()
+    mcpServersRef.value?.fetchConnections?.()
   } catch (error) { console.error("Failed to save server details:", error); dialog.toast.error(`${t('Tools.updateFailed')}: ${error}`) }
 }
 
 // 服务器工具测试模态框
-async function openTestServerModal(connection: McpConnection) {
+function openTestServerModal(connection: McpConnection) {
   testingServer.value = { ...connection }
   showTestServerModal.value = true
   testServerTools.value = []
@@ -591,16 +593,18 @@ async function openTestServerModal(connection: McpConnection) {
   testToolParamsJson.value = ''
   testToolResult.value = ''
   if (!connection.id) { dialog.toast.error('当前服务器未处于连接状态，无法测试工具'); return }
-  isLoadingTestTools.value = true
-  try {
-    const tools = await invoke<FrontendTool[]>('mcp_get_connection_tools', { connectionId: connection.id })
-    testServerTools.value = tools || []
-    if (testServerTools.value.length > 0) {
-      selectedTestToolName.value = testServerTools.value[0].name
-      if (testServerTools.value[0].input_schema) testToolParamsJson.value = generateDefaultParams(testServerTools.value[0].input_schema)
-    }
-  } catch (error) { console.error('Failed to fetch tools for testing:', error); dialog.toast.error('加载服务器工具列表失败') }
-  finally { isLoadingTestTools.value = false }
+  void (async () => {
+    isLoadingTestTools.value = true
+    try {
+      const tools = await invoke<FrontendTool[]>('mcp_get_connection_tools', { connectionId: connection.id })
+      testServerTools.value = tools || []
+      if (testServerTools.value.length > 0) {
+        selectedTestToolName.value = testServerTools.value[0].name
+        if (testServerTools.value[0].input_schema) testToolParamsJson.value = generateDefaultParams(testServerTools.value[0].input_schema)
+      }
+    } catch (error) { console.error('Failed to fetch tools for testing:', error); dialog.toast.error('加载服务器工具列表失败') }
+    finally { isLoadingTestTools.value = false }
+  })()
 }
 
 function closeTestServerModal() {
@@ -636,7 +640,7 @@ async function handleQuickCreateServer() {
     await invoke('quick_create_mcp_server', { config: quickCreateForm })
     showAddServerModal.value = false
     Object.assign(quickCreateForm, { enabled: true, name: '', description: '', type: 'stdio', params: '', envVars: '', timeout: 60, providerName: '', providerWebsite: '', logoUrl: '' })
-    myServersRef.value?.fetchConnections?.()
+    mcpServersRef.value?.fetchConnections?.()
     await emit('mcp:tools-changed', { action: 'server_created', serverName })
   } catch (error) { console.error("快速创建服务器失败:", error); await dialog.error(`${t('Tools.addServerFailed')}: ${error}`) }
 }
@@ -647,7 +651,7 @@ async function handleImportFromJson() {
     await invoke('import_mcp_servers_from_json', { jsonConfig: jsonImportConfig.value })
     dialog.toast.success(t('Tools.importSuccess'))
     showAddServerModal.value = false
-    myServersRef.value?.fetchConnections?.()
+    mcpServersRef.value?.fetchConnections?.()
     await emit('mcp:tools-changed', { action: 'servers_imported' })
   } catch (error) { console.error("从JSON导入服务器失败:", error); dialog.toast.error(`${t('Tools.importFailed')}: ${error}`) }
 }
@@ -659,7 +663,7 @@ async function cleanupDuplicateServers() {
     const removedDuplicates: string[] = await invoke('cleanup_duplicate_mcp_servers')
     if (removedDuplicates.length > 0) { dialog.toast.success(`已清理 ${removedDuplicates.length} 个重复配置`) }
     else { dialog.toast.info('没有发现重复的服务器配置') }
-    myServersRef.value?.fetchConnections?.()
+    mcpServersRef.value?.fetchConnections?.()
   } catch (error) { console.error('清理重复服务器失败:', error); dialog.toast.error(`清理失败: ${error}`) }
 }
 
@@ -669,7 +673,7 @@ onMounted(async () => {
   listen('mcp:tools-changed', async (event) => {
     console.log('MCP tools changed event received:', event.payload)
     builtinToolsRef.value?.refresh?.()
-    myServersRef.value?.fetchConnections?.()
+    mcpServersRef.value?.fetchConnections?.()
   })
   listen('workflow:changed', async () => { workflowToolsRef.value?.refresh?.() })
 })
@@ -685,4 +689,3 @@ onMounted(async () => {
 }
 .space-y-4 > * { transition: opacity 0.15s ease-in-out; }
 </style>
-

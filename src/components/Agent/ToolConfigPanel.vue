@@ -1,0 +1,657 @@
+<template>
+  <div class="tool-config-panel">
+    <!-- Header -->
+    <div class="panel-header flex items-center justify-between p-4 border-b border-base-300">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-tools text-primary"></i>
+        <h3 class="text-lg font-semibold">工具配置</h3>
+      </div>
+      <button @click="$emit('close')" class="btn btn-sm btn-ghost btn-circle">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <!-- Content -->
+    <div class="panel-content p-4 space-y-4 overflow-y-auto">
+      <!-- Enable Tools Toggle -->
+      <div class="form-control">
+        <label class="label cursor-pointer justify-start gap-3">
+          <input 
+            type="checkbox" 
+            v-model="localConfig.enabled" 
+            class="checkbox checkbox-primary"
+            @change="emitUpdate"
+          />
+          <div>
+            <span class="label-text font-medium">启用工具调用</span>
+            <p class="text-xs text-base-content/60 mt-1">允许 Agent 调用工具来完成任务</p>
+          </div>
+        </label>
+      </div>
+
+      <div v-if="localConfig.enabled" class="space-y-4">
+        <!-- Tool Selection Strategy -->
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text font-medium">工具选择策略</span>
+          </label>
+          <select 
+            v-model="localConfig.selection_strategy" 
+            class="select select-bordered w-full"
+            @change="emitUpdate"
+          >
+            <option value="Keyword">关键词匹配（快速，免费）</option>
+            <option value="LLM">智能分析（准确，有成本）</option>
+            <option value="Hybrid">混合策略（推荐）</option>
+            <option value="Manual">手动选择</option>
+            <option value="All">全部工具（测试用）</option>
+          </select>
+          <label class="label">
+            <span class="label-text-alt text-base-content/60">
+              {{ getStrategyDescription(localConfig.selection_strategy) }}
+            </span>
+          </label>
+        </div>
+
+        <!-- Max Tools -->
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text font-medium">最大工具数量</span>
+            <span class="label-text-alt">{{ localConfig.max_tools }}</span>
+          </label>
+          <input 
+            type="range" 
+            v-model.number="localConfig.max_tools" 
+            min="1" 
+            max="20" 
+            class="range range-primary range-sm"
+            @change="emitUpdate"
+          />
+          <div class="w-full flex justify-between text-xs px-2 text-base-content/60">
+            <span>1</span>
+            <span>5</span>
+            <span>10</span>
+            <span>15</span>
+            <span>20</span>
+          </div>
+        </div>
+
+        <!-- Tool Management -->
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text font-medium">
+              {{ localConfig.selection_strategy === 'Manual' ? '选择工具' : '工具管理' }}
+            </span>
+            <button @click="loadTools" class="btn btn-xs btn-ghost">
+              <i class="fas fa-sync-alt"></i>
+            </button>
+          </label>
+          
+          <div v-if="loading" class="flex justify-center py-4">
+            <span class="loading loading-spinner loading-md"></span>
+          </div>
+          
+          <div v-else class="space-y-2 max-h-96 overflow-y-auto border border-base-300 rounded-lg p-3">
+            <!-- Category Filters -->
+            <div class="flex flex-wrap gap-2 mb-3 pb-3 border-b border-base-300">
+              <!-- 全部按钮 -->
+              <button 
+                @click="clearCategoryFilter"
+                class="btn btn-xs"
+                :class="selectedCategories.length === 0 ? 'btn-primary' : 'btn-ghost'"
+              >
+                全部
+              </button>
+              
+              <!-- 工具插件按钮 -->
+              <button 
+                v-if="hasPluginTools"
+                @click="toggleCategory('Plugin')"
+                class="btn btn-xs"
+                :class="selectedCategories.includes('Plugin') ? 'btn-primary' : 'btn-ghost'"
+              >
+                插件
+              </button>
+              
+              <!-- 其他分类按钮 -->
+              <button 
+                v-for="cat in categories.filter(c => c !== 'Plugin')" 
+                :key="cat"
+                @click="toggleCategory(cat)"
+                class="btn btn-xs"
+                :class="selectedCategories.includes(cat) ? 'btn-primary' : 'btn-ghost'"
+              >
+                {{ getCategoryDisplayName(cat) }}
+              </button>
+            </div>
+
+            <!-- Tool List -->
+            <div v-for="tool in filteredTools" :key="tool.id" class="form-control hover:bg-base-200 rounded px-2 transition-colors">
+              <label v-if="localConfig.selection_strategy === 'Manual'" class="label cursor-pointer justify-start gap-3 py-2">
+                <input 
+                  type="checkbox" 
+                  :value="tool.id"
+                  v-model="localConfig.manual_tools"
+                  class="checkbox checkbox-sm checkbox-primary"
+                  @change="emitUpdate"
+                />
+                <div class="flex-1">
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium text-sm">{{ tool.name }}</span>
+                    <span class="badge badge-xs" :class="getCategoryBadgeClass(tool.category)">
+                      {{ getCategoryDisplayName(tool.category) }}
+                    </span>
+                  </div>
+                  <p class="text-xs text-base-content/60 mt-1 truncate" :title="tool.description">{{ tool.description }}</p>
+                </div>
+              </label>
+
+              <div v-else class="flex items-center justify-between py-2">
+                <div class="flex-1 min-w-0 mr-2">
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium text-sm truncate">{{ tool.name }}</span>
+                    <span class="badge badge-xs flex-shrink-0" :class="getCategoryBadgeClass(tool.category)">
+                      {{ getCategoryDisplayName(tool.category) }}
+                    </span>
+                  </div>
+                  <p class="text-xs text-base-content/60 mt-1 truncate" :title="tool.description">{{ tool.description }}</p>
+                </div>
+                <div class="join flex-shrink-0">
+                   <button 
+                     class="join-item btn btn-xs" 
+                     :class="!isFixed(tool.id) && !isDisabled(tool.id) ? 'btn-active shadow-inner' : 'btn-ghost'"
+                     @click="setToolStatus(tool.id, 'auto')"
+                     title="自动选择"
+                   >自动</button>
+                   <button 
+                     class="join-item btn btn-xs"
+                     :class="isFixed(tool.id) ? 'btn-primary' : 'btn-ghost'"
+                     @click="setToolStatus(tool.id, 'fixed')"
+                     title="始终启用"
+                   >固定</button>
+                   <button 
+                     class="join-item btn btn-xs"
+                     :class="isDisabled(tool.id) ? 'btn-error' : 'btn-ghost'"
+                     @click="setToolStatus(tool.id, 'disabled')"
+                     title="禁用工具"
+                   >禁用</button>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="filteredTools.length === 0" class="text-center py-4 text-base-content/60">
+              <i class="fas fa-inbox text-2xl mb-2"></i>
+              <p class="text-sm">没有找到工具</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fixed Tools -->
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text font-medium">始终启用的工具</span>
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <div 
+              v-for="tool in localConfig.fixed_tools" 
+              :key="tool"
+              class="badge badge-primary gap-2"
+            >
+              {{ tool }}
+              <button 
+                @click="removeFixedTool(tool)"
+                class="btn btn-xs btn-ghost btn-circle"
+              >
+                <i class="fas fa-times text-xs"></i>
+              </button>
+            </div>
+            <button 
+              v-if="localConfig.fixed_tools.length === 0"
+              class="badge badge-ghost"
+            >
+              无
+            </button>
+          </div>
+        </div>
+
+        <!-- Tool Statistics -->
+        <div v-if="statistics" class="stats stats-vertical shadow w-full">
+          <div class="stat">
+            <div class="stat-title">可用工具总数</div>
+            <div class="stat-value text-primary">{{ statistics.total_tools }}</div>
+            <div class="stat-desc">
+              内置: {{ statistics.builtin_tools }} | 
+              工作流: {{ statistics.workflow_tools }} | 
+              MCP: {{ statistics.mcp_tools }} | 
+              插件: {{ statistics.plugin_tools }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Tool Usage Statistics -->
+        <div class="divider">使用统计</div>
+        
+        <div v-if="usageStats" class="space-y-3">
+          <div class="stats stats-horizontal shadow w-full">
+            <div class="stat">
+              <div class="stat-title">总执行次数</div>
+              <div class="stat-value text-sm">{{ usageStats.total_executions }}</div>
+            </div>
+            <div class="stat">
+              <div class="stat-title">成功</div>
+              <div class="stat-value text-sm text-success">{{ usageStats.successful_executions }}</div>
+            </div>
+            <div class="stat">
+              <div class="stat-title">失败</div>
+              <div class="stat-value text-sm text-error">{{ usageStats.failed_executions }}</div>
+            </div>
+          </div>
+
+          <!-- Top Used Tools -->
+          <div v-if="topUsedTools.length > 0" class="space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium">最常用工具</span>
+              <button @click="loadUsageStats" class="btn btn-xs btn-ghost">
+                <i class="fas fa-sync-alt"></i>
+              </button>
+            </div>
+            <div class="space-y-1">
+              <div 
+                v-for="tool in topUsedTools.slice(0, 5)" 
+                :key="tool.tool_id"
+                class="flex items-center justify-between p-2 bg-base-200 rounded text-xs"
+              >
+                <div class="flex-1">
+                  <div class="font-medium">{{ tool.tool_name }}</div>
+                  <div class="text-base-content/60">
+                    成功率: {{ ((tool.success_count / tool.execution_count) * 100).toFixed(1) }}% | 
+                    平均耗时: {{ tool.avg_execution_time_ms.toFixed(0) }}ms
+                  </div>
+                </div>
+                <div class="badge badge-sm">{{ tool.execution_count }}次</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Executions -->
+          <div v-if="usageStats.recent_executions.length > 0" class="space-y-2">
+            <div class="text-sm font-medium">最近执行</div>
+            <div class="space-y-1 max-h-48 overflow-y-auto">
+              <div 
+                v-for="record in usageStats.recent_executions.slice(0, 10)" 
+                :key="`${record.execution_id}-${record.timestamp}`"
+                class="flex items-center gap-2 p-2 bg-base-200 rounded text-xs"
+              >
+                <i 
+                  class="fas" 
+                  :class="record.success ? 'fa-check-circle text-success' : 'fa-times-circle text-error'"
+                ></i>
+                <div class="flex-1">
+                  <div class="font-medium">{{ record.tool_name }}</div>
+                  <div class="text-base-content/60">
+                    {{ formatTimestamp(record.timestamp) }} | {{ record.execution_time_ms }}ms
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button @click="clearUsageStats" class="btn btn-sm btn-error btn-outline w-full">
+            <i class="fas fa-trash"></i>
+            清空统计数据
+          </button>
+        </div>
+
+        <div v-else class="text-center py-4 text-base-content/60">
+          <i class="fas fa-chart-bar text-2xl mb-2"></i>
+          <p class="text-sm">暂无使用统计</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer Actions -->
+    <div class="panel-footer p-4 border-t border-base-300 flex justify-end gap-2">
+      <button @click="resetToDefault" class="btn btn-sm btn-ghost">
+        <i class="fas fa-undo"></i>
+        重置
+      </button>
+      <button @click="$emit('close')" class="btn btn-sm btn-primary">
+        <i class="fas fa-check"></i>
+        确定
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+
+interface ToolMetadata {
+  id: string
+  name: string
+  description: string
+  category: string
+  tags: string[]
+  cost_estimate: string
+  always_available: boolean
+}
+
+interface ToolConfig {
+  enabled: boolean
+  selection_strategy: string
+  max_tools: number
+  fixed_tools: string[]
+  disabled_tools: string[]
+  manual_tools?: string[]
+}
+
+interface ToolStatistics {
+  total_tools: number
+  builtin_tools: number
+  workflow_tools: number
+  mcp_tools: number
+  plugin_tools: number
+  always_available: number
+  by_category: Record<string, number>
+  by_cost: Record<string, number>
+}
+
+interface ToolUsageStats {
+  tool_id: string
+  tool_name: string
+  execution_count: number
+  success_count: number
+  failure_count: number
+  avg_execution_time_ms: number
+  last_used: number
+}
+
+interface ToolUsageRecord {
+  tool_id: string
+  tool_name: string
+  execution_id: string
+  timestamp: number
+  success: boolean
+  execution_time_ms: number
+  error_message?: string
+}
+
+interface ToolUsageStatistics {
+  total_executions: number
+  successful_executions: number
+  failed_executions: number
+  by_tool: Record<string, ToolUsageStats>
+  recent_executions: ToolUsageRecord[]
+}
+
+const props = defineProps<{
+  config: ToolConfig
+}>()
+
+const emit = defineEmits<{
+  'update:config': [config: ToolConfig]
+  'close': []
+}>()
+
+// 初始化 localConfig，处理 Manual 枚举格式
+const initLocalConfig = () => {
+  let manualTools: string[] = []
+  const rawStrategy = props.config.selection_strategy
+  let strategy: string = 'Keyword'
+  
+  if (rawStrategy !== null && rawStrategy !== undefined) {
+    // 如果 selection_strategy 是 Manual 枚举格式 { Manual: [...] }，提取工具列表
+    if (typeof rawStrategy === 'object') {
+      const manualValue = (rawStrategy as any).Manual
+      if (manualValue) {
+        // 统一工具 ID 格式：将 :: 替换为 __
+        manualTools = manualValue.map((id: string) => id.replace(/::/g, '__'))
+        strategy = 'Manual'
+      }
+    } else {
+      strategy = rawStrategy as string
+    }
+  }
+  
+  return { 
+    ...props.config, 
+    selection_strategy: strategy,
+    manual_tools: manualTools 
+  }
+}
+
+const localConfig = ref<ToolConfig>(initLocalConfig())
+const allTools = ref<ToolMetadata[]>([])
+const statistics = ref<ToolStatistics | null>(null)
+const usageStats = ref<ToolUsageStatistics | null>(null)
+const loading = ref(false)
+const selectedCategories = ref<string[]>([])
+
+const categories = computed(() => {
+  const cats = new Set(allTools.value.map(t => t.category))
+  return Array.from(cats).sort()
+})
+
+const hasPluginTools = computed(() => {
+  return allTools.value.some(t => t.category === 'Plugin')
+})
+
+const filteredTools = computed(() => {
+  if (selectedCategories.value.length === 0) {
+    return allTools.value
+  }
+  return allTools.value.filter(t => selectedCategories.value.includes(t.category))
+})
+
+const topUsedTools = computed(() => {
+  if (!usageStats.value) return []
+  return Object.values(usageStats.value.by_tool)
+    .sort((a, b) => b.execution_count - a.execution_count)
+})
+
+const toggleCategory = (cat: string) => {
+  const index = selectedCategories.value.indexOf(cat)
+  if (index > -1) {
+    selectedCategories.value.splice(index, 1)
+  } else {
+    selectedCategories.value.push(cat)
+  }
+}
+
+const clearCategoryFilter = () => {
+  selectedCategories.value = []
+}
+
+const getCategoryDisplayName = (category: string) => {
+  const nameMap: Record<string, string> = {
+    'Network': '网络',
+    'Security': '安全',
+    'Data': '数据',
+    'AI': 'AI',
+    'System': '系统',
+    'MCP': 'MCP',
+    'Plugin': '插件',
+    'Workflow': '工作流',
+  }
+  return nameMap[category] || category
+}
+
+const getCategoryBadgeClass = (category: string) => {
+  const map: Record<string, string> = {
+    'Network': 'badge-info',
+    'Security': 'badge-error',
+    'Data': 'badge-success',
+    'AI': 'badge-warning',
+    'System': 'badge-neutral',
+    'MCP': 'badge-primary',
+    'Plugin': 'badge-secondary',
+    'Workflow': 'badge-accent',
+  }
+  return map[category] || 'badge-ghost'
+}
+
+const getStrategyDescription = (strategy: string) => {
+  const descriptions: Record<string, string> = {
+    'Keyword': '基于关键词匹配，速度快，无额外成本',
+    'LLM': '使用 LLM 智能分析任务，准确度高，有少量 token 成本',
+    'Hybrid': '关键词初筛 + LLM 精选，兼顾速度和准确度',
+    'Manual': '手动选择需要的工具',
+    'All': '使用所有可用工具（不推荐，token 消耗大）',
+  }
+  return descriptions[strategy] || ''
+}
+
+const loadTools = async () => {
+  loading.value = true
+  try {
+    allTools.value = await invoke<ToolMetadata[]>('get_all_tool_metadata')
+    statistics.value = await invoke<ToolStatistics>('get_tool_statistics')
+  } catch (error) {
+    console.error('Failed to load tools:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadUsageStats = async () => {
+  try {
+    usageStats.value = await invoke<ToolUsageStatistics>('get_tool_usage_stats')
+  } catch (error) {
+    console.error('Failed to load usage stats:', error)
+  }
+}
+
+const clearUsageStats = async () => {
+  if (!confirm('确定要清空所有工具使用统计吗？')) return
+  
+  try {
+    await invoke('clear_tool_usage_stats')
+    usageStats.value = null
+    await loadUsageStats()
+  } catch (error) {
+    console.error('Failed to clear usage stats:', error)
+  }
+}
+
+const formatTimestamp = (timestamp: number) => {
+  const date = new Date(timestamp * 1000)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  
+  if (diff < 60000) return '刚刚'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`
+  return date.toLocaleDateString()
+}
+
+const isFixed = (id: string) => localConfig.value.fixed_tools?.includes(id)
+const isDisabled = (id: string) => localConfig.value.disabled_tools?.includes(id)
+
+const setToolStatus = (id: string, status: 'auto' | 'fixed' | 'disabled') => {
+  if (!localConfig.value.fixed_tools) localConfig.value.fixed_tools = []
+  if (!localConfig.value.disabled_tools) localConfig.value.disabled_tools = []
+  
+  // Remove from both
+  localConfig.value.fixed_tools = localConfig.value.fixed_tools.filter(t => t !== id)
+  localConfig.value.disabled_tools = localConfig.value.disabled_tools.filter(t => t !== id)
+  
+  if (status === 'fixed') {
+    localConfig.value.fixed_tools.push(id)
+  } else if (status === 'disabled') {
+    localConfig.value.disabled_tools.push(id)
+  }
+  
+  emitUpdate()
+}
+
+const removeFixedTool = (tool: string) => {
+  const index = localConfig.value.fixed_tools.indexOf(tool)
+  if (index > -1) {
+    localConfig.value.fixed_tools.splice(index, 1)
+    emitUpdate()
+  }
+}
+
+const resetToDefault = () => {
+  localConfig.value = {
+    enabled: false,
+    selection_strategy: 'Keyword',
+    max_tools: 5,
+    fixed_tools: ['local_time'],
+    disabled_tools: [],
+    manual_tools: [],
+  }
+  emitUpdate()
+}
+
+const emitUpdate = () => {
+  // 如果是手动模式，需要将 manual_tools 转换为 Manual(Vec<String>) 格式
+  const configToEmit = { ...localConfig.value }
+  if (configToEmit.selection_strategy === 'Manual' && configToEmit.manual_tools) {
+    // 统一工具 ID 格式：将 :: 替换为 __，并去重
+    const normalizedTools = [...new Set(
+      configToEmit.manual_tools.map((id: string) => id.replace(/::/g, '__'))
+    )]
+    console.log('[ToolConfigPanel] Emitting manual_tools:', normalizedTools)
+    // 将 selection_strategy 转换为 Rust 枚举格式: { Manual: [...] }
+    configToEmit.selection_strategy = { Manual: normalizedTools } as any
+    delete configToEmit.manual_tools
+  }
+  emit('update:config', configToEmit)
+}
+
+watch(() => props.config, (newConfig) => {
+  // 如果 selection_strategy 是 Manual 枚举，提取工具列表
+  let manualTools: string[] = []
+  const rawStrategy = newConfig.selection_strategy
+  let strategy: string = 'Keyword'
+  
+  if (rawStrategy !== null && rawStrategy !== undefined) {
+    if (typeof rawStrategy === 'object') {
+      // 安全地检查 Manual 属性
+      const manualValue = (rawStrategy as any).Manual
+      if (manualValue) {
+        // 统一工具 ID 格式：将 :: 替换为 __
+        manualTools = manualValue.map((id: string) => id.replace(/::/g, '__'))
+        strategy = 'Manual'
+      }
+    } else {
+      strategy = rawStrategy as string
+    }
+  }
+  
+  localConfig.value = { 
+    ...newConfig, 
+    selection_strategy: strategy,
+    manual_tools: manualTools 
+  }
+}, { deep: true })
+
+onMounted(() => {
+  loadTools()
+  loadUsageStats()
+})
+</script>
+
+<style scoped>
+.tool-config-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--fallback-b1, oklch(var(--b1)));
+}
+
+.panel-content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.icon-btn {
+  @apply btn btn-sm btn-ghost btn-circle;
+}
+
+.icon-btn.active {
+  @apply btn-primary;
+}
+</style>
