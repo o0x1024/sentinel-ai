@@ -80,7 +80,7 @@
             :value="inputMessage"
             @input="onInput"
             @keydown="onKeydown"
-            :disabled="isLoading"
+            :disabled="isLoading && !allowTakeover"
             :placeholder="placeholderText"
             class="w-full bg-transparent outline-none resize-none leading-relaxed text-sm placeholder:text-base-content/50 max-h-40"
             rows="1"
@@ -113,17 +113,17 @@
           <div class="flex items-center gap-2 shrink-0">
             <button class="icon-btn" title="语言 / 翻译"><i class="fas fa-language"></i></button>
             <button
-              v-if="!isLoading"
+              v-if="!isLoading || allowTakeover"
               class="send-btn"
               :disabled="!inputMessage.trim()"
               :class="{ 'opacity-40 cursor-not-allowed': !inputMessage.trim() }"
               @click="emitSend"
-              title="发送 (Enter)"
+              :title="isLoading ? '接管并发送 (Enter)' : '发送 (Enter)'"
             >
               <i class="fas fa-arrow-up"></i>
             </button>
             <button
-              v-else
+              v-if="isLoading"
               class="send-btn bg-error text-error-content hover:bg-error/90"
               @click="handleStop"
               title="停止执行"
@@ -169,6 +169,7 @@ const props = defineProps<{
   inputMessage: string
   isLoading: boolean
   showDebugInfo: boolean
+  allowTakeover?: boolean
   ragEnabled?: boolean
   toolsEnabled?: boolean
   webSearchEnabled?: boolean
@@ -194,6 +195,8 @@ const emit = defineEmits([
 ])
 
 // removed architecture utilities
+
+const allowTakeover = computed(() => props.allowTakeover === true)
 
 // --- New input logic ---
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -265,7 +268,8 @@ const onInput = (e: Event) => {
 }
 
 const emitSend = () => {
-  if (!props.inputMessage.trim() || props.isLoading) return
+  if (!props.inputMessage.trim()) return
+  if (props.isLoading && !allowTakeover.value) return
   emit('send-message')
   // 发送后恢复高度
   requestAnimationFrame(() => autoResize())

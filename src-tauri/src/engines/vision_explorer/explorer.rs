@@ -255,8 +255,20 @@ impl VisionExplorer {
             state.update_status(ExplorationStatus::Exploring);
         }
 
+        // 注册 TakeoverManager 到全局注册表，以便前端可以提交凭据
+        if let Some(exec_id) = &self.config.execution_id {
+            super::register_takeover_manager(exec_id.clone(), self.takeover_manager.clone()).await;
+            info!("Registered TakeoverManager for execution_id: {}", exec_id);
+        }
+
         // 执行探索循环
         let result = self.exploration_loop().await;
+
+        // 从全局注册表注销 TakeoverManager
+        if let Some(exec_id) = &self.config.execution_id {
+            super::unregister_takeover_manager(exec_id).await;
+            info!("Unregistered TakeoverManager for execution_id: {}", exec_id);
+        }
 
         // 标记停止
         {
@@ -342,6 +354,45 @@ impl VisionExplorer {
     pub async fn get_takeover_status(&self) -> TakeoverStatus {
         let manager = self.takeover_manager.read().await;
         manager.get_status().clone()
+    }
+
+    /// 接收用户凭据（由外部调用，如 Tauri 命令）
+    pub async fn receive_user_credentials(
+        &self, 
+        username: String, 
+        password: String,
+        verification_code: Option<String>,
+        extra_fields: Option<std::collections::HashMap<String, String>>,
+    ) {
+        let mut manager = self.takeover_manager.write().await;
+        manager.set_user_credentials(username.clone(), password, verification_code, extra_fields);
+        
+        // 发送凭据已接收通知到前端
+        if let Some(emitter) = &self.message_emitter {
+            emitter.emit_credentials_received(&username);
+        }
+        
+        info!("User credentials received for user: {}", username);
+    }
+
+    /// 恢复探索（用户提供凭据后调用）
+    pub async fn resume_after_credentials(&self) {
+        let mut manager = self.takeover_manager.write().await;
+        
+        // 归还控制权，继续探索
+        manager.return_control();
+        
+        let mut state = self.state_manager.write().await;
+        state.update_status(ExplorationStatus::Exploring);
+        
+        info!("Exploration resumed after receiving credentials");
+    }
+
+    /// 检查是否正在等待用户凭据
+    pub async fn is_waiting_for_credentials(&self) -> bool {
+        let manager = self.takeover_manager.read().await;
+        manager.is_login_detected() && !manager.has_credentials() && 
+        matches!(manager.get_status(), TakeoverStatus::WaitingForUser)
     }
 
     /// 获取上下文摘要信息
@@ -531,6 +582,12 @@ impl VisionExplorer {
             }
         }
 
+        // 探索结束，关闭浏览器
+        info!("Exploration loop ended, closing browser");
+        if let Err(e) = self.browser_tools.close_browser().await {
+            warn!("Failed to close browser at end of exploration: {}", e);
+        }
+
         Ok(())
     }
 
@@ -566,6 +623,42 @@ impl VisionExplorer {
         {
             let mut state = self.state_manager.write().await;
             state.update_page_state(page_state.clone());
+        }
+
+        // 2.1. 检测登录页面并处理 Takeover
+        // 2.1. 检测登录页面并处理 Takeover
+        if let Some(login_fields) = self.detect_login_page(&page_state) {
+            let takeover = self.takeover_manager.read().await;
+            let has_credentials = takeover.has_credentials();
+            let is_login_detected = takeover.is_login_detected();
+            drop(takeover); // 释放读锁
+            
+            if !has_credentials && !is_login_detected {
+                // 检测到登录页面但没有凭据，请求用户接管
+                info!("Login page detected at {}, requesting user credentials with {} fields", page_state.url, login_fields.len());
+                
+                if self.config.enable_takeover {
+                    let mut takeover = self.takeover_manager.write().await;
+                    takeover.request_login_takeover("检测到登录页面，请提供账号密码以继续探索", Some(login_fields.clone()));
+                    
+                    // 发送通知到前端
+                    if let Some(emitter) = &self.message_emitter {
+                        emitter.emit_takeover_request(
+                            iteration,
+                            "login_required",
+                            "检测到登录页面，请在下方输入账号密码后点击\"继续探索\"",
+                            Some(&login_fields),
+                        );
+                    }
+                    
+                    return Ok((false, false)); // 暂停探索，等待用户输入
+                } else {
+                    warn!("Login page detected but takeover is disabled");
+                }
+            } else if has_credentials && is_login_detected {
+                // 有凭据且刚检测到登录，记录日志
+                info!("Login page detected and credentials available, LLM will use credentials to login");
+            }
         }
 
         // 2.5. 更新元素管理器和路由追踪器
@@ -1094,6 +1187,8 @@ impl VisionExplorer {
 URL: {}
 标题: {}
 {}{}
+{}
+
 {}"#,
             Utc::now().format("%Y-%m-%d"),
             Utc::now().format("%H:%M:%S"),
@@ -1108,10 +1203,184 @@ URL: {}
             page_state.title,
             elements_section,
             context_summary,
-            action_hint
+            action_hint,
+            self.build_credentials_context().await
         );
         
         Ok((system_prompt, user_prompt))
+    }
+
+    /// 构建凭据上下文（仅在检测到登录页面且用户提供了凭据时添加）
+    async fn build_credentials_context(&self) -> String {
+        let takeover = self.takeover_manager.read().await;
+        
+        if let Some(creds_info) = takeover.get_credentials_for_llm() {
+            format!(
+                r#"
+────────────────────────
+🔑 登录凭据（用户已提供）
+────────────────────────
+
+{}
+
+请使用这些凭据完成登录操作。"#,
+                creds_info
+            )
+        } else {
+            String::new()
+        }
+    }
+
+    /// 检测登录页面并提取登录字段
+    fn detect_login_page(&self, page_state: &PageState) -> Option<Vec<LoginField>> {
+        let url_lower = page_state.url.to_lowercase();
+        let title_lower = page_state.title.to_lowercase();
+        
+        let url_indicators = ["login", "signin", "sign-in", "auth", "authenticate", "sso"];
+        let is_url_login = url_indicators.iter().any(|ind| url_lower.contains(ind));
+        
+        let title_indicators = ["登录", "login", "signin", "sign in", "登入", "认证"];
+        let is_title_login = title_indicators.iter().any(|ind| title_lower.contains(ind));
+        
+        // 筛选可见的输入框 (使用 interactable_elements 以支持多模态模式)
+        let inputs: Vec<&PageElement> = page_state.interactable_elements.iter()
+            .filter(|e| {
+                let tag = e.tag.to_lowercase();
+                let type_attr = e.element_type.as_ref()
+                    .or_else(|| e.attributes.get("type"))
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_else(|| "text".to_string());
+                
+                // 必须是 input 且不是 hidden/submit/button 等
+                tag == "input" && 
+                !["hidden", "submit", "button", "image", "reset"].contains(&type_attr.as_str())
+            })
+            .collect();
+            
+        let has_password = inputs.iter().any(|e| {
+            e.element_type.as_ref()
+                .or_else(|| e.attributes.get("type"))
+                .map(|s| s.to_lowercase() == "password")
+                .unwrap_or(false)
+        });
+        
+        // 判断是否为登录页面: 必须有密码框，或者 (URL/Title包含登录关键字 且 有输入框)
+        if !has_password && !((is_url_login || is_title_login) && !inputs.is_empty()) {
+            return None;
+        }
+        
+        // 构建字段列表
+        let mut fields = Vec::new();
+        let mut has_username = false;
+        let mut has_password_field = false;
+        
+        for input in inputs {
+            let type_attr = input.element_type.as_ref()
+                .or_else(|| input.attributes.get("type"))
+                .map(|s| s.to_lowercase())
+                .unwrap_or_else(|| "text".to_string());
+                
+            let name_attr = input.attributes.get("name").map(|s| s.to_lowercase()).unwrap_or_default();
+            let id_attr = input.id.to_lowercase(); // PageElement always has id (real or synthetic)
+            
+            // 优先使用 attributes 中的 placeholder，否则使用 text (JS中text可能包含placeholder)
+            let placeholder_attr = input.attributes.get("placeholder")
+                .map(|s| s.to_lowercase())
+                .unwrap_or_else(|| input.text.to_lowercase());
+                
+            let combined_text = format!("{} {} {}", name_attr, id_attr, placeholder_attr);
+            
+            if type_attr == "password" {
+                fields.push(LoginField {
+                    id: "password".to_string(),
+                    label: "密码".to_string(),
+                    field_type: "password".to_string(),
+                    required: true,
+                    placeholder: Some(input.attributes.get("placeholder").cloned().unwrap_or("请输入密码".to_string())),
+                });
+                has_password_field = true;
+            } else if !has_username && (
+                type_attr == "email" || 
+                combined_text.contains("user") || 
+                combined_text.contains("name") || 
+                combined_text.contains("login") ||
+                combined_text.contains("email") ||
+                combined_text.contains("phone") ||
+                combined_text.contains("account") ||
+                combined_text.contains("账号") ||
+                combined_text.contains("用户") ||
+                combined_text.contains("邮箱") ||
+                combined_text.contains("手机")
+            ) {
+                fields.push(LoginField {
+                    id: "username".to_string(),
+                    label: "账号/邮箱/手机号".to_string(),
+                    field_type: "text".to_string(),
+                    required: true,
+                    placeholder: Some(input.attributes.get("placeholder").cloned().unwrap_or("请输入账号".to_string())),
+                });
+                has_username = true;
+            } else if combined_text.contains("code") || 
+                      combined_text.contains("verif") || 
+                      combined_text.contains("captcha") || 
+                      combined_text.contains("otp") ||
+                      combined_text.contains("验证码") {
+                fields.push(LoginField {
+                    id: "verification_code".to_string(),
+                    label: "验证码".to_string(),
+                    field_type: "text".to_string(),
+                    required: false,
+                    placeholder: Some(input.attributes.get("placeholder").cloned().unwrap_or("请输入验证码".to_string())),
+                });
+            } else {
+                // 其他未知字段，添加为额外字段
+                // 使用 name 或 id 作为标识符，如果是合成ID则尝试用 placeholder 构造更友好的ID
+                let mut field_id = input.attributes.get("name").cloned()
+                    .unwrap_or_else(|| input.id.clone());
+                
+                if field_id.starts_with("element_") {
+                    // 如果是合成ID，尝试生成更有意义的ID
+                    field_id = format!("field_{}", fields.len());
+                }
+                
+                let label = input.attributes.get("placeholder").cloned().unwrap_or_else(|| "输入框".to_string());
+                
+                fields.push(LoginField {
+                    id: field_id,
+                    label,
+                    field_type: type_attr,
+                    required: false, // 默认为非必填
+                    placeholder: input.attributes.get("placeholder").cloned(),
+                });
+            }
+        }
+        
+        // 如果没有找到 Account/Password 字段，但 URL 强提示是登录页，则手动添加标准字段
+        if (!has_username || !has_password_field) && (is_url_login || is_title_login) && fields.is_empty() {
+             return Some(vec![
+                 LoginField {
+                     id: "username".to_string(),
+                     label: "账号".to_string(),
+                     field_type: "text".to_string(),
+                     required: true,
+                     placeholder: Some("请输入账号".to_string()),
+                 },
+                 LoginField {
+                     id: "password".to_string(),
+                     label: "密码".to_string(),
+                     field_type: "password".to_string(),
+                     required: true,
+                     placeholder: Some("请输入密码".to_string()),
+                 }
+             ]);
+        }
+        
+        if fields.is_empty() {
+            None
+        } else {
+            // 确保 password 存在 (如果检测到了登录页但没识别出 password 字段，可能比较奇怪，但我们还是返回已识别的)
+            Some(fields)
+        }
     }
 
     /// 解析VLM响应

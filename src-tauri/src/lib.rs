@@ -697,6 +697,7 @@ pub fn run() {
             tool_commands::get_tool_metadata,
             tool_commands::get_tool_usage_stats,
             tool_commands::clear_tool_usage_stats,
+            tool_commands::vision_explorer_receive_credentials,
             // MCP commands
             commands::mcp_commands::mcp_get_connections,
             commands::mcp_commands::mcp_get_connection_status,

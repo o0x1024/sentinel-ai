@@ -4,6 +4,7 @@
 //! 发送 vision_step 格式以与前端对接
 
 use crate::utils::ordered_message::{emit_message_chunk_with_arch, ArchitectureType, ChunkType};
+use super::types::LoginField;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
@@ -411,5 +412,46 @@ impl VisionExplorerMessageEmitter {
             Some(self.get_architecture()),
             Some(data),
         );
+    }
+
+    /// 发送 Takeover 请求（请求用户接管操作）
+    pub fn emit_takeover_request(&self, iteration: u32, request_type: &str, message: &str, fields: Option<&Vec<LoginField>>) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "execution_id": self.execution_id,
+            "iteration": iteration,
+            "request_type": request_type,
+            "message": message,
+            "fields": fields,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:takeover_request", &payload) {
+            debug!("Failed to emit takeover request: {}", e);
+        }
+        
+        debug!(
+            "Takeover request emitted: type={}, message={}",
+            request_type, message
+        );
+        
+        // 也通过 meta 发送，确保前端能收到
+        self.emit_meta("takeover_request", payload);
+    }
+
+    /// 发送凭据已接收通知
+    pub fn emit_credentials_received(&self, username: &str) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "execution_id": self.execution_id,
+            "username": username,
+            "message": format!("已接收用户凭据，正在使用用户 {} 登录", username),
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:credentials_received", &payload) {
+            debug!("Failed to emit credentials received: {}", e);
+        }
     }
 }

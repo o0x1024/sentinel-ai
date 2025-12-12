@@ -786,6 +786,11 @@ impl BrowserTools {
                             if (el.href) attrs.href = el.href;
                             if (el.name) attrs.name = el.name;
                             if (el.className) attrs.class = el.className;
+                            if (el.placeholder) attrs.placeholder = el.placeholder;
+                            if (el.getAttribute('aria-label')) attrs['aria-label'] = el.getAttribute('aria-label');
+                            if (el.getAttribute('role')) attrs.role = el.getAttribute('role');
+                            if (el.title) attrs.title = el.title;
+                            if (el.getAttribute('type')) attrs.type = el.getAttribute('type'); // Ensure type is in attributes too for consistency
                             
                             elements.push({
                                 id: el.id || `element_${idx}`,
@@ -988,6 +993,23 @@ impl BrowserTools {
         debug!("Playwright tool result: {:?}", result);
         
         Ok(result)
+    }
+
+    /// 关闭浏览器
+    pub async fn close_browser(&self) -> Result<()> {
+        info!("Closing browser via playwright_close");
+        
+        match self.call_playwright_tool("playwright_close", json!({})).await {
+            Ok(_) => {
+                info!("Browser closed successfully");
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Failed to close browser: {}", e);
+                // 不抛出错误，因为浏览器可能已经关闭
+                Ok(())
+            }
+        }
     }
 }
 

@@ -57,6 +57,9 @@ static CANCELLATION_TOKENS: std::sync::LazyLock<Mutex<HashMap<String, Cancellati
 fn create_cancellation_token(conversation_id: &str) -> CancellationToken {
     let token = CancellationToken::new();
     if let Ok(mut tokens) = CANCELLATION_TOKENS.lock() {
+        if let Some(old) = tokens.remove(conversation_id) {
+            old.cancel();
+        }
         tokens.insert(conversation_id.to_string(), token.clone());
     }
     token
@@ -85,6 +88,13 @@ pub fn cancel_conversation_stream(conversation_id: &str) {
         remove_cancellation_token(conversation_id);
         tracing::info!("Cancelled conversation stream: {}", conversation_id);
     }
+}
+
+/// 检查某个会话是否已被取消（用于停止后续事件发送）
+pub fn is_conversation_cancelled(conversation_id: &str) -> bool {
+    get_cancellation_token(conversation_id)
+        .map(|t| t.is_cancelled())
+        .unwrap_or(false)
 }
 
 /// 流式调用 LLM 并处理事件发送、消息保存
@@ -152,6 +162,9 @@ async fn stream_chat_with_llm(
             &history,
             image.as_ref(),
             move |chunk| {
+                if is_conversation_cancelled(&conv_id) {
+                    return;
+                }
                 match chunk {
                     StreamContent::Text(text) => {
                         tracing::debug!("Stream chunk received: {} chars", text.len());

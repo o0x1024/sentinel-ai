@@ -155,74 +155,79 @@ async fn execute_agent_simple(
         .stream_completion(
             Some(&params.system_prompt),
             &params.task,
-            |content| match content {
-                StreamContent::Text(text) => {
-                    let _ = app.emit(
-                        "agent:chunk",
-                        &json!({
-                            "execution_id": execution_id,
-                            "chunk_type": "text",
-                            "content": text,
-                        }),
-                    );
+            |content| {
+                if crate::commands::ai::is_conversation_cancelled(&execution_id) {
+                    return;
                 }
-                StreamContent::Reasoning(reasoning) => {
-                    let _ = app.emit(
-                        "agent:chunk",
-                        &json!({
-                            "execution_id": execution_id,
-                            "chunk_type": "reasoning",
-                            "content": reasoning,
-                        }),
-                    );
-                }
-                StreamContent::ToolCallStart { id, name } => {
-                    let _ = app.emit(
-                        "agent:tool_call_start",
-                        &json!({
-                            "execution_id": execution_id,
-                            "tool_call_id": id,
-                            "tool_name": name,
-                        }),
-                    );
-                }
-                StreamContent::ToolCallDelta { id, delta } => {
-                    let _ = app.emit(
-                        "agent:tool_call_delta",
-                        &json!({
-                            "execution_id": execution_id,
-                            "tool_call_id": id,
-                            "delta": delta,
-                        }),
-                    );
-                }
-                StreamContent::ToolCallComplete {
-                    id,
-                    name,
-                    arguments,
-                } => {
-                    let _ = app.emit(
-                        "agent:tool_call_complete",
-                        &json!({
-                            "execution_id": execution_id,
-                            "tool_call_id": id,
-                            "tool_name": name,
-                            "arguments": arguments,
-                        }),
-                    );
-                }
-                StreamContent::ToolResult { id, result } => {
-                    let _ = app.emit(
-                        "agent:tool_result",
-                        &json!({
-                            "execution_id": execution_id,
-                            "tool_call_id": id,
-                            "result": result,
-                        }),
-                    );
-                }
-                StreamContent::Done => {
-                    tracing::info!("Agent completed - execution_id: {}", execution_id);
+                match content {
+                    StreamContent::Text(text) => {
+                        let _ = app.emit(
+                            "agent:chunk",
+                            &json!({
+                                "execution_id": execution_id,
+                                "chunk_type": "text",
+                                "content": text,
+                            }),
+                        );
+                    }
+                    StreamContent::Reasoning(reasoning) => {
+                        let _ = app.emit(
+                            "agent:chunk",
+                            &json!({
+                                "execution_id": execution_id,
+                                "chunk_type": "reasoning",
+                                "content": reasoning,
+                            }),
+                        );
+                    }
+                    StreamContent::ToolCallStart { id, name } => {
+                        let _ = app.emit(
+                            "agent:tool_call_start",
+                            &json!({
+                                "execution_id": execution_id,
+                                "tool_call_id": id,
+                                "tool_name": name,
+                            }),
+                        );
+                    }
+                    StreamContent::ToolCallDelta { id, delta } => {
+                        let _ = app.emit(
+                            "agent:tool_call_delta",
+                            &json!({
+                                "execution_id": execution_id,
+                                "tool_call_id": id,
+                                "delta": delta,
+                            }),
+                        );
+                    }
+                    StreamContent::ToolCallComplete {
+                        id,
+                        name,
+                        arguments,
+                    } => {
+                        let _ = app.emit(
+                            "agent:tool_call_complete",
+                            &json!({
+                                "execution_id": execution_id,
+                                "tool_call_id": id,
+                                "tool_name": name,
+                                "arguments": arguments,
+                            }),
+                        );
+                    }
+                    StreamContent::ToolResult { id, result } => {
+                        let _ = app.emit(
+                            "agent:tool_result",
+                            &json!({
+                                "execution_id": execution_id,
+                                "tool_call_id": id,
+                                "result": result,
+                            }),
+                        );
+                    }
+                    StreamContent::Done => {
+                        tracing::info!("Agent completed - execution_id: {}", execution_id);
+                    }
                 }
             },
         )
@@ -401,7 +406,11 @@ async fn execute_agent_with_tools(
             &[],  // 空的历史记录
             None, // 无图片
             dynamic_tools,
-            |content| match content {
+            |content| {
+                if crate::commands::ai::is_conversation_cancelled(&execution_id) {
+                    return;
+                }
+                match content {
                 StreamContent::Text(text) => {
                     let _ = app.emit(
                         "agent:chunk",
@@ -495,7 +504,7 @@ async fn execute_agent_with_tools(
                 StreamContent::Done => {
                     tracing::info!("Stream completed - execution_id: {}", execution_id);
                 }
-            },
+            }},
         )
         .await;
 

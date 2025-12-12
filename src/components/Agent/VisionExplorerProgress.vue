@@ -87,6 +87,48 @@
         </div>
       </div>
       
+      <!-- Login Takeover Form -->
+      <div v-if="showTakeoverForm" class="p-3 bg-warning/10 border-b border-warning/30">
+        <div class="flex items-center gap-2 text-sm text-warning font-medium mb-2">
+          <i class="fas fa-key"></i>
+          <span>{{ takeoverMessage || '检测到登录页面，请输入凭证' }}</span>
+        </div>
+        
+        <div class="space-y-2">
+          <input
+            v-model="credentials.username"
+            type="text"
+            placeholder="用户名/账号"
+            class="input input-sm input-bordered w-full text-xs"
+            @keyup.enter="submitCredentials"
+          />
+          <input
+            v-model="credentials.password"
+            type="password"
+            placeholder="密码"
+            class="input input-sm input-bordered w-full text-xs"
+            @keyup.enter="submitCredentials"
+          />
+          <div class="flex gap-2">
+            <input
+              v-model="credentials.verificationCode"
+              type="text"
+              placeholder="验证码（可选）"
+              class="input input-sm input-bordered flex-1 text-xs"
+              @keyup.enter="submitCredentials"
+            />
+            <button
+              class="btn btn-sm btn-warning shrink-0"
+              :disabled="!credentials.username || !credentials.password || isSubmittingCredentials"
+              @click="submitCredentials"
+            >
+              <span v-if="isSubmittingCredentials" class="loading loading-spinner loading-xs"></span>
+              <span v-else>继续探索</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      
       <!-- Footer Stats -->
       <div class="flex gap-4 p-2 bg-base-200/30 text-[10px] border-t border-base-300 font-medium">
          <div class="flex items-center gap-1 opacity-70" title="Pages Visited">
@@ -109,7 +151,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 
 const props = defineProps<{
   executionId: string
@@ -129,6 +171,16 @@ const coverage = ref({ route: 0, element: 0, component: 100, overall: 0 })
 const pendingRoutes = ref<string[]>([])
 const stableRounds = ref(0)
 const showCoverage = ref(false)
+
+// Takeover form state
+const showTakeoverForm = ref(false)
+const takeoverMessage = ref('')
+const isSubmittingCredentials = ref(false)
+const credentials = ref({
+  username: '',
+  password: '',
+  verificationCode: ''
+})
 
 const unlisteners: UnlistenFn[] = []
 
@@ -162,6 +214,29 @@ const getLogClass = (type: string) => {
     case 'success': return 'text-success font-medium'
     case 'action': return 'text-warning font-medium'
     default: return 'text-base-content/80'
+  }
+}
+
+// Submit credentials to backend
+const submitCredentials = async () => {
+  isSubmittingCredentials.value = true
+  try {
+    await invoke('vision_explorer_receive_credentials', {
+      executionId: props.executionId,
+      username: credentials.value.username,
+      password: credentials.value.password,
+      verificationCode: credentials.value.verificationCode || null,
+      extraFields: null
+    })
+    pushLog('Credentials submitted, resuming exploration...', 'success')
+    showTakeoverForm.value = false
+    // Reset credentials for security
+    credentials.value = { username: '', password: '', verificationCode: '' }
+  } catch (error) {
+    console.error('Failed to submit credentials:', error)
+    pushLog(`Failed to submit credentials: ${error}`, 'error')
+  } finally {
+    isSubmittingCredentials.value = false
   }
 }
 
@@ -252,6 +327,23 @@ onMounted(async () => {
     isRunning.value = false
     pushLog(`Error: ${e.payload.error}`, 'error')
     currentStep.value = 'Error'
+  }))
+
+  // Listen for takeover requests (login page detected)
+  unlisteners.push(await listen<any>('vision:takeover_request', (e) => {
+    if (e.payload.execution_id !== props.executionId) return
+    showTakeoverForm.value = true
+    takeoverMessage.value = e.payload.message || 'Login page detected. Please enter your credentials.'
+    pushLog('Login page detected - waiting for credentials', 'action')
+    currentStep.value = 'Waiting for credentials'
+  }))
+
+  // Listen for credentials received confirmation
+  unlisteners.push(await listen<any>('vision:credentials_received', (e) => {
+    if (e.payload.execution_id !== props.executionId) return
+    showTakeoverForm.value = false
+    pushLog('Credentials received, continuing exploration...', 'success')
+    currentStep.value = 'Logging in...'
   }))
 })
 

@@ -60,6 +60,18 @@
           </div>
         </div>
         <div class="flex items-center gap-2">
+          <!-- Vision History Button - shows when there's exploration history -->
+          <button 
+            v-if="visionEvents.hasHistory.value"
+            @click="visionEvents.open()"
+            class="btn btn-sm gap-1"
+            :class="isVisionActive ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="isVisionActive ? '视觉探索面板已打开' : '查看视觉探索历史'"
+          >
+            <i class="fas fa-eye"></i>
+            <span>探索</span>
+            <span class="badge badge-xs badge-primary">{{ visionEvents.steps.value.length }}</span>
+          </button>
           <button 
             @click="handleCreateConversation()"
             class="btn btn-sm btn-ghost gap-1"
@@ -93,6 +105,10 @@
                :discovered-apis="visionEvents.discoveredApis.value"
                :is-active="isVisionActive"
                :current-url="visionEvents.currentUrl.value"
+               :show-takeover-form="visionEvents.showTakeoverForm.value"
+               :takeover-message="visionEvents.takeoverMessage.value"
+               :takeover-fields="visionEvents.takeoverFields.value"
+               :execution-id="visionEvents.currentExecutionId.value"
                class="h-full border-0 rounded-none bg-transparent"
                @close="visionEvents.close()"
             />
@@ -108,6 +124,7 @@
       <InputAreaComponent
         v-model:input-message="inputValue"
         :is-loading="isExecuting"
+        :allow-takeover="true"
         :show-debug-info="false"
         :rag-enabled="ragEnabled"
         :tools-enabled="toolsEnabled"
@@ -584,10 +601,39 @@ const handleCreateConversation = async (newConvId?: string) => {
 // Handle submit
 const handleSubmit = async () => {
   const task = inputValue.value.trim()
-  if (isExecuting.value || !task) return
+  if (!task) return
   
   localError.value = null
   
+  // Takeover: if currently executing, cancel previous stream first
+  if (isExecuting.value && conversationId.value) {
+    try {
+      const partial = agentEvents.streamingContent.value?.trim()
+      if (partial) {
+        const partialMsgId = crypto.randomUUID()
+        // 先在本地固化旧流的部分输出为最终助手消息
+        agentEvents.messages.value.push({
+          id: partialMsgId,
+          type: 'final' as any,
+          content: partial,
+          timestamp: Date.now(),
+        })
+        // 再写入数据库，保证会话历史一致
+        await invoke('save_ai_message', {
+          request: {
+            id: partialMsgId,
+            conversation_id: conversationId.value,
+            role: 'assistant',
+            content: partial,
+          },
+        })
+      }
+      await handleStop()
+    } catch (e) {
+      console.warn('[AgentView] Takeover stop failed, continuing:', e)
+    }
+  }
+
   // Build full task with traffic context
   let fullTask = task
   if (referencedTraffic.value.length > 0) {

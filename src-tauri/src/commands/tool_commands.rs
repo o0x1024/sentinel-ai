@@ -1063,3 +1063,27 @@ pub async fn refresh_all_dynamic_tools(
         "message": "Dynamic tools refreshed. MCP and plugin tools will be registered when connected/enabled."
     }))
 }
+
+// ============================================================================
+// Vision Explorer Credential Commands
+// ============================================================================
+
+/// Receive login credentials from frontend for a running VisionExplorer
+#[tauri::command]
+pub async fn vision_explorer_receive_credentials(
+    execution_id: String,
+    username: String,
+    password: String,
+    verification_code: Option<String>,
+    extra_fields: Option<HashMap<String, String>>,
+) -> Result<(), String> {
+    tracing::info!("Received credentials for VisionExplorer execution_id: {}", execution_id);
+    
+    crate::engines::vision_explorer::submit_credentials(
+        &execution_id,
+        username,
+        password,
+        verification_code,
+        extra_fields,
+    ).await
+}

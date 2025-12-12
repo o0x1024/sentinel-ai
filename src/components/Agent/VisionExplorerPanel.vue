@@ -16,6 +16,63 @@
       </div>
     </div>
 
+    <!-- Login Takeover Form - only show if not yet submitted in this session -->
+    <div v-if="showTakeoverForm && !credentialsSubmitted" class="p-3 bg-warning/10 border-b border-warning/30">
+      <div class="flex items-center gap-2 text-sm text-warning font-medium mb-2">
+        <i class="fas fa-key"></i>
+        <span>{{ takeoverMessage || '检测到登录页面，请输入凭证' }}</span>
+      </div>
+      
+      <div class="space-y-2">
+          <!-- Dynamic Fields -->
+          <template v-if="takeoverFields && takeoverFields.length > 0">
+              <div v-for="field in takeoverFields" :key="field.id">
+                  <input
+                    v-model="credentials[field.id]"
+                    :type="field.field_type"
+                    :placeholder="field.placeholder || field.label"
+                    class="input input-sm input-bordered w-full text-xs"
+                    @keyup.enter="submitCredentials"
+                  />
+              </div>
+          </template>
+          
+          <!-- Fallback Fields (if no dynamic fields provided) -->
+          <template v-else>
+              <input
+                v-model="credentials.username"
+                type="text"
+                placeholder="用户名/账号"
+                class="input input-sm input-bordered w-full text-xs"
+                @keyup.enter="submitCredentials"
+              />
+              <input
+                v-model="credentials.password"
+                type="password"
+                placeholder="密码"
+                class="input input-sm input-bordered w-full text-xs"
+                @keyup.enter="submitCredentials"
+              />
+              <input
+                  v-model="credentials.verificationCode"
+                  type="text"
+                  placeholder="验证码（可选）"
+                  class="input input-sm input-bordered w-full text-xs"
+                  @keyup.enter="submitCredentials"
+              />
+          </template>
+
+          <button
+              class="btn btn-sm btn-warning w-full mt-2"
+              :disabled="!canSubmit || isSubmittingCredentials"
+              @click="submitCredentials"
+            >
+              <span v-if="isSubmittingCredentials" class="loading loading-spinner loading-xs"></span>
+              <span v-else>继续探索</span>
+          </button>
+        </div>
+    </div>
+
     <!-- Coverage Stats -->
     <div class="p-3 bg-base-100/50 text-xs border-b border-base-300 flex flex-col gap-2" v-if="coverage">
       <div class="flex justify-between items-center">
@@ -113,7 +170,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import type { VisionStep, VisionCoverage } from '@/composables/useVisionEvents'
 
 const props = defineProps<{
@@ -122,6 +180,11 @@ const props = defineProps<{
   discoveredApis: { method: string; url: string }[]
   isActive: boolean
   currentUrl: string
+  // Takeover props
+  showTakeoverForm?: boolean
+  takeoverMessage?: string
+  takeoverFields?: any[]
+  executionId?: string | null
 }>()
 
 defineEmits<{
@@ -129,6 +192,120 @@ defineEmits<{
 }>()
 
 const stepsContainer = ref<HTMLElement | null>(null)
+
+// Takeover form state
+const isSubmittingCredentials = ref(false)
+const credentials = ref<Record<string, string>>({})
+const credentialsSubmitted = ref(false) // Track if credentials were submitted in this session
+
+// Reset credentialsSubmitted when a new takeover request comes in
+watch(() => props.showTakeoverForm, (newVal) => {
+    if (newVal) {
+        // New takeover request, reset submitted state
+        credentialsSubmitted.value = false
+    }
+})
+
+// Initialize credentials when fields change
+watch(() => props.takeoverFields, (fields) => {
+    const newCreds: Record<string, string> = {}
+    if (fields) {
+        fields.forEach(f => {
+            newCreds[f.id] = ''
+        })
+    } else {
+        // Fallback init
+        newCreds.username = ''
+        newCreds.password = ''
+        newCreds.verificationCode = ''
+    }
+    credentials.value = newCreds
+}, { immediate: true })
+
+const canSubmit = computed(() => {
+    if (props.takeoverFields && props.takeoverFields.length > 0) {
+        // Check required fields
+        return props.takeoverFields.every(f => !f.required || !!credentials.value[f.id])
+    }
+    return !!credentials.value.username && !!credentials.value.password
+})
+
+// Submit credentials to backend
+const submitCredentials = async () => {
+  if (!canSubmit.value) return
+  
+  isSubmittingCredentials.value = true
+  try {
+    const eid = props.executionId || (window as any).__visionExecutionId
+    
+    if (!eid) {
+      console.warn('No execution ID available for credential submission')
+      return
+    }
+    
+    // Map credentials to backend expected format
+    let username = ''
+    let password = ''
+    let verificationCode: string | null = null
+    let extraFields: Record<string, string> | null = null
+    
+    if (props.takeoverFields && props.takeoverFields.length > 0) {
+        // Dynamic mapping
+        const creds = credentials.value
+        const extras: Record<string, string> = {}
+        
+        // Find standard fields by ID convention or fallback
+        // We expect backend to send ids: "username", "password", "verification_code" for standard ones
+        
+        if (creds['username']) username = creds['username']
+        if (creds['password']) password = creds['password']
+        if (creds['verification_code']) verificationCode = creds['verification_code']
+        
+        // Put everything else or duplicates into extraFields
+        Object.entries(creds).forEach(([key, val]) => {
+            if (key !== 'username' && key !== 'password' && key !== 'verification_code') {
+                extras[key] = val
+            }
+        })
+        
+        if (Object.keys(extras).length > 0) {
+            extraFields = extras
+        }
+    } else {
+        // Fallback mapping
+        username = credentials.value.username
+        password = credentials.value.password
+        verificationCode = credentials.value.verificationCode || null
+    }
+    
+    await invoke('vision_explorer_receive_credentials', {
+      executionId: eid,
+      username,
+      password,
+      verificationCode,
+      extraFields
+    })
+    console.log('[VisionPanel] Credentials submitted successfully')
+    
+    // Mark as submitted to immediately hide the form
+    credentialsSubmitted.value = true
+    
+    // Reset
+    const newCreds: Record<string, string> = {}
+    if (props.takeoverFields) {
+        props.takeoverFields.forEach(f => newCreds[f.id] = '')
+    } else {
+        newCreds.username = ''
+        newCreds.password = ''
+    }
+    credentials.value = newCreds
+    
+  } catch (error) {
+    console.error('Failed to submit credentials:', error)
+  } finally {
+    isSubmittingCredentials.value = false
+  }
+}
 
 // Auto-scroll to bottom when steps change
 watch(() => props.steps.length, async () => {

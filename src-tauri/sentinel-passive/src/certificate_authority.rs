@@ -76,10 +76,10 @@ impl SniCertResolver {
             return key;
         }
 
-        tracing::info!(
-            "SniCertResolver: Generating certificate for SNI host: {}",
-            host
-        );
+        // tracing::info!(
+        //     "SniCertResolver: Generating certificate for SNI host: {}",
+        //     host
+        // );
 
         let mut params = CertificateParams::default();
         params.serial_number = Some(rand::thread_rng().gen::<u64>().into());

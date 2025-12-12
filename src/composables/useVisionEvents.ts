@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted, type Ref } from 'vue'
+import { ref, computed, onMounted, onUnmounted, type Ref } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export interface VisionStep {
@@ -48,6 +48,12 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     const isVisionActive = ref(false)
     const currentUrl = ref('')
 
+    // Takeover State
+    const showTakeoverForm = ref(false)
+    const takeoverMessage = ref('')
+    const takeoverFields = ref<any[] | null>(null)
+    const currentExecutionId = ref<string | null>(null)
+
     const unlisteners: UnlistenFn[] = []
 
     const resetstate = () => {
@@ -56,6 +62,10 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
         discoveredApis.value = []
         isVisionActive.value = false
         currentUrl.value = ''
+        showTakeoverForm.value = false
+        takeoverMessage.value = ''
+        takeoverFields.value = null
+        currentExecutionId.value = null
     }
 
     const startListening = async () => {
@@ -64,22 +74,64 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
             const payload = event.payload
             if (executionId?.value && payload.execution_id !== executionId.value) return
 
+            // Auto-activate vision panel on updates
+            isVisionActive.value = true
+            currentExecutionId.value = payload.execution_id
+
             coverage.value = payload.coverage
             // Also update api count if needed, though we track specific APIs too
         })
         unlisteners.push(unlistenCoverage)
+
+        // Listen for takeover requests (Global event)
+        const unlistenTakeover = await listen<any>('vision:takeover_request', (event) => {
+            const payload = event.payload
+            if (executionId?.value && payload.execution_id !== executionId.value) return
+
+            console.log('[VisionEvents] Takeover requested:', payload)
+            isVisionActive.value = true
+            currentExecutionId.value = payload.execution_id
+            showTakeoverForm.value = true
+            takeoverMessage.value = payload.message || '检测到登录页面，请输入凭证'
+            takeoverFields.value = payload.fields || null
+        })
+        unlisteners.push(unlistenTakeover)
+
+        // Listen for credentials received (Global event)
+        const unlistenCreds = await listen<any>('vision:credentials_received', (event) => {
+            const payload = event.payload
+            console.log('[VisionEvents] Credentials received event:', payload)
+
+            // Less strict filtering - if we have a showTakeoverForm open, close it
+            if (executionId?.value && payload.execution_id !== executionId.value) {
+                console.log('[VisionEvents] Ignoring credentials event for different execution')
+                return
+            }
+
+            console.log('[VisionEvents] Hiding takeover form after credentials received')
+            showTakeoverForm.value = false
+            takeoverMessage.value = ''
+            takeoverFields.value = null
+        })
+        unlisteners.push(unlistenCreds)
 
         // Listen for message chunks (Meta events for steps)
         const unlistenChunk = await listen<OrderedMessageChunk>('message_chunk', (event) => {
             const chunk = event.payload
             if (executionId?.value && chunk.execution_id !== executionId.value) return
 
-            if (chunk.chunk_type === 'Meta') {
+            if (chunk.chunk_type === 'Meta' || chunk.chunk_type === 'StreamComplete') {
                 const data = chunk.structured_data
+
+                // Track execution ID from meta events
+                if (chunk.execution_id) {
+                    currentExecutionId.value = chunk.execution_id
+                }
 
                 if (data?.type === 'start') {
                     isVisionActive.value = true
                     resetstate() // New session
+                    currentExecutionId.value = chunk.execution_id
                     if (data.target_url) currentUrl.value = data.target_url
                 }
 
@@ -95,6 +147,14 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
                     if (step.url) currentUrl.value = step.url
                 }
 
+                // Handle takeover request from Meta channel (fallback/redundancy)
+                if (data?.type === 'takeover_request') {
+                    console.log('[VisionEvents] Takeover requested (Meta):', data)
+                    showTakeoverForm.value = true
+                    takeoverMessage.value = data.message || '检测到登录页面，请输入凭证'
+                    takeoverFields.value = data.fields || null
+                }
+
                 if (data?.type === 'api_discovered') {
                     const api = { method: data.method, url: data.api }
                     // Avoid duplicates
@@ -104,7 +164,8 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
                 }
 
                 if (data?.type === 'complete') {
-                    // Keep active for viewing results
+                    // Auto close on completion as requested
+                    isVisionActive.value = false
                 }
             }
         })
@@ -128,13 +189,29 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
         isVisionActive.value = false
     }
 
+    // Check if there's history to view
+    const hasHistory = computed(() => steps.value.length > 0)
+
+    // Open/reopen the panel (for viewing history)
+    const open = () => {
+        if (hasHistory.value) {
+            isVisionActive.value = true
+        }
+    }
+
     return {
         steps,
         coverage,
         discoveredApis,
         isVisionActive,
         currentUrl,
+        showTakeoverForm,
+        takeoverMessage,
+        takeoverFields,
+        currentExecutionId,
+        hasHistory,
         resetstate,
-        close
+        close,
+        open
     }
 }

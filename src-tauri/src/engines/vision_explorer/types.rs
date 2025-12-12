@@ -419,8 +419,31 @@ pub struct VisionExplorerConfig {
 /// 登录凭据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginCredentials {
+    /// 用户名/账号
     pub username: String,
+    /// 密码
     pub password: String,
+    /// 验证码（可选，如图形验证码、短信验证码等）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_code: Option<String>,
+    /// 其他额外字段（如安全码、OTP、动态口令等）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_fields: Option<HashMap<String, String>>,
+}
+
+/// 登录字段定义
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginField {
+    /// 字段ID (也是提交时的 key)
+    pub id: String,
+    /// 显示标签
+    pub label: String,
+    /// 字段类型 (text, password, etc.)
+    pub field_type: String,
+    /// 是否必填
+    pub required: bool,
+    /// 占位符
+    pub placeholder: Option<String>,
 }
 
 impl Default for VisionExplorerConfig {
@@ -437,8 +460,8 @@ impl Default for VisionExplorerConfig {
             passive_proxy_port: Some(4201),
             headless: false,
             browser_proxy: Some("http://127.0.0.1:8080".to_string()),
-            viewport_width: 1280,
-            viewport_height: 960, // bytebot使用1280x960
+            viewport_width: 1920,
+            viewport_height: 1080,
             vlm_provider: "anthropic".to_string(),
             vlm_model: "claude-sonnet-4-20250514".to_string(),
             credentials: None,
@@ -446,7 +469,7 @@ impl Default for VisionExplorerConfig {
             enable_context_summary: true, // 默认启用上下文摘要
             context_summary_threshold: 50000, // 50k tokens触发摘要
             include_elements_in_prompt: false, // 默认关闭，多模态模型通过截图查看
-            enable_takeover: false, // 默认禁用Takeover
+            enable_takeover: true, // 默认启用Takeover
             api_poll_interval_ms: 2000, // 2秒轮询一次API
             finalize_on_complete: true,
             headers: None,
@@ -503,6 +526,12 @@ pub struct TakeoverSession {
     pub user_actions: Vec<UserAction>,
     /// 原因 (为什么需要Takeover)
     pub reason: Option<String>,
+    /// 用户提供的凭据 (在Takeover期间由用户输入)
+    pub user_credentials: Option<LoginCredentials>,
+    /// 是否检测到登录页面
+    pub login_detected: bool,
+    /// 登录字段定义 (动态)
+    pub login_fields: Option<Vec<LoginField>>,
 }
 
 impl Default for TakeoverSession {
@@ -514,6 +543,9 @@ impl Default for TakeoverSession {
             ended_at: None,
             user_actions: Vec::new(),
             reason: None,
+            user_credentials: None,
+            login_detected: false,
+            login_fields: None,
         }
     }
 }

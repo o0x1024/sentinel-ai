@@ -430,6 +430,90 @@ impl TakeoverManager {
     pub fn get_session(&self) -> &TakeoverSession {
         &self.session
     }
+
+    // ========== 登录检测与凭据处理 ==========
+
+    /// 请求用户接管（因登录需求）
+    pub fn request_login_takeover(&mut self, reason: &str, fields: Option<Vec<super::types::LoginField>>) -> bool {
+        if !self.enabled {
+            warn!("Login takeover requested but takeover not enabled");
+            return false;
+        }
+        
+        self.session.login_detected = true;
+        self.session.status = TakeoverStatus::WaitingForUser;
+        self.session.reason = Some(reason.to_string());
+        self.session.started_at = Some(Utc::now());
+        self.session.login_fields = fields;
+        
+        info!("Login takeover requested: {}", reason);
+        true
+    }
+
+    /// 设置用户凭据（由前端调用）
+    pub fn set_user_credentials(
+        &mut self, 
+        username: String, 
+        password: String,
+        verification_code: Option<String>,
+        extra_fields: Option<std::collections::HashMap<String, String>>,
+    ) {
+        use super::types::LoginCredentials;
+        self.session.user_credentials = Some(LoginCredentials { 
+            username, 
+            password,
+            verification_code,
+            extra_fields,
+        });
+        info!("User credentials received and stored for login");
+    }
+
+    /// 检查是否有用户凭据
+    pub fn has_credentials(&self) -> bool {
+        self.session.user_credentials.is_some()
+    }
+
+    /// 获取用户凭据（用于 LLM 上下文）
+    pub fn get_credentials(&self) -> Option<&super::types::LoginCredentials> {
+        self.session.user_credentials.as_ref()
+    }
+
+    /// 检查是否检测到登录页面
+    pub fn is_login_detected(&self) -> bool {
+        self.session.login_detected
+    }
+
+    /// 清除登录检测状态（登录成功后调用）
+    pub fn clear_login_detected(&mut self) {
+        self.session.login_detected = false;
+        info!("Login detection cleared - login successful");
+    }
+
+    /// 获取凭据摘要（用于 LLM 上下文，不泄露密码）
+    pub fn get_credentials_summary(&self) -> Option<String> {
+        self.session.user_credentials.as_ref().map(|creds| {
+            format!("用户已提供登录凭据 - 用户名: {}", creds.username)
+        })
+    }
+
+    /// 获取完整的凭据信息（仅供 LLM 使用）
+    pub fn get_credentials_for_llm(&self) -> Option<String> {
+        self.session.user_credentials.as_ref().map(|creds| {
+            let mut info = format!("登录凭据 - 用户名: {}, 密码: {}", creds.username, creds.password);
+            
+            if let Some(ref code) = creds.verification_code {
+                info.push_str(&format!(", 验证码: {}", code));
+            }
+            
+            if let Some(ref extras) = creds.extra_fields {
+                for (key, value) in extras {
+                    info.push_str(&format!(", {}: {}", key, value));
+                }
+            }
+            
+            info
+        })
+    }
 }
 
 #[cfg(test)]

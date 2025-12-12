@@ -83,10 +83,10 @@ impl Tool for VisionExplorerTool {
                         "type": "boolean",
                         "description": "Enable multimodal mode with screenshots (default: false, uses text-based element annotation)"
                     },
-                    "headless": {
-                        "type": "boolean",
-                        "description": "Run browser in headless mode (default: false)"
-                    },
+                    // "headless": {
+                    //     "type": "boolean",
+                    //     "description": "Run browser in headless mode (default: false)"
+                    // },
                     "headers": {
                         "type": "object",
                         "description": "Custom HTTP headers to send with requests (e.g. Authorization)",
@@ -143,15 +143,6 @@ impl Tool for VisionExplorerTool {
             ..Default::default()
         };
 
-        // Attempt to auto-detect screen resolution and set viewport
-        if let Some(app) = &self.app_handle {
-            if let Ok(Some(monitor)) = app.primary_monitor() {
-                let size = monitor.size();
-                config.viewport_width = size.width;
-                config.viewport_height = size.height;
-                tracing::info!("Auto-detected screen resolution: {}x{}", size.width, size.height);
-            }
-        }
 
         // Set execution_id and a generated message_id to enable message emitting
         if let Some(exec_id) = &self.execution_id {
@@ -179,6 +170,15 @@ impl Tool for VisionExplorerTool {
                      explorer = explorer.with_passive_db(db);
                  }
              }
+        }
+
+        // Inject cancellation token if available
+        if let Some(exec_id) = &self.execution_id {
+            // Using the global cancellation manager to get the token associated with this execution
+            if let Some(token) = crate::managers::cancellation_manager::get_token(exec_id).await {
+                tracing::info!("VisionExplorerTool: Injecting cancellation token for execution {}", exec_id);
+                explorer = explorer.with_cancellation_token(token);
+            }
         }
 
         match explorer.start().await {
