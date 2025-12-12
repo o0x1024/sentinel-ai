@@ -410,6 +410,7 @@ pub fn run() {
             ai::save_scheduler_config,
             ai::get_service_for_stage,
             ai::get_ai_usage_stats,
+            ai::generate_workflow_from_nl,
             commands::get_active_rag_collections,
             commands::set_rag_collection_active,
             // Database commands

@@ -120,6 +120,7 @@ export interface UseAgentEventsReturn {
   lastMessage: ComputedRef<AgentMessage | undefined>
   ragMetaInfo: Ref<RagMetaInfo | null>
   clearMessages: () => void
+  stopExecution: () => void
   startListening: () => Promise<void>
   stopListening: () => void
 }
@@ -163,6 +164,17 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     isExecuting.value = false
     currentExecutionId.value = null
     ragMetaInfo.value = null
+  }
+
+  // 停止执行：清空流式内容并更新状态
+  const stopExecution = () => {
+    console.log('[useAgentEvents] Stopping execution, current execution_id:', currentExecutionId.value)
+    isExecuting.value = false
+    streamingContent.value = ''
+    contentBuffer.value = ''
+
+    // 如果有正在流式输出的内容，将其作为最终消息添加
+    // 注意：后端取消后可能不会发送 complete 事件，所以这里处理残留内容
   }
 
   const startListening = async () => {
@@ -307,6 +319,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
           tool_args: parsedArgs,
           tool_call_id: payload.tool_call_id,
           status: 'running',
+          execution_id: payload.execution_id,
         }
       })
     })
@@ -608,6 +621,30 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       }
     })
     unlisteners.push(unlistenOldChunk)
+
+    // 监听 agent:cancelled 事件（用户取消执行）
+    const unlistenCancelled = await listen<{
+      execution_id: string
+      message: string
+    }>('agent:cancelled', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      console.log('[useAgentEvents] Execution cancelled:', payload.execution_id)
+
+      isExecuting.value = false
+      streamingContent.value = ''
+      contentBuffer.value = ''
+
+      // 可选：添加一条取消消息到聊天记录
+      // messages.value.push({
+      //   id: crypto.randomUUID(),
+      //   type: 'system',
+      //   content: '执行已被用户取消',
+      //   timestamp: Date.now(),
+      // })
+    })
+    unlisteners.push(unlistenCancelled)
   }
 
   const stopListening = () => {
@@ -633,6 +670,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     lastMessage,
     ragMetaInfo,
     clearMessages,
+    stopExecution,
     startListening,
     stopListening,
   }

@@ -6,6 +6,10 @@
         <span>这些是在工作流工作室中标记为工具的工作流，可供AI助手调用执行。</span>
       </div>
       <div class="flex gap-2">
+        <button @click="openAiGenerateInStudio" class="btn btn-outline btn-secondary btn-sm">
+          <i class="fas fa-magic mr-1"></i>
+          AI生成
+        </button>
         <button @click="refresh" class="btn btn-outline btn-sm">
           <i class="fas fa-sync-alt mr-1"></i>
           刷新
@@ -278,6 +282,11 @@ function goToWorkflowStudio() {
   window.location.hash = '#/workflow-studio'
 }
 
+function openAiGenerateInStudio() {
+  localStorage.setItem('open_ai_generate_workflow', '1')
+  goToWorkflowStudio()
+}
+
 function viewInStudio(workflow: any) {
   window.location.hash = `#/workflow-studio?id=${workflow.id}`
 }
@@ -440,4 +449,3 @@ onMounted(() => {
   fetchWorkflows()
 })
 </script>
-

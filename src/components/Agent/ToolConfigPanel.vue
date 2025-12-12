@@ -92,6 +92,28 @@
           </div>
           
           <div v-else class="space-y-2 max-h-96 overflow-y-auto border border-base-300 rounded-lg p-3">
+            <!-- Search Box -->
+            <div class="sticky top-0 z-10 bg-base-100 pb-2 -mt-1 pt-1">
+              <div class="relative w-full">
+                <input 
+                  type="text" 
+                  v-model="searchQuery"
+                  placeholder="搜索工具名称或描述..." 
+                  class="input input-sm input-bordered w-full pr-8" 
+                />
+                <div class="absolute inset-y-0 right-0 flex items-center pr-2">
+                  <button 
+                    v-if="searchQuery" 
+                    @click="searchQuery = ''"
+                    class="btn btn-ghost btn-xs btn-circle h-5 w-5 min-h-0"
+                  >
+                    <i class="fas fa-times text-xs"></i>
+                  </button>
+                  <i v-else class="fas fa-search text-xs text-base-content/50"></i>
+                </div>
+              </div>
+            </div>
+
             <!-- Category Filters -->
             <div class="flex flex-wrap gap-2 mb-3 pb-3 border-b border-base-300">
               <!-- 全部按钮 -->
@@ -427,6 +449,7 @@ const statistics = ref<ToolStatistics | null>(null)
 const usageStats = ref<ToolUsageStatistics | null>(null)
 const loading = ref(false)
 const selectedCategories = ref<string[]>([])
+const searchQuery = ref('')
 
 const categories = computed(() => {
   const cats = new Set(allTools.value.map(t => t.category))
@@ -438,10 +461,22 @@ const hasPluginTools = computed(() => {
 })
 
 const filteredTools = computed(() => {
-  if (selectedCategories.value.length === 0) {
-    return allTools.value
+  let tools = allTools.value
+
+  // Filter by search query
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase()
+    tools = tools.filter(t => 
+      t.name.toLowerCase().includes(query) || 
+      t.description.toLowerCase().includes(query)
+    )
   }
-  return allTools.value.filter(t => selectedCategories.value.includes(t.category))
+
+  // Filter by category
+  if (selectedCategories.value.length === 0) {
+    return tools
+  }
+  return tools.filter(t => selectedCategories.value.includes(t.category))
 })
 
 const topUsedTools = computed(() => {

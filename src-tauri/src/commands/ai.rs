@@ -17,6 +17,10 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use sentinel_workflow::WorkflowGraph;
+use crate::services::SchedulerStage;
+use crate::commands::passive_scan_commands::PassiveScanState;
+use crate::commands::tool_commands;
 
 // DTO for Tauri command argument to avoid CommandArg bound issues
 #[derive(Debug, Clone, Deserialize)]
@@ -421,9 +425,22 @@ pub async fn list_ai_services(
 
 // 取消流式聊天
 #[tauri::command]
-pub async fn cancel_ai_stream(conversation_id: String) -> Result<(), String> {
+pub async fn cancel_ai_stream(
+    conversation_id: String,
+    app_handle: AppHandle,
+) -> Result<(), String> {
     tracing::info!("Cancelling stream for conversation: {}", conversation_id);
     cancel_conversation_stream(&conversation_id);
+    
+    // 发送取消事件通知前端
+    let _ = app_handle.emit(
+        "agent:cancelled",
+        &serde_json::json!({
+            "execution_id": conversation_id,
+            "message": "Execution cancelled by user"
+        }),
+    );
+    
     Ok(())
 }
 
@@ -1881,6 +1898,146 @@ pub async fn get_ai_config(
 
     tracing::info!("Successfully retrieved AI configuration");
     Ok(ai_config)
+}
+
+/// 通过自然语言描述生成工作流图
+#[tauri::command(rename_all = "snake_case")]
+pub async fn generate_workflow_from_nl(
+    description: String,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+    passive_state: State<'_, PassiveScanState>,
+) -> Result<WorkflowGraph, String> {
+    let desc = description.trim();
+    if desc.is_empty() {
+        return Err("description is empty".to_string());
+    }
+
+    // 选择一个用于规划的 AI 配置
+    let mut ai_config = ai_manager
+        .get_ai_config_for_stage(SchedulerStage::Planning)
+        .await
+        .map_err(|e| e.to_string())?;
+    if ai_config.is_none() {
+        ai_config = ai_manager
+            .get_ai_config_for_stage(SchedulerStage::Execution)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let ai_config = ai_config.ok_or("No AI model configured for planning/execution")?;
+
+    // 将 AiConfig 转换为 AiService，再获取 LlmConfig
+    let ai_service = sentinel_llm::AiService::new(ai_config);
+    let llm_config = ai_service.to_llm_config();
+    let llm_client = sentinel_llm::LlmClient::new(llm_config);
+
+    // 可用工具与节点摘要（提高生成命中率）
+    let tools_summary = match tool_commands::list_unified_tools().await {
+        Ok(tools) => {
+            let mut lines = Vec::new();
+            for t in tools.into_iter().take(60) {
+                let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let cat = t.get("category").and_then(|v| v.as_str()).unwrap_or("misc");
+                let desc = t.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                lines.push(format!("- {} ({}): {}", name, cat, desc));
+            }
+            lines.join("\n")
+        }
+        Err(_) => "".to_string(),
+    };
+
+    let catalog_summary = match tool_commands::build_node_catalog(passive_state.inner()).await {
+        Ok(catalog) => {
+            let mut lines = Vec::new();
+            for item in catalog.into_iter().take(80) {
+                lines.push(format!("- {} [{}]: {}", item.node_type, item.category, item.label));
+            }
+            lines.join("\n")
+        }
+        Err(_) => "".to_string(),
+    };
+
+    let system_prompt = format!(r#"你是 Sentinel AI 的工作流设计助手。
+根据用户的自然语言描述，输出一个严格符合下面 JSON Schema 的 WorkflowGraph。
+只输出 JSON，不要解释，不要包含 Markdown。
+
+可用统一工具列表（tool::<name> 用于工具节点）：
+{}
+
+可用节点类型列表（node_type 必须从中选择或基于其命名）：
+{}
+
+Schema:
+{{
+  "id": "string",
+  "name": "string",
+  "version": "string",
+  "nodes": [
+    {{
+      "id": "string",
+      "node_type": "string",
+      "node_name": "string",
+      "x": number,
+      "y": number,
+      "params": object,
+      "input_ports": [{{"id":"string","name":"string","port_type":"String|Integer|Float|Boolean|Json|Array|Object|Artifact","required":boolean}}],
+      "output_ports": [{{"id":"string","name":"string","port_type":"String|Integer|Float|Boolean|Json|Array|Object|Artifact","required":boolean}}]
+    }}
+  ],
+  "edges": [
+    {{"id":"string","from_node":"string","from_port":"string","to_node":"string","to_port":"string"}}
+  ],
+  "variables": [],
+  "credentials": []
+}}
+
+规则：
+1) 用简洁的 node_type，能对应内置工具则用 "tool::<name>"，需要 AI 推理则用 "llm::completion"。
+2) 每个节点给出 node_name 与简短 params.description。
+3) 至少包含一个入口节点（node_type 可以为 "start"）。
+4) 给出合理的 x/y 布局（从左到右）。
+"#, tools_summary, catalog_summary);
+
+    let user_prompt = format!("用户描述：{}\n请生成 WorkflowGraph JSON。", desc);
+
+    let raw = llm_client
+        .completion(Some(&system_prompt), &user_prompt)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let json_str = raw.trim();
+    let parsed_value: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(e0) => {
+            if let (Some(s), Some(e)) = (json_str.find('{'), json_str.rfind('}')) {
+                serde_json::from_str(&json_str[s..=e])
+                    .map_err(|e| format!("Failed to parse extracted JSON: {}", e))?
+            } else {
+                return Err(format!("Failed to parse LLM output as JSON: {}", e0));
+            }
+        }
+    };
+
+    let mut graph: WorkflowGraph = serde_json::from_value(parsed_value)
+        .map_err(|e| format!("Failed to parse workflow graph: {}", e))?;
+
+    if graph.id.trim().is_empty() {
+        graph.id = format!("wf_{}", Utc::now().timestamp_millis());
+    }
+    if graph.name.trim().is_empty() {
+        graph.name = "AI生成工作流".to_string();
+    }
+    if graph.version.trim().is_empty() {
+        graph.version = "0.1.0".to_string();
+    }
+    // 确保变量/凭据字段存在
+    if graph.variables.is_empty() {
+        graph.variables = vec![];
+    }
+    if graph.credentials.is_empty() {
+        graph.credentials = vec![];
+    }
+
+    Ok(graph)
 }
 
 /// 生成默认的AI提供商配置（与前端 `AiProviderConfig` 结构兼容）

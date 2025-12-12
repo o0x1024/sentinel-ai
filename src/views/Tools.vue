@@ -128,6 +128,14 @@
                 <input type="text" v-model="editableServer.description" class="input input-bordered" />
               </div>
               <div class="form-control">
+                <label class="label"><span class="label-text">{{ $t('common.type') }}</span></label>
+                <select class="select select-bordered" v-model="editableServer.transport_type">
+                  <option value="stdio">标准输入/输出 (stdio)</option>
+                  <option value="sse">服务器发送事件 (sse)</option>
+                  <option value="streamableHttp">可流式HTTP (streamableHttp)</option>
+                </select>
+              </div>
+              <div class="form-control">
                 <label class="label"><span class="label-text">{{ $t('Tools.addServer.command') }}</span></label>
                 <input type="text" v-model="editableServer.command" class="input input-bordered font-mono" />
               </div>
@@ -208,79 +216,29 @@
           <button @click="showAddServerModal = false" class="btn btn-sm btn-ghost">✕</button>
         </div>
 
-        <div class="tabs tabs-boxed mb-4">
-          <button @click="addServerMode = 'quick'" :class="['tab', { 'tab-active': addServerMode === 'quick' }]">
-            <i class="fas fa-magic mr-2"></i>{{ $t('Tools.addServer.quickCreate') }}
-          </button>
-          <button @click="addServerMode = 'json'" :class="['tab', { 'tab-active': addServerMode === 'json' }]">
-            <i class="fas fa-file-code mr-2"></i>{{ $t('Tools.addServer.importFromJson') }}
-          </button>
-        </div>
 
-        <div v-if="addServerMode === 'quick'" class="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
-          <div class="flex items-center justify-between">
-            <label class="label">{{ $t('Tools.addServer.enabled') }}</label>
-            <input type="checkbox" class="toggle toggle-success" v-model="quickCreateForm.enabled" />
-          </div>
-          <div class="form-control">
-            <label class="label"><span class="label-text">{{ $t('common.name') }}<span class="text-error">*</span></span></label>
-            <input type="text" :placeholder="$t('common.name')" class="input input-bordered" v-model="quickCreateForm.name" />
-          </div>
-          <div class="form-control">
-            <label class="label"><span class="label-text">{{ $t('common.description') }}</span></label>
-            <textarea class="textarea textarea-bordered" :placeholder="$t('common.description')" v-model="quickCreateForm.description"></textarea>
-          </div>
-          <div class="form-control">
-            <label class="label"><span class="label-text">{{ $t('common.type') }}<span class="text-error">*</span></span></label>
-            <select class="select select-bordered" v-model="quickCreateForm.type">
-              <option value="stdio">标准输入/输出 (stdio)</option>
-              <option value="sse">服务器发送事件 (sse)</option>
-              <option value="streamableHttp">可流式HTTP (streamableHttp)</option>
-            </select>
-          </div>
-          <div class="form-control">
-            <label class="label"><span class="label-text">{{ $t('Tools.addServer.params') }}</span></label>
-            <textarea class="textarea textarea-bordered font-mono" :placeholder="$t('Tools.addServer.paramsPlaceholder')" rows="3" v-model="quickCreateForm.params"></textarea>
-          </div>
-          <div class="form-control">
-            <label class="label"><span class="label-text">{{ $t('Tools.addServer.envVars') }}</span></label>
-            <textarea class="textarea textarea-bordered font-mono" placeholder="KEY1=value1&#10;KEY2=value2" rows="3" v-model="quickCreateForm.envVars"></textarea>
-          </div>
-          <div class="form-control">
-            <label class="label"><span class="label-text">{{ $t('Tools.addServer.timeout') }}</span></label>
-            <input type="number" placeholder="60" class="input input-bordered" v-model.number="quickCreateForm.timeout" />
-          </div>
-          <div class="collapse collapse-arrow border border-base-300 bg-base-100">
-            <input type="checkbox" /> 
-            <div class="collapse-title text-md font-medium">{{ $t('Tools.addServer.advancedSettings') }}</div>
-            <div class="collapse-content space-y-4">
-              <div class="form-control">
-                <label class="label"><span class="label-text">{{ $t('Tools.addServer.providerName') }}</span></label>
-                <input type="text" class="input input-bordered" v-model="quickCreateForm.providerName" />
-              </div>
-              <div class="form-control">
-                <label class="label"><span class="label-text">{{ $t('Tools.addServer.providerWebsite') }}</span></label>
-                <input type="text" class="input input-bordered" v-model="quickCreateForm.providerWebsite" />
-              </div>
-              <div class="form-control">
-                <label class="label"><span class="label-text">{{ $t('Tools.addServer.logoUrl') }}</span></label>
-                <input type="text" class="input input-bordered" v-model="quickCreateForm.logoUrl" />
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <div v-if="addServerMode === 'json'" class="space-y-4">
+        <div class="space-y-4">
           <div class="form-control">
             <label class="label"><span class="label-text">{{ $t('Tools.addServer.jsonPaste') }}<span class="text-error">*</span></span></label>
-            <textarea v-model="jsonImportConfig" class="textarea textarea-bordered font-mono" rows="15"></textarea>
+            <textarea v-model="jsonImportConfig" class="textarea textarea-bordered font-mono" rows="15" placeholder='{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/path/to/directory"
+      ]
+    }
+  }
+}'></textarea>
           </div>
         </div>
 
         <div class="modal-action">
           <button @click="showAddServerModal = false" class="btn">{{ $t('common.cancel') }}</button>
-          <button v-if="addServerMode === 'quick'" @click="handleQuickCreateServer" class="btn btn-primary">{{ $t('common.save') }}</button>
-          <button v-if="addServerMode === 'json'" @click="handleImportFromJson" class="btn btn-primary">{{ $t('Tools.addServer.import') }}</button>
+          <button @click="handleImportFromJson" class="btn btn-primary">{{ $t('Tools.addServer.import') }}</button>
         </div>
       </div>
     </dialog>
@@ -351,7 +309,7 @@
 
             <div class="form-control">
               <label class="label"><span class="label-text">测试结果</span></label>
-              <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-40 bg-base-200">{{ testToolResult }}</pre>
+              <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap min-h-40 max-h-60 overflow-auto bg-base-200">{{ testToolResult }}</pre>
             </div>
           </div>
         </div>
@@ -416,14 +374,13 @@ const pluginToolsRef = ref<InstanceType<typeof PluginToolsTab> | null>(null)
 const activeTab = ref('builtin_tools')
 const showAddServerModal = ref(false)
 const showUploadPluginModal = ref(false)
-const addServerMode = ref('quick')
 
 // 服务器详情模态框
 const showDetailsModal = ref(false)
 const detailsTab = ref('general')
 const editMode = ref('form')
 const selectedServer = ref<McpConnection | null>(null)
-const editableServer = reactive({ db_id: -1, name: '', description: '', command: '', args: '', enabled: true })
+const editableServer = reactive({ db_id: '', name: '', description: '', command: '', args: '', enabled: true, transport_type: 'stdio' })
 const editableServerJson = ref('')
 const serverTools = ref<FrontendTool[]>([])
 const isLoadingTools = ref(false)
@@ -439,9 +396,7 @@ const testToolResult = ref('')
 const isTestingTool = ref(false)
 
 // 添加服务器表单
-const quickCreateForm = reactive({
-  enabled: true, name: '', description: '', type: 'stdio', params: '', envVars: '', timeout: 60, providerName: '', providerWebsite: '', logoUrl: ''
-})
+// 添加服务器表单
 const jsonImportConfig = ref('')
 
 // 计算属性
@@ -452,6 +407,24 @@ const addedServerNames = computed(() => {
 const selectedTestTool = computed(() => {
   if (!selectedTestToolName.value) return null
   return testServerTools.value.find(t => t.name === selectedTestToolName.value) || null
+})
+
+// 监听添加服务器模态框打开，设置默认 JSON 模板
+watch(showAddServerModal, (isOpen) => {
+  if (isOpen && !jsonImportConfig.value) {
+    jsonImportConfig.value = `{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/username/Desktop"
+      ]
+    }
+  }
+}`
+  }
 })
 
 // 监听工具选择变化
@@ -516,6 +489,7 @@ function openDetailsModal(connection: McpConnection) {
     command: connection.command,
     args: connection.args.join(' '),
     enabled: true,
+    transport_type: connection.transport_type
   })
   editableServerJson.value = JSON.stringify({
     db_id: connection.db_id, id: connection.id, name: connection.name,
@@ -563,7 +537,7 @@ async function saveServerDetails() {
         db_id: editableServer.db_id, id: selectedServer.value.id, name: editableServer.name,
         description: editableServer.description || '', command: editableServer.command,
         args: editableServer.args.split(' ').filter(s => s.trim() !== ''),
-        transport_type: selectedServer.value.transport_type, endpoint: selectedServer.value.endpoint, status: selectedServer.value.status,
+        transport_type: editableServer.transport_type, endpoint: selectedServer.value.endpoint, status: selectedServer.value.status,
       }
     }
     await invoke('mcp_update_server_config', { payload })
@@ -632,18 +606,7 @@ async function runTestTool() {
   } finally { isTestingTool.value = false }
 }
 
-// 添加服务器
-async function handleQuickCreateServer() {
-  if (!quickCreateForm.name) { await dialog.error(t('Tools.addServer.nameRequired')); return }
-  try {
-    const serverName = quickCreateForm.name
-    await invoke('quick_create_mcp_server', { config: quickCreateForm })
-    showAddServerModal.value = false
-    Object.assign(quickCreateForm, { enabled: true, name: '', description: '', type: 'stdio', params: '', envVars: '', timeout: 60, providerName: '', providerWebsite: '', logoUrl: '' })
-    mcpServersRef.value?.fetchConnections?.()
-    await emit('mcp:tools-changed', { action: 'server_created', serverName })
-  } catch (error) { console.error("快速创建服务器失败:", error); await dialog.error(`${t('Tools.addServerFailed')}: ${error}`) }
-}
+
 
 async function handleImportFromJson() {
   if (!jsonImportConfig.value.trim()) { await dialog.error(t('Tools.addServer.jsonRequired')); return }

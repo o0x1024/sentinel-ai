@@ -509,6 +509,13 @@ fn ts_type_to_json_schema(type_str: &str) -> serde_json::Value {
 pub async fn list_node_catalog(
     passive_state: tauri::State<'_, crate::commands::passive_scan_commands::PassiveScanState>,
 ) -> Result<Vec<NodeCatalogItem>, String> {
+    build_node_catalog(passive_state.inner()).await
+}
+
+/// Build node catalog for use by other commands (includes MCP and enabled plugins).
+pub async fn build_node_catalog(
+    passive_state: &crate::commands::passive_scan_commands::PassiveScanState,
+) -> Result<Vec<NodeCatalogItem>, String> {
     let mut catalog = Vec::new();
     
     // Trigger nodes
@@ -1056,4 +1063,3 @@ pub async fn refresh_all_dynamic_tools(
         "message": "Dynamic tools refreshed. MCP and plugin tools will be registered when connected/enabled."
     }))
 }
-

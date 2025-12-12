@@ -7,6 +7,7 @@ import { performanceService } from './services/performance';
 import i18n from './i18n'; // 导入i18n配置
 import DialogPlugin from './composables/useDialog'; // 导入对话框插件
 import ToastPlugin from './composables/useToast'; // 导入Toast插件
+import { open as openExternal } from '@tauri-apps/plugin-shell'
 
 // 启动时应用已保存的通用设置（主题/字体/语言）
 const applyStartupSettings = () => {
@@ -237,6 +238,38 @@ app.use(router);
 app.use(i18n); // 使用i18n
 app.use(DialogPlugin); // 注册对话框插件
 app.use(ToastPlugin); // 注册Toast插件
+
+// 全局外链拦截：所有外部链接用系统默认浏览器打开
+const isExternalHref = (href: string) => {
+  const h = href.trim()
+  return (
+    /^https?:\/\//i.test(h) ||
+    /^\/\//.test(h) ||
+    /^mailto:/i.test(h) ||
+    /^tel:/i.test(h)
+  )
+}
+
+document.addEventListener(
+  'click',
+  (e) => {
+    const target = e.target as HTMLElement | null
+    const anchor = target?.closest('a') as HTMLAnchorElement | null
+    if (!anchor) return
+    if (anchor.hasAttribute('data-internal')) return
+
+    const href = anchor.getAttribute('href')
+    if (!href) return
+    // 允许应用内路由/锚点
+    if (href.startsWith('#') || href.startsWith('/')) return
+    if (!isExternalHref(href)) return
+
+    e.preventDefault()
+    e.stopPropagation()
+    openExternal(href)
+  },
+  true
+)
 
 // 在应用挂载前应用本地持久化的通用设置
 applyStartupSettings();

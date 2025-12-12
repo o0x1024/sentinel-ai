@@ -55,6 +55,7 @@ impl BrowserTools {
             BrowserAction::SetAutoAnnotation { enabled } => self.set_auto_annotation(*enabled).await,
             BrowserAction::GetAnnotatedElements => self.get_annotated_elements_action().await,
             BrowserAction::FillByIndex { index, value } => self.fill_by_index(*index, value).await,
+            BrowserAction::HoverByIndex { index } => self.hover_by_index(*index).await,
         };
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -327,6 +328,16 @@ impl BrowserTools {
         if let Some(ref proxy_server) = self.config.browser_proxy {
             params["proxy"] = json!({"server": proxy_server});
         }
+
+        // 添加自定义 header
+        if let Some(ref headers) = self.config.headers {
+            params["headers"] = json!(headers);
+        }
+
+        // 添加自定义 local storage
+        if let Some(ref storage) = self.config.local_storage {
+            params["localStorage"] = json!(storage);
+        }
         
         self.call_playwright_tool("playwright_navigate", params).await?;
         
@@ -434,6 +445,106 @@ impl BrowserTools {
                     .unwrap_or("Unknown error");
                 return Err(anyhow!("Fill by index failed: {}", error_msg));
             }
+        }
+        
+        Ok(ActionResult {
+            success: true,
+            error: None,
+            screenshot: None,
+            duration_ms: 0,
+        })
+    }
+
+    /// 通过索引悬停元素（用于发现悬停菜单）
+    pub async fn hover_by_index(&self, index: u32) -> Result<ActionResult> {
+        info!("Hovering element by index: {}", index);
+        
+        // 使用 JavaScript 触发悬停事件
+        let hover_script = format!(
+            r#"(async function() {{
+                // 获取标注元素
+                const elements = window.__elements_map__ || window.__playwrightAnnotatedElements || {{}};
+                const element = elements[{}];
+                
+                if (!element) {{
+                    return {{ success: false, error: 'Element not found at index {}' }};
+                }}
+                
+                // 记录悬停前的可见元素计数
+                const beforeCount = document.querySelectorAll(
+                    '[role="menu"], [role="listbox"], .dropdown-menu, .submenu, .tooltip, [aria-expanded="true"]'
+                ).length;
+                
+                // 获取元素中心坐标
+                const rect = element.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                
+                // 发送 mouseover 和 mouseenter 事件
+                const mouseoverEvent = new MouseEvent('mouseover', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: centerX,
+                    clientY: centerY
+                }});
+                
+                const mouseenterEvent = new MouseEvent('mouseenter', {{
+                    bubbles: false,
+                    cancelable: true,
+                    view: window,
+                    clientX: centerX,
+                    clientY: centerY
+                }});
+                
+                element.dispatchEvent(mouseenterEvent);
+                element.dispatchEvent(mouseoverEvent);
+                
+                // 也触发 focus 事件（某些元素需要）
+                if (element.focus) {{
+                    element.focus();
+                }}
+                
+                // 等待动画和 DOM 更新
+                await new Promise(resolve => setTimeout(resolve, 350));
+                
+                // 检测新出现的元素
+                const afterElements = document.querySelectorAll(
+                    '[role="menu"], [role="listbox"], .dropdown-menu, .submenu, .tooltip, [aria-expanded="true"]'
+                );
+                
+                const newCount = afterElements.length - beforeCount;
+                
+                // 检测 aria-expanded 状态变化
+                const expanded = element.getAttribute('aria-expanded');
+                
+                return {{
+                    success: true,
+                    before_count: beforeCount,
+                    after_count: afterElements.length,
+                    new_elements_count: newCount,
+                    aria_expanded: expanded,
+                    element_text: (element.textContent || '').substring(0, 50)
+                }};
+            }})()"#,
+            index, index
+        );
+        
+        let result = self.evaluate_js(&hover_script).await?;
+        
+        // 检查结果
+        let success = result.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+        
+        if !success {
+            let error = result.get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("Unknown error");
+            return Err(anyhow!("Hover by index failed: {}", error));
+        }
+        
+        let new_count = result.get("new_elements_count").and_then(|n| n.as_i64()).unwrap_or(0);
+        if new_count > 0 {
+            info!("Hover revealed {} new elements", new_count);
         }
         
         Ok(ActionResult {
@@ -956,6 +1067,10 @@ pub fn action_to_tool_call(action: &BrowserAction) -> (String, Value) {
         BrowserAction::FillByIndex { index, value } => (
             "playwright_fill_by_index".to_string(),
             json!({ "index": index, "value": value })
+        ),
+        BrowserAction::HoverByIndex { index } => (
+            "hover_by_index".to_string(),
+            json!({ "index": index })
         ),
     }
 }

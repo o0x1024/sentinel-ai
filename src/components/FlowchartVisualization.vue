@@ -15,6 +15,12 @@
                             新建
                         </button>
 
+                        <!-- AI生成按钮 -->
+                        <button class="btn btn-sm btn-outline btn-secondary" @click="openAiGenerateModal" title="通过自然语言生成工作流">
+                            <i class="fas fa-magic mr-1"></i>
+                            AI生成
+                        </button>
+
                         <!-- 缩放控制 -->
                         <div class="join">
                             <button class="btn btn-sm join-item" @click="zoomOut">
@@ -236,12 +242,48 @@
                 {{ item.label }}
             </div>
         </div>
+
+        <!-- AI生成工作流模态框 -->
+        <dialog :class="['modal', { 'modal-open': showAiGenerateModal }]">
+            <div class="modal-box max-w-2xl">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="font-bold text-lg">AI生成工作流</h3>
+                    <button class="btn btn-sm btn-ghost" @click="closeAiGenerateModal">✕</button>
+                </div>
+                <div class="space-y-3">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i>
+                        <span>用自然语言描述你想要的流程，例如：先子域名扫描，再端口扫描，最后用AI分析结果并生成报告。</span>
+                    </div>
+                    <textarea
+                        v-model="aiGenerateText"
+                        class="textarea textarea-bordered w-full font-mono text-sm"
+                        rows="6"
+                        placeholder="请输入工作流描述..."
+                        spellcheck="false"
+                    ></textarea>
+                    <div v-if="aiGenerateError" class="alert alert-error text-sm">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>{{ aiGenerateError }}</span>
+                    </div>
+                </div>
+                <div class="modal-action">
+                    <button class="btn" @click="closeAiGenerateModal" :disabled="isAiGenerating">取消</button>
+                    <button class="btn btn-primary" @click="generateWorkflowFromNl" :disabled="isAiGenerating || !aiGenerateText.trim()">
+                        <i v-if="isAiGenerating" class="fas fa-spinner fa-spin mr-1"></i>
+                        <i v-else class="fas fa-magic mr-1"></i>
+                        生成并加载
+                    </button>
+                </div>
+            </div>
+        </dialog>
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { CSSProperties } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 
 
 defineOptions({
@@ -312,6 +354,12 @@ const dragOffset = reactive({ x: 0, y: 0 })
 const isFullscreen = ref(false)
 const zoomLevel = ref(1)
 // 已移除布局模式，保留自由拖拽
+
+// AI生成
+const showAiGenerateModal = ref(false)
+const aiGenerateText = ref('')
+const isAiGenerating = ref(false)
+const aiGenerateError = ref('')
 
 // 画布拖拽
 const isPanningCanvas = ref(false)
@@ -922,6 +970,13 @@ onMounted(() => {
     initializeFlowchart()
     updateContainerSize()
     window.addEventListener('resize', updateContainerSize)
+
+    // 从其他入口触发自动打开 AI生成
+    const flag = localStorage.getItem('open_ai_generate_workflow')
+    if (flag === '1') {
+        localStorage.removeItem('open_ai_generate_workflow')
+        openAiGenerateModal()
+    }
     
     // 使用事件代理处理节点右键菜单
     const handleContextMenu = (e: MouseEvent) => {
@@ -1153,6 +1208,76 @@ const updateFlowchartFromPlan = (planData: any) => {
     // 根据实际的计划数据更新节点状态
     // 这里可以根据实际的API响应格式来实现
     console.log('Updating flowchart from plan data:', planData)
+}
+
+const openAiGenerateModal = () => {
+    aiGenerateError.value = ''
+    showAiGenerateModal.value = true
+    nextTick(() => {
+        const el = document.querySelector('.modal-open textarea') as HTMLTextAreaElement | null
+        el?.focus()
+    })
+}
+
+const closeAiGenerateModal = () => {
+    showAiGenerateModal.value = false
+    aiGenerateError.value = ''
+}
+
+const applyWorkflowGraph = (graph: any) => {
+    if (!graph?.nodes || !Array.isArray(graph.nodes)) {
+        throw new Error('生成结果缺少 nodes')
+    }
+    const deps: Record<string, string[]> = {}
+    const edges = Array.isArray(graph.edges) ? graph.edges : []
+    edges.forEach((e: any) => {
+        if (!deps[e.to_node]) deps[e.to_node] = []
+        deps[e.to_node].push(e.from_node)
+    })
+
+    nodes.value = graph.nodes.map((n: any) => ({
+        id: n.id,
+        name: n.node_name || n.node_type || n.id,
+        description: n.params?.description || n.node_type || '',
+        status: 'pending',
+        x: typeof n.x === 'number' ? n.x : 80,
+        y: typeof n.y === 'number' ? n.y : 80,
+        type: n.node_type,
+        dependencies: deps[n.id] || [],
+        params: n.params || {},
+        metadata: {
+            input_ports: n.input_ports || [],
+            output_ports: n.output_ports || [],
+        },
+    }))
+
+    customEdges.value = edges.map((e: any) => ({
+        from_node: e.from_node,
+        to_node: e.to_node,
+        from_port: e.from_port || 'out',
+        to_port: e.to_port || 'in',
+    }))
+    updateConnections()
+    history.value = []
+    historyIndex.value = -1
+    saveHistory()
+    emit('change')
+}
+
+const generateWorkflowFromNl = async () => {
+    if (!aiGenerateText.value.trim()) return
+    isAiGenerating.value = true
+    aiGenerateError.value = ''
+    try {
+        const graph = await invoke<any>('generate_workflow_from_nl', { description: aiGenerateText.value.trim() })
+        applyWorkflowGraph(graph)
+        closeAiGenerateModal()
+    } catch (e: any) {
+        console.error('AI generate workflow failed:', e)
+        aiGenerateError.value = e?.message || String(e)
+    } finally {
+        isAiGenerating.value = false
+    }
 }
 
 // 暴露方法给父组件

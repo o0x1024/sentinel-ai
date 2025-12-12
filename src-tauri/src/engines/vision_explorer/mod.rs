@@ -51,6 +51,10 @@ pub mod state;
 pub mod integrations;
 pub mod tool;
 pub mod message_emitter;
+pub mod route_tracker;
+pub mod element_manager;
+pub mod coverage_engine;
+pub mod browser_scripts;
 
 // 导出核心类型
 pub use types::{
@@ -74,6 +78,11 @@ pub use tools::BrowserTools;
 // 导出状态管理
 pub use state::{StateManager, ExplorationSummary};
 
+// 导出覆盖率引擎
+pub use route_tracker::{RouteTracker, RouteStats};
+pub use element_manager::{ElementManager, ElementStats, ElementFingerprint, DynamicComponent};
+pub use coverage_engine::{CoverageEngine, CoverageReport, CompletionCheck, COVERAGE_TARGET, STABILITY_THRESHOLD};
+
 // 导出集成模块
 pub use integrations::{
     ContextSummaryManager, PassiveProxyIntegration, TakeoverManager,
@@ -83,7 +92,7 @@ pub use integrations::{
 // 导出消息发送器
 pub use message_emitter::{
     VisionExplorerMessageEmitter, VisionStep, VisionAnalysis,
-    VisionAction, VisionExplorationStats,
+    VisionAction, VisionExplorationStats, VisionCoverageUpdate,
 };
 
 pub use tool::VisionExplorerTool;

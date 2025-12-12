@@ -77,6 +77,8 @@ pub enum BrowserAction {
     GetAnnotatedElements,
     /// 通过索引填充输入框（使用 fill 而非 type，更可靠）
     FillByIndex { index: u32, value: String },
+    /// 通过索引悬停元素（用于发现悬停菜单）
+    HoverByIndex { index: u32 },
 }
 
 /// 操作执行结果
@@ -408,6 +410,10 @@ pub struct VisionExplorerConfig {
     pub api_poll_interval_ms: u64,
     /// 探索完成时是否发送最终块以终止消息流
     pub finalize_on_complete: bool,
+    /// 自定义 HTTP 请求头 (用于 Playwright 导航)
+    pub headers: Option<HashMap<String, String>>,
+    /// 自定义 Local Storage 数据 (用于 Playwright 导航)
+    pub local_storage: Option<HashMap<String, String>>,
 }
 
 /// 登录凭据
@@ -443,6 +449,8 @@ impl Default for VisionExplorerConfig {
             enable_takeover: false, // 默认禁用Takeover
             api_poll_interval_ms: 2000, // 2秒轮询一次API
             finalize_on_complete: true,
+            headers: None,
+            local_storage: None,
         }
     }
 }
@@ -644,6 +652,20 @@ pub fn get_browser_tool_definitions() -> Vec<BrowserToolDefinition> {
                     }
                 },
                 "required": ["keys"]
+            }),
+        },
+        BrowserToolDefinition {
+            name: "hover_by_index".to_string(),
+            description: "通过元素索引号悬停元素（用于发现悬停菜单）".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "元素标注索引号"
+                    }
+                },
+                "required": ["index"]
             }),
         },
         

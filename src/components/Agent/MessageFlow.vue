@@ -1,7 +1,7 @@
 <template>
   <div class="message-flow flex flex-col gap-2 p-4 overflow-y-auto flex-1" ref="containerRef">
-    <div v-for="msg in messages" :key="msg.id" class="message-wrapper animate-fadeIn">
-      <MessageBlock :message="msg" />
+    <div v-for="msg in messages" :key="msg.id" class="message-wrapper animate-fadeIn min-w-0">
+      <MessageBlock :message="msg" :is-vision-active="isVisionActive" @resend="handleResend" />
     </div>
     
     <!-- Loading indicator (waiting for response) -->
@@ -38,6 +38,11 @@ const props = defineProps<{
   messages: AgentMessage[]
   isStreaming?: boolean
   streamingContent?: string
+  isVisionActive?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'resend', message: AgentMessage): void
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -68,6 +73,11 @@ const scrollToBottom = () => {
   if (containerRef.value) {
     containerRef.value.scrollTop = containerRef.value.scrollHeight
   }
+}
+
+// Handle resend event from MessageBlock
+const handleResend = (message: AgentMessage) => {
+  emit('resend', message)
 }
 
 // Expose scroll method

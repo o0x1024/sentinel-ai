@@ -24,7 +24,7 @@
     </Transition>
 
     <!-- Tool Config Panel -->
-    <Transition name="slide-drawer">
+    <Transition name="slide-drawer-right">
       <div 
         v-if="showToolConfig"
         class="tool-config-drawer absolute right-0 top-0 bottom-0 w-96 bg-base-100 shadow-2xl z-50 overflow-hidden"
@@ -79,15 +79,29 @@
           :messages="messages"
           :is-streaming="isStreaming"
           :streaming-content="streamingContent"
+          :is-vision-active="isVisionActive"
           class="flex-1"
+          @resend="handleResendMessage"
         />
         
-        <!-- Todo panel (when available) -->
-        <TodoPanel 
-          v-if="hasTodos" 
-          :todos="todos" 
-          class="todo-sidebar w-72 flex-shrink-0 border-l border-base-300 p-4 overflow-y-auto"
-        />
+        <!-- Side Panel (Vision or Todo) -->
+        <div class="sidebar-container w-80 flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100" v-if="isVisionActive || hasTodos">
+            <VisionExplorerPanel 
+               v-if="isVisionActive"
+               :steps="visionEvents.steps.value" 
+               :coverage="visionEvents.coverage.value"
+               :discovered-apis="visionEvents.discoveredApis.value"
+               :is-active="isVisionActive"
+               :current-url="visionEvents.currentUrl.value"
+               class="h-full border-0 rounded-none bg-transparent"
+               @close="visionEvents.close()"
+            />
+            <TodoPanel 
+              v-else-if="hasTodos" 
+              :todos="todos" 
+              class="h-full p-4 overflow-y-auto border-0 bg-transparent"
+            />
+        </div>
       </div>
 
       <!-- Input area - using InputAreaComponent for full features -->
@@ -129,9 +143,11 @@ import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
 import type { Todo } from '@/types/todo'
 import { useAgentEvents } from '@/composables/useAgentEvents'
+import { useVisionEvents } from '@/composables/useVisionEvents'
 import { useTodos } from '@/composables/useTodos'
 import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
+import VisionExplorerPanel from './VisionExplorerPanel.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
 import ToolConfigPanel from './ToolConfigPanel.vue'
@@ -197,6 +213,10 @@ const messages = computed(() => agentEvents.messages.value)
 const isExecuting = computed(() => agentEvents.isExecuting.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
+
+// Vision Events
+const visionEvents = useVisionEvents(computed(() => agentEvents.currentExecutionId.value || ''))
+const isVisionActive = computed(() => visionEvents.isVisionActive.value)
 
 // Todos
 const todosComposable = useTodos()
@@ -380,10 +400,56 @@ const handleClearConversation = async () => {
 }
 
 // Handle stop
-const handleStop = () => {
-  console.log('[AgentView] Stop requested')
-  // TODO: implement stop logic via backend
-  // isExecuting 和 isStreaming 由 useAgentEvents 管理
+const handleStop = async () => {
+  console.log('[AgentView] Stop requested for conversation:', conversationId.value)
+  
+  if (!conversationId.value) {
+    console.warn('[AgentView] No conversation ID to stop')
+    return
+  }
+  
+  try {
+    // 调用后端取消命令
+    await invoke('cancel_ai_stream', {
+      conversationId: conversationId.value
+    })
+    
+    console.log('[AgentView] Stop command sent successfully')
+    
+    // 通知 useAgentEvents 停止执行状态
+    agentEvents.stopExecution()
+    
+  } catch (e) {
+    console.error('[AgentView] Failed to stop execution:', e)
+    localError.value = '停止执行失败: ' + e
+  }
+}
+
+// Handle resend message - 重新发送用户消息，删除该消息之后的所有消息
+const handleResendMessage = async (message: AgentMessage) => {
+  if (isExecuting.value) {
+    console.log('[AgentView] Cannot resend while executing')
+    return
+  }
+
+  console.log('[AgentView] Resending message:', message.id, message.content)
+  
+  // 找到该消息在列表中的位置
+  const messageIndex = messages.value.findIndex(m => m.id === message.id)
+  if (messageIndex === -1) {
+    console.error('[AgentView] Message not found')
+    return
+  }
+
+  // 删除该消息之后的所有消息（保留该用户消息，删除 LLM 响应和后续消息）
+  const messagesToKeep = messages.value.slice(0, messageIndex)
+  agentEvents.messages.value = messagesToKeep
+
+  // 将用户消息内容设置到输入框
+  inputValue.value = message.content
+
+  // 自动触发发送
+  await handleSubmit()
 }
 
 // Load conversation history
@@ -691,6 +757,17 @@ defineExpose({
 
 .slide-drawer-leave-to {
   transform: translateX(-100%);
+}
+
+/* Drawer Slide Animation Right */
+.slide-drawer-right-enter-active,
+.slide-drawer-right-leave-active {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.slide-drawer-right-enter-from,
+.slide-drawer-right-leave-to {
+  transform: translateX(100%);
 }
 
 /* Responsive */

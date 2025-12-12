@@ -9,7 +9,11 @@
 //! - 上下文摘要：长任务时自动生成摘要避免token溢出
 
 use super::integrations::{ContextSummaryManager, PassiveProxyIntegration, ProxyRequestInfo, TakeoverManager};
-use super::message_emitter::{VisionExplorerMessageEmitter, VisionAnalysis, VisionAction, VisionExplorationStats};
+use super::message_emitter::{VisionExplorerMessageEmitter, VisionAnalysis, VisionAction, VisionExplorationStats, VisionCoverageUpdate};
+use super::route_tracker::RouteTracker;
+use super::element_manager::ElementManager;
+use super::coverage_engine::CoverageEngine;
+use super::browser_scripts;
 use super::state::{StateManager, ExplorationSummary};
 use crate::utils::ordered_message::ArchitectureType;
 use super::tools::BrowserTools;
@@ -87,6 +91,14 @@ pub struct VisionExplorer {
     message_emitter: Option<Arc<VisionExplorerMessageEmitter>>,
     // 取消令牌 (用于响应外部停止请求)
     cancellation_token: Option<CancellationToken>,
+    // 新增：路由追踪器
+    route_tracker: Arc<RwLock<RouteTracker>>,
+    // 新增：元素管理器
+    element_manager: Arc<RwLock<ElementManager>>,
+    // 新增：覆盖率引擎
+    coverage_engine: Arc<RwLock<CoverageEngine>>,
+    // 是否已注入路由监听脚本
+    route_monitor_injected: Arc<RwLock<bool>>,
 }
 
 impl VisionExplorer {
@@ -120,6 +132,11 @@ impl VisionExplorer {
         // 创建Takeover事件通道
         let (tx, rx) = mpsc::unbounded_channel();
 
+        // 初始化覆盖率组件
+        let route_tracker = Arc::new(RwLock::new(RouteTracker::new(&config.target_url)));
+        let element_manager = Arc::new(RwLock::new(ElementManager::new()));
+        let coverage_engine = Arc::new(RwLock::new(CoverageEngine::new()));
+
         Self {
             config,
             browser_tools,
@@ -138,6 +155,10 @@ impl VisionExplorer {
             passive_scan_state: None,
             message_emitter: None,
             cancellation_token: None,
+            route_tracker,
+            element_manager,
+            coverage_engine,
+            route_monitor_injected: Arc::new(RwLock::new(false)),
         }
     }
 
@@ -391,6 +412,19 @@ impl VisionExplorer {
             state.record_action(navigate_action, result, vec![]);
         }
 
+        // 注入路由监听脚本（用于 SPA 路由追踪）
+        {
+            let mut injected = self.route_monitor_injected.write().await;
+            if !*injected {
+                info!("Injecting route monitor script for SPA tracking");
+                if let Err(e) = self.browser_tools.evaluate_js(browser_scripts::ROUTE_MONITOR_SCRIPT).await {
+                    warn!("Failed to inject route monitor script: {}", e);
+                } else {
+                    *injected = true;
+                }
+            }
+        }
+
         // 第2步：获取初始页面状态（根据多模态配置选择方式）
         info!("Step 2: Capturing initial page state (multimodal={})", self.config.enable_multimodal);
         let page_state = if self.config.enable_multimodal {
@@ -534,6 +568,42 @@ impl VisionExplorer {
             state.update_page_state(page_state.clone());
         }
 
+        // 2.5. 更新元素管理器和路由追踪器
+        {
+            // 更新元素管理器
+            let mut em = self.element_manager.write().await;
+            em.update_page_elements(&page_state.annotated_elements, &page_state.url);
+        }
+        
+        // 从内部链接中提取路由
+        {
+            let internal_links: Vec<String> = page_state.links.iter()
+                .filter_map(|el| el.attributes.get("href").cloned())
+                .collect();
+            
+            let mut rt = self.route_tracker.write().await;
+            let new_routes = rt.add_discovered_routes(&internal_links, &page_state.url);
+            if new_routes > 0 {
+                info!("Discovered {} new routes from page links", new_routes);
+            }
+            rt.mark_visited(&page_state.url);
+        }
+        
+        // 检查 SPA 路由变化（通过注入的脚本）
+        if let Ok(routes_result) = self.browser_tools.evaluate_js(browser_scripts::GET_ROUTES_SCRIPT).await {
+            if let Some(routes) = routes_result.as_array() {
+                let route_strings: Vec<String> = routes.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+                
+                let mut rt = self.route_tracker.write().await;
+                let new_spa_routes = rt.add_discovered_routes(&route_strings, "spa_history");
+                if new_spa_routes > 0 {
+                    info!("Discovered {} new SPA routes via History API", new_spa_routes);
+                }
+            }
+        }
+
         // 3. 构建VLM提示词 (分离 system_prompt 和 user_prompt)
         let (system_prompt, user_prompt) = self.build_vlm_prompt(&page_state).await?;
 
@@ -578,10 +648,56 @@ impl VisionExplorer {
         }
 
         // 8. 检查是否完成
-        if analysis.is_exploration_complete {
-            let mut state = self.state_manager.write().await;
-            state.mark_completed(analysis.completion_reason.as_deref().unwrap_or("VLM decided exploration is complete"));
-            return Ok((true, false));
+        // 8a. 首先检查 VLM 是否认为完成
+        let vlm_says_complete = analysis.is_exploration_complete;
+        
+        // 8b. 检查覆盖率引擎是否认为可以完成
+        let coverage_allows_complete = {
+            let pending_routes = {
+                let rt = self.route_tracker.read().await;
+                rt.pending_count()
+            };
+            let ce = self.coverage_engine.read().await;
+            ce.is_completion_ready(pending_routes)
+        };
+        
+        // 8c. 如果 VLM 说完成，验证覆盖率是否达标
+        if vlm_says_complete {
+            if coverage_allows_complete {
+                let mut state = self.state_manager.write().await;
+                state.mark_completed(analysis.completion_reason.as_deref().unwrap_or("VLM decided exploration is complete, coverage verified"));
+                return Ok((true, false));
+            } else {
+                // VLM 说完成但覆盖率未达标，检查是否有待访问路由
+                let pending_route = {
+                    let mut rt = self.route_tracker.write().await;
+                    rt.next_pending()
+                };
+                
+                if let Some(route) = pending_route {
+                    info!("VLM says complete but {} routes pending, navigating to next route: {}", 
+                        {let rt = self.route_tracker.read().await; rt.pending_count() + 1}, route);
+                    // 不完成，继续探索
+                } else {
+                    // 没有待访问路由，检查稳定性
+                    let ce = self.coverage_engine.read().await;
+                    if ce.is_stable_complete() {
+                        let mut state = self.state_manager.write().await;
+                        state.mark_completed("Stable completion: no new discoveries for multiple rounds");
+                        return Ok((true, false));
+                    }
+                }
+            }
+        }
+        
+        // 8d. 即使 VLM 没说完成，如果覆盖率系统检测到稳定完成也可以结束
+        {
+            let ce = self.coverage_engine.read().await;
+            if ce.is_stable_complete() && coverage_allows_complete {
+                let mut state = self.state_manager.write().await;
+                state.mark_completed("Coverage metrics indicate exploration complete");
+                return Ok((true, false));
+            }
         }
 
         // 9. 执行下一步操作
@@ -615,6 +731,63 @@ impl VisionExplorer {
             
             // 更新进度
             state.calculate_progress();
+        }
+
+        // 11. 更新元素管理器中的交互状态
+        if let Some(index) = analysis.next_action.element_index {
+            let mut em = self.element_manager.write().await;
+            em.mark_interacted_by_index(index);
+        }
+
+        // 12. 更新覆盖率并发送到前端
+        {
+            let route_stats = {
+                let rt = self.route_tracker.read().await;
+                rt.stats()
+            };
+            
+            let element_stats = {
+                let em = self.element_manager.read().await;
+                em.stats()
+            };
+            
+            let api_count = {
+                let state = self.state_manager.read().await;
+                state.state().discovered_apis.len()
+            };
+            
+            // 计算组件覆盖率（暂时为 100%）
+            let component_coverage = {
+                let em = self.element_manager.read().await;
+                em.component_coverage_percentage()
+            };
+            
+            // 更新覆盖率引擎
+            {
+                let mut ce = self.coverage_engine.write().await;
+                ce.update(&route_stats, &element_stats, api_count, component_coverage);
+            }
+            
+            // 发送覆盖率更新到前端
+            if let Some(emitter) = &self.message_emitter {
+                let ce = self.coverage_engine.read().await;
+                let pending_routes = {
+                    let rt = self.route_tracker.read().await;
+                    rt.get_pending_routes()
+                };
+                
+                let update = VisionCoverageUpdate {
+                    route_coverage: route_stats.coverage,
+                    element_coverage: element_stats.coverage,
+                    component_coverage,
+                    overall_coverage: ce.overall_coverage(),
+                    api_count,
+                    pending_routes,
+                    stable_rounds: ce.consecutive_no_discovery,
+                };
+                
+                emitter.emit_coverage_update(&update);
+            }
         }
 
         Ok((false, is_screenshot))

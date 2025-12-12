@@ -6,7 +6,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::RwLock;
 
@@ -14,7 +14,15 @@ use sentinel_core::models::database::McpServerConfig;
 use sentinel_db::DatabaseService;
 
 use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
-use rmcp::ServiceExt;
+use rmcp::service::RunningService;
+use rmcp::{RoleClient, ServiceExt};
+
+/// Type alias for MCP client service
+type McpClient = RunningService<RoleClient, ClientInfo>;
+
+/// Persistent MCP client connections - keeps the client alive for tool calls
+static PERSISTENT_CLIENTS: Lazy<RwLock<HashMap<String, Arc<tokio::sync::Mutex<McpClient>>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// MCP connection info for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,12 +303,13 @@ pub async fn add_child_process_mcp_server(
         }
     }
 
-    // Note: We intentionally drop the client here.
-    // For tool execution, we'll reconnect each time (stateless approach).
-    // This is simpler and avoids lifetime/ownership issues.
-    drop(client);
+    // Keep the client alive in persistent storage
+    {
+        let mut clients = PERSISTENT_CLIENTS.write().await;
+        clients.insert(name.clone(), Arc::new(tokio::sync::Mutex::new(client)));
+    }
 
-    tracing::info!("MCP server {} connected with id: {}", name, connection_id);
+    tracing::info!("MCP server {} connected with id: {} (persistent client stored)", name, connection_id);
 
     Ok(connection_id)
 }
@@ -321,6 +330,22 @@ pub async fn mcp_disconnect_server(
 
     if let Some(name) = name_to_remove {
         active.remove(&name);
+
+        // Remove persistent client and cancel it properly
+        {
+            let mut clients = PERSISTENT_CLIENTS.write().await;
+            if let Some(client_arc) = clients.remove(&name) {
+                tracing::info!("Removing persistent MCP client for server: {}", name);
+                
+                // Try to clean up gracefully if we can acquire the lock
+                // We use try_lock to avoid deadlocks in shutdown scenarios
+                if let Ok(client) = client_arc.try_lock() {
+                     // Note: RunningService doesn't implement Cancel in version 0.9.1 the way we expect
+                     // Drop will handle cleanup via Drop trait in rmcp/tokio transport
+                     // Just letting it drop is sufficient
+                }
+            }
+        }
 
         // Update auto_connect in database
         if let Ok(Some(config)) = db.get_mcp_server_config_by_name(&name).await {
@@ -485,8 +510,12 @@ pub async fn mcp_auto_connect_servers(db: Arc<DatabaseService>, app: AppHandle) 
                     );
                 }
 
-                drop(client);
-                tracing::info!("Auto-connected MCP server: {}", config.name);
+                // Store the client in persistent storage for reuse
+                {
+                    let mut clients = PERSISTENT_CLIENTS.write().await;
+                    clients.insert(config.name.clone(), Arc::new(tokio::sync::Mutex::new(client)));
+                }
+                tracing::info!("Auto-connected MCP server: {} (persistent client stored)", config.name);
 
                 // Notify frontend to update status
                 let _ = app.emit(
@@ -570,7 +599,7 @@ pub async fn mcp_get_connection_tools(connection_id: String) -> Result<Vec<McpTo
     }
 }
 
-/// Call a tool on a connected MCP server (reconnects for each call)
+/// Call a tool on a connected MCP server
 #[tauri::command]
 pub async fn mcp_call_tool(
     connection_id: String,
@@ -579,46 +608,74 @@ pub async fn mcp_call_tool(
 ) -> Result<serde_json::Value, String> {
     tracing::info!("Calling tool {} on connection {}", tool_name, connection_id);
 
-    // Get connection info
-    let conn_info = {
+    // Get the server name from connection info
+    let server_name = {
         let active = ACTIVE_CONNECTIONS.read().await;
         active
             .iter()
             .find(|(_, conn)| conn.connection_id == connection_id)
-            .map(|(_, conn)| (conn.command.clone(), conn.args.clone()))
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| format!("Connection {} not found", connection_id))?
     };
 
-    let (command, args) =
-        conn_info.ok_or_else(|| format!("Connection {} not found", connection_id))?;
+    tracing::info!("Using MCP server: {}", server_name);
 
-    // Reconnect to execute the tool
-    let mut cmd = TokioCommand::new(&command);
-    cmd.args(&args);
+    // Try to get existing persistent client
+    let client_arc = {
+        let clients = PERSISTENT_CLIENTS.read().await;
+        clients.get(&server_name).cloned()
+    };
 
-    let transport = rmcp::transport::TokioChildProcess::new(cmd)
-        .map_err(|e| format!("Failed to create transport: {}", e))?;
-
-    let client_info = create_client_info();
-    let client = client_info
-        .serve(transport)
-        .await
-        .map_err(|e| format!("Failed to connect to MCP server: {}", e))?;
-
-    // Convert arguments to the format expected by rmcp
+    // Convert arguments ahead of time
     let args_map: Option<serde_json::Map<String, serde_json::Value>> = if arguments.is_object() {
         arguments.as_object().cloned()
     } else {
         None
     };
 
-    // Call the tool
-    let result = client
-        .call_tool(rmcp::model::CallToolRequestParam {
+    let result = if let Some(client_arc) = client_arc {
+        // Reuse existing client
+        tracing::debug!("Reusing persistent client for {}", server_name);
+        let client = client_arc.lock().await;
+        client
+            .call_tool(rmcp::model::CallToolRequestParam {
+                name: tool_name.clone().into(),
+                arguments: args_map,
+            })
+            .await
+            .map_err(|e| format!("Failed to call tool: {}", e))?
+    } else {
+        // Fallback: This should rarely happen if connection flow is correct. 
+        // We warn but try to create a fresh temporary connection for robustness.
+        tracing::warn!("Persistent client not found for {}, creating temporary connection", server_name);
+        
+        let (command, args) = {
+             let active = ACTIVE_CONNECTIONS.read().await;
+             active.get(&server_name)
+                 .map(|c| (c.command.clone(), c.args.clone()))
+                 .ok_or_else(|| format!("Server {} not active", server_name))?
+        };
+
+        let mut cmd = TokioCommand::new(&command);
+        cmd.args(&args);
+        
+        // ... standard connection setup ...
+        let transport = rmcp::transport::TokioChildProcess::new(cmd)
+            .map_err(|e| format!("Creation failed: {}", e))?;
+            
+        let client_info = create_client_info();
+        let client = client_info
+            .serve(transport)
+            .await
+            .map_err(|e| format!("Connection failed: {}", e))?;
+            
+        client.call_tool(rmcp::model::CallToolRequestParam {
             name: tool_name.clone().into(),
             arguments: args_map,
         })
         .await
-        .map_err(|e| format!("Failed to call tool: {}", e))?;
+        .map_err(|e| format!("Tool call failed: {}", e))?
+    };
 
     // Convert result to JSON
     let content_json: Vec<serde_json::Value> = result

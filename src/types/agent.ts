@@ -35,6 +35,7 @@ export interface MessageMetadata {
     rag_sources_used: boolean
     source_count: number
   }
+  execution_id?: string
 }
 
 // Agent 消息

@@ -71,7 +71,8 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
                    .with_rig_provider(&rig_provider);
 
                 let ve_tool = VisionExplorerTool::new(mcp_service.inner().clone(), llm_config)
-                   .with_app_handle(app_handle.clone());
+                   .with_app_handle(app_handle.clone())
+                   .with_execution_id(params.execution_id.clone());
                 
                 // Get definition
                 let def = ve_tool.definition(String::new()).await;

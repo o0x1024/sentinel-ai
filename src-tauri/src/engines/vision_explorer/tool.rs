@@ -3,6 +3,7 @@ use rig::completion::ToolDefinition;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
+use std::collections::HashMap;
 use crate::services::mcp::McpService;
 use crate::engines::LlmConfig;
 use super::explorer::VisionExplorer;
@@ -13,13 +14,23 @@ use tauri::{AppHandle, Manager};
 pub struct VisionExplorerArgs {
     url: String,
     max_iterations: Option<u32>,
+    /// Enable multimodal mode (use screenshots instead of text-based element annotation). Default: false
+    enable_multimodal: Option<bool>,
+    /// Run browser in headless mode. Default: false
+    headless: Option<bool>,
+    /// Custom HTTP headers to send with requests
+    headers: Option<HashMap<String, String>>,
+    /// Custom Local Storage data
+    local_storage: Option<HashMap<String, String>>,
 }
+
 
 #[derive(Clone)]
 pub struct VisionExplorerTool {
     mcp_service: Arc<McpService>,
     llm_config: LlmConfig,
     app_handle: Option<AppHandle>,
+    execution_id: Option<String>,
 }
 
 impl VisionExplorerTool {
@@ -31,11 +42,17 @@ impl VisionExplorerTool {
             mcp_service,
             llm_config,
             app_handle: None,
+            execution_id: None,
         }
     }
 
     pub fn with_app_handle(mut self, app_handle: AppHandle) -> Self {
         self.app_handle = Some(app_handle);
+        self
+    }
+
+    pub fn with_execution_id(mut self, execution_id: String) -> Self {
+        self.execution_id = Some(execution_id);
         self
     }
 }
@@ -58,9 +75,31 @@ impl Tool for VisionExplorerTool {
                         "type": "string",
                         "description": "The URL to explore"
                     },
-                    "max_iterations": {
-                        "type": "integer",
-                        "description": "Maximum number of exploration steps (default: 20)"
+                    // "max_iterations": {
+                    //     "type": "integer",
+                    //     "description": "Maximum number of exploration steps (default: 20)"
+                    // },
+                    "enable_multimodal": {
+                        "type": "boolean",
+                        "description": "Enable multimodal mode with screenshots (default: false, uses text-based element annotation)"
+                    },
+                    "headless": {
+                        "type": "boolean",
+                        "description": "Run browser in headless mode (default: false)"
+                    },
+                    "headers": {
+                        "type": "object",
+                        "description": "Custom HTTP headers to send with requests (e.g. Authorization)",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
+                    },
+                    "local_storage": {
+                        "type": "object",
+                        "description": "Custom Local Storage data to set before navigation (e.g. tokens)",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
                     }
                 },
                 "required": ["url"]
@@ -69,11 +108,57 @@ impl Tool for VisionExplorerTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let config = VisionExplorerConfig {
+        // Check global multimodal setting
+        let global_multimodal_enabled = if let Some(app) = &self.app_handle {
+            if let Some(db) = app.try_state::<Arc<crate::services::database::DatabaseService>>() {
+                 db.get_config("ai", "enable_multimodal").await
+                   .ok()
+                   .flatten()
+                   .and_then(|s| s.parse::<bool>().ok())
+                   .unwrap_or(true) // Default to true if not set
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+
+        let enable_multimodal = if global_multimodal_enabled {
+            args.enable_multimodal.unwrap_or(false)
+        } else {
+            false
+        };
+
+        if !global_multimodal_enabled && args.enable_multimodal == Some(true) {
+            tracing::info!("VisionExplorer: Multimodal mode requested but disabled in global settings");
+        }
+
+        let mut config = VisionExplorerConfig {
             target_url: args.url.clone(),
             max_iterations: args.max_iterations.unwrap_or(20),
+            enable_multimodal, 
+            headless: args.headless.unwrap_or(false),
+            headers: args.headers,
+            local_storage: args.local_storage,
             ..Default::default()
         };
+
+        // Attempt to auto-detect screen resolution and set viewport
+        if let Some(app) = &self.app_handle {
+            if let Ok(Some(monitor)) = app.primary_monitor() {
+                let size = monitor.size();
+                config.viewport_width = size.width;
+                config.viewport_height = size.height;
+                tracing::info!("Auto-detected screen resolution: {}x{}", size.width, size.height);
+            }
+        }
+
+        // Set execution_id and a generated message_id to enable message emitting
+        if let Some(exec_id) = &self.execution_id {
+            config.execution_id = Some(exec_id.clone());
+            config.conversation_id = Some(exec_id.clone()); // Usually execution_id is conversation_id in this context
+            config.message_id = Some(uuid::Uuid::new_v4().to_string()); // Generate a new message ID for this run
+        }
         
         let mut explorer = VisionExplorer::new(
             config,
@@ -88,20 +173,6 @@ impl Tool for VisionExplorerTool {
              if let Some(state) = app.try_state::<crate::commands::passive_scan_commands::PassiveScanState>() {
                  explorer = explorer.with_passive_scan_state(Arc::new(state.inner().clone()));
              }
-             
-             // Inject PassiveDatabaseService
-             // Assuming Access to DatabaseService?
-             // crate::commands::passive_scan_commands::PassiveScanState handles DB lazy loading internally?
-             // Warning: VisionExplorer.with_passive_db takes Arc<PassiveDatabaseService>
-             // We can get it from state if we really want, but current code in explorer.rs might rely on
-             // PassiveScanState to init proxy, and maybe use db from there?
-             // Actually explorer.rs: line 145 has with_passive_db.
-             
-             // Let's try to get it from AppHandle state managing DatabaseService?
-             // But DatabaseService in src-tauri is crate::services::database::DatabaseService
-             // PassiveDatabaseService is sentinel_passive::PassiveDatabaseService
-             // They are different types maybe?
-             // Yes. But PassiveScanState has get_db_service().
              
              if let Some(state) = app.try_state::<crate::commands::passive_scan_commands::PassiveScanState>() {
                  if let Ok(db) = state.get_db_service().await {
@@ -126,3 +197,4 @@ impl Tool for VisionExplorerTool {
         }
     }
 }
+

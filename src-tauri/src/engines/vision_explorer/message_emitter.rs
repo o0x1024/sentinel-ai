@@ -89,6 +89,25 @@ pub struct VisionExplorationStats {
     pub status: String,
 }
 
+/// 覆盖率更新数据
+#[derive(Debug, Clone, Serialize)]
+pub struct VisionCoverageUpdate {
+    /// 路由覆盖率
+    pub route_coverage: f32,
+    /// 元素覆盖率
+    pub element_coverage: f32,
+    /// 组件覆盖率
+    pub component_coverage: f32,
+    /// 综合覆盖率
+    pub overall_coverage: f32,
+    /// API 数量
+    pub api_count: usize,
+    /// 待访问路由
+    pub pending_routes: Vec<String>,
+    /// 稳定轮次
+    pub stable_rounds: u32,
+}
+
 impl VisionExplorerMessageEmitter {
     pub fn new(
         app_handle: Arc<AppHandle>,
@@ -190,11 +209,11 @@ impl VisionExplorerMessageEmitter {
         self.emit_vision_step(&step);
 
         // 发送简短的文本内容
-        let content = format!(
-            "\n---\n**迭代 {}** | 📸 截图完成\n- URL: {}\n- 标题: {}\n",
-            iteration, url, title
-        );
-        self.emit_content(&content, false);
+        // let content = format!(
+        //     "\n---\n**迭代 {}** | 📸 截图完成\n- URL: {}\n- 标题: {}\n",
+        //     iteration, url, title
+        // );
+        // self.emit_content(&content, false);
     }
 
     /// 发送 VLM 分析结果
@@ -215,18 +234,18 @@ impl VisionExplorerMessageEmitter {
         self.emit_vision_step(&step);
 
         // 发送分析内容
-        let apis_str = analysis.estimated_apis
-            .as_ref()
-            .map(|apis| apis.join(", "))
-            .unwrap_or_else(|| "无".to_string());
+        // let apis_str = analysis.estimated_apis
+        //     .as_ref()
+        //     .map(|apis| apis.join(", "))
+        //     .unwrap_or_else(|| "无".to_string());
         
-        let content = format!(
-            "🧠 **分析结果**\n{}\n- 预估 API: {}\n- 进度: {:.0}%\n",
-            analysis.page_analysis,
-            apis_str,
-            analysis.exploration_progress * 100.0
-        );
-        self.emit_content(&content, false);
+        // let content = format!(
+        //     "🧠 **分析结果**\n{}\n- 预估 API: {}\n- 进度: {:.0}%\n",
+        //     analysis.page_analysis,
+        //     apis_str,
+        //     analysis.exploration_progress * 100.0
+        // );
+        // self.emit_content(&content, false);
     }
 
     /// 发送操作执行
@@ -249,28 +268,28 @@ impl VisionExplorerMessageEmitter {
         self.emit_vision_step(&step);
 
         // 发送操作内容
-        let status_icon = if action.success { "✅" } else { "❌" };
-        let element_info = action.element_index
-            .map(|idx| format!("[{}]", idx))
-            .unwrap_or_default();
-        let value_info = action.value
-            .as_ref()
-            .map(|v| format!(" = \"{}\"", v))
-            .unwrap_or_default();
-        let duration_info = action.duration_ms
-            .map(|d| format!(" ({}ms)", d))
-            .unwrap_or_default();
+        // let status_icon = if action.success { "✅" } else { "❌" };
+        // let element_info = action.element_index
+        //     .map(|idx| format!("[{}]", idx))
+        //     .unwrap_or_default();
+        // let value_info = action.value
+        //     .as_ref()
+        //     .map(|v| format!(" = \"{}\"", v))
+        //     .unwrap_or_default();
+        // let duration_info = action.duration_ms
+        //     .map(|d| format!(" ({}ms)", d))
+        //     .unwrap_or_default();
         
-        let content = format!(
-            "{} **{}** {}{}{}\n- 原因: {}\n",
-            status_icon,
-            action.action_type,
-            element_info,
-            value_info,
-            duration_info,
-            action.reason
-        );
-        self.emit_content(&content, false);
+        // let content = format!(
+        //     "{} **{}** {}{}{}\n- 原因: {}\n",
+        //     status_icon,
+        //     action.action_type,
+        //     element_info,
+        //     value_info,
+        //     duration_info,
+        //     action.reason
+        // );
+        // self.emit_content(&content, false);
     }
 
     /// 发送错误信息
@@ -290,20 +309,47 @@ impl VisionExplorerMessageEmitter {
         };
         self.emit_vision_step(&step);
 
-        let content = format!("\n❌ **错误**: {}\n", error);
-        self.emit_content(&content, false);
+        // let content = format!("\n❌ **错误**: {}\n", error);
+        // self.emit_content(&content, false);
     }
 
     /// 发送 API 发现
     pub fn emit_api_discovered(&self, api: &str, method: &str) {
-        let content = format!("🔍 **发现 API**: {} {}\n", method, api);
-        self.emit_content(&content, false);
+        // let content = format!("🔍 **发现 API**: {} {}\n", method, api);
+        // self.emit_content(&content, false);
         
         self.emit_meta("api_discovered", serde_json::json!({
             "type": "api_discovered",
             "api": api,
             "method": method
         }));
+    }
+
+    /// 发送覆盖率更新（直接使用 Tauri 事件）
+    pub fn emit_coverage_update(&self, update: &VisionCoverageUpdate) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "execution_id": self.execution_id,
+            "coverage": {
+                "route_coverage": update.route_coverage,
+                "element_coverage": update.element_coverage,
+                "component_coverage": update.component_coverage,
+                "overall_coverage": update.overall_coverage
+            },
+            "api_count": update.api_count,
+            "pending_routes": update.pending_routes,
+            "stable_rounds": update.stable_rounds
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:coverage_update", &payload) {
+            debug!("Failed to emit coverage update: {}", e);
+        }
+        
+        debug!(
+            "Coverage update emitted: overall={:.1}%, routes={:.1}%, elements={:.1}%",
+            update.overall_coverage, update.route_coverage, update.element_coverage
+        );
     }
 
     /// 发送流式内容
