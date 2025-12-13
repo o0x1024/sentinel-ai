@@ -1512,8 +1512,7 @@ URL: {}
     /// 格式: index,type,tag,text,href,name,value,placeholder
     fn format_elements_as_csv(elements: &[AnnotatedElement], limit: usize) -> String {
         let mut lines = Vec::with_capacity(limit + 1);
-        
-        for e in elements.iter().take(limit) {
+                for e in elements.iter().take(limit) {
             // 获取常用属性
             let href = e.attributes.get("href").map(|s| s.as_str()).unwrap_or("");
             let name = e.attributes.get("name").map(|s| s.as_str()).unwrap_or("");
@@ -1528,8 +1527,21 @@ URL: {}
                 e.text.clone() 
             };
             let text = text.replace(',', ";").replace('\n', " ");
+            
             let href = if href.len() > 50 { format!("{}...", &href[..50]) } else { href.to_string() };
             let href = href.replace(',', ";");
+
+            let name = if name.len() > 30 { format!("{}...", &name[..30]) } else { name.to_string() };
+            let name = name.replace(',', ";");
+
+            let mut value_str = if !value.is_empty() { value.to_string() } else { input_type.to_string() };
+            if value_str.len() > 50 {
+                value_str = format!("{}...", &value_str[..50]);
+            }
+            let value_str = value_str.replace(',', ";");
+
+            let placeholder = if placeholder.len() > 30 { format!("{}...", &placeholder[..30]) } else { placeholder.to_string() };
+            let placeholder = placeholder.replace(',', ";");
             
             // 构建CSV行
             let line = format!(
@@ -1540,7 +1552,7 @@ URL: {}
                 text,
                 href,
                 name,
-                if !value.is_empty() { value } else { input_type },
+                value_str,
                 placeholder
             );
             lines.push(line);
