@@ -128,18 +128,10 @@
               <label class="label">
                 <span class="label-text">{{ t('settings.general.language') }}</span>
               </label>
-              <select class="select select-bordered" v-model="settings.general.language">
+              <select class="select select-bordered" v-model="settings.general.language" @change="saveGeneralConfig">
                 <option value="auto">{{ t('settings.general.languages.auto') }}</option>
                 <option value="zh-CN">{{ t('settings.general.languages.zhCN') }}</option>
-                <option value="zh-TW">{{ t('settings.general.languages.zhTW') }}</option>
                 <option value="en-US">{{ t('settings.general.languages.enUS') }}</option>
-                <option value="ja-JP">{{ t('settings.general.languages.jaJP') }}</option>
-                <option value="ko-KR">{{ t('settings.general.languages.koKR') }}</option>
-                <option value="fr-FR">{{ t('settings.general.languages.frFR') }}</option>
-                <option value="de-DE">{{ t('settings.general.languages.deDE') }}</option>
-                <option value="es-ES">{{ t('settings.general.languages.esES') }}</option>
-                <option value="pt-BR">{{ t('settings.general.languages.ptBR') }}</option>
-                <option value="ru-RU">{{ t('settings.general.languages.ruRU') }}</option>
               </select>
             </div>
             
@@ -456,19 +448,14 @@
       </div>
     </div>
 
-    <!-- 保存按钮 -->
-    <div class="flex justify-end">
-      <button class="btn btn-primary" @click="saveGeneralConfig" :disabled="saving">
-        <i class="fas fa-save"></i>
-        {{ saving ? t('settings.saving') : t('settings.general.saveConfig') }}
-      </button>
-    </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const { t } = useI18n()
 
@@ -614,9 +601,86 @@ const applyLanguagePreview = (language: string) => {
   }
   
   const { locale } = useI18n()
-  const langCode = finalLang.split('-')[0]
-  locale.value = langCode
+  // Map to supported locales (zh, en)
+  if (finalLang.startsWith('zh')) {
+    locale.value = 'zh'
+  } else {
+    locale.value = 'en'
+  }
 }
+
+// 监听窗口置顶设置
+watch(() => props.settings?.general?.alwaysOnTop, async (val) => {
+  try {
+    await getCurrentWindow().setAlwaysOnTop(!!val)
+  } catch (e) {
+    console.error('Failed to set always on top:', e)
+  }
+})
+
+// 监听紧凑模式设置
+watch(() => props.settings?.general?.compactMode, (val) => {
+  if (val) {
+    document.documentElement.classList.add('compact-mode')
+  } else {
+    document.documentElement.classList.remove('compact-mode')
+  }
+})
+
+// 监听深色模式设置 - 与主题联动
+watch(() => props.settings?.general?.darkMode, (val) => {
+  if (val) {
+    // 如果开启深色模式且当前是浅色主题，自动切换到深色
+    if (props.settings.general.theme === 'light' || props.settings.general.theme === 'corporate' || props.settings.general.theme === 'cupcake') {
+      props.settings.general.theme = 'dark'
+    }
+  } else {
+    // 如果关闭深色模式且当前是深色主题，自动切换到浅色
+    if (props.settings.general.theme === 'dark' || props.settings.general.theme === 'business' || props.settings.general.theme === 'dracula') {
+      props.settings.general.theme = 'light'
+    }
+  }
+})
+
+// 监听窗口透明度 (仅作为视觉效果，实际窗口透明度需要后端支持)
+watch(() => props.settings?.general?.windowOpacity, (val) => {
+  if (val) {
+    document.documentElement.style.opacity = `${val}`
+  }
+})
+
+// 自动保存
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+watch(() => props.settings?.general, () => {
+  if (autoSaveTimer) clearTimeout(autoSaveTimer)
+  autoSaveTimer = setTimeout(() => {
+    saveGeneralConfig()
+  }, 1000)
+}, { deep: true })
+
+// 初始化时应用设置
+onMounted(async () => {
+  if (props.settings?.general) {
+    // 应用紧凑模式
+    if (props.settings.general.compactMode) {
+      document.documentElement.classList.add('compact-mode')
+    }
+    
+    // 应用置顶
+    if (props.settings.general.alwaysOnTop) {
+      try {
+        await getCurrentWindow().setAlwaysOnTop(true)
+      } catch (e) {
+        // 忽略错误
+      }
+    }
+
+    // 应用透明度
+    if (props.settings.general.windowOpacity) {
+      document.documentElement.style.opacity = `${props.settings.general.windowOpacity}`
+    }
+  }
+})
 </script>
 
 <style scoped>
@@ -642,5 +706,30 @@ const applyLanguagePreview = (language: string) => {
 
 .range {
   @apply transition-all duration-200;
+}
+
+/* 紧凑模式样式 */
+:global(.compact-mode) .card-body {
+  @apply p-4;
+}
+
+:global(.compact-mode) .form-control {
+  @apply min-h-0;
+}
+
+:global(.compact-mode) .label {
+  @apply py-1;
+}
+
+:global(.compact-mode) .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+  @apply mt-4;
+}
+
+:global(.compact-mode) .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+  @apply mt-2;
+}
+
+:global(.compact-mode) .stat {
+  @apply py-2;
 }
 </style>

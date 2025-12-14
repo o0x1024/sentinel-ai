@@ -81,11 +81,19 @@
                       v-model:settings="settings"
                       :database-status="databaseStatus"
                       :saving="saving"
-                      @test-database="testDatabase"
-                      @backup-database="backupDatabase"
-                      @restore-database="restoreDatabase"
-                      @optimize-database="optimizeDatabase"
-                      @save-database-config="saveDatabaseConfig" />
+                      @selectDatabasePath="selectDatabasePath"
+                      @selectBackupPath="selectBackupPath"
+                      @testDatabaseConnection="testDatabaseConnection"
+                      @createBackup="createBackup"
+                      @selectBackupFile="selectBackupFile"
+                      @exportData="exportData"
+                      @importData="importData"
+                      @cleanupNow="cleanupNow"
+                      @optimizeDatabase="optimizeDatabase"
+                      @rebuildIndexes="rebuildIndexes"
+                      @resetDatabase="resetDatabase"
+                      @saveDatabaseConfig="saveDatabaseConfig" />
+
 
     <!-- 通用设置 -->
     <GeneralSettings v-if="activeCategory === 'system'" 
@@ -177,10 +185,26 @@ const settings = ref({
   database: {
     type: 'sqlite',
     path: '',
+    host: 'localhost',
+    port: 5432,
+    name: 'sentinel_ai',
+    username: '',
+    password: '',
+    maxConnections: 10,
+    queryTimeout: 30,
+    enableWAL: true,
+    enableSSL: false,
     autoBackup: true,
-    backupInterval: 24,
-    maxBackups: 10
+    backupFrequency: 'daily',
+    backupRetention: 7,
+    backupPath: '',
+    autoCleanup: false,
+    retentionDays: 30,
+    cleanupLogs: true,
+    cleanupTempFiles: true,
+    cleanupOldSessions: true
   },
+
   general: {
     theme: 'auto',
     darkMode: false,
@@ -334,10 +358,13 @@ const addingCustomProvider = ref(false)
 // 数据库状态
 const databaseStatus = ref({
   connected: false,
+  type: 'SQLite',
   size: 0,
-  lastBackup: null,
+  tables: 0,
+  lastBackup: null as string | null,
   backupCount: 0
 })
+
 
 // 安全状态
 const securityStatus = ref({
@@ -904,25 +931,248 @@ const saveSchedulerConfig = async () => {
 }
 
 // 数据库相关方法
-const testDatabase = async () => {
-  dialog.toast.info('测试数据库连接...')
+const loadDatabaseStatus = async () => {
+  try {
+    const status = await invoke('get_database_status') as any
+    console.log('Database status from backend:', status)
+    
+    databaseStatus.value = {
+      connected: status.connected ?? false,
+      type: status.db_type ?? 'SQLite',
+      size: status.size ?? 0,
+      tables: status.tables ?? 0,
+      lastBackup: status.last_backup ?? null,
+      backupCount: 0
+    }
+    
+    // 同步数据库路径到设置
+    if (status.path) {
+      settings.value.database.path = status.path
+    }
+  } catch (error) {
+    console.error('Failed to load database status:', error)
+  }
 }
 
-const backupDatabase = async () => {
-  dialog.toast.success('数据库备份已创建')
+
+const selectDatabasePath = async () => {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      filters: [{ name: 'Database', extensions: ['db', 'sqlite', 'sqlite3'] }]
+    })
+    if (selected) {
+      settings.value.database.path = selected as string
+      dialog.toast.success('数据库路径已选择')
+    }
+  } catch (error) {
+    console.error('Failed to select database path:', error)
+    dialog.toast.error('选择数据库路径失败')
+  }
 }
 
-const restoreDatabase = async () => {
-  dialog.toast.success('数据库已恢复')
+const selectBackupPath = async () => {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: '选择备份保存目录'
+    })
+    if (selected) {
+      settings.value.database.backupPath = selected as string
+      dialog.toast.success('备份路径已选择')
+    }
+  } catch (error) {
+    console.error('Failed to select backup path:', error)
+    dialog.toast.error('选择备份路径失败')
+  }
+}
+
+const testDatabaseConnection = async () => {
+  dialog.toast.info('正在测试数据库连接...')
+  try {
+    const result = await invoke('test_database_connection')
+    if (result) {
+      dialog.toast.success('数据库连接正常')
+    } else {
+      dialog.toast.error('数据库连接失败')
+    }
+  } catch (error) {
+    console.error('Database connection test failed:', error)
+    dialog.toast.error(`数据库连接测试失败: ${error}`)
+  }
+}
+
+const createBackup = async () => {
+  dialog.toast.info('正在创建数据库备份...')
+  try {
+    const backupPath = await invoke('create_database_backup', { 
+      backupPath: settings.value.database.backupPath || null 
+    }) as string
+    await loadDatabaseStatus()
+    dialog.toast.success(`数据库备份已创建: ${backupPath}`)
+  } catch (error) {
+    console.error('Failed to create backup:', error)
+    dialog.toast.error(`创建备份失败: ${error}`)
+  }
+}
+
+const selectBackupFile = async () => {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      filters: [{ name: 'Database Backup', extensions: ['db'] }],
+      title: '选择要恢复的备份文件'
+    })
+    if (selected) {
+      const confirmed = await dialog.confirm({
+        title: '确认恢复',
+        message: '恢复备份将覆盖当前数据库，是否继续？此操作不可撤销。',
+        variant: 'warning'
+      })
+      if (confirmed) {
+        dialog.toast.info('正在恢复数据库...')
+        await invoke('restore_database_backup', { backupPath: selected as string })
+        await loadDatabaseStatus()
+        dialog.toast.success('数据库已从备份恢复，请重启应用以使更改生效')
+      }
+    }
+  } catch (error) {
+    console.error('Failed to restore backup:', error)
+    dialog.toast.error(`恢复备份失败: ${error}`)
+  }
+}
+
+const exportData = async () => {
+  try {
+    const { save } = await import('@tauri-apps/plugin-dialog')
+    const selected = await save({
+      defaultPath: `sentinel_export_${new Date().toISOString().split('T')[0]}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      title: '导出数据'
+    })
+    if (selected) {
+      dialog.toast.info('正在导出数据...')
+      const tables = ['scan_tasks', 'vulnerabilities', 'assets', 'ai_conversations']
+      await invoke('export_database_json', { tables, outputPath: selected })
+      dialog.toast.success(`数据已导出到: ${selected}`)
+    }
+  } catch (error) {
+    console.error('Failed to export data:', error)
+    dialog.toast.error(`导出数据失败: ${error}`)
+  }
+}
+
+const importData = async () => {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      title: '选择要导入的数据文件'
+    })
+    if (selected) {
+      const confirmed = await dialog.confirm({
+        title: '确认导入',
+        message: '导入数据可能会影响现有数据，是否继续？',
+        variant: 'warning'
+      })
+      if (confirmed) {
+        dialog.toast.info('正在导入数据...')
+        const result = await invoke('import_database_json', { inputPath: selected as string }) as string
+        dialog.toast.success(result)
+      }
+    }
+  } catch (error) {
+    console.error('Failed to import data:', error)
+    dialog.toast.error(`导入数据失败: ${error}`)
+  }
+}
+
+const cleanupNow = async () => {
+  const confirmed = await dialog.confirm({
+    title: '确认清理',
+    message: '将根据设置清理旧数据，是否继续？',
+    variant: 'warning'
+  })
+  if (confirmed) {
+    dialog.toast.info('正在清理数据库...')
+    try {
+      const result = await invoke('cleanup_database', {
+        retentionDays: settings.value.database.retentionDays || 30,
+        cleanupLogs: settings.value.database.cleanupLogs ?? true,
+        cleanupTempFiles: settings.value.database.cleanupTempFiles ?? true,
+        cleanupOldSessions: settings.value.database.cleanupOldSessions ?? true
+      }) as string
+      await loadDatabaseStatus()
+      dialog.toast.success(result)
+    } catch (error) {
+      console.error('Failed to cleanup database:', error)
+      dialog.toast.error(`清理数据库失败: ${error}`)
+    }
+  }
 }
 
 const optimizeDatabase = async () => {
-  dialog.toast.success('数据库已优化')
+  dialog.toast.info('正在优化数据库...')
+  try {
+    const result = await invoke('optimize_database') as string
+    await loadDatabaseStatus()
+    dialog.toast.success(result)
+  } catch (error) {
+    console.error('Failed to optimize database:', error)
+    dialog.toast.error(`优化数据库失败: ${error}`)
+  }
+}
+
+const rebuildIndexes = async () => {
+  dialog.toast.info('正在重建索引...')
+  try {
+    const result = await invoke('rebuild_database_indexes') as string
+    dialog.toast.success(result)
+  } catch (error) {
+    console.error('Failed to rebuild indexes:', error)
+    dialog.toast.error(`重建索引失败: ${error}`)
+  }
+}
+
+const resetDatabase = async () => {
+  const confirmed = await dialog.confirm({
+    title: '危险操作',
+    message: '此操作将删除所有数据（会自动创建备份）。请输入 "CONFIRM_RESET" 确认。',
+    variant: 'error'
+  })
+  if (confirmed) {
+    try {
+      dialog.toast.info('正在重置数据库...')
+      const result = await invoke('reset_database', { confirmText: 'CONFIRM_RESET' }) as string
+      await loadDatabaseStatus()
+      dialog.toast.warning(result)
+    } catch (error) {
+      console.error('Failed to reset database:', error)
+      dialog.toast.error(`重置数据库失败: ${error}`)
+    }
+  }
 }
 
 const saveDatabaseConfig = async () => {
-  dialog.toast.success('数据库配置已保存')
+  try {
+    // 保存数据库相关配置到 localStorage
+    const settingsToSave = JSON.stringify(settings.value)
+    localStorage.setItem('sentinel-settings', settingsToSave)
+    dialog.toast.success('数据库配置已保存')
+  } catch (error) {
+    console.error('Failed to save database config:', error)
+    dialog.toast.error('保存数据库配置失败')
+  }
 }
+
 
 // 通用设置相关方法
 const saveGeneralConfig = async () => {
@@ -1023,7 +1273,13 @@ const applyLanguage = (language: string) => {
   }
   
   // 应用语言设置
-  const langCode = finalLang.split('-')[0] // 提取主语言代码
+  let langCode = finalLang.split('-')[0] // 提取主语言代码
+  
+  // 仅支持 zh 和 en，其他语言映射到 en
+  if (langCode !== 'zh') {
+    langCode = 'en'
+  }
+  
   locale.value = langCode
   // 与 i18n/index.ts 保持一致，写入 sentinel-language
   localStorage.setItem('sentinel-language', langCode)
@@ -1175,11 +1431,21 @@ const loadRagConfig = async () => {
 }
 
 // 生命周期
-onMounted(() => {
-  loadSettings()
-  loadAiUsageStats()
-  loadRagConfig()
+onMounted(async () => {
+  // 首先加载保存的设置
+  await loadSettings()
+  
+  // 然后加载动态数据
+  await Promise.all([
+    loadAiUsageStats(),
+    loadRagConfig(),
+  ])
+  
+  // 最后加载数据库状态，这样可以覆盖 localStorage 中可能过时的数据库路径
+  await loadDatabaseStatus()
 })
+
+
 
 // 自动持久化通用设置与即时应用
 watch(() => settings.value.general, (newGeneral, oldGeneral) => {

@@ -1878,16 +1878,19 @@ impl DatabaseService {
 
             for (i, column) in row.columns().iter().enumerate() {
                 let column_name = column.name();
-                let value: Value = match column.type_info().name() {
-                    "TEXT" => {
+                let type_name = column.type_info().name();
+                
+                // 尝试按照类型获取值，对于未知类型尝试多种方式
+                let value: Value = match type_name {
+                    "TEXT" | "VARCHAR" | "CHAR" | "CLOB" => {
                         let val: Option<String> = row.try_get(i)?;
                         val.map(Value::String).unwrap_or(Value::Null)
                     }
-                    "INTEGER" => {
+                    "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" => {
                         let val: Option<i64> = row.try_get(i)?;
                         val.map(|v| Value::Number(v.into())).unwrap_or(Value::Null)
                     }
-                    "REAL" => {
+                    "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" | "DECIMAL" => {
                         let val: Option<f64> = row.try_get(i)?;
                         val.map(|v| {
                             Value::Number(
@@ -1896,7 +1899,28 @@ impl DatabaseService {
                         })
                         .unwrap_or(Value::Null)
                     }
-                    _ => Value::Null,
+                    "BOOLEAN" | "BOOL" => {
+                        let val: Option<bool> = row.try_get(i)?;
+                        val.map(Value::Bool).unwrap_or(Value::Null)
+                    }
+                    "NULL" => Value::Null,
+                    _ => {
+                        // 对于未知类型，按优先级尝试不同的类型
+                        // 首先尝试 i64 (最常见的 COUNT 等聚合函数返回类型)
+                        if let Ok(Some(val)) = row.try_get::<Option<i64>, _>(i) {
+                            Value::Number(val.into())
+                        } else if let Ok(Some(val)) = row.try_get::<Option<f64>, _>(i) {
+                            Value::Number(serde_json::Number::from_f64(val).unwrap_or_else(|| 0.into()))
+                        } else if let Ok(Some(val)) = row.try_get::<Option<String>, _>(i) {
+                            Value::String(val)
+                        } else if let Ok(Some(val)) = row.try_get::<Option<bool>, _>(i) {
+                            Value::Bool(val)
+                        } else {
+                            // 如果所有尝试都失败，返回 Null
+                            tracing::debug!("Unknown column type '{}' for column '{}', returning Null", type_name, column_name);
+                            Value::Null
+                        }
+                    }
                 };
                 obj.insert(column_name.to_string(), value);
             }
@@ -1907,9 +1931,16 @@ impl DatabaseService {
         Ok(results)
     }
 
+
+    /// 获取数据库文件路径
+    pub fn get_db_path(&self) -> PathBuf {
+        self.db_path.clone()
+    }
+
     /// 获取数据库统计信息
     pub async fn get_stats(&self) -> Result<DatabaseStats> {
         let pool = self.get_pool()?;
+
 
 
 

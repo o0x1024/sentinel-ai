@@ -1,6 +1,6 @@
 import { createI18n } from 'vue-i18n'
-import en from './locales/en'
 import zh from './locales/zh'
+import en from './locales/en'
 
 // 定义支持的语言类型
 type SupportedLocale = 'en' | 'zh'
@@ -37,4 +37,4 @@ export const setLanguage = (lang: SupportedLocale) => {
   i18n.global.locale.value = lang
 }
 
-export default i18n 
+export default i18n
