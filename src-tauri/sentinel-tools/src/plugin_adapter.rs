@@ -246,11 +246,63 @@ impl PluginToolAdapter {
         }
     }
     
-    /// Parse TypeScript interface ToolInput to JSON Schema
+    /// Parse plugin code to extract input_schema.
+    /// Priority:
+    /// 1. Header block: `/* @sentinel_schema { ... } */`
+    /// 2. Fallback: parse TS interface ToolInput
     pub fn parse_tool_input_schema(code: &str) -> Value {
+        tracing::info!("Parsing input schema from plugin code ({} chars)", code.len());
+        
+        // 1. Try header schema block first
+        if let Some(schema) = Self::parse_header_schema_block(code) {
+            tracing::info!("Found @sentinel_schema header block, using it");
+            return schema;
+        }
+        
+        // 2. Fallback: parse TS interface ToolInput
+        Self::parse_ts_interface_schema(code)
+    }
+    
+    /// Parse header schema block: `/* @sentinel_schema { ... } */`
+    fn parse_header_schema_block(code: &str) -> Option<Value> {
         use regex::Regex;
         
-        tracing::info!("Parsing ToolInput schema from plugin code ({} chars)", code.len());
+        // Match: /* @sentinel_schema { ... } */
+        // The JSON content is between @sentinel_schema and the closing */
+        let schema_re = Regex::new(
+            r"(?s)/\*\s*@sentinel_schema\s*(\{[\s\S]*?\})\s*\*/"
+        ).ok()?;
+        
+        let captures = schema_re.captures(code)?;
+        let json_str = captures.get(1)?.as_str();
+        
+        // Parse JSON
+        match serde_json::from_str::<Value>(json_str) {
+            Ok(mut schema) => {
+                // Ensure it has proper structure
+                if schema.get("type").is_none() {
+                    schema.as_object_mut().map(|obj| {
+                        obj.insert("type".to_string(), serde_json::json!("object"));
+                    });
+                }
+                if schema.get("properties").is_none() {
+                    // If input_schema is nested, extract it
+                    if let Some(input_schema) = schema.get("input_schema").cloned() {
+                        return Some(input_schema);
+                    }
+                }
+                Some(schema)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to parse @sentinel_schema JSON: {}", e);
+                None
+            }
+        }
+    }
+    
+    /// Fallback: Parse TypeScript interface ToolInput to JSON Schema
+    fn parse_ts_interface_schema(code: &str) -> Value {
+        use regex::Regex;
         
         // Find start of interface
         let start_pattern = Regex::new(r"interface\s+ToolInput\s*\{").unwrap();
@@ -265,14 +317,8 @@ impl PluginToolAdapter {
                 tracing::info!("Found type ToolInput at position {}", m.start());
                 m.end()
             } else {
-                // Default fallback schema
                 tracing::warn!("Could not find ToolInput interface/type in plugin code, using default schema");
-                return serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "input": {"type": "string", "description": "Tool input parameter"}
-                    }
-                });
+                return Self::default_schema();
             }
         };
 
@@ -295,23 +341,16 @@ impl PluginToolAdapter {
         
         let body = &code[start_index..body_end];
         
-        // Parse fields from body
-        // We'll process the body to extract fields and comments
-        // Strategy: 
-        // 1. Remove block comments /* */ and store them associated with lines? 
-        //    Actually simpler: regex that captures doc comment before field.
-        
-        // Match: 
-        // (optional doc comment) 
-        // (field name) (optional ?) : (type) (semicolon or newline)
+        // Match fields with optional doc comments (/** */ or // style)
         let field_re = Regex::new(
-            r"(?ms)(?:/\*\*([\s\S]*?)\*/\s*)?([a-zA-Z0-9_]+)(\?)?\s*:\s*([^;}\n]+)(?:;|\n|$)"
+            r"(?ms)(?:/\*\*([\s\S]*?)\*/\s*|(?://\s*(.+)\n)+)?([a-zA-Z0-9_]+)(\?)?\s*:\s*([^;}\n]+)(?:;|\n|$)"
         ).unwrap();
         
         let mut properties = serde_json::Map::new();
         let mut required_fields = Vec::new();
         
         for cap in field_re.captures_iter(body) {
+            // Try block comment first, then line comments
             let comment = cap.get(1).map(|m| {
                 m.as_str()
                     .lines()
@@ -319,17 +358,18 @@ impl PluginToolAdapter {
                     .filter(|l| !l.is_empty())
                     .collect::<Vec<_>>()
                     .join(" ")
-            }).unwrap_or_default();
+            }).or_else(|| cap.get(2).map(|m| m.as_str().trim().to_string()))
+            .unwrap_or_default();
             
-            let field_name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-            let optional = cap.get(3).is_some();
-            let type_str = cap.get(4).map(|m| m.as_str().trim()).unwrap_or("string");
+            let field_name = cap.get(3).map(|m| m.as_str()).unwrap_or("");
+            let optional = cap.get(4).is_some();
+            let type_str = cap.get(5).map(|m| m.as_str().trim()).unwrap_or("string");
             
             if field_name.is_empty() {
                 continue;
             }
             
-            // Skip if this field looks like a method or something else
+            // Skip if this field looks like a method
             if type_str.contains("(") {
                 continue;
             }
@@ -361,15 +401,19 @@ impl PluginToolAdapter {
                 "required": required_fields
             })
         } else {
-             // Fallback
-             tracing::warn!("No fields parsed from ToolInput interface body, using default schema");
-             serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "input": {"type": "string", "description": "Tool input parameter"}
-                }
-            })
+            tracing::warn!("No fields parsed from ToolInput interface body, using default schema");
+            Self::default_schema()
         }
+    }
+    
+    /// Default fallback schema
+    fn default_schema() -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "input": {"type": "string", "description": "Tool input parameter"}
+            }
+        })
     }
     
     /// Convert TypeScript type to JSON Schema
@@ -390,8 +434,7 @@ impl PluginToolAdapter {
         } else if type_str.contains("object") || type_str.starts_with('{') {
             serde_json::json!({"type": "object"})
         } else {
-            // Default to string for unknown types
-             serde_json::json!({"type": "string"})
+            serde_json::json!({"type": "string"})
         }
     }
 }
@@ -419,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_tool_input_schema() {
+    fn test_parse_tool_input_schema_with_ts_interface() {
         let code = r#"
             interface ToolInput {
                 /** Target URL to scan */
@@ -435,5 +478,73 @@ mod tests {
         let props = schema.get("properties").unwrap();
         assert!(props.get("url").is_some());
         assert!(props.get("threads").is_some());
+    }
+    
+    #[test]
+    fn test_parse_header_schema_block() {
+        let code = r#"
+/* @sentinel_schema
+{
+    "type": "object",
+    "required": ["targets"],
+    "properties": {
+        "targets": { "type": "array", "items": { "type": "string" }, "description": "Target hosts or URLs" },
+        "concurrency": { "type": "integer", "default": 10, "description": "Parallelism" }
+    }
+}
+*/
+
+interface ToolInput {
+    targets: string[];
+    concurrency?: number;
+}
+
+export async function analyze(input: ToolInput) {
+    return { success: true };
+}
+globalThis.analyze = analyze;
+        "#;
+        
+        let schema = PluginToolAdapter::parse_tool_input_schema(code);
+        
+        // Should use header block, not TS interface
+        assert_eq!(schema.get("type").unwrap(), "object");
+        let props = schema.get("properties").unwrap();
+        
+        // Check targets property
+        let targets = props.get("targets").unwrap();
+        assert_eq!(targets.get("type").unwrap(), "array");
+        assert_eq!(targets.get("description").unwrap(), "Target hosts or URLs");
+        
+        // Check concurrency property
+        let concurrency = props.get("concurrency").unwrap();
+        assert_eq!(concurrency.get("type").unwrap(), "integer");
+        assert_eq!(concurrency.get("default").unwrap(), 10);
+        assert_eq!(concurrency.get("description").unwrap(), "Parallelism");
+        
+        // Check required
+        let required = schema.get("required").unwrap().as_array().unwrap();
+        assert!(required.iter().any(|v| v == "targets"));
+    }
+    
+    #[test]
+    fn test_fallback_to_ts_interface_when_no_header() {
+        let code = r#"
+interface ToolInput {
+    /** Target URL */
+    url: string;
+}
+
+export async function analyze(input: ToolInput) {
+    return { success: true };
+}
+        "#;
+        
+        let schema = PluginToolAdapter::parse_tool_input_schema(code);
+        
+        let props = schema.get("properties").unwrap();
+        let url = props.get("url").unwrap();
+        assert_eq!(url.get("type").unwrap(), "string");
+        assert_eq!(url.get("description").unwrap(), "Target URL");
     }
 }

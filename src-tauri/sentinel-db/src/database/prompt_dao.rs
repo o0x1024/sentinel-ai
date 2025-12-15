@@ -34,7 +34,8 @@ fn template_type_str(t: &TemplateType) -> &'static str {
         TemplateType::PluginFix => "PluginFix",
         TemplateType::AgentPluginFix => "AgentPluginFix",
         TemplateType::PluginVulnSpecific => "PluginVulnSpecific",
-        TemplateType::VisionExplorerSystem => "VisionExplorerSystem",
+        TemplateType::VisionExplorerVision => "VisionExplorerVision",
+        TemplateType::VisionExplorerText => "VisionExplorerText",
     }
 }
 
@@ -49,7 +50,8 @@ fn parse_template_type(s: &str) -> Option<TemplateType> {
         "PluginFix" => Some(TemplateType::PluginFix),
         "AgentPluginFix" => Some(TemplateType::AgentPluginFix),
         "PluginVulnSpecific" => Some(TemplateType::PluginVulnSpecific),
-        "VisionExplorerSystem" => Some(TemplateType::VisionExplorerSystem),
+        "VisionExplorerVision" => Some(TemplateType::VisionExplorerVision),
+        "VisionExplorerText" => Some(TemplateType::VisionExplorerText),
         _ => None,
     }
 }

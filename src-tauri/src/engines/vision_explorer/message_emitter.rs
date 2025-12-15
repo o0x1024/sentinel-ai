@@ -419,6 +419,7 @@ impl VisionExplorerMessageEmitter {
         use tauri::Emitter;
         
         let payload = serde_json::json!({
+            "type": "takeover_request",
             "execution_id": self.execution_id,
             "iteration": iteration,
             "request_type": request_type,
@@ -445,6 +446,7 @@ impl VisionExplorerMessageEmitter {
         use tauri::Emitter;
         
         let payload = serde_json::json!({
+            "type": "credentials_received",
             "execution_id": self.execution_id,
             "username": username,
             "message": format!("已接收用户凭据，正在使用用户 {} 登录", username),
@@ -453,5 +455,26 @@ impl VisionExplorerMessageEmitter {
         if let Err(e) = self.app_handle.emit("vision:credentials_received", &payload) {
             debug!("Failed to emit credentials received: {}", e);
         }
+
+        // 也通过 meta 发送，确保前端能收到
+        self.emit_meta("credentials_received", payload);
+    }
+
+    /// 发送登录跳过通知（超时或用户主动跳过）
+    pub fn emit_login_skipped(&self, reason: &str) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "type": "credentials_received",
+            "execution_id": self.execution_id,
+            "skipped": true,
+            "message": reason,
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:credentials_received", &payload) {
+            debug!("Failed to emit login skipped: {}", e);
+        }
+
+        self.emit_meta("credentials_received", payload);
     }
 }

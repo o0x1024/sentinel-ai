@@ -1,6 +1,6 @@
 import { createI18n } from 'vue-i18n'
-import zh from './locales/zh'
-import en from './locales/en'
+import zh from './locales/zh/index'
+import en from './locales/en/index'
 
 // 定义支持的语言类型
 type SupportedLocale = 'en' | 'zh'

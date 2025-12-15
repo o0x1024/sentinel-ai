@@ -3,7 +3,7 @@
     <div class="card-body">
       <h2 class="card-title text-base mb-3">
         <i class="fas fa-power-off mr-2"></i>
-        代理控制
+        {{ $t('passiveScan.control.title') }}
       </h2>
       
       <!-- 代理状态 -->
@@ -12,40 +12,40 @@
           <div class="stat-figure text-primary">
             <i :class="['fas fa-circle', proxyStatus.running ? 'text-success' : 'text-error', 'stat-icon']"></i>
           </div>
-          <div class="stat-title text-xs">代理状态</div>
+          <div class="stat-title text-xs">{{ $t('passiveScan.control.stats.proxyStatus') }}</div>
           <div class="stat-value text-base" :class="proxyStatus.running ? 'text-success' : 'text-error'">
-            {{ proxyStatus.running ? '运行中' : '已停止' }}
+            {{ proxyStatus.running ? $t('passiveScan.control.stats.running') : $t('passiveScan.control.stats.stopped') }}
           </div>
-          <div class="stat-desc">{{ proxyStatus.running ? `端口: ${proxyStatus.port}` : '未启动' }}</div>
+          <div class="stat-desc">{{ proxyStatus.running ? `${$t('passiveScan.control.stats.port')}: ${proxyStatus.port}` : $t('passiveScan.control.stats.notStarted') }}</div>
         </div>
         
         <div class="stat">
           <div class="stat-figure text-secondary">
             <i class="fas fa-lock stat-icon"></i>
           </div>
-          <div class="stat-title text-xs">MITM 状态</div>
-          <div class="stat-value text-base">{{ proxyStatus.mitm ? '已启用' : '未启用' }}</div>
-          <div class="stat-desc text-xs">中间人拦截</div>
+          <div class="stat-title text-xs">{{ $t('passiveScan.control.stats.mitmStatus') }}</div>
+          <div class="stat-value text-base">{{ proxyStatus.mitm ? $t('passiveScan.control.stats.enabled') : $t('passiveScan.control.stats.disabled') }}</div>
+          <div class="stat-desc text-xs">{{ $t('passiveScan.control.stats.mitmDesc') }}</div>
         </div>
         
         <div class="stat">
           <div class="stat-figure text-accent">
             <i class="fas fa-tachometer-alt stat-icon"></i>
           </div>
-          <div class="stat-title text-xs">QPS</div>
+          <div class="stat-title text-xs">{{ $t('passiveScan.control.stats.qps') }}</div>
           <div class="stat-value text-base">{{ proxyStatus.stats.qps.toFixed(2) }}</div>
-          <div class="stat-desc text-xs">每秒请求数</div>
+          <div class="stat-desc text-xs">{{ $t('passiveScan.control.stats.qpsDesc') }}</div>
         </div>
         
         <div class="stat">
           <div class="stat-figure text-info">
             <i class="fas fa-exchange-alt stat-icon"></i>
           </div>
-          <div class="stat-title text-xs">请求统计</div>
+          <div class="stat-title text-xs">{{ $t('passiveScan.control.stats.requestStats') }}</div>
           <div class="stat-value text-base">{{ totalRequests }}</div>
           <div class="stat-desc">
-            HTTP: {{ proxyStatus.stats.http_requests }} | 
-            HTTPS: {{ proxyStatus.stats.https_requests }}
+            {{ $t('passiveScan.control.stats.http') }}: {{ proxyStatus.stats.http_requests }} | 
+            {{ $t('passiveScan.control.stats.https') }}: {{ proxyStatus.stats.https_requests }}
           </div>
         </div>
       </div>
@@ -59,7 +59,7 @@
         >
           <i v-if="isToggling" class="fas fa-spinner fa-spin mr-2"></i>
           <i v-else :class="['fas', proxyStatus.running ? 'fa-stop' : 'fa-play', 'mr-2']"></i>
-          {{ isToggling ? '处理中...' : (proxyStatus.running ? '停止代理' : '启动代理') }}
+          {{ isToggling ? $t('passiveScan.control.processing') : (proxyStatus.running ? $t('passiveScan.control.stopProxy') : $t('passiveScan.control.startProxy')) }}
         </button>
         
         <button 
@@ -68,15 +68,15 @@
           :disabled="isRefreshing"
         >
           <i :class="['fas fa-sync-alt mr-2', { 'fa-spin': isRefreshing }]"></i>
-          刷新状态
+          {{ $t('passiveScan.control.refreshStatus') }}
         </button>
       </div>
       
       <div class="alert alert-info">
         <i class="fas fa-info-circle"></i>
         <div class="text-sm">
-          <p>配置浏览器代理为 <code class="font-mono bg-base-300 px-2 py-1 rounded">127.0.0.1:{{ proxyStatus.port || 8080 }}</code></p>
-          <p class="mt-1">代理配置和拦截规则请前往 <strong>Proxy Settings</strong> 页面进行设置</p>
+          <p>{{ $t('passiveScan.control.proxyConfig') }} <code class="font-mono bg-base-300 px-2 py-1 rounded">127.0.0.1:{{ proxyStatus.port || 8080 }}</code></p>
+          <p class="mt-1">{{ $t('passiveScan.control.proxySettings') }}</p>
         </div>
       </div>
     </div>

@@ -16,11 +16,6 @@ use crate::config::LlmConfig;
 use crate::log::{log_request, log_response};
 use crate::message::{build_user_message, convert_chat_history, ChatMessage, ImageAttachment};
 use sentinel_tools::DynamicTool;
-use sentinel_tools::buildin_tools::{PortScanTool, HttpRequestTool, LocalTimeTool, ShellTool};
-
-// 注意：内置工具（PortScanTool, HttpRequestTool, LocalTimeTool, ShellTool）
-// 现在应该通过 ToolServer 动态注册，而不是硬编码到此模块中。
-// stream_chat_with_dynamic_tools 方法接收所有需要的工具作为参数。
 
 /// 流式内容类型
 #[derive(Debug, Clone)]
@@ -55,7 +50,7 @@ impl StreamingLlmClient {
         Self { config }
     }
 
-    /// Flow chat (simple, no extra tool IDs passed, though internal implementation might add defaults)
+    /// 流式对话（无工具）
     pub async fn stream_chat<F>(
         &self,
         system_prompt: Option<&str>,
@@ -67,209 +62,19 @@ impl StreamingLlmClient {
     where
         F: FnMut(StreamContent),
     {
-        self.stream_chat_with_tools(
+        self.stream_chat_with_dynamic_tools(
             system_prompt,
             user_prompt,
             history,
             image,
-            &[],
+            vec![],
             on_content,
         )
         .await
     }
 
-    /// 流式多轮对话（带工具支持 - 遗留方法，使用内置工具）
-    pub async fn stream_chat_with_tools<F>(
-        &self,
-        system_prompt: Option<&str>,
-        user_prompt: &str,
-        history: &[ChatMessage],
-        image: Option<&ImageAttachment>,
-        tool_ids: &[String],
-        mut on_content: F,
-    ) -> Result<String>
-    where
-        F: FnMut(StreamContent),
-    {
-        let provider = self.config.provider.to_lowercase();
-        let provider_for_agent = self.config.get_effective_rig_provider();
-        let model = &self.config.model;
-        let session_id = uuid::Uuid::new_v4().to_string();
-
-        info!(
-            "StreamingLlmClient with tools - Provider: {}, Model: {}, Tools: {:?}, History: {} messages",
-            provider,
-            model,
-            tool_ids,
-            history.len()
-        );
-
-        let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
-
-        // 记录请求日志
-        log_request(
-            &session_id,
-            None,
-            &provider,
-            model,
-            Some(preamble),
-            user_prompt,
-        );
-
-        // 设置环境变量
-        self.config.setup_env_vars();
-
-        // LM Studio 特殊处理
-        if matches!(provider.as_str(), "lm studio" | "lmstudio" | "lm_studio") {
-            let mut base = self
-                .config
-                .base_url
-                .clone()
-                .unwrap_or_else(|| "http://localhost:1234".to_string());
-            if !base.ends_with("/v1") {
-                base = format!("{}/v1", base.trim_end_matches('/'));
-            }
-
-            unsafe {
-                std::env::set_var("OPENAI_API_BASE", base.clone());
-                std::env::set_var("OPENAI_BASE_URL", base.clone());
-                std::env::set_var("OPENAI_BASE", base);
-            }
-            if std::env::var("OPENAI_API_KEY")
-                .map(|v| v.trim().is_empty())
-                .unwrap_or(true)
-            {
-                let key = self
-                    .config
-                    .api_key
-                    .clone()
-                    .unwrap_or_else(|| "lm-studio".to_string());
-                unsafe {
-                    std::env::set_var("OPENAI_API_KEY", key);
-                }
-            }
-        }
-
-        let user_message = build_user_message(user_prompt, image);
-        let chat_history = convert_chat_history(history);
-        let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
-
-        // 根据 provider 创建 agent 并执行流式调用（带工具）
-        let content = match provider_for_agent.as_str() {
-            "openai" => {
-                self.stream_with_openai_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-            "anthropic" => {
-                self.stream_with_anthropic_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-            "gemini" | "google" => {
-                self.stream_with_gemini_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-            "ollama" => {
-                self.stream_with_ollama_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-            "deepseek" => {
-                self.stream_with_deepseek_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-            "openrouter" => {
-                self.stream_with_openrouter_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-            "xai" => {
-                self.stream_with_xai_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-            "groq" => {
-                self.stream_with_groq_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-            _ => {
-                info!(
-                    "Unknown provider '{}', trying OpenAI compatible mode with tools",
-                    provider_for_agent
-                );
-                self.stream_with_openai_and_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    &mut on_content,
-                )
-                .await?
-            }
-        };
-
-        log_response(&session_id, None, &provider, model, &content);
-        info!(
-            "StreamingLlmClient with tools: Response length: {} chars",
-            content.len()
-        );
-        Ok(content)
-    }
-
     /// 流式多轮对话（带动态工具支持 - 使用 rig-core 原生工具调用）
+    /// 支持所有 rig-core 提供商: openai, anthropic, gemini, deepseek, ollama, openrouter, xai, groq
     pub async fn stream_chat_with_dynamic_tools<F>(
         &self,
         system_prompt: Option<&str>,
@@ -289,7 +94,7 @@ impl StreamingLlmClient {
         let tool_names: Vec<String> = dynamic_tools.iter().map(|t| t.name().to_string()).collect();
 
         info!(
-            "StreamingLlmClient with dynamic tools - Provider: {}, Model: {}, Tools: {:?}, History: {} messages",
+            "StreamingLlmClient - Provider: {}, Model: {}, Tools: {:?}, History: {} messages",
             provider,
             model,
             tool_names,
@@ -347,88 +152,56 @@ impl StreamingLlmClient {
         // 根据 provider 创建带动态工具的 agent
         let content = match provider_for_agent.as_str() {
             "openai" => {
-                self.stream_with_openai_dynamic_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut on_content,
-                )
-                .await?
+                self.stream_with_openai(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
             }
             "anthropic" => {
-                self.stream_with_anthropic_dynamic_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut on_content,
-                )
-                .await?
+                self.stream_with_anthropic(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
             }
             "gemini" | "google" => {
-                self.stream_with_gemini_dynamic_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut on_content,
-                )
-                .await?
+                self.stream_with_gemini(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
             }
             "deepseek" => {
-                self.stream_with_deepseek_dynamic_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut on_content,
-                )
-                .await?
+                self.stream_with_deepseek(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
+            }
+            "ollama" => {
+                self.stream_with_ollama(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
+            }
+            "openrouter" => {
+                self.stream_with_openrouter(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
+            }
+            "xai" => {
+                self.stream_with_xai(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
+            }
+            "groq" => {
+                self.stream_with_groq(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
             }
             _ => {
                 info!(
-                    "Unknown provider '{}', trying OpenAI compatible mode with dynamic tools",
+                    "Unknown provider '{}', trying OpenAI compatible mode",
                     provider_for_agent
                 );
-                self.stream_with_openai_dynamic_tools(
-                    model,
-                    preamble,
-                    user_message,
-                    chat_history,
-                    timeout,
-                    dynamic_tools,
-                    &mut on_content,
-                )
-                .await?
+                self.stream_with_openai(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
             }
         };
 
         log_response(&session_id, None, &provider, model, &content);
         info!(
-            "StreamingLlmClient with dynamic tools: Response length: {} chars",
+            "StreamingLlmClient: Response length: {} chars",
             content.len()
         );
         Ok(content)
     }
 
-    // ==================== 私有辅助方法 (Builtin Tools) ====================
+    // ==================== Provider 实现 ====================
 
-    async fn stream_with_openai_and_tools<F>(
+    async fn stream_with_openai<F>(
         &self,
         model: &str,
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
         timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
@@ -436,25 +209,24 @@ impl StreamingLlmClient {
     {
         use rig::providers::openai;
         let client = openai::Client::from_env();
+        
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let agent = client
             .agent(model)
             .preamble(preamble)
-            .tool(PortScanTool)
-            .tool(HttpRequestTool::default())
-            .tool(LocalTimeTool)
-            .tool(ShellTool::new())
+            .tool_server_handle(tool_server_handle)
             .build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
-    async fn stream_with_anthropic_and_tools<F>(
+    async fn stream_with_anthropic<F>(
         &self,
         model: &str,
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
         timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
@@ -488,28 +260,26 @@ impl StreamingLlmClient {
         
         let client = builder.build()
             .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {:?}", e))?;
-            
+        
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let agent = client
             .agent(model)
             .preamble(preamble)
             .max_tokens(self.config.get_max_tokens() as u64)
-            .tool(PortScanTool)
-            .tool(HttpRequestTool::default())
-            .tool(LocalTimeTool)
-            .tool(ShellTool::new())
+            .tool_server_handle(tool_server_handle)
             .build();
             
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
-    async fn stream_with_gemini_and_tools<F>(
+    async fn stream_with_gemini<F>(
         &self,
         model: &str,
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
         timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
@@ -520,27 +290,71 @@ impl StreamingLlmClient {
         let gen_cfg = GenerationConfig::default();
         let cfg = AdditionalParameters::default().with_config(gen_cfg);
         
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let agent = client
             .agent(model)
             .preamble(preamble)
             .additional_params(serde_json::to_value(cfg).unwrap())
-            .tool(PortScanTool)
-            .tool(HttpRequestTool::default())
-            .tool(LocalTimeTool)
-            .tool(ShellTool::new())
+            .tool_server_handle(tool_server_handle)
             .build();
             
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
-    async fn stream_with_ollama_and_tools<F>(
+    async fn stream_with_deepseek<F>(
         &self,
         model: &str,
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
         timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
+        on_content: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamContent),
+    {
+        use rig::providers::deepseek;
+        
+        let api_key = std::env::var("DEEPSEEK_API_KEY")
+            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+            .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
+        
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+        
+        let client = deepseek::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
+        
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
+        let agent = client
+            .agent(model)
+            .preamble(preamble)
+            .tool_server_handle(tool_server_handle)
+            .build();
+            
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
+    }
+
+    async fn stream_with_ollama<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
@@ -549,74 +363,24 @@ impl StreamingLlmClient {
         use rig::providers::ollama;
         let client = ollama::Client::from_env();
         
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let agent = client
             .agent(model)
             .preamble(preamble)
-            .tool(PortScanTool)
-            .tool(HttpRequestTool::default())
-            .tool(LocalTimeTool)
-            .tool(ShellTool::new())
+            .tool_server_handle(tool_server_handle)
             .build();
             
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
-    async fn stream_with_deepseek_and_tools<F>(
+    async fn stream_with_openrouter<F>(
         &self,
         model: &str,
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
         timeout: std::time::Duration,
-        on_content: &mut F,
-    ) -> Result<String>
-    where
-        F: FnMut(StreamContent),
-    {
-        use rig::providers::deepseek;
-        
-        let api_key = std::env::var("DEEPSEEK_API_KEY")
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
-        
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-        
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-        
-        let client = deepseek::Client::<reqwest::Client>::builder()
-            .api_key(api_key)
-            .http_client(http_client)
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
-            
-        let agent = client
-            .agent(model)
-            .preamble(preamble)
-            .tool(PortScanTool)
-            .tool(HttpRequestTool::default())
-            .tool(LocalTimeTool)
-            .tool(ShellTool::new())
-            .build();
-            
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
-    }
-
-    async fn stream_with_openrouter_and_tools<F>(
-        &self,
-        model: &str,
-        preamble: &str,
-        user_message: Message,
-        chat_history: Vec<Message>,
-        timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
@@ -625,26 +389,24 @@ impl StreamingLlmClient {
         use rig::providers::openrouter;
         let client = openrouter::Client::from_env();
         
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let agent = client
             .agent(model)
             .preamble(preamble)
-            .tool(PortScanTool)
-            .tool(HttpRequestTool::default())
-            .tool(LocalTimeTool)
-            .tool(ShellTool::new())
+            .tool_server_handle(tool_server_handle)
             .build();
             
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
-    async fn stream_with_xai_and_tools<F>(
+    async fn stream_with_xai<F>(
         &self,
         model: &str,
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
         timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
@@ -653,26 +415,24 @@ impl StreamingLlmClient {
         use rig::providers::xai;
         let client = xai::Client::from_env();
         
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let agent = client
             .agent(model)
             .preamble(preamble)
-            .tool(PortScanTool)
-            .tool(HttpRequestTool::default())
-            .tool(LocalTimeTool)
-            .tool(ShellTool::new())
+            .tool_server_handle(tool_server_handle)
             .build();
             
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
-    async fn stream_with_groq_and_tools<F>(
+    async fn stream_with_groq<F>(
         &self,
         model: &str,
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
         timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
@@ -681,179 +441,26 @@ impl StreamingLlmClient {
         use rig::providers::groq;
         let client = groq::Client::from_env();
         
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
         let agent = client
             .agent(model)
             .preamble(preamble)
-            .tool(PortScanTool)
-            .tool(HttpRequestTool::default())
-            .tool(LocalTimeTool)
-            .tool(ShellTool::new())
+            .tool_server_handle(tool_server_handle)
             .build();
             
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
-    // ==================== 动态工具方法 ====================
-    async fn stream_with_openai_dynamic_tools<F>(
-        &self,
-        model: &str,
-        preamble: &str,
-        user_message: Message,
-        chat_history: Vec<Message>,
-        timeout: std::time::Duration,
-        dynamic_tools: Vec<DynamicTool>,
-        on_content: &mut F,
-    ) -> Result<String>
-    where
-        F: FnMut(StreamContent),
-    {
-        use rig::providers::openai;
-        let client = openai::Client::from_env();
+    // ==================== 辅助方法 ====================
+
+    fn build_tool_server(dynamic_tools: Vec<DynamicTool>) -> rig::tool::server::ToolServerHandle {
         let mut tool_server = ToolServer::new();
         for tool in dynamic_tools {
             info!("Adding dynamic tool to agent: {}", tool.name());
             tool_server = tool_server.tool(tool);
         }
-        let tool_server_handle = tool_server.run();
-        let agent = client
-            .agent(model)
-            .preamble(preamble)
-            .tool_server_handle(tool_server_handle)
-            .build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
+        tool_server.run()
     }
-
-    async fn stream_with_anthropic_dynamic_tools<F>(
-        &self,
-        model: &str,
-        preamble: &str,
-        user_message: Message,
-        chat_history: Vec<Message>,
-        timeout: std::time::Duration,
-        dynamic_tools: Vec<DynamicTool>,
-        on_content: &mut F,
-    ) -> Result<String>
-    where
-        F: FnMut(StreamContent),
-    {
-        use rig::providers::anthropic;
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-        let client = anthropic::Client::<reqwest::Client>::builder()
-            .api_key(api_key)
-            .http_client(http_client)
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {}", e))?;
-        
-        let mut tool_server = ToolServer::new();
-        for tool in dynamic_tools {
-            info!("Adding dynamic tool to agent: {}", tool.name());
-            tool_server = tool_server.tool(tool);
-        }
-        let tool_server_handle = tool_server.run();
-        let agent = client
-            .agent(model)
-            .preamble(preamble)
-            .max_tokens(self.config.get_max_tokens() as u64)
-            .tool_server_handle(tool_server_handle)
-            .build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
-    }
-
-    async fn stream_with_gemini_dynamic_tools<F>(
-        &self,
-        model: &str,
-        preamble: &str,
-        user_message: Message,
-        chat_history: Vec<Message>,
-        timeout: std::time::Duration,
-        dynamic_tools: Vec<DynamicTool>,
-        on_content: &mut F,
-    ) -> Result<String>
-    where
-        F: FnMut(StreamContent),
-    {
-        use rig::providers::gemini;
-        let client = gemini::Client::from_env();
-        let gen_cfg = GenerationConfig::default();
-        let cfg = AdditionalParameters::default().with_config(gen_cfg);
-        
-        let mut tool_server = ToolServer::new();
-        for tool in dynamic_tools {
-            info!("Adding dynamic tool to agent: {}", tool.name());
-            tool_server = tool_server.tool(tool);
-        }
-        let tool_server_handle = tool_server.run();
-        let agent = client
-            .agent(model)
-            .preamble(preamble)
-            .additional_params(serde_json::to_value(cfg).unwrap())
-            .tool_server_handle(tool_server_handle)
-            .build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
-    }
-
-    async fn stream_with_deepseek_dynamic_tools<F>(
-        &self,
-        model: &str,
-        preamble: &str,
-        user_message: Message,
-        chat_history: Vec<Message>,
-        timeout: std::time::Duration,
-        dynamic_tools: Vec<DynamicTool>,
-        on_content: &mut F,
-    ) -> Result<String>
-    where
-        F: FnMut(StreamContent),
-    {
-        use rig::providers::deepseek;
-        let api_key = std::env::var("DEEPSEEK_API_KEY")
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-        let client = deepseek::Client::<reqwest::Client>::builder()
-            .api_key(api_key)
-            .http_client(http_client)
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
-            
-        let mut tool_server = ToolServer::new();
-        for tool in dynamic_tools {
-            info!("Adding dynamic tool to agent: {}", tool.name());
-            tool_server = tool_server.tool(tool);
-        }
-        let tool_server_handle = tool_server.run();
-        let agent = client
-            .agent(model)
-            .preamble(preamble)
-            .tool_server_handle(tool_server_handle)
-            .build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
-            .await
-    }
-
-    // ==================== 通用执行方法 ====================
 
     async fn execute_stream<M, F>(
         &self,
@@ -868,7 +475,6 @@ impl StreamingLlmClient {
         M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
         F: FnMut(StreamContent),
     {
-        // 跟踪工具调用的增量参数
         let mut tool_call_args: HashMap<String, String> = HashMap::new();
         let mut tool_call_names: HashMap<String, String> = HashMap::new();
         info!("Starting stream iteration...");
@@ -923,7 +529,7 @@ impl StreamingLlmClient {
                         on_content(StreamContent::Reasoning(piece));
                     }
                 }
-                // 完整的工具调用（rig-core 会自动执行工具）
+                // 完整的工具调用
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall(tool_call),
                 )) => {
@@ -931,41 +537,36 @@ impl StreamingLlmClient {
                         "Tool call received: id={}, name={}, args={}",
                         tool_call.id, tool_call.function.name, tool_call.function.arguments
                     );
-                    // 发送工具调用完成事件
                     on_content(StreamContent::ToolCallComplete {
                         id: tool_call.id.clone(),
                         name: tool_call.function.name.clone(),
                         arguments: tool_call.function.arguments.to_string(),
                     });
-                    // 存储工具名称供后续参考
                     tool_call_names.insert(tool_call.id.clone(), tool_call.function.name.clone());
                 }
-                // 工具调用增量（流式接收参数）
+                // 工具调用增量
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCallDelta { id, delta },
                 )) => {
-                    // 累积参数增量
                     tool_call_args
                         .entry(id.clone())
                         .or_default()
                         .push_str(&delta);
-                    // 发送增量事件
                     on_content(StreamContent::ToolCallDelta { id, delta });
                 }
-                // 工具执行结果（用户消息中的工具结果）
+                // 工具执行结果
                 Ok(MultiTurnStreamItem::StreamUserItem(user_content)) => {
-                    // StreamedUserContent::ToolResult 包含 ToolResult 结构体
-                     let rig::streaming::StreamedUserContent::ToolResult(tool_result) = user_content;
-                        let result_str = serde_json::to_string(&tool_result.content).unwrap_or_default();
-                        info!(
-                            "Tool result received: id={}, result_len={}",
-                            tool_result.id,
-                            result_str.len()
-                        );
-                        on_content(StreamContent::ToolResult {
-                            id: tool_result.id,
-                            result: result_str,
-                        });
+                    let rig::streaming::StreamedUserContent::ToolResult(tool_result) = user_content;
+                    let result_str = serde_json::to_string(&tool_result.content).unwrap_or_default();
+                    info!(
+                        "Tool result received: id={}, result_len={}",
+                        tool_result.id,
+                        result_str.len()
+                    );
+                    on_content(StreamContent::ToolResult {
+                        id: tool_result.id,
+                        result: result_str,
+                    });
                 }
                 // 最终响应
                 Ok(MultiTurnStreamItem::FinalResponse(final_resp)) => {
@@ -974,7 +575,6 @@ impl StreamingLlmClient {
                         chunk_count,
                         content.len()
                     );
-                    // 从 final_resp 中提取最终内容（如果有）
                     let final_text = final_resp.response();
                     if !final_text.is_empty() && !content.ends_with(final_text) {
                         content.push_str(final_text);

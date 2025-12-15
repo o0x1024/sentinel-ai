@@ -5,7 +5,7 @@
       <div class="message-header flex items-center gap-2 mb-2 text-sm" v-if="showHeader">
         <span class="message-type font-semibold text-base-content/70">{{ typeName }}</span>
         <span v-if="toolName" class="tool-name font-mono text-xs text-primary">`{{ toolName }}`</span>
-        <!-- 工具状态指示器 -->
+        <!-- Tool Status Indicator -->
         <span v-if="toolStatus" :class="['status-badge px-2 py-0.5 rounded text-xs font-medium', toolStatusClass]">
           {{ toolStatusText }}
         </span>
@@ -13,15 +13,15 @@
         <span v-if="duration" class="duration ml-auto text-xs text-base-content/60">{{ duration }}</span>
       </div>
       
-      <!-- RAG引用指示器 -->
+      <!-- RAG Citation Indicator -->
       <div v-if="ragInfo" class="rag-indicator flex items-center gap-2 mb-2 px-3 py-2 bg-info/10 rounded-md border border-info/30">
         <i class="fas fa-book text-info text-sm"></i>
         <span class="text-xs text-info font-medium">
           <template v-if="ragInfo.rag_sources_used">
-            已引用知识库 ({{ ragInfo.source_count }} 处引用)
+            {{ t('agent.knowledgeBaseCited', { count: ragInfo.source_count }) }}
           </template>
           <template v-else>
-            已启用知识库，但未找到相关内容
+            {{ t('agent.noKnowledgeBaseCitations') }}
           </template>
         </span>
       </div>
@@ -42,19 +42,19 @@
           {{ isExpanded ? '收起详情' : '展开详情' }}
         </button>
         <div v-if="isExpanded" class="mt-2 space-y-3">
-          <!-- 工具参数 -->
+          <!-- Tool Arguments -->
           <div v-if="hasToolArgs" class="tool-args-section">
-            <div class="text-xs text-base-content/60 mb-1 font-medium">📥 输入参数:</div>
+            <div class="text-xs text-base-content/60 mb-1 font-medium">📥 {{ t('agent.inputParameters') }}:</div>
             <pre class="tool-args p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-48 overflow-y-auto">{{ formattedArgs }}</pre>
           </div>
-          <!-- 工具结果（合并显示） -->
+          <!-- Tool Result (merged display) -->
           <div v-if="hasToolResult" class="tool-result-section">
-            <div class="text-xs text-base-content/60 mb-1 font-medium">📤 执行结果:</div>
+            <div class="text-xs text-base-content/60 mb-1 font-medium">📤 {{ t('agent.executionResult') }}:</div>
             <pre class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap">{{ message.metadata?.tool_result }}</pre>
           </div>
-          <!-- 工具调用 ID -->
+          <!-- Tool Call ID -->
           <div v-if="message.metadata?.tool_call_id" class="text-xs text-base-content/50">
-            ID: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
+            {{ t('agent.toolCallId') }}: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
           </div>
         </div>
       </div>
@@ -119,10 +119,13 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { AgentMessage } from '@/types/agent'
 import { getMessageTypeName } from '@/types/agent'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import VisionExplorerProgress from './VisionExplorerProgress.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   message: AgentMessage

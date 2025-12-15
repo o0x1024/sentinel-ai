@@ -79,10 +79,10 @@ impl Tool for VisionExplorerTool {
                     //     "type": "integer",
                     //     "description": "Maximum number of exploration steps (default: 20)"
                     // },
-                    "enable_multimodal": {
-                        "type": "boolean",
-                        "description": "Enable multimodal mode with screenshots (default: false, uses text-based element annotation)"
-                    },
+                    // "enable_multimodal": {
+                    //     "type": "boolean",
+                    //     "description": "Enable multimodal mode with screenshots (default: false, uses text-based element annotation)"
+                    // },
                     // "headless": {
                     //     "type": "boolean",
                     //     "description": "Run browser in headless mode (default: false)"
@@ -108,34 +108,30 @@ impl Tool for VisionExplorerTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        // Check global multimodal setting
-        let global_multimodal_enabled = if let Some(app) = &self.app_handle {
+        // Use database setting as the single source of truth for multimodal mode.
+        // If the config is missing/unreadable, default to false.
+        let enable_multimodal = if let Some(app) = &self.app_handle {
             if let Some(db) = app.try_state::<Arc<crate::services::database::DatabaseService>>() {
                  db.get_config("ai", "enable_multimodal").await
                    .ok()
                    .flatten()
                    .and_then(|s| s.parse::<bool>().ok())
-                   .unwrap_or(true) // Default to true if not set
+                   .unwrap_or(false) // Default to false if not set
             } else {
-                true
+                false
             }
-        } else {
-            true
-        };
-
-        let enable_multimodal = if global_multimodal_enabled {
-            args.enable_multimodal.unwrap_or(false)
         } else {
             false
         };
 
-        if !global_multimodal_enabled && args.enable_multimodal == Some(true) {
+        // Keep this log for visibility if tool args request multimodal while global setting is off.
+        if !enable_multimodal && args.enable_multimodal == Some(true) {
             tracing::info!("VisionExplorer: Multimodal mode requested but disabled in global settings");
         }
 
         let mut config = VisionExplorerConfig {
             target_url: args.url.clone(),
-            max_iterations: args.max_iterations.unwrap_or(20),
+            max_iterations: args.max_iterations.unwrap_or(100),
             enable_multimodal, 
             headless: args.headless.unwrap_or(false),
             headers: args.headers,
@@ -172,13 +168,11 @@ impl Tool for VisionExplorerTool {
              }
         }
 
-        // Inject cancellation token if available
+        // Register and inject cancellation token so UI "Stop" can cancel this execution.
         if let Some(exec_id) = &self.execution_id {
-            // Using the global cancellation manager to get the token associated with this execution
-            if let Some(token) = crate::managers::cancellation_manager::get_token(exec_id).await {
-                tracing::info!("VisionExplorerTool: Injecting cancellation token for execution {}", exec_id);
-                explorer = explorer.with_cancellation_token(token);
-            }
+            let token = crate::managers::cancellation_manager::register_cancellation_token(exec_id.clone()).await;
+            tracing::info!("VisionExplorerTool: Injecting cancellation token for execution {}", exec_id);
+            explorer = explorer.with_cancellation_token(token);
         }
 
         match explorer.start().await {

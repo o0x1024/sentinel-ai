@@ -1,0 +1,53 @@
+export default {
+  title: '智能扫描会话',
+  description: '管理和监控智能扫描会话',
+  newSession: '新会话',
+  allSessions: '所有会话',
+  activeSessions: '活跃会话',
+  completedSessions: '已完成会话',
+  sessionDetails: '会话详情',
+  sessionName: '会话名称',
+  target: '目标',
+  sessionType: '会话类型',
+  status: '状态',
+  currentStage: '当前阶段',
+  progress: '进度',
+  assetsFound: '发现的资产',
+  vulnerabilitiesFound: '发现的漏洞',
+  startTime: '开始时间',
+  endTime: '结束时间',
+  duration: '持续时间',
+  actions: '操作',
+  start: '开始',
+  pause: '暂停',
+  stop: '停止',
+  resume: '恢复',
+  delete: '删除',
+  viewDetails: '查看详情',
+  exportReport: '导出报告',
+  clone: '克隆',
+  filters: {
+    all: '全部',
+    active: '活跃',
+    paused: '已暂停',
+    completed: '已完成',
+    failed: '失败'
+  },
+  statusLabels: {
+    pending: '待处理',
+    running: '运行中',
+    paused: '已暂停',
+    completed: '已完成',
+    failed: '失败',
+    stopped: '已停止'
+  },
+  types: {
+    comprehensive: '综合扫描',
+    targeted: '目标扫描',
+    quick: '快速扫描',
+    deep: '深度扫描',
+    custom: '自定义扫描',
+    subdomain: '子域名扫描',
+    port: '端口扫描'
+  }
+}

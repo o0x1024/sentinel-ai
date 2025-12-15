@@ -4,7 +4,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   content: string
@@ -20,10 +23,10 @@ const renderedHtml = computed(() => {
   try {
     let content = props.content
     
-    // 高亮知识库引用 [SOURCE n]
+    // Highlight knowledge base citations [SOURCE n]
     content = content.replace(
       /\[SOURCE\s+(\d+)\]/gi,
-      '<span class="source-citation" title="知识库引用 #$1">[SOURCE $1]</span>'
+      '<span class="source-citation" :title="t(\'agent.sourceCitation\', { number: \'$1\' })">[SOURCE $1]</span>'
     )
     
     return marked(content)

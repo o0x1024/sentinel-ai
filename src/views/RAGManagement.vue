@@ -2,21 +2,21 @@
   <div class="container mx-auto p-6">
     <!-- 页面标题 -->
     <div class="flex justify-between items-center mb-6">
-      <h1 class="text-3xl font-bold">RAG 知识库管理</h1>
+      <h1 class="text-3xl font-bold">{{ t('ragManagement.title') }}</h1>
       <div class="flex gap-2">
         <button 
           @click="showCreateCollectionModal = true"
           class="btn btn-primary"
         >
           <i class="fas fa-plus mr-2"></i>
-          创建集合
+          {{ t('ragManagement.createCollection') }}
         </button>
         <button 
           @click="refreshCollections"
           class="btn btn-outline"
         >
           <i class="fas fa-refresh mr-2"></i>
-          刷新
+          {{ t('ragManagement.refresh') }}
         </button>
       </div>
     </div>
@@ -27,7 +27,7 @@
         <div class="stat-figure text-primary">
           <i class="fas fa-database text-2xl"></i>
         </div>
-        <div class="stat-title">集合总数</div>
+        <div class="stat-title">{{ t('ragManagement.stats.totalCollections') }}</div>
         <div class="stat-value text-primary">{{ collections.length }}</div>
       </div>
       
@@ -35,7 +35,7 @@
         <div class="stat-figure text-secondary">
           <i class="fas fa-file-alt text-2xl"></i>
         </div>
-        <div class="stat-title">文档总数</div>
+        <div class="stat-title">{{ t('ragManagement.stats.totalDocuments') }}</div>
         <div class="stat-value text-secondary">{{ totalDocuments }}</div>
       </div>
       
@@ -43,7 +43,7 @@
         <div class="stat-figure text-accent">
           <i class="fas fa-puzzle-piece text-2xl"></i>
         </div>
-        <div class="stat-title">块总数</div>
+        <div class="stat-title">{{ t('ragManagement.stats.totalChunks') }}</div>
         <div class="stat-value text-accent">{{ totalChunks }}</div>
       </div>
       
@@ -51,7 +51,7 @@
         <div class="stat-figure text-info">
           <i class="fas fa-search text-2xl"></i>
         </div>
-        <div class="stat-title">查询总数</div>
+        <div class="stat-title">{{ t('ragManagement.stats.totalQueries') }}</div>
         <div class="stat-value text-info">{{ totalQueries }}</div>
       </div>
     </div>
@@ -59,9 +59,9 @@
     <!-- 集合列表 -->
     <div class="card bg-base-100 shadow-xl">
       <div class="card-body">
-        <h2 class="card-title mb-2">知识库集合</h2>
+        <h2 class="card-title mb-2">{{ t('ragManagement.collections.title') }}</h2>
         <p class="text-sm text-base-content/70 mb-4">
-          已激活的集合会在 AI 助手的 RAG 模式下被联合检索。
+          {{ t('ragManagement.collections.description') }}
         </p>
         
         <!-- 搜索和过滤 -->
@@ -70,14 +70,14 @@
             <input 
               v-model="searchQuery"
               type="text" 
-              placeholder="搜索集合..." 
+              :placeholder="t('ragManagement.collections.searchPlaceholder')" 
               class="input input-bordered"
             >
           </div>
           <select v-model="statusFilter" class="select select-bordered">
-            <option value="">全部状态</option>
-            <option value="active">已激活</option>
-            <option value="inactive">未激活</option>
+            <option value="">{{ t('ragManagement.collections.allStatus') }}</option>
+            <option value="active">{{ t('ragManagement.collections.active') }}</option>
+            <option value="inactive">{{ t('ragManagement.collections.inactive') }}</option>
           </select>
         </div>
 
@@ -86,13 +86,13 @@
           <table class="table table-zebra w-full">
             <thead>
               <tr>
-                <th>名称</th>
-                <th>描述</th>
-                <th>嵌入模型</th>
-                <th>文档数</th>
-                <th>创建时间</th>
-                <th class="text-center">激活</th>
-                <th>操作</th>
+                <th>{{ t('ragManagement.table.name') }}</th>
+                <th>{{ t('ragManagement.table.description') }}</th>
+                <th>{{ t('ragManagement.table.embeddingModel') }}</th>
+                <th>{{ t('ragManagement.table.documentCount') }}</th>
+                <th>{{ t('ragManagement.table.createdAt') }}</th>
+                <th class="text-center">{{ t('ragManagement.table.activate') }}</th>
+                <th>{{ t('ragManagement.table.actions') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -110,7 +110,7 @@
                     </div>
                   </div>
                 </td>
-                <td>{{ collection.description || '无描述' }}</td>
+                <td>{{ collection.description || t('ragManagement.collection.noDescription') }}</td>
                 <td>
                   <div class="badge badge-outline">{{ collection.embedding_model }}</div>
                 </td>
@@ -122,7 +122,7 @@
                     class="toggle toggle-primary"
                     :checked="!!collection.is_active"
                     @change="onActiveToggle(collection, $event)"
-                    :aria-label="collection.is_active ? '已激活' : '未激活'"
+                    :aria-label="collection.is_active ? t('ragManagement.collections.activated') : t('ragManagement.collections.notActivated')"
                   />
                 </td>
                 <td>
@@ -130,35 +130,35 @@
                     <button 
                       @click="viewCollection(collection)"
                       class="btn btn-ghost btn-xs"
-                      title="查看详情"
+                      :title="t('ragManagement.actions.view')"
                     >
                       <i class="fas fa-eye"></i>
                     </button>
                     <button 
                       @click="editCollection(collection)"
                       class="btn btn-ghost btn-xs"
-                      title="编辑集合"
+                      :title="t('ragManagement.actions.edit')"
                     >
                       <i class="fas fa-edit"></i>
                     </button>
                     <button 
                       @click="showIngestModal(collection)"
                       class="btn btn-ghost btn-xs"
-                      title="添加文档"
+                      :title="t('ragManagement.actions.add')"
                     >
                       <i class="fas fa-plus"></i>
                     </button>
                     <button 
                       @click="queryCollection(collection)"
                       class="btn btn-ghost btn-xs"
-                      title="查询"
+                      :title="t('ragManagement.actions.query')"
                     >
                       <i class="fas fa-search"></i>
                     </button>
                     <button 
                       @click="deleteCollection(collection)"
                       class="btn btn-ghost btn-xs text-error"
-                      title="删除"
+                      :title="t('ragManagement.actions.delete')"
                     >
                       <i class="fas fa-trash"></i>
                     </button>
@@ -174,41 +174,41 @@
     <!-- 创建集合模态框 -->
     <div v-if="showCreateCollectionModal" class="modal modal-open">
       <div class="modal-box">
-        <h3 class="font-bold text-lg mb-4">创建新集合</h3>
+        <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.collection.createTitle') }}</h3>
         
         <form @submit.prevent="createCollection">
           <div class="form-control mb-4">
             <label class="label">
-              <span class="label-text">集合名称</span>
+              <span class="label-text">{{ t('ragManagement.collection.nameLabel') }}</span>
             </label>
             <input 
               v-model="newCollection.name"
               type="text" 
               class="input input-bordered" 
-              placeholder="输入集合名称"
+              :placeholder="t('ragManagement.collection.namePlaceholder')"
               required
             >
           </div>
           
           <div class="form-control mb-4">
             <label class="label">
-              <span class="label-text">描述</span>
+              <span class="label-text">{{ t('ragManagement.collection.descriptionLabel') }}</span>
             </label>
             <textarea 
               v-model="newCollection.description"
               class="textarea textarea-bordered" 
-              placeholder="输入集合描述"
+              :placeholder="t('ragManagement.collection.descriptionPlaceholder')"
               rows="3"
             ></textarea>
           </div>
           
           <div class="modal-action">
             <button type="button" @click="showCreateCollectionModal = false" class="btn">
-              取消
+              {{ t('ragManagement.cancel') }}
             </button>
             <button type="submit" class="btn btn-primary" :disabled="creating">
               <span v-if="creating" class="loading loading-spinner loading-sm"></span>
-              {{ creating ? '创建中...' : '创建' }}
+              {{ creating ? t('ragManagement.creating') : t('ragManagement.create') }}
             </button>
           </div>
         </form>
@@ -218,41 +218,41 @@
     <!-- 编辑集合模态框 -->
     <div v-if="showEditCollectionModal" class="modal modal-open">
       <div class="modal-box">
-        <h3 class="font-bold text-lg mb-4">编辑集合</h3>
+        <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.collection.editTitle') }}</h3>
         
         <form @submit.prevent="updateCollection">
           <div class="form-control mb-4">
             <label class="label">
-              <span class="label-text">集合名称</span>
+              <span class="label-text">{{ t('ragManagement.collection.nameLabel') }}</span>
             </label>
             <input 
               v-model="editingCollection.name"
               type="text" 
               class="input input-bordered" 
-              placeholder="输入集合名称"
+              :placeholder="t('ragManagement.collection.namePlaceholder')"
               required
             >
           </div>
           
           <div class="form-control mb-4">
             <label class="label">
-              <span class="label-text">描述</span>
+              <span class="label-text">{{ t('ragManagement.collection.descriptionLabel') }}</span>
             </label>
             <textarea 
               v-model="editingCollection.description"
               class="textarea textarea-bordered" 
-              placeholder="输入集合描述"
+              :placeholder="t('ragManagement.collection.descriptionPlaceholder')"
               rows="3"
             ></textarea>
           </div>
           
           <div class="modal-action">
             <button type="button" @click="showEditCollectionModal = false" class="btn">
-              取消
+              {{ t('ragManagement.cancel') }}
             </button>
             <button type="submit" class="btn btn-primary" :disabled="updating">
               <span v-if="updating" class="loading loading-spinner loading-sm"></span>
-              {{ updating ? '保存中...' : '保存' }}
+              {{ updating ? t('ragManagement.saving') : t('ragManagement.save') }}
             </button>
           </div>
         </form>
@@ -262,7 +262,7 @@
     <!-- 文档摄取模态框 -->
     <div v-if="showIngestDocumentModal" class="modal modal-open">
       <div class="modal-box max-w-2xl">
-        <h3 class="font-bold text-lg mb-4">添加文档到 {{ selectedCollection?.name }}</h3>
+        <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.ingest.title', { name: selectedCollection?.name }) }}</h3>
         
         <!-- 选项卡切换 -->
         <div class="tabs tabs-boxed mb-4">
@@ -272,7 +272,7 @@
             @click="ingestMode = 'file'"
           >
             <i class="fas fa-file-upload mr-2"></i>
-            选择文件
+            {{ t('ragManagement.ingest.modeFile') }}
           </a>
           <a 
             class="tab" 
@@ -280,7 +280,7 @@
             @click="ingestMode = 'manual'"
           >
             <i class="fas fa-keyboard mr-2"></i>
-            手动输入
+            {{ t('ragManagement.ingest.modeManual') }}
           </a>
         </div>
         
@@ -289,7 +289,7 @@
           <div v-if="ingestMode === 'file'">
             <div class="form-control mb-4">
               <label class="label">
-                <span class="label-text">选择文件</span>
+                <span class="label-text">{{ t('ragManagement.ingest.selectFile') }}</span>
               </label>
               <div class="flex gap-2">
                 <input 
@@ -304,7 +304,7 @@
                   type="button"
                   @click="selectFileWithDialog"
                   class="btn btn-outline"
-                  title="选择单个文件"
+                  :title="t('ragManagement.ingest.selectSingleFile')"
                 >
                   <i class="fas fa-file"></i>
                 </button>
@@ -312,30 +312,30 @@
                   type="button"
                   @click="selectFolderWithDialog"
                   class="btn btn-outline"
-                  title="选择文件夹"
+                  :title="t('ragManagement.ingest.selectFolder')"
                 >
                   <i class="fas fa-folder-open"></i>
                 </button>
               </div>
               <label class="label">
-                <span class="label-text-alt">支持格式: TXT, MD, PDF, DOCX</span>
+                <span class="label-text-alt">{{ t('ragManagement.ingest.supportedFormats') }}</span>
               </label>
             </div>
             
             <div v-if="selectedFiles.length > 0" class="alert alert-info mb-4">
               <i class="fas fa-info-circle"></i>
               <div>
-                <span v-if="selectedFiles.length === 1">已选择文件: {{ selectedFiles[0].name }}</span>
-                <span v-else>已选择 {{ selectedFiles.length }} 个文件</span>
+                <span v-if="selectedFiles.length === 1">{{ t('ragManagement.ingest.fileSelected', { name: selectedFiles[0].name }) }}</span>
+                <span v-else>{{ t('ragManagement.ingest.filesSelected', { count: selectedFiles.length }) }}</span>
                 <div v-if="selectedFolder" class="text-sm mt-1">
-                  文件夹: {{ selectedFolder }}
+                  {{ t('ragManagement.ingest.folder', { path: selectedFolder }) }}
                 </div>
               </div>
             </div>
             
             <!-- 文件列表 -->
             <div v-if="selectedFiles.length > 1" class="mb-4">
-              <h5 class="font-semibold mb-2">文件列表:</h5>
+              <h5 class="font-semibold mb-2">{{ t('ragManagement.ingest.fileList') }}</h5>
               <div class="max-h-32 overflow-y-auto bg-base-200 rounded p-2">
                 <div v-for="(file, index) in selectedFiles" :key="index" class="text-sm py-1">
                   <i class="fas fa-file mr-2"></i>{{ file.name }}
@@ -348,30 +348,30 @@
           <div v-else>
             <div class="form-control mb-4">
               <label class="label">
-                <span class="label-text">文档标题 <span class="text-error">*</span></span>
+                <span class="label-text">{{ t('ragManagement.ingest.titleRequired') }}</span>
               </label>
               <input 
                 v-model="manualInput.title"
                 type="text" 
                 class="input input-bordered" 
-                placeholder="输入文档标题..."
+                :placeholder="t('ragManagement.ingest.titlePlaceholder')"
                 required
               >
             </div>
             
             <div class="form-control mb-4">
               <label class="label">
-                <span class="label-text">文档内容 <span class="text-error">*</span></span>
+                <span class="label-text">{{ t('ragManagement.ingest.contentRequired') }}</span>
               </label>
               <textarea 
                 v-model="manualInput.content"
                 class="textarea textarea-bordered h-48" 
-                placeholder="输入或粘贴文档内容..."
+                :placeholder="t('ragManagement.ingest.contentPlaceholder')"
                 required
               ></textarea>
               <label class="label">
                 <span class="label-text-alt">
-                  字符数: {{ manualInput.content.length }}
+                  {{ t('ragManagement.ingest.characterCount', { count: manualInput.content.length }) }}
                 </span>
               </label>
             </div>
@@ -379,7 +379,7 @@
           
           <div class="modal-action">
             <button type="button" @click="closeIngestModal" class="btn">
-              取消
+              {{ t('ragManagement.cancel') }}
             </button>
             <button 
               v-if="ingestMode === 'file'"
@@ -388,7 +388,7 @@
               :disabled="ingesting || selectedFiles.length === 0"
             >
               <span v-if="ingesting" class="loading loading-spinner loading-sm"></span>
-              {{ ingesting ? `处理中... ${batchProgress.current}/${batchProgress.total}` : (selectedFiles.length > 1 ? `添加 ${selectedFiles.length} 个文档` : '添加文档') }}
+              {{ ingesting ? t('ragManagement.ingest.processingProgress', { current: batchProgress.current, total: batchProgress.total }) : (selectedFiles.length > 1 ? t('ragManagement.ingest.addMultiple', { count: selectedFiles.length }) : t('ragManagement.addDocument')) }}
             </button>
             <button 
               v-else
@@ -397,7 +397,7 @@
               :disabled="ingesting || !manualInput.title.trim() || !manualInput.content.trim()"
             >
               <span v-if="ingesting" class="loading loading-spinner loading-sm"></span>
-              {{ ingesting ? '处理中...' : '添加文档' }}
+              {{ ingesting ? t('ragManagement.processing') : t('ragManagement.addDocument') }}
             </button>
           </div>
         </form>
@@ -407,27 +407,27 @@
     <!-- 集合详情模态框 -->
     <div v-if="showCollectionDetailsModal" class="modal modal-open">
       <div class="modal-box max-w-4xl">
-        <h3 class="font-bold text-lg mb-4">集合详情: {{ selectedCollection?.name }}</h3>
+        <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.details.title', { name: selectedCollection?.name }) }}</h3>
         
         <!-- 基本信息 -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div class="stat bg-base-200 rounded-lg">
-            <div class="stat-title">文档数量</div>
+            <div class="stat-title">{{ t('ragManagement.details.documentCount') }}</div>
             <div class="stat-value text-primary">{{ collectionDetails.stats.totalDocuments }}</div>
           </div>
           <div class="stat bg-base-200 rounded-lg">
-            <div class="stat-title">文本块数量</div>
+            <div class="stat-title">{{ t('ragManagement.details.chunkCount') }}</div>
             <div class="stat-value text-secondary">{{ collectionDetails.stats.totalChunks }}</div>
           </div>
           <div class="stat bg-base-200 rounded-lg">
-            <div class="stat-title">嵌入模型</div>
+            <div class="stat-title">{{ t('ragManagement.details.embeddingModel') }}</div>
             <div class="stat-value text-sm">{{ collectionDetails.stats.embeddingModel }}</div>
           </div>
         </div>
 
         <!-- 集合描述 -->
         <div class="mb-4" v-if="selectedCollection?.description">
-          <h4 class="font-semibold mb-2">描述</h4>
+          <h4 class="font-semibold mb-2">{{ t('ragManagement.details.description') }}</h4>
           <p class="text-base-content/70">{{ selectedCollection.description }}</p>
         </div>
 
@@ -438,38 +438,38 @@
             class="btn btn-primary btn-sm"
           >
             <i class="fas fa-plus mr-2"></i>
-            添加文档
+            {{ t('ragManagement.addDocument') }}
           </button>
           <button 
             @click="switchToQueryModal"
             class="btn btn-outline btn-sm"
           >
             <i class="fas fa-search mr-2"></i>
-            查询文档
+            {{ t('ragManagement.queryDocument') }}
           </button>
           <button @click="closeDetailsModal" class="btn btn-sm">
-            关闭
+            {{ t('ragManagement.close') }}
           </button>
         </div>
 
         <!-- 文档列表 -->
         <div class="mb-2 flex items-center justify-between gap-2">
-          <h4 class="font-semibold">文档列表</h4>
+          <h4 class="font-semibold">{{ t('ragManagement.details.documentList') }}</h4>
           <div class="flex items-center gap-2">
             <input
               v-model="documentSearch"
               type="text"
-              placeholder="按文件名搜索..."
+              :placeholder="t('ragManagement.details.searchPlaceholder')"
               class="input input-bordered input-sm"
             >
             <select v-model.number="docPageSize" class="select select-bordered select-sm">
-              <option :value="10">10/页</option>
-              <option :value="20">20/页</option>
-              <option :value="50">50/页</option>
+              <option :value="10">{{ t('ragManagement.details.perPage', { size: 10 }) }}</option>
+              <option :value="20">{{ t('ragManagement.details.perPage', { size: 20 }) }}</option>
+              <option :value="50">{{ t('ragManagement.details.perPage', { size: 50 }) }}</option>
             </select>
             <button class="btn btn-ghost btn-xs" @click="reloadDocuments" :disabled="loadingDocuments">
               <span v-if="loadingDocuments" class="loading loading-spinner loading-xs"></span>
-              刷新
+              {{ t('ragManagement.refresh') }}
             </button>
           </div>
         </div>
@@ -477,10 +477,10 @@
           <table class="table table-zebra w-full">
             <thead>
               <tr>
-                <th>文件名</th>
-                <th>大小</th>
-                <th>创建时间</th>
-                <th>操作</th>
+                <th>{{ t('ragManagement.table.fileName') }}</th>
+                <th>{{ t('ragManagement.table.size') }}</th>
+                <th>{{ t('ragManagement.table.createdAt') }}</th>
+                <th>{{ t('ragManagement.table.operations') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -488,12 +488,12 @@
                 <td colspan="4">
                   <div class="flex items-center gap-2">
                     <span class="loading loading-spinner loading-sm"></span>
-                    正在加载文档...
+                    {{ t('ragManagement.details.loading') }}
                   </div>
                 </td>
               </tr>
               <tr v-else-if="documents.length === 0">
-                <td colspan="4" class="text-base-content/60">暂无文档</td>
+                <td colspan="4" class="text-base-content/60">{{ t('ragManagement.details.noDocuments') }}</td>
               </tr>
               <tr v-else v-for="doc in paginatedDocuments" :key="doc.id">
                 <td>
@@ -504,10 +504,10 @@
                 <td>{{ formatDate(doc.created_at) }}</td>
                 <td>
                   <div class="flex gap-2">
-                    <button class="btn btn-ghost btn-xs" title="预览" @click="viewDocument(doc)">
+                    <button class="btn btn-ghost btn-xs" :title="t('ragManagement.actions.preview')" @click="viewDocument(doc)">
                       <i class="fas fa-eye"></i>
                     </button>
-                    <button class="btn btn-ghost btn-xs text-error" title="删除" @click="deleteDocument(doc)">
+                    <button class="btn btn-ghost btn-xs text-error" :title="t('ragManagement.actions.delete')" @click="deleteDocument(doc)">
                       <i class="fas fa-trash"></i>
                     </button>
                   </div>
@@ -519,9 +519,9 @@
 
         <!-- 分页器 -->
         <div class="flex items-center justify-end gap-2 mt-3">
-          <button class="btn btn-xs" :disabled="docCurrentPage <= 1" @click="docCurrentPage = docCurrentPage - 1">上一页</button>
-          <div class="text-sm">第 {{ docCurrentPage }} / {{ totalDocPages }} 页（共 {{ filteredDocuments.length }} 条）</div>
-          <button class="btn btn-xs" :disabled="docCurrentPage >= totalDocPages" @click="docCurrentPage = docCurrentPage + 1">下一页</button>
+          <button class="btn btn-xs" :disabled="docCurrentPage <= 1" @click="docCurrentPage = docCurrentPage - 1">{{ t('ragManagement.details.prevPage') }}</button>
+          <div class="text-sm">{{ t('ragManagement.details.pageInfo', { current: docCurrentPage, total: totalDocPages, count: filteredDocuments.length }) }}</div>
+          <button class="btn btn-xs" :disabled="docCurrentPage >= totalDocPages" @click="docCurrentPage = docCurrentPage + 1">{{ t('ragManagement.details.nextPage') }}</button>
         </div>
 
         <!-- 加载状态 -->
@@ -534,20 +534,20 @@
     <!-- 文档预览模态框 -->
     <div v-if="showDocumentModal" class="modal modal-open">
       <div class="modal-box max-w-5xl">
-        <h3 class="font-bold text-lg mb-2">文档预览: {{ selectedDocument?.file_name }}</h3>
+        <h3 class="font-bold text-lg mb-2">{{ t('ragManagement.document.previewTitle', { name: selectedDocument?.file_name }) }}</h3>
         <div class="text-xs text-base-content/60 mb-4 break-all">{{ selectedDocument?.file_path }}</div>
 
         <div class="mb-3 flex items-center justify-between">
-          <div class="text-sm">文本块: {{ documentChunks.length }}</div>
+          <div class="text-sm">{{ t('ragManagement.document.chunks', { count: documentChunks.length }) }}</div>
           <button class="btn btn-ghost btn-xs" @click="reloadDocumentChunks" :disabled="loadingChunks">
             <span v-if="loadingChunks" class="loading loading-spinner loading-xs"></span>
-            刷新
+            {{ t('ragManagement.refresh') }}
           </button>
         </div>
 
         <div v-if="loadingChunks" class="flex items-center gap-2">
           <span class="loading loading-spinner loading-sm"></span>
-          正在加载内容...
+          {{ t('ragManagement.document.loadingContent') }}
         </div>
         <div v-else class="space-y-3 max-h-[60vh] overflow-y-auto">
           <div v-for="(chunk, idx) in documentChunks" :key="chunk.id" class="card bg-base-200">
@@ -562,7 +562,7 @@
         </div>
 
         <div class="modal-action">
-          <button class="btn" @click="showDocumentModal = false">关闭</button>
+          <button class="btn" @click="showDocumentModal = false">{{ t('ragManagement.close') }}</button>
         </div>
       </div>
     </div>
@@ -570,16 +570,16 @@
     <!-- 查询模态框 -->
     <div v-if="showQueryModal" class="modal modal-open">
       <div class="modal-box max-w-4xl">
-        <h3 class="font-bold text-lg mb-4">查询 {{ selectedCollection?.name }}</h3>
+        <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.query.title', { name: selectedCollection?.name }) }}</h3>
         
         <div class="form-control mb-4">
           <label class="label">
-            <span class="label-text">查询内容</span>
+            <span class="label-text">{{ t('ragManagement.query.contentLabel') }}</span>
           </label>
           <textarea 
             v-model="queryText"
             class="textarea textarea-bordered" 
-            placeholder="输入您的查询..."
+            :placeholder="t('ragManagement.query.contentPlaceholder')"
             rows="3"
           ></textarea>
         </div>
@@ -587,7 +587,7 @@
         <div class="flex gap-4 mb-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">返回结果数</span>
+              <span class="label-text">{{ t('ragManagement.query.topKLabel') }}</span>
             </label>
             <input 
               v-model.number="queryTopK"
@@ -599,13 +599,13 @@
           </div>
           <div class="form-control">
             <label class="label">
-              <span class="label-text">使用嵌入检索</span>
+              <span class="label-text">{{ t('ragManagement.query.useEmbeddingLabel') }}</span>
             </label>
             <input type="checkbox" class="toggle" v-model="queryUseEmbedding" />
           </div>
           <div class="form-control">
             <label class="label">
-              <span class="label-text">启用重排</span>
+              <span class="label-text">{{ t('ragManagement.query.rerankingLabel') }}</span>
             </label>
             <input type="checkbox" class="toggle" v-model="queryReranking" />
           </div>
@@ -618,16 +618,16 @@
             :disabled="querying || !queryText.trim()"
           >
             <span v-if="querying" class="loading loading-spinner loading-sm"></span>
-            {{ querying ? '查询中...' : '执行查询' }}
+            {{ querying ? t('ragManagement.querying') : t('ragManagement.query.execute') }}
           </button>
           <button @click="showQueryModal = false" class="btn">
-            关闭
+            {{ t('ragManagement.close') }}
           </button>
         </div>
         
         <!-- 查询结果 -->
         <div v-if="queryResults.length > 0" class="mt-6">
-          <h4 class="font-bold mb-4">查询结果</h4>
+          <h4 class="font-bold mb-4">{{ t('ragManagement.query.resultsTitle') }}</h4>
           <div class="space-y-4">
             <div 
               v-for="(result, index) in queryResults" 
@@ -636,8 +636,8 @@
             >
               <div class="card-body p-4">
                 <div class="flex justify-between items-start mb-2">
-                  <div class="badge badge-primary">相似度: {{ (result.score * 100).toFixed(1) }}%</div>
-                  <div class="badge badge-outline">排名: {{ result.rank }}</div>
+                  <div class="badge badge-primary">{{ t('ragManagement.query.similarity', { score: (result.score * 100).toFixed(1) }) }}</div>
+                  <div class="badge badge-outline">{{ t('ragManagement.query.rank', { rank: result.rank }) }}</div>
                 </div>
                 <p class="text-sm">{{ result.chunk.content }}</p>
               </div>
@@ -660,7 +660,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 import Toast from '@/components/Toast.vue'
+
+const { t } = useI18n()
 
 // 响应式数据
 const collections = ref([])
@@ -685,12 +688,12 @@ const onActiveToggle = async (collection: any, ev: Event) => {
   try {
     await invoke('set_rag_collection_active', { collectionId: collection.id, active: checked })
     collection.is_active = checked
-    showToast(checked ? '已激活该集合，AI助手将联合检索' : '已取消激活该集合', 'info')
+    showToast(checked ? t('ragManagement.messages.activateSuccess') : t('ragManagement.messages.deactivateSuccess'), 'info')
   } catch (e) {
     console.error('更新激活状态失败:', e)
     // revert UI
     collection.is_active = !checked
-    showToast('更新激活状态失败', 'error')
+    showToast(t('ragManagement.messages.updateActiveFailed'), 'error')
   }
 }
 
@@ -833,13 +836,13 @@ const refreshCollections = async () => {
     collections.value = status.collections || []
   } catch (error) {
     console.error('获取集合列表失败:', error)
-    showToast('获取集合列表失败', 'error')
+    showToast(t('ragManagement.messages.loadFailed'), 'error')
   }
 }
 
 const createCollection = async () => {
   if (!newCollection.value.name) {
-    showToast('请填写集合名称', 'warning')
+    showToast(t('ragManagement.messages.nameRequired'), 'warning')
     return
   }
 
@@ -850,13 +853,13 @@ const createCollection = async () => {
       description: newCollection.value.description || null
     })
     
-    showToast('集合创建成功', 'success')
+    showToast(t('ragManagement.messages.createSuccess'), 'success')
     showCreateCollectionModal.value = false
     newCollection.value = { name: '', description: '' }
     await refreshCollections()
   } catch (error) {
     console.error('创建集合失败:', error)
-    showToast('创建集合失败: ' + error, 'error')
+    showToast(t('ragManagement.messages.createFailed', { error }), 'error')
   } finally {
     creating.value = false
   }
@@ -873,7 +876,7 @@ const editCollection = (collection: any) => {
 
 const updateCollection = async () => {
   if (!editingCollection.value.name) {
-    showToast('请填写集合名称', 'warning')
+    showToast(t('ragManagement.messages.nameRequired'), 'warning')
     return
   }
 
@@ -885,13 +888,13 @@ const updateCollection = async () => {
       description: editingCollection.value.description || null
     })
     
-    showToast('集合更新成功', 'success')
+    showToast(t('ragManagement.messages.updateSuccess'), 'success')
     showEditCollectionModal.value = false
     editingCollection.value = { id: '', name: '', description: '' }
     await refreshCollections()
   } catch (error) {
     console.error('更新集合失败:', error)
-    showToast('更新集合失败: ' + error, 'error')
+    showToast(t('ragManagement.messages.updateFailed', { error }), 'error')
   } finally {
     updating.value = false
   }
@@ -936,7 +939,7 @@ const reloadDocuments = async () => {
     documents.value = list || []
   } catch (e) {
     console.error('获取文档列表失败:', e)
-    showToast('获取文档列表失败', 'error')
+    showToast(t('ragManagement.messages.loadDocumentsFailed'), 'error')
   } finally {
     loadingDocuments.value = false
   }
@@ -983,7 +986,7 @@ const reloadDocumentChunks = async () => {
     documentChunks.value = chunks || []
   } catch (e) {
     console.error('获取文档内容失败:', e)
-    showToast('获取文档内容失败', 'error')
+    showToast(t('ragManagement.messages.loadChunksFailed'), 'error')
   } finally {
     loadingChunks.value = false
   }
@@ -992,12 +995,12 @@ const reloadDocumentChunks = async () => {
 const deleteDocument = async (doc: any) => {
   try {
     await invoke('delete_rag_document', { documentId: doc.id })
-    showToast('文档删除成功', 'success')
+    showToast(t('ragManagement.messages.deleteDocumentSuccess'), 'success')
     await reloadDocuments()
     await refreshCollections()
   } catch (e) {
     console.error('删除文档失败:', e)
-    showToast('删除文档失败: ' + e, 'error')
+    showToast(t('ragManagement.messages.deleteDocumentFailed', { error: e }), 'error')
   }
 }
 
@@ -1039,7 +1042,7 @@ const selectFileWithDialog = async () => {
     }
   } catch (error) {
     console.error('文件选择失败:', error)
-    showToast('文件选择失败: ' + error, 'error')
+    showToast(t('ragManagement.messages.fileSelectFailed', { error }), 'error')
   }
 }
 
@@ -1068,36 +1071,36 @@ const selectFolderWithDialog = async () => {
         }))
         
         if (files.length === 0) {
-          showToast('文件夹中没有找到支持的文档文件', 'warning')
+          showToast(t('ragManagement.messages.noSupportedFiles'), 'warning')
         } else {
-          showToast(`找到 ${files.length} 个文档文件`, 'success')
+          showToast(t('ragManagement.messages.foundFiles', { count: files.length }), 'success')
         }
       } catch (error) {
         console.error('获取文件夹文件失败:', error)
-        showToast('获取文件夹文件失败: ' + error, 'error')
+        showToast(t('ragManagement.messages.folderFilesFailed', { error }), 'error')
       }
     }
   } catch (error) {
     console.error('文件夹选择失败:', error)
-    showToast('文件夹选择失败: ' + error, 'error')
+    showToast(t('ragManagement.messages.folderSelectFailed', { error }), 'error')
   }
 }
 
 const ingestDocument = async () => {
   if (!selectedCollection.value) {
-    showToast('请选择集合', 'warning')
+    showToast(t('ragManagement.messages.selectCollection'), 'warning')
     return
   }
 
   // 根据模式验证输入
   if (ingestMode.value === 'file') {
     if (selectedFiles.value.length === 0) {
-      showToast('请选择文件', 'warning')
+      showToast(t('ragManagement.messages.selectFile'), 'warning')
       return
     }
   } else {
     if (!manualInput.value.title.trim() || !manualInput.value.content.trim()) {
-      showToast('请填写文档标题和内容', 'warning')
+      showToast(t('ragManagement.messages.fillRequired'), 'warning')
       return
     }
   }
@@ -1117,7 +1120,7 @@ const ingestDocument = async () => {
         }
       }) as any
       
-      showToast(`文档添加成功！共处理了 ${response.chunks_created || 0} 个文本块`, 'success')
+      showToast(t('ragManagement.messages.ingestSuccess', { chunks: response.chunks_created || 0 }), 'success')
       closeIngestModal()
       await refreshCollections()
       return
@@ -1166,11 +1169,11 @@ const ingestDocument = async () => {
     
     // 显示最终结果
     if (batchProgress.value.failed === 0) {
-      showToast(`所有文档添加成功！共处理了 ${totalChunks} 个文本块`, 'success')
+      showToast(t('ragManagement.messages.ingestSuccess', { chunks: totalChunks }), 'success')
     } else if (batchProgress.value.success > 0) {
-      showToast(`部分文档添加成功！成功: ${batchProgress.value.success}, 失败: ${batchProgress.value.failed}, 共处理了 ${totalChunks} 个文本块`, 'warning')
+      showToast(t('ragManagement.messages.ingestPartialSuccess', { success: batchProgress.value.success, failed: batchProgress.value.failed, chunks: totalChunks }), 'warning')
     } else {
-      showToast('所有文档添加失败', 'error')
+      showToast(t('ragManagement.messages.ingestAllFailed'), 'error')
     }
     
     // 如果有失败的文件，在控制台输出详细错误信息
@@ -1183,7 +1186,7 @@ const ingestDocument = async () => {
     
   } catch (error) {
     console.error('文档摄取失败:', error)
-    showToast('文档摄取失败: ' + error, 'error')
+    showToast(t('ragManagement.messages.ingestFailed', { error }), 'error')
   } finally {
     ingesting.value = false
     batchProgress.value = { current: 0, total: 0, success: 0, failed: 0 }
@@ -1210,7 +1213,7 @@ const queryCollection = (collection: any) => {
 
 const executeQuery = async () => {
   if (!queryText.value.trim() || !selectedCollection.value) {
-    showToast('请输入查询内容', 'warning')
+    showToast(t('ragManagement.messages.queryRequired'), 'warning')
     return
   }
 
@@ -1227,10 +1230,10 @@ const executeQuery = async () => {
     }) as any
     
     queryResults.value = response.results || []
-    showToast(`找到 ${queryResults.value.length} 个相关结果`, 'success')
+    showToast(t('ragManagement.messages.querySuccess', { count: queryResults.value.length }), 'success')
   } catch (error) {
     console.error('查询失败:', error)
-    showToast('查询失败: ' + error, 'error')
+    showToast(t('ragManagement.messages.queryFailed', { error }), 'error')
   } finally {
     querying.value = false
   }
@@ -1240,11 +1243,11 @@ const deleteCollection = async (collection: any) => {
 
   try {
     await invoke('delete_rag_collection', { collectionId: collection.id })
-    showToast('集合删除成功', 'success')
+    showToast(t('ragManagement.messages.deleteSuccess'), 'success')
     await refreshCollections()
   } catch (error) {
     console.error('删除集合失败:', error)
-    showToast('删除集合失败: ' + error, 'error')
+    showToast(t('ragManagement.messages.deleteFailed', { error }), 'error')
   }
 }
 

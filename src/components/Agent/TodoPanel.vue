@@ -7,7 +7,7 @@
     </div>
     
     <div class="todo-list flex flex-col gap-1">
-      <!-- 递归渲染支持嵌套 -->
+      <!-- Recursive rendering supports nesting -->
       <TodoItem 
         v-for="todo in rootTodos" 
         :key="todo.id"
@@ -29,10 +29,10 @@ const props = defineProps<{
   todos: Todo[]
 }>()
 
-// 顶级任务（无 parent_id）
+// Top-level tasks (no parent_id)
 const rootTodos = computed(() => getRootTodos(props.todos))
 
-// 是否有 todos
+// Whether there are todos
 const hasTodos = computed(() => props.todos.length > 0)
 
 // 完成进度

@@ -13,21 +13,21 @@
         @click="sendToRepeater"
       >
         <i class="fas fa-redo text-primary"></i>
-        Send to Repeater
+        {{ $t('passiveScan.history.contextMenu.sendToRepeater') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="sendRequestToAssistantFromMenu"
       >
         <i class="fas fa-upload text-accent"></i>
-        Send Request to Assistant
+        {{ $t('passiveScan.history.contextMenu.sendRequestToAssistant') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="sendResponseToAssistantFromMenu"
       >
         <i class="fas fa-download text-accent"></i>
-        Send Response to Assistant
+        {{ $t('passiveScan.history.contextMenu.sendResponseToAssistant') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -35,14 +35,14 @@
         @click="copyUrl"
       >
         <i class="fas fa-link text-info"></i>
-        Copy URL
+        {{ $t('passiveScan.history.contextMenu.copyUrl') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="copyAsCurl"
       >
         <i class="fas fa-terminal text-warning"></i>
-        Copy as cURL
+        {{ $t('passiveScan.history.contextMenu.copyAsCurl') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -50,7 +50,7 @@
         @click="openInBrowser"
       >
         <i class="fas fa-external-link-alt text-success"></i>
-        Open in Browser
+        {{ $t('passiveScan.history.contextMenu.openInBrowser') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -58,7 +58,7 @@
         @click="clearHistoryFromMenu"
       >
         <i class="fas fa-trash"></i>
-        Clear History
+        {{ $t('passiveScan.history.contextMenu.clearHistory') }}
       </button>
     </div>
 
@@ -74,21 +74,21 @@
         @click="detailSendToRepeater"
       >
         <i class="fas fa-redo text-primary"></i>
-        Send to Repeater
+        {{ $t('passiveScan.history.contextMenu.sendToRepeater') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="detailSendRequestToAssistant"
       >
         <i class="fas fa-upload text-accent"></i>
-        Send Request to Assistant
+        {{ $t('passiveScan.history.contextMenu.sendRequestToAssistant') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="detailSendResponseToAssistant"
       >
         <i class="fas fa-download text-accent"></i>
-        Send Response to Assistant
+        {{ $t('passiveScan.history.contextMenu.sendResponseToAssistant') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -96,87 +96,87 @@
         @click="detailCopyUrl"
       >
         <i class="fas fa-link text-info"></i>
-        Copy URL
+        {{ $t('passiveScan.history.contextMenu.copyUrl') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="detailCopyRequest"
       >
         <i class="fas fa-copy text-secondary"></i>
-        Copy Request
+        {{ $t('passiveScan.history.contextMenu.copyRequest') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="detailCopyAsCurl"
       >
         <i class="fas fa-terminal text-warning"></i>
-        Copy as cURL
+        {{ $t('passiveScan.history.contextMenu.copyAsCurl') }}
       </button>
     </div>
 
     <!-- 筛选器配置弹窗 -->
     <dialog ref="filterDialog" class="modal">
       <div class="modal-box max-w-4xl">
-        <h3 class="font-bold text-lg mb-4">Configure HTTP Proxy filter</h3>
+        <h3 class="font-bold text-lg mb-4">{{ $t('passiveScan.history.filterDialog.title') }}</h3>
         
         <div class="grid grid-cols-4 gap-4">
           <!-- Filter by request type -->
           <div class="border border-base-300 rounded-lg p-3">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by request type</h4>
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.search') }}</h4>
             <div class="space-y-1">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.requestType.showOnlyWithParams" class="checkbox checkbox-xs" />
-                <span class="text-xs">Show only parameterized requests</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.showOnlyWithParams') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.requestType.hideWithoutResponse" class="checkbox checkbox-xs" />
-                <span class="text-xs">Hide items without responses</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.hideWithoutResponse') }}</span>
               </label>
             </div>
           </div>
 
           <!-- Filter by MIME type -->
           <div class="border border-base-300 rounded-lg p-3">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by MIME type</h4>
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.method') }}</h4>
             <div class="grid grid-cols-2 gap-x-2 gap-y-1">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.mimeType.html" class="checkbox checkbox-xs" />
-                <span class="text-xs">HTML</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.html') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.mimeType.otherText" class="checkbox checkbox-xs" />
-                <span class="text-xs">Other text</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.otherText') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.mimeType.script" class="checkbox checkbox-xs" />
-                <span class="text-xs">Script</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.script') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.mimeType.images" class="checkbox checkbox-xs" />
-                <span class="text-xs">Images</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.images') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.mimeType.xml" class="checkbox checkbox-xs" />
-                <span class="text-xs">XML</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.xml') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.mimeType.flash" class="checkbox checkbox-xs" />
-                <span class="text-xs">Flash</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.flash') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.mimeType.css" class="checkbox checkbox-xs" />
-                <span class="text-xs">CSS</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.css') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.mimeType.otherBinary" class="checkbox checkbox-xs" />
-                <span class="text-xs">Other binary</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.otherBinary') }}</span>
               </label>
             </div>
           </div>
 
           <!-- Filter by status code -->
           <div class="border border-base-300 rounded-lg p-3">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by status code</h4>
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.statusCode') }}</h4>
             <div class="space-y-1">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.statusCode.s2xx" class="checkbox checkbox-xs" />
@@ -199,52 +199,52 @@
 
           <!-- Filter by listener -->
           <div class="border border-base-300 rounded-lg p-3">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by listener</h4>
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.host') }}</h4>
             <div class="form-control">
               <label class="label py-0">
-                <span class="label-text text-xs">Port</span>
+                <span class="label-text text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.port') }}</span>
               </label>
-              <input type="text" v-model="filterConfig.listener.port" placeholder="e.g. 8080" class="input input-bordered input-xs w-full" />
+              <input type="text" v-model="filterConfig.listener.port" :placeholder="$t('passiveScan.history.filterDialog.checkboxes.placeholders.port')" class="input input-bordered input-xs w-full" />
             </div>
           </div>
 
           <!-- Filter by search term -->
           <div class="border border-base-300 rounded-lg p-3 col-span-2">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by search term</h4>
-            <input type="text" v-model="filterConfig.search.term" placeholder="Search..." class="input input-bordered input-xs w-full mb-2" />
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.contains') }}</h4>
+            <input type="text" v-model="filterConfig.search.term" :placeholder="$t('passiveScan.history.filterDialog.checkboxes.placeholders.search')" class="input input-bordered input-xs w-full mb-2" />
             <div class="flex gap-4">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.search.regex" class="checkbox checkbox-xs" />
-                <span class="text-xs">Regex</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.regex') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.search.caseSensitive" class="checkbox checkbox-xs" />
-                <span class="text-xs">Case sensitive</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.caseSensitive') }}</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="filterConfig.search.negative" class="checkbox checkbox-xs" />
-                <span class="text-xs">Negative search</span>
+                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.negativeSearch') }}</span>
               </label>
             </div>
           </div>
 
           <!-- Filter by file extension -->
           <div class="border border-base-300 rounded-lg p-3 col-span-2">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">Filter by file extension</h4>
+            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.contentType') }}</h4>
             <div class="grid grid-cols-2 gap-2">
               <div class="form-control">
                 <label class="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" v-model="filterConfig.extension.showOnlyEnabled" class="checkbox checkbox-xs" />
-                  <span class="label-text text-xs">Show only:</span>
+                  <span class="label-text text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.labels.showOnly') }}</span>
                 </label>
-                <input type="text" v-model="filterConfig.extension.showOnly" placeholder="asp,aspx,jsp,php" class="input input-bordered input-xs w-full mt-1" />
+                <input type="text" v-model="filterConfig.extension.showOnly" :placeholder="$t('passiveScan.history.filterDialog.checkboxes.placeholders.showExtensions')" class="input input-bordered input-xs w-full mt-1" />
               </div>
               <div class="form-control">
                 <label class="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" v-model="filterConfig.extension.hideEnabled" class="checkbox checkbox-xs" />
-                  <span class="label-text text-xs">Hide:</span>
+                  <span class="label-text text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.labels.hide') }}</span>
                 </label>
-                <input type="text" v-model="filterConfig.extension.hide" placeholder="js,gif,jpg,png,css" class="input input-bordered input-xs w-full mt-1" />
+                <input type="text" v-model="filterConfig.extension.hide" :placeholder="$t('passiveScan.history.filterDialog.checkboxes.placeholders.hideExtensions')" class="input input-bordered input-xs w-full mt-1" />
               </div>
             </div>
           </div>
@@ -253,18 +253,18 @@
         <!-- 底部按钮 -->
         <div class="modal-action justify-between">
           <div class="flex gap-2">
-            <button class="btn btn-sm" @click="showAllFilters">Show all</button>
-            <button class="btn btn-sm" @click="hideAllFilters">Hide all</button>
-            <button class="btn btn-sm" @click="revertFilterChanges">Revert changes</button>
+            <button class="btn btn-sm" @click="showAllFilters">{{ $t('passiveScan.history.filterDialog.startTime') }}</button>
+            <button class="btn btn-sm" @click="hideAllFilters">{{ $t('passiveScan.history.filterDialog.endTime') }}</button>
+            <button class="btn btn-sm" @click="revertFilterChanges">{{ $t('passiveScan.history.filterDialog.reset') }}</button>
           </div>
           <div class="flex gap-2">
-            <button class="btn btn-sm" @click="closeFilterDialog">Cancel</button>
-            <button class="btn btn-sm btn-primary" @click="applyFilterConfig">Apply</button>
+            <button class="btn btn-sm" @click="closeFilterDialog">{{ $t('passiveScan.history.filterDialog.url') }}</button>
+            <button class="btn btn-sm btn-primary" @click="applyFilterConfig">{{ $t('passiveScan.history.filterDialog.apply') }}</button>
           </div>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>close</button>
+        <button>{{ $t('passiveScan.history.detailsPanel.close') }}</button>
       </form>
     </dialog>
 
@@ -286,7 +286,7 @@
           @click="toggleMultiSelectMode" 
           class="btn btn-sm btn-ghost"
           :class="{ 'btn-active btn-primary': isMultiSelectMode }"
-          title="多选模式"
+          :title="$t('passiveScan.history.toolbar.filter')"
         >
           <i class="fas fa-check-square"></i>
         </button>
@@ -296,14 +296,14 @@
           <button 
             @click="selectAllVisible" 
             class="btn btn-sm btn-ghost"
-            title="全选"
+            :title="$t('passiveScan.history.toolbar.clear')"
           >
             <i class="fas fa-check-double"></i>
           </button>
           <button 
             @click="clearSelection" 
             class="btn btn-sm btn-ghost"
-            title="取消选择"
+            :title="$t('passiveScan.history.toolbar.refresh')"
             :disabled="selectedRequests.size === 0"
           >
             <i class="fas fa-times"></i>
@@ -315,20 +315,20 @@
               :class="{ 'btn-disabled': selectedRequests.size === 0 }"
             >
               <i class="fas fa-brain"></i>
-              <span class="text-xs">发送 ({{ selectedRequests.size }})</span>
+              <span class="text-xs">{{ $t('passiveScan.history.toolbar.export') }} ({{ selectedRequests.size }})</span>
               <i class="fas fa-chevron-down text-xs"></i>
             </label>
             <ul tabindex="0" class="dropdown-content z-[100] menu p-2 shadow bg-base-100 rounded-box w-48">
               <li>
                 <a @click="sendSelectedToAssistant('request')" class="flex items-center gap-2">
                   <i class="fas fa-upload text-accent"></i>
-                  发送请求
+                  {{ $t('passiveScan.history.contextMenu.sendRequestToAssistant') }}
                 </a>
               </li>
               <li>
                 <a @click="sendSelectedToAssistant('response')" class="flex items-center gap-2">
                   <i class="fas fa-download text-accent"></i>
-                  发送响应
+                  {{ $t('passiveScan.history.contextMenu.sendResponseToAssistant') }}
                 </a>
               </li>
             </ul>
@@ -336,7 +336,7 @@
         </template>
         
         <!-- 快捷操作按钮 -->
-        <button @click="refreshRequests" class="btn btn-sm btn-ghost" title="刷新">
+        <button @click="refreshRequests" class="btn btn-sm btn-ghost" :title="$t('passiveScan.history.toolbar.refresh')">
           <i :class="['fas fa-sync-alt', { 'fa-spin': isLoading }]"></i>
         </button>
       </div>
@@ -353,21 +353,21 @@
         <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
           <h3 class="font-semibold text-sm">
             <i class="fas fa-history mr-2"></i>
-            HTTP 历史记录 ({{ filteredRequests.length }})
+            {{ $t('passiveScan.history.title') }} ({{ filteredRequests.length }})
           </h3>
           <div class="dropdown dropdown-end">
             <label tabindex="0" class="btn btn-xs btn-ghost">
               <i class="fas fa-cog"></i>
             </label>
             <div tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 mt-2 max-h-96 overflow-y-auto">
-              <li class="menu-title"><span>显示列</span></li>
+              <li class="menu-title"><span>{{ $t('passiveScan.history.table.actions') }}</span></li>
               <li v-for="col in columns" :key="col.id">
                 <label class="label cursor-pointer justify-start gap-2">
                   <input type="checkbox" :checked="col.visible" @change="toggleColumn(col.id)" class="checkbox checkbox-xs" />
                   <span class="label-text text-xs">{{ col.label }}</span>
                 </label>
               </li>
-              <li><a @click="resetColumns" class="text-xs"><i class="fas fa-undo mr-1"></i>重置</a></li>
+              <li><a @click="resetColumns" class="text-xs"><i class="fas fa-undo mr-1"></i>{{ $t('passiveScan.history.filterDialog.reset') }}</a></li>
             </div>
           </div>
         </div>
@@ -482,7 +482,7 @@
           <div v-else class="flex items-center justify-center h-full text-base-content/50">
             <div class="text-center">
               <i class="fas fa-inbox text-4xl mb-2"></i>
-              <p>暂无请求历史</p>
+              <p>{{ $t('passiveScan.history.emptyState.noRequests') }}</p>
             </div>
           </div>
         </div>
@@ -503,7 +503,7 @@
         class="bg-base-100 overflow-hidden flex flex-col flex-1 min-h-0"
       >
         <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
-          <h3 class="font-semibold text-sm">请求详情 - ID: {{ selectedRequest.id }}</h3>
+          <h3 class="font-semibold text-sm">{{ $t('passiveScan.history.detailsPanel.requestDetails') }} - ID: {{ selectedRequest.id }}</h3>
           <button @click="closeDetails" class="btn btn-xs btn-ghost">
             <i class="fas fa-times"></i>
           </button>
@@ -513,25 +513,25 @@
           <!-- 左侧：Request -->
           <div class="flex flex-col overflow-hidden" :style="{ width: leftPanelWidth + 'px' }">
             <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
-              <h4 class="font-semibold text-sm">Request</h4>
+              <h4 class="font-semibold text-sm">{{ $t('passiveScan.history.detailsPanel.request') }}</h4>
               <div class="btn-group btn-group-xs">
                 <button 
                   :class="['btn btn-xs', requestTab === 'pretty' ? 'btn-active' : '']"
                   @click="requestTab = 'pretty'"
                 >
-                  Pretty
+                  {{ $t('passiveScan.history.detailsPanel.tabs.pretty') }}
                 </button>
                 <button 
                   :class="['btn btn-xs', requestTab === 'raw' ? 'btn-active' : '']"
                   @click="requestTab = 'raw'"
                 >
-                  Raw
+                  {{ $t('passiveScan.history.detailsPanel.tabs.raw') }}
                 </button>
                 <button 
                   :class="['btn btn-xs', requestTab === 'hex' ? 'btn-active' : '']"
                   @click="requestTab = 'hex'"
                 >
-                  Hex
+                  {{ $t('passiveScan.history.detailsPanel.tabs.hex') }}
                 </button>
               </div>
             </div>
@@ -562,9 +562,9 @@
           <div class="flex-1 flex flex-col overflow-hidden min-w-0">
             <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
               <div class="flex items-center gap-2">
-                <h4 class="font-semibold text-sm">Response</h4>
+                <h4 class="font-semibold text-sm">{{ $t('passiveScan.history.detailsPanel.response') }}</h4>
                 <span v-if="isResponseCompressed(selectedRequest)" class="badge badge-xs badge-info" title="响应已自动解压">
-                  <i class="fas fa-file-archive mr-1"></i>Decompressed
+                  <i class="fas fa-file-archive mr-1"></i>{{ $t('passiveScan.history.detailsPanel.decompressed') }}
                 </span>
               </div>
               <div class="btn-group btn-group-xs">
@@ -572,19 +572,19 @@
                   :class="['btn btn-xs', responseTab === 'pretty' ? 'btn-active' : '']"
                   @click="responseTab = 'pretty'"
                 >
-                  Pretty
+                  {{ $t('passiveScan.history.detailsPanel.tabs.pretty') }}
                 </button>
                 <button 
                   :class="['btn btn-xs', responseTab === 'raw' ? 'btn-active' : '']"
                   @click="responseTab = 'raw'"
                 >
-                  Raw
+                  {{ $t('passiveScan.history.detailsPanel.tabs.raw') }}
                 </button>
                 <button 
                   :class="['btn btn-xs', responseTab === 'hex' ? 'btn-active' : '']"
                   @click="responseTab = 'hex'"
                 >
-                  Hex
+                  {{ $t('passiveScan.history.detailsPanel.tabs.hex') }}
                 </button>
               </div>
             </div>
@@ -611,6 +611,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, inject } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { useRouter } from 'vue-router';
@@ -618,6 +619,7 @@ import { dialog } from '@/composables/useDialog';
 import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
 
 const router = useRouter();
+const { t } = useI18n();
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0));
@@ -806,9 +808,9 @@ const defaultColumns: Column[] = [
   { id: 'method', label: 'Method', visible: true, width: 80, minWidth: 60 },
   { id: 'url', label: 'URL', visible: true, width: 300, minWidth: 150 },
   { id: 'params', label: 'Params', visible: true, width: 70, minWidth: 60 },
-  { id: 'status', label: 'Status code', visible: true, width: 90, minWidth: 80 },
+  { id: 'status', label: 'Status', visible: true, width: 90, minWidth: 80 },
   { id: 'length', label: 'Length', visible: true, width: 80, minWidth: 60 },
-  { id: 'mime', label: 'MIME type', visible: true, width: 100, minWidth: 80 },
+  { id: 'mime', label: 'MIME Type', visible: true, width: 100, minWidth: 80 },
   { id: 'extension', label: 'Extension', visible: true, width: 90, minWidth: 70 },
   { id: 'title', label: 'Title', visible: true, width: 150, minWidth: 100 },
   { id: 'tls', label: 'TLS', visible: true, width: 60, minWidth: 50 },
@@ -844,16 +846,12 @@ const columnResizeStartX = ref(0);
 const resizeStartWidth = ref(0);
 
 // 虚拟滚动相关
-const itemHeight = 32; // 每个项目的高度（像素）
-const headerHeight = 34; // 表头高度（像素）
+const itemHeight = 32;
+const headerHeight = 34;
 const scrollTop = ref(0);
-const containerHeight = ref(600); // 容器高度（响应式）
-const bufferSize = 5; // 缓冲区大小（额外渲染的项目数）
-const maxVisibleItems = 20; // 一屏最多显示的条目数
-
-// 滚动节流
-let scrollTimer: number | null = null;
-const scrollThrottleDelay = 16; // 约 60fps
+const containerHeight = ref(600);
+const bufferSize = 5;
+const maxVisibleItems = 20;
 
 // 事件监听器
 let unlistenRequest: (() => void) | null = null;
@@ -1045,8 +1043,29 @@ const filterSummary = computed(() => {
   return `Filter settings: ${parts.join(' and ')}`;
 });
 
+const translatedColumns = computed(() => {
+  return columns.value.map(col => ({
+    ...col,
+    label: col.id === 'id' ? t('passiveScan.history.table.id') :
+           col.id === 'host' ? t('passiveScan.history.table.host') :
+           col.id === 'method' ? t('passiveScan.history.table.method') :
+           col.id === 'url' ? t('passiveScan.history.table.url') :
+           col.id === 'status' ? t('passiveScan.history.table.status') :
+           col.id === 'length' ? t('passiveScan.history.table.length') :
+           col.id === 'mime' ? t('passiveScan.history.table.mimeType') :
+           col.id === 'time' ? t('passiveScan.history.table.time') :
+           col.id === 'extension' ? t('passiveScan.history.table.actions') :
+           col.id === 'title' ? t('passiveScan.history.table.actions') :
+           col.id === 'tls' ? t('passiveScan.history.table.actions') :
+           col.id === 'ip' ? t('passiveScan.history.table.actions') :
+           col.id === 'listener' ? t('passiveScan.history.table.actions') :
+           col.id === 'responseTimer' ? t('passiveScan.history.table.actions') :
+           col.id === 'params' ? t('passiveScan.history.table.actions') : col.label
+  }));
+});
+
 const visibleColumns = computed(() => {
-  return columns.value.filter(col => col.visible);
+  return translatedColumns.value.filter(col => col.visible);
 });
 
 // 虚拟滚动计算
@@ -1077,26 +1096,15 @@ const visibleItems = computed((): VirtualItem[] => {
 // 方法
 function handleScroll(event: Event) {
   const target = event.target as HTMLElement;
-  
-  // 使用节流优化滚动性能
-  if (scrollTimer !== null) {
-    return;
+  scrollTop.value = target.scrollTop;
+
+  const scrollHeight = target.scrollHeight;
+  const clientHeight = target.clientHeight;
+  const scrollBottom = scrollHeight - scrollTop.value - clientHeight;
+
+  if (scrollBottom < 200 && hasMore.value && !isLoadingMore.value) {
+    loadMoreRequests();
   }
-  
-  scrollTimer = window.setTimeout(() => {
-    scrollTop.value = target.scrollTop;
-    scrollTimer = null;
-    
-    // 检查是否滚动到底部，触发加载更多
-    const scrollHeight = target.scrollHeight;
-    const clientHeight = target.clientHeight;
-    const scrollBottom = scrollHeight - scrollTop.value - clientHeight;
-    
-    // 距离底部 200px 时触发加载更多
-    if (scrollBottom < 200 && hasMore.value && !isLoadingMore.value) {
-      loadMoreRequests();
-    }
-  }, scrollThrottleDelay);
 }
 
 // 更新容器高度
@@ -1929,18 +1937,9 @@ function formatRequest(request: ProxyRequest, tab: string): string {
   // Pretty format - 从完整URL提取路径
   const requestPath = getRequestPath(request.url);
   let result = `${request.method} ${requestPath} HTTP/1.1\n`;
-  result += `Host: ${request.host}\n`;
-  
-  if (request.request_headers) {
-    try {
-      const headers = JSON.parse(request.request_headers);
-      for (const [key, value] of Object.entries(headers)) {
-        result += `${key}: ${value}\n`;
-      }
-    } catch {
-      result += request.request_headers + '\n';
-    }
-  }
+  const hostValue = request.host || getHostFromUrl(request.url);
+  if (hostValue) result += `Host: ${hostValue}\n`;
+  result += formatHeaderBlock(request.request_headers, { skipHost: !!hostValue });
   
   if (request.request_body) {
     result += '\n';
@@ -1955,11 +1954,10 @@ function formatRequestRaw(request: ProxyRequest): string {
   // 从完整URL提取路径
   const requestPath = getRequestPath(request.url);
   let result = `${request.method} ${requestPath} HTTP/1.1\n`;
-  result += `Host: ${request.host}\n`;
-  
-  if (request.request_headers) {
-    result += request.request_headers + '\n';
-  }
+  const hostValue = request.host || getHostFromUrl(request.url);
+  if (hostValue) result += `Host: ${hostValue}\n`;
+  // Raw tab should still be an HTTP-like text block; if stored headers are JSON, render as header lines.
+  result += formatHeaderBlock(request.request_headers, { skipHost: !!hostValue });
   
   if (request.request_body) {
     result += '\n' + request.request_body;
@@ -1981,6 +1979,57 @@ function getRequestPath(url: string): string {
     }
     return url;
   }
+}
+
+function getHostFromUrl(url: string): string | null {
+  try {
+    return new URL(url).host || null;
+  } catch {
+    return null;
+  }
+}
+
+function formatHeaderBlock(
+  headersJsonOrRaw: string | undefined,
+  opts: { skipHost?: boolean } = {}
+): string {
+  if (!headersJsonOrRaw) return '';
+  const skip = new Set<string>();
+  if (opts.skipHost) skip.add('host');
+
+  // Prefer JSON -> header lines (avoid showing JSON in "raw" tab)
+  try {
+    const parsed = JSON.parse(headersJsonOrRaw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      let out = '';
+      for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
+        const key = String(k);
+        const keyLower = key.toLowerCase();
+        if (skip.has(keyLower)) continue;
+        if (Array.isArray(v)) {
+          for (const item of v) out += `${key}: ${String(item)}\n`;
+        } else {
+          out += `${key}: ${String(v)}\n`;
+        }
+      }
+      return out;
+    }
+  } catch {
+    // fallthrough
+  }
+
+  const lines = headersJsonOrRaw
+    .split(/\r?\n/)
+    .map(l => l.trimEnd())
+    .filter(l => l.trim().length > 0)
+    .filter(line => {
+      const idx = line.indexOf(':');
+      if (idx <= 0) return true;
+      const name = line.slice(0, idx).trim().toLowerCase();
+      return !skip.has(name);
+    });
+
+  return lines.length ? lines.join('\n') + '\n' : '';
 }
 
 // 格式化JSON body
@@ -2005,17 +2054,7 @@ function formatResponse(request: ProxyRequest, tab: string): string {
   
   // Pretty format
   let result = `HTTP/1.2 ${request.status_code} OK\n`;
-  
-  if (request.response_headers) {
-    try {
-      const headers = JSON.parse(request.response_headers);
-      for (const [key, value] of Object.entries(headers)) {
-        result += `${key}: ${value}\n`;
-      }
-    } catch {
-      result += request.response_headers + '\n';
-    }
-  }
+  result += formatHeaderBlock(request.response_headers);
   
   if (request.response_body) {
     result += '\n';
@@ -2076,10 +2115,7 @@ function isResponseCompressed(request: ProxyRequest): boolean {
 
 function formatResponseRaw(request: ProxyRequest): string {
   let result = `HTTP/1.2 ${request.status_code} OK\n`;
-  
-  if (request.response_headers) {
-    result += request.response_headers + '\n';
-  }
+  result += formatHeaderBlock(request.response_headers);
   
   if (request.response_body) {
     result += '\n' + request.response_body;
@@ -2188,12 +2224,8 @@ onUnmounted(() => {
   if (mainContainerResizeObserver) {
     mainContainerResizeObserver.disconnect();
   }
-  // 清理定时器
   if (updateTimer !== null) {
     clearTimeout(updateTimer);
-  }
-  if (scrollTimer !== null) {
-    clearTimeout(scrollTimer);
   }
   // 清理拖拽事件监听
   document.removeEventListener('mousemove', handleResize);

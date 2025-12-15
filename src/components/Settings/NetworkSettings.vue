@@ -3,54 +3,51 @@
     <div  class="card bg-base-100 shadow-md mb-6">
         <div class="card-body gap-4">
             <div class="flex items-center gap-3">
-                <input type="checkbox" class="toggle toggle-primary" v-model="network.proxy.enabled"
+                <input type="checkbox" class="toggle toggle-primary" v-model="network.proxy.enabled" :disabled="props.saving"
                     @change="saveProxy" />
-                <span class="font-medium">{{ t('settings.network.enableGlobalProxy', '启用全局代理') }}</span>
+                <span class="font-medium">{{ t('settings.network.enableGlobalProxy') }}</span>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="label">
-                        <span class="label-text">{{ t('settings.network.scheme', '协议') }}</span>
+                        <span class="label-text">{{ t('settings.network.scheme') }}</span>
                     </label>
-                    <select v-model="network.proxy.scheme" class="select select-bordered w-full" @change="saveProxy">
-                        <option value="http">HTTP - 标准HTTP代理</option>
-                        <option value="https">HTTPS - HTTPS代理</option>
-                        <option value="socks5">SOCKS5 - 本地DNS解析</option>
-                        <option value="socks5h">SOCKS5H - 远程DNS解析(推荐)</option>
+                    <select v-model="network.proxy.scheme" class="select select-bordered w-full" :disabled="props.saving" @change="saveProxy">
+                        <option value="http">{{ t('settings.network.proxySchemes.http') }}</option>
+                        <option value="https">{{ t('settings.network.proxySchemes.https') }}</option>
+                        <option value="socks5">{{ t('settings.network.proxySchemes.socks5') }}</option>
+                        <option value="socks5h">{{ t('settings.network.proxySchemes.socks5h') }}</option>
                     </select>
                     <label class="label">
                         <span class="label-text-alt text-gray-500">
-                            提示: SOCKS5H更安全，DNS请求也通过代理
+                            {{ t('settings.network.proxySchemeHint') }}
                         </span>
                     </label>
                 </div>
                 <div>
-                    <label class="label"><span class="label-text">{{ t('settings.network.host', '主机') }}</span></label>
-                    <input v-model.trim="network.proxy.host" class="input input-bordered w-full" placeholder="127.0.0.1"
+                    <label class="label"><span class="label-text">{{ t('settings.network.host') }}</span></label>
+                    <input v-model.trim="network.proxy.host" class="input input-bordered w-full" :disabled="props.saving" :placeholder="t('settings.network.placeholders.host')"
                         @blur="saveProxy" />
                 </div>
                 <div>
-                    <label class="label"><span class="label-text">{{ t('settings.network.port', '端口') }}</span></label>
+                    <label class="label"><span class="label-text">{{ t('settings.network.port') }}</span></label>
                     <input v-model.number="network.proxy.port" class="input input-bordered w-full" type="number"
-                        placeholder="7890" @blur="saveProxy" />
+                        :disabled="props.saving" :placeholder="t('settings.network.placeholders.port')" @blur="saveProxy" />
                 </div>
                 <div>
-                    <label class="label"><span class="label-text">{{ t('settings.network.noProxy', '不走代理')
-                            }}</span></label>
+                    <label class="label"><span class="label-text">{{ t('settings.network.noProxy') }}</span></label>
                     <input v-model.trim="network.proxy.no_proxy" class="input input-bordered w-full"
-                        placeholder="localhost,127.0.0.1" @blur="saveProxy" />
+                        :disabled="props.saving" :placeholder="t('settings.network.placeholders.noProxy')" @blur="saveProxy" />
                 </div>
                 <div>
-                    <label class="label"><span class="label-text">{{ t('settings.network.username', '用户名(可选)')
-                            }}</span></label>
+                    <label class="label"><span class="label-text">{{ t('settings.network.username') }}</span></label>
                     <input v-model.trim="network.proxy.username" class="input input-bordered w-full"
-                        @blur="saveProxy" />
+                        :disabled="props.saving" @blur="saveProxy" />
                 </div>
                 <div>
-                    <label class="label"><span class="label-text">{{ t('settings.network.password', '密码(可选)')
-                            }}</span></label>
+                    <label class="label"><span class="label-text">{{ t('settings.network.password') }}</span></label>
                     <input v-model.trim="network.proxy.password" class="input input-bordered w-full" type="password"
-                        @blur="saveProxy" />
+                        :disabled="props.saving" @blur="saveProxy" />
                 </div>
             </div>
         </div>
@@ -62,7 +59,7 @@
       <div class="card-body">
         <h2 class="card-title flex items-center gap-2">
           <i class="fas fa-network-wired text-primary"></i>
-          代理配置动态更新测试
+          {{ t('settings.network.proxyTest.title') }}
         </h2>
         
         <div class="space-y-4">
@@ -70,46 +67,46 @@
           <div class="alert alert-info">
             <i class="fas fa-info-circle"></i>
             <div>
-              <p class="font-semibold">测试功能说明：</p>
-              <p>此测试验证网络设置更改后，三大AI架构能够动态更新代理配置，防止请求出错。</p>
+              <p class="font-semibold">{{ t('settings.network.proxyTest.descriptionTitle') }}</p>
+              <p>{{ t('settings.network.proxyTest.description') }}</p>
             </div>
           </div>
 
           <!-- 当前代理配置显示 -->
           <div class="bg-base-200 p-4 rounded-lg">
-            <h3 class="font-semibold text-lg mb-2">当前代理配置</h3>
+            <h3 class="font-semibold text-lg mb-2">{{ t('settings.network.proxyTest.currentConfig') }}</h3>
             <div v-if="currentProxy" class="space-y-2">
               <div class="flex justify-between">
-                <span>状态:</span>
+                <span>{{ t('settings.network.proxyTest.statusLabel') }}</span>
                 <span :class="currentProxy.enabled ? 'text-success' : 'text-error'">
-                  {{ currentProxy.enabled ? '启用' : '禁用' }}
+                  {{ currentProxy.enabled ? t('settings.enabled') : t('settings.disabled') }}
                 </span>
               </div>
               <div v-if="currentProxy.enabled" class="space-y-1">
                 <div class="flex justify-between">
-                  <span>协议:</span>
-                  <span>{{ currentProxy.scheme || 'http' }}</span>
+                  <span>{{ t('settings.network.proxyTest.schemeLabel') }}</span>
+                  <span>{{ currentProxy.scheme || t('settings.network.defaults.scheme') }}</span>
                 </div>
                 <div class="flex justify-between">
-                  <span>主机:</span>
-                  <span>{{ currentProxy.host || 'N/A' }}</span>
+                  <span>{{ t('settings.network.proxyTest.hostLabel') }}</span>
+                  <span>{{ currentProxy.host || t('settings.network.defaults.notAvailable') }}</span>
                 </div>
                 <div class="flex justify-between">
-                  <span>端口:</span>
-                  <span>{{ currentProxy.port || 'N/A' }}</span>
+                  <span>{{ t('settings.network.proxyTest.portLabel') }}</span>
+                  <span>{{ currentProxy.port || t('settings.network.defaults.notAvailable') }}</span>
                 </div>
                 <div v-if="currentProxy.username" class="flex justify-between">
-                  <span>用户名:</span>
+                  <span>{{ t('settings.network.proxyTest.usernameLabel') }}</span>
                   <span>{{ currentProxy.username }}</span>
                 </div>
                 <div v-if="currentProxy.no_proxy" class="flex justify-between">
-                  <span>不代理:</span>
+                  <span>{{ t('settings.network.proxyTest.noProxyLabel') }}</span>
                   <span class="text-xs">{{ currentProxy.no_proxy }}</span>
                 </div>
               </div>
             </div>
             <div v-else class="text-gray-500">
-              没有代理配置
+              {{ t('settings.network.proxyTest.noConfig') }}
             </div>
           </div>
 
@@ -118,17 +115,17 @@
             <!-- 动态更新测试 -->
             <div class="card bg-base-200 shadow">
               <div class="card-body p-4">
-                <h4 class="font-semibold mb-2">动态更新测试</h4>
+                <h4 class="font-semibold mb-2">{{ t('settings.network.proxyTest.dynamic.title') }}</h4>
                 <p class="text-sm text-gray-600 mb-3">
-                  测试HTTP客户端能否在代理配置变更后自动应用新配置
+                  {{ t('settings.network.proxyTest.dynamic.description') }}
                 </p>
                 <button 
                   class="btn btn-primary btn-sm w-full"
-                  :disabled="testing.dynamic"
+                  :disabled="props.saving || testing.dynamic"
                   @click="testDynamicUpdate"
                 >
                   <span v-if="testing.dynamic" class="loading loading-spinner loading-xs"></span>
-                  {{ testing.dynamic ? '测试中...' : '开始测试' }}
+                  {{ testing.dynamic ? t('settings.network.proxyTest.testing') : t('settings.network.proxyTest.startTest') }}
                 </button>
               </div>
             </div>
@@ -136,17 +133,17 @@
             <!-- 持久化测试 -->
             <div class="card bg-base-200 shadow">
               <div class="card-body p-4">
-                <h4 class="font-semibold mb-2">持久化测试</h4>
+                <h4 class="font-semibold mb-2">{{ t('settings.network.proxyTest.persistence.title') }}</h4>
                 <p class="text-sm text-gray-600 mb-3">
-                  测试代理配置能否正确保存到数据库并加载
+                  {{ t('settings.network.proxyTest.persistence.description') }}
                 </p>
                 <button 
                   class="btn btn-secondary btn-sm w-full"
-                  :disabled="testing.persistence"
+                  :disabled="props.saving || testing.persistence"
                   @click="testPersistence"
                 >
                   <span v-if="testing.persistence" class="loading loading-spinner loading-xs"></span>
-                  {{ testing.persistence ? '测试中...' : '开始测试' }}
+                  {{ testing.persistence ? t('settings.network.proxyTest.testing') : t('settings.network.proxyTest.startTest') }}
                 </button>
               </div>
             </div>
@@ -154,17 +151,17 @@
             <!-- 客户端更新测试 -->
             <div class="card bg-base-200 shadow">
               <div class="card-body p-4">
-                <h4 class="font-semibold mb-2">客户端更新测试</h4>
+                <h4 class="font-semibold mb-2">{{ t('settings.network.proxyTest.client.title') }}</h4>
                 <p class="text-sm text-gray-600 mb-3">
-                  测试HTTP客户端的代理自动更新机制
+                  {{ t('settings.network.proxyTest.client.description') }}
                 </p>
                 <button 
                   class="btn btn-accent btn-sm w-full"
-                  :disabled="testing.client"
+                  :disabled="props.saving || testing.client"
                   @click="testClientUpdate"
                 >
                   <span v-if="testing.client" class="loading loading-spinner loading-xs"></span>
-                  {{ testing.client ? '测试中...' : '开始测试' }}
+                  {{ testing.client ? t('settings.network.proxyTest.testing') : t('settings.network.proxyTest.startTest') }}
                 </button>
               </div>
             </div>
@@ -172,7 +169,7 @@
 
           <!-- 测试结果显示 -->
           <div v-if="testResults.length > 0" class="space-y-3">
-            <h3 class="font-semibold text-lg">测试结果</h3>
+            <h3 class="font-semibold text-lg">{{ t('settings.network.proxyTest.results') }}</h3>
             <div v-for="(result, index) in testResults" :key="index" 
                  :class="[
                    'alert',
@@ -187,7 +184,7 @@
                   <div class="font-semibold">{{ result.test_name }}</div>
                   <div class="text-sm">{{ result.message }}</div>
                   <div v-if="result.response_time_ms" class="text-xs mt-1">
-                    响应时间: {{ result.response_time_ms }}ms
+                    {{ t('settings.network.proxyTest.responseTime', { ms: result.response_time_ms }) }}
                   </div>
                   <div v-if="result.proxy_config" class="text-xs mt-2 font-mono bg-base-100 p-2 rounded">
                     {{ JSON.stringify(result.proxy_config, null, 2) }}
@@ -201,7 +198,7 @@
           <div v-if="testResults.length > 0" class="flex justify-end">
             <button class="btn btn-ghost btn-sm" @click="clearResults">
               <i class="fas fa-trash mr-2"></i>
-              清空结果
+              {{ t('settings.network.proxyTest.clearResults') }}
             </button>
           </div>
         </div>
@@ -218,9 +215,15 @@ import { onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n'
 
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 
+const props = defineProps({
+  saving: {
+    type: Boolean,
+    default: false
+  }
+})
 
 
 const network = reactive({ proxy: { enabled: false, scheme: 'http', host: '', port: 0, username: '', password: '', no_proxy: '' } })
@@ -270,16 +273,16 @@ const testDynamicUpdate = async () => {
     const result = await invoke('test_proxy_dynamic_update') as TestResult
     testResults.value.unshift({
       ...result,
-      test_name: '动态更新测试'
+      test_name: t('settings.network.proxyTest.dynamic.title')
     })
     
     // 刷新当前代理配置显示
     await loadCurrentProxy()
   } catch (error) {
     testResults.value.unshift({
-      test_name: '动态更新测试',
+      test_name: t('settings.network.proxyTest.dynamic.title'),
       success: false,
-      message: `测试失败: ${error}`
+      message: t('settings.network.proxyTest.testFailed', { error: String(error) })
     })
   } finally {
     testing.dynamic = false
@@ -292,13 +295,13 @@ const testPersistence = async () => {
     const result = await invoke('test_proxy_persistence') as TestResult
     testResults.value.unshift({
       ...result,
-      test_name: '持久化测试'
+      test_name: t('settings.network.proxyTest.persistence.title')
     })
   } catch (error) {
     testResults.value.unshift({
-      test_name: '持久化测试',
+      test_name: t('settings.network.proxyTest.persistence.title'),
       success: false,
-      message: `测试失败: ${error}`
+      message: t('settings.network.proxyTest.testFailed', { error: String(error) })
     })
   } finally {
     testing.persistence = false
@@ -311,13 +314,13 @@ const testClientUpdate = async () => {
     const result = await invoke('test_http_client_proxy_update') as TestResult
     testResults.value.unshift({
       ...result,
-      test_name: '客户端更新测试'
+      test_name: t('settings.network.proxyTest.client.title')
     })
   } catch (error) {
     testResults.value.unshift({
-      test_name: '客户端更新测试',
+      test_name: t('settings.network.proxyTest.client.title'),
       success: false,
-      message: `测试失败: ${error}`
+      message: t('settings.network.proxyTest.testFailed', { error: String(error) })
     })
   } finally {
     testing.client = false
@@ -365,9 +368,9 @@ const saveProxy = async () => {
       no_proxy: network.proxy.no_proxy || null,
     }
     await invoke('set_global_proxy_config', { cfg })
-    dialog.toast.success('全局代理已保存并生效')
+    dialog.toast.success(t('settings.network.toast.proxySaved'))
   } catch (e) {
-    dialog.toast.error('保存全局代理失败')
+    dialog.toast.error(t('settings.network.toast.proxySaveFailed'))
   }
 }
 

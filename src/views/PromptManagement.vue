@@ -6,7 +6,7 @@
       <div class="card-body p-4 pb-3">
         <!-- Prompt分类选择器 -->
         <div class="mb-4">
-          <h4 class="card-title text-xs mb-2">Prompt分类</h4>
+          <h4 class="card-title text-xs mb-2">{{ t('promptMgmt.categories.promptCategory') }}</h4>
           <select v-model="selectedCategory" class="select select-sm select-bordered w-full">
             <option v-for="cat in promptCategories" :key="cat.value" :value="cat.value">
               {{ cat.label }}
@@ -17,45 +17,48 @@
         
         <!-- 系统级提示创建按钮 -->
         <div v-if="selectedCategory === 'System'" class="mt-4 pt-4 border-t">
-          <h3 class="card-title text-sm">创建系统提示</h3>
-          <div class="text-xs opacity-70 mt-1">添加新的系统提示模板</div>
+          <h3 class="card-title text-sm">{{ t('promptMgmt.systemPrompts.title') }}</h3>
+          <div class="text-xs opacity-70 mt-1">{{ t('promptMgmt.systemPrompts.description') }}</div>
           <div class="mt-2 flex flex-col gap-1">
             <button class="btn btn-xs btn-outline w-full" @click="createIntentClassifierTemplate">
-              意图分析器
+              {{ t('promptMgmt.systemPrompts.intentClassifier') }}
             </button>
             <button class="btn btn-xs btn-outline w-full" @click="createSystemPromptTemplate">
-              通用系统提示
+              {{ t('promptMgmt.systemPrompts.generalSystemPrompt') }}
             </button>
           </div>
         </div>
         
         <!-- 应用级提示 - 仅在应用分类时显示 -->
         <div v-if="selectedCategory === 'Application'">
-          <h3 class="card-title text-sm">应用级提示模板</h3>
-          <div class="text-xs opacity-70 mt-1">管理应用特定的提示模板</div>
+          <h3 class="card-title text-sm">{{ t('promptMgmt.applicationPrompts.title') }}</h3>
+          <div class="text-xs opacity-70 mt-1">{{ t('promptMgmt.applicationPrompts.description') }}</div>
           <div class="mt-2 flex flex-col gap-1">
             <button class="btn btn-xs btn-outline" @click="createPluginGenerationTemplate">
-              插件生成(被动扫描)
+              {{ t('promptMgmt.applicationPrompts.pluginGenPassive') }}
             </button>
             <button class="btn btn-xs btn-outline" @click="createAgentPluginGenerationTemplate">
-              插件生成(Agent工具)
+              {{ t('promptMgmt.applicationPrompts.pluginGenAgent') }}
             </button>
             <button class="btn btn-xs btn-outline" @click="createPluginFixTemplate">
-              插件修复(被动扫描)
+              {{ t('promptMgmt.applicationPrompts.pluginFixPassive') }}
             </button>
             <button class="btn btn-xs btn-outline" @click="createAgentPluginFixTemplate">
-              插件修复(Agent工具)
+              {{ t('promptMgmt.applicationPrompts.pluginFixAgent') }}
             </button>
-            <button class="btn btn-xs btn-outline" @click="createVisionExplorerSystemTemplate">
-              VisionExplorer系统提示
+            <button class="btn btn-xs btn-outline" @click="createVisionExplorerVisionTemplate">
+              {{ t('promptMgmt.applicationPrompts.visionMultimodal') }}
+            </button>
+            <button class="btn btn-xs btn-outline" @click="createVisionExplorerTextTemplate">
+              {{ t('promptMgmt.applicationPrompts.visionText') }}
             </button>
           </div>
         </div>
         
         <!-- 用户自定义 - 仅在用户自定义分类时显示 -->
         <div v-if="selectedCategory === 'UserDefined'">
-          <h3 class="card-title text-sm">用户自定义模板</h3>
-          <div class="text-xs opacity-70 mt-1">管理用户创建的自定义模板</div>
+          <h3 class="card-title text-sm">{{ t('promptMgmt.userDefinedPrompts.title') }}</h3>
+          <div class="text-xs opacity-70 mt-1">{{ t('promptMgmt.userDefinedPrompts.description') }}</div>
         </div>
         
       </div>
@@ -77,41 +80,41 @@
         <div class="divider my-1"></div>
         
         <!-- 模板列表标题 -->
-        <div class="text-xs font-medium mb-2">模板列表 ({{ filteredTemplates.length }})</div>
+        <div class="text-xs font-medium mb-2">{{ t('promptMgmt.templateList.count', { count: filteredTemplates.length }) }}</div>
       </div>
 
       <!-- 模板列表 -->
       <div class="px-4 pb-4 flex-1 overflow-auto">
         <div class="grid grid-cols-1 gap-2">
           <button
-            v-for="t in filteredTemplates"
-            :key="t.id"
+            v-for="tpl in filteredTemplates"
+            :key="tpl.id"
             class="btn btn-outline btn-sm justify-start normal-case w-full"
             :class="{
-              '!btn-primary text-white': editingTemplate?.id === t.id,
+              '!btn-primary text-white': editingTemplate?.id === tpl.id,
             }"
-            @click="onLoadWithGuard(t)"
+            @click="onLoadWithGuard(tpl)"
           >
             <div class="w-full flex items-center gap-2">
               <div class="truncate flex-1 text-left">
                 <div class="font-medium text-xs truncate flex items-center gap-1">
-                  <span v-if="t.is_active" class="inline-block w-2 h-2 rounded-full bg-success" title="已启用"></span>
-                  {{ t.name }}
+                  <span v-if="tpl.is_active" class="inline-block w-2 h-2 rounded-full bg-success" :title="t('promptMgmt.templateList.enabledTitle')"></span>
+                  {{ tpl.name }}
                 </div>
                 <div class="text-[10px] opacity-70 truncate">
-                  #{{ t.id }} · {{ t.template_type || 'Custom' }}
+                  #{{ tpl.id }} · {{ tpl.template_type || 'Custom' }}
                 </div>
               </div>
-              <span v-if="t.is_active" class="badge badge-success badge-xs">启用</span>
-              <span v-else-if="t.id === activePromptId" class="badge badge-success badge-xs">{{ $t('promptMgmt.activeBadge') }}</span>
-              <span v-else-if="t.is_default" class="badge badge-outline badge-xs">{{ $t('promptMgmt.default') }}</span>
+              <span v-if="tpl.is_active" class="badge badge-success badge-xs">{{ t('promptMgmt.templateList.enabled') }}</span>
+              <span v-else-if="tpl.id === activePromptId" class="badge badge-success badge-xs">{{ $t('promptMgmt.activeBadge') }}</span>
+              <span v-else-if="tpl.is_default" class="badge badge-outline badge-xs">{{ $t('promptMgmt.default') }}</span>
             </div>
           </button>
         </div>
         
         <!-- 空状态 -->
         <div v-if="filteredTemplates.length === 0" class="text-center py-8 text-xs opacity-50">
-          暂无模板，点击"新建"创建
+          {{ t('promptMgmt.templateList.empty') }}
         </div>
       </div>
     </div>
@@ -147,26 +150,27 @@
             <!-- 新增字段 -->
             <div class="grid grid-cols-2 gap-2 mb-2">
               <div>
-                <label class="label label-text text-xs">模板类型</label>
+                <label class="label label-text text-xs">{{ t('promptMgmt.editor.templateType') }}</label>
                 <select v-model="editingTemplate.template_type" class="select select-xs select-bordered w-full">
-                  <option value="SystemPrompt">系统提示</option>
-                  <option value="IntentClassifier">意图分析器</option>
-                  <option value="Planner">规划器</option>
-                  <option value="Executor">执行器</option>
-                  <option value="Replanner">重规划器</option>
-                  <option value="Evaluator">评估器</option>
-                  <option value="ReportGenerator">报告生成器</option>
-                  <option value="PluginGeneration">插件生成(被动扫描)</option>
-                  <option value="AgentPluginGeneration">插件生成(Agent工具)</option>
-                  <option value="PluginFix">插件修复(被动扫描)</option>
-                  <option value="AgentPluginFix">插件修复(Agent工具)</option>
-                  <option value="PluginVulnSpecific">插件漏洞专用</option>
-                  <option value="VisionExplorerSystem">VisionExplorer系统提示</option>
-                  <option value="Custom">自定义</option>
+                  <option value="SystemPrompt">{{ t('promptMgmt.templateTypes.systemPrompt') }}</option>
+                  <option value="IntentClassifier">{{ t('promptMgmt.templateTypes.intentClassifier') }}</option>
+                  <option value="Planner">{{ t('promptMgmt.templateTypes.planner') }}</option>
+                  <option value="Executor">{{ t('promptMgmt.templateTypes.executor') }}</option>
+                  <option value="Replanner">{{ t('promptMgmt.templateTypes.replanner') }}</option>
+                  <option value="Evaluator">{{ t('promptMgmt.templateTypes.evaluator') }}</option>
+                  <option value="ReportGenerator">{{ t('promptMgmt.templateTypes.reportGenerator') }}</option>
+                  <option value="PluginGeneration">{{ t('promptMgmt.templateTypes.pluginGenPassive') }}</option>
+                  <option value="AgentPluginGeneration">{{ t('promptMgmt.templateTypes.pluginGenAgent') }}</option>
+                  <option value="PluginFix">{{ t('promptMgmt.templateTypes.pluginFixPassive') }}</option>
+                  <option value="AgentPluginFix">{{ t('promptMgmt.templateTypes.pluginFixAgent') }}</option>
+                  <option value="PluginVulnSpecific">{{ t('promptMgmt.templateTypes.pluginVulnSpecific') }}</option>
+                  <option value="VisionExplorerVision">{{ t('promptMgmt.templateTypes.visionExplorerVision') }}</option>
+                  <option value="VisionExplorerText">{{ t('promptMgmt.templateTypes.visionExplorerText') }}</option>
+                  <option value="Custom">{{ t('promptMgmt.templateTypes.custom') }}</option>
                 </select>
               </div>
               <div>
-                <label class="label label-text text-xs">优先级</label>
+                <label class="label label-text text-xs">{{ t('promptMgmt.editor.priority') }}</label>
                 <input v-model.number="editingTemplate.priority" type="number" class="input input-xs input-bordered w-full" min="0" max="100" />
               </div>
             </div>
@@ -174,17 +178,17 @@
             <div class="flex items-center gap-4 mb-2">
               <label class="cursor-pointer label">
                 <input v-model="editingTemplate.is_system" type="checkbox" class="checkbox checkbox-xs" />
-                <span class="label-text text-xs ml-2">系统级模板</span>
+                <span class="label-text text-xs ml-2">{{ t('promptMgmt.editor.systemTemplate') }}</span>
               </label>
               <label class="cursor-pointer label">
                 <input v-model="editingTemplate.is_active" type="checkbox" class="checkbox checkbox-xs checkbox-success" />
-                <span class="label-text text-xs ml-2">启用此模板</span>
+                <span class="label-text text-xs ml-2">{{ t('promptMgmt.editor.enableTemplate') }}</span>
               </label>
             </div>
             
             <!-- Tags 标签管理 -->
             <div class="mb-2">
-              <label class="label label-text text-xs">标签</label>
+              <label class="label label-text text-xs">{{ t('promptMgmt.editor.tags') }}</label>
               <div class="flex flex-wrap gap-1 mb-1">
                 <span v-for="(tag, index) in editingTemplate.tags || []" :key="index"
                       class="badge badge-outline badge-xs flex items-center gap-1">
@@ -193,14 +197,14 @@
                 </span>
               </div>
               <div class="flex gap-1">
-                <input v-model="newTag" @keyup.enter="addTag" class="input input-xs input-bordered flex-1" placeholder="添加标签..." />
-                <button @click="addTag" class="btn btn-xs btn-outline">添加</button>
+                <input v-model="newTag" @keyup.enter="addTag" class="input input-xs input-bordered flex-1" :placeholder="t('promptMgmt.editor.addTagPlaceholder')" />
+                <button @click="addTag" class="btn btn-xs btn-outline">{{ t('promptMgmt.editor.addTag') }}</button>
               </div>
             </div>
             
             <!-- Variables 变量管理 -->
             <div class="mb-2">
-              <label class="label label-text text-xs">变量</label>
+              <label class="label label-text text-xs">{{ t('promptMgmt.editor.variables') }}</label>
               <div class="flex flex-wrap gap-1 mb-1">
                 <span v-for="(variable, index) in editingTemplate.variables || []" :key="index"
                       class="badge badge-success badge-xs flex items-center gap-1">
@@ -209,14 +213,14 @@
                 </span>
               </div>
               <div class="flex gap-1">
-                <input v-model="newVariable" @keyup.enter="addVariable" class="input input-xs input-bordered flex-1" placeholder="变量名 (如: task_name)" />
-                <button @click="addVariable" class="btn btn-xs btn-outline">添加</button>
-                <button @click="loadDefaultPrompt" class="btn btn-xs btn-outline" :disabled="!editingTemplate" title="从应用数据目录的prompts文件夹导入默认内容">
-                  📥 导入默认prompt
+                <input v-model="newVariable" @keyup.enter="addVariable" class="input input-xs input-bordered flex-1" :placeholder="t('promptMgmt.editor.addVariablePlaceholder')" />
+                <button @click="addVariable" class="btn btn-xs btn-outline">{{ t('promptMgmt.editor.addVariable') }}</button>
+                <button @click="loadDefaultPrompt" class="btn btn-xs btn-outline" :disabled="!editingTemplate" :title="t('promptMgmt.editor.importDefaultTitle')">
+                  {{ t('promptMgmt.editor.importDefault') }}
                 </button>
               </div>
               <div class="text-xs opacity-60 mt-1">
-                提示：默认prompt存储在应用数据目录的prompts文件夹中，可以手动编辑
+                {{ t('promptMgmt.editor.importDefaultHint') }}
               </div>
             </div>
             
@@ -231,27 +235,27 @@
         <div class="card bg-base-100 shadow-md h-full overflow-hidden">
           <div class="card-body p-4 h-full overflow-hidden flex flex-col">
             <div class="flex items-center justify-between mb-2">
-              <div class="text-sm font-medium">{{ $t('promptMgmt.preview') }}</div>
+              <div class="text-sm font-medium">{{ t('promptMgmt.preview.title') }}</div>
               <div class="flex items-center gap-2">
                 <label class="label cursor-pointer">
-                  <span class="label-text text-xs mr-2">变量渲染</span>
+                  <span class="label-text text-xs mr-2">{{ t('promptMgmt.preview.variableRendering') }}</span>
                   <input v-model="enableVariablePreview" type="checkbox" class="checkbox checkbox-xs" />
                 </label>
                 <button v-if="enableVariablePreview && editingTemplate?.id" 
                         @click="evaluatePreview" 
                         class="btn btn-xs btn-outline">
-                  实时预览
+                  {{ t('promptMgmt.preview.realTimePreview') }}
                 </button>
               </div>
             </div>
             
             <!-- 变量上下文编辑器 -->
             <div v-if="enableVariablePreview" class="mb-2">
-              <label class="label label-text text-xs">示例上下文 (JSON)</label>
+              <label class="label label-text text-xs">{{ t('promptMgmt.preview.sampleContext') }}</label>
               <textarea v-model="sampleContext" 
                        class="textarea textarea-bordered text-xs font-mono"
                        rows="3"
-                       placeholder='{"task_name": "端口扫描", "tools": "nmap, masscan", "target_info": "192.168.1.1"}'>
+                       :placeholder="t('promptMgmt.preview.sampleContextPlaceholder')">
               </textarea>
             </div>
             
@@ -275,7 +279,7 @@ import { dialog } from '@/composables/useDialog'
 
 // 简化类型定义 - 仅保留必要的分类
 type PromptCategory = 'System' | 'Application' | 'UserDefined'
-type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'VisionExplorerSystem'
+type TemplateType = 'SystemPrompt' | 'IntentClassifier' | 'Planner' | 'Executor' | 'Replanner' | 'Evaluator' | 'ReportGenerator' | 'Domain' | 'Custom' | 'PluginGeneration' | 'AgentPluginGeneration' | 'PluginFix' | 'AgentPluginFix' | 'PluginVulnSpecific' | 'VisionExplorerVision' | 'VisionExplorerText'
 type ArchitectureType = 'ReAct'
 
 interface PromptTemplate {
@@ -296,12 +300,15 @@ interface PromptTemplate {
   version?: string
 }
 
+const { t } = useI18n()
+
+
 // 统一使用系统级提示，不再区分架构/阶段
-const promptCategories = [
-  { value: 'System', label: '系统级', description: '系统提示模板' },
-  { value: 'Application', label: '应用级', description: '应用特定的提示模板' },
-  { value: 'UserDefined', label: '用户自定义', description: '用户创建的自定义模板' },
-]
+const promptCategories = computed(() => [
+  { value: 'System', label: t('promptMgmt.categories.system'), description: t('promptMgmt.categories.systemDesc') },
+  { value: 'Application', label: t('promptMgmt.categories.application'), description: t('promptMgmt.categories.applicationDesc') },
+  { value: 'UserDefined', label: t('promptMgmt.categories.userDefined'), description: t('promptMgmt.categories.userDefinedDesc') },
+])
 
 const templates = ref<PromptTemplate[]>([])
 const editingTemplate = ref<PromptTemplate | null>(null)
@@ -310,7 +317,6 @@ const statusText = ref('')
 const searchQuery = ref('')
 const isDirty = ref(false)
 const toast = useToast()
-const { t } = useI18n()
 const selectedCategory = ref<PromptCategory>('System')
 const ignoreCategoryWatch = ref(false)
 
@@ -383,7 +389,7 @@ async function refresh() {
   } catch (e) {
     templates.value = []
   }
-  statusText.value = 'Ready'
+  statusText.value = t('promptMgmt.messages.ready')
 }
 
 function newTemplate() {
@@ -452,9 +458,9 @@ async function saveTemplate() {
   
   // 如果激活了模板，提示用户同类型的其他模板已被自动取消激活
   if (tpl.is_active && tpl.template_type) {
-    toast.success('模板已保存并激活，同类型的其他模板已自动取消激活')
+    toast.success(t('promptMgmt.messages.templateSavedAndActivated'))
   } else if (selectedCategory.value === 'System' && tpl.is_active) {
-    toast.success('模板已保存并激活')
+    toast.success(t('promptMgmt.messages.templateSavedAndActivatedSimple'))
   } else {
     toast.success(t('promptMgmt.savedToast') as unknown as string)
   }
@@ -551,20 +557,20 @@ watch(selectedCategory, async (newVal, oldVal) => {
 // 导入默认prompt内容
 async function loadDefaultPrompt() {
   if (!editingTemplate.value) {
-    toast.error('请先选择或创建一个模板')
+    toast.error(t('promptMgmt.messages.selectOrCreate'))
     return
   }
   
   try {
-    statusText.value = '正在加载默认prompt...'
+    statusText.value = t('promptMgmt.messages.loadingDefault')
     
     const content = await invoke<string>('get_default_prompt_content', {})
     
     // 确认是否覆盖当前内容
     if (editingTemplate.value.content && editingTemplate.value.content.trim()) {
       const confirmed = await dialog.confirm({
-        title: '确认导入',
-        message: '当前模板已有内容，是否覆盖？',
+        title: t('promptMgmt.messages.confirmImport'),
+        message: t('promptMgmt.messages.confirmImportMessage'),
         variant: 'warning'
       })
       
@@ -579,36 +585,17 @@ async function loadDefaultPrompt() {
     isDirty.value = true
     
     statusText.value = ''
-    toast.success('已导入默认prompt')
+    toast.success(t('promptMgmt.messages.importSuccess'))
   } catch (error: any) {
     console.error('Failed to load default prompt:', error)
     statusText.value = ''
-    toast.error(`导入失败: ${error.message || error}`)
+    toast.error(t('promptMgmt.messages.importFailed', { error: error.message || error }))
   }
 }
 
 // 创建意图分析器模板
 function createIntentClassifierTemplate() {
-  const defaultContent = `作为一个AI意图分类器，请分析用户输入并判断意图类型。
-
-请判断用户输入属于以下哪种类型：
-1. Chat - 普通对话（问候、闲聊、简单交流）
-2. Question - 知识性问答（询问概念、原理等，不需要实际执行）  
-3. Task - 任务执行（需要AI助手执行具体的安全扫描、分析等操作）
-
-判断标准：
-- Chat: 问候语、感谢、简单交流等
-- Question: 以"什么是"、"如何理解"等开头的概念性问题
-- Task: 包含"扫描"、"检测"、"分析"、"帮我执行"等行动指令
-
-请以JSON格式回复：
-{
-    "intent": "Chat|Question|Task",
-    "confidence": 0.0-1.0,
-    "reasoning": "分类理由",
-    "requires_agent": true/false,
-    "extracted_info": {"key": "value"}
-}`
+  const defaultContent = ``
 
   editingTemplate.value = {
     name: `意图分析器-${Date.now()}`,
@@ -657,136 +644,7 @@ function createSystemPromptTemplate() {
 
 // 创建插件生成模板(被动扫描)
 function createPluginGenerationTemplate() {
-  const defaultContent = `# Security Plugin Generation Task
-
-You are an expert security researcher and TypeScript developer. Your task is to generate a high-quality security testing plugin for a passive scanning system.
-
-## Environment and Context
-
-### Available APIs
-- **Finding Emission**: Use \`Deno.core.ops.op_emit_finding(finding)\` to report vulnerabilities
-- **Logging**: Use \`console.log()\`, \`console.warn()\`, \`console.error()\` for debugging
-- **HTTP Analysis**: Access request/response data through the provided context objects
-
-### Plugin Interface (Required)
-Your plugin MUST implement these functions:
-
-\`\`\`typescript
-interface PluginMetadata {
-  id: string;                    // Unique plugin identifier
-  name: string;                  // Human-readable name
-  version: string;               // Semantic version (e.g., "1.0.0")
-  author: string;                // Author name
-  main_category: "passive";      // Must be "passive" for passive scan plugins
-  category: string;              // Vulnerability category (e.g., "sqli", "xss")
-  description: string;           // Brief description
-  default_severity: "critical" | "high" | "medium" | "low";
-  tags: string[];                // Descriptive tags
-}
-
-interface RequestContext {
-  id: string;                    // Request ID
-  url: string;                   // Full URL
-  method: string;                // HTTP method (GET, POST, etc.)
-  headers: Record<string, string>;
-  query_params: Record<string, string>;  // Parsed query parameters
-  body: number[] | Uint8Array;   // Request body as bytes
-  content_type?: string;         // Content-Type header
-  is_https: boolean;             // Whether using HTTPS
-  timestamp: string;             // ISO 8601 timestamp
-}
-
-interface ResponseContext {
-  id: string;                    // Response ID (matches request)
-  status: number;                // HTTP status code
-  headers: Record<string, string>;
-  body: number[] | Uint8Array;   // Response body as bytes
-  timestamp: string;             // ISO 8601 timestamp
-}
-
-// Required functions:
-export function get_metadata(): PluginMetadata;
-export function scan_request(ctx: RequestContext): void;   // Optional
-export function scan_response(ctx: ResponseContext): void; // Optional
-\`\`\`
-
-### Body Handling
-Request/response bodies are provided as \`number[]\` or \`Uint8Array\`. Use this helper:
-
-\`\`\`typescript
-function bodyToString(body: number[] | Uint8Array): string {
-  try {
-    if (body instanceof Uint8Array) {
-      return new TextDecoder().decode(body);
-    } else if (Array.isArray(body)) {
-      return new TextDecoder().decode(new Uint8Array(body));
-    }
-    return "";
-  } catch (e) {
-    return "";
-  }
-}
-\`\`\`
-
-### Iterating Over Objects
-Use \`Object.entries()\` to iterate over plain JavaScript objects:
-
-\`\`\`typescript
-// ✅ Correct
-for (const [key, value] of Object.entries(query_params)) {
-  // ...
-}
-
-// ❌ Wrong (objects don't have .entries() method)
-for (const [key, value] of query_params.entries()) {
-  // ...
-}
-\`\`\`
-
-### Emitting Findings
-\`\`\`typescript
-Deno.core.ops.op_emit_finding({
-  title: "SQL Injection Detected",
-  description: "Potential SQL injection in parameter 'id'",
-  severity: "high",
-  confidence: 0.85,
-  request_id: ctx.id,
-  evidence: {
-    parameter: "id",
-    value: "1' OR '1'='1",
-    pattern: "SQL_INJECTION"
-  }
-});
-\`\`\`
-
-## Task Requirements
-
-**Variables**: 
-- {vuln_type}: Vulnerability type to detect (e.g., "sqli", "xss", "idor")
-- {analysis}: Website analysis data (technologies, endpoints, patterns)
-- {endpoints}: Target endpoints to focus on
-- {requirements}: Additional specific requirements
-
-## Output Format
-
-Return ONLY the complete TypeScript plugin code wrapped in a markdown code block:
-
-\`\`\`typescript
-// Your plugin code here
-\`\`\`
-
-Do NOT include explanations or comments outside the code block.
-
-## Important Constraints
-
-1. **Use \`Object.entries()\`** for iterating over objects (query_params, headers, etc.)
-2. **Convert body to string** using the \`bodyToString()\` helper function
-3. **Check for null/undefined** before accessing properties
-4. **Use try-catch blocks** to handle errors gracefully
-5. **Emit findings** only when confident (confidence >= 0.7)
-6. **Include proper TypeScript types** for all variables and functions
-
-Please generate a complete, production-ready TypeScript plugin that follows all the above guidelines.`
+  const defaultContent = ``
 
   editingTemplate.value = {
     name: `被动扫描插件生成模板-${Date.now()}`,
@@ -807,23 +665,7 @@ Please generate a complete, production-ready TypeScript plugin that follows all 
 
 // 创建Agent插件生成模板
 function createAgentPluginGenerationTemplate() {
-  const defaultContent = `# Agent Tool Plugin Generation Task
-
-You are an expert security researcher and TypeScript developer. Your task is to generate a high-quality Agent tool plugin for an AI-powered security testing system.
-
-The plugin should:
-1. Be written in TypeScript
-2. Implement specific security testing or analysis functionality
-3. Follow the Agent tool plugin interface
-4. Include proper error handling and validation
-5. Return structured results using the ToolOutput interface
-
-**Variables**: 
-- {tool_type}: Type of tool to implement
-- {requirements}: Specific requirements
-- {options}: Additional options
-
-Please generate a complete TypeScript Agent tool plugin that follows the standard interface.`
+  const defaultContent = ``
 
   editingTemplate.value = {
     name: `Agent插件生成模板-${Date.now()}`,
@@ -844,101 +686,7 @@ Please generate a complete TypeScript Agent tool plugin that follows the standar
 
 // 创建插件修复模板
 function createPluginFixTemplate() {
-  const defaultContent = `# Plugin Code Fix Task
-
-You are an expert TypeScript developer and security researcher. A security plugin was generated but failed execution testing. Your task is to fix the code so it executes correctly.
-
-## Error Information
-
-**Fix Attempt**: {attempt}
-
-**Error Message**: {error_message}
-
-**Detailed Error**:
-\`\`\`
-{error_details}
-\`\`\`
-
-## Original Plugin Code
-
-\`\`\`typescript
-{original_code}
-\`\`\`
-
-## Fix Instructions
-
-Please fix the code to resolve the error. The fixed plugin must:
-
-1. **Fix the specific error** mentioned above
-2. **Maintain the plugin interface**:
-   - \`function get_metadata()\` - returns plugin metadata with id, name, version, etc.
-   - \`function scan_response(ctx)\` - scans HTTP response for vulnerabilities
-   - Optionally \`function scan_request(ctx)\` - scans HTTP request
-3. **Detect {vuln_type} vulnerabilities** correctly
-4. **Use proper TypeScript syntax** - no syntax errors
-5. **Emit findings** using \`Deno.core.ops.op_emit_finding()\`
-6. **Include error handling** - use try-catch blocks
-7. **Be executable** - the code must run without errors
-
-## Common Issues to Check
-
-- **Missing or incorrect function signatures**: Ensure \`get_metadata()\`, \`scan_request()\`, \`scan_response()\` are properly defined
-- **Undefined variables or functions**: Check all variable declarations and function calls
-- **Incorrect API usage**: Use \`Deno.core.ops.op_emit_finding()\` (not \`Sentinel.emitFinding()\`)
-- **Missing metadata fields**: Ensure all required fields (id, name, version, category, etc.) are present
-- **Syntax errors**: Check for missing brackets, semicolons, parentheses
-- **Type errors in TypeScript**: Ensure proper type annotations
-- **Accessing undefined properties**: Use optional chaining (\`?.\`) or null checks
-- **Object iteration**: Use \`Object.entries()\` not \`.entries()\` for plain objects
-- **Body handling**: Use \`bodyToString()\` helper to convert \`number[]\` or \`Uint8Array\` to string
-
-## Body Handling Helper
-
-\`\`\`typescript
-function bodyToString(body: number[] | Uint8Array): string {
-  try {
-    if (body instanceof Uint8Array) {
-      return new TextDecoder().decode(body);
-    } else if (Array.isArray(body)) {
-      return new TextDecoder().decode(new Uint8Array(body));
-    }
-    return "";
-  } catch (e) {
-    return "";
-  }
-}
-\`\`\`
-
-## Correct Object Iteration
-
-\`\`\`typescript
-// ✅ Correct
-for (const [key, value] of Object.entries(query_params)) {
-  // ...
-}
-
-// ❌ Wrong
-for (const [key, value] of query_params.entries()) {
-  // ...
-}
-\`\`\`
-
-## Output Format
-
-Return ONLY the fixed TypeScript code, wrapped in a code block:
-
-\`\`\`typescript
-// Fixed plugin code here
-\`\`\`
-
-Do NOT include explanations, comments about the fix, or any other text outside the code block.
-
-## Important Reminders
-
-- Focus on fixing the SPECIFIC error mentioned
-- Maintain all existing functionality
-- Ensure the plugin is production-ready
-- Test edge cases in your mind before outputting`
+  const defaultContent = ``
 
   editingTemplate.value = {
     name: `插件修复模板-${Date.now()}`,
@@ -989,145 +737,42 @@ Please analyze the error and provide a fixed version of the plugin code.`
   isDirty.value = false
 }
 
-// 创建VisionExplorer系统提示模板
-function createVisionExplorerSystemTemplate() {
-  const defaultContent = `# Vision Explorer System Prompt
-
-You are **VisionExplorer**, a highly-reliable AI agent operating a web browser to discover all API endpoints and functionality of a website. The browser display measures {viewport_width} x {viewport_height} pixels.
-
-────────────────────────
-CORE WORKING PRINCIPLES
-────────────────────────
-
-1. **Observe First** - *Always* invoke \`computer_screenshot\` before your first action **and** whenever the UI may have changed. Never act blindly.
-
-2. **Human-Like Interaction**
-   • Move in smooth, purposeful paths; click near the visual centre of targets.
-   • Type realistic, context-appropriate text for form fields.
-   • Wait for page loads and animations to complete.
-
-3. **Systematic Exploration**
-   • Explore ALL interactive elements: buttons, links, forms, menus.
-   • Click on every button, fill every form, navigate every link.
-   • Track what you've explored to avoid repetition.
-
-4. **Verify Every Step** - After each action:
-   a. Take another screenshot.
-   b. Confirm the expected state before continuing.
-   c. If it failed, retry sensibly (try 2 different methods) before calling \`set_exploration_status\` with \`"status":"needs_help"\`.
-
-5. **API Discovery Focus**
-   • Your main goal is to trigger as many API calls as possible.
-   • Forms, search boxes, and data operations typically trigger APIs.
-   • Pay attention to AJAX requests, form submissions, and navigation.
-
-────────────────────────
-EXPLORATION STRATEGY
-────────────────────────
-
-1. **Initial Scan**
-   - Take a screenshot to understand the page structure
-   - Identify all visible interactive elements
-   - Plan a systematic exploration order
-
-2. **Navigation Menu First**
-   - Click through all navigation menu items
-   - Each page may have unique forms and functionalities
-
-3. **Forms and Inputs**
-   - Fill forms with realistic test data
-   - Submit forms to trigger API calls
-   - Test both valid and edge case inputs
-
-4. **Interactive Elements**
-   - Click all buttons (except dangerous ones like "Delete All")
-   - Test dropdown menus and selections
-   - Explore modal dialogs and popups
-
-5. **Scroll and Discover**
-   - Scroll through pages to load lazy content
-   - Look for infinite scroll or pagination
-   - Check for elements revealed after scrolling
-
-────────────────────────
-AVAILABLE TOOLS
-────────────────────────
-
-**Observation:**
-- \`computer_screenshot\` - Capture current page state (ALWAYS use before acting)
-
-**Mouse Actions:**
-- \`computer_click_mouse\` - Click at coordinates
-- \`computer_scroll\` - Scroll in a direction
-
-**Keyboard Actions:**
-- \`computer_type_text\` - Type text into focused element
-- \`computer_type_keys\` - Press keyboard keys (Enter, Tab, etc.)
-
-**Navigation:**
-- \`computer_navigate\` - Navigate to a URL
-- \`computer_wait\` - Wait for page to settle
-
-**Task Management:**
-- \`set_exploration_status\` - Mark exploration as completed or needs_help
-
-────────────────────────
-TASK LIFECYCLE
-────────────────────────
-
-1. **Start** - Screenshot → analyze page → plan exploration
-2. **Loop** - For each unexplored element: Screenshot → Click/Fill → Verify → Record API
-3. **Navigate** - When current page is fully explored, go to next unvisited page
-4. **Complete** - When all pages and elements are explored, call set_exploration_status with completed
-
-────────────────────────
-IMPORTANT NOTES
-────────────────────────
-
-- Do NOT click on logout buttons or destructive actions
-- Do NOT submit sensitive forms without user consent
-- Always take a screenshot BEFORE and AFTER each action
-- If you encounter a login page and have credentials, log in first
-- If you encounter a CAPTCHA, call \`set_exploration_status\` with \`needs_help\`
-
-────────────────────────
-OUTPUT FORMAT
-────────────────────────
-
-You MUST respond with a valid JSON object in the following format:
-
-\`\`\`json
-{
-  "page_analysis": "Brief description of what you see on the page and current state",
-  "next_action": {
-    "type": "click|scroll|type|navigate|screenshot|completed|needs_help",
-    "element_id": "100,200",
-    "value": "text to type if applicable",
-    "reason": "Why you chose this action"
-  },
-  "estimated_apis": ["list of API endpoints you estimate might be triggered"],
-  "exploration_progress": 0.5,
-  "is_exploration_complete": false
-}
-\`\`\`
-
-**Variables**:
-- {viewport_width}: Browser viewport width in pixels
-- {viewport_height}: Browser viewport height in pixels
-
-Remember: **accuracy over speed, systematic over random**. Explore every element to maximize API discovery.`
+// 创建VisionExplorer多模态提示模板
+function createVisionExplorerVisionTemplate() {
+  const defaultContent = ``
 
   editingTemplate.value = {
-    name: `VisionExplorer系统提示-${Date.now()}`,
-    description: 'VisionExplorer视觉探索引擎的系统提示模板，定义AI代理如何操作浏览器发现API',
+    name: `VisionExplorer多模态提示-${Date.now()}`,
+    description: 'VisionExplorer视觉探索引擎多模态模型专用提示，支持截图分析',
     content: defaultContent,
     is_default: false,
     is_active: true,
     category: 'Application' as PromptCategory,
-    template_type: 'VisionExplorerSystem' as TemplateType,
+    template_type: 'VisionExplorerVision' as TemplateType,
     is_system: true,
     priority: 90,
-    tags: ['vision', 'explorer', 'browser', 'api-discovery'],
+    tags: ['vision', 'explorer', 'multimodal', 'screenshot'],
+    variables: ['viewport_width', 'viewport_height'],
+    version: '1.0.0',
+  }
+  isDirty.value = false
+}
+
+// 创建VisionExplorer文本模型提示模板
+function createVisionExplorerTextTemplate() {
+  const defaultContent = ``
+
+  editingTemplate.value = {
+    name: `VisionExplorer文本模型提示-${Date.now()}`,
+    description: 'VisionExplorer视觉探索引擎文本模型专用提示，基于元素列表分析',
+    content: defaultContent,
+    is_default: false,
+    is_active: true,
+    category: 'Application' as PromptCategory,
+    template_type: 'VisionExplorerText' as TemplateType,
+    is_system: true,
+    priority: 90,
+    tags: ['vision', 'explorer', 'text', 'element-list'],
     variables: ['viewport_width', 'viewport_height'],
     version: '1.0.0',
   }
@@ -1175,7 +820,7 @@ async function evaluatePreview() {
     try {
       context = JSON.parse(sampleContext.value)
     } catch (e) {
-      toast.error('上下文JSON格式不正确')
+      toast.error(t('promptMgmt.messages.contextJsonError'))
       return
     }
     
@@ -1186,7 +831,7 @@ async function evaluatePreview() {
     evaluatedContent.value = result
   } catch (error) {
     console.error('Failed to evaluate prompt:', error)
-    toast.error('预览失败: ' + (error as any).message)
+    toast.error(t('promptMgmt.messages.previewFailed', { error: (error as any).message }))
   }
 }
 </script>

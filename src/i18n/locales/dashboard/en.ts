@@ -1,0 +1,23 @@
+export default {
+  title: 'Dashboard',
+  welcome: 'Welcome Back',
+  summary: 'Summary',
+  recentActivity: 'Recent Activity',
+  todayStats: 'Today\'s Stats',
+  activeScans: 'Active Scans',
+  vulnerabilitiesFound: 'Vulnerabilities Found',
+  projectsMonitored: 'Projects Monitored',
+
+  scanProgress: 'Scan Progress',
+  recentVulnerabilities: 'Recent Vulnerabilities',
+  topProjects: 'Top Projects',
+  systemStatus: 'System Status',
+  cpuUsage: 'CPU Usage',
+  memoryUsage: 'Memory Usage',
+  diskUsage: 'Disk Usage',
+  networkUsage: 'Network Usage',
+  quickActions: 'Quick Actions',
+  startNewScan: 'Start New Scan',
+  viewAllVulnerabilities: 'View All Vulnerabilities',
+  manageProjects: 'Manage Projects',
+}

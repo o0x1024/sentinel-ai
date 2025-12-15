@@ -39,13 +39,13 @@
 
     <!-- Main content area -->
     <div class="flex-1 flex flex-col overflow-hidden min-h-0">
-      <!-- Conversation Header -->
+      <!-- {{ t('agent.conversationHeader') }} -->
       <div class="conversation-header px-4 py-2 border-b border-base-300 flex items-center justify-between bg-base-100/50">
         <div class="flex items-center gap-2">
           <button 
             @click="showConversations = !showConversations"
             class="btn btn-sm btn-ghost"
-            title="切换会话列表"
+            :title="t('agent.switchConversationList')"
           >
             <i class="fas fa-bars"></i>
           </button>
@@ -53,10 +53,10 @@
             {{ currentConversationTitle }}
           </span>
           
-          <!-- RAG状态指示器 -->
+          <!-- RAG {{ t('agent.statusIndicator') }} -->
           <div v-if="ragEnabled" class="flex items-center gap-1 px-2 py-1 bg-info/10 rounded-md border border-info/30">
             <i class="fas fa-book text-info text-xs"></i>
-            <span class="text-xs text-info font-medium">知识库</span>
+            <span class="text-xs text-info font-medium">{{ t('agent.knowledgeBase') }}</span>
           </div>
         </div>
         <div class="flex items-center gap-2">
@@ -66,24 +66,24 @@
             @click="visionEvents.open()"
             class="btn btn-sm gap-1"
             :class="isVisionActive ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="isVisionActive ? '视觉探索面板已打开' : '查看视觉探索历史'"
+            :title="isVisionActive ? t('agent.visionPanelOpen') : t('agent.viewVisionHistory')"
           >
             <i class="fas fa-eye"></i>
-            <span>探索</span>
+            <span>{{ t('agent.explore') }}</span>
             <span class="badge badge-xs badge-primary">{{ visionEvents.steps.value.length }}</span>
           </button>
           <button 
             @click="handleCreateConversation()"
             class="btn btn-sm btn-ghost gap-1"
-            title="新建会话"
+            :title="t('agent.newConversation')"
           >
             <i class="fas fa-plus"></i>
-            新建
+            <span>{{ t('agent.newConversation') }}</span>
           </button>
         </div>
       </div>
 
-      <!-- Messages and Todos -->
+      <!-- {{ t('agent.messagesAndTodos') }} -->
       <div class="flex flex-1 overflow-hidden min-h-0">
         <!-- Message flow -->
         <MessageFlow 
@@ -120,7 +120,7 @@
         </div>
       </div>
 
-      <!-- Input area - using InputAreaComponent for full features -->
+      <!-- {{ t('agent.inputArea') }} -->
       <InputAreaComponent
         v-model:input-message="inputValue"
         :is-loading="isExecuting"
@@ -144,7 +144,7 @@
         @open-tool-config="showToolConfig = true"
       />
 
-      <!-- Error display -->
+      <!-- {{ t('agent.errorDisplay') }} -->
       <div v-if="error" class="error-banner flex items-center gap-2 px-4 py-3 bg-error/10 border-t border-error text-error text-sm">
         <span class="error-icon flex-shrink-0">⚠️</span>
         <span class="error-message flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{{ error }}</span>
@@ -156,6 +156,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
 import type { Todo } from '@/types/todo'
@@ -169,7 +170,7 @@ import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
 import ToolConfigPanel from './ToolConfigPanel.vue'
 
-// 流量引用类型
+// Traffic reference type
 type TrafficSendType = 'request' | 'response' | 'both'
 interface ReferencedTraffic {
   id: number
@@ -198,15 +199,18 @@ const emit = defineEmits<{
   (e: 'error', error: string): void
 }>()
 
+// i18n
+const { t } = useI18n()
+
 // Refs
 const messageFlowRef = ref<InstanceType<typeof MessageFlow> | null>(null)
 const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(null)
 const inputValue = ref('')
 const localError = ref<string | null>(null)
 const conversationId = ref<string | null>(null)
-const showConversations = ref(false) // 默认隐藏
+const showConversations = ref(false) // Default hidden
 const showToolConfig = ref(false)
-const currentConversationTitle = ref('新会话')
+const currentConversationTitle = ref(t('agent.newConversationTitle'))
 
 // Feature toggles
 const ragEnabled = ref(false)
@@ -267,7 +271,7 @@ const handleToolConfigUpdate = async (config: any) => {
   toolsEnabled.value = config.enabled
   console.log('[AgentView] Tool config updated:', config)
   
-  // 保存工具配置到数据库（全局配置，不绑定到会话）
+  // Save tool config to database (global config, not bound to conversation)
   try {
     await invoke('save_tool_config', {
       toolConfig: config
@@ -275,7 +279,7 @@ const handleToolConfigUpdate = async (config: any) => {
     console.log('[AgentView] Tool config saved globally')
   } catch (e) {
     console.error('[AgentView] Failed to save tool config:', e)
-    localError.value = '保存工具配置失败: ' + e
+    localError.value = t('agent.failedToSaveToolConfig') + ': ' + e
   }
 }
 
@@ -393,26 +397,26 @@ const handleClearConversation = async () => {
   try {
     console.log('[AgentView] Clearing conversation:', conversationId.value)
     
-    // 调用后端清空会话消息
+    // Call backend to clear conversation messages
     await invoke('clear_conversation_messages', {
       conversationId: conversationId.value
     })
     
-    // 清空前端消息
+    // Clear frontend messages
     agentEvents.clearMessages()
     
-    // 清空附件和引用
+    // Clear attachments and references
     pendingAttachments.value = []
     referencedTraffic.value = []
     inputValue.value = ''
     
-    // 刷新会话列表（更新消息计数）
+    // Refresh conversation list (update message count)
     conversationListRef.value?.loadConversations()
     
     console.log('[AgentView] Conversation cleared successfully')
   } catch (e) {
     console.error('[AgentView] Failed to clear conversation:', e)
-    localError.value = '清空会话失败: ' + e
+    localError.value = t('agent.failedToClearConversation') + ': ' + e
   }
 }
 
@@ -426,23 +430,23 @@ const handleStop = async () => {
   }
   
   try {
-    // 调用后端取消命令
+    // Call backend to cancel command
     await invoke('cancel_ai_stream', {
       conversationId: conversationId.value
     })
     
     console.log('[AgentView] Stop command sent successfully')
     
-    // 通知 useAgentEvents 停止执行状态
+    // Notify useAgentEvents to stop execution status
     agentEvents.stopExecution()
     
   } catch (e) {
     console.error('[AgentView] Failed to stop execution:', e)
-    localError.value = '停止执行失败: ' + e
+    localError.value = t('agent.failedToStopExecution') + ': ' + e
   }
 }
 
-// Handle resend message - 重新发送用户消息，删除该消息之后的所有消息
+// Handle resend message - resend user message, delete all messages after it
 const handleResendMessage = async (message: AgentMessage) => {
   if (isExecuting.value) {
     console.log('[AgentView] Cannot resend while executing')
@@ -451,21 +455,21 @@ const handleResendMessage = async (message: AgentMessage) => {
 
   console.log('[AgentView] Resending message:', message.id, message.content)
   
-  // 找到该消息在列表中的位置
+  // Find the position of the message in the list
   const messageIndex = messages.value.findIndex(m => m.id === message.id)
   if (messageIndex === -1) {
     console.error('[AgentView] Message not found')
     return
   }
 
-  // 删除该消息之后的所有消息（保留该用户消息，删除 LLM 响应和后续消息）
+  // Delete all messages after this message (keep the user message, delete LLM response and subsequent messages)
   const messagesToKeep = messages.value.slice(0, messageIndex)
   agentEvents.messages.value = messagesToKeep
 
-  // 将用户消息内容设置到输入框
+  // Set user message content to input box
   inputValue.value = message.content
 
-  // 自动触发发送
+  // Auto trigger send
   await handleSubmit()
 }
 
@@ -489,7 +493,7 @@ const loadConversationHistory = async (convId: string) => {
           ? JSON.parse(msg.metadata) 
           : msg.metadata
         
-        // 解析 tool_calls 字段（如果存在）
+        // Parse tool_calls field (if exists)
         let toolCalls: any[] = []
         if (msg.tool_calls) {
           try {
@@ -501,10 +505,10 @@ const loadConversationHistory = async (convId: string) => {
           }
         }
         
-        // 如果有工具调用，先添加工具调用消息
+        // If there are tool calls, add tool call message first
         if (toolCalls && toolCalls.length > 0) {
           toolCalls.forEach((tc: any) => {
-            // 解析参数 JSON
+            // Parse parameter JSON
             let parsedArgs: any = {}
             try {
               parsedArgs = typeof tc.arguments === 'string' 
@@ -514,11 +518,11 @@ const loadConversationHistory = async (convId: string) => {
               parsedArgs = { raw: tc.arguments }
             }
             
-            // 创建工具调用消息（带合并的结果）
+            // Create tool call message (with merged results)
             agentEvents.messages.value.push({
               id: tc.id || crypto.randomUUID(),
               type: 'tool_call' as any,
-              content: `工具调用完成: ${tc.name}`,
+              content: `${t('agent.toolCallCompleted')}: ${tc.name}`,
               timestamp: new Date(msg.timestamp).getTime(),
               metadata: {
                 tool_name: tc.name,
@@ -532,7 +536,7 @@ const loadConversationHistory = async (convId: string) => {
           })
         }
         
-        // 添加主消息（用户或助手）
+        // Add main message (user or assistant)
         const messageType = msg.role === 'user' ? 'user' : 'final'
         agentEvents.messages.value.push({
           id: msg.id,
@@ -561,13 +565,13 @@ const handleSelectConversation = async (convId: string) => {
     const conversations = await invoke<any[]>('get_ai_conversations')
     const conv = conversations.find(c => c.id === convId)
     if (conv) {
-      currentConversationTitle.value = conv.title || '未命名会话'
+      currentConversationTitle.value = conv.title || t('agent.unnamedConversation')
     }
   } catch (e) {
     console.error('[AgentView] Failed to get conversation title:', e)
   }
   
-  // 选择会话后自动关闭抽屉
+  // Auto close drawer after selecting conversation
   showConversations.value = false
 }
 
@@ -575,19 +579,19 @@ const handleSelectConversation = async (convId: string) => {
 const handleCreateConversation = async (newConvId?: string) => {
   if (newConvId) {
     conversationId.value = newConvId
-    currentConversationTitle.value = '新会话'
+    currentConversationTitle.value = t('agent.newConversationTitle')
     agentEvents.clearMessages()
   } else {
     // Create new conversation
     try {
       const convId = await invoke<string>('create_ai_conversation', {
         request: {
-          title: `新会话 ${new Date().toLocaleString()}`,
+          title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
           service_name: 'default'
         }
       })
       conversationId.value = convId
-      currentConversationTitle.value = '新会话'
+      currentConversationTitle.value = t('agent.newConversationTitle')
       agentEvents.clearMessages()
       
       // Refresh conversation list
@@ -611,14 +615,14 @@ const handleSubmit = async () => {
       const partial = agentEvents.streamingContent.value?.trim()
       if (partial) {
         const partialMsgId = crypto.randomUUID()
-        // 先在本地固化旧流的部分输出为最终助手消息
+        // First solidify the partial output of the old stream locally as the final assistant message
         agentEvents.messages.value.push({
           id: partialMsgId,
           type: 'final' as any,
           content: partial,
           timestamp: Date.now(),
         })
-        // 再写入数据库，保证会话历史一致
+        // Then write to database to ensure conversation history consistency
         await invoke('save_ai_message', {
           request: {
             id: partialMsgId,
@@ -657,19 +661,19 @@ const handleSubmit = async () => {
       console.log('[AgentView] No conversation ID, creating new conversation')
       const convId = await invoke<string>('create_ai_conversation', {
         request: {
-          title: `新会话 ${new Date().toLocaleString()}`,
+          title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
           service_name: 'default'
         }
       })
       conversationId.value = convId
-      currentConversationTitle.value = '新会话'
+      currentConversationTitle.value = t('agent.newConversationTitle')
       console.log('[AgentView] Created new conversation:', convId)
       
       // Refresh conversation list
       conversationListRef.value?.loadConversations()
     }
     
-    // Call agent_execute command (工具配置直接从前端传递，确保最新配置立即生效)
+    // Call agent_execute command (tool config passed directly from frontend to ensure latest config takes effect immediately)
     const result = await invoke('agent_execute', {
       task: fullTask,
       config: {
@@ -691,7 +695,7 @@ const handleSubmit = async () => {
     localError.value = errorMsg
     emit('error', errorMsg)
   }
-  // isExecuting 和 isStreaming 由 useAgentEvents 自动管理，不需要手动设置
+  // isExecuting and isStreaming are automatically managed by useAgentEvents, no manual setting needed
 }
 
 // Load tool config from database
@@ -715,13 +719,13 @@ const loadLatestConversation = async () => {
   try {
     const conversations = await invoke<any[]>('get_ai_conversations')
     if (conversations && conversations.length > 0) {
-      // 按更新时间倒序，取最新的会话
+      // Sort by update time in reverse order, take the latest conversation
       const sorted = conversations.sort((a, b) => 
         new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
       )
       const latest = sorted[0]
       conversationId.value = latest.id
-      currentConversationTitle.value = latest.title || '未命名会话'
+      currentConversationTitle.value = latest.title || t('agent.unnamedConversation')
       await loadConversationHistory(latest.id)
       console.log('[AgentView] Loaded latest conversation:', latest.id)
     }
@@ -742,7 +746,7 @@ onMounted(async () => {
     conversationId.value = props.executionId
     await loadConversationHistory(props.executionId)
   } else {
-    // 默认加载最后一次会话
+    // Default load the last conversation
     await loadLatestConversation()
   }
 })
@@ -754,7 +758,7 @@ watch(conversationId, async (newId) => {
       const conversations = await invoke<any[]>('get_ai_conversations')
       const conv = conversations.find(c => c.id === newId)
       if (conv) {
-        currentConversationTitle.value = conv.title || '未命名会话'
+        currentConversationTitle.value = conv.title || t('agent.unnamedConversation')
       }
     } catch (e) {
       console.error('[AgentView] Failed to update conversation title:', e)

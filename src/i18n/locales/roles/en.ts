@@ -1,0 +1,21 @@
+export default {
+  roleManagement: 'Role Management',
+  newRole: 'New Role',
+  editRole: 'Edit Role',
+  deleteRole: 'Delete Role',
+  roleTitle: 'Role Title',
+  roleDescription: 'Role Description',
+  rolePrompt: 'System Prompt',
+  selectThisRole: 'Select This Role',
+  rolesCount: 'roles',
+  loadError: 'Failed to load roles',
+  saveSuccess: 'Role saved successfully',
+  saveError: 'Failed to save role',
+  deleteConfirm: 'Are you sure you want to delete this role? This action cannot be undone.',
+  deleteSuccess: 'Role deleted successfully',
+  deleteError: 'Failed to delete role',
+  gridView: 'Grid View',
+  listView: 'List View',
+  systemRoleNoEdit: 'System roles cannot be edited',
+  systemRoleNoDelete: 'System roles cannot be deleted'
+}

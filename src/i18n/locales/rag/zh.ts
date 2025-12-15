@@ -1,0 +1,170 @@
+export default {
+    title: 'RAG 知识库管理',
+
+    // 按钮
+    createCollection: '创建集合',
+    refresh: '刷新',
+    addDocument: '添加文档',
+    queryDocument: '查询文档',
+    close: '关闭',
+    cancel: '取消',
+    save: '保存',
+    create: '创建',
+    creating: '创建中...',
+    saving: '保存中...',
+    processing: '处理中...',
+    querying: '查询中...',
+
+    // 统计卡片
+    stats: {
+        totalCollections: '集合总数',
+        totalDocuments: '文档总数',
+        totalChunks: '块总数',
+        totalQueries: '查询总数',
+    },
+
+    // 集合列表
+    collections: {
+        title: '知识库集合',
+        description: '已激活的集合会在 AI 助手的 RAG 模式下被联合检索。',
+        searchPlaceholder: '搜索集合...',
+        allStatus: '全部状态',
+        active: '已激活',
+        inactive: '未激活',
+        activated: '已激活',
+        notActivated: '未激活',
+    },
+
+    // 表格列
+    table: {
+        name: '名称',
+        description: '描述',
+        embeddingModel: '嵌入模型',
+        documentCount: '文档数',
+        createdAt: '创建时间',
+        activate: '激活',
+        actions: '操作',
+        fileName: '文件名',
+        size: '大小',
+        operations: '操作',
+        chunks: '文本块',
+    },
+
+    // 操作提示
+    actions: {
+        view: '查看详情',
+        edit: '编辑集合',
+        add: '添加文档',
+        query: '查询',
+        delete: '删除',
+        preview: '预览',
+    },
+
+    // 创建/编辑集合
+    collection: {
+        createTitle: '创建新集合',
+        editTitle: '编辑集合',
+        nameLabel: '集合名称',
+        namePlaceholder: '输入集合名称',
+        descriptionLabel: '描述',
+        descriptionPlaceholder: '输入集合描述',
+        noDescription: '无描述',
+    },
+
+    // 文档摄取
+    ingest: {
+        title: '添加文档到 {name}',
+        modeFile: '选择文件',
+        modeManual: '手动输入',
+        selectFile: '选择文件',
+        selectSingleFile: '选择单个文件',
+        selectFolder: '选择文件夹',
+        supportedFormats: '支持格式: TXT, MD, PDF, DOCX',
+        filesSelected: '已选择 {count} 个文件',
+        fileSelected: '已选择文件: {name}',
+        folder: '文件夹: {path}',
+        fileList: '文件列表:',
+        titleLabel: '文档标题',
+        titleRequired: '文档标题 *',
+        titlePlaceholder: '输入文档标题...',
+        contentLabel: '文档内容',
+        contentRequired: '文档内容 *',
+        contentPlaceholder: '输入或粘贴文档内容...',
+        characterCount: '字符数: {count}',
+        addMultiple: '添加 {count} 个文档',
+        processingProgress: '处理中... {current}/{total}',
+    },
+
+    // 集合详情
+    details: {
+        title: '集合详情: {name}',
+        documentCount: '文档数量',
+        chunkCount: '文本块数量',
+        embeddingModel: '嵌入模型',
+        description: '描述',
+        documentList: '文档列表',
+        searchPlaceholder: '按文件名搜索...',
+        perPage: '{size}/页',
+        loading: '正在加载文档...',
+        noDocuments: '暂无文档',
+        prevPage: '上一页',
+        nextPage: '下一页',
+        pageInfo: '第 {current} / {total} 页（共 {count} 条）',
+    },
+
+    // 文档预览
+    document: {
+        previewTitle: '文档预览: {name}',
+        chunks: '文本块: {count}',
+        loadingContent: '正在加载内容...',
+    },
+
+    // 查询
+    query: {
+        title: '查询 {name}',
+        contentLabel: '查询内容',
+        contentPlaceholder: '输入您的查询...',
+        topKLabel: '返回结果数',
+        useEmbeddingLabel: '使用嵌入检索',
+        rerankingLabel: '启用重排',
+        execute: '执行查询',
+        resultsTitle: '查询结果',
+        similarity: '相似度: {score}%',
+        rank: '排名: {rank}',
+    },
+
+    // 消息提示
+    messages: {
+        activateSuccess: '已激活该集合，AI助手将联合检索',
+        deactivateSuccess: '已取消激活该集合',
+        updateActiveFailed: '更新激活状态失败',
+        createSuccess: '集合创建成功',
+        createFailed: '创建集合失败: {error}',
+        updateSuccess: '集合更新成功',
+        updateFailed: '更新集合失败: {error}',
+        deleteSuccess: '集合删除成功',
+        deleteFailed: '删除集合失败: {error}',
+        loadFailed: '获取集合列表失败',
+        loadDetailsFailed: '加载集合详情失败: {error}',
+        loadDocumentsFailed: '获取文档列表失败',
+        loadChunksFailed: '获取文档内容失败',
+        deleteDocumentSuccess: '文档删除成功',
+        deleteDocumentFailed: '删除文档失败: {error}',
+        selectCollection: '请选择集合',
+        selectFile: '请选择文件',
+        fillRequired: '请填写文档标题和内容',
+        ingestSuccess: '文档添加成功！共处理了 {chunks} 个文本块',
+        ingestPartialSuccess: '部分文档添加成功！成功: {success}, 失败: {failed}, 共处理了 {chunks} 个文本块',
+        ingestAllFailed: '所有文档添加失败',
+        ingestFailed: '文档摄取失败: {error}',
+        querySuccess: '找到 {count} 个相关结果',
+        queryFailed: '查询失败: {error}',
+        queryRequired: '请输入查询内容',
+        nameRequired: '请填写集合名称',
+        fileSelectFailed: '文件选择失败: {error}',
+        folderSelectFailed: '文件夹选择失败: {error}',
+        folderFilesFailed: '获取文件夹文件失败: {error}',
+        noSupportedFiles: '文件夹中没有找到支持的文档文件',
+        foundFiles: '找到 {count} 个文档文件',
+    },
+}

@@ -1,0 +1,21 @@
+export default {
+  roleManagement: '角色管理',
+  newRole: '新角色',
+  editRole: '编辑角色',
+  deleteRole: '删除角色',
+  roleTitle: '角色标题',
+  roleDescription: '角色描述',
+  rolePrompt: '系统提示词',
+  selectThisRole: '选择此角色',
+  rolesCount: '角色',
+  loadError: '加载角色失败',
+  saveSuccess: '角色保存成功',
+  saveError: '保存角色失败',
+  deleteConfirm: '您确定要删除此角色吗？此操作无法撤销。',
+  deleteSuccess: '角色删除成功',
+  deleteError: '删除角色失败',
+  gridView: '网格视图',
+  listView: '列表视图',
+  systemRoleNoEdit: '系统角色无法编辑',
+  systemRoleNoDelete: '系统角色无法删除'
+}

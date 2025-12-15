@@ -33,7 +33,20 @@ impl BrowserTools {
 
         // 执行操作
         let result = match action {
-            BrowserAction::Screenshot => self.take_screenshot().await,
+            BrowserAction::Screenshot => {
+                if !self.config.enable_multimodal {
+                    // Text-only mode has no visual capability; avoid taking screenshots to save time/resources.
+                    warn!("Text mode: screenshot action requested but multimodal is disabled, skipping");
+                    Ok(ActionResult {
+                        success: true,
+                        error: None,
+                        screenshot: None,
+                        duration_ms: 0,
+                    })
+                } else {
+                    self.take_screenshot().await
+                }
+            }
             BrowserAction::MoveMouse { coordinates } => {
                 self.move_mouse(coordinates).await
             }
@@ -65,7 +78,8 @@ impl BrowserTools {
                 action_result.duration_ms = duration_ms;
                 
                 // 对于非截图操作，等待UI稳定后自动截图
-                if !matches!(action, BrowserAction::Screenshot) {
+                // 仅多模态模式需要截图；文本模式使用元素标注/列表理解页面
+                if self.config.enable_multimodal && !matches!(action, BrowserAction::Screenshot) {
                     sleep(Duration::from_millis(self.config.screenshot_delay_ms)).await;
                     
                     match self.take_screenshot_raw().await {
@@ -893,16 +907,22 @@ impl BrowserTools {
         Ok(result.as_str().unwrap_or("").to_string())
     }
 
-    /// 采集当前页面状态 (多模态模式 - 包含截图)
+    /// 采集当前页面状态 (多模态模式 - 包含截图和标注元素)
+    /// 多模态模型依赖截图理解页面，同时保留 annotated_elements 以支持 fill_by_index / click_by_index 操作
     pub async fn capture_page_state(&self) -> Result<PageState> {
-        // 并行获取各种信息
-        let (url, title, screenshot, elements, forms) = tokio::try_join!(
+        // 先标注元素，确保 window.__playwrightAnnotatedElements 可用
+        let annotated_elements = self.annotate_elements().await?;
+
+        // 并行获取 URL / title / DOM elements / forms
+        let (url, title, elements, forms) = tokio::try_join!(
             self.get_current_url(),
             self.get_page_title(),
-            self.take_screenshot_raw(),
             self.get_interactable_elements(),
             self.get_forms()
         )?;
+
+        // 截图在 annotate 之后，确保截图包含标注覆盖层
+        let screenshot = self.take_screenshot_raw().await?;
         
         // 提取链接
         let links: Vec<PageElement> = elements.iter()
@@ -915,7 +935,7 @@ impl BrowserTools {
             title,
             screenshot: Some(screenshot),
             interactable_elements: elements,
-            annotated_elements: Vec::new(), // 多模态模式不需要标注元素列表
+            annotated_elements,
             forms,
             links,
             visible_text_summary: None,

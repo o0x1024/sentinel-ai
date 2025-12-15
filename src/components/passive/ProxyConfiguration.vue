@@ -5,10 +5,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-network-wired mr-2"></i>
-          代理监听器
+          {{ $t('passiveScan.proxyConfiguration.proxyListenersTitle') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          配置代理监听器以接收来自浏览器的 HTTP 请求。需要配置浏览器使用其中一个监听器作为代理服务器。
+          {{ $t('passiveScan.proxyConfiguration.proxyListenersDescription') }}
         </p>
 
         <div class="overflow-x-auto">
@@ -23,13 +23,15 @@
                     :checked="selectedListeners.length === proxyListeners.length && proxyListeners.length > 0"
                   />
                 </th>
-                <th class="w-20">运行中</th>
-                <th>接口</th>
-                <th>不可见</th>
-                <th>重定向</th>
-                <th>证书</th>
-                <th>TLS协议</th>
-                <th>支持 HTTP/2</th>
+                <th class="w-20">
+                  {{ $t('passiveScan.proxyConfiguration.running') }}
+                </th>
+                <th>{{ $t('passiveScan.proxyConfiguration.interface') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.invisible') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.redirect') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.certificate') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.tlsProtocols') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.http2Support') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -91,7 +93,7 @@
         <div class="flex gap-2 mt-4">
           <button class="btn btn-sm btn-primary" @click="addListener">
             <i class="fas fa-plus mr-1"></i>
-            添加
+            {{ $t('passiveScan.proxyConfiguration.addListener') }}
           </button>
           <button 
             class="btn btn-sm btn-outline" 
@@ -99,7 +101,7 @@
             :disabled="selectedListeners.length !== 1"
           >
             <i class="fas fa-edit mr-1"></i>
-            编辑
+            {{ $t('passiveScan.proxyConfiguration.editListener') }}
           </button>
           <button 
             class="btn btn-sm btn-outline btn-error" 
@@ -107,7 +109,7 @@
             :disabled="selectedListeners.length === 0"
           >
             <i class="fas fa-trash mr-1"></i>
-            移除
+            {{ $t('passiveScan.proxyConfiguration.removeListener') }}
           </button>
         </div>
 
@@ -119,7 +121,7 @@
               :disabled="isDownloadingCert"
             >
               <i :class="['fas fa-download mr-1', { 'fa-spin': isDownloadingCert }]"></i>
-              导出 CA 证书
+              {{ $t('passiveScan.proxyConfiguration.exportCACert') }}
             </button>
             <button 
               class="btn btn-sm btn-outline"
@@ -127,7 +129,7 @@
               :disabled="isRegeneratingCert"
             >
               <i :class="['fas fa-sync-alt mr-1', { 'fa-spin': isRegeneratingCert }]"></i>
-              重新生成 CA 证书
+              {{ $t('passiveScan.proxyConfiguration.regenerateCACert') }}
             </button>
             <button 
               class="btn btn-sm btn-outline"
@@ -135,11 +137,11 @@
               :disabled="isOpeningCertDir"
             >
               <i :class="['fas fa-folder-open mr-1', { 'fa-spin': isOpeningCertDir }]"></i>
-              打开证书目录
+              {{ $t('passiveScan.proxyConfiguration.openCertDir') }}
             </button>
           </div>
           <p class="text-xs text-base-content/60">
-            每个安装都会生成自己的 CA 证书，代理监听器在协商 TLS 连接时可以使用该证书。导出证书后，请手动将其安装到系统信任列表中。
+            {{ $t('passiveScan.proxyConfiguration.certInfo') }}
           </p>
         </div>
       </div>
@@ -148,12 +150,14 @@
     <!-- 编辑监听器对话框 -->
     <dialog ref="editDialogRef" class="modal">
       <div class="modal-box">
-        <h3 class="font-bold text-lg mb-4">编辑监听器</h3>
+        <h3 class="font-bold text-lg mb-4">
+          {{ $t('passiveScan.proxyConfiguration.editListener') }}
+        </h3>
         
         <div class="space-y-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">绑定地址</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.bindAddress') }}</span>
             </label>
             <input 
               type="text" 
@@ -165,7 +169,7 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">端口</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.port') }}</span>
             </label>
             <input 
               type="number" 
@@ -179,30 +183,30 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">证书模式</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.certMode') }}</span>
             </label>
             <select v-model="editingListener.certificate" class="select select-bordered">
-              <option value="Per-host">Per-host（每个主机独立证书）</option>
-              <option value="Wildcard">Wildcard（通配符证书）</option>
-              <option value="Custom">Custom（自定义证书）</option>
+              <option value="Per-host">{{ $t('passiveScan.proxyConfiguration.perHostCert') }}</option>
+              <option value="Wildcard">{{ $t('passiveScan.proxyConfiguration.wildcardCert') }}</option>
+              <option value="Custom">{{ $t('passiveScan.proxyConfiguration.customCert') }}</option>
             </select>
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">TLS 协议</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.tlsProtocols') }}</span>
             </label>
             <select v-model="editingListener.tlsProtocols" class="select select-bordered">
-              <option value="Default">Default（默认）</option>
-              <option value="TLS 1.2">TLS 1.2</option>
-              <option value="TLS 1.3">TLS 1.3</option>
-              <option value="TLS 1.2+1.3">TLS 1.2+1.3</option>
+              <option value="Default">{{ $t('passiveScan.proxyConfiguration.defaultTLS') }}</option>
+              <option value="TLS 1.2">{{ $t('passiveScan.proxyConfiguration.tls12') }}</option>
+              <option value="TLS 1.3">{{ $t('passiveScan.proxyConfiguration.tls13') }}</option>
+              <option value="TLS 1.2+1.3">{{ $t('passiveScan.proxyConfiguration.tls12Plus13') }}</option>
             </select>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer">
-              <span class="label-text">支持 HTTP/2</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.supportHTTP2') }}</span>
               <input 
                 type="checkbox" 
                 v-model="editingListener.supportHTTP2"
@@ -213,7 +217,7 @@
 
           <div class="form-control">
             <label class="label cursor-pointer">
-              <span class="label-text">不可见模式</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.invisibleMode') }}</span>
               <input 
                 type="checkbox" 
                 v-model="editingListener.invisible"
@@ -224,7 +228,7 @@
 
           <div class="form-control">
             <label class="label cursor-pointer">
-              <span class="label-text">启用重定向</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.enableRedirect') }}</span>
               <input 
                 type="checkbox" 
                 v-model="editingListener.redirect"
@@ -235,12 +239,12 @@
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost" @click="cancelEdit">取消</button>
-          <button class="btn btn-primary" @click="saveEdit">保存</button>
+          <button class="btn btn-ghost" @click="cancelEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveEdit">{{ $t('passiveScan.proxyConfiguration.save') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>close</button>
+        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
       </form>
     </dialog>
 
@@ -249,10 +253,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-filter mr-2"></i>
-          请求拦截规则
+          {{ $t('passiveScan.proxyConfiguration.interceptionRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来控制在拦截选项卡中暂停哪些请求以供查看和编辑。
+          {{ $t('passiveScan.proxyConfiguration.interceptionRulesDesc') }}
         </p>
 
         <div class="form-control">
@@ -262,8 +266,8 @@
               class="checkbox checkbox-sm"
               v-model="interceptRequests"
             />
-            <span class="label-text">根据以下规则拦截请求：</span>
-            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm">主拦截已关闭</span>
+            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptRequests') }}</span>
+            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm">{{ $t('passiveScan.proxyConfiguration.masterInterceptionDisabled') }}</span>
           </label>
         </div>
 
@@ -271,11 +275,11 @@
           <table class="table table-sm w-full">
             <thead>
               <tr>
-                <th class="w-20">启用</th>
-                <th>操作符</th>
-                <th>匹配类型</th>
-                <th>关系</th>
-                <th>条件</th>
+                <th class="w-20">{{ $t('passiveScan.proxyConfiguration.enable') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.operator') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.matchType') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.relationship') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.condition') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -297,24 +301,24 @@
         </div>
 
         <div class="flex gap-2 mt-4">
-          <button class="btn btn-sm btn-primary">添加</button>
-          <button class="btn btn-sm btn-outline">编辑</button>
-          <button class="btn btn-sm btn-outline btn-error">移除</button>
-          <button class="btn btn-sm btn-outline">上移</button>
-          <button class="btn btn-sm btn-outline">下移</button>
+          <button class="btn btn-sm btn-primary">{{ $t('passiveScan.proxyConfiguration.addRule') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.editRule') }}</button>
+          <button class="btn btn-sm btn-outline btn-error">{{ $t('passiveScan.proxyConfiguration.removeRule') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.moveUp') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.moveDown') }}</button>
         </div>
 
         <div class="form-control mt-4">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="autoFixNewlines" />
-            <span class="label-text">自动修复请求末尾缺失或多余的换行符</span>
+            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.autoFixNewlines') }}</span>
           </label>
         </div>
 
         <div class="form-control">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="autoUpdateContentLength" />
-            <span class="label-text">编辑请求时自动更新 Content-Length 标头</span>
+            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.autoUpdateContentLength') }}</span>
           </label>
         </div>
       </div>
@@ -325,10 +329,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-reply mr-2"></i>
-          响应拦截规则
+          {{ $t('passiveScan.proxyConfiguration.interceptionRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来控制在拦截选项卡中暂停哪些响应以供查看和编辑。
+          {{ $t('passiveScan.proxyConfiguration.interceptionRulesDesc') }}
         </p>
 
         <div class="form-control">
@@ -338,8 +342,8 @@
               class="checkbox checkbox-sm"
               v-model="interceptResponses"
             />
-            <span class="label-text">根据以下规则拦截响应：</span>
-            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm">主拦截已关闭</span>
+            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptResponses') }}</span>
+            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm">{{ $t('passiveScan.proxyConfiguration.masterInterceptionDisabled') }}</span>
           </label>
         </div>
 
@@ -347,11 +351,11 @@
           <table class="table table-sm w-full">
             <thead>
               <tr>
-                <th class="w-20">启用</th>
-                <th>操作符</th>
-                <th>匹配类型</th>
-                <th>关系</th>
-                <th>条件</th>
+                <th class="w-20">{{ $t('passiveScan.proxyConfiguration.enable') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.operator') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.matchType') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.relationship') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.condition') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -375,7 +379,7 @@
         <div class="form-control mt-4">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="autoUpdateResponseContentLength" />
-            <span class="label-text">编辑响应时自动更新 Content-Length 标头</span>
+            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.autoUpdateResponseContentLength') }}</span>
           </label>
         </div>
       </div>
@@ -386,31 +390,31 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-exchange-alt mr-2"></i>
-          WebSocket 拦截规则
+          {{ $t('passiveScan.proxyConfiguration.websocketInterceptionRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来控制在拦截选项卡中暂停哪些 WebSocket 消息以供查看和编辑。
+          {{ $t('passiveScan.proxyConfiguration.websocketInterceptionRulesDesc') }}
         </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="interceptClientToServer" />
-              <span class="label-text">拦截客户端到服务器的消息</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptClientToServer') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="interceptServerToClient" />
-              <span class="label-text">拦截服务器到客户端的消息</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptServerToClient') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="onlyInterceptInScope" />
-              <span class="label-text">仅拦截范围内的消息</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.onlyInterceptInScope') }}</span>
             </label>
           </div>
         </div>
@@ -422,52 +426,52 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-edit mr-2"></i>
-          响应修改规则
+          {{ $t('passiveScan.proxyConfiguration.responseModificationRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来控制 Sentinel 自动修改响应的方式。
+          {{ $t('passiveScan.proxyConfiguration.responseModificationRulesDesc') }}
         </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="unhideHiddenFields" />
-              <span class="label-text">取消隐藏表单字段</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.unhideHiddenFields') }}</span>
             </label>
           </div>
 
           <div class="form-control ml-6">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="prominentlyHighlightUnhidden" disabled />
-              <span class="label-text text-base-content/50">突出显示取消隐藏的字段</span>
+              <span class="label-text text-base-content/50">{{ $t('passiveScan.proxyConfiguration.prominentlyHighlightUnhidden') }}</span>  
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="enableDisabledFields" />
-              <span class="label-text">启用禁用的表单字段</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.enableDisabledFields') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="removeInputFieldLengthLimits" />
-              <span class="label-text">删除输入字段长度限制</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.removeInputFieldLengthLimits') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="removeJavaScriptFormValidation" />
-              <span class="label-text">删除 JavaScript 表单验证</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.removeJavaScriptFormValidation') }}</span> 
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="removeAllJavaScript" />
-              <span class="label-text">删除所有 JavaScript</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.removeAllJavaScript') }}</span> 
             </label>
           </div>
         </div>
@@ -479,16 +483,16 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-search-plus mr-2"></i>
-          匹配和替换规则
+          {{ $t('passiveScan.proxyConfiguration.matchReplaceRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来自动替换通过代理的请求和响应的部分内容。
+          {{ $t('passiveScan.proxyConfiguration.matchReplaceRulesDesc') }}
         </p>
 
         <div class="form-control mb-3">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="onlyApplyToInScope" />
-            <span class="label-text">仅应用于范围内的项目</span>
+            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.onlyApplyToInScope') }}</span>
           </label>
         </div>
 
@@ -496,12 +500,12 @@
           <table class="table table-sm w-full">
             <thead>
               <tr>
-                <th class="w-20">启用</th>
-                <th>项目</th>
-                <th>匹配</th>
-                <th>替换</th>
-                <th>类型</th>
-                <th>备注</th>
+                <th class="w-20">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.item') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.match') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.replace') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.type') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.comment') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -524,11 +528,11 @@
         </div>
 
         <div class="flex gap-2 mt-4">
-          <button class="btn btn-sm btn-primary">添加</button>
-          <button class="btn btn-sm btn-outline">编辑</button>
-          <button class="btn btn-sm btn-outline btn-error">移除</button>
-          <button class="btn btn-sm btn-outline">上移</button>
-          <button class="btn btn-sm btn-outline">下移</button>
+          <button class="btn btn-sm btn-primary">{{ $t('passiveScan.proxyConfiguration.add') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.edit') }}</button>
+          <button class="btn btn-sm btn-outline btn-error">{{ $t('passiveScan.proxyConfiguration.remove') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.moveUp') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.moveDown') }}</button>
         </div>
       </div>
     </div>
@@ -538,24 +542,24 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-lock mr-2"></i>
-          TLS 直通
+          {{ $t('passiveScan.proxyConfiguration.tlsPassThrough') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来指定目标 Web 服务器，Sentinel 将直接通过 TLS 连接。通过这些连接将无法在代理拦截视图或历史记录中查看有关请求或响应的详细信息。
+          {{ $t('passiveScan.proxyConfiguration.tlsPassThroughDesc') }}
         </p>
 
         <div class="overflow-x-auto">
           <table class="table table-sm w-full">
             <thead>
               <tr>
-                <th class="w-20">启用</th>
-                <th>主机 / IP 范围</th>
-                <th>端口</th>
+                <th class="w-20">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.hostIPRange') }}</th>
+                <th>{{ $t('passiveScan.proxyConfiguration.port') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="tlsPassThroughRules.length === 0">
-                <td colspan="3" class="text-center text-base-content/50">暂无规则</td>
+                <td colspan="3" class="text-center text-base-content/50">{{ $t('passiveScan.proxyConfiguration.noRules') }}</td>
               </tr>
               <tr v-for="(rule, index) in tlsPassThroughRules" :key="index">
                 <td>
@@ -573,24 +577,24 @@
         </div>
 
         <div class="flex gap-2 mt-4">
-          <button class="btn btn-sm btn-primary">添加</button>
-          <button class="btn btn-sm btn-outline">编辑</button>
-          <button class="btn btn-sm btn-outline btn-error">移除</button>
-          <button class="btn btn-sm btn-outline">粘贴 URL</button>
-          <button class="btn btn-sm btn-outline">加载...</button>
+          <button class="btn btn-sm btn-primary">{{ $t('passiveScan.proxyConfiguration.add') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.edit') }}</button>
+          <button class="btn btn-sm btn-outline btn-error">{{ $t('passiveScan.proxyConfiguration.remove') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.pasteURL') }}</button>
+          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.load') }}</button>
         </div>
 
         <div class="form-control mt-4">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="autoAddTLSOnFailure" />
-            <span class="label-text">在客户端 TLS 协商失败时自动添加条目</span>
+            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.autoAddTLSOnFailure') }}</span>
           </label>
         </div>
 
         <div class="form-control">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="applyToOutOfScope" disabled />
-            <span class="label-text text-base-content/50">应用于范围外的项目</span>
+            <span class="label-text text-base-content/50">{{ $t('passiveScan.proxyConfiguration.applyToOutOfScope') }}</span>
           </label>
         </div>
       </div>
@@ -601,10 +605,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-history mr-2"></i>
-          代理历史记录日志
+          {{ $t('passiveScan.proxyConfiguration.proxyHistoryLogging') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用此设置来选择当您将项目添加到目标范围时，代理是否自动停止将范围外的项目发送到历史记录和其他工具。
+          {{ $t('passiveScan.proxyConfiguration.proxyHistoryLoggingDesc') }}
         </p>
 
         <div class="space-y-2">
@@ -618,7 +622,7 @@
                 v-model="historyLogging"
                 checked
               />
-              <span class="label-text">停止记录范围外的项目</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.stopLoggingOutOfScope') }}</span>
             </label>
           </div>
 
@@ -631,7 +635,7 @@
                 value="ask"
                 v-model="historyLogging"
               />
-              <span class="label-text">每次询问我该怎么做</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.askUser') }}</span>
             </label>
           </div>
 
@@ -644,7 +648,7 @@
                 value="nothing"
                 v-model="historyLogging"
               />
-              <span class="label-text">不执行任何操作</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.doNothing') }}</span>
             </label>
           </div>
         </div>
@@ -656,10 +660,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-power-off mr-2"></i>
-          默认代理拦截状态
+          {{ $t('passiveScan.proxyConfiguration.defaultInterceptionState') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用此设置来选择启动 Sentinel 时是否启用代理拦截。
+          {{ $t('passiveScan.proxyConfiguration.defaultInterceptionStateDesc') }}
         </p>
 
         <div class="space-y-2">
@@ -672,7 +676,7 @@
                 value="enable"
                 v-model="interceptionState"
               />
-              <span class="label-text">启用拦截</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.enableInterception') }}</span>
             </label>
           </div>
 
@@ -686,7 +690,7 @@
                 v-model="interceptionState"
                 checked
               />
-              <span class="label-text">禁用拦截</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.disableInterception') }}</span>
             </label>
           </div>
 
@@ -699,7 +703,7 @@
                 value="restore"
                 v-model="interceptionState"
               />
-              <span class="label-text">恢复关闭 Sentinel 时在 <strong>代理 > 拦截</strong> 选项卡中选择的设置</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.restoreInterceptionState') }}</span>
             </label>
           </div>
         </div>
@@ -711,73 +715,73 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-cogs mr-2"></i>
-          其他设置
+          {{ $t('passiveScan.proxyConfiguration.miscellaneousSettings') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          使用这些设置来更改 Sentinel 代理的默认行为。
+          {{ $t('passiveScan.proxyConfiguration.miscellaneousSettingsDesc') }}
         </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="useHTTP1_1ToServer" />
-              <span class="label-text">对服务器的请求使用 HTTP/1.0</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.useHTTP1_1ToServer') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="useHTTP1_1ToClient" />
-              <span class="label-text">对客户端的响应使用 HTTP/1.0</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.useHTTP1_1ToClient') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="setConnectionClose" />
-              <span class="label-text">设置响应头 "Connection: close"</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.setConnectionClose') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="setConnectionHeader" />
-              <span class="label-text">使用 HTTP/1 时在传入请求上设置 "Connection" 标头</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.setConnectionHeader') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="stripProxyHeaders" />
-              <span class="label-text">剥离传入请求中的 Proxy-* 标头</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.stripProxyHeaders') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="removeUnsupportedEncodings" />
-              <span class="label-text">从传入请求的 Accept-Encoding 标头中删除不支持的编码</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.removeUnsupportedEncodings') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="stripWebSocketExtensions" />
-              <span class="label-text">剥离传入请求中的 Sec-WebSocket-Extensions 标头</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.stripWebSocketExtensions') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="unpackCompressedRequests" />
-              <span class="label-text">解压缩请求</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.unpackCompressedRequests') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="unpackCompressedResponses" />
-              <span class="label-text">解压缩响应</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.unpackCompressedResponses') }}</span>
             </label>
           </div>
 
@@ -785,21 +789,21 @@
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="suppressBurpErrorMessages" />
-              <span class="label-text">在浏览器中抑制 Sentinel 错误消息</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.suppressBurpErrorMessages') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="dontSendToProxyHistory" />
-              <span class="label-text">不将项目发送到代理历史记录或实时任务</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.dontSendToProxyHistory') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="dontSendToProxyHistoryIfOutOfScope" />
-              <span class="label-text">如果超出范围，不将项目发送到代理历史记录或实时任务</span>
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.dontSendToProxyHistoryIfOutOfScope') }}</span>
             </label>
           </div>
         </div>
@@ -811,11 +815,11 @@
     <div class="flex justify-end gap-2">
       <button class="btn btn-outline" @click="resetToDefaults">
         <i class="fas fa-undo mr-2"></i>
-        重置为默认
+        {{ $t('passiveScan.proxyConfiguration.resetToDefaults') }}
       </button>
       <div v-if="isSaving" class="flex items-center gap-2 text-sm text-base-content/70">
         <i class="fas fa-spinner fa-spin"></i>
-        <span>正在保存...</span>
+        <span>{{ $t('passiveScan.proxyConfiguration.saving') }}</span>
       </div>
     </div>
   </div>
@@ -1203,9 +1207,6 @@ const removeListener = async () => {
     return
   }
   
-  if (!confirm(`确定要删除选中的 ${selectedListeners.value.length} 个监听器吗？`)) {
-    return
-  }
   
   // 按索引降序排序，从后往前删除
   const sortedIndices = [...selectedListeners.value].sort((a, b) => b - a)

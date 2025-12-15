@@ -45,7 +45,6 @@ impl RouteTracker {
                 "javascript:".to_string(),
                 "mailto:".to_string(),
                 "tel:".to_string(),
-                "#".to_string(),
             ],
         };
         
@@ -64,26 +63,60 @@ impl RouteTracker {
 
     /// 规范化路由（移除 hash、query 等）
     fn normalize_route(&self, url: &str) -> String {
+        let trimmed = url.trim();
+
+        // Hash-router (SPA) relative routes: "#/xxx" or "#!/xxx"
+        if let Some(rest) = trimmed.strip_prefix("#/") {
+            return format!("#/{}", rest.split('?').next().unwrap_or(rest));
+        }
+        if let Some(rest) = trimmed.strip_prefix("#!/") {
+            return format!("#!/{}", rest.split('?').next().unwrap_or(rest));
+        }
+
         // 尝试解析为完整 URL
         if let Ok(parsed) = Url::parse(url) {
-            // 只保留 scheme + host + path
-            format!(
+            // 保留 scheme + host + path
+            let mut normalized = format!(
                 "{}://{}{}",
                 parsed.scheme(),
                 parsed.host_str().unwrap_or(""),
                 parsed.path()
-            )
+            );
+
+            // Preserve hash fragment if it looks like a client-side route (hash-router).
+            // Example: "https://a.com/#/dashboard" -> "https://a.com/#/dashboard"
+            if let Some(frag) = parsed.fragment() {
+                if frag.starts_with('/') || frag.starts_with("!/") {
+                    normalized.push('#');
+                    normalized.push_str(frag);
+                }
+            }
+
+            normalized
         } else {
             // 可能是相对路径，直接使用
-            url.split('?').next().unwrap_or(url)
-                .split('#').next().unwrap_or(url)
-                .to_string()
+            let s = trimmed.split('?').next().unwrap_or(trimmed);
+            // Keep hash-router style fragments, but drop plain anchors
+            if s.starts_with("#/") || s.starts_with("#!/") {
+                return s.to_string();
+            }
+            s.split('#').next().unwrap_or(s).to_string()
         }
     }
 
     /// 检查路由是否应该被忽略
     fn should_ignore(&self, url: &str) -> bool {
-        let lower = url.to_lowercase();
+        let trimmed = url.trim();
+
+        // Ignore pure anchors but keep hash-router routes like "#/xxx"
+        if trimmed == "#" {
+            return true;
+        }
+        if trimmed.starts_with("#/") || trimmed.starts_with("#!/") {
+            return false;
+        }
+
+        let lower = trimmed.to_lowercase();
         self.ignored_patterns.iter().any(|p| lower.contains(p))
     }
 
@@ -285,5 +318,23 @@ mod tests {
         tracker.mark_visited("/page1");
         tracker.mark_visited("/page2");
         assert!(tracker.is_fully_covered());
+    }
+
+    #[test]
+    fn test_hash_router_routes_are_not_ignored_and_normalized() {
+        let mut tracker = RouteTracker::new("https://example.com/#/login");
+
+        // Pure anchor should be ignored
+        assert!(!tracker.add_discovered_route("#", "src"));
+
+        // Hash-router routes should be accepted
+        assert!(tracker.add_discovered_route("https://example.com/#/dashboard", "src"));
+        assert!(tracker.add_discovered_route("#/settings?tab=profile", "src"));
+
+        // Ensure they are tracked as distinct routes
+        let stats = tracker.stats();
+        assert!(stats.discovered >= 3); // initial + 2 new
+        assert!(tracker.discovered_routes().iter().any(|r| r.contains("#/dashboard")));
+        assert!(tracker.discovered_routes().iter().any(|r| r.starts_with("#/settings")));
     }
 }

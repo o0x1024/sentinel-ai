@@ -1,6 +1,6 @@
 <template>
   <div class="ai-assistant-view page-content-full h-full flex flex-col bg-base-100 overflow-hidden">
-    <!-- 头部控制栏 -->
+    <!-- {{ t('aiAssistant.headerControlBar') }} -->
     <div class="navbar bg-base-200 shadow-sm border-b border-base-300 flex-shrink-0">
       <div class="navbar-start">
         <h1 class="text-xl font-bold flex items-center gap-2">
@@ -10,7 +10,7 @@
       </div>
       <div class="navbar-end">
         <div class="flex items-center gap-2">
-          <!-- 角色选择器 -->
+          <!-- {{ t('aiAssistant.roleSelector') }} -->
           <div class="dropdown dropdown-end">
             <div tabindex="0" role="button" class="btn btn-sm btn-outline gap-2">
               <i class="fas fa-user-tie"></i>
@@ -22,7 +22,7 @@
               <li @click="handleSelectRole(null)">
                 <a class="flex items-center justify-between gap-3" :class="{ 'active': !selectedRole }">
                   <div class="flex items-center gap-2">
-                    <div class="badge badge-xs badge-ghost">默认</div>
+                    <div class="badge badge-xs badge-ghost">{{ t('aiAssistant.defaultBadge') }}</div>
                     <span>{{ t('aiAssistant.defaultRole', '默认助手') }}</span>
                   </div>
                 </a>
@@ -31,7 +31,7 @@
               <li v-for="role in roles" :key="role.id" @click="handleSelectRole(role)">
                 <a class="flex items-center justify-between gap-3" :class="{ 'active': selectedRole?.id === role.id }">
                   <div class="flex items-center gap-2">
-                    <div class="badge badge-xs badge-primary">角色</div>
+                    <div class="badge badge-xs badge-primary">{{ t('aiAssistant.roleBadge') }}</div>
                     <span class="truncate">{{ role.title }}</span>
                   </div>
                   <div class="text-xs text-base-content/60 truncate max-w-20" :title="role.description">
@@ -55,7 +55,7 @@
       </div>
     </div>
 
-    <!-- 主内容区 - Agent 执行模式 -->
+    <!-- {{ t('aiAssistant.mainContentArea') }} -->
     <div class="flex-1 overflow-hidden min-h-0">
       <AgentView 
         ref="agentViewRef"
@@ -67,7 +67,7 @@
       />
     </div>
 
-    <!-- 角色管理弹窗 -->
+    <!-- {{ t('aiAssistant.roleManagementModal') }} -->
     <RoleManagement v-if="showRoleManagement" @close="showRoleManagement = false" />
   </div>
 </template>
@@ -80,7 +80,7 @@ import RoleManagement from '@/components/RoleManagement.vue'
 import { AgentView } from '@/components/Agent'
 import { useRoleManagement } from '@/composables/useRoleManagement'
 
-// 流量引用类型
+// {{ t('aiAssistant.trafficReferenceType') }}
 interface ReferencedTraffic {
   id: number
   url: string
@@ -111,7 +111,7 @@ const {
 // 角色管理状态
 const showRoleManagement = ref(false)
 
-// --- AgentView 相关 ---
+// --- {{ t('aiAssistant.agentViewRelated') }} ---
 const agentViewRef = ref<any>(null)
 
 // 流量事件监听器
@@ -125,7 +125,7 @@ const handleSelectRole = async (role: any) => {
   }
 }
 
-// --- AgentView 事件处理 ---
+// --- {{ t('aiAssistant.agentViewEventHandling') }} ---
 const handleAgentSubmit = (task: string) => {
   console.log('Agent task submitted:', task)
 }
@@ -138,7 +138,7 @@ const handleAgentError = (error: string) => {
   console.error('Agent task error:', error)
 }
 
-// 初始化
+// {{ t('aiAssistant.initialization') }}
 onMounted(async () => {
   try {
     // 加载角色列表
@@ -157,7 +157,7 @@ onMounted(async () => {
   }
 })
 
-// 清理事件监听
+// {{ t('aiAssistant.cleanupEventListener') }}
 onUnmounted(() => {
   if (unlistenTraffic) {
     unlistenTraffic()

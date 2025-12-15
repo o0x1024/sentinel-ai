@@ -143,12 +143,6 @@
               <select class="select select-bordered" v-model="settings.general.region">
                 <option value="auto">{{ t('settings.general.regions.auto') }}</option>
                 <option value="CN">{{ t('settings.general.regions.CN') }}</option>
-                <option value="TW">{{ t('settings.general.regions.TW') }}</option>
-                <option value="HK">{{ t('settings.general.regions.HK') }}</option>
-                <option value="US">{{ t('settings.general.regions.US') }}</option>
-                <option value="JP">{{ t('settings.general.regions.JP') }}</option>
-                <option value="KR">{{ t('settings.general.regions.KR') }}</option>
-                <option value="EU">{{ t('settings.general.regions.EU') }}</option>
               </select>
             </div>
             

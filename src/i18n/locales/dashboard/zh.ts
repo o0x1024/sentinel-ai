@@ -1,0 +1,23 @@
+export default {
+  title: '总览',
+  welcome: '欢迎回来',
+  summary: '摘要',
+  recentActivity: '最近活动',
+  todayStats: '今日统计',
+  activeScans: '活跃扫描',
+  vulnerabilitiesFound: '发现漏洞',
+  projectsMonitored: '监控项目',
+
+  scanProgress: '扫描进度',
+  recentVulnerabilities: '最近漏洞',
+  topProjects: '热门项目',
+  systemStatus: '系统状态',
+  cpuUsage: 'CPU使用率',
+  memoryUsage: '内存使用率',
+  diskUsage: '磁盘使用率',
+  networkUsage: '网络使用率',
+  quickActions: '快速操作',
+  startNewScan: '开始新扫描',
+  viewAllVulnerabilities: '查看所有漏洞',
+  manageProjects: '管理项目',
+}

@@ -108,27 +108,5 @@ impl StreamingLlmClient {
     {
         self.stream_chat(system_prompt, user_prompt, &[], None, on_content).await
     }
-
-    /// 使用工具的流式完成
-    ///
-    /// # 参数
-    /// - `system_prompt`: 可选的系统提示
-    /// - `user_prompt`: 用户提示
-    /// - `tool_ids`: 选中的工具 ID 列表
-    /// - `on_content`: 内容回调函数
-    pub async fn stream_completion_with_tools<F>(
-        &self,
-        system_prompt: Option<&str>,
-        user_prompt: &str,
-        tool_ids: &[String],
-        on_content: F,
-    ) -> anyhow::Result<String>
-    where
-        F: FnMut(StreamContent),
-    {
-        self
-            .stream_chat_with_tools(system_prompt, user_prompt, &[], None, tool_ids, on_content)
-            .await
-    }
 }
 

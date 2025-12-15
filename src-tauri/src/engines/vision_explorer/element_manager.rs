@@ -204,6 +204,11 @@ impl ElementManager {
         }
     }
 
+    /// 检查索引是否属于当前页面映射（防止模型使用陈旧索引）
+    pub fn is_known_index(&self, index: u32) -> bool {
+        self.current_page_mapping.contains_key(&index)
+    }
+
     /// 获取当前页面未交互的元素索引
     pub fn get_uninteracted_indices(&self) -> Vec<u32> {
         self.current_page_mapping

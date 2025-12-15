@@ -345,6 +345,7 @@ const customProvider = reactive({
   api_base: '',
   model_id: '',
   display_name: '',
+  rig_provider: '',
   compat_mode: 'openai', // openai, anthropic, rig_openai, rig_anthropic
   extra_headers_json: '',
   timeout: 120,

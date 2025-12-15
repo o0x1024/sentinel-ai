@@ -1095,7 +1095,7 @@ const savePlugin = async () => {
  */
 `
 
-    let codeWithoutMetadata = pluginCode.value.replace(/\/\*\*\s*[\s\S]*?\*\/\s*/, '')
+    const codeWithoutMetadata = pluginCode.value.replace(/\/\*\*\s*[\s\S]*?\*\/\s*/, '')
     const fullCode = metadataComment + '\n' + codeWithoutMetadata
 
     // 构建完整元数据用于全量更新

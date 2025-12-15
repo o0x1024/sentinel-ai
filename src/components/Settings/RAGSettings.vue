@@ -688,9 +688,17 @@ const formatFileSize = (bytes: number): string => {
 // 加载RAG统计信息
 const loadRagStats = async () => {
   try {
-    const stats = await invoke('get_rag_stats')
-    if (stats && typeof stats === 'object') {
-      ragStats.value = { ...ragStats.value, ...(stats as Record<string, any>) }
+    const status = await invoke('get_rag_status') as any
+    if (status && typeof status === 'object') {
+      ragStats.value = {
+        ...ragStats.value,
+        total_documents: status.total_documents ?? ragStats.value.total_documents,
+        total_chunks: status.total_chunks ?? ragStats.value.total_chunks,
+        embedding_dimensions: (ragConfig.value as any).embedding_dimensions ?? ragStats.value.embedding_dimensions,
+        index_size_bytes: typeof status.database_size_mb === 'number'
+          ? Math.round(status.database_size_mb * 1024 * 1024)
+          : ragStats.value.index_size_bytes,
+      }
     }
   } catch (error) {
     console.warn('Failed to load RAG stats:', error)

@@ -35,19 +35,19 @@
           <div class="radial-progress text-primary text-[10px]" :style="`--value:${coverage.route}; --size:2.5rem; --thickness:3px`">
             {{ coverage.route.toFixed(0) }}%
           </div>
-          <span class="text-[9px] opacity-60 mt-1">路由</span>
+          <span class="text-[9px] opacity-60 mt-1">{{ t('agent.route') }}</span>
         </div>
         <div class="flex flex-col items-center">
           <div class="radial-progress text-secondary text-[10px]" :style="`--value:${coverage.element}; --size:2.5rem; --thickness:3px`">
             {{ coverage.element.toFixed(0) }}%
           </div>
-          <span class="text-[9px] opacity-60 mt-1">元素</span>
+          <span class="text-[9px] opacity-60 mt-1">{{ t('agent.element') }}</span>
         </div>
         <div class="flex flex-col items-center">
           <div class="radial-progress text-accent text-[10px]" :style="`--value:${coverage.component}; --size:2.5rem; --thickness:3px`">
             {{ coverage.component.toFixed(0) }}%
           </div>
-          <span class="text-[9px] opacity-60 mt-1">组件</span>
+          <span class="text-[9px] opacity-60 mt-1">{{ t('agent.component') }}</span>
         </div>
         <div class="flex flex-col items-center">
           <div class="text-lg font-bold text-info">{{ stats.apis }}</div>
@@ -59,7 +59,7 @@
       <div v-if="pendingRoutes.length > 0" class="p-2 bg-warning/10 border-b border-base-300">
         <div class="flex items-center gap-1 text-[10px] text-warning font-medium mb-1">
           <i class="fas fa-route"></i>
-          待访问路由 ({{ pendingRoutes.length }})
+          {{ t('agent.pendingRoutesCount', { count: pendingRoutes.length }) }}
         </div>
         <div class="text-[9px] opacity-70 max-h-[40px] overflow-y-auto">
           {{ pendingRoutes.slice(0, 3).join(' • ') }}
@@ -150,8 +150,11 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   executionId: string

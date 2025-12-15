@@ -1,6 +1,6 @@
 <template>
   <div class="todo-item-wrapper flex flex-col">
-    <!-- 当前任务 -->
+    <!-- Current task -->
     <div :class="['todo-item flex items-center gap-2 text-sm py-1 leading-snug', statusClass]">
       <span :class="['todo-indicator w-4 text-center font-bold flex-shrink-0', indicatorClass]">{{ indicator }}</span>
       <span :class="['todo-content flex-1 break-words', contentClass]">{{ displayText }}</span>
@@ -8,8 +8,8 @@
         ({{ completedChildrenCount }}/{{ childrenCount }})
       </span>
     </div>
-    
-    <!-- 子任务（递归） -->
+
+    <!-- Child tasks (recursive) -->
     <div v-if="childrenCount > 0" class="todo-children ml-5 pl-2 border-l border-base-300">
       <TodoItem 
         v-for="child in children" 
@@ -36,7 +36,7 @@ const props = defineProps<{
 // 状态指示符
 const indicator = computed(() => getTodoIndicator(props.todo.status))
 
-// 显示文本（如果正在执行，使用 active_form）
+// Display text (if in progress, use active_form)
 const displayText = computed(() => getTodoDisplayText(props.todo))
 
 // 子任务数量

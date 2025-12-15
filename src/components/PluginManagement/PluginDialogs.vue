@@ -213,7 +213,7 @@
       </div>
       <div class="modal-action">
         <button class="btn" @click="closeAIGenerateDialog">{{ $t('common.cancel', '取消') }}</button>
-        <button class="btn btn-primary" :disabled="!aiPrompt.trim() || aiGenerating" @click="$emit('generatePluginWithAI')">
+        <button class="btn btn-primary" :disabled="!aiPrompt.trim() || aiGenerating" @click="$emit('generatePluginWithAi')">
           <i class="fas fa-magic mr-2"></i>{{ $t('plugins.generatePlugin', '生成插件') }}
         </button>
       </div>
@@ -428,13 +428,13 @@ const emit = defineEmits<{
   'update:aiPrompt': [value: string]
   'update:aiPluginType': [value: string]
   'update:aiSeverity': [value: string]
-  'generatePluginWithAI': []
+  'generatePluginWithAi': []
   'runAdvancedTest': []
   'update:advancedForm': [value: AdvancedForm]
   'closeReviewDetailDialog': []
   'closeUploadDialog': []
   'closeDeleteDialog': []
-  'closeAIGenerateDialog': []
+  'closeAiGenerateDialog': []
   'closeTestResultDialog': []
   'closeAdvancedDialog': []
 }>()
@@ -501,7 +501,7 @@ const closeUploadDialog = () => { uploadDialogRef.value?.close(); emit('closeUpl
 const showDeleteDialog = () => deleteDialogRef.value?.showModal()
 const closeDeleteDialog = () => { deleteDialogRef.value?.close(); emit('closeDeleteDialog') }
 const showAIGenerateDialog = () => aiGenerateDialogRef.value?.showModal()
-const closeAIGenerateDialog = () => { aiGenerateDialogRef.value?.close(); emit('closeAIGenerateDialog') }
+const closeAIGenerateDialog = () => { aiGenerateDialogRef.value?.close(); emit('closeAiGenerateDialog') }
 const showTestResultDialog = () => testResultDialogRef.value?.showModal()
 const closeTestResultDialog = () => { testResultDialogRef.value?.close(); emit('closeTestResultDialog') }
 const showAdvancedDialog = () => advancedDialogRef.value?.showModal()

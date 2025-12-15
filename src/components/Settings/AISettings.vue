@@ -2,19 +2,19 @@
   <div class="ai-settings">
     <!-- 配置模式切换 -->
     <div class="flex justify-between items-center mb-6">
-      <h2 class="text-2xl font-bold">AI 配置</h2>
+      <h2 class="text-2xl font-bold">{{ t('settings.ai.title') }}</h2>
       <div class="flex items-center gap-4">
         <div class="form-control">
           <label class="label cursor-pointer gap-2">
-            <span class="label-text">图形界面</span>
+            <span class="label-text">{{ t('settings.ai.guiMode') }}</span>
             <input type="checkbox" class="toggle toggle-primary" 
                    v-model="useGuiMode" />
-            <span class="label-text">手动编辑</span>
+            <span class="label-text">{{ t('settings.ai.manualMode') }}</span>
           </label>
         </div>
         <button v-if="!useGuiMode" class="btn btn-primary btn-sm" @click="validateConfig">
           <i class="fas fa-check"></i>
-          验证配置
+          {{ t('settings.ai.validateConfig') }}
         </button>
       </div>
     </div>
@@ -24,20 +24,20 @@
       <div class="card-body">
         <h3 class="card-title mb-4">
           <i class="fas fa-code"></i>
-          手动编辑 Providers 配置
+          {{ t('settings.ai.manualEdit') }}
         </h3>
         
         <!-- JSON 编辑器 -->
         <div class="space-y-4">
           <div class="flex items-center gap-2 mb-2">
             <span class="text-sm text-base-content/70">
-              直接编辑 AI 提供商配置 JSON
+              {{ t('settings.ai.manualEditJson') }}
             </span>
             <div class="badge badge-warning badge-sm" v-if="configError">
-              配置有误
+              {{ t('settings.ai.configError') }}
             </div>
             <div class="badge badge-success badge-sm" v-else-if="configValid">
-              配置有效
+              {{ t('settings.ai.configValid') }}
             </div>
           </div>
           
@@ -49,7 +49,7 @@
             }"
             v-model="manualConfigText"
             @input="onManualConfigChange"
-            placeholder="输入 providers 配置的 JSON 格式..."
+            placeholder="{{ t('settings.ai.manualEditJsonPlaceholder') }}"
           ></textarea>
           
           <div v-if="configError" class="alert alert-error">
@@ -60,15 +60,15 @@
           <div class="flex gap-2">
             <button class="btn btn-primary" @click="applyManualConfig" :disabled="!!configError">
               <i class="fas fa-save"></i>
-              应用配置
+              {{ t('settings.ai.applyManualConfig') }}
             </button>
             <button class="btn btn-outline" @click="formatConfig">
               <i class="fas fa-indent"></i>
-              格式化
+              {{ t('settings.ai.formatConfig') }}
             </button>
             <button class="btn btn-outline" @click="resetToDefault">
               <i class="fas fa-undo"></i>
-              重置为默认
+              {{ t('settings.ai.resetToDefault') }}
             </button>
           </div>
         </div>
@@ -84,7 +84,7 @@
           <div class="card-body p-4">
             <div class="flex items-center gap-4 mb-4">
               <i class="fas fa-cog text-primary text-xl"></i>
-              <h3 class="font-semibold text-lg">默认配置</h3>
+              <h3 class="font-semibold text-lg">{{ t('settings.ai.defaultConfig') }}</h3>
             </div>
             
             <!-- 默认Provider和模型选择器 -->
@@ -94,14 +94,14 @@
                 <label class="label">
                   <span class="label-text font-medium flex items-center gap-2">
                     <i class="fas fa-star text-warning"></i>
-                    默认 Provider
+                    {{ t('settings.ai.defaultProvider') }}
                   </span>
                 </label>
                 <SearchableSelect
                   v-model="defaultProviderLocal"
                   :options="providerOptions"
                   :placeholder="t('settings.ai.selectProvider', '选择提供商')"
-                  search-placeholder="搜索提供商..."
+                  search-placeholder="{{ t('settings.ai.searchProvider') }}"
                   @change="onChangeDefaultProvider"
                 />
               </div>
@@ -111,14 +111,14 @@
                 <label class="label">
                   <span class="label-text font-medium flex items-center gap-2">
                     <i class="fas fa-robot text-primary"></i>
-                    默认 Chat 模型
+                    {{ t('settings.ai.defaultChatModel') }}
                   </span>
                 </label>
                 <SearchableSelect
                   v-model="defaultChatModelLocal"
                   :options="chatModelOptions"
                   :placeholder="t('settings.ai.selectModel')"
-                  search-placeholder="搜索模型..."
+                  search-placeholder="{{ t('settings.ai.searchModel') }}"
                   :disabled="!defaultProviderLocal || !getProviderModels(defaultProviderLocal).length"
                   @change="onChangeDefaultChatModel"
                 />
@@ -134,10 +134,10 @@
                 <div class="flex flex-col">
                   <span class="label-text font-medium flex items-center gap-2">
                     <i class="fas fa-image text-accent"></i>
-                    多模态模式
+                    {{ t('settings.ai.multimodalMode') }}
                   </span>
                   <span class="label-text-alt text-base-content/60">
-                    启用后，视觉探索引擎将发送截图给模型；关闭后使用文本元素列表（适用于非多模态模型）
+                    {{ t('settings.ai.multimodalModeDescription') }}
                   </span>
                 </div>
               </label>
@@ -146,7 +146,7 @@
             <!-- 提示信息 -->
             <div class="flex items-center gap-2 mt-3 text-sm text-base-content/70">
               <i class="fas fa-info-circle"></i>
-              <span>AI助手将使用此配置进行对话</span>
+              <span>{{ t('settings.ai.aiAssistantWillUseThisConfig') }}</span>
             </div>
           </div>
         </div>
@@ -175,9 +175,9 @@
     <div class="flex flex-col lg:flex-row gap-6 mb-6">
       <!-- 左侧：提供商选择 -->
       <div class="w-full lg:w-64 flex-shrink-0">
-        <h3 class="text-lg font-semibold mb-3">AI 提供商</h3>
+        <h3 class="text-lg font-semibold mb-3">{{ t('settings.ai.aiProviders') }}</h3>
         <div class="menu bg-base-200 rounded-box p-2 space-y-1">
-          <li v-for="provider in Object.keys(aiConfig.providers)" :key="provider">
+          <li v-for="provider in sortedProviderKeys" :key="provider">
             <a class="flex items-center gap-3 p-3 rounded-lg transition-all duration-200"
                :class="{ 'bg-primary text-primary-content': selectedAiProvider === provider }"
                @click="selectedAiProvider = provider">
@@ -212,18 +212,18 @@
         <!-- Rig 提供商类型 -->
         <div class="form-control">
           <label class="label">
-            <span class="label-text">Rig 提供商类型</span>
-            <span class="label-text-alt text-info">后端 API 调用方式</span>
+            <span class="label-text">{{ t('settings.ai.rigProvider') }}</span>
+            <span class="label-text-alt text-info">{{ t('settings.ai.rigProviderDescription') }}</span>
           </label>
           <SearchableSelect
-            v-model="selectedProviderConfig.rig_provider"
+            v-model="rigProviderLocal"
             :options="rigProviderOptions"
-            placeholder="选择提供商类型..."
-            search-placeholder="搜索提供商..."
+            placeholder="{{ t('settings.ai.selectProviderType') }}"
+            search-placeholder="{{ t('settings.ai.searchProviderType') }}"
             @change="saveAiConfig"
           />
           <label class="label">
-            <span class="label-text-alt">决定后端使用哪种 API 格式发送请求</span>
+            <span class="label-text-alt">{{ t('settings.ai.decideBackendApiFormat') }}</span>
           </label>
         </div>
 
@@ -286,28 +286,28 @@
           <!-- HTTP Referer -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">HTTP Referer (可选)</span>
+              <span class="label-text">{{ t('settings.ai.httpReferer') }}</span>
             </label>
             <input type="url" placeholder="https://yoursite.com" 
                    class="input input-bordered"
                    v-model="selectedProviderConfig.http_referer"
                    @blur="saveAiConfig">
             <label class="label">
-              <span class="label-text-alt">用于在 OpenRouter 上进行排名统计</span>
+              <span class="label-text-alt">{{ t('settings.ai.httpRefererDescription') }}</span>
             </label>
           </div>
 
           <!-- X-Title -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">应用名称 (可选)</span>
+              <span class="label-text">{{ t('settings.ai.appName') }}</span>
             </label>
-            <input type="text" placeholder="我的AI应用" 
+            <input type="text" placeholder="{{ t('settings.ai.appNamePlaceholder') }}" 
                    class="input input-bordered"
                    v-model="selectedProviderConfig.x_title"
                    @blur="saveAiConfig">
             <label class="label">
-              <span class="label-text-alt">用于在 OpenRouter 上显示站点标题</span>
+              <span class="label-text-alt">{{ t('settings.ai.appNameDescription') }}</span>
             </label>
           </div>
         </div>
@@ -321,7 +321,7 @@
             v-model="selectedProviderDefaultModel"
             :options="selectedProviderModelOptions"
             :placeholder="t('settings.ai.selectModel')"
-            search-placeholder="搜索模型..."
+            search-placeholder="{{ t('settings.ai.searchModel') }}"
             @change="onSelectedProviderModelChange"
           />
         </div>
@@ -393,12 +393,12 @@
             </label>
             <input v-model="tavilyApiKeyLocal" type="password" class="input input-bordered" placeholder="tvly-..." />
             <label class="label">
-              <span class="label-text-alt">后端将从数据库读取用于联网搜索</span>
+              <span class="label-text-alt">{{ t('settings.ai.tavilyApiKeyDescription') }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label">
-              <span class="label-text">默认最大结果数</span>
+              <span class="label-text">{{ t('settings.ai.defaultMaxResults') }}</span>
             </label>
             <input v-model.number="tavilyMaxResultsLocal" type="number" min="1" max="20" class="input input-bordered w-40" />
           </div>
@@ -406,7 +406,7 @@
         <div class="flex justify-end mt-3">
           <button class="btn btn-primary btn-sm" @click="saveAiConfig">
             <i class="fas fa-save mr-1"></i>
-            保存设置
+            {{ t('settings.ai.save') }}
           </button>
         </div>
       </div>
@@ -417,25 +417,25 @@
       <div class="card-body p-4">
         <div class="flex items-center gap-3 mb-2">
           <i class="fas fa-cloud-upload-alt text-primary text-lg"></i>
-          <h3 class="font-semibold">阿里云 DashScope</h3>
+          <h3 class="font-semibold">{{ t('settings.ai.aliyunDashScope') }}</h3>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">DashScope API Key</span>
+              <span class="label-text">{{ t('settings.ai.dashscopeApiKey') }}</span>
             </label>
             <input v-model="aliyunApiKeyLocal" type="password" class="input input-bordered" placeholder="sk-..." />
             <label class="label">
-              <span class="label-text-alt">用于文件上传和多模态模型调用</span>
+              <span class="label-text-alt">{{ t('settings.ai.dashscopeApiKeyDescription') }}</span>
             </label>
           </div>
           <div class="form-control">
             <label class="label">
-              <span class="label-text">默认模型</span>
+              <span class="label-text">{{ t('settings.ai.defaultModel') }}</span>
             </label>
             <input v-model="aliyunDefaultModelLocal" type="text" class="input input-bordered" placeholder="qwen-vl-plus" />
             <label class="label">
-              <span class="label-text-alt">上传文件时使用的模型名称</span>
+              <span class="label-text-alt">{{ t('settings.ai.dashscopeDefaultModelDescription') }}</span>
             </label>
           </div>
         </div>
@@ -443,11 +443,11 @@
           <button class="btn btn-outline btn-sm" @click="testAliyunConnection" :disabled="testingAliyun">
             <span v-if="testingAliyun" class="loading loading-spinner loading-sm"></span>
             <i v-else class="fas fa-plug mr-1"></i>
-            测试连接
+            {{ t('settings.ai.testConnection') }}
           </button>
           <button class="btn btn-primary btn-sm" @click="saveAiConfig">
             <i class="fas fa-save mr-1"></i>
-            保存设置
+            {{ t('settings.ai.save') }}
           </button>
         </div>
       </div>
@@ -508,7 +508,7 @@
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ t('settings.ai.providerName') }}</span>
-              <span class="label-text-alt text-warning">*必填，唯一标识</span>
+              <span class="label-text-alt text-warning">{{ t('settings.ai.providerNameDescription') }}</span>
             </label>
             <input type="text" placeholder="MyCustomProvider" 
                    class="input input-bordered"
@@ -518,18 +518,18 @@
           <!-- Rig 提供商选择 -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">Rig 提供商</span>
-              <span class="label-text-alt text-warning">*必填，决定 API 调用方式</span>
+              <span class="label-text">{{ t('settings.ai.rigProvider') }}</span>
+              <span class="label-text-alt text-warning">{{ t('settings.ai.rigProviderDescription') }}</span>
             </label>
             <SearchableSelect
               v-model="customProvider.rig_provider"
               :options="rigProviderOptions"
-              placeholder="选择提供商类型..."
-              search-placeholder="搜索提供商..."
+              :placeholder="t('settings.ai.rigProviderPlaceholder')"
+              :search-placeholder="t('settings.ai.rigProviderSearchPlaceholder')"
             />
             <label class="label">
               <span class="label-text-alt">
-                选择与你的 API 服务兼容的提供商类型，后端将使用对应的调用方式
+                {{ t('settings.ai.rigProviderDescription') }}
               </span>
             </label>
           </div>
@@ -538,7 +538,7 @@
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ t('settings.ai.apiKey') }}</span>
-              <span class="label-text-alt text-warning" v-if="customProvider.compat_mode !== 'ollama'">*必填</span>
+              <span class="label-text-alt text-warning" v-if="customProvider.compat_mode !== 'ollama'">{{ t('settings.ai.apiKeyDescription') }}</span>
             </label>
             <input type="password" :placeholder="t('settings.apiKeyPlaceholder')" 
                    class="input input-bordered"
@@ -549,14 +549,14 @@
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ t('settings.ai.apiBaseUrl') }}</span>
-              <span class="label-text-alt text-warning">*必填</span>
+              <span class="label-text-alt text-warning" v-if="customProvider.compat_mode !== 'ollama'">{{ t('settings.ai.apiBaseUrlDescription') }}</span>
             </label>
             <input type="url" placeholder="https://api.example.com/v1" 
                    class="input input-bordered"
                    v-model="customProvider.api_base">
             <label class="label">
               <span class="label-text-alt">
-                示例：https://api.openai.com/v1
+                {{ t('settings.ai.apiBaseUrlExample') }}
               </span>
             </label>
           </div>
@@ -565,7 +565,7 @@
           <div class="form-control">
             <label class="label">
               <span class="label-text">{{ t('settings.ai.modelId') }}</span>
-              <span class="label-text-alt text-warning">*必填，默认模型</span>
+              <span class="label-text-alt text-warning" v-if="customProvider.compat_mode !== 'ollama'">{{ t('settings.ai.modelIdDescription') }}</span>
             </label>
             <input type="text" placeholder="gpt-4o-mini" 
                    class="input input-bordered"
@@ -575,10 +575,10 @@
           <!-- 显示名称 -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">显示名称</span>
-              <span class="label-text-alt">可选，用于界面显示</span>
+              <span class="label-text">{{ t('settings.ai.displayName') }}</span>
+              <span class="label-text-alt">{{ t('settings.ai.displayNameDescription') }}</span>
             </label>
-            <input type="text" placeholder="我的自定义提供商" 
+            <input type="text" placeholder="{{ t('settings.ai.displayNamePlaceholder') }}" 
                    class="input input-bordered"
                    v-model="customProvider.display_name">
           </div>
@@ -588,14 +588,14 @@
         <div class="collapse collapse-arrow bg-base-200 mt-4">
           <input type="checkbox" /> 
           <div class="collapse-title font-medium">
-            <i class="fas fa-cogs mr-2"></i>高级选项
+            <i class="fas fa-cogs mr-2"></i>{{ t('settings.ai.advancedOptions') }}
           </div>
           <div class="collapse-content">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <!-- 额外请求头 -->
               <div class="form-control md:col-span-2">
                 <label class="label">
-                  <span class="label-text">额外请求头 (JSON)</span>
+                  <span class="label-text">{{ t('settings.ai.extraHeaders') }}</span>
                 </label>
                 <textarea 
                   class="textarea textarea-bordered font-mono text-sm h-24"
@@ -607,7 +607,7 @@
               <!-- 超时设置 -->
               <div class="form-control">
                 <label class="label">
-                  <span class="label-text">请求超时（秒）</span>
+                  <span class="label-text">{{ t('settings.ai.timeout') }}</span>
                 </label>
                 <input type="number" class="input input-bordered" 
                        v-model.number="customProvider.timeout" 
@@ -617,7 +617,7 @@
               <!-- 最大重试次数 -->
               <div class="form-control">
                 <label class="label">
-                  <span class="label-text">最大重试次数</span>
+                  <span class="label-text">{{ t('settings.ai.maxRetries') }}</span>
                 </label>
                 <input type="number" class="input input-bordered" 
                        v-model.number="customProvider.max_retries" 
@@ -745,6 +745,14 @@ const selectedAiProvider = computed({
   }
 })
 
+const sortedProviderKeys = computed(() => {
+  const providers = props.aiConfig?.providers
+  if (!providers || typeof providers !== 'object') return []
+  return Object.keys(providers).sort((a, b) =>
+    a.localeCompare(b, 'en', { sensitivity: 'base', numeric: true })
+  )
+})
+
 const settings = computed({
   get: () => props.settings ?? { ai: { temperature: 0.7, maxTokens: 2000 } },
   set: (value) => emit('update:settings', value)
@@ -763,7 +771,7 @@ const addingCustomProvider = computed(() => props.addingCustomProvider)
 const customProviderValidationError = computed(() => {
   const p = props.customProvider
   if (!p.name || !p.name.trim()) {
-    return '请输入提供商名称（唯一标识）'
+    return t('settings.ai.providerNameDescription')
   }
   // 检查名称是否与现有提供商冲突
   const existingProviders = Object.keys(props.aiConfig?.providers || {})
@@ -798,6 +806,16 @@ const customProviderValidationError = computed(() => {
 
 const selectedProviderConfig = computed(() => {
   return props.aiConfig.providers[props.selectedAiProvider]
+})
+
+const rigProviderLocal = computed({
+  get: () => selectedProviderConfig.value?.rig_provider || '',
+  set: (value: string) => {
+    const providerKey = selectedAiProvider.value
+    if (providerKey && props.aiConfig.providers && props.aiConfig.providers[providerKey]) {
+      props.aiConfig.providers[providerKey].rig_provider = value
+    }
+  }
 })
 
 // 默认 Provider 选择

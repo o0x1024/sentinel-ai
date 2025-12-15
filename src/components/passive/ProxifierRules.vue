@@ -3,7 +3,7 @@
     <div class="p-3 border-b border-base-300">
       <h3 class="font-semibold text-sm flex items-center gap-2">
         <i class="fas fa-filter text-primary"></i>
-        代理规则
+        {{ $t('proxifierPanel.rules.title') }}
       </h3>
     </div>
 
@@ -13,17 +13,17 @@
         <thead>
           <tr class="bg-base-200">
             <th class="w-8"></th>
-            <th class="w-24">名称</th>
-            <th class="w-20">应用</th>
-            <th class="w-28">目标主机</th>
-            <th class="w-16">端口</th>
-            <th class="w-24">动作</th>
+            <th class="w-24">{{ $t('proxifierPanel.rules.table.name') }}</th>
+            <th class="w-20">{{ $t('proxifierPanel.rules.table.applications') }}</th>
+            <th class="w-28">{{ $t('proxifierPanel.rules.table.targetHosts') }}</th>
+            <th class="w-16">{{ $t('proxifierPanel.rules.table.targetPorts') }}</th>
+            <th class="w-24">{{ $t('proxifierPanel.rules.table.action') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="localRules.length === 0">
             <td colspan="6" class="text-center text-base-content/50 py-4">
-              暂无规则
+              {{ $t('proxifierPanel.rules.noRules') }}
             </td>
           </tr>
           <tr 
@@ -61,24 +61,24 @@
     <!-- 操作按钮 -->
     <div class="p-2 border-t border-base-300 flex gap-2 flex-wrap">
       <button class="btn btn-xs btn-primary" @click="addRule">
-        Add...
+        {{ $t('proxifierPanel.buttons.add') }}
       </button>
       <button class="btn btn-xs btn-ghost" @click="cloneRule" :disabled="selectedIndex < 0">
-        Clone
+        {{ $t('proxifierPanel.buttons.clone') }}
       </button>
       <button 
         class="btn btn-xs btn-ghost" 
         @click="editRule(selectedIndex)"
         :disabled="selectedIndex < 0"
       >
-        Edit...
+        {{ $t('proxifierPanel.buttons.edit') }}
       </button>
       <button 
         class="btn btn-xs btn-ghost text-error" 
         @click="removeRule"
         :disabled="selectedIndex < 0"
       >
-        Remove
+        {{ $t('proxifierPanel.buttons.remove') }}
       </button>
     </div>
 
@@ -104,7 +104,7 @@
     <dialog ref="editDialog" class="modal">
       <div class="modal-box max-w-lg">
         <h3 class="font-bold text-lg mb-4">
-          {{ editingRule.id ? '编辑规则' : '新建规则' }}
+          {{ editingRule.id ? $t('proxifierPanel.buttons.edit') : $t('proxifierPanel.buttons.add') }}
         </h3>
         
         <div class="space-y-4">
@@ -112,13 +112,13 @@
           <div class="flex items-center gap-4">
             <div class="form-control flex-1">
               <label class="label py-1">
-                <span class="label-text text-sm">名称:</span>
+                <span class="label-text text-sm">{{ $t('proxifierPanel.rules.table.name') }}:</span>
               </label>
               <input 
                 type="text" 
                 v-model="editingRule.name"
                 class="input input-bordered input-sm"
-                placeholder="规则名称"
+                placeholder="{{ $t('proxifierPanel.rules.table.name') }}"
               />
             </div>
             <label class="label cursor-pointer gap-2">
@@ -127,14 +127,14 @@
                 v-model="editingRule.enabled"
                 class="checkbox checkbox-sm"
               />
-              <span class="label-text">启用</span>
+              <span class="label-text">{{ $t('proxifierPanel.buttons.enabled') }}</span>
             </label>
           </div>
 
           <!-- 应用程序 -->
           <div class="form-control">
             <label class="label py-1">
-              <span class="label-text text-sm">应用程序</span>
+              <span class="label-text text-sm">{{ $t('proxifierPanel.rules.table.applications') }}</span>
             </label>
             <textarea 
               v-model="editingRule.applications"
@@ -142,14 +142,14 @@
               placeholder="Any"
             ></textarea>
             <label class="label py-1">
-              <span class="label-text-alt text-xs">示例: Safari; Mail; com.google.*</span>
+              <span class="label-text-alt text-xs">{{ $t('proxifierPanel.rules.table.applicationsExample') }}</span>
             </label>
           </div>
 
           <!-- 目标主机 -->
           <div class="form-control">
             <label class="label py-1">
-              <span class="label-text text-sm">目标主机</span>
+              <span class="label-text text-sm">{{ $t('proxifierPanel.rules.table.targetHosts') }}</span>
             </label>
             <textarea 
               v-model="editingRule.targetHosts"
@@ -157,14 +157,14 @@
               placeholder="Any"
             ></textarea>
             <label class="label py-1">
-              <span class="label-text-alt text-xs">示例: 127.0.0.1; *.example.com; 192.168.1.*; 10.1.0.0-10.5.255.255</span>
+              <span class="label-text-alt text-xs">{{ $t('proxifierPanel.rules.table.targetHostsExample') }}</span>
             </label>
           </div>
 
           <!-- 目标端口 -->
           <div class="form-control">
             <label class="label py-1">
-              <span class="label-text text-sm">目标端口</span>
+              <span class="label-text text-sm">{{ $t('proxifierPanel.rules.table.targetPorts') }}</span>
             </label>
             <input 
               type="text" 
@@ -173,25 +173,25 @@
               placeholder="Any"
             />
             <label class="label py-1">
-              <span class="label-text-alt text-xs">示例: 80; 8000-9000; 3124</span>
+              <span class="label-text-alt text-xs">{{ $t('proxifierPanel.rules.table.targetPortsExample') }}</span>
             </label>
           </div>
 
           <!-- 动作 -->
           <div class="form-control">
             <label class="label py-1">
-              <span class="label-text text-sm">动作:</span>
+              <span class="label-text text-sm">{{ $t('proxifierPanel.rules.table.action') }}:</span>
             </label>
             <select v-model="editingRule.action" class="select select-bordered select-sm">
-              <option value="Direct">Direct（直连）</option>
-              <option value="Block">Block（阻止）</option>
-              <optgroup label="通过代理">
+              <option value="Direct">{{ $t('proxifierPanel.rules.table.direct') }}</option>
+              <option value="Block">{{ $t('proxifierPanel.rules.table.block') }}</option>
+              <optgroup label="{{ $t('proxifierPanel.rules.table.viaProxy') }}">
                 <option 
                   v-for="proxy in availableProxies" 
                   :key="proxy.id"
                   :value="`Proxy ${proxy.type} ${proxy.host}:${proxy.port}`"
                 >
-                  Proxy {{ proxy.type }} {{ proxy.host }}:{{ proxy.port }}
+                  {{ $t('proxifierPanel.rules.table.proxyFormat', { type: proxy.type, host: proxy.host, port: proxy.port }) }}
                 </option>
               </optgroup>
             </select>
@@ -199,12 +199,12 @@
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" @click="cancelEdit">取消</button>
-          <button class="btn btn-primary btn-sm" @click="saveRule">保存</button>
+          <button class="btn btn-ghost btn-sm" @click="cancelEdit">{{ $t('proxifierPanel.buttons.cancel') }}</button>
+          <button class="btn btn-primary btn-sm" @click="saveRule">{{ $t('proxifierPanel.buttons.save') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>close</button>
+        <button>{{ $t('proxifierPanel.buttons.close') }}</button>
       </form>
     </dialog>
   </div>

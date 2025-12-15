@@ -1,0 +1,1013 @@
+export default {
+  title: 'Passive Scan',
+  tabs: {
+    control: 'Proxy Control',
+    history: 'History',
+    repeater: 'Repeater',
+    proxifier: 'Proxifier',
+    capture: 'Capture',
+    proxyConfig: 'Proxy Configuration'
+  },
+  ariaLabels: {
+    passiveScanTabs: 'Passive scan tabs'
+  },
+  tooltips: {
+    control: 'Proxy Control',
+    history: 'History Records',
+    repeater: 'Repeater',
+    proxifier: 'Proxifier',
+    capture: 'Capture',
+    proxyConfig: 'Proxy Configuration'
+  },
+  icons: {
+    control: 'fa-sliders-h',
+    history: 'fa-history',
+    repeater: 'fa-redo',
+    proxifier: 'fa-network-wired',
+    capture: 'fa-broadcast-tower',
+    proxyConfig: 'fa-cog'
+  },
+  // Proxy Intercept Component
+  intercept: {
+    title: 'Intercept',
+    status: {
+      on: 'Intercept is on',
+      off: 'Intercept is off'
+    },
+    buttons: {
+      turnOn: 'Turn on',
+      turnOff: 'Turn off',
+      forward: 'Forward',
+      drop: 'Drop',
+      forwardAll: 'Forward All',
+      dropAll: 'Drop All',
+      save: 'Save',
+      edit: 'Edit',
+      sendToRepeater: 'Send to Repeater'
+    },
+    stats: {
+      proxyStatus: 'Proxy Status',
+      running: 'Running',
+      stopped: 'Stopped',
+      port: 'Port',
+      interceptQueue: 'Intercept Queue'
+    },
+    tabs: {
+      raw: 'Raw',
+      pretty: 'Pretty',
+      hex: 'Hex'
+    },
+    requestLine: 'Request Line',
+    statusLine: 'Status Line',
+    headers: 'Headers',
+    body: 'Body',
+    waiting: 'Waiting for intercepted requests/responses...',
+    enabled: 'Intercept is currently enabled',
+    disabled: 'Please enable intercept functionality',
+    proxyConfig: 'Configure browser proxy to',
+    queue: 'Intercept Queue',
+    response: 'Response',
+    clickToView: 'Click on a request in the queue above to view details'
+  },
+  // Proxy Control Component
+  control: {
+    title: 'Proxy Control',
+    startProxy: 'Start Proxy',
+    stopProxy: 'Stop Proxy',
+    processing: 'Processing...',
+    refreshStatus: 'Refresh Status',
+    proxyConfig: 'Configure browser proxy to',
+    proxySettings: 'Proxy configuration and interception rules can be set in the Proxy Settings page',
+    stats: {
+      proxyStatus: 'Proxy Status',
+      running: 'Running',
+      stopped: 'Stopped',
+      notStarted: 'Not started',
+      mitmStatus: 'MITM Status',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      mitmDesc: 'Man-in-the-middle interception',
+      qps: 'QPS',
+      qpsDesc: 'Queries per second',
+      requestStats: 'Request Statistics',
+      http: 'HTTP',
+      https: 'HTTPS'
+    }
+  },
+  // Proxy History Component
+  history: {
+    title: 'Request History',
+    emptyState: {
+      noRequests: 'No request history',
+      selectInterface: 'Please select a network interface'
+    },
+    contextMenu: {
+      sendToRepeater: 'Send to Repeater',
+      sendRequestToAssistant: 'Send Request to Assistant',
+      sendResponseToAssistant: 'Send Response to Assistant',
+      copyUrl: 'Copy URL',
+      copyAsCurl: 'Copy as cURL',
+      copyRequest: 'Copy Request',
+      openInBrowser: 'Open in Browser',
+      clearHistory: 'Clear History'
+    },
+    filterDialog: {
+      title: 'Filter Settings',
+      search: 'Search',
+      method: 'Method',
+      host: 'Host',
+      url: 'URL',
+      statusCode: 'Status Code',
+      contentType: 'Content Type',
+      contains: 'Contains',
+      startTime: 'Start Time',
+      endTime: 'End Time',
+      reset: 'Reset',
+      apply: 'Apply',
+      checkboxes: {
+        showOnlyWithParams: 'Show only parameterized requests',
+        hideWithoutResponse: 'Hide items without responses',
+        html: 'HTML',
+        javascript: 'JavaScript',
+        css: 'CSS',
+        json: 'JSON',
+        xml: 'XML',
+        image: 'Image',
+        other: 'Other',
+        otherText: 'Other text',
+        script: 'Script',
+        images: 'Images',
+        flash: 'Flash',
+        otherBinary: 'Other binary',
+        port: 'Port',
+        regex: 'Regex',
+        caseSensitive: 'Case sensitive',
+        negativeSearch: 'Negative search',
+        placeholders: {
+          port: 'e.g. 8080',
+          search: 'Search...',
+          showExtensions: 'asp,aspx,jsp,php',
+          hideExtensions: 'js,gif,jpg,png,css'
+        },
+        labels: {
+          showOnly: 'Show only:',
+          hide: 'Hide:'
+        }
+      }
+    },
+    table: {
+      id: 'ID',
+      time: 'Time',
+      method: 'Method',
+      host: 'Host',
+      url: 'URL',
+      status: 'Status',
+      length: 'Length',
+      mimeType: 'MIME Type',
+      actions: 'Actions'
+    },
+    detailsPanel: {
+      requestDetails: 'Request Details',
+      responseDetails: 'Response Details',
+      tabs: {
+        headers: 'Headers',
+        raw: 'Raw',
+        pretty: 'Pretty',
+        hex: 'Hex'
+      },
+      request: 'Request',
+      response: 'Response',
+      decompressed: 'Decompressed',
+      close: 'close'
+    },
+    // ProxifierProxies Component
+    proxifierProxies: {
+      title: 'Proxy Servers',
+      table: {
+        name: 'Name',
+        port: 'Port',
+        type: 'Type'
+      },
+      emptyState: {
+        noProxies: 'No proxy servers'
+      },
+      buttons: {
+        add: 'Add...',
+        edit: 'Edit...',
+        remove: 'Remove',
+        proxyChains: 'Proxy Chains...'
+      },
+      description: 'Multiple proxy servers can be chained:',
+      dialog: {
+        addTitle: 'Add Proxy',
+        editTitle: 'Edit Proxy',
+        host: {
+          label: 'Host Address',
+          placeholder: '127.0.0.1 or proxy.example.com'
+        },
+        port: {
+          label: 'Port',
+          placeholder: '8080'
+        },
+        type: {
+          label: 'Proxy Type',
+          http: 'HTTP',
+          https: 'HTTPS',
+          socks5: 'SOCKS5'
+        },
+        auth: 'Authentication (Optional)',
+        username: {
+          label: 'Username',
+          placeholder: 'Optional'
+        },
+        password: {
+          label: 'Password',
+          placeholder: 'Optional'
+        },
+        buttons: {
+          cancel: 'Cancel',
+          save: 'Save'
+        }
+      }
+    },
+    toolbar: {
+      filter: 'Filter',
+      clear: 'Clear',
+      refresh: 'Refresh',
+      export: 'Export',
+      searchPlaceholder: 'Search requests...'
+    }
+  },
+  // Proxy Repeater Component
+  repeater: {
+    contextMenu: {
+      sendRequest: 'Send Request',
+      sendToNewTab: 'Send to New Tab',
+      copyUrl: 'Copy URL',
+      copyRequest: 'Copy Request',
+      copyAsCurl: 'Copy as cURL',
+      sendRequestToAssistant: 'Send Request to Assistant'
+    }
+  },
+  // Packet Capture Component
+  capture: {
+    toolbar: {
+      interfaceSelect: 'Interface Selection',
+      selectInterface: 'Select Interface',
+      startStop: 'Start/Stop Button',
+      start: 'Start',
+      stop: 'Stop',
+      clear: 'Clear',
+      openFile: 'Open File',
+      saveFile: 'Save File',
+      extractFile: 'Extract File',
+      advancedFilter: 'Advanced Filter',
+      filterInput: 'Filter Input',
+      statistics: 'Statistics',
+      advancedFiltering: 'Advanced Filtering'
+    },
+    table: {
+      time: 'Time',
+      source: 'Source',
+      destination: 'Destination',
+      protocol: 'Protocol',
+      length: 'Length',
+      info: 'Info',
+      no: 'No.'
+    },
+    statusBar: {
+      capturing: 'Capturing',
+      selected: 'Selected',
+      captured: 'captured',
+      packets: 'packets'
+    },
+    contextMenu: {
+      mark: 'Mark',
+      unmark: 'Unmark',
+      ignore: 'Ignore',
+      unignore: 'Unignore',
+      filter: 'Filter',
+      filterByField: 'Filter by Field',
+      sourceAddress: 'Source Address',
+      destinationAddress: 'Destination Address',
+      protocol: 'Protocol',
+      conversation: 'Conversation',
+      followStream: 'Follow Stream',
+      tcpStream: 'TCP Stream',
+      udpStream: 'UDP Stream',
+      httpStream: 'HTTP Stream',
+      copy: 'Copy',
+      summary: 'Summary',
+      copySource: 'Source Address',
+      copyDestination: 'Destination Address',
+      filterByValue: 'Filter by this value'
+    },
+    emptyStates: {
+      gettingInterfaces: 'Getting interface list...',
+      noInterfaces: 'No available interfaces detected',
+      installNpcap: 'Windows systems require Npcap driver for network packet capture',
+      downloadNpcap: 'Download Npcap',
+      selectAndStart: 'Select interface and click start capture',
+      waitingForPackets: 'Waiting for packets...'
+    },
+    hexView: {
+      hex: 'Hex',
+      ascii: 'ASCII',
+      raw: 'Raw'
+    }
+  },
+  // Packet Capture Component (new structure)
+  packetCapture: {
+    toolbar: {
+      selectInterface: 'Select Interface',
+      start: 'Start',
+      stop: 'Stop',
+      clear: 'Clear',
+      open: 'Open File',
+      save: 'Save File',
+      export: 'Export',
+      advancedFilter: 'Advanced Filter',
+      advancedFilterBadge: 'Advanced',
+      filterPlaceholder: 'Filter packets...',
+      filtering: 'Filtering'
+    },
+    table: {
+      no: 'No.',
+      time: 'Time',
+      source: 'Source',
+      destination: 'Destination',
+      protocol: 'Protocol',
+      length: 'Length',
+      info: 'Info'
+    },
+    statusBar: {
+      capturing: 'Capturing',
+      selected: 'Selected',
+      captured: 'captured',
+      packets: 'packets'
+    },
+    emptyState: {
+      loadingInterfaces: 'Getting interface list...',
+      noInterfaces: 'No available interfaces detected',
+      npcapRequired: 'Windows systems require Npcap driver for network packet capture',
+      downloadNpcap: 'Download Npcap',
+      selectAndStart: 'Select interface and click start capture',
+      waitingForPackets: 'Waiting for packets...'
+    },
+    contextMenu: {
+      mark: 'Mark',
+      unmark: 'Unmark',
+      ignore: 'Ignore',
+      unignore: 'Unignore',
+      filter: 'Filter',
+      filterByField: 'Filter by Field',
+      sourceAddress: 'Source Address',
+      destinationAddress: 'Destination Address',
+      protocol: 'Protocol',
+      conversation: 'Conversation',
+      followStream: 'Follow Stream',
+      tcpStream: 'TCP Stream',
+      udpStream: 'UDP Stream',
+      httpStream: 'HTTP Stream',
+      copy: 'Copy',
+      summary: 'Summary',
+      copySource: 'Source Address',
+      copyDestination: 'Destination Address',
+      filterThisValue: 'Filter by this value',
+      hex: 'Hex'
+    },
+    filterDialog: {
+      title: 'Advanced Filter',
+      protocol: 'Protocol',
+      sourceIp: 'Source IP',
+      destinationIp: 'Destination IP',
+      sourcePort: 'Source Port',
+      destinationPort: 'Destination Port',
+      containsString: 'Contains String',
+      containsHex: 'Contains Hex',
+      minLength: 'Min Length',
+      maxLength: 'Max Length',
+      tcpFlags: 'TCP Flags',
+      reset: 'Reset',
+      cancel: 'Cancel',
+      apply: 'Apply'
+    },
+    streamDialog: {
+      ascii: 'ASCII',
+      hex: 'Hex',
+      raw: 'Raw',
+      clientToServer: 'Client → Server',
+      serverToClient: 'Server → Client',
+      packets: 'packets',
+      close: 'Close'
+    },
+    extractDialog: {
+      title: 'File Extraction',
+      foundFiles: 'Found {count} files',
+      analyzing: 'Analyzing packets for file extraction...',
+      supportedProtocols: 'Supports: HTTP, FTP, Email attachments, DNS tunneling',
+      noFilesFound: 'No files found in current packet selection',
+      protocolExamples: 'Examples: HTTP downloads, FTP transfers, email attachments',
+      filterConditions: 'Filter Conditions',
+      clearFilter: 'Clear Filter',
+      filename: 'Filename',
+      searchFilename: 'Search filename...',
+      fileType: 'File Type',
+      allTypes: 'All Types',
+      image: 'Image',
+      video: 'Video',
+      audio: 'Audio',
+      archive: 'Archive',
+      document: 'Document',
+      executable: 'Executable',
+      other: 'Other',
+      sourceProtocol: 'Source Protocol',
+      allSources: 'All Sources',
+      fileSize: 'File Size',
+      anySize: 'Any Size',
+      sizeTiny: 'Tiny (< 1KB)',
+      sizeSmall: 'Small (1KB - 10KB)',
+      sizeMedium: 'Medium (10KB - 1MB)',
+      sizeLarge: 'Large (1MB - 10MB)',
+      sizeHuge: 'Huge (> 10MB)',
+      http: 'HTTP',
+      ftp: 'FTP',
+      email: 'Email',
+      dnsTunnel: 'DNS Tunnel',
+      type: 'Type',
+      size: 'Size',
+      source: 'Source',
+      traffic: 'Traffic',
+      actions: 'Actions',
+      downloadFile: 'Download File',
+      traceTraffic: 'Trace Traffic',
+      locatePackets: 'Locate Packets',
+      close: 'Close',
+      saveSelectedFiles: 'Save Selected Files',
+      selectedFiles: 'Selected Files',
+      selectedSize: 'Selected Size'
+    }
+  },
+  // Proxy Configuration Component
+  configuration: {
+    title: 'Proxy Listeners',
+    description: 'Configure proxy listeners to receive HTTP requests from browsers. You need to configure your browser to use one of these listeners as a proxy server.',
+    table: {
+      select: 'Select',
+      running: 'Running',
+      interface: 'Interface',
+      invisible: 'Invisible',
+      redirect: 'Redirect',
+      certificate: 'Certificate',
+      tlsProtocol: 'TLS Protocol',
+      supportHttp2: 'Support HTTP/2'
+    }
+  },
+  // Proxy Configuration Component (new structure)
+  proxyConfiguration: {
+    proxyListenersTitle: 'Proxy Listeners',
+    proxyListenersDescription: 'Configure proxy listeners to receive HTTP requests from browsers. You need to configure your browser to use one of these listeners as a proxy server.',
+    running: 'Running',
+    interface: 'Interface',
+    invisible: 'Invisible',
+    redirect: 'Redirect',
+    certificate: 'Certificate',
+    tlsProtocols: 'TLS Protocols',
+    http2Support: 'Support HTTP/2',
+    addListener: 'Add Listener',
+    editListener: 'Edit Listener',
+    removeListener: 'Remove Listener',
+    exportCACert: 'Export CA Certificate',
+    regenerateCACert: 'Regenerate CA Certificate',
+    openCertDir: 'Open Certificate Directory',
+    certInfo: 'Certificate Info',
+    bindAddress: 'Bind Address',
+    port: 'Port',
+    certMode: 'Certificate Mode',
+    perHostCert: 'Per-host Certificate',
+    wildcardCert: 'Wildcard Certificate',
+    customCert: 'Custom Certificate',
+    defaultTLS: 'Default',
+    tls12: 'TLS 1.2',
+    tls13: 'TLS 1.3',
+    tls12Plus13: 'TLS 1.2 + 1.3',
+    supportHTTP2: 'Support HTTP/2',
+    invisibleMode: 'Invisible Mode',
+    enableRedirect: 'Enable Redirect',
+    cancel: 'Cancel',
+    save: 'Save',
+    close: 'Close',
+    interceptionRules: 'Interception Rules',
+    interceptionRulesDesc: 'Configure interception rules for requests and responses',
+    interceptRequests: 'Intercept Requests',
+    masterInterceptionDisabled: 'Master interception is disabled',
+    enable: 'Enable',
+    operator: 'Operator',
+    matchType: 'Match Type',
+    relationship: 'Relationship',
+    condition: 'Condition',
+    addRule: 'Add Rule',
+    editRule: 'Edit Rule',
+    removeRule: 'Remove Rule',
+    moveUp: 'Move Up',
+    moveDown: 'Move Down',
+    autoFixNewlines: 'Auto-fix newlines',
+    autoUpdateContentLength: 'Auto-update Content-Length',
+    interceptResponses: 'Intercept Responses',
+    autoUpdateResponseContentLength: 'Auto-update Response Content-Length',
+    websocketInterceptionRules: 'WebSocket Interception Rules',
+    websocketInterceptionRulesDesc: 'Configure WebSocket interception rules',
+    interceptClientToServer: 'Intercept Client → Server',
+    interceptServerToClient: 'Intercept Server → Client',
+    onlyInterceptInScope: 'Only intercept in-scope items',
+    responseModificationRules: 'Response Modification Rules',
+    responseModificationRulesDesc: 'Configure response modification rules',
+    unhideHiddenFields: 'Unhide hidden form fields',
+    prominentlyHighlightUnhidden: 'Prominently highlight unhidden fields',
+    enableDisabledFields: 'Enable disabled form fields',
+    removeInputFieldLengthLimits: 'Remove input field length limits',
+    removeJavaScriptFormValidation: 'Remove JavaScript form validation',
+    removeAllJavaScript: 'Remove all JavaScript',
+    matchReplaceRules: 'Match and Replace Rules',
+    matchReplaceRulesDesc: 'Configure match and replace rules for requests and responses',
+    onlyApplyToInScope: 'Only apply to in-scope items',
+    enabled: 'Enabled',
+    item: 'Item',
+    match: 'Match',
+    replace: 'Replace',
+    type: 'Type',
+    comment: 'Comment',
+    add: 'Add',
+    edit: 'Edit',
+    remove: 'Remove',
+    pasteURL: 'Paste URL',
+    load: 'Load',
+    tlsPassThrough: 'TLS Pass Through',
+    tlsPassThroughDesc: 'Configure TLS pass through rules',
+    hostIPRange: 'Host/IP Range',
+    noRules: 'No rules',
+    autoAddTLSOnFailure: 'Auto-add TLS on failure',
+    applyToOutOfScope: 'Apply to out-of-scope items',
+    proxyHistoryLogging: 'Proxy History Logging',
+    proxyHistoryLoggingDesc: 'Configure proxy history logging settings',
+    stopLoggingOutOfScope: 'Stop logging out-of-scope items',
+    askUser: 'Ask user',
+    doNothing: 'Do Nothing',
+    defaultInterceptionState: 'Default Interception State',
+    defaultInterceptionStateDesc: 'Configure the default interception state for requests and responses',
+    enableInterception: 'Enable Interception',
+    disableInterception: 'Disable Interception',
+    restoreInterceptionState: 'Restore Interception State',
+    miscellaneousSettings: 'Miscellaneous Settings',
+    miscellaneousSettingsDesc: 'Configure miscellaneous proxy settings',
+    useHTTP1_1ToServer: 'Use HTTP/1.1 to Server',
+    useHTTP1_1ToClient: 'Use HTTP/1.1 to Client',
+    setConnectionClose: 'Set Connection: Close',
+    setConnectionHeader: 'Set Connection Header',
+    stripProxyHeaders: 'Strip Proxy Headers',
+    removeUnsupportedEncodings: 'Remove Unsupported Encodings',
+    stripWebSocketExtensions: 'Strip WebSocket Extensions',
+    unpackCompressedRequests: 'Unpack Compressed Requests',
+    unpackCompressedResponses: 'Unpack Compressed Responses',
+    suppressBurpErrorMessages: 'Suppress Burp Error Messages',
+    dontSendToProxyHistory: 'Don\'t Send to Proxy History',
+    dontSendToProxyHistoryIfOutOfScope: 'Don\'t Send to Proxy History if Out-of-Scope',
+    resetToDefaults: 'Reset to Defaults'
+  },
+  // Proxifier Panel Component
+  proxifier: {
+    title: 'Proxifier',
+    status: {
+      running: 'Running',
+      stopped: 'Stopped'
+    },
+    buttons: {
+      start: 'Start',
+      stop: 'Stop'
+    },
+    tabs: {
+      proxies: 'Proxies',
+      rules: 'Rules',
+      system: 'System'
+    }
+  },
+  // Proxifier Proxies Component
+  proxifierProxies: {
+    title: 'Proxy Servers',
+    table: {
+      name: 'Name',
+      port: 'Port',
+      type: 'Type',
+      noProxies: 'No proxy servers'
+    },
+    emptyState: {
+      noProxies: 'No proxy servers'
+    },
+    buttons: {
+      add: 'Add...',
+      edit: 'Edit',
+      remove: 'Remove',
+      proxyChains: 'Proxy Chains...'
+    },
+    description: 'Configure proxy chains to chain multiple proxy servers',
+    dialog: {
+      addTitle: 'Add Proxy Server',
+      editTitle: 'Edit Proxy Server',
+      host: {
+        label: 'Host',
+        placeholder: 'Enter host address'
+      },
+      port: {
+        label: 'Port',
+        placeholder: 'Enter port number'
+      },
+      type: {
+        label: 'Type',
+        http: 'HTTP',
+        https: 'HTTPS',
+        socks5: 'SOCKS5'
+      },
+      auth: 'Authentication',
+      username: {
+        label: 'Username',
+        placeholder: 'Enter username (optional)'
+      },
+      password: {
+        label: 'Password',
+        placeholder: 'Enter password (optional)'
+      },
+      buttons: {
+        cancel: 'Cancel',
+        save: 'Save'
+      }
+    }
+  },
+  // Proxifier Panel Component
+  proxifierPanel: {
+    statusRunning: 'Running',
+    statusStopped: 'Stopped',
+    start: 'Start',
+    stop: 'Stop',
+    application: 'Application',
+    target: 'Target',
+    timeOrStatus: 'Time/Status',
+    ruleProxy: 'Rule/Proxy',
+    sent: 'Sent',
+    received: 'Received',
+    noConnections: 'No connections',
+    startProxifierToShow: 'Start Proxifier to show connections',
+    noLogs: 'No logs',
+    transparentProxy: 'Transparent Proxy',
+    transparentProxyStatus: 'Transparent Proxy Status',
+    status: 'Status',
+    running: 'Running',
+    stopped: 'Stopped',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    proxyPort: 'Proxy Port',
+    redirectPorts: 'Redirect Ports',
+    startTransparentProxy: 'Start Transparent Proxy',
+    stopTransparentProxy: 'Stop Transparent Proxy',
+    transparentProxyDesc: 'transparently intercepts traffic from all applications',
+    startTransparentProxyDesc: 'Start transparent proxy to automatically intercept traffic from all applications',
+    stopTransparentProxyDesc: 'Stop transparent proxy to disable automatic traffic interception',
+    pfFirewall: 'pf Firewall',
+    rules: {
+      title: 'Proxy Rules',
+      noRules: 'No rules',
+      table: {
+        name: 'Name',
+        applications: 'Applications',
+        applicationsExample: 'Example: Chrome, Safari',
+        targetHosts: 'Target Hosts',
+        targetHostsExample: 'Example: *.example.com',
+        targetPorts: 'Target Ports',
+        targetPortsExample: 'Example: 80, 443',
+        action: 'Action',
+        direct: 'Direct',
+        block: 'Block',
+        viaProxy: 'Via Proxy',
+        proxyFormat: '{type} {host}:{port}'
+      }
+    },
+    buttons: {
+      add: 'Add',
+      clone: 'Clone',
+      edit: 'Edit',
+      remove: 'Remove',
+      enabled: 'Enabled',
+      cancel: 'Cancel',
+      save: 'Save',
+      close: 'Close'
+    }
+  },
+  // Proxifier Rules Component
+  rules: {
+    title: 'Proxy Rules',
+    table: {
+      select: 'Select',
+      name: 'Name',
+      applications: 'Applications',
+      targetHosts: 'Target Hosts',
+      port: 'Port',
+      action: 'Action',
+      noRules: 'No rules'
+    }
+  },
+  workflowStudio: {
+    title: 'Workflow Studio',
+    header: {
+      namePlaceholder: 'Workflow name',
+      editMetadataTooltip: 'Edit workflow metadata'
+    },
+    toolbar: {
+      load: 'Load',
+      loadTooltip: 'Load workflow',
+      templates: 'Templates',
+      templateMarketTooltip: 'Template Market',
+      save: 'Save',
+      saveTooltip: 'Save workflow',
+      exportImportTooltip: 'Export/Import',
+      refreshCatalog: 'Refresh catalog',
+      refreshCatalogTooltip: 'Refresh node catalog',
+      resetCanvas: 'Reset canvas',
+      resetCanvasTooltip: 'Reset canvas',
+      run: 'Run',
+      runTooltip: 'Run workflow',
+      stop: 'Stop',
+      stopTooltip: 'Stop workflow',
+      schedule: 'Schedule',
+      startScheduleTooltip: 'Start schedule',
+      startScheduleDisabledTooltip: 'Save workflow and add a schedule trigger node first',
+      stopScheduleTooltip: 'Stop schedule',
+      logs: 'Logs',
+      toggleLogsTooltip: 'Toggle logs panel',
+      history: 'History',
+      executionHistoryTooltip: 'Execution history'
+    },
+    export: {
+      exportJson: 'Export as JSON',
+      importJson: 'Import from JSON',
+      exportImage: 'Export as image',
+      exportedBy: 'Exported by Sentinel AI Workflow Studio'
+    },
+    sidebar: {
+      nodeLibrary: 'Node Library',
+      expandSidebar: 'Expand sidebar',
+      collapseSidebar: 'Collapse sidebar',
+      searchPlaceholder: 'Search nodes...',
+      clearSearchTooltip: 'Clear search',
+      searchInCanvasTooltip: 'Search in canvas',
+      favoritesOnly: 'Favorites only',
+      noMatchingNodes: 'No matching nodes',
+      favorite: 'Favorite',
+      unfavorite: 'Unfavorite'
+    },
+    logs: {
+      title: 'Execution Logs',
+      clear: 'Clear',
+      empty: 'No logs',
+      expandDetails: 'Expand details',
+      collapseDetails: 'Collapse details',
+      executionId: 'Execution ID: {id}',
+      newWorkflowCreated: 'New workflow created',
+      validationFailed: 'Workflow validation failed: {message}',
+      validationError: 'Validation error: {error}',
+      workflowExecutionStarted: 'Workflow execution started: {name}',
+      workflowStarted: 'Workflow started',
+      startFailed: 'Start failed: {error}',
+      stoppingWorkflow: 'Stopping workflow...',
+      workflowStopped: 'Workflow stopped',
+      stopFailed: 'Stop failed: {error}',
+      scheduleStarted: 'Schedule started: {desc}',
+      scheduleStartFailed: 'Failed to start schedule: {error}',
+      scheduleStopped: 'Schedule stopped',
+      scheduleStopFailed: 'Failed to stop schedule: {error}',
+      workflowSaved: 'Workflow saved: {name}',
+      workflowSavedAsTool: 'Workflow saved: {name} (set as tool)',
+      saveFailed: 'Save failed: {error}',
+      workflowLoaded: 'Workflow loaded: {name}',
+      loadFailed: 'Load failed: {error}',
+      workflowExported: 'Workflow exported: {filename}',
+      exportFailed: 'Export failed: {error}',
+      workflowImported: 'Workflow imported: {name}',
+      importFailed: 'Import failed: {message}',
+      imageExportTodo: 'Image export feature is not implemented yet',
+      workflowExecutionStartedExternal: 'Workflow execution started (external trigger)',
+      nodeStarted: 'Node execution started',
+      nodeCompleted: 'Node execution completed',
+      workflowCompleted: 'Workflow execution completed',
+      workflowExecutionStopped: 'Workflow execution stopped',
+      foundMatchingNodes: 'Found {count} matching nodes',
+      noMatchingNodes: 'No matching nodes found',
+      templateSaved: 'Template saved: {name}',
+      templateSaveFailed: 'Failed to save template: {error}'
+    },
+    loadDialog: {
+      title: 'Load Workflow',
+      empty: 'No saved workflows',
+      version: 'Version: {version}',
+      updated: 'Updated: {date}',
+      deleteTooltip: 'Delete',
+      close: 'Close'
+    },
+    templateMarket: {
+      title: 'Workflow Template Market',
+      recommended: 'Recommended',
+      myTemplates: 'My Templates',
+      empty: 'No templates',
+      templateBadge: 'Template',
+      nodeCount: '{count} nodes',
+      useTemplate: 'Use template',
+      saveAsTemplate: 'Save as template',
+      saveCurrentAsTemplate: 'Save current as template',
+      close: 'Close'
+    },
+    newWorkflowConfirm: {
+      title: 'New Workflow',
+      message: 'The current workflow is not saved. Save it before creating a new one?',
+      saveAndNew: 'Save and create new',
+      discardAndNew: 'Discard and create new',
+      cancel: 'Cancel',
+      close: 'Close'
+    },
+    metaDialog: {
+      title: 'Workflow Metadata',
+      name: 'Workflow name',
+      namePlaceholder: 'Enter workflow name',
+      description: 'Description',
+      descriptionPlaceholder: 'Describe the purpose and functionality of this workflow',
+      tags: 'Tags',
+      tagsPlaceholder: 'Separate multiple tags with commas, e.g. automation,data processing',
+      version: 'Version',
+      asAiTool: 'Expose as AI tool',
+      asAiToolHelp: 'When enabled, this workflow can be used as a tool by the AI assistant',
+      stats: {
+        nodes: 'Nodes',
+        edges: 'Edges'
+      },
+      confirm: 'Confirm',
+      cancel: 'Cancel'
+    },
+    paramsEditor: {
+      title: 'Parameter Editor',
+      noParams: 'This node has no configurable parameters',
+      selectNotificationRule: '-- Select notification rule --',
+      noNotificationRules: 'No notification rules available,',
+      goToConfigure: 'Go to configure',
+      useDefaultConfig: '-- Use default configuration --',
+      noAiProviders: 'No AI providers available,',
+      selectModel: 'Select model',
+      selectProviderFirst: 'Select provider first',
+      noTools: 'No available tools',
+      selectedToolsCount: '{count} tools selected',
+      enterField: 'Enter {key}',
+      onePerLine: 'One value per line',
+      pleaseSelect: '-- Please select --',
+      booleanYes: 'Yes',
+      booleanNo: 'No',
+      arrayPlaceholder: 'One value per line, for example:\nhttps://example1.com/\nhttps://example2.com/',
+      defaultValue: 'Default: {value}',
+      save: 'Save',
+      cancel: 'Cancel'
+    },
+    executionHistory: {
+      title: 'Execution History',
+      clear: 'Clear',
+      clearTooltip: 'Clear history',
+      emptyTitle: 'No execution records',
+      emptyDescription: 'Run the workflow to see history here',
+      status: {
+        completed: '✓ Completed',
+        failed: '✗ Failed',
+        running: '● Running',
+        pending: '○ Pending'
+      },
+      deleteRecordTooltip: 'Delete this record',
+      durationMs: 'Duration: {ms}ms',
+      detailsTitle: 'Execution Details',
+      copyResultsTooltip: 'Copy results'
+    },
+    resultPanel: {
+      title: 'Step Execution Result',
+      copyTooltip: 'Copy result',
+      nodeId: 'Node ID',
+      nodeName: 'Node name',
+      unknown: 'Unknown',
+      executionResult: 'Execution result',
+      editParams: 'Edit parameters',
+      close: 'Close',
+      noResult: 'No result'
+    },
+    groups: {
+      trigger: 'Trigger',
+      control: 'Control Flow',
+      ai: 'AI',
+      data: 'Data',
+      output: 'Output/Notification',
+      tool: 'Built-in Tools',
+      mcp: 'MCP Tools',
+      plugin: 'Agent Plugins'
+    },
+    schedule: {
+      everySeconds: 'Every {seconds} seconds',
+      dailyAt: 'Daily at {time}',
+      weeklyAt: 'Weekly on {weekdays} at {time}'
+    },
+    confirm: {
+      deleteWorkflow: 'Are you sure you want to delete this workflow?'
+    },
+    toasts: {
+      enterWorkflowName: 'Please enter a workflow name first',
+      newWorkflowCreated: 'New workflow created',
+      copiedToClipboard: 'Result copied to clipboard',
+      copyFailed: 'Copy failed: {message}',
+      validationFailed: 'Validation failed: {message}',
+      validationError: 'Validation error: {error}',
+      executionStarted: 'Execution started: {id}',
+      startFailed: 'Start failed: {error}',
+      noRunningWorkflow: 'No running workflow',
+      workflowStopped: 'Workflow stopped',
+      stopFailed: 'Stop failed: {error}',
+      scheduleMissingTrigger: 'Add and configure a schedule trigger node first',
+      scheduleStarted: 'Schedule started: {desc}',
+      scheduleStartFailed: 'Failed to start schedule: {error}',
+      scheduleStopped: 'Schedule stopped',
+      scheduleStopFailed: 'Failed to stop schedule: {error}',
+      workflowSaved: 'Workflow saved',
+      saveFailed: 'Save failed: {error}',
+      loadFailed: 'Load failed: {error}',
+      workflowDeleted: 'Workflow deleted',
+      deleteFailed: 'Delete failed: {error}',
+      workflowExported: 'Workflow exported',
+      exportFailed: 'Export failed: {error}',
+      workflowImported: 'Workflow imported',
+      importFailed: 'Import failed: {message}',
+      imageExportRequiresHtml2Canvas: 'Image export requires the html2canvas library',
+      templateSaved: 'Template saved',
+      templateSaveFailed: 'Failed to save template: {error}'
+    },
+    flowchart: {
+      toolbar: {
+        title: 'Execution Flowchart',
+        newWorkflow: 'New',
+        newWorkflowTooltip: 'Create new workflow',
+        aiGenerate: 'AI Generate',
+        aiGenerateTooltip: 'Generate workflow from natural language description',
+        resetView: 'Reset view',
+        arrangeNodes: 'Arrange nodes',
+        arrangeNodesTooltip: 'Automatically arrange node layout',
+        undoTooltip: 'Undo (Ctrl+Z)',
+        redoTooltip: 'Redo (Ctrl+Y)',
+        deleteConnection: 'Delete connection',
+        deleteConnectionTooltip: 'Click a connection line to delete',
+        exitFullscreen: 'Exit fullscreen'
+      },
+      emptyState: {
+        title: 'Canvas is empty',
+        description: 'Drag nodes from the node library on the left to start building a workflow',
+        tip: 'Tip: hold Shift while dragging to pan the canvas'
+      },
+      ports: {
+        input: 'Input',
+        output: 'Output'
+      },
+      breakpoints: {
+        title: 'Breakpoints'
+      },
+      status: {
+        pending: 'Pending',
+        planning: 'Planning',
+        running: 'Running',
+        completed: 'Completed',
+        failed: 'Failed',
+        paused: 'Paused',
+        cancelled: 'Cancelled'
+      },
+      contextMenu: {
+        addBreakpoint: 'Add breakpoint',
+        removeBreakpoint: 'Remove breakpoint',
+        duplicateNode: 'Duplicate node',
+        deleteNode: 'Delete node',
+        duplicateNodeName: '{name} (Copy)'
+      },
+      aiGenerate: {
+        title: 'AI Generated Workflow',
+        help: 'Describe the workflow you want in natural language, for example: first run subdomain scan, then port scan, then use AI to analyze results and generate a report.',
+        placeholder: 'Enter workflow description...',
+        cancel: 'Cancel',
+        generateAndLoad: 'Generate and load',
+        missingNodesError: 'Generated result is missing nodes'
+      }
+    },
+    defaults: {
+      unnamedWorkflow: 'Unnamed workflow',
+      importedWorkflow: 'Imported workflow',
+      duplicateWorkflowName: '{name} (Copy)'
+    },
+    errors: {
+      invalidWorkflowFile: 'Invalid workflow file format',
+      jsonFormatError: 'JSON format error: {message}'
+    }
+  }
+}

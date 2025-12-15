@@ -4,21 +4,21 @@
     <div class="p-3 border-b border-base-300 flex items-center justify-between">
       <h3 class="font-semibold text-sm flex items-center gap-2">
         <i class="fas fa-comments text-primary"></i>
-        会话列表
+        {{ t('agent.conversationList') }}
       </h3>
       <div class="flex items-center gap-2">
         <button 
           @click="createNewConversation" 
           class="btn btn-xs btn-primary gap-1"
-          title="新建会话"
+          :title="t('agent.newConversation')"
         >
           <i class="fas fa-plus"></i>
-          新建
+          {{ t('agent.newConversation') }}
         </button>
         <button 
           @click="$emit('close')"
           class="btn btn-xs btn-ghost"
-          title="关闭"
+          :title="t('agent.close')"
         >
           <i class="fas fa-times"></i>
         </button>
@@ -30,7 +30,7 @@
       <input 
         v-model="searchQuery"
         type="text" 
-        placeholder="搜索会话..." 
+        :placeholder="t('agent.searchConversations')" 
         class="input input-sm input-bordered w-full"
       />
     </div>
@@ -43,7 +43,7 @@
 
       <div v-else-if="filteredConversations.length === 0" class="text-center py-8 text-base-content/50 text-sm">
         <i class="fas fa-inbox text-3xl mb-2 opacity-50"></i>
-        <p>{{ searchQuery ? '未找到匹配的会话' : '暂无会话' }}</p>
+        <p>{{ searchQuery ? t('agent.noMatchingConversations') : t('agent.noConversations') }}</p>
       </div>
 
       <div v-else class="space-y-1 p-2">
@@ -60,8 +60,8 @@
         >
           <div class="flex items-start justify-between gap-2">
             <div class="flex-1 min-w-0">
-              <h4 class="font-medium text-sm truncate" :title="conv.title || '未命名会话'">
-                {{ conv.title || '未命名会话' }}
+              <h4 class="font-medium text-sm truncate" :title="conv.title || t('agent.unnamedConversation')">
+                {{ conv.title || t('agent.unnamedConversation') }}
               </h4>
               <p class="text-xs text-base-content/60 mt-1">
                 {{ formatDate(conv.updated_at) }}
@@ -81,14 +81,14 @@
               <button
                 @click.stop="renameConversation(conv)"
                 class="btn btn-xs btn-ghost"
-                title="重命名"
+                :title="t('agent.rename')"
               >
                 <i class="fas fa-edit"></i>
               </button>
               <button
                 @click.stop="deleteConversation(conv)"
                 class="btn btn-xs btn-ghost text-error"
-                title="删除"
+                :title="t('agent.delete')"
               >
                 <i class="fas fa-trash"></i>
               </button>
@@ -103,6 +103,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 
 interface Conversation {
   id: string
@@ -122,6 +123,8 @@ const emit = defineEmits<{
   (e: 'create', conversationId: string): void
   (e: 'close'): void
 }>()
+
+const { t } = useI18n()
 
 const conversations = ref<Conversation[]>([])
 const isLoading = ref(false)
@@ -155,7 +158,7 @@ const createNewConversation = async () => {
   try {
     const conversationId = await invoke<string>('create_ai_conversation', {
       request: {
-        title: `新会话 ${new Date().toLocaleString()}`,
+        title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
         service_name: 'default'
       }
     })
@@ -171,7 +174,7 @@ const selectConversation = (conv: Conversation) => {
 }
 
 const renameConversation = async (conv: Conversation) => {
-  const newTitle = prompt('请输入新的会话名称:', conv.title || '')
+  const newTitle = prompt(t('agent.enterNewConversationName'), conv.title || '')
   if (newTitle && newTitle.trim()) {
     try {
       await invoke('update_ai_conversation_title', {
@@ -207,10 +210,10 @@ const formatDate = (dateStr: string) => {
   const hours = Math.floor(diff / 3600000)
   const days = Math.floor(diff / 86400000)
   
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes}分钟前`
-  if (hours < 24) return `${hours}小时前`
-  if (days < 7) return `${days}天前`
+  if (minutes < 1) return t('agent.justNow')
+  if (minutes < 60) return `${minutes} ${t('agent.minutesAgo')}`
+  if (hours < 24) return `${hours} ${t('agent.hoursAgo')}`
+  if (days < 7) return `${days} ${t('agent.daysAgo')}`
   
   return date.toLocaleDateString()
 }

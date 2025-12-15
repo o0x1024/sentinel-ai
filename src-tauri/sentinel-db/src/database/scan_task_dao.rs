@@ -89,4 +89,20 @@ pub async fn update_scan_task_status(
     Ok(())
 }
 
+pub async fn delete_scan_task(pool: &SqlitePool, id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM scan_tasks WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn stop_scan_task(pool: &SqlitePool, id: &str) -> Result<()> {
+    sqlx::query("UPDATE scan_tasks SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 

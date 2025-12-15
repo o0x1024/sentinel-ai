@@ -176,7 +176,8 @@ impl PromptRepository {
             TemplateType::PluginFix => "PluginFix",
             TemplateType::AgentPluginFix => "AgentPluginFix",
             TemplateType::PluginVulnSpecific => "PluginVulnSpecific",
-            TemplateType::VisionExplorerSystem => "VisionExplorerSystem",
+            TemplateType::VisionExplorerVision => "VisionExplorerVision",
+            TemplateType::VisionExplorerText => "VisionExplorerText",
         }
     }
     
@@ -191,7 +192,8 @@ impl PromptRepository {
             "PluginFix" => Some(TemplateType::PluginFix),
             "AgentPluginFix" => Some(TemplateType::AgentPluginFix),
             "PluginVulnSpecific" => Some(TemplateType::PluginVulnSpecific),
-            "VisionExplorerSystem" => Some(TemplateType::VisionExplorerSystem),
+            "VisionExplorerVision" => Some(TemplateType::VisionExplorerVision),
+            "VisionExplorerText" => Some(TemplateType::VisionExplorerText),
             _ => None,
         }
     }

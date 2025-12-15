@@ -32,7 +32,7 @@ use commands::{
     passive_scan_commands::{self, PassiveScanState},
     performance, prompt_commands,
     proxifier_commands::{self, ProxifierState},
-    rag_commands, scan_session_commands, tool_commands, window,
+    rag_commands, scan_session_commands, scan_task_commands, tool_commands, window,
 };
 
 // Workflow engine and scheduler
@@ -479,6 +479,12 @@ pub fn run() {
             scan_session_commands::delete_scan_session,
             scan_session_commands::get_scan_progress,
             scan_session_commands::get_session_stages,
+            // Scan task commands
+            scan_task_commands::get_scan_tasks,
+            scan_task_commands::create_scan_task,
+            scan_task_commands::update_scan_task_status,
+            scan_task_commands::delete_scan_task,
+            scan_task_commands::stop_scan_task,
             // Performance commands
             performance::get_performance_metrics,
             performance::get_performance_report,
@@ -713,6 +719,8 @@ pub fn run() {
             tool_commands::get_tool_usage_stats,
             tool_commands::clear_tool_usage_stats,
             tool_commands::vision_explorer_receive_credentials,
+            tool_commands::vision_explorer_send_user_message,
+            tool_commands::vision_explorer_skip_login,
             // MCP commands
             commands::mcp_commands::mcp_get_connections,
             commands::mcp_commands::mcp_get_connection_status,

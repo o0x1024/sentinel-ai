@@ -388,120 +388,9 @@ pub struct PortDef {
     pub required: bool,
 }
 
-/// Parse TypeScript interface ToolInput from plugin code to JSON Schema
+/// Parse plugin code to extract input_schema (delegates to unified parser)
 fn parse_tool_input_schema(code: &str) -> serde_json::Value {
-    use regex::Regex;
-    
-    // Match interface ToolInput { ... } (supports multiline)
-    let interface_re = Regex::new(r"(?s)interface\s+ToolInput\s*\{([^}]+)\}").ok();
-    let interface_match = interface_re.and_then(|re| re.captures(code));
-    
-    if let Some(captures) = interface_match {
-        let body = captures.get(1).map(|m| m.as_str()).unwrap_or("");
-        
-        // Pattern to match: /** comment */ fieldName?: type;
-        // Using a more robust multiline pattern
-        let field_pattern = Regex::new(
-            r"(?ms)/\*\*\s*\*?\s*([^*]+(?:\*(?!/)[^*]*)*)\s*\*/\s*(\w+)(\?)?:\s*([^;]+);"
-        ).ok();
-        
-        // Also try simple field pattern without comment
-        let simple_field = Regex::new(r"(?m)^\s*(\w+)(\?)?:\s*([^;]+);").ok();
-        
-        let mut properties = serde_json::Map::new();
-        let mut required_fields = Vec::new();
-        
-        // First try to match fields with comments
-        if let Some(re) = &field_pattern {
-            for cap in re.captures_iter(body) {
-                let comment = cap.get(1).map(|m| {
-                    m.as_str()
-                        .lines()
-                        .map(|l| l.trim().trim_start_matches('*').trim())
-                        .filter(|l| !l.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                }).unwrap_or_default();
-                let field_name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                let optional = cap.get(3).is_some();
-                let type_str = cap.get(4).map(|m| m.as_str().trim()).unwrap_or("string");
-                
-                if field_name.is_empty() {
-                    continue;
-                }
-                
-                let mut prop = ts_type_to_json_schema(type_str);
-                if !comment.is_empty() {
-                    prop.as_object_mut().map(|p| p.insert("description".to_string(), serde_json::json!(comment)));
-                }
-                
-                properties.insert(field_name.to_string(), prop);
-                
-                if !optional {
-                    required_fields.push(field_name.to_string());
-                }
-            }
-        }
-        
-        // Then try simple fields (may override if already found with comment)
-        if let Some(re) = &simple_field {
-            for cap in re.captures_iter(body) {
-                let field_name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-                let optional = cap.get(2).is_some();
-                let type_str = cap.get(3).map(|m| m.as_str().trim()).unwrap_or("string");
-                
-                if field_name.is_empty() || properties.contains_key(field_name) {
-                    continue;
-                }
-                
-                let prop = ts_type_to_json_schema(type_str);
-                properties.insert(field_name.to_string(), prop);
-                
-                if !optional && !required_fields.contains(&field_name.to_string()) {
-                    required_fields.push(field_name.to_string());
-                }
-            }
-        }
-        
-        if !properties.is_empty() {
-            return serde_json::json!({
-                "type": "object",
-                "properties": properties,
-                "required": required_fields
-            });
-        }
-    }
-    
-    // Default fallback schema
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "input": {"type": "string", "x-ui-widget": "textarea", "description": "工具输入参数"}
-        }
-    })
-}
-
-/// Convert TypeScript type to JSON Schema
-fn ts_type_to_json_schema(type_str: &str) -> serde_json::Value {
-    let type_str = type_str.trim();
-    
-    if type_str.contains("string[]") || type_str.contains("Array<string>") {
-        serde_json::json!({
-            "type": "array",
-            "items": {"type": "string"},
-            "x-ui-widget": "textarea-lines"
-        })
-    } else if type_str == "string" {
-        serde_json::json!({"type": "string"})
-    } else if type_str == "number" {
-        serde_json::json!({"type": "number"})
-    } else if type_str == "boolean" {
-        serde_json::json!({"type": "boolean"})
-    } else if type_str.contains("object") || type_str.starts_with('{') {
-        serde_json::json!({"type": "object"})
-    } else {
-        serde_json::json!({"type": "string"})
-    }
+    sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(code)
 }
 
 /// List all available node types for workflow studio
@@ -1071,6 +960,7 @@ pub async fn refresh_all_dynamic_tools(
 /// Receive login credentials from frontend for a running VisionExplorer
 #[tauri::command]
 pub async fn vision_explorer_receive_credentials(
+    app: tauri::AppHandle,
     execution_id: String,
     username: String,
     password: String,
@@ -1085,5 +975,52 @@ pub async fn vision_explorer_receive_credentials(
         password,
         verification_code,
         extra_fields,
-    ).await
+    ).await?;
+
+    // Notify frontend to close takeover form (some flows may not have an emitter available here).
+    // Keep payload compatible with VisionExplorerMessageEmitter.emit_credentials_received
+    use tauri::Emitter;
+    let payload = serde_json::json!({
+        "type": "credentials_received",
+        "execution_id": execution_id,
+    });
+    let _ = app.emit("vision:credentials_received", payload);
+
+    Ok(())
+}
+
+/// Send a user message to a running VisionExplorer (for mid-run guidance)
+#[tauri::command]
+pub async fn vision_explorer_send_user_message(
+    execution_id: String,
+    message: String,
+) -> Result<(), String> {
+    tracing::info!(
+        "Received user message for VisionExplorer execution_id: {} ({} chars)",
+        execution_id,
+        message.len()
+    );
+
+    crate::engines::vision_explorer::submit_user_message(&execution_id, message).await
+}
+
+/// Skip login for a running VisionExplorer (user chose not to provide credentials)
+#[tauri::command]
+pub async fn vision_explorer_skip_login(
+    app: tauri::AppHandle,
+    execution_id: String,
+) -> Result<(), String> {
+    tracing::info!("Skip login requested for VisionExplorer execution_id: {}", execution_id);
+
+    crate::engines::vision_explorer::skip_login(&execution_id).await?;
+
+    // Emit credentials_received event to close takeover UI on the frontend.
+    use tauri::Emitter;
+    let payload = serde_json::json!({
+        "type": "credentials_received",
+        "execution_id": execution_id,
+    });
+    let _ = app.emit("vision:credentials_received", payload);
+
+    Ok(())
 }

@@ -606,7 +606,7 @@ pub async fn mcp_call_tool(
     tool_name: String,
     arguments: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    tracing::info!("Calling tool {} on connection {}", tool_name, connection_id);
+    // tracing::info!("Calling tool {} on connection {}", tool_name, connection_id);
 
     // Get the server name from connection info
     let server_name = {
@@ -618,7 +618,7 @@ pub async fn mcp_call_tool(
             .ok_or_else(|| format!("Connection {} not found", connection_id))?
     };
 
-    tracing::info!("Using MCP server: {}", server_name);
+    // tracing::info!("Using MCP server: {}", server_name);
 
     // Try to get existing persistent client
     let client_arc = {

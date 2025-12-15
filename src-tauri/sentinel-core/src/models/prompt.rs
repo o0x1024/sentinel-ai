@@ -22,7 +22,8 @@ pub enum TemplateType {
     AgentPluginFix,          // Agent 插件修复
     PluginVulnSpecific,      // 漏洞特定插件模板
     // Vision Explorer templates
-    VisionExplorerSystem,    // VisionExplorer 系统提示
+    VisionExplorerVision,    // VisionExplorer 多模态模型提示
+    VisionExplorerText,      // VisionExplorer 文本模型提示
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +72,8 @@ mod tests {
             ("PluginFix", TemplateType::PluginFix),
             ("AgentPluginFix", TemplateType::AgentPluginFix),
             ("PluginVulnSpecific", TemplateType::PluginVulnSpecific),
-            ("VisionExplorerSystem", TemplateType::VisionExplorerSystem),
+            ("VisionExplorerVision", TemplateType::VisionExplorerVision),
+            ("VisionExplorerText", TemplateType::VisionExplorerText),
         ];
 
         for (json_str, expected) in test_cases {

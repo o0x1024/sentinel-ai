@@ -444,6 +444,10 @@ pub async fn cancel_ai_stream(
 ) -> Result<(), String> {
     tracing::info!("Cancelling stream for conversation: {}", conversation_id);
     cancel_conversation_stream(&conversation_id);
+
+    // Also cancel long-running tool executions (e.g. VisionExplorer) that use the global cancellation manager.
+    // conversation_id is used as execution_id across the app.
+    let _ = crate::managers::cancellation_manager::cancel_execution(&conversation_id).await;
     
     // 发送取消事件通知前端
     let _ = app_handle.emit(

@@ -7,7 +7,7 @@
     <!-- Loading indicator (waiting for response) -->
     <div v-if="isStreaming && !streamingContent" class="loading-indicator flex items-center gap-3 px-4 py-3 bg-base-200/50 rounded-lg">
       <span class="loading loading-dots loading-md text-primary"></span>
-      <span class="text-sm text-base-content/70">AI 正在思考...</span>
+      <span class="text-sm text-base-content/70">{{ t('agent.aiIsThinking') }}</span>
     </div>
     
     <!-- Streaming indicator (receiving content) -->
@@ -23,16 +23,19 @@
           <i class="fas fa-robot text-2xl"></i>
         </div>
       </div>
-      <h3 class="text-lg font-semibold mb-2 text-base-content">Agent Ready</h3>
-      <p class="max-w-xs text-base-content/70">开始对话，查看Agent的响应和任务执行。</p>
+      <h3 class="text-lg font-semibold mb-2 text-base-content">{{ t('agent.agentReady') }}</h3>
+      <p class="max-w-xs text-base-content/70">{{ t('agent.startConversation') }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, nextTick, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { AgentMessage } from '@/types/agent'
 import MessageBlock from './MessageBlock.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   messages: AgentMessage[]

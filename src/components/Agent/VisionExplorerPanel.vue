@@ -1,5 +1,5 @@
 <template>
-  <div class="vision-panel border border-base-300 rounded-lg bg-base-200 flex flex-col h-full max-h-[600px] overflow-hidden" v-if="isActive">
+  <div class="vision-panel border border-base-300 rounded-lg bg-base-200 flex flex-col h-full min-h-0 overflow-hidden" v-if="isActive">
     <!-- Header -->
     <div class="vision-header p-3 border-b border-base-300 flex justify-between items-center bg-base-100">
       <div class="flex items-center gap-2">
@@ -20,7 +20,7 @@
     <div v-if="showTakeoverForm && !credentialsSubmitted" class="p-3 bg-warning/10 border-b border-warning/30">
       <div class="flex items-center gap-2 text-sm text-warning font-medium mb-2">
         <i class="fas fa-key"></i>
-        <span>{{ takeoverMessage || '检测到登录页面，请输入凭证' }}</span>
+        <span>{{ takeoverMessage || t('agent.loginPageDetected') }}</span>
       </div>
       
       <div class="space-y-2">
@@ -42,34 +42,46 @@
               <input
                 v-model="credentials.username"
                 type="text"
-                placeholder="用户名/账号"
+                :placeholder="t('agent.usernameAccount')"
                 class="input input-sm input-bordered w-full text-xs"
                 @keyup.enter="submitCredentials"
               />
               <input
                 v-model="credentials.password"
                 type="password"
-                placeholder="密码"
+                :placeholder="t('agent.password')"
                 class="input input-sm input-bordered w-full text-xs"
                 @keyup.enter="submitCredentials"
               />
               <input
                   v-model="credentials.verificationCode"
                   type="text"
-                  placeholder="验证码（可选）"
+                  :placeholder="t('agent.verificationCodeOptional')"
                   class="input input-sm input-bordered w-full text-xs"
                   @keyup.enter="submitCredentials"
               />
           </template>
 
-          <button
-              class="btn btn-sm btn-warning w-full mt-2"
-              :disabled="!canSubmit || isSubmittingCredentials"
+          <!-- Actions -->
+          <div class="flex gap-2 mt-2">
+            <button
+              class="btn btn-sm btn-warning flex-1"
+              :disabled="!canSubmit || isSubmittingCredentials || isSkippingLogin"
               @click="submitCredentials"
             >
               <span v-if="isSubmittingCredentials" class="loading loading-spinner loading-xs"></span>
-              <span v-else>继续探索</span>
-          </button>
+              <span v-else>{{ t('agent.continueExploration') }}</span>
+            </button>
+
+            <button
+              class="btn btn-sm btn-ghost flex-1"
+              :disabled="isSubmittingCredentials || isSkippingLogin"
+              @click="skipLogin"
+            >
+              <span v-if="isSkippingLogin" class="loading loading-spinner loading-xs"></span>
+              <span v-else>{{ t('agent.skipLogin') }}</span>
+            </button>
+          </div>
         </div>
     </div>
 
@@ -166,13 +178,51 @@
           </div>
        </div>
     </div>
+
+    <!-- User Message Input (sticky bottom) -->
+    <div class="mt-auto p-3 border-t border-base-300 bg-base-100/70">
+      <div class="relative">
+        <textarea
+          v-model="userMessage"
+          class="textarea textarea-bordered w-full text-xs leading-5 min-h-[2.75rem] max-h-28 resize-none pr-20"
+          :placeholder="t('agent.visionMessagePlaceholder')"
+          @keydown="onUserMessageKeydown"
+        />
+
+        <!-- Inline buttons inside textarea -->
+        <div class="absolute right-2 bottom-2 flex items-center gap-1">
+          <!-- <button
+            class="btn btn-xs btn-ghost"
+            :title="t('agent.stop')"
+            :disabled="isStopping"
+            @click="stopVision"
+          >
+            <span v-if="isStopping" class="loading loading-spinner loading-xs"></span>
+            <i v-else class="fas fa-stop"></i>
+          </button> -->
+
+          <button
+            class="btn btn-xs btn-primary"
+            :title="t('agent.send')"
+            :disabled="!canSendMessage || isSendingMessage"
+            @click="sendUserMessage"
+          >
+            <span v-if="isSendingMessage" class="loading loading-spinner loading-xs"></span>
+            <i v-else class="fas fa-paper-plane"></i>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, nextTick, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { VisionStep, VisionCoverage } from '@/composables/useVisionEvents'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   steps: VisionStep[]
@@ -195,16 +245,23 @@ const stepsContainer = ref<HTMLElement | null>(null)
 
 // Takeover form state
 const isSubmittingCredentials = ref(false)
+const isSkippingLogin = ref(false)
 const credentials = ref<Record<string, string>>({})
 const credentialsSubmitted = ref(false) // Track if credentials were submitted in this session
 
-// Reset credentialsSubmitted when a new takeover request comes in
-watch(() => props.showTakeoverForm, (newVal) => {
-    if (newVal) {
-        // New takeover request, reset submitted state
-        credentialsSubmitted.value = false
-    }
-})
+// User message state
+const userMessage = ref('')
+const isSendingMessage = ref(false)
+const isStopping = ref(false)
+
+// Reset credentialsSubmitted when a new takeover request comes in.
+// Note: `showTakeoverForm` may stay true across retries; we also reset when message/fields change.
+watch(
+  () => [props.showTakeoverForm, props.takeoverMessage, props.takeoverFields?.length],
+  ([show]) => {
+    if (show) credentialsSubmitted.value = false
+  }
+)
 
 // Initialize credentials when fields change
 watch(() => props.takeoverFields, (fields) => {
@@ -229,6 +286,78 @@ const canSubmit = computed(() => {
     }
     return !!credentials.value.username && !!credentials.value.password
 })
+
+const canSendMessage = computed(() => {
+  return !!(props.executionId && userMessage.value.trim().length > 0)
+})
+
+const onUserMessageKeydown = async (e: KeyboardEvent) => {
+  if (e.key !== 'Enter') return
+  if (e.shiftKey) return
+  e.preventDefault()
+  await sendUserMessage()
+}
+
+const sendUserMessage = async () => {
+  const message = userMessage.value.trim()
+  if (!message) return
+  const eid = props.executionId
+  if (!eid) {
+    console.warn('[VisionPanel] Missing executionId for sending message')
+    return
+  }
+
+  isSendingMessage.value = true
+  try {
+    await invoke('vision_explorer_send_user_message', {
+      executionId: eid,
+      message
+    })
+    userMessage.value = ''
+    console.log('[VisionPanel] User message sent')
+  } catch (error) {
+    console.error('[VisionPanel] Failed to send user message:', error)
+  } finally {
+    isSendingMessage.value = false
+  }
+}
+
+const stopVision = async () => {
+  const eid = props.executionId
+  if (!eid) {
+    console.warn('[VisionPanel] Missing executionId for stop')
+    return
+  }
+  isStopping.value = true
+  try {
+    await invoke('cancel_ai_stream', { conversationId: eid })
+    console.log('[VisionPanel] Stop command sent')
+  } catch (error) {
+    console.error('[VisionPanel] Failed to stop:', error)
+  } finally {
+    isStopping.value = false
+  }
+}
+
+// Skip login and continue exploration without credentials
+const skipLogin = async () => {
+  const eid = props.executionId || (window as any).__visionExecutionId
+  if (!eid) {
+    console.warn('[VisionPanel] Missing executionId for skip login')
+    return
+  }
+
+  isSkippingLogin.value = true
+  try {
+    await invoke('vision_explorer_skip_login', { executionId: eid })
+    credentialsSubmitted.value = true
+    console.log('[VisionPanel] Skip login requested')
+  } catch (error) {
+    console.error('[VisionPanel] Failed to skip login:', error)
+  } finally {
+    isSkippingLogin.value = false
+  }
+}
 
 // Submit credentials to backend
 const submitCredentials = async () => {

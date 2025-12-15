@@ -4,7 +4,7 @@
     <div class="panel-header flex items-center justify-between p-4 border-b border-base-300">
       <div class="flex items-center gap-2">
         <i class="fas fa-tools text-primary"></i>
-        <h3 class="text-lg font-semibold">工具配置</h3>
+        <h3 class="text-lg font-semibold">{{ t('agent.toolConfig') }}</h3>
       </div>
       <button @click="$emit('close')" class="btn btn-sm btn-ghost btn-circle">
         <i class="fas fa-times"></i>
@@ -23,8 +23,8 @@
             @change="emitUpdate"
           />
           <div>
-            <span class="label-text font-medium">启用工具调用</span>
-            <p class="text-xs text-base-content/60 mt-1">允许 Agent 调用工具来完成任务</p>
+            <span class="label-text font-medium">{{ t('agent.enableToolCalls') }}</span>
+            <p class="text-xs text-base-content/60 mt-1">{{ t('agent.allowAgentToCallTools') }}</p>
           </div>
         </label>
       </div>
@@ -33,18 +33,18 @@
         <!-- Tool Selection Strategy -->
         <div class="form-control">
           <label class="label">
-            <span class="label-text font-medium">工具选择策略</span>
+            <span class="label-text font-medium">{{ t('agent.toolSelectionStrategy') }}</span>
           </label>
           <select 
             v-model="localConfig.selection_strategy" 
             class="select select-bordered w-full"
             @change="emitUpdate"
           >
-            <option value="Keyword">关键词匹配（快速，免费）</option>
-            <option value="LLM">智能分析（准确，有成本）</option>
-            <option value="Hybrid">混合策略（推荐）</option>
-            <option value="Manual">手动选择</option>
-            <option value="All">全部工具（测试用）</option>
+            <option value="Keyword">{{ t('agent.keywordMatching') }}</option>
+            <option value="LLM">{{ t('agent.intelligentAnalysis') }}</option>
+            <option value="Hybrid">{{ t('agent.hybridStrategy') }}</option>
+            <option value="Manual">{{ t('agent.manualSelection') }}</option>
+            <option value="All">{{ t('agent.allTools') }}</option>
           </select>
           <label class="label">
             <span class="label-text-alt text-base-content/60">
@@ -56,7 +56,7 @@
         <!-- Max Tools -->
         <div class="form-control">
           <label class="label">
-            <span class="label-text font-medium">最大工具数量</span>
+            <span class="label-text font-medium">{{ t('agent.maxTools') }}</span>
             <span class="label-text-alt">{{ localConfig.max_tools }}</span>
           </label>
           <input 
@@ -80,7 +80,7 @@
         <div class="form-control">
           <label class="label">
             <span class="label-text font-medium">
-              {{ localConfig.selection_strategy === 'Manual' ? '选择工具' : '工具管理' }}
+              {{ localConfig.selection_strategy === 'Manual' ? t('agent.selectTools') : t('agent.toolManagement') }}
             </span>
             <button @click="loadTools" class="btn btn-xs btn-ghost">
               <i class="fas fa-sync-alt"></i>
@@ -98,7 +98,7 @@
                 <input 
                   type="text" 
                   v-model="searchQuery"
-                  placeholder="搜索工具名称或描述..." 
+                  :placeholder="t('agent.searchToolNamesOrDescriptions')" 
                   class="input input-sm input-bordered w-full pr-8" 
                 />
                 <div class="absolute inset-y-0 right-0 flex items-center pr-2">
@@ -122,7 +122,7 @@
                 class="btn btn-xs"
                 :class="selectedCategories.length === 0 ? 'btn-primary' : 'btn-ghost'"
               >
-                全部
+                {{ t('agent.all') }}
               </button>
               
               <!-- 工具插件按钮 -->
@@ -132,7 +132,7 @@
                 class="btn btn-xs"
                 :class="selectedCategories.includes('Plugin') ? 'btn-primary' : 'btn-ghost'"
               >
-                插件
+                {{ t('agent.plugins') }}
               </button>
               
               <!-- 其他分类按钮 -->
@@ -183,27 +183,27 @@
                      class="join-item btn btn-xs" 
                      :class="!isFixed(tool.id) && !isDisabled(tool.id) ? 'btn-active shadow-inner' : 'btn-ghost'"
                      @click="setToolStatus(tool.id, 'auto')"
-                     title="自动选择"
-                   >自动</button>
+                     :title="t('agent.autoSelect')"
+                   >{{ t('agent.autoSelect') }}</button>
                    <button 
                      class="join-item btn btn-xs"
                      :class="isFixed(tool.id) ? 'btn-primary' : 'btn-ghost'"
                      @click="setToolStatus(tool.id, 'fixed')"
-                     title="始终启用"
-                   >固定</button>
+                     :title="t('agent.alwaysEnabled')"
+                   >{{ t('agent.alwaysEnabled') }}</button>
                    <button 
                      class="join-item btn btn-xs"
                      :class="isDisabled(tool.id) ? 'btn-error' : 'btn-ghost'"
                      @click="setToolStatus(tool.id, 'disabled')"
-                     title="禁用工具"
-                   >禁用</button>
+                     :title="t('agent.disableTool')"
+                   >{{ t('agent.disableTool') }}</button>
                 </div>
               </div>
             </div>
 
             <div v-if="filteredTools.length === 0" class="text-center py-4 text-base-content/60">
               <i class="fas fa-inbox text-2xl mb-2"></i>
-              <p class="text-sm">没有找到工具</p>
+              <p class="text-sm">{{ t('agent.noToolsFound') }}</p>
             </div>
           </div>
         </div>
@@ -211,7 +211,7 @@
         <!-- Fixed Tools -->
         <div class="form-control">
           <label class="label">
-            <span class="label-text font-medium">始终启用的工具</span>
+            <span class="label-text font-medium">{{ t('agent.alwaysEnabledTools') }}</span>
           </label>
           <div class="flex flex-wrap gap-2">
             <div 
@@ -231,7 +231,7 @@
               v-if="localConfig.fixed_tools.length === 0"
               class="badge badge-ghost"
             >
-              无
+              {{ t('agent.none') }}
             </button>
           </div>
         </div>
@@ -239,32 +239,32 @@
         <!-- Tool Statistics -->
         <div v-if="statistics" class="stats stats-vertical shadow w-full">
           <div class="stat">
-            <div class="stat-title">可用工具总数</div>
+            <div class="stat-title">{{ t('agent.totalAvailableTools') }}</div>
             <div class="stat-value text-primary">{{ statistics.total_tools }}</div>
             <div class="stat-desc">
-              内置: {{ statistics.builtin_tools }} | 
-              工作流: {{ statistics.workflow_tools }} | 
+              {{ t('agent.builtin') }}: {{ statistics.builtin_tools }} | 
+              {{ t('agent.workflow') }}: {{ statistics.workflow_tools }} | 
               MCP: {{ statistics.mcp_tools }} | 
-              插件: {{ statistics.plugin_tools }}
+              {{ t('agent.plugins') }}: {{ statistics.plugin_tools }}
             </div>
           </div>
         </div>
 
         <!-- Tool Usage Statistics -->
-        <div class="divider">使用统计</div>
+        <div class="divider">{{ t('agent.usageStatistics') }}</div>
         
         <div v-if="usageStats" class="space-y-3">
           <div class="stats stats-horizontal shadow w-full">
             <div class="stat">
-              <div class="stat-title">总执行次数</div>
+              <div class="stat-title">{{ t('agent.totalExecutions') }}</div>
               <div class="stat-value text-sm">{{ usageStats.total_executions }}</div>
             </div>
             <div class="stat">
-              <div class="stat-title">成功</div>
+              <div class="stat-title">{{ t('agent.success') }}</div>
               <div class="stat-value text-sm text-success">{{ usageStats.successful_executions }}</div>
             </div>
             <div class="stat">
-              <div class="stat-title">失败</div>
+              <div class="stat-title">{{ t('agent.failure') }}</div>
               <div class="stat-value text-sm text-error">{{ usageStats.failed_executions }}</div>
             </div>
           </div>
@@ -272,7 +272,7 @@
           <!-- Top Used Tools -->
           <div v-if="topUsedTools.length > 0" class="space-y-2">
             <div class="flex items-center justify-between">
-              <span class="text-sm font-medium">最常用工具</span>
+              <span class="text-sm font-medium">{{ t('agent.mostUsedTools') }}</span>
               <button @click="loadUsageStats" class="btn btn-xs btn-ghost">
                 <i class="fas fa-sync-alt"></i>
               </button>
@@ -286,18 +286,18 @@
                 <div class="flex-1">
                   <div class="font-medium">{{ tool.tool_name }}</div>
                   <div class="text-base-content/60">
-                    成功率: {{ ((tool.success_count / tool.execution_count) * 100).toFixed(1) }}% | 
-                    平均耗时: {{ tool.avg_execution_time_ms.toFixed(0) }}ms
+                    {{ t('agent.successRate') }}: {{ ((tool.success_count / tool.execution_count) * 100).toFixed(1) }}% | 
+                    {{ t('agent.averageTime') }}: {{ tool.avg_execution_time_ms.toFixed(0) }}ms
                   </div>
                 </div>
-                <div class="badge badge-sm">{{ tool.execution_count }}次</div>
+                <div class="badge badge-sm">{{ tool.execution_count }}{{ t('agent.times') }}</div>
               </div>
             </div>
           </div>
 
           <!-- Recent Executions -->
           <div v-if="usageStats.recent_executions.length > 0" class="space-y-2">
-            <div class="text-sm font-medium">最近执行</div>
+            <div class="text-sm font-medium">{{ t('agent.recentExecutions') }}</div>
             <div class="space-y-1 max-h-48 overflow-y-auto">
               <div 
                 v-for="record in usageStats.recent_executions.slice(0, 10)" 
@@ -320,13 +320,13 @@
 
           <button @click="clearUsageStats" class="btn btn-sm btn-error btn-outline w-full">
             <i class="fas fa-trash"></i>
-            清空统计数据
+            {{ t('agent.clearStatistics') }}
           </button>
         </div>
 
         <div v-else class="text-center py-4 text-base-content/60">
           <i class="fas fa-chart-bar text-2xl mb-2"></i>
-          <p class="text-sm">暂无使用统计</p>
+          <p class="text-sm">{{ t('agent.noUsageStatistics') }}</p>
         </div>
       </div>
     </div>
@@ -335,11 +335,11 @@
     <div class="panel-footer p-4 border-t border-base-300 flex justify-end gap-2">
       <button @click="resetToDefault" class="btn btn-sm btn-ghost">
         <i class="fas fa-undo"></i>
-        重置
+        {{ t('agent.reset') }}
       </button>
       <button @click="$emit('close')" class="btn btn-sm btn-primary">
         <i class="fas fa-check"></i>
-        确定
+        {{ t('agent.confirm') }}
       </button>
     </div>
   </div>
@@ -348,6 +348,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 
 interface ToolMetadata {
   id: string
@@ -442,6 +443,8 @@ const initLocalConfig = () => {
     manual_tools: manualTools 
   }
 }
+
+const { t } = useI18n()
 
 const localConfig = ref<ToolConfig>(initLocalConfig())
 const allTools = ref<ToolMetadata[]>([])
@@ -558,7 +561,7 @@ const loadUsageStats = async () => {
 }
 
 const clearUsageStats = async () => {
-  if (!confirm('确定要清空所有工具使用统计吗？')) return
+  if (!confirm(t('agent.areYouSureClearStatistics'))) return
   
   try {
     await invoke('clear_tool_usage_stats')

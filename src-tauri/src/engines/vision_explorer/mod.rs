@@ -153,3 +153,31 @@ pub async fn submit_credentials(
     
     Ok(())
 }
+
+/// Submit a user message to a running VisionExplorer via its TakeoverManager.
+/// The message will be injected into the next VLM prompt.
+pub async fn submit_user_message(
+    execution_id: &str,
+    message: String,
+) -> Result<(), String> {
+    let manager = get_takeover_manager(execution_id).await
+        .ok_or_else(|| format!("No active explorer found with execution_id: {}", execution_id))?;
+
+    let mut manager_guard = manager.write().await;
+    manager_guard.push_user_message(message);
+    Ok(())
+}
+
+/// Skip login for a running VisionExplorer.
+/// The explorer will continue without credentials and explore public pages.
+pub async fn skip_login(execution_id: &str) -> Result<(), String> {
+    let manager = get_takeover_manager(execution_id).await
+        .ok_or_else(|| format!("No active explorer found with execution_id: {}", execution_id))?;
+
+    let mut manager_guard = manager.write().await;
+    manager_guard.mark_login_skipped();
+    manager_guard.return_control();
+
+    tracing::info!("Skip login set and control returned for execution_id: {}", execution_id);
+    Ok(())
+}

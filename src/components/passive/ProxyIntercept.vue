@@ -6,11 +6,11 @@
         <div class="flex items-center gap-3">
           <h2 class="font-semibold text-base">
             <i class="fas fa-shield-alt mr-2"></i>
-            Intercept
+            {{ $t('passiveScan.intercept.title') }}
           </h2>
           <div class="badge badge-sm" :class="interceptEnabled ? 'badge-success' : 'badge-error'">
             <i :class="['fas fa-circle mr-2', interceptEnabled ? 'text-success-content' : 'text-error-content']"></i>
-            {{ interceptEnabled ? 'Intercept is on' : 'Intercept is off' }}
+            {{ interceptEnabled ? $t('passiveScan.intercept.status.on') : $t('passiveScan.intercept.status.off') }}
           </div>
         </div>
         
@@ -20,24 +20,24 @@
             :class="['btn btn-sm', interceptEnabled ? 'btn-error' : 'btn-success']"
           >
             <i :class="['fas', interceptEnabled ? 'fa-stop' : 'fa-play', 'mr-1']"></i>
-            {{ interceptEnabled ? 'Turn off' : 'Turn on' }}
+            {{ interceptEnabled ? $t('passiveScan.intercept.buttons.turnOff') : $t('passiveScan.intercept.buttons.turnOn') }}
           </button>
           
           <div class="divider divider-horizontal mx-0"></div>
           
           <div class="stats stats-horizontal shadow-sm">
             <div class="stat py-2 px-4">
-              <div class="stat-title text-xs">代理状态</div>
+              <div class="stat-title text-xs">{{ $t('passiveScan.intercept.stats.proxyStatus') }}</div>
               <div class="stat-value text-sm" :class="proxyStatus.running ? 'text-success' : 'text-error'">
-                {{ proxyStatus.running ? '运行中' : '已停止' }}
+                {{ proxyStatus.running ? $t('passiveScan.intercept.stats.running') : $t('passiveScan.intercept.stats.stopped') }}
               </div>
             </div>
             <div class="stat py-2 px-4">
-              <div class="stat-title text-xs">端口</div>
+              <div class="stat-title text-xs">{{ $t('passiveScan.intercept.stats.port') }}</div>
               <div class="stat-value text-sm">{{ proxyStatus.port || 8080 }}</div>
             </div>
             <div class="stat py-2 px-4">
-              <div class="stat-title text-xs">拦截队列</div>
+              <div class="stat-title text-xs">{{ $t('passiveScan.intercept.stats.interceptQueue') }}</div>
               <div class="stat-value text-sm">{{ interceptedItems.length }}</div>
             </div>
           </div>
@@ -51,12 +51,12 @@
       <div v-if="interceptedItems.length === 0" class="flex-1 flex items-center justify-center bg-base-100">
         <div class="text-center">
           <i class="fas fa-hourglass-half text-6xl text-base-content/30 mb-4"></i>
-          <p class="text-lg font-semibold text-base-content/70">等待拦截请求/响应...</p>
+          <p class="text-lg font-semibold text-base-content/70">{{ $t('passiveScan.intercept.waiting') }}</p>
           <p class="text-sm text-base-content/50 mt-2">
-            {{ interceptEnabled || responseInterceptEnabled ? '当前拦截已启用' : '请启用拦截功能' }}
+            {{ interceptEnabled || responseInterceptEnabled ? $t('passiveScan.intercept.enabled') : $t('passiveScan.intercept.disabled') }}
           </p>
           <p class="text-sm text-base-content/50">
-            配置浏览器代理为 127.0.0.1:{{ proxyStatus.port || 8080 }}
+            {{ $t('passiveScan.intercept.proxyConfig') }} 127.0.0.1:{{ proxyStatus.port || 8080 }}
           </p>
         </div>
       </div>
@@ -71,7 +71,7 @@
           <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
             <h3 class="font-semibold text-sm">
               <i class="fas fa-list mr-2"></i>
-              拦截队列 ({{ interceptedItems.length }})
+              {{ $t('passiveScan.intercept.queue') }} ({{ interceptedItems.length }})
             </h3>
             <div class="flex items-center gap-2">
               <button 
@@ -80,7 +80,7 @@
                 :disabled="isProcessing || interceptedItems.length === 0"
               >
                 <i class="fas fa-forward mr-1"></i>
-                Forward All
+                {{ $t('passiveScan.intercept.buttons.forwardAll') }}
               </button>
               <button 
                 @click="dropAll"
@@ -88,7 +88,7 @@
                 :disabled="isProcessing || interceptedItems.length === 0"
               >
                 <i class="fas fa-trash mr-1"></i>
-                Drop All
+                {{ $t('passiveScan.intercept.buttons.dropAll') }}
               </button>
             </div>
           </div>
@@ -112,7 +112,7 @@
                 <template v-else>
                   <span class="badge badge-sm badge-secondary">RES</span>
                   <span class="badge badge-sm" :class="getStatusClass((item.data as any).status)">{{ (item.data as any).status }}</span>
-                  <span class="truncate flex-1 font-mono text-xs text-base-content/70">响应 #{{ (item.data as any).request_id.slice(0, 8) }}</span>
+                  <span class="truncate flex-1 font-mono text-xs text-base-content/70">{{ $t('passiveScan.intercept.response') }} #{{ (item.data as any).request_id.slice(0, 8) }}</span>
                 </template>
                 <span class="text-xs text-base-content/50">{{ formatTimestamp(item.data.timestamp) }}</span>
               </div>
@@ -136,7 +136,7 @@
               :disabled="isProcessing || !currentItem"
             >
               <i class="fas fa-arrow-right mr-1"></i>
-              Forward
+              {{ $t('passiveScan.intercept.buttons.forward') }}
             </button>
             
             <button 
@@ -145,7 +145,7 @@
               :disabled="isProcessing || !currentItem"
             >
               <i class="fas fa-times mr-1"></i>
-              Drop
+              {{ $t('passiveScan.intercept.buttons.drop') }}
             </button>
             
             <div class="divider divider-horizontal mx-1"></div>
@@ -157,7 +157,7 @@
               :disabled="!currentItem"
             >
               <i :class="['fas', isEditable ? 'fa-check' : 'fa-edit', 'mr-1']"></i>
-              {{ isEditable ? 'Save' : 'Edit' }}
+              {{ isEditable ? $t('passiveScan.intercept.buttons.save') : $t('passiveScan.intercept.buttons.edit') }}
             </button>
             
             <button 
@@ -166,7 +166,7 @@
               :disabled="!currentItem || currentItem.type !== 'request'"
             >
               <i class="fas fa-redo mr-1"></i>
-              Send to Repeater
+              {{ $t('passiveScan.intercept.buttons.sendToRepeater') }}
             </button>
             
             <div class="flex-1"></div>
@@ -177,7 +177,7 @@
                 {{ (currentItem.data as any).method }} {{ (currentItem.data as any).url }}
               </template>
               <template v-else>
-                响应 {{ (currentItem.data as any).status }} - #{{ (currentItem.data as any).request_id.slice(0, 8) }}
+                {{ $t('passiveScan.intercept.response') }} {{ (currentItem.data as any).status }} - #{{ (currentItem.data as any).request_id.slice(0, 8) }}
               </template>
             </div>
           </div>
@@ -188,19 +188,19 @@
               :class="['tab tab-sm', activeTab === 'raw' ? 'tab-active' : '']"
               @click="activeTab = 'raw'"
             >
-              Raw
+              {{ $t('passiveScan.intercept.tabs.raw') }}
             </a>
             <a 
               :class="['tab tab-sm', activeTab === 'pretty' ? 'tab-active' : '']"
               @click="activeTab = 'pretty'"
             >
-              Pretty
+              {{ $t('passiveScan.intercept.tabs.pretty') }}
             </a>
             <a 
               :class="['tab tab-sm', activeTab === 'hex' ? 'tab-active' : '']"
               @click="activeTab = 'hex'"
             >
-              Hex
+              {{ $t('passiveScan.intercept.tabs.hex') }}
             </a>
           </div>
 
@@ -225,7 +225,7 @@
                 <template v-if="currentItem.type === 'request'">
                   <div class="card bg-base-200">
                     <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">Request Line</h3>
+                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.requestLine') }}</h3>
                       <div class="font-mono text-sm">
                         {{ (currentItem.data as any).method }} {{ (currentItem.data as any).path }} {{ (currentItem.data as any).protocol }}
                       </div>
@@ -237,7 +237,7 @@
                 <template v-else>
                   <div class="card bg-base-200">
                     <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">Status Line</h3>
+                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.statusLine') }}</h3>
                       <div class="font-mono text-sm">
                         HTTP/1.1 <span :class="getStatusClass((currentItem.data as any).status)">{{ (currentItem.data as any).status }}</span>
                       </div>
@@ -247,7 +247,7 @@
 
                 <div class="card bg-base-200">
                   <div class="card-body p-4">
-                    <h3 class="font-semibold mb-2 text-sm">Headers</h3>
+                    <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.headers') }}</h3>
                     <div class="space-y-1">
                       <div 
                         v-for="(value, key) in currentItem.data.headers" 
@@ -263,7 +263,7 @@
 
                 <div v-if="currentItem.data.body" class="card bg-base-200">
                   <div class="card-body p-4">
-                    <h3 class="font-semibold mb-2 text-sm">Body</h3>
+                    <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.body') }}</h3>
                     <pre class="font-mono text-sm whitespace-pre-wrap break-all">{{ currentItem.data.body }}</pre>
                   </div>
                 </div>
@@ -279,7 +279,7 @@
             <div v-else class="flex-1 flex items-center justify-center text-base-content/50">
               <div class="text-center">
                 <i class="fas fa-mouse-pointer text-4xl mb-2"></i>
-                <p>点击上方队列中的请求查看详情</p>
+                <p>{{ $t('passiveScan.intercept.clickToView') }}</p>
               </div>
             </div>
           </div>

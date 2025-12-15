@@ -34,9 +34,9 @@ export function usePluginManagement() {
   const codeEditorContainer = ref<HTMLDivElement>()
   const reviewCodeEditorContainer = ref<HTMLDivElement>()
   const fullscreenCodeEditorContainer = ref<HTMLDivElement>()
-  let codeEditorView: EditorView | null = null
-  let reviewCodeEditorView: EditorView | null = null
-  let fullscreenCodeEditorView: EditorView | null = null
+  const codeEditorView: EditorView | null = null
+  const reviewCodeEditorView: EditorView | null = null
+  const fullscreenCodeEditorView: EditorView | null = null
 
   // CodeMirror Compartments
   const codeEditorReadOnly = new Compartment()
@@ -322,12 +322,13 @@ export function usePluginManagement() {
     try {
       const command = plugin.status === 'Enabled' ? 'disable_plugin' : 'enable_plugin'
       const actionText = plugin.status === 'Enabled' ? t('plugins.disable', '禁用') : t('plugins.enable', '启用')
+      const unknownErrorText = t('common.unknownError', '未知错误')
       const response = await invoke<CommandResponse<void>>(command, { pluginId: plugin.metadata.id })
       if (response.success) {
         await refreshPlugins()
-        showToast(t('plugins.toggleSuccess', `插件已${actionText}: ${plugin.metadata.name}`), 'success')
+        showToast(t('plugins.toggleSuccess', { action: actionText, name: plugin.metadata.name }), 'success')
       } else {
-        showToast(t('plugins.toggleFailed', `${actionText}失败: ${response.error || '未知错误'}`), 'error')
+        showToast(t('plugins.toggleFailed', { action: actionText, error: response.error || unknownErrorText }), 'error')
       }
     } catch (error) {
       console.error('Error toggling plugin:', error)
@@ -524,13 +525,13 @@ export function usePluginManagement() {
         plugin.status = 'Approved'
         await refreshReviewPlugins()
         await refreshPlugins()
-        showToast(t('plugins.approveSuccess', `插件已批准: ${plugin.plugin_name}`), 'success')
+        showToast(t('plugins.approveSuccess', { name: plugin.plugin_name }), 'success')
       } else {
-        showToast(t('plugins.approveFailed', `批准失败: ${response.message || '未知错误'}`), 'error')
+        showToast(t('plugins.approveFailed', { error: response.message || t('common.unknownError', '未知错误') }), 'error')
       }
     } catch (error) {
       console.error('Error approving plugin:', error)
-      showToast(t('plugins.approveFailed', '批准失败'), 'error')
+      showToast(t('plugins.approveFailed', { error: t('common.unknownError', '未知错误') }), 'error')
     }
   }
 
@@ -542,13 +543,13 @@ export function usePluginManagement() {
         plugin.status = 'Rejected'
         await refreshReviewPlugins()
         await refreshPlugins()
-        showToast(t('plugins.rejectSuccess', `插件已拒绝: ${plugin.plugin_name}`), 'success')
+        showToast(t('plugins.rejectSuccess', { name: plugin.plugin_name }), 'success')
       } else {
-        showToast(t('plugins.rejectFailed', `拒绝失败: ${response.message || '未知错误'}`), 'error')
+        showToast(t('plugins.rejectFailed', { error: response.message || t('common.unknownError', '未知错误') }), 'error')
       }
     } catch (error) {
       console.error('Error rejecting plugin:', error)
-      showToast(t('plugins.rejectFailed', '拒绝失败'), 'error')
+      showToast(t('plugins.rejectFailed', { error: t('common.unknownError', '未知错误') }), 'error')
     }
   }
 
@@ -561,13 +562,13 @@ export function usePluginManagement() {
         await refreshReviewPlugins()
         await refreshPlugins()
         selectedReviewPlugins.value = []
-        showToast(t('plugins.batchApproveSuccess', `已批准 ${pluginIds.length} 个插件`), 'success')
+        showToast(t('plugins.batchApproveSuccess', { count: pluginIds.length }), 'success')
       } else {
-        showToast(t('plugins.batchApproveFailed', `批量批准失败: ${response.message || '未知错误'}`), 'error')
+        showToast(t('plugins.batchApproveFailed', { error: response.message || t('common.unknownError', '未知错误') }), 'error')
       }
     } catch (error) {
       console.error('Error batch approving plugins:', error)
-      showToast(t('plugins.batchApproveFailed', '批量批准失败'), 'error')
+      showToast(t('plugins.batchApproveFailed', { error: t('common.unknownError', '未知错误') }), 'error')
     }
   }
 
@@ -580,13 +581,13 @@ export function usePluginManagement() {
         await refreshReviewPlugins()
         await refreshPlugins()
         selectedReviewPlugins.value = []
-        showToast(t('plugins.batchRejectSuccess', `已拒绝 ${pluginIds.length} 个插件`), 'success')
+        showToast(t('plugins.batchRejectSuccess', { count: pluginIds.length }), 'success')
       } else {
-        showToast(t('plugins.batchRejectFailed', `批量拒绝失败: ${response.message || '未知错误'}`), 'error')
+        showToast(t('plugins.batchRejectFailed', { error: response.message || t('common.unknownError', '未知错误') }), 'error')
       }
     } catch (error) {
       console.error('Error batch rejecting plugins:', error)
-      showToast(t('plugins.batchRejectFailed', '批量拒绝失败'), 'error')
+      showToast(t('plugins.batchRejectFailed', { error: t('common.unknownError', '未知错误') }), 'error')
     }
   }
 

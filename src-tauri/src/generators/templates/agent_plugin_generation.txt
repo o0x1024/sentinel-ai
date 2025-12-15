@@ -10,6 +10,7 @@ Agent 工具插件应该：
 3. 遵循 Agent 工具插件接口
 4. 包含适当的错误处理和验证
 5. 使用 ToolOutput 接口返回结构化结果
+6. **在文件头部包含 `@sentinel_schema` 块声明输入参数的 JSON Schema**
 
 ## 关键原则
 
@@ -38,16 +39,44 @@ Agent 工具插件应该：
 
 ## Agent 工具插件接口（必需结构）
 
-你生成的 Agent 工具插件**必须**实现以下 TypeScript 接口：
+你生成的 Agent 工具插件**必须**包含以下结构：
+
+### 1. 头部 Schema 块（必需）
+
+在插件代码最前面添加 `@sentinel_schema` 块，声明输入参数的 JSON Schema：
 
 ```typescript
-// 工具输入接口 - 根据你的工具需求自定义
+/* @sentinel_schema
+{
+    "type": "object",
+    "required": ["target"],
+    "properties": {
+        "target": {
+            "type": "string",
+            "description": "目标URL或主机地址"
+        },
+        "timeout": {
+            "type": "integer",
+            "default": 5000,
+            "description": "超时时间（毫秒）"
+        },
+        "options": {
+            "type": "object",
+            "description": "额外选项"
+        }
+    }
+}
+*/
+```
+
+### 2. TypeScript 接口和实现
+
+```typescript
+// 工具输入接口 - 与上面的 schema 保持一致
 interface ToolInput {
-    [key: string]: any;
-    // 常用字段（可选）:
-    // target?: string;
-    // options?: Record<string, any>;
-    // context?: Record<string, any>;
+    target: string;
+    timeout?: number;
+    options?: Record<string, any>;
 }
 
 // 工具输出接口 - 标准化的结果结构
@@ -55,20 +84,16 @@ interface ToolOutput {
     success: boolean;           // 工具执行是否成功
     data?: any;                 // 工具特定的结果数据
     error?: string;             // 失败时的错误消息
-    // 可选字段:
-    // confidence?: "high" | "medium" | "low";
-    // evidence?: string[];
-    // metadata?: Record<string, any>;
 }
 
 // 主工具函数 - 实现工具逻辑
 export async function analyze(input: ToolInput): Promise<ToolOutput> {
     try {
         // 验证输入
-        if (!input) {
+        if (!input || !input.target) {
             return {
                 success: false,
-                error: "无效输入: input 是必需的"
+                error: "无效输入: target 是必需的"
             };
         }
         
@@ -92,24 +117,53 @@ export async function analyze(input: ToolInput): Promise<ToolOutput> {
 globalThis.analyze = analyze;
 ```
 
-### 上下文对象示例
+### 完整示例：端口扫描工具
 
 ```typescript
-// 端口扫描工具的输入示例
-interface PortScanInput extends ToolInput {
+/* @sentinel_schema
+{
+    "type": "object",
+    "required": ["target"],
+    "properties": {
+        "target": {
+            "type": "string",
+            "description": "目标主机地址（IP或域名）"
+        },
+        "ports": {
+            "type": "string",
+            "default": "80,443,22,21",
+            "description": "要扫描的端口列表，逗号分隔"
+        },
+        "timeout": {
+            "type": "integer",
+            "default": 3000,
+            "description": "每个端口的超时时间（毫秒）"
+        }
+    }
+}
+*/
+
+interface ToolInput {
     target: string;
     ports?: string;
     timeout?: number;
 }
 
-// 端口扫描工具的输出示例
-interface PortScanOutput extends ToolOutput {
+interface ToolOutput {
+    success: boolean;
     data?: {
         open_ports: number[];
         closed_ports: number[];
         scan_duration: number;
     };
+    error?: string;
 }
+
+export async function analyze(input: ToolInput): Promise<ToolOutput> {
+    // 工具实现...
+}
+
+globalThis.analyze = analyze;
 ```
 
 ### 可用 API
@@ -153,9 +207,27 @@ Deno.core.ops.op_plugin_log('error', '发生错误');
 只返回用 markdown 代码块包裹的 TypeScript 插件代码：
 
 ```typescript
-// 你的完整 Agent 工具插件代码
+/* @sentinel_schema
+{
+    "type": "object",
+    "required": ["target"],
+    "properties": {
+        "target": {
+            "type": "string",
+            "description": "目标地址"
+        },
+        "option1": {
+            "type": "string",
+            "default": "default_value",
+            "description": "选项1的描述"
+        }
+    }
+}
+*/
+
 interface ToolInput {
-    [key: string]: any;
+    target: string;
+    option1?: string;
 }
 
 interface ToolOutput {
@@ -166,10 +238,17 @@ interface ToolOutput {
 
 export async function analyze(input: ToolInput): Promise<ToolOutput> {
     try {
+        // 验证输入
+        if (!input || !input.target) {
+            return { success: false, error: "target is required" };
+        }
+        
         // 你的工具逻辑
         return {
             success: true,
-            data: { /* 你的结果 */ }
+            data: {
+                // 你的结果
+            }
         };
     } catch (error) {
         return {
@@ -184,11 +263,13 @@ globalThis.analyze = analyze;
 ```
 
 **要求**:
-1. 包含解释工具逻辑的详细注释
-2. 使用正确的 TypeScript 类型
-3. 优雅地处理边界情况和错误
-4. 返回带有 success/error 状态的结构化 ToolOutput
-5. 包含输入参数验证
-6. **必须在末尾包含 globalThis 导出**
+1. **必须在文件开头包含 `@sentinel_schema` 块** - 这是 AI 和工作流系统理解工具参数的关键
+2. Schema 块中的 `properties` 必须包含每个参数的 `description` 字段
+3. 包含解释工具逻辑的详细注释
+4. 使用正确的 TypeScript 类型
+5. 优雅地处理边界情况和错误
+6. 返回带有 success/error 状态的结构化 ToolOutput
+7. 包含输入参数验证
+8. **必须在末尾包含 globalThis 导出**
 
 现在生成 Agent 工具插件。

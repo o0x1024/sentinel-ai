@@ -4,21 +4,21 @@
         <div class="card bg-base-100 shadow-xl mb-4">
             <div class="card-body py-3">
                 <div class="flex justify-between items-center">
-                    <h3 class="card-title text-lg">执行流程图</h3>
+                    <h3 class="card-title text-lg">{{ t('passiveScan.workflowStudio.flowchart.toolbar.title') }}</h3>
 
                     <div class="flex gap-2">
                         <!-- 新建按钮 -->
-                        <button class="btn btn-sm btn-outline" @click="onNewWorkflow" title="新建工作流">
+                        <button class="btn btn-sm btn-outline" @click="onNewWorkflow" :title="t('passiveScan.workflowStudio.flowchart.toolbar.newWorkflowTooltip')">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                             </svg>
-                            新建
+                            {{ t('passiveScan.workflowStudio.flowchart.toolbar.newWorkflow') }}
                         </button>
 
                         <!-- AI生成按钮 -->
-                        <button class="btn btn-sm btn-outline btn-secondary" @click="openAiGenerateModal" title="通过自然语言生成工作流">
+                        <button class="btn btn-sm btn-outline btn-secondary" @click="openAiGenerateModal" :title="t('passiveScan.workflowStudio.flowchart.toolbar.aiGenerateTooltip')">
                             <i class="fas fa-magic mr-1"></i>
-                            AI生成
+                            {{ t('passiveScan.workflowStudio.flowchart.toolbar.aiGenerate') }}
                         </button>
 
                         <!-- 缩放控制 -->
@@ -53,22 +53,22 @@
 
                         <!-- 重置视图 -->
                         <button class="btn btn-sm btn-outline" @click="resetView">
-                            重置视图
+                            {{ t('passiveScan.workflowStudio.flowchart.toolbar.resetView') }}
                         </button>
 
                         <!-- 一键整理节点 -->
-                        <button class="btn btn-sm btn-outline" @click="arrangeNodes" title="自动整理节点布局">
-                            整理节点
+                        <button class="btn btn-sm btn-outline" @click="arrangeNodes" :title="t('passiveScan.workflowStudio.flowchart.toolbar.arrangeNodesTooltip')">
+                            {{ t('passiveScan.workflowStudio.flowchart.toolbar.arrangeNodes') }}
                         </button>
 
                         <!-- 撤销/重做 -->
                         <div class="join">
-                            <button class="btn btn-sm join-item" @click="undo" :disabled="!canUndo" title="撤销 (Ctrl+Z)">
+                            <button class="btn btn-sm join-item" @click="undo" :disabled="!canUndo" :title="t('passiveScan.workflowStudio.flowchart.toolbar.undoTooltip')">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
                                 </svg>
                             </button>
-                            <button class="btn btn-sm join-item" @click="redo" :disabled="!canRedo" title="重做 (Ctrl+Y)">
+                            <button class="btn btn-sm join-item" @click="redo" :disabled="!canRedo" :title="t('passiveScan.workflowStudio.flowchart.toolbar.redoTooltip')">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" />
                                 </svg>
@@ -76,11 +76,11 @@
                         </div>
 
                         <!-- 删除连接 -->
-                        <button class="btn btn-sm btn-outline" @click="toggleDeleteConnectionMode" :class="{ 'btn-error': deleteConnectionMode }" title="点击连接线删除">
+                        <button class="btn btn-sm btn-outline" @click="toggleDeleteConnectionMode" :class="{ 'btn-error': deleteConnectionMode }" :title="t('passiveScan.workflowStudio.flowchart.toolbar.deleteConnectionTooltip')">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
-                            删除连接
+                            {{ t('passiveScan.workflowStudio.flowchart.toolbar.deleteConnection') }}
                         </button>
                     </div>
                 </div>
@@ -102,9 +102,9 @@
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto mb-4 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        <p class="text-lg font-semibold mb-2">画布为空</p>
-                        <p class="text-sm">从左侧节点库拖拽节点到这里开始创建工作流</p>
-                        <p class="text-xs mt-2">提示：按住 Shift 键拖拽可以平移画布</p>
+                        <p class="text-lg font-semibold mb-2">{{ t('passiveScan.workflowStudio.flowchart.emptyState.title') }}</p>
+                        <p class="text-sm">{{ t('passiveScan.workflowStudio.flowchart.emptyState.description') }}</p>
+                        <p class="text-xs mt-2">{{ t('passiveScan.workflowStudio.flowchart.emptyState.tip') }}</p>
                     </div>
                 </div>
                 
@@ -151,7 +151,7 @@
                     <!-- 输入端口 -->
                     <div class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col gap-1">
                         <div 
-                            v-for="port in node.metadata?.input_ports || [{id: 'in', name: '输入'}]" 
+                            v-for="port in node.metadata?.input_ports || [{id: 'in', name: t('passiveScan.workflowStudio.flowchart.ports.input') }]" 
                             :key="port.id"
                             class="port port-input w-3 h-3 rounded-full bg-primary border-2 border-white cursor-pointer hover:scale-125 transition-transform"
                             :class="{ 'ring-2 ring-success': isDraggingConnection && hover_port?.nodeId === node.id && hover_port?.portId === port.id }"
@@ -164,7 +164,7 @@
                     </div>
                     
                     <!-- 断点标记 -->
-                    <div v-if="breakpoints.has(node.id)" class="absolute -top-2 -left-2 w-4 h-4 rounded-full bg-error flex items-center justify-center z-10" title="断点">
+                    <div v-if="breakpoints.has(node.id)" class="absolute -top-2 -left-2 w-4 h-4 rounded-full bg-error flex items-center justify-center z-10" :title="t('passiveScan.workflowStudio.flowchart.breakpoints.title')">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-white" fill="currentColor" viewBox="0 0 24 24">
                             <circle cx="12" cy="12" r="10" />
                         </svg>
@@ -190,7 +190,7 @@
                     <!-- 输出端口 -->
                     <div class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 flex flex-col gap-1">
                         <div 
-                            v-for="port in node.metadata?.output_ports || [{id: 'out', name: '输出'}]" 
+                            v-for="port in node.metadata?.output_ports || [{id: 'out', name: t('passiveScan.workflowStudio.flowchart.ports.output') }]" 
                             :key="port.id"
                             class="port port-output w-3 h-3 rounded-full bg-secondary border-2 border-white cursor-pointer hover:scale-125 transition-transform"
                             :class="{ 'ring-2 ring-success': isDraggingConnection && dragConnectionStart?.nodeId === node.id && dragConnectionStart?.portId === port.id }"
@@ -227,7 +227,7 @@
 
 
             </div>
-            <button v-if="isFullscreen" class="btn btn-sm btn-outline absolute top-2 right-2" @click="toggleFullscreen">退出全屏</button>
+            <button v-if="isFullscreen" class="btn btn-sm btn-outline absolute top-2 right-2" @click="toggleFullscreen">{{ t('passiveScan.workflowStudio.flowchart.toolbar.exitFullscreen') }}</button>
         </div>
 
         <!-- 右键菜单 -->
@@ -247,19 +247,19 @@
         <dialog :class="['modal', { 'modal-open': showAiGenerateModal }]">
             <div class="modal-box max-w-2xl">
                 <div class="flex justify-between items-center mb-3">
-                    <h3 class="font-bold text-lg">AI生成工作流</h3>
+                    <h3 class="font-bold text-lg">{{ t('passiveScan.workflowStudio.flowchart.aiGenerate.title') }}</h3>
                     <button class="btn btn-sm btn-ghost" @click="closeAiGenerateModal">✕</button>
                 </div>
                 <div class="space-y-3">
                     <div class="alert alert-info">
                         <i class="fas fa-info-circle"></i>
-                        <span>用自然语言描述你想要的流程，例如：先子域名扫描，再端口扫描，最后用AI分析结果并生成报告。</span>
+                        <span>{{ t('passiveScan.workflowStudio.flowchart.aiGenerate.help') }}</span>
                     </div>
-                    <textarea
+                        <textarea
                         v-model="aiGenerateText"
                         class="textarea textarea-bordered w-full font-mono text-sm"
                         rows="6"
-                        placeholder="请输入工作流描述..."
+                        :placeholder="t('passiveScan.workflowStudio.flowchart.aiGenerate.placeholder')"
                         spellcheck="false"
                     ></textarea>
                     <div v-if="aiGenerateError" class="alert alert-error text-sm">
@@ -268,11 +268,11 @@
                     </div>
                 </div>
                 <div class="modal-action">
-                    <button class="btn" @click="closeAiGenerateModal" :disabled="isAiGenerating">取消</button>
+                    <button class="btn" @click="closeAiGenerateModal" :disabled="isAiGenerating">{{ t('passiveScan.workflowStudio.flowchart.aiGenerate.cancel') }}</button>
                     <button class="btn btn-primary" @click="generateWorkflowFromNl" :disabled="isAiGenerating || !aiGenerateText.trim()">
                         <i v-if="isAiGenerating" class="fas fa-spinner fa-spin mr-1"></i>
                         <i v-else class="fas fa-magic mr-1"></i>
-                        生成并加载
+                        {{ t('passiveScan.workflowStudio.flowchart.aiGenerate.generateAndLoad') }}
                     </button>
                 </div>
             </div>
@@ -284,7 +284,9 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { CSSProperties } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 
 defineOptions({
   name: 'Flowchartvisualization'
@@ -531,16 +533,16 @@ const getConnectionClass = computed(() => (connection: FlowchartConnection) => {
 
 // 方法
 const getStatusText = (status: NodeStatus): string => {
-    const statusMap = {
-        pending: '待执行',
-        planning: '规划中',
-        running: '执行中',
-        completed: '已完成',
-        failed: '失败',
-        paused: '已暂停',
-        cancelled: '已取消'
+    switch (status) {
+        case 'pending': return t('passiveScan.workflowStudio.flowchart.status.pending')
+        case 'planning': return t('passiveScan.workflowStudio.flowchart.status.planning')
+        case 'running': return t('passiveScan.workflowStudio.flowchart.status.running')
+        case 'completed': return t('passiveScan.workflowStudio.flowchart.status.completed')
+        case 'failed': return t('passiveScan.workflowStudio.flowchart.status.failed')
+        case 'paused': return t('passiveScan.workflowStudio.flowchart.status.paused')
+        case 'cancelled': return t('passiveScan.workflowStudio.flowchart.status.cancelled')
+        default: return status
     }
-    return statusMap[status] || status
 }
 
 const initializeFlowchart = () => {
@@ -569,15 +571,17 @@ const showNodeContextMenu = (node: FlowchartNode, event: MouseEvent) => {
     contextMenu.node = node
     contextMenu.items = [
         { 
-            label: hasBreakpoint ? '移除断点' : '添加断点', 
+            label: hasBreakpoint
+                ? t('passiveScan.workflowStudio.flowchart.contextMenu.removeBreakpoint')
+                : t('passiveScan.workflowStudio.flowchart.contextMenu.addBreakpoint'),
             action: () => toggleBreakpoint(node.id) 
         },
         { 
-            label: '复制节点', 
+            label: t('passiveScan.workflowStudio.flowchart.contextMenu.duplicateNode'),
             action: () => duplicateNode(node) 
         },
         { 
-            label: '删除节点', 
+            label: t('passiveScan.workflowStudio.flowchart.contextMenu.deleteNode'),
             action: () => removeNode(node.id),
             danger: true
         }
@@ -611,7 +615,7 @@ const duplicateNode = (node: FlowchartNode) => {
         id: `node_${Date.now()}`,
         x: node.x + 50,
         y: node.y + 50,
-        name: `${node.name} (副本)`
+        name: t('passiveScan.workflowStudio.flowchart.contextMenu.duplicateNodeName', { name: node.name })
     }
     saveHistory()
     nodes.value.push(newNode)
@@ -1226,7 +1230,7 @@ const closeAiGenerateModal = () => {
 
 const applyWorkflowGraph = (graph: any) => {
     if (!graph?.nodes || !Array.isArray(graph.nodes)) {
-        throw new Error('生成结果缺少 nodes')
+        throw new Error(t('passiveScan.workflowStudio.flowchart.aiGenerate.missingNodesError'))
     }
     const deps: Record<string, string[]> = {}
     const edges = Array.isArray(graph.edges) ? graph.edges : []

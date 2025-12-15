@@ -6,7 +6,7 @@
         <div class="flex items-center gap-2">
           <span class="text-sm font-semibold">Proxifier</span>
           <div class="badge badge-sm" :class="isEnabled ? 'badge-success' : 'badge-ghost'">
-            {{ isEnabled ? '运行中' : '已停止' }}
+            {{ isEnabled ? $t('passiveScan.proxifierPanel.statusRunning') : $t('passiveScan.proxifierPanel.statusStopped') }}
           </div>
         </div>
         <div class="divider divider-horizontal mx-0"></div>
@@ -17,7 +17,7 @@
           :disabled="isToggling"
         >
           <i :class="['fas', isToggling ? 'fa-spinner fa-spin' : (isEnabled ? 'fa-stop' : 'fa-play'), 'mr-1']"></i>
-          {{ isEnabled ? '停止' : '启动' }}
+          {{ isEnabled ? $t('passiveScan.proxifierPanel.stop') : $t('passiveScan.proxifierPanel.start') }}
         </button>
       </div>
       <div class="flex-none flex items-center gap-2">
@@ -60,20 +60,20 @@
           <table class="table table-xs table-pin-rows">
             <thead>
               <tr class="bg-base-200">
-                <th class="w-32">应用</th>
-                <th class="w-64">目标</th>
-                <th class="w-28">时间/状态</th>
-                <th class="w-40">规则 : 代理</th>
-                <th class="w-20 text-right">发送</th>
-                <th class="w-20 text-right">接收</th>
+                <th class="w-32">{{ $t('passiveScan.proxifierPanel.application') }}</th>
+                <th class="w-64">{{ $t('passiveScan.proxifierPanel.target') }}</th>
+                <th class="w-28">{{ $t('passiveScan.proxifierPanel.timeOrStatus') }}</th>
+                <th class="w-40">{{ $t('passiveScan.proxifierPanel.ruleProxy') }}</th>
+                <th class="w-20 text-right">{{ $t('passiveScan.proxifierPanel.sent') }}</th>
+                <th class="w-20 text-right">{{ $t('passiveScan.proxifierPanel.received') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="connections.length === 0">
                 <td colspan="6" class="text-center text-base-content/50 py-8">
                   <i class="fas fa-plug text-2xl mb-2 block"></i>
-                  暂无连接
-                  <p class="text-xs mt-2">启动 Proxifier 后，将显示通过代理的连接</p>
+                  {{ $t('passiveScan.proxifierPanel.noConnections') }}
+                  <p class="text-xs mt-2">{{ $t('passiveScan.proxifierPanel.startProxifierToShow') }}</p>
                 </td>
               </tr>
               <tr 
@@ -144,7 +144,7 @@
             <span :class="getLogClass(log.type)">{{ log.message }}</span>
           </div>
           <div v-if="logs.length === 0" class="text-center text-base-content/50 py-4">
-            暂无日志
+            {{ $t('passiveScan.proxifierPanel.noLogs') }}
           </div>
         </div>
       </div>
@@ -171,33 +171,35 @@
           <div class="p-3 border-b border-base-300">
             <h3 class="font-semibold text-sm flex items-center gap-2">
               <i class="fas fa-shield-alt text-primary"></i>
-              pf 透明代理
+              {{ $t('passiveScan.proxifierPanel.transparentProxy') }}
             </h3>
           </div>
 
           <div class="p-4 space-y-4">
 
             <div class="bg-base-200 rounded-lg p-3">
-              <h4 class="text-xs font-semibold text-base-content/70 mb-2">透明代理状态</h4>
+              <h4 class="text-xs font-semibold text-base-content/70 mb-2">
+                {{ $t('passiveScan.proxifierPanel.transparentProxyStatus') }}
+              </h4>
               <div class="space-y-2 text-sm">
                 <div class="flex justify-between items-center">
-                  <span>状态</span>
+                  <span>{{ $t('passiveScan.proxifierPanel.status') }}</span>
                   <span :class="transparentProxy.enabled ? 'text-success' : 'text-base-content/50'">
-                    {{ transparentProxy.enabled ? '运行中' : '已停止' }}
+                    {{ transparentProxy.enabled ? $t('passiveScan.proxifierPanel.running') : $t('passiveScan.proxifierPanel.stopped') }}
                   </span>
                 </div>
                 <div class="flex justify-between items-center">
-                  <span>pf 防火墙</span>
+                  <span>{{ $t('passiveScan.proxifierPanel.pfFirewall') }}</span>
                   <span :class="transparentProxy.pfEnabled ? 'text-success' : 'text-base-content/50'">
-                    {{ transparentProxy.pfEnabled ? '已启用' : '未启用' }}
+                    {{ transparentProxy.pfEnabled ? $t('passiveScan.proxifierPanel.enabled') : $t('passiveScan.proxifierPanel.disabled') }}
                   </span>
                 </div>
                 <div v-if="transparentProxy.enabled" class="flex justify-between items-center">
-                  <span>代理端口</span>
+                  <span>{{ $t('passiveScan.proxifierPanel.proxyPort') }}</span>
                   <span class="text-info">{{ transparentProxy.proxyPort }}</span>
                 </div>
                 <div v-if="transparentProxy.enabled && transparentProxy.redirectPorts.length > 0" class="flex justify-between items-center">
-                  <span>重定向端口</span>
+                  <span>{{ $t('passiveScan.proxifierPanel.redirectPorts') }}</span>
                   <span class="text-info">{{ transparentProxy.redirectPorts.join(', ') }}</span>
                 </div>
               </div>
@@ -207,7 +209,7 @@
             <div class="space-y-3">
               <div class="form-control">
                 <label class="label py-1">
-                  <span class="label-text text-sm">代理端口</span>
+                  <span class="label-text text-sm">{{ $t('passiveScan.proxifierPanel.proxyPort') }}</span>
                 </label>
                 <input 
                   type="number" 
@@ -220,7 +222,7 @@
 
               <div class="form-control">
                 <label class="label py-1">
-                  <span class="label-text text-sm">重定向端口（逗号分隔）</span>
+                  <span class="label-text text-sm">{{ $t('passiveScan.proxifierPanel.redirectPorts') }}</span>
                 </label>
                 <input 
                   type="text" 
@@ -239,7 +241,7 @@
                   :disabled="isTransparentProxyStarting"
                 >
                   <i :class="['fas mr-1', isTransparentProxyStarting ? 'fa-spinner fa-spin' : 'fa-play']"></i>
-                  启动透明代理
+                  {{ $t('passiveScan.proxifierPanel.startTransparentProxy') }}
                 </button>
                 <button 
                   v-else
@@ -248,7 +250,7 @@
                   :disabled="isTransparentProxyStarting"
                 >
                   <i :class="['fas mr-1', isTransparentProxyStarting ? 'fa-spinner fa-spin' : 'fa-stop']"></i>
-                  停止透明代理
+                  {{ $t('passiveScan.proxifierPanel.stopTransparentProxy') }}
                 </button>
               </div>
             </div>
@@ -257,9 +259,9 @@
             <div class="alert alert-info text-xs">
               <i class="fas fa-info-circle"></i>
               <div>
-                <p><strong>透明代理</strong> 会自动设置 macOS 系统代理，将 HTTP/HTTPS 流量转发到本地代理服务器。</p>
-                <p class="mt-1">启动后，系统偏好设置中的网络代理会被自动配置。</p>
-                <p class="mt-1">停止时会自动清除系统代理设置。</p>
+                <p><strong>{{ $t('passiveScan.proxifierPanel.transparentProxy') }}</strong> {{ $t('passiveScan.proxifierPanel.transparentProxyDesc') }}</p>
+                <p class="mt-1">{{ $t('passiveScan.proxifierPanel.startTransparentProxyDesc') }}</p>
+                <p class="mt-1">{{ $t('passiveScan.proxifierPanel.stopTransparentProxyDesc') }}</p>
               </div>
             </div>
 
@@ -267,10 +269,10 @@
             <div v-if="transparentProxy.enabled" class="bg-base-200 rounded-lg p-3">
               <h4 class="text-xs font-semibold text-base-content/70 mb-2 flex items-center gap-2">
                 <i class="fab fa-node-js text-success"></i>
-                Electron / Node.js 应用
+                {{ $t('passiveScan.proxifierPanel.electronNodeJsApp') }}
               </h4>
               <p class="text-xs text-base-content/70 mb-2">
-                部分应用（如 Electron）不遵循系统代理，需要手动设置环境变量：
+                {{ $t('passiveScan.proxifierPanel.electronNodeJsAppDesc') }}
               </p>
               <div class="bg-base-300 rounded p-2 font-mono text-xs mb-2 break-all">
                 export HTTP_PROXY=http://127.0.0.1:{{ transparentProxy.proxyPort }}<br>
@@ -281,13 +283,13 @@
                 @click="copyProxyEnvCommand"
               >
                 <i class="fas fa-copy mr-1"></i>
-                复制命令
+                {{ $t('passiveScan.proxifierPanel.copyEnvCommand') }}
               </button>
               
               <div class="divider my-2"></div>
               
               <p class="text-xs text-base-content/70 mb-2">
-                或者使用以下命令启动 Electron 应用：
+                {{ $t('passiveScan.proxifierPanel.startElectronAppDesc') }}
               </p>
               <div class="bg-base-300 rounded p-2 font-mono text-xs break-all">
                 /path/to/app --proxy-server=http://127.0.0.1:{{ transparentProxy.proxyPort }}

@@ -431,6 +431,21 @@ impl TakeoverManager {
         &self.session
     }
 
+    /// Push a user message to guide the next exploration decisions.
+    pub fn push_user_message(&mut self, message: String) {
+        let msg = message.trim();
+        if msg.is_empty() {
+            return;
+        }
+        self.session.user_messages.push(msg.to_string());
+        info!("User message queued for VisionExplorer ({} chars)", msg.len());
+    }
+
+    /// Drain all pending user messages (clears the queue).
+    pub fn drain_user_messages(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.session.user_messages)
+    }
+
     // ========== 登录检测与凭据处理 ==========
 
     /// 请求用户接管（因登录需求）
@@ -440,11 +455,18 @@ impl TakeoverManager {
             return false;
         }
         
-        self.session.login_detected = true;
+        // NOTE:
+        // `login_detected` is used by the explorer loop to infer whether an automated login
+        // attempt has already happened (to avoid infinite retries).
+        // When we are merely waiting for the user to provide credentials, we MUST NOT set it to true,
+        // otherwise the next iteration will wrongly treat it as a "login attempt already happened"
+        // and report "login failed" immediately.
         self.session.status = TakeoverStatus::WaitingForUser;
         self.session.reason = Some(reason.to_string());
         self.session.started_at = Some(Utc::now());
         self.session.login_fields = fields;
+        self.session.login_retry_count = 0;
+        self.session.login_requested_at = Some(Utc::now());
         
         info!("Login takeover requested: {}", reason);
         true
@@ -483,10 +505,31 @@ impl TakeoverManager {
         self.session.login_detected
     }
 
+    /// 标记已检测到登录页面（等待 LLM 使用凭据登录）
+    pub fn mark_login_detected(&mut self) {
+        self.session.login_detected = true;
+        self.session.login_retry_count = 0;
+        info!("Login page detected, waiting for LLM to perform login");
+    }
+
     /// 清除登录检测状态（登录成功后调用）
     pub fn clear_login_detected(&mut self) {
         self.session.login_detected = false;
-        info!("Login detection cleared - login successful");
+        self.session.login_retry_count = 0;
+        info!("Login detection cleared");
+    }
+
+    pub fn increment_login_retry(&mut self) -> u32 {
+        self.session.login_retry_count = self.session.login_retry_count.saturating_add(1);
+        self.session.login_retry_count
+    }
+
+    pub fn get_login_retry_count(&self) -> u32 {
+        self.session.login_retry_count
+    }
+
+    pub fn reset_login_retry_count(&mut self) {
+        self.session.login_retry_count = 0;
     }
 
     /// 获取凭据摘要（用于 LLM 上下文，不泄露密码）
@@ -513,6 +556,49 @@ impl TakeoverManager {
             
             info
         })
+    }
+
+    // ========== 跳过登录 ==========
+
+    /// 用户选择跳过登录
+    pub fn mark_login_skipped(&mut self) {
+        self.session.login_skipped = true;
+        self.session.login_requested_at = None;
+
+        self.push_user_message(
+            "No credentials are available. Skip login and continue exploring any publicly accessible pages. Do not ask for credentials again."
+                .to_string(),
+        );
+
+        info!("Login skipped by user; continuing exploration without credentials");
+    }
+
+    /// 检查用户是否选择跳过登录
+    pub fn is_login_skipped(&self) -> bool {
+        self.session.login_skipped
+    }
+
+    /// 检查登录等待是否超时（默认 30 秒）
+    pub fn is_login_timeout(&self, timeout_secs: i64) -> bool {
+        if let Some(requested_at) = self.session.login_requested_at {
+            let elapsed = Utc::now().signed_duration_since(requested_at).num_seconds();
+            elapsed >= timeout_secs
+        } else {
+            false
+        }
+    }
+
+    /// 自动跳过登录（超时触发）
+    pub fn auto_skip_login(&mut self) {
+        self.session.login_skipped = true;
+        self.session.login_requested_at = None;
+
+        self.push_user_message(
+            "Credentials input timed out. Skipping login and continuing with publicly accessible pages."
+                .to_string(),
+        );
+
+        info!("Login auto-skipped due to timeout; continuing exploration without credentials");
     }
 }
 

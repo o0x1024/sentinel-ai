@@ -216,7 +216,6 @@ export default {
     unsavedBadge: '未保存',
     toolbarContext: '{architecture} / {stage}',
     noTemplateSelected: '未选择模板',
-    preview: '预览',
     shortcuts: '快捷键：保存 ⌘/Ctrl+S · 激活 ⌘/Ctrl+Enter · 删除 ⌘/Ctrl+Backspace',
     groupMapping: 'Prompt 分组映射',
     currentGroup: '当前分组',
@@ -234,6 +233,105 @@ export default {
     groupNamePlaceholder: '例如：默认分组',
     groupCreateSuccess: '分组已创建',
     defaultGroupSet: '已设为默认分组',
+
+    // 新增翻译
+    categories: {
+      promptCategory: 'Prompt分类',
+      system: '系统级',
+      systemDesc: '系统提示模板',
+      application: '应用级',
+      applicationDesc: '应用特定的提示模板',
+      userDefined: '用户自定义',
+      userDefinedDesc: '用户创建的自定义模板',
+    },
+
+    systemPrompts: {
+      title: '创建系统提示',
+      description: '添加新的系统提示模板',
+      intentClassifier: '意图分析器',
+      generalSystemPrompt: '通用系统提示',
+    },
+
+    applicationPrompts: {
+      title: '应用级提示模板',
+      description: '管理应用特定的提示模板',
+      pluginGenPassive: '插件生成(被动扫描)',
+      pluginGenAgent: '插件生成(Agent工具)',
+      pluginFixPassive: '插件修复(被动扫描)',
+      pluginFixAgent: '插件修复(Agent工具)',
+      visionMultimodal: 'Vision多模态提示',
+      visionText: 'Vision文本模型提示',
+    },
+
+    userDefinedPrompts: {
+      title: '用户自定义模板',
+      description: '管理用户创建的自定义模板',
+    },
+
+    templateList: {
+      title: '模板列表',
+      count: '模板列表 ({count})',
+      enabled: '启用',
+      enabledTitle: '已启用',
+      empty: '暂无模板，点击"新建"创建',
+    },
+
+    editor: {
+      templateType: '模板类型',
+      priority: '优先级',
+      systemTemplate: '系统级模板',
+      enableTemplate: '启用此模板',
+      tags: '标签',
+      addTag: '添加',
+      addTagPlaceholder: '添加标签...',
+      variables: '变量',
+      addVariable: '添加',
+      addVariablePlaceholder: '变量名 (如: task_name)',
+      importDefault: '📥 导入默认prompt',
+      importDefaultTitle: '从应用数据目录的prompts文件夹导入默认内容',
+      importDefaultHint: '提示：默认prompt存储在应用数据目录的prompts文件夹中，可以手动编辑',
+    },
+
+    templateTypes: {
+      systemPrompt: '系统提示',
+      intentClassifier: '意图分析器',
+      planner: '规划器',
+      executor: '执行器',
+      replanner: '重规划器',
+      evaluator: '评估器',
+      reportGenerator: '报告生成器',
+      pluginGenPassive: '插件生成(被动扫描)',
+      pluginGenAgent: '插件生成(Agent工具)',
+      pluginFixPassive: '插件修复(被动扫描)',
+      pluginFixAgent: '插件修复(Agent工具)',
+      pluginVulnSpecific: '插件漏洞专用',
+      visionExplorerVision: 'VisionExplorer多模态提示',
+      visionExplorerText: 'VisionExplorer文本模型提示',
+      custom: '自定义',
+    },
+
+    preview: {
+      title: '预览',
+      variableRendering: '变量渲染',
+      realTimePreview: '实时预览',
+      sampleContext: '示例上下文 (JSON)',
+      sampleContextPlaceholder: '{"task_name": "端口扫描", "tools": "nmap, masscan", "target_info": "192.168.1.1"}',
+    },
+
+    messages: {
+      loading: 'Loading...',
+      ready: 'Ready',
+      selectOrCreate: '请先选择或创建一个模板',
+      loadingDefault: '正在加载默认prompt...',
+      confirmImport: '确认导入',
+      confirmImportMessage: '当前模板已有内容，是否覆盖？',
+      importSuccess: '已导入默认prompt',
+      importFailed: '导入失败: {error}',
+      contextJsonError: '上下文JSON格式不正确',
+      previewFailed: '预览失败: {error}',
+      templateSavedAndActivated: '模板已保存并激活，同类型的其他模板已自动取消激活',
+      templateSavedAndActivatedSimple: '模板已保存并激活',
+    },
   },
   aiChat: {
     title: 'AI 助手',
@@ -1061,7 +1159,7 @@ export default {
     endDate: '结束日期',
     status: '状态',
     budget: '预算',
-    
+
     scope: '范围',
     outOfScope: '超出范围',
     vulnerabilitiesFound: '发现漏洞',
@@ -1193,7 +1291,7 @@ export default {
 
   sidebar: {
     agentManager: 'Agent管理',
-    promptManagement:"提示词管理",
+    promptManagement: "提示词管理",
     dashboard: '总览',
     securityCenter: '安全中心',
     scanTasks: '扫描任务',
@@ -1208,35 +1306,37 @@ export default {
     plugins: '插件管理',
     pluginReview: '插件审核',
     ragManagement: '知识库管理',
-    
+
     smartAgent: '智能Agent控制台',
     aiAssistant: 'AI助手',
     settings: '系统设置',
     language: '语言设置',
     performance: '性能监控',
-    
+
     // 侧边栏区域标题
     coreFeatures: '核心功能',
     toolsManagement: '工具与管理',
     systemSettings: '系统设置',
-    
+
     // 任务状态
     currentTask: '当前任务',
     running: '运行中',
     remaining: '剩余',
     scanning: '扫描',
-    
+
     // 统计信息
     todayStats: '今日统计',
     vulnerabilitiesFound: '发现漏洞',
     completedTasks: '完成任务',
-    
+
     // 新增的翻译键值
     new: '新',
     vulnerabilityCount: '12',
 
     remainingTimeDefault: '2小时15分钟',
     intelligentTest: '智能安全测试',
+    workflowStudio: '工作流工作室',
+    notifications: '通知',
   },
   dictionary: {
     title: '字典管理',
@@ -1267,67 +1367,67 @@ export default {
     confirmClearDictionary: '确定要清空这个字典吗？',
     copyPostfix: ' (副本)',
     types: {
-        all: '全部',
-        subdomain: '子域名',
-        username: '用户名',
-        password: '密码',
-        path: '路径',
-        http_param: 'HTTP参数',
-        parameter: 'HTTP参数',
-        xss_payload: 'XSS载荷',
-        sql_injection_payload: 'SQL注入载荷',
-        sql_injection: 'SQL注入',
-        custom: '自定义'
-      },
-     serviceTypes: {
-        web: '网站服务',
-        ssh: 'SSH服务',
-        database: '数据库服务',
-        ftp: 'FTP服务',
-        email: '邮件服务',
-        generic: '通用服务'
-      },
-     createNew: '新建字典',
-     initBuiltin: '初始化内置字典',
-     builtin: '内置',
-     wordCount: '词条数',
-     lastUpdated: '最后更新',
-     viewWords: '查看词条',
-     manage: '管理',
-     editDictionary: '编辑字典',
-     createDictionary: '创建字典',
-     name: '字典名称',
-     namePlaceholder: '请输入字典名称',
-     description: '描述',
-     descriptionPlaceholder: '请输入字典描述',
-     type: '字典类型',
-     selectType: '选择类型',
-     serviceType: '服务类型',
-     selectServiceType: '选择服务类型（可选）',
-     isActive: '启用字典',
-     manageWords: '管理词条',
-     addWordPlaceholder: '输入新词条',
-     addWord: '添加',
-     searchWords: '搜索词条...',
-     word: '词条',
-     addedAt: '添加时间',
-     clearAll: '清空字典',
-     setDefault: '设为默认',
-     clearDefault: '清除默认',
-      // 额外键值
-      copyPrefix: '(副本)',
-      confirmDelete: '确定要删除这个字典吗？',
-      confirmClear: '确定要清空这个字典吗？',
-      importWords: '导入词条',
-      importFromText: '文本导入',
-      importFromFile: '文件导入',
-      pasteWords: '粘贴词条（每行一个）',
-      importTextPlaceholder: '每行输入一个词条...',
-      mergeModes: {
-        append: '追加（保留现有词条）',
-        replace: '替换（清空后导入）',
-        merge: '合并（去重）'
-      },
+      all: '全部',
+      subdomain: '子域名',
+      username: '用户名',
+      password: '密码',
+      path: '路径',
+      http_param: 'HTTP参数',
+      parameter: 'HTTP参数',
+      xss_payload: 'XSS载荷',
+      sql_injection_payload: 'SQL注入载荷',
+      sql_injection: 'SQL注入',
+      custom: '自定义'
+    },
+    serviceTypes: {
+      web: '网站服务',
+      ssh: 'SSH服务',
+      database: '数据库服务',
+      ftp: 'FTP服务',
+      email: '邮件服务',
+      generic: '通用服务'
+    },
+    createNew: '新建字典',
+    initBuiltin: '初始化内置字典',
+    builtin: '内置',
+    wordCount: '词条数',
+    lastUpdated: '最后更新',
+    viewWords: '查看词条',
+    manage: '管理',
+    editDictionary: '编辑字典',
+    createDictionary: '创建字典',
+    name: '字典名称',
+    namePlaceholder: '请输入字典名称',
+    description: '描述',
+    descriptionPlaceholder: '请输入字典描述',
+    type: '字典类型',
+    selectType: '选择类型',
+    serviceType: '服务类型',
+    selectServiceType: '选择服务类型（可选）',
+    isActive: '启用字典',
+    manageWords: '管理词条',
+    addWordPlaceholder: '输入新词条',
+    addWord: '添加',
+    searchWords: '搜索词条...',
+    word: '词条',
+    addedAt: '添加时间',
+    clearAll: '清空字典',
+    setDefault: '设为默认',
+    clearDefault: '清除默认',
+    // 额外键值
+    copyPrefix: '(副本)',
+    confirmDelete: '确定要删除这个字典吗？',
+    confirmClear: '确定要清空这个字典吗？',
+    importWords: '导入词条',
+    importFromText: '文本导入',
+    importFromFile: '文件导入',
+    pasteWords: '粘贴词条（每行一个）',
+    importTextPlaceholder: '每行输入一个词条...',
+    mergeModes: {
+      append: '追加（保留现有词条）',
+      replace: '替换（清空后导入）',
+      merge: '合并（去重）'
+    },
 
   },
   mcp: {
@@ -1418,20 +1518,20 @@ export default {
     exportReport: '导出报告',
     clone: '克隆',
     filters: {
-       all: '全部',
-       active: '活跃',
-       paused: '已暂停',
-       completed: '已完成',
-       failed: '失败'
-     },
-     statusLabels: {
-       pending: '等待中',
-       running: '运行中',
-       paused: '已暂停',
-       completed: '已完成',
-       failed: '失败',
-       stopped: '已停止'
-     },
+      all: '全部',
+      active: '活跃',
+      paused: '已暂停',
+      completed: '已完成',
+      failed: '失败'
+    },
+    statusLabels: {
+      pending: '等待中',
+      running: '运行中',
+      paused: '已暂停',
+      completed: '已完成',
+      failed: '失败',
+      stopped: '已停止'
+    },
     types: {
       comprehensive: '全面扫描',
       targeted: '目标扫描',
@@ -1443,31 +1543,31 @@ export default {
       vulnerability: '漏洞扫描'
     },
     stages: {
-       reconnaissance: '侦察阶段',
-       discovery: '发现阶段',
-       enumeration: '枚举阶段',
-       vulnerability_scanning: '漏洞扫描',
-       exploitation: '漏洞利用',
-       post_exploitation: '后渗透',
-       reporting: '报告生成',
-       subdomainDiscovery: '子域名发现',
-       portScanning: '端口扫描',
-       serviceDetection: '服务检测',
-       vulnerabilityScanning: '漏洞扫描',
-       aiAnalysis: 'AI分析'
-     },
+      reconnaissance: '侦察阶段',
+      discovery: '发现阶段',
+      enumeration: '枚举阶段',
+      vulnerability_scanning: '漏洞扫描',
+      exploitation: '漏洞利用',
+      post_exploitation: '后渗透',
+      reporting: '报告生成',
+      subdomainDiscovery: '子域名发现',
+      portScanning: '端口扫描',
+      serviceDetection: '服务检测',
+      vulnerabilityScanning: '漏洞扫描',
+      aiAnalysis: 'AI分析'
+    },
     form: {
-       sessionNamePlaceholder: '输入会话名称',
-       targetPlaceholder: '输入目标域名或IP',
-       selectType: '选择扫描类型',
-       enableSubdomains: '包含子域名',
-       maxDepth: '最大深度',
-       timeout: '超时时间（分钟）',
-       customConfig: '自定义配置',
-       submit: '创建会话',
-       cancel: '取消',
-       namePlaceholder: '输入会话名称'
-     },
+      sessionNamePlaceholder: '输入会话名称',
+      targetPlaceholder: '输入目标域名或IP',
+      selectType: '选择扫描类型',
+      enableSubdomains: '包含子域名',
+      maxDepth: '最大深度',
+      timeout: '超时时间（分钟）',
+      customConfig: '自定义配置',
+      submit: '创建会话',
+      cancel: '取消',
+      namePlaceholder: '输入会话名称'
+    },
     details: {
       sessionId: '会话ID',
       configuration: '配置信息',
@@ -1479,150 +1579,150 @@ export default {
       reports: '报告'
     },
     messages: {
-       sessionCreated: '会话创建成功',
-       sessionStarted: '会话启动成功',
-       sessionPaused: '会话已暂停',
-       sessionStopped: '会话已停止',
-       sessionDeleted: '会话已删除',
-       sessionCloned: '会话克隆成功',
-       reportExported: '报告导出成功',
-       operationFailed: '操作失败',
-       confirmDelete: '确定要删除此会话吗？此操作不可撤销。',
-       confirmStop: '确定要停止此会话吗？',
-       createFailed: '创建会话失败'
-     },
-     // 额外的字段标签
-     targetUrl: '目标URL',
-     scanType: '扫描类型',
-     scanDepth: '扫描深度',
-     maxConcurrency: '最大并发数',
-     enableAI: '启用AI分析',
-     autoOptimize: '自动优化',
-     configuration: '配置信息',
-     scanStages: '扫描阶段',
-     createdAt: '创建时间',
-     estimatedTime: '预计剩余时间',
-     domains: '域名',
-     ports: '端口',
-     paused: '已暂停',
-     viewReport: '查看报告',
-     export: '导出',
-     notifications: {
-       createFailed: '创建会话失败'
-     },
-     depth: {
-       shallow: '浅层扫描',
-       medium: '中等深度',
-       deep: '深度扫描'
-     }
+      sessionCreated: '会话创建成功',
+      sessionStarted: '会话启动成功',
+      sessionPaused: '会话已暂停',
+      sessionStopped: '会话已停止',
+      sessionDeleted: '会话已删除',
+      sessionCloned: '会话克隆成功',
+      reportExported: '报告导出成功',
+      operationFailed: '操作失败',
+      confirmDelete: '确定要删除此会话吗？此操作不可撤销。',
+      confirmStop: '确定要停止此会话吗？',
+      createFailed: '创建会话失败'
+    },
+    // 额外的字段标签
+    targetUrl: '目标URL',
+    scanType: '扫描类型',
+    scanDepth: '扫描深度',
+    maxConcurrency: '最大并发数',
+    enableAI: '启用AI分析',
+    autoOptimize: '自动优化',
+    configuration: '配置信息',
+    scanStages: '扫描阶段',
+    createdAt: '创建时间',
+    estimatedTime: '预计剩余时间',
+    domains: '域名',
+    ports: '端口',
+    paused: '已暂停',
+    viewReport: '查看报告',
+    export: '导出',
+    notifications: {
+      createFailed: '创建会话失败'
+    },
+    depth: {
+      shallow: '浅层扫描',
+      medium: '中等深度',
+      deep: '深度扫描'
+    }
   },
   agents: {
-     title: 'Agent管理',
-     description: '管理和监控智能Agent系统',
-     executeTask: '执行任务',
-     createWorkflow: '创建工作流',
-     intelligentTest: '智能测试',
-     initializing: '初始化Agent系统...',
-     refreshing: '刷新数据...',
-     initSuccess: 'Agent系统初始化成功',
-     initFailed: 'Agent系统初始化失败',
-     loadFailed: '加载数据失败',
-     refreshSuccess: '数据刷新成功',
-     taskExecuteSuccess: '任务执行成功',
-     taskExecuteFailed: '任务执行失败',
-     workflowCreateSuccess: '工作流创建并启动成功',
-     workflowCreateFailed: '工作流创建失败',
-     workflowActionSuccess: '工作流操作成功',
-     workflowActionFailed: '工作流操作失败',
-     intelligentTestStarted: '智能安全测试已启动',
-     intelligentTestFailed: '智能安全测试启动失败',
-     enterTarget: '请输入测试目标:',
-     paused: '暂停',
-     resumed: '恢复',
-     cancelled: '取消',
-     agentList: 'Agent列表',
-     workflowList: '工作流列表',
-     
-     // Agent类型和状态
-     legacyAgent: '传统Agent',
-     universalAgent: '通用Agent',
-     active: '活跃',
-     inactive: '未激活',
-     universalSystem: '通用系统',
-     initUniversalSystem: '初始化通用系统',
-     noAgents: '暂无Agent',
-     ready: '就绪',
-     stats: {
-       totalAgents: '总Agent数',
-       totalTasks: '总任务数',
-       successRate: '成功率',
-       avgExecutionTime: '平均执行时间'
-     },
-     table: {
-       name: '名称',
-       type: '类型',
-       status: '状态',
-       totalTasks: '总任务',
-       successRate: '成功率',
-       avgTime: '平均时间',
-       lastActivity: '最后活动',
-       actions: '操作'
-     },
-     workflow: {
-       name: '名称',
-       target: '目标',
-       status: '状态',
-       progress: '进度',
-       tasks: '任务',
-       created: '创建时间',
-       actions: '操作',
-       currentStage: '当前阶段',
-       total: '总计',
-       completed: '完成',
-       failed: '失败',
-       createAndStart: '创建并启动',
-       form: {
-         name: '工作流名称',
-         target: '目标',
-         riskTolerance: '风险容忍度',
-         timeLimit: '时间限制 (秒)'
-       }
-     },
-     form: {
-       agentType: 'Agent类型',
-       selectAgent: '选择Agent',
-       selectFactory: '选择Agent工厂',
-       taskType: '任务类型',
-       target: '目标',
-       parameters: '参数 (JSON)',
-       priority: '优先级',
-       pleaseSelect: '请选择...'
-     },
-     
-     taskTypes: {
-       reconnaissance: '侦察',
-       scanning: '扫描',
-       exploitation: '利用',
-       reporting: '报告'
-     },
-     
-     priority: {
-       low: '低',
-       normal: '普通',
-       high: '高',
-       critical: '紧急'
-     },
-     
-     risk: {
-       low: '低',
-       medium: '中',
-       high: '高'
-     },
-     
-         createCustomAgent: '创建自定义Agent',
+    title: 'Agent管理',
+    description: '管理和监控智能Agent系统',
+    executeTask: '执行任务',
+    createWorkflow: '创建工作流',
+    intelligentTest: '智能测试',
+    initializing: '初始化Agent系统...',
+    refreshing: '刷新数据...',
+    initSuccess: 'Agent系统初始化成功',
+    initFailed: 'Agent系统初始化失败',
+    loadFailed: '加载数据失败',
+    refreshSuccess: '数据刷新成功',
+    taskExecuteSuccess: '任务执行成功',
+    taskExecuteFailed: '任务执行失败',
+    workflowCreateSuccess: '工作流创建并启动成功',
+    workflowCreateFailed: '工作流创建失败',
+    workflowActionSuccess: '工作流操作成功',
+    workflowActionFailed: '工作流操作失败',
+    intelligentTestStarted: '智能安全测试已启动',
+    intelligentTestFailed: '智能安全测试启动失败',
+    enterTarget: '请输入测试目标:',
+    paused: '暂停',
+    resumed: '恢复',
+    cancelled: '取消',
+    agentList: 'Agent列表',
+    workflowList: '工作流列表',
+
+    // Agent类型和状态
+    legacyAgent: '传统Agent',
+    universalAgent: '通用Agent',
+    active: '活跃',
+    inactive: '未激活',
+    universalSystem: '通用系统',
+    initUniversalSystem: '初始化通用系统',
+    noAgents: '暂无Agent',
+    ready: '就绪',
+    stats: {
+      totalAgents: '总Agent数',
+      totalTasks: '总任务数',
+      successRate: '成功率',
+      avgExecutionTime: '平均执行时间'
+    },
+    table: {
+      name: '名称',
+      type: '类型',
+      status: '状态',
+      totalTasks: '总任务',
+      successRate: '成功率',
+      avgTime: '平均时间',
+      lastActivity: '最后活动',
+      actions: '操作'
+    },
+    workflow: {
+      name: '名称',
+      target: '目标',
+      status: '状态',
+      progress: '进度',
+      tasks: '任务',
+      created: '创建时间',
+      actions: '操作',
+      currentStage: '当前阶段',
+      total: '总计',
+      completed: '完成',
+      failed: '失败',
+      createAndStart: '创建并启动',
+      form: {
+        name: '工作流名称',
+        target: '目标',
+        riskTolerance: '风险容忍度',
+        timeLimit: '时间限制 (秒)'
+      }
+    },
+    form: {
+      agentType: 'Agent类型',
+      selectAgent: '选择Agent',
+      selectFactory: '选择Agent工厂',
+      taskType: '任务类型',
+      target: '目标',
+      parameters: '参数 (JSON)',
+      priority: '优先级',
+      pleaseSelect: '请选择...'
+    },
+
+    taskTypes: {
+      reconnaissance: '侦察',
+      scanning: '扫描',
+      exploitation: '利用',
+      reporting: '报告'
+    },
+
+    priority: {
+      low: '低',
+      normal: '普通',
+      high: '高',
+      critical: '紧急'
+    },
+
+    risk: {
+      low: '低',
+      medium: '中',
+      high: '高'
+    },
+
+    createCustomAgent: '创建自定义Agent',
     customAgentCreated: '自定义Agent创建成功',
     type: '类型'
- },
+  },
 
   // ReAct 架构
   react: {
@@ -1642,10 +1742,10 @@ export default {
   aiAssistant: {
     generating: '',
     conversationHistory: '会话历史',
-    untitledConversation:"未命名会话",
-    currentSession:"当前会话",
+    untitledConversation: "未命名会话",
+    currentSession: "当前会话",
     noAgents: '暂无Agent',
-    selectAgent:"选择Agent",
+    selectAgent: "选择Agent",
     selectRole: '选择角色',
     manageRoles: '管理角色',
     availableRoles: '可用角色',
@@ -1693,7 +1793,7 @@ export default {
       maxConcurrentTasks: '最大并发任务'
     }
   },
-  
+
   plugins: {
     title: '插件管理',
     description: '管理和配置安全测试插件',
@@ -1770,6 +1870,9 @@ export default {
     codeQuality: '代码质量',
     validationResult: '验证结果',
     codeEditor: '代码编辑器',
+    favorited: '已收藏',
+    allPlugins: '全部插件',
+    agentInputs: '插件入参 (JSON)',
     review: {
       pending: '待审核',
       approved: '已通过',

@@ -173,7 +173,6 @@ export default {
     unsavedBadge: 'Unsaved',
     toolbarContext: '{architecture} / {stage}',
     noTemplateSelected: 'No template selected',
-    preview: 'Preview',
     shortcuts: 'Shortcuts: Save Cmd/Ctrl+S · Activate Cmd/Ctrl+Enter · Delete Cmd/Ctrl+Backspace',
     groupMapping: 'Prompt Group Mapping',
     currentGroup: 'Current Group',
@@ -191,6 +190,105 @@ export default {
     groupNamePlaceholder: 'e.g., Default Group',
     groupCreateSuccess: 'Group created',
     defaultGroupSet: 'Default group set',
+
+    // New translations
+    categories: {
+      promptCategory: 'Prompt Category',
+      system: 'System',
+      systemDesc: 'System prompt templates',
+      application: 'Application',
+      applicationDesc: 'Application-specific prompt templates',
+      userDefined: 'User Defined',
+      userDefinedDesc: 'User-created custom templates',
+    },
+
+    systemPrompts: {
+      title: 'Create System Prompt',
+      description: 'Add new system prompt template',
+      intentClassifier: 'Intent Classifier',
+      generalSystemPrompt: 'General System Prompt',
+    },
+
+    applicationPrompts: {
+      title: 'Application Prompt Templates',
+      description: 'Manage application-specific prompt templates',
+      pluginGenPassive: 'Plugin Generation (Passive Scan)',
+      pluginGenAgent: 'Plugin Generation (Agent Tool)',
+      pluginFixPassive: 'Plugin Fix (Passive Scan)',
+      pluginFixAgent: 'Plugin Fix (Agent Tool)',
+      visionMultimodal: 'Vision Multimodal Prompt',
+      visionText: 'Vision Text Model Prompt',
+    },
+
+    userDefinedPrompts: {
+      title: 'User Defined Templates',
+      description: 'Manage user-created custom templates',
+    },
+
+    templateList: {
+      title: 'Template List',
+      count: 'Template List ({count})',
+      enabled: 'Enabled',
+      enabledTitle: 'Enabled',
+      empty: 'No templates, click "Create" to add',
+    },
+
+    editor: {
+      templateType: 'Template Type',
+      priority: 'Priority',
+      systemTemplate: 'System Template',
+      enableTemplate: 'Enable this template',
+      tags: 'Tags',
+      addTag: 'Add',
+      addTagPlaceholder: 'Add tag...',
+      variables: 'Variables',
+      addVariable: 'Add',
+      addVariablePlaceholder: 'Variable name (e.g., task_name)',
+      importDefault: '📥 Import Default Prompt',
+      importDefaultTitle: 'Import default content from prompts folder in app data directory',
+      importDefaultHint: 'Tip: Default prompts are stored in the prompts folder in the app data directory and can be manually edited',
+    },
+
+    templateTypes: {
+      systemPrompt: 'System Prompt',
+      intentClassifier: 'Intent Classifier',
+      planner: 'Planner',
+      executor: 'Executor',
+      replanner: 'Replanner',
+      evaluator: 'Evaluator',
+      reportGenerator: 'Report Generator',
+      pluginGenPassive: 'Plugin Generation (Passive Scan)',
+      pluginGenAgent: 'Plugin Generation (Agent Tool)',
+      pluginFixPassive: 'Plugin Fix (Passive Scan)',
+      pluginFixAgent: 'Plugin Fix (Agent Tool)',
+      pluginVulnSpecific: 'Plugin Vulnerability Specific',
+      visionExplorerVision: 'VisionExplorer Multimodal Prompt',
+      visionExplorerText: 'VisionExplorer Text Model Prompt',
+      custom: 'Custom',
+    },
+
+    preview: {
+      title: 'Preview',
+      variableRendering: 'Variable Rendering',
+      realTimePreview: 'Real-time Preview',
+      sampleContext: 'Sample Context (JSON)',
+      sampleContextPlaceholder: '{"task_name": "Port Scan", "tools": "nmap, masscan", "target_info": "192.168.1.1"}',
+    },
+
+    messages: {
+      loading: 'Loading...',
+      ready: 'Ready',
+      selectOrCreate: 'Please select or create a template first',
+      loadingDefault: 'Loading default prompt...',
+      confirmImport: 'Confirm Import',
+      confirmImportMessage: 'Current template has content, overwrite?',
+      importSuccess: 'Default prompt imported',
+      importFailed: 'Import failed: {error}',
+      contextJsonError: 'Context JSON format is incorrect',
+      previewFailed: 'Preview failed: {error}',
+      templateSavedAndActivated: 'Template saved and activated, other templates of the same type have been automatically deactivated',
+      templateSavedAndActivatedSimple: 'Template saved and activated',
+    },
   },
   aiChat: {
     title: 'AI Assistant',
@@ -301,7 +399,73 @@ export default {
       backup: 'Backup Database',
       restore: 'Restore Database',
       optimize: 'Optimize Database',
-      management: 'Database Management'
+      management: 'Database Management',
+      status: 'Database Status',
+      connected: 'Connected',
+      disconnected: 'Disconnected',
+      type: 'Database Type',
+      size: 'Database Size',
+      tables: ' tables',
+      lastBackup: 'Last Backup',
+      autoBackup: 'Auto Backup',
+      configuration: 'Database Configuration',
+      basicSettings: 'Basic Settings',
+      recommended: 'Recommended',
+      typeHint: 'SQLite is suitable for single-machine deployment, PostgreSQL and MySQL are suitable for high-concurrency scenarios',
+      path: 'Database Path',
+      browse: 'Browse',
+      host: 'Host Address',
+      port: 'Port',
+      name: 'Database Name',
+      username: 'Username',
+      password: 'Password',
+      testConnection: 'Test Connection',
+      advancedSettings: 'Advanced Settings',
+      maxConnections: 'Max Connections',
+      maxConnectionsHint: 'Recommended to set to 2-4 times the number of CPU cores',
+      queryTimeout: 'Query Timeout',
+      enableWAL: 'Enable WAL Mode',
+      enableWALHint: 'WAL mode can improve concurrent performance but increases disk usage',
+      enableSSL: 'Enable SSL Connection',
+      backupRestore: 'Backup & Restore',
+      backupSettings: 'Backup Settings',
+      backupFrequency: 'Backup Frequency',
+      daily: 'Daily',
+      weekly: 'Weekly',
+      monthly: 'Monthly',
+      backupRetention: 'Backup Retention',
+      backupRetentionHint: 'Number of backup files to retain',
+      backupPath: 'Backup Path',
+      backupOperations: 'Backup Operations',
+      createBackup: 'Create Backup',
+      restoreBackup: 'Restore Backup',
+      exportData: 'Export Data',
+      importData: 'Import Data',
+      dataManagement: 'Data Management',
+      cleanupSettings: 'Cleanup Settings',
+      autoCleanup: 'Auto Cleanup',
+      retentionDays: 'Retention Days',
+      retentionDaysHint: 'Data older than this number of days will be automatically cleaned up',
+      cleanupTypes: 'Cleanup Types',
+      cleanupLogs: 'Cleanup Logs',
+      cleanupTempFiles: 'Cleanup Temp Files',
+      cleanupOldSessions: 'Cleanup Old Sessions',
+      cleanupOperations: 'Cleanup Operations',
+      cleanupNow: 'Cleanup Now',
+      rebuildIndexes: 'Rebuild Indexes',
+      dangerZone: 'Danger Zone',
+      resetDatabase: 'Reset Database',
+      resetDatabaseWarning: 'This operation will delete all data and cannot be recovered!',
+      saveConfig: 'Save Configuration',
+      behavior: 'Behavior Settings',
+      startup: 'Startup Settings',
+      autoStart: 'Start on Boot',
+      autoStartHint: 'Automatically start the application when system boots',
+      startMinimized: 'Start Minimized',
+      restoreSession: 'Restore Session',
+      restoreSessionHint: 'Restore the previous session state on startup',
+      checkUpdates: 'Check for Updates',
+      never: 'Never'
     },
     performance: 'Performance Settings',
     security: 'Security Settings',
@@ -327,8 +491,8 @@ export default {
       network: 'Network Settings',
       proxy_test: 'Proxy Testing'
     },
-      ai: {
-        basicConfig: 'Basic Configuration',
+    ai: {
+      basicConfig: 'Basic Configuration',
       advancedConfig: 'Advanced Configuration',
       providerStatus: 'AI Provider Status Overview',
       connected: 'Connected',
@@ -373,8 +537,8 @@ export default {
       outputTokens: 'Output Tokens',
       totalTokens: 'Total Tokens',
       estimatedCost: 'Estimated Cost',
-        selectModel: 'Please select a model',
-        refreshModels: 'Refresh Models'
+      selectModel: 'Please select a model',
+      refreshModels: 'Refresh Models'
     },
     scheduler: {
       title: 'Scheduler Strategy Configuration',
@@ -431,20 +595,21 @@ export default {
       highPerformance: 'High Performance configuration applied',
       balanced: 'Balanced configuration applied',
       economic: 'Economic configuration applied',
+      scenarios: 'Scenario Configuration',
       strategies: {
-          adaptive: 'Adaptive Strategy',
-          conservative: 'Conservative Strategy',
-          aggressive: 'Aggressive Strategy',
-          costOptimized: 'Cost Optimized Strategy',
-          adaptiveDesc: 'Automatically selects the best replanning strategy based on failure type',
-          conservativeDesc: 'Conservative replanning strategy that prioritizes stability',
-          aggressiveDesc: 'Aggressive replanning strategy that pursues optimal performance',
-          costOptimizedDesc: 'Cost-optimized replanning strategy that balances performance and cost',
-          adaptiveDetailed: {
-            name: 'Adaptive Strategy',
-            description: 'Automatically select the best strategy based on context',
-            scenario: 'All scenarios'
-          },
+        adaptive: 'Adaptive Strategy',
+        conservative: 'Conservative Strategy',
+        aggressive: 'Aggressive Strategy',
+        costOptimized: 'Cost Optimized Strategy',
+        adaptiveDesc: 'Automatically selects the best replanning strategy based on failure type',
+        conservativeDesc: 'Conservative replanning strategy that prioritizes stability',
+        aggressiveDesc: 'Aggressive replanning strategy that pursues optimal performance',
+        costOptimizedDesc: 'Cost-optimized replanning strategy that balances performance and cost',
+        adaptiveDetailed: {
+          name: 'Adaptive Strategy',
+          description: 'Automatically select the best strategy based on context',
+          scenario: 'All scenarios'
+        },
         scenarios: 'Scenario Configuration',
         complete: {
           name: 'Complete Replanning',
@@ -504,6 +669,8 @@ export default {
     general: {
       version: 'Version',
       buildDate: 'Build Date',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
       language: 'Language',
       region: 'Region',
       theme: 'Theme',
@@ -827,7 +994,7 @@ export default {
     }
   },
   projects: {
-    
+
     newProject: 'New Project',
     allProjects: 'All Projects',
     activeProjects: 'Active Projects',
@@ -841,7 +1008,7 @@ export default {
     endDate: 'End Date',
     status: 'Status',
     budget: 'Budget',
-    
+
     scope: 'Scope',
     outOfScope: 'Out of Scope',
     vulnerabilitiesFound: 'Vulnerabilities Found',
@@ -987,23 +1154,23 @@ export default {
     settings: 'System Settings',
     language: 'Language Settings',
     performance: 'Performance Monitor',
-    
+
     // Sidebar section titles
     coreFeatures: 'Core Features',
     toolsManagement: 'Tools & Management',
     systemSettings: 'System Settings',
-    
+
     // Task status
     currentTask: 'Current Task',
     running: 'Running',
     remaining: 'Remaining',
     scanning: 'Scanning',
-    
+
     // Statistics
     todayStats: 'Today\'s Stats',
     vulnerabilitiesFound: 'Vulnerabilities Found',
     completedTasks: 'Completed Tasks',
-    
+
     // New translation keys
     new: 'NEW',
     vulnerabilityCount: '12',
@@ -1011,7 +1178,14 @@ export default {
     remainingTimeDefault: '2h 15m remaining',
     assets: 'Asset Management',
     intelligentTest: 'Intelligent Security Test',
-    
+    workflowStudio: 'Workflow Studio',
+    notifications: 'Notifications',
+    securityCenter: 'Security Center',
+    aiAssistant: 'AI Assistant',
+    ragManagement: 'RAG Management',
+    promptManagement: 'Prompt Management',
+    projects: 'Bounty Projects',
+
   },
   dictionary: {
     title: 'Dictionary Management',
@@ -1041,68 +1215,68 @@ export default {
     confirmDeleteDictionary: 'Are you sure you want to delete this dictionary?',
     confirmClearDictionary: 'Are you sure you want to clear this dictionary?',
     copyPostfix: ' (Copy)',
-     types: {
-       all: 'All',
-       subdomain: 'Subdomain',
-       username: 'Username',
-       password: 'Password',
-       path: 'Path',
-       http_param: 'HTTP Parameter',
-       parameter: 'HTTP Parameter',
-       xss_payload: 'XSS Payload',
-       sql_injection_payload: 'SQL Injection Payload',
-       sql_injection: 'SQL Injection',
-       custom: 'Custom'
-     },
-     serviceTypes: {
-       web: 'Web Service',
-       ssh: 'SSH Service',
-       database: 'Database Service',
-       ftp: 'FTP Service',
-       email: 'Email Service',
-       generic: 'Generic Service'
-     },
-     createNew: 'Create New',
-     initBuiltin: 'Initialize Built-in Dictionaries',
-     builtin: 'Built-in',
-     wordCount: 'Word Count',
-     lastUpdated: 'Last Updated',
-     viewWords: 'View Words',
-     manage: 'Manage',
-     editDictionary: 'Edit Dictionary',
-     createDictionary: 'Create Dictionary',
-     name: 'Dictionary Name',
-     namePlaceholder: 'Enter dictionary name',
-     description: 'Description',
-     descriptionPlaceholder: 'Enter dictionary description',
-     type: 'Dictionary Type',
-     selectType: 'Select Type',
-     serviceType: 'Service Type',
-     selectServiceType: 'Select Service Type (Optional)',
-     isActive: 'Enable Dictionary',
-     manageWords: 'Manage Words',
-     addWordPlaceholder: 'Enter new word',
-     addWord: 'Add',
-     searchWords: 'Search words...',
-     word: 'Word',
-     addedAt: 'Added At',
-     clearAll: 'Clear All',
-     setDefault: 'Set as Default',
-     clearDefault: 'Clear Default',
-      // Extra keys used by UI
-      copyPrefix: '(Copy)',
-      confirmDelete: 'Are you sure you want to delete this dictionary?',
-      confirmClear: 'Are you sure you want to clear this dictionary?',
-      importWords: 'Import Words',
-      importFromText: 'Import from Text',
-      importFromFile: 'Import from File',
-      pasteWords: 'Paste entries (one per line)',
-      importTextPlaceholder: 'Enter one entry per line...',
-      mergeModes: {
-        append: 'Append (keep existing entries)',
-        replace: 'Replace (clear and import)',
-        merge: 'Merge (deduplicate)'
-      },
+    types: {
+      all: 'All',
+      subdomain: 'Subdomain',
+      username: 'Username',
+      password: 'Password',
+      path: 'Path',
+      http_param: 'HTTP Parameter',
+      parameter: 'HTTP Parameter',
+      xss_payload: 'XSS Payload',
+      sql_injection_payload: 'SQL Injection Payload',
+      sql_injection: 'SQL Injection',
+      custom: 'Custom'
+    },
+    serviceTypes: {
+      web: 'Web Service',
+      ssh: 'SSH Service',
+      database: 'Database Service',
+      ftp: 'FTP Service',
+      email: 'Email Service',
+      generic: 'Generic Service'
+    },
+    createNew: 'Create New',
+    initBuiltin: 'Initialize Built-in Dictionaries',
+    builtin: 'Built-in',
+    wordCount: 'Word Count',
+    lastUpdated: 'Last Updated',
+    viewWords: 'View Words',
+    manage: 'Manage',
+    editDictionary: 'Edit Dictionary',
+    createDictionary: 'Create Dictionary',
+    name: 'Dictionary Name',
+    namePlaceholder: 'Enter dictionary name',
+    description: 'Description',
+    descriptionPlaceholder: 'Enter dictionary description',
+    type: 'Dictionary Type',
+    selectType: 'Select Type',
+    serviceType: 'Service Type',
+    selectServiceType: 'Select Service Type (Optional)',
+    isActive: 'Enable Dictionary',
+    manageWords: 'Manage Words',
+    addWordPlaceholder: 'Enter new word',
+    addWord: 'Add',
+    searchWords: 'Search words...',
+    word: 'Word',
+    addedAt: 'Added At',
+    clearAll: 'Clear All',
+    setDefault: 'Set as Default',
+    clearDefault: 'Clear Default',
+    // Extra keys used by UI
+    copyPrefix: '(Copy)',
+    confirmDelete: 'Are you sure you want to delete this dictionary?',
+    confirmClear: 'Are you sure you want to clear this dictionary?',
+    importWords: 'Import Words',
+    importFromText: 'Import from Text',
+    importFromFile: 'Import from File',
+    pasteWords: 'Paste entries (one per line)',
+    importTextPlaceholder: 'Enter one entry per line...',
+    mergeModes: {
+      append: 'Append (keep existing entries)',
+      replace: 'Replace (clear and import)',
+      merge: 'Merge (deduplicate)'
+    },
 
   },
   mcp: {
@@ -1316,7 +1490,7 @@ export default {
     cancelled: 'Cancelled',
     agentList: 'Agent List',
     workflowList: 'Workflow List',
-    
+
     // Agent types and status
     legacyAgent: 'Legacy Agent',
     universalAgent: 'Universal Agent',
@@ -1372,32 +1546,32 @@ export default {
       priority: 'Priority',
       pleaseSelect: 'Please select...'
     },
-    
+
     taskTypes: {
       reconnaissance: 'Reconnaissance',
       scanning: 'Scanning',
       exploitation: 'Exploitation',
       reporting: 'Reporting'
     },
-    
+
     priority: {
       low: 'Low',
       normal: 'Normal',
       high: 'High',
       critical: 'Critical'
     },
-    
+
     risk: {
       low: 'Low',
       medium: 'Medium',
       high: 'High'
     },
-    
+
     createCustomAgent: 'Create Custom Agent',
     customAgentCreated: 'Custom Agent Created Successfully',
     type: 'Type'
   },
-  
+
   agentCreator: {
     title: 'Create Custom Agent',
     steps: {
@@ -1498,7 +1672,7 @@ export default {
       fillRequired: 'Please fill in required fields'
     }
   },
-  
+
   // AI Assistant
   aiAssistant: {
     selectRole: 'Select Role',
@@ -1507,7 +1681,7 @@ export default {
     defaultRole: 'Default Assistant',
     noRoles: 'No custom roles',
   },
-  
+
   plugins: {
     title: 'Plugin Management',
     description: 'Manage and configure security testing plugins',

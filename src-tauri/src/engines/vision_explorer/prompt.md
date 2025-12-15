@@ -20,7 +20,7 @@
 
 **模式2：文本模式（CSV元素列表）**
 - 没有截图，但会提供「页面元素列表」CSV 格式
-- CSV格式: `index,type,tag,text,href,name,value,placeholder`
+- CSV格式: `index,type,tag,text,href,name,value,placeholder,role,aria_label,aria_expanded,aria_haspopup,testid,class,selector`
 - 示例: `0,link,a,首页,/index.php,,,` 表示索引0是一个链接，文本"首页"，href="/index.php"
 - 你需要根据元素的 text/href/name 等字段来判断其功能
 - ⚠️ **文本模式下禁止使用 screenshot 工具**，因为没有视觉能力

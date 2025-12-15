@@ -41,47 +41,36 @@ const closeMobileMenu = () => {
 }
 
 // 注册AI助手快捷键 (Alt+A)
-const setupAIChatShortcut = () => {
-  const handleKeyDown = (e: KeyboardEvent) => {
-    // ESC键关闭移动端菜单
-    if (e.key === 'Escape' && showMobileMenu.value) {
+const handleKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && showMobileMenu.value) {
+    closeMobileMenu()
+  }
+  
+  if (e.key === 'Backspace') {
+    const target = e.target as HTMLElement
+    const tagName = target.tagName.toLowerCase()
+    const isEditable = target.isContentEditable
+    const isInput = tagName === 'input' || tagName === 'textarea'
+    
+    if (!isInput && !isEditable) {
+      e.preventDefault()
+    }
+  }
+}
+
+const handleClickOutside = (e: MouseEvent) => {
+  if (showMobileMenu.value) {
+    const target = e.target as Element
+    const dropdown = document.querySelector('.dropdown.lg\\:hidden')
+    if (dropdown && !dropdown.contains(target)) {
       closeMobileMenu()
     }
-    
-    // 阻止退格键的默认后退行为
-    // 只在非输入元素上阻止
-    if (e.key === 'Backspace') {
-      const target = e.target as HTMLElement
-      const tagName = target.tagName.toLowerCase()
-      const isEditable = target.isContentEditable
-      const isInput = tagName === 'input' || tagName === 'textarea'
-      
-      // 如果不是在可编辑元素中，阻止默认行为
-      if (!isInput && !isEditable) {
-        e.preventDefault()
-      }
-    }
   }
+}
 
-  // 点击外部区域关闭移动端菜单
-  const handleClickOutside = (e: MouseEvent) => {
-    if (showMobileMenu.value) {
-      const target = e.target as Element
-      const dropdown = document.querySelector('.dropdown.lg\\:hidden')
-      if (dropdown && !dropdown.contains(target)) {
-        closeMobileMenu()
-      }
-    }
-  }
-
+const setupAIChatShortcut = () => {
   window.addEventListener('keydown', handleKeyDown)
   document.addEventListener('click', handleClickOutside)
-
-
-  onUnmounted(() => {
-    window.removeEventListener('keydown', handleKeyDown)
-    document.removeEventListener('click', handleClickOutside)
-  })
 }
 
 
@@ -117,7 +106,8 @@ onMounted(async () => {
 
 // 组件卸载时清理事件监听器
 onUnmounted(() => {
-
+  window.removeEventListener('keydown', handleKeyDown)
+  document.removeEventListener('click', handleClickOutside)
 })
 
 // 主题管理

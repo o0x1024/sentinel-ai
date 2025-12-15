@@ -18,10 +18,10 @@
         <div class="dropdown dropdown-end">
           <button tabindex="0" class="btn btn-outline btn-secondary">
             <i class="fas fa-cog mr-2"></i>
-            管理
+            {{ $t('Tools.management') }}
           </button>
           <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
-            <li><a @click="cleanupDuplicateServers"><i class="fas fa-broom mr-2"></i>清理重复服务器</a></li>
+            <li><a @click="cleanupDuplicateServers"><i class="fas fa-broom mr-2"></i>{{ $t('Tools.cleanupDuplicates') }}</a></li>
           </ul>
         </div>
       </div>
@@ -34,21 +34,21 @@
         :class="['tab', { 'tab-active': activeTab === 'builtin_tools' }]"
       >
         <i class="fas fa-tools mr-2"></i>
-        内置工具
+        {{ $t('Tools.builtinTools') }}
       </button>
       <button 
         @click="activeTab = 'workflow_tools'"
         :class="['tab', { 'tab-active': activeTab === 'workflow_tools' }]"
       >
         <i class="fas fa-project-diagram mr-2"></i>
-        工作流工具
+        {{ $t('Tools.workflowTools') }}
       </button>
       <button 
         @click="activeTab = 'plugin_tools'"
         :class="['tab', { 'tab-active': activeTab === 'plugin_tools' }]"
       >
         <i class="fas fa-plug mr-2"></i>
-        插件工具
+        {{ $t('Tools.pluginTools') }}
       </button>
       <button 
         @click="activeTab = 'my_servers'"
@@ -110,10 +110,10 @@
             <div class="flex justify-end">
               <div class="join">
                 <button @click="editMode = 'form'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': editMode === 'form'}]">
-                  <i class="fas fa-edit mr-1"></i>表单编辑
+                  <i class="fas fa-edit mr-1"></i>{{ $t('Tools.formEdit') }}
                 </button>
                 <button @click="editMode = 'json'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': editMode === 'json'}]">
-                  <i class="fas fa-code mr-1"></i>JSON 编辑
+                  <i class="fas fa-code mr-1"></i>{{ $t('Tools.jsonEdit') }}
                 </button>
               </div>
             </div>
@@ -130,9 +130,9 @@
               <div class="form-control">
                 <label class="label"><span class="label-text">{{ $t('common.type') }}</span></label>
                 <select class="select select-bordered" v-model="editableServer.transport_type">
-                  <option value="stdio">标准输入/输出 (stdio)</option>
-                  <option value="sse">服务器发送事件 (sse)</option>
-                  <option value="streamableHttp">可流式HTTP (streamableHttp)</option>
+                  <option value="stdio">{{ $t('Tools.transportTypes.stdio') }}</option>
+                  <option value="sse">{{ $t('Tools.transportTypes.sse') }}</option>
+                  <option value="streamableHttp">{{ $t('Tools.transportTypes.streamableHttp') }}</option>
                 </select>
               </div>
               <div class="form-control">
@@ -148,10 +148,10 @@
             <div v-if="editMode === 'json'" class="space-y-4">
               <div class="alert alert-warning">
                 <i class="fas fa-exclamation-triangle"></i>
-                <span>直接编辑 JSON 配置，请确保格式正确</span>
+                <span>{{ $t('Tools.jsonEditWarning') }}</span>
               </div>
               <div class="form-control">
-                <label class="label"><span class="label-text">服务器配置 (JSON)</span></label>
+                <label class="label"><span class="label-text">{{ $t('Tools.serverConfigJson') }}</span></label>
                 <textarea v-model="editableServerJson" class="textarea textarea-bordered font-mono text-sm" rows="15" spellcheck="false"></textarea>
               </div>
             </div>
@@ -247,23 +247,23 @@
     <dialog :class="['modal', { 'modal-open': showTestServerModal }]">
       <div v-if="showTestServerModal" class="modal-box w-11/12 max-w-5xl">
         <div class="flex justify-between items-center mb-4">
-          <h3 class="font-bold text-lg">测试服务器工具: {{ testingServer?.name }}</h3>
+          <h3 class="font-bold text-lg">{{ $t('Tools.testServerTitle') }}: {{ testingServer?.name }}</h3>
           <button @click="closeTestServerModal" class="btn btn-sm btn-ghost">✕</button>
         </div>
 
         <div v-if="isLoadingTestTools" class="text-center p-8">
           <i class="fas fa-spinner fa-spin text-2xl"></i>
-          <p class="mt-2">正在加载服务器工具列表...</p>
+          <p class="mt-2">{{ $t('Tools.loadingTools') }}</p>
         </div>
 
         <div v-else class="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
           <div class="alert alert-info">
             <i class="fas fa-info-circle"></i>
-            <span>选择一个工具进行测试，可以使用默认参数或自定义参数。</span>
+            <span>{{ $t('Tools.selectToolInfo') }}</span>
           </div>
 
           <div class="form-control">
-            <label class="label"><span class="label-text">选择工具</span></label>
+            <label class="label"><span class="label-text">{{ $t('Tools.selectTool') }}</span></label>
             <select v-model="selectedTestToolName" class="select select-bordered">
               <option v-for="tool in testServerTools" :key="tool.name" :value="tool.name">
                 {{ tool.name }}{{ tool.description ? ' - ' + tool.description : '' }}
@@ -274,24 +274,24 @@
           <div v-if="selectedTestTool" class="space-y-3">
             <div class="collapse collapse-arrow border border-base-300 bg-base-100">
               <input type="checkbox" />
-              <div class="collapse-title text-md font-medium">输入参数说明</div>
+              <div class="collapse-title text-md font-medium">{{ $t('Tools.inputParamsDescription') }}</div>
               <div class="collapse-content">
                 <div v-if="selectedTestTool.input_schema && selectedTestTool.input_schema.properties" class="overflow-x-auto">
                   <table class="table table-sm w-full">
                     <thead>
                       <tr>
-                        <th>参数名</th>
-                        <th>类型</th>
-                        <th>必填</th>
-                        <th>描述</th>
-                        <th>约束</th>
+                        <th>{{ $t('Tools.paramName') }}</th>
+                        <th>{{ $t('Tools.paramType') }}</th>
+                        <th>{{ $t('Tools.paramRequired') }}</th>
+                        <th>{{ $t('common.description') }}</th>
+                        <th>{{ $t('Tools.paramConstraints') }}</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-for="prop in getToolProperties(selectedTestTool.input_schema)" :key="prop.name">
                         <td class="font-mono text-primary">{{ prop.name }}</td>
                         <td><span class="badge badge-outline">{{ prop.type }}</span></td>
-                        <td><span v-if="prop.required" class="badge badge-error badge-sm">必填</span></td>
+                        <td><span v-if="prop.required" class="badge badge-error badge-sm">{{ $t('Tools.required') }}</span></td>
                         <td>{{ prop.description }}</td>
                         <td class="font-mono text-xs">{{ prop.constraints }}</td>
                       </tr>
@@ -303,12 +303,12 @@
             </div>
 
             <div class="form-control">
-              <label class="label"><span class="label-text">测试参数 (JSON，可选)</span></label>
-              <textarea v-model="testToolParamsJson" class="textarea textarea-bordered font-mono text-sm" placeholder="留空使用默认参数，或输入 JSON 对象覆盖默认参数" rows="6" spellcheck="false"></textarea>
+              <label class="label"><span class="label-text">{{ $t('Tools.testParams') }}</span></label>
+              <textarea v-model="testToolParamsJson" class="textarea textarea-bordered font-mono text-sm" :placeholder="$t('Tools.testParamsPlaceholder')" rows="6" spellcheck="false"></textarea>
             </div>
 
             <div class="form-control">
-              <label class="label"><span class="label-text">测试结果</span></label>
+              <label class="label"><span class="label-text">{{ $t('Tools.testResult') }}</span></label>
               <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap min-h-40 max-h-60 overflow-auto bg-base-200">{{ testToolResult }}</pre>
             </div>
           </div>
@@ -319,7 +319,7 @@
           <button class="btn btn-primary" :disabled="!selectedTestToolName || isTestingTool" @click="runTestTool">
             <i v-if="isTestingTool" class="fas fa-spinner fa-spin mr-1"></i>
             <i v-else class="fas fa-play mr-1"></i>
-            运行测试
+            {{ $t('Tools.runTest') }}
           </button>
         </div>
       </div>
@@ -531,7 +531,7 @@ async function saveServerDetails() {
           transport_type: jsonData.transport_type || 'stdio', endpoint: jsonData.endpoint || '',
           status: jsonData.status || selectedServer.value.status || 'Disconnected',
         }
-      } catch (e) { dialog.toast.error('JSON 格式错误，请检查语法'); return }
+      } catch (e) { dialog.toast.error(t('Tools.jsonFormatError')); return }
     } else {
       payload = {
         db_id: editableServer.db_id, id: selectedServer.value.id, name: editableServer.name,
@@ -547,10 +547,10 @@ async function saveServerDetails() {
         await invoke('mcp_disconnect_server', { connectionId: selectedServer.value.id })
         await new Promise(resolve => setTimeout(resolve, 500))
         await invoke('add_child_process_mcp_server', { name: payload.name, command: payload.command, args: payload.args })
-        dialog.toast.success(t('Tools.updateSuccess') + '，服务器已重新连接')
+        dialog.toast.success(t('Tools.updateSuccess') + t('Tools.reconnected'))
       } catch (reconnectError) {
         console.error('Failed to reconnect server:', reconnectError)
-        dialog.toast.warning(t('Tools.updateSuccess') + '，但重新连接失败，请手动重连')
+        dialog.toast.warning(t('Tools.updateSuccess') + t('Tools.reconnectWarning'))
       }
     } else { dialog.toast.success(t('Tools.updateSuccess')) }
     closeDetailsModal()
@@ -566,7 +566,7 @@ function openTestServerModal(connection: McpConnection) {
   selectedTestToolName.value = ''
   testToolParamsJson.value = ''
   testToolResult.value = ''
-  if (!connection.id) { dialog.toast.error('当前服务器未处于连接状态，无法测试工具'); return }
+  if (!connection.id) { dialog.toast.error(t('Tools.serverNotConnected')); return }
   void (async () => {
     isLoadingTestTools.value = true
     try {
@@ -576,7 +576,7 @@ function openTestServerModal(connection: McpConnection) {
         selectedTestToolName.value = testServerTools.value[0].name
         if (testServerTools.value[0].input_schema) testToolParamsJson.value = generateDefaultParams(testServerTools.value[0].input_schema)
       }
-    } catch (error) { console.error('Failed to fetch tools for testing:', error); dialog.toast.error('加载服务器工具列表失败') }
+    } catch (error) { console.error('Failed to fetch tools for testing:', error); dialog.toast.error(t('Tools.loadToolsFailed')) }
     finally { isLoadingTestTools.value = false }
   })()
 }
@@ -587,22 +587,22 @@ function closeTestServerModal() {
 }
 
 async function runTestTool() {
-  if (!testingServer.value || !testingServer.value.id || !selectedTestToolName.value) { dialog.toast.error('请选择要测试的工具'); return }
+  if (!testingServer.value || !testingServer.value.id || !selectedTestToolName.value) { dialog.toast.error(t('Tools.selectToolFirst')); return }
   let args: any = {}
   if (testToolParamsJson.value.trim()) {
     try { args = JSON.parse(testToolParamsJson.value) }
-    catch (e) { dialog.toast.error('参数 JSON 格式错误，请检查'); return }
+    catch (e) { dialog.toast.error(t('Tools.paramsJsonError')); return }
   }
   isTestingTool.value = true
-  testToolResult.value = '正在执行测试...'
+  testToolResult.value = t('Tools.testing')
   try {
     const result = await invoke<any>('mcp_test_server_tool', { connectionId: testingServer.value.id, toolName: selectedTestToolName.value, args })
     testToolResult.value = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
-    dialog.toast.success('工具测试完成')
+    dialog.toast.success(t('Tools.testCompleted'))
   } catch (error: any) {
     console.error('Failed to test server tool:', error)
-    testToolResult.value = `测试失败: ${error?.message || String(error)}`
-    dialog.toast.error('工具测试失败')
+    testToolResult.value = `${t('Tools.testFailed')}: ${error?.message || String(error)}`
+    dialog.toast.error(t('Tools.testFailed'))
   } finally { isTestingTool.value = false }
 }
 
@@ -621,13 +621,13 @@ async function handleImportFromJson() {
 
 async function cleanupDuplicateServers() {
   try {
-    const confirmed = await dialog.confirm('确定要清理重复的MCP服务器配置吗？这将删除重复的配置，只保留最新的。')
+    const confirmed = await dialog.confirm(t('Tools.cleanupConfirm'))
     if (!confirmed) return
     const removedDuplicates: string[] = await invoke('cleanup_duplicate_mcp_servers')
-    if (removedDuplicates.length > 0) { dialog.toast.success(`已清理 ${removedDuplicates.length} 个重复配置`) }
-    else { dialog.toast.info('没有发现重复的服务器配置') }
+    if (removedDuplicates.length > 0) { dialog.toast.success(t('Tools.cleanedDuplicates', { count: removedDuplicates.length })) }
+    else { dialog.toast.info(t('Tools.noDuplicates')) }
     mcpServersRef.value?.fetchConnections?.()
-  } catch (error) { console.error('清理重复服务器失败:', error); dialog.toast.error(`清理失败: ${error}`) }
+  } catch (error) { console.error('清理重复服务器失败:', error); dialog.toast.error(`${t('Tools.cleanupFailed')}: ${error}`) }
 }
 
 // 生命周期

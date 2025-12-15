@@ -97,8 +97,7 @@
       </div>
 
       <!-- 底部状态信息 -->
-      <div class="p-4 border-t border-base-300">
-        <!-- 当前任务状态 -->
+<!-- 
         <div class="bg-base-100 rounded-lg p-3 mb-3">
           <div class="flex items-center justify-between mb-2">
             <span class="sidebar-text font-medium">{{ t('sidebar.currentTask', '当前任务') }}</span>
@@ -109,7 +108,6 @@
           <div class="sidebar-small-text text-center mt-1 opacity-70">{{ taskProgress }}% - {{ t('sidebar.remaining') }} {{ remainingTime }}</div>
         </div>
 
-        <!-- 今日统计 -->
         <div class="grid grid-cols-2 gap-2 text-center">
           <div class="bg-base-100 rounded-lg p-2">
             <div class="sidebar-stat-number font-bold text-error">{{ todayVulns }}</div>
@@ -120,7 +118,7 @@
             <div class="sidebar-small-text opacity-70">{{ t('sidebar.completedTasks') }}</div>
           </div>
         </div>
-      </div>
+      </div>  -->
     </div>
   </div>
 </template>
@@ -299,12 +297,12 @@ interface TaskStats {
 
 // 获取任务统计信息
 const loadTaskStats = async () => {
-  try {
-    const stats = await invoke<TaskStats>('get_scan_task_stats')
-    taskStats.value = stats
-  } catch (error) {
-    console.error('Failed to load task stats:', error)
-  }
+  // try {
+  //   const stats = await invoke<TaskStats>('get_scan_task_stats')
+  //   taskStats.value = stats
+  // } catch (error) {
+  //   console.error('Failed to load task stats:', error)
+  // }
 }
 
 // 加载待审核插件数量

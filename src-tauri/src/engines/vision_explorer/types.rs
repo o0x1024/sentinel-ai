@@ -532,6 +532,14 @@ pub struct TakeoverSession {
     pub login_detected: bool,
     /// 登录字段定义 (动态)
     pub login_fields: Option<Vec<LoginField>>,
+    /// 登录流程重试次数（仍停留在登录页的轮次计数，用于触发 takeover）
+    pub login_retry_count: u32,
+    /// 用户选择跳过登录（无凭据也继续探索）
+    pub login_skipped: bool,
+    /// 登录请求时间（用于超时自动跳过）
+    pub login_requested_at: Option<DateTime<Utc>>,
+    /// 用户在探索过程中发送的消息（用于指导下一轮决策）
+    pub user_messages: Vec<String>,
 }
 
 impl Default for TakeoverSession {
@@ -546,6 +554,10 @@ impl Default for TakeoverSession {
             user_credentials: None,
             login_detected: false,
             login_fields: None,
+            login_retry_count: 0,
+            login_skipped: false,
+            login_requested_at: None,
+            user_messages: Vec::new(),
         }
     }
 }

@@ -129,6 +129,18 @@ impl VisionExplorer {
             config.enable_takeover,
         )));
         
+        // If credentials are provided in config, pre-set them to TakeoverManager
+        if let Some(ref creds) = config.credentials {
+            let mut tm = takeover_manager.blocking_write();
+            tm.set_user_credentials(
+                creds.username.clone(),
+                creds.password.clone(),
+                creds.verification_code.clone(),
+                creds.extra_fields.clone(),
+            );
+            info!("Pre-set credentials from config for user: {}", creds.username);
+        }
+        
         // 创建Takeover事件通道
         let (tx, rx) = mpsc::unbounded_channel();
 
@@ -268,6 +280,11 @@ impl VisionExplorer {
         if let Some(exec_id) = &self.config.execution_id {
             super::unregister_takeover_manager(exec_id).await;
             info!("Unregistered TakeoverManager for execution_id: {}", exec_id);
+        }
+
+        // Cleanup cancellation token for this execution (if any)
+        if let Some(exec_id) = &self.config.execution_id {
+            crate::managers::cancellation_manager::cleanup_token(exec_id).await;
         }
 
         // 标记停止
@@ -530,9 +547,29 @@ impl VisionExplorer {
             {
                 let takeover = self.takeover_manager.read().await;
                 if matches!(takeover.get_status(), TakeoverStatus::WaitingForUser | TakeoverStatus::Active) {
-                    // 等待用户操作
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    continue;
+                    // Check for login timeout (40 seconds)
+                    let is_timeout = takeover.is_login_timeout(40);
+                    let has_credentials = takeover.has_credentials();
+                    drop(takeover);
+
+                    if is_timeout && !has_credentials {
+                        // Auto-skip login due to timeout
+                        info!("Login input timed out (40s), auto-skipping login");
+                        let mut takeover = self.takeover_manager.write().await;
+                        takeover.auto_skip_login();
+                        takeover.return_control();
+                        drop(takeover);
+
+                        // Emit event to close takeover UI on frontend
+                        if let Some(emitter) = &self.message_emitter {
+                            emitter.emit_login_skipped("Login input timed out, continuing exploration");
+                        }
+                        // Don't continue, proceed to run_iteration which will handle navigation
+                    } else {
+                        // Still waiting for user input
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                        continue;
+                    }
                 }
             }
 
@@ -615,7 +652,7 @@ impl VisionExplorer {
                 iteration,
                 &page_state.url,
                 &page_state.title,
-                None, // 不发送 base64 到前端，太大
+                page_state.screenshot.as_deref(),
             );
         }
         
@@ -625,39 +662,171 @@ impl VisionExplorer {
             state.update_page_state(page_state.clone());
         }
 
-        // 2.1. 检测登录页面并处理 Takeover
-        // 2.1. 检测登录页面并处理 Takeover
+        // 2.1. 检测登录页面并处理凭据/Takeover
         if let Some(login_fields) = self.detect_login_page(&page_state) {
             let takeover = self.takeover_manager.read().await;
             let has_credentials = takeover.has_credentials();
             let is_login_detected = takeover.is_login_detected();
+            let login_skipped = takeover.is_login_skipped();
+            let login_timeout = takeover.is_login_timeout(40); // 30 seconds timeout
             drop(takeover); // 释放读锁
             
-            if !has_credentials && !is_login_detected {
-                // 检测到登录页面但没有凭据，请求用户接管
-                info!("Login page detected at {}, requesting user credentials with {} fields", page_state.url, login_fields.len());
-                
-                if self.config.enable_takeover {
-                    let mut takeover = self.takeover_manager.write().await;
-                    takeover.request_login_takeover("检测到登录页面，请提供账号密码以继续探索", Some(login_fields.clone()));
+            if !has_credentials {
+                // Check if login was skipped or timed out
+                if login_skipped || login_timeout {
+                    // In skip-login mode, some sites will keep redirecting target_url back to login.
+                    // Add a retry budget to avoid infinite navigate loops.
+                    let skip_escape_attempts = {
+                        let mut takeover = self.takeover_manager.write().await;
+                        takeover.increment_login_retry()
+                    };
+                    const MAX_SKIP_LOGIN_AUTO_NAV_ATTEMPTS: u32 = 3;
+                    const MAX_SKIP_LOGIN_ESCAPE_ATTEMPTS: u32 = 10;
+
+                    if login_timeout && !login_skipped {
+                        // Auto-skip due to timeout
+                        let mut takeover = self.takeover_manager.write().await;
+                        takeover.auto_skip_login();
+                        drop(takeover);
+                        info!("Login input timed out, auto-skipping login");
+                    }
+
+                    info!(
+                        "Login page detected at {}, but login was skipped; continuing exploration without credentials",
+                        page_state.url
+                    );
+
+                    // Try to escape login page by navigating to a non-login pending route.
+                    let next_route = {
+                        let mut rt = self.route_tracker.write().await;
+                        let mut candidate = None;
+                        while let Some(r) = rt.next_pending() {
+                            if !Self::is_login_like_route(&r) {
+                                candidate = Some(r);
+                                break;
+                            }
+                        }
+                        candidate
+                    };
+
+                    if let Some(url) = next_route {
+                        info!("Navigating to non-login pending route: {}", url);
+                        let _ = self.browser_tools.execute_action(&BrowserAction::Navigate { url }).await?;
+                        return Ok((false, false));
+                    }
+
+                    // Fallback: try target_url if it's not obviously a login url and not the current url.
+                    if skip_escape_attempts <= MAX_SKIP_LOGIN_AUTO_NAV_ATTEMPTS
+                        && !Self::is_login_like_route(&self.config.target_url)
+                        && self.config.target_url != page_state.url
+                    {
+                        info!("No pending routes available; navigating to target_url: {}", self.config.target_url);
+                        let _ = self
+                            .browser_tools
+                            .execute_action(&BrowserAction::Navigate { url: self.config.target_url.clone() })
+                            .await?;
+                        return Ok((false, false));
+                    }
+
+                    // After a few auto-nav attempts, let the VLM try to find public/guest access from the current page.
+                    if skip_escape_attempts > MAX_SKIP_LOGIN_AUTO_NAV_ATTEMPTS {
+                        info!(
+                            "Skip-login mode: reached {} escape attempts; letting VLM try to find public access without auto navigation",
+                            skip_escape_attempts
+                        );
+                    }
+
+                    // Hard stop to avoid infinite loops if we're stuck on a login page.
+                    if skip_escape_attempts >= MAX_SKIP_LOGIN_ESCAPE_ATTEMPTS {
+                        let reason = format!(
+                            "Skip-login mode: still on a login page after {} escape attempts. The site likely requires authentication; stopping exploration to avoid an infinite loop.",
+                            skip_escape_attempts
+                        );
+                        warn!("{}", reason);
+                        let mut state = self.state_manager.write().await;
+                        state.mark_completed(&reason);
+                        return Ok((true, false));
+                    }
+
+                    // Otherwise: do not pause; let VLM attempt to find public links / guest mode on this page.
+                } else {
+                    // Case 1: No credentials at all, request user input
+                    info!("Login page detected at {}, no credentials available, requesting user input", page_state.url);
                     
-                    // 发送通知到前端
+                    if self.config.enable_takeover {
+                        let mut takeover = self.takeover_manager.write().await;
+                        takeover.request_login_takeover("检测到登录页面，请提供账号密码以继续探索", Some(login_fields.clone()));
+                        
+                        if let Some(emitter) = &self.message_emitter {
+                            emitter.emit_takeover_request(
+                                iteration,
+                                "login_required",
+                                "检测到登录页面，请在下方输入账号密码后点击\"继续探索\"",
+                                Some(&login_fields),
+                            );
+                        }
+                        
+                        return Ok((false, false)); // Pause exploration, wait for user input
+                    } else {
+                        warn!("Login page detected but takeover is disabled");
+                    }
+                }
+            } else if has_credentials && is_login_detected {
+                // Case 2: Has credentials but login_detected was already set
+                // This means we are still on a login page after an automated login attempt.
+                // This does NOT necessarily mean credentials are wrong (could be captcha/2FA/blocked/extra steps).
+                let retry_count = {
+                    let mut takeover = self.takeover_manager.write().await;
+                    takeover.increment_login_retry()
+                };
+
+                // Allow the VLM to continue the login flow for a few iterations.
+                // Only trigger takeover if we remain on login page for too long.
+                if retry_count >= 5 && self.config.enable_takeover {
+                    info!("Login page still detected after {} iterations in login flow, requesting user takeover", retry_count);
+
+                    let mut takeover = self.takeover_manager.write().await;
+                    takeover.clear_login_detected();
+                    takeover.request_login_takeover(
+                        "登录未完成，可能需要验证码/二次验证/额外步骤，请手动完成登录或补充信息",
+                        Some(login_fields.clone())
+                    );
+
                     if let Some(emitter) = &self.message_emitter {
                         emitter.emit_takeover_request(
                             iteration,
-                            "login_required",
-                            "检测到登录页面，请在下方输入账号密码后点击\"继续探索\"",
+                            "login_failed",
+                            "登录未完成：可能需要验证码/二次验证/额外步骤。请手动完成登录或补充信息后继续。",
                             Some(&login_fields),
                         );
                     }
-                    
-                    return Ok((false, false)); // 暂停探索，等待用户输入
+
+                    return Ok((false, false)); // Pause exploration, wait for user
                 } else {
-                    warn!("Login page detected but takeover is disabled");
+                    info!(
+                        "Login page still detected during login flow (retry {}/3), continuing automated login",
+                        retry_count
+                    );
                 }
-            } else if has_credentials && is_login_detected {
-                // 有凭据且刚检测到登录，记录日志
-                info!("Login page detected and credentials available, LLM will use credentials to login");
+            } else {
+                // Case 3: Has credentials and login_detected is false (first time seeing login page)
+                // Mark login_detected and let LLM use credentials to login
+                info!("Login page detected at {}, credentials available, LLM will use them to login", page_state.url);
+                let mut takeover = self.takeover_manager.write().await;
+                takeover.mark_login_detected();
+            }
+        } else {
+            // Not a login page - if login was previously detected and we're now on a different page, login succeeded
+            let takeover = self.takeover_manager.read().await;
+            if takeover.is_login_detected() {
+                drop(takeover);
+                let mut takeover = self.takeover_manager.write().await;
+                takeover.clear_login_detected();
+                info!("Left login page, login appears successful");
+            } else if takeover.is_login_skipped() && takeover.get_login_retry_count() > 0 {
+                drop(takeover);
+                let mut takeover = self.takeover_manager.write().await;
+                takeover.reset_login_retry_count();
             }
         }
 
@@ -711,7 +880,7 @@ impl VisionExplorer {
         }
 
         // 6. 解析VLM响应（传入连续截图次数用于检测循环）
-        let analysis = self.parse_vlm_response(&vlm_response, consecutive_screenshots)?;
+        let mut analysis = self.parse_vlm_response(&vlm_response, consecutive_screenshots)?;
         
         // 发送分析结果到前端
         if let Some(emitter) = &self.message_emitter {
@@ -793,7 +962,8 @@ impl VisionExplorer {
             }
         }
 
-        // 9. 执行下一步操作
+        // 9. 执行下一步操作（引擎侧防循环保护：避免重复/陈旧 index）
+        self.guard_next_action(&mut analysis).await;
         let action = self.build_action_from_analysis(&analysis)?;
         let is_screenshot = matches!(action, BrowserAction::Screenshot);
         let action_start = std::time::Instant::now();
@@ -1022,16 +1192,23 @@ impl VisionExplorer {
     }
 
     /// 获取 system prompt 模板 (优先从数据库，回退到默认)
+    /// 根据 enable_multimodal 配置选择多模态或文本模式的 prompt
     async fn get_system_prompt_template(&self) -> String {
         if let Some(repo) = &self.prompt_repo {
-            // 尝试从数据库获取激活的 VisionExplorerSystem 模板
-            match repo.get_active_template_by_type(TemplateType::VisionExplorerSystem).await {
+            // 根据模式选择对应的模板类型
+            let template_type = if self.config.enable_multimodal {
+                TemplateType::VisionExplorerVision
+            } else {
+                TemplateType::VisionExplorerText
+            };
+            
+            match repo.get_active_template_by_type(template_type.clone()).await {
                 Ok(Some(template)) => {
-                    info!("Using database prompt template: {}", template.name);
+                    info!("Using database prompt template: {} (type: {:?})", template.name, template_type);
                     return template.content;
                 }
                 Ok(None) => {
-                    debug!("No active VisionExplorerSystem template in database, using default");
+                    debug!("No active {:?} template in database, using default", template_type);
                 }
                 Err(e) => {
                     warn!("Failed to get prompt template from database: {}, using default", e);
@@ -1095,6 +1272,9 @@ impl VisionExplorer {
                 apis.join("\n")
             }
         };
+
+        // 覆盖率与引导信息（给纯文本模型足够反馈，减少循环/盲点）
+        let coverage_context = self.build_coverage_context().await;
         
         // 获取上下文摘要
         let context_summary = if self.config.enable_context_summary {
@@ -1123,22 +1303,15 @@ impl VisionExplorer {
 **注意**：你正在使用文本模式（无截图），必须根据以下元素列表进行操作。
 每个元素都有一个 `index` 索引号，使用 `click_by_index` 或 `fill_by_index` 时需要指定这个索引。
 
-格式: index,type,tag,text,href,name,value,placeholder
+格式: index,type,tag,text,href,name,value,placeholder,role,aria_label,aria_expanded,aria_haspopup,testid,class,selector
 {}
 "#,
                 page_state.annotated_elements.len(),
                 elements_csv
             )
-        } else if self.config.include_elements_in_prompt {
-            // 多模态模式但配置了包含元素：作为补充信息（CSV格式）
-            let elements_csv = Self::format_elements_as_csv(&page_state.annotated_elements, 50);
-            format!(
-                "\n可交互元素（{}，最多显示 50 个）：\n格式: index,type,tag,text,href,name,value,placeholder\n{}\n",
-                page_state.annotated_elements.len(),
-                elements_csv
-            )
         } else {
-            // 多模态模式：通过截图查看元素，不需要元素列表
+            // 多模态模式：截图用于语义理解，同时保留元素列表以支持 index 操作
+            // 不在 prompt 中显示元素列表（模型通过截图中的标注看到 index）
             String::new()
         };
         
@@ -1153,11 +1326,12 @@ impl VisionExplorer {
             // 文本模式：必须根据元素列表操作
             "**文本模式**：请根据上述「页面元素列表」中的 index 索引号，使用 click_by_index 或 fill_by_index 进行操作。"
         } else {
-            // 多模态模式：根据截图中的标注操作
-            "**多模态模式**：请查看截图中的元素标注（索引号），决定下一步操作。"
+            // 多模态模式：通过截图中的标注识别元素 index，使用 click_by_index / fill_by_index 操作
+            "**多模态模式**：请观察截图中的元素标注（带有索引号），使用 click_by_index / fill_by_index 进行操作。"
         };
         
         // 构建 user_prompt
+        let user_messages_context = self.drain_user_messages_context().await;
         let user_prompt = format!(
             r#"当前日期: {}
 当前时间: {}
@@ -1177,7 +1351,11 @@ impl VisionExplorer {
 已发现 API（避免重复触发）：
 {}
 
+{}
+
 最近操作（最近 5 次）：
+{}
+
 {}
 
 ────────────────────────
@@ -1198,7 +1376,9 @@ URL: {}
             interacted_count,
             visited_urls_list,
             discovered_apis_list,
+            coverage_context,
             action_history,
+            user_messages_context,
             page_state.url,
             page_state.title,
             elements_section,
@@ -1208,6 +1388,135 @@ URL: {}
         );
         
         Ok((system_prompt, user_prompt))
+    }
+
+    /// Drain queued user messages and build a prompt context block for VLM.
+    async fn drain_user_messages_context(&self) -> String {
+        let messages = {
+            let mut takeover = self.takeover_manager.write().await;
+            takeover.drain_user_messages()
+        };
+
+        if messages.is_empty() {
+            return String::new();
+        }
+
+        let lines = messages
+            .into_iter()
+            .enumerate()
+            .map(|(i, m)| format!("  {}. {}", i + 1, m))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            r#"────────────────────────
+用户消息（优先遵循）
+────────────────────────
+{}
+"#,
+            lines
+        )
+    }
+
+    /// 构建覆盖率与探索引导上下文（用于文本模式，减少盲点与循环）
+    async fn build_coverage_context(&self) -> String {
+        let route_stats = {
+            let rt = self.route_tracker.read().await;
+            rt.stats()
+        };
+
+        let pending_routes = {
+            let rt = self.route_tracker.read().await;
+            rt.get_pending_routes()
+        };
+
+        let (element_stats, mut uninteracted_indices, mut hover_candidate_indices) = {
+            let em = self.element_manager.read().await;
+            let stats = em.stats();
+            let mut u = em.get_uninteracted_indices();
+            let mut h = em.get_hover_candidate_indices();
+            u.sort_unstable();
+            h.sort_unstable();
+            (stats, u, h)
+        };
+
+        let (stable_rounds, stability_threshold, coverage_target, overall_coverage) = {
+            let ce = self.coverage_engine.read().await;
+            (
+                ce.consecutive_no_discovery,
+                ce.stability_threshold,
+                ce.coverage_target,
+                ce.overall_coverage(),
+            )
+        };
+
+        let pending_routes_display = if pending_routes.is_empty() {
+            "  (none)".to_string()
+        } else {
+            pending_routes
+                .iter()
+                .take(10)
+                .map(|r| format!("  - {}", r))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let uninteracted_display = if uninteracted_indices.is_empty() {
+            "(none)".to_string()
+        } else {
+            uninteracted_indices
+                .iter()
+                .take(60)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        let hover_display = if hover_candidate_indices.is_empty() {
+            "(none)".to_string()
+        } else {
+            hover_candidate_indices
+                .iter()
+                .take(60)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        format!(
+            r#"────────────────────────
+Coverage & Guidance
+────────────────────────
+
+- Route coverage: {}/{} ({:.1}%), pending: {}
+- Element coverage: {}/{} ({:.1}%), target: {:.1}%
+- Overall coverage: {:.1}%
+- Stable rounds: {}/{} (no new routes/elements/APIs)
+
+Pending routes (next 10):
+{}
+
+Uninteracted element indices (current page):
+{}
+
+Hover candidate indices (current page):
+{}
+"#,
+            route_stats.visited,
+            route_stats.discovered,
+            route_stats.coverage,
+            route_stats.pending,
+            element_stats.interacted,
+            element_stats.total,
+            element_stats.coverage,
+            coverage_target,
+            overall_coverage,
+            stable_rounds,
+            stability_threshold,
+            pending_routes_display,
+            uninteracted_display,
+            hover_display
+        )
     }
 
     /// 构建凭据上下文（仅在检测到登录页面且用户提供了凭据时添加）
@@ -1231,6 +1540,14 @@ URL: {}
         }
     }
 
+    /// Check if a URL looks like a login route
+    fn is_login_like_route(url: &str) -> bool {
+        let lower = url.to_lowercase();
+        ["login", "signin", "sign-in", "auth", "authenticate", "sso"]
+            .iter()
+            .any(|k| lower.contains(k))
+    }
+
     /// 检测登录页面并提取登录字段
     fn detect_login_page(&self, page_state: &PageState) -> Option<Vec<LoginField>> {
         let url_lower = page_state.url.to_lowercase();
@@ -1241,6 +1558,12 @@ URL: {}
         
         let title_indicators = ["登录", "login", "signin", "sign in", "登入", "认证"];
         let is_title_login = title_indicators.iter().any(|ind| title_lower.contains(ind));
+
+        // If the page clearly shows "logged-in" indicators, do NOT treat it as login page,
+        // even if it contains password inputs (some pages include password fields for profile/security).
+        if Self::has_logged_in_indicators(page_state) {
+            return None;
+        }
         
         // 筛选可见的输入框 (使用 interactable_elements 以支持多模态模式)
         let inputs: Vec<&PageElement> = page_state.interactable_elements.iter()
@@ -1263,9 +1586,16 @@ URL: {}
                 .map(|s| s.to_lowercase() == "password")
                 .unwrap_or(false)
         });
+
+        let has_login_action = Self::has_login_action_indicators(page_state);
         
-        // 判断是否为登录页面: 必须有密码框，或者 (URL/Title包含登录关键字 且 有输入框)
-        if !has_password && !((is_url_login || is_title_login) && !inputs.is_empty()) {
+        // 判断是否为登录页面（更严格）：
+        // - 需要能看到登录动作（按钮/提交）或明显的登录语义
+        // - 避免仅因出现 password 输入框就误判
+        let is_login_page = (has_password && has_login_action)
+            || ((is_url_login || is_title_login) && !inputs.is_empty() && has_login_action);
+
+        if !is_login_page {
             return None;
         }
         
@@ -1381,6 +1711,79 @@ URL: {}
             // 确保 password 存在 (如果检测到了登录页但没识别出 password 字段，可能比较奇怪，但我们还是返回已识别的)
             Some(fields)
         }
+    }
+
+    fn has_logged_in_indicators(page_state: &PageState) -> bool {
+        let indicators = [
+            "logout", "log out", "sign out",
+            "退出", "注销", "登出",
+            "个人中心", "工作台", "控制台", "dashboard",
+        ];
+
+        let haystacks = page_state
+            .interactable_elements
+            .iter()
+            .flat_map(|e| {
+                let mut v = Vec::with_capacity(4);
+                v.push(e.text.to_lowercase());
+                if let Some(t) = &e.element_type { v.push(t.to_lowercase()); }
+                if let Some(vv) = e.attributes.get("aria-label") { v.push(vv.to_lowercase()); }
+                if let Some(vv) = e.attributes.get("title") { v.push(vv.to_lowercase()); }
+                v
+            })
+            .chain(page_state.annotated_elements.iter().flat_map(|e| {
+                let mut v = Vec::with_capacity(4);
+                v.push(e.text.to_lowercase());
+                v.push(e.element_type.to_lowercase());
+                if let Some(vv) = e.attributes.get("aria-label") { v.push(vv.to_lowercase()); }
+                if let Some(vv) = e.attributes.get("title") { v.push(vv.to_lowercase()); }
+                v
+            }))
+            .collect::<Vec<_>>();
+
+        indicators.iter().any(|k| {
+            let kk = k.to_lowercase();
+            haystacks.iter().any(|s| s.contains(&kk))
+        })
+    }
+
+    fn has_login_action_indicators(page_state: &PageState) -> bool {
+        let keywords = ["登录", "login", "sign in", "signin", "submit", "立即登录"];
+
+        let mut candidates: Vec<String> = Vec::new();
+
+        for e in &page_state.interactable_elements {
+            let tag = e.tag.to_lowercase();
+            let t = e.text.to_lowercase();
+            let aria = e.attributes.get("aria-label").map(|s| s.to_lowercase()).unwrap_or_default();
+            let title = e.attributes.get("title").map(|s| s.to_lowercase()).unwrap_or_default();
+            let ty = e.element_type.as_ref().map(|s| s.to_lowercase()).unwrap_or_default();
+            let value = e.attributes.get("value").map(|s| s.to_lowercase()).unwrap_or_default();
+
+            // likely clickable controls
+            if tag == "button" || (tag == "input" && ["submit", "button"].contains(&ty.as_str())) {
+                candidates.push(format!("{} {} {} {}", t, aria, title, value));
+            }
+        }
+
+        for e in &page_state.annotated_elements {
+            let t = e.text.to_lowercase();
+            let ty = e.element_type.to_lowercase();
+            let aria = e.attributes.get("aria-label").map(|s| s.to_lowercase()).unwrap_or_default();
+            let title = e.attributes.get("title").map(|s| s.to_lowercase()).unwrap_or_default();
+            if ty.contains("button") || ty.contains("submit") {
+                candidates.push(format!("{} {} {}", t, aria, title));
+            }
+        }
+
+        if candidates.is_empty() {
+            return false;
+        }
+
+        keywords.iter().any(|k| {
+            let kk = k.to_lowercase();
+            candidates.iter().any(|s| s.contains(&kk))
+        })
     }
 
     /// 解析VLM响应
@@ -1519,6 +1922,20 @@ URL: {}
             let value = e.attributes.get("value").map(|s| s.as_str()).unwrap_or("");
             let placeholder = e.attributes.get("placeholder").map(|s| s.as_str()).unwrap_or("");
             let input_type = e.attributes.get("type").map(|s| s.as_str()).unwrap_or("");
+
+            // 语义属性（对纯文本模型很关键）
+            let role = e.attributes.get("role").map(|s| s.as_str()).unwrap_or("");
+            let aria_label = e.attributes.get("aria-label").map(|s| s.as_str()).unwrap_or("");
+            let aria_expanded = e.attributes.get("aria-expanded").map(|s| s.as_str()).unwrap_or("");
+            let aria_haspopup = e.attributes.get("aria-haspopup").map(|s| s.as_str()).unwrap_or("");
+            let testid = e
+                .attributes
+                .get("data-testid")
+                .or_else(|| e.attributes.get("data-test"))
+                .or_else(|| e.attributes.get("data-cy"))
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            let class_name = e.attributes.get("class").map(|s| s.as_str()).unwrap_or("");
             
             // 截断过长文本并转义逗号
             let text = if e.text.len() > 30 { 
@@ -1542,10 +1959,29 @@ URL: {}
 
             let placeholder = if placeholder.len() > 30 { format!("{}...", &placeholder[..30]) } else { placeholder.to_string() };
             let placeholder = placeholder.replace(',', ";");
+
+            let role = if role.len() > 30 { format!("{}...", &role[..30]) } else { role.to_string() };
+            let role = role.replace(',', ";");
+
+            let aria_label = if aria_label.len() > 50 { format!("{}...", &aria_label[..50]) } else { aria_label.to_string() };
+            let aria_label = aria_label.replace(',', ";");
+
+            let aria_expanded = aria_expanded.to_string().replace(',', ";");
+            let aria_haspopup = aria_haspopup.to_string().replace(',', ";");
+
+            let testid = if testid.len() > 30 { format!("{}...", &testid[..30]) } else { testid.to_string() };
+            let testid = testid.replace(',', ";");
+
+            let class_name = if class_name.len() > 60 { format!("{}...", &class_name[..60]) } else { class_name.to_string() };
+            let class_name = class_name.replace(',', ";");
+
+            // selector：用于区分“无文本的 clickable div”，做短截断
+            let selector = if e.selector.len() > 80 { format!("{}...", &e.selector[..80]) } else { e.selector.clone() };
+            let selector = selector.replace(',', ";").replace('\n', " ");
             
             // 构建CSV行
             let line = format!(
-                "{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 e.index,
                 e.element_type,
                 e.tag_name.to_lowercase(),
@@ -1553,12 +1989,84 @@ URL: {}
                 href,
                 name,
                 value_str,
-                placeholder
+                placeholder,
+                role,
+                aria_label,
+                aria_expanded,
+                aria_haspopup,
+                testid,
+                class_name,
+                selector
             );
             lines.push(line);
         }
         
         lines.join("\n")
+    }
+
+    /// 执行前对模型动作做保护：避免使用陈旧/已交互索引导致循环
+    async fn guard_next_action(&self, analysis: &mut VlmAnalysisResult) {
+        let action_type = analysis.next_action.action_type.as_str();
+        let Some(index) = analysis.next_action.element_index else {
+            return;
+        };
+
+        // 只保护“依赖索引”的动作
+        if !matches!(action_type, "click_by_index" | "fill_by_index" | "hover_by_index") {
+            return;
+        }
+
+        let (is_known, is_interacted, mut uninteracted, mut hover_candidates) = {
+            let em = self.element_manager.read().await;
+            let known = em.is_known_index(index);
+            let interacted = em.is_interacted_by_index(index);
+            let mut u = em.get_uninteracted_indices();
+            let mut h = em.get_hover_candidate_indices();
+            u.sort_unstable();
+            h.sort_unstable();
+            (known, interacted, u, h)
+        };
+
+        // 索引不属于当前页面映射：强制刷新元素列表
+        if !is_known {
+            analysis.next_action.action_type = "get_elements".to_string();
+            analysis.next_action.element_index = None;
+            analysis.next_action.value = None;
+            analysis.next_action.reason = format!(
+                "Guard: element index {} is not in current page mapping, refreshing annotated elements",
+                index
+            );
+            return;
+        }
+
+        // 已交互：改为下一个未交互 index（如果没有则尝试 hover/scroll）
+        if is_interacted {
+            if let Some(next_idx) = uninteracted.iter().find(|i| **i != index).cloned() {
+                analysis.next_action.element_index = Some(next_idx);
+                analysis.next_action.reason = format!(
+                    "Guard: index {} already interacted, switching to next uninteracted index {}",
+                    index, next_idx
+                );
+                return;
+            }
+
+            if let Some(hover_idx) = hover_candidates.first().cloned() {
+                analysis.next_action.action_type = "hover_by_index".to_string();
+                analysis.next_action.element_index = Some(hover_idx);
+                analysis.next_action.value = None;
+                analysis.next_action.reason = format!(
+                    "Guard: all current indices interacted, trying hover candidate index {} to reveal menus",
+                    hover_idx
+                );
+                return;
+            }
+
+            analysis.next_action.action_type = "scroll".to_string();
+            analysis.next_action.element_index = None;
+            analysis.next_action.value = Some("down".to_string());
+            analysis.next_action.reason =
+                "Guard: all current indices interacted, scrolling down to discover more elements".to_string();
+        }
     }
 
     /// 根据分析结果构建浏览器操作

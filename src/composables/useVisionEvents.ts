@@ -147,12 +147,22 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
                     if (step.url) currentUrl.value = step.url
                 }
 
-                // Handle takeover request from Meta channel (fallback/redundancy)
-                if (data?.type === 'takeover_request') {
+                // Handle takeover/credentials events from Meta channel (fallback/redundancy)
+                // Some environments may miss the direct tauri event, so we also support:
+                // - data.type === 'takeover_request' / 'credentials_received'
+                // - chunk.stage === 'takeover_request' / 'credentials_received'
+                const metaType = data?.type || chunk.stage
+                if (metaType === 'takeover_request') {
                     console.log('[VisionEvents] Takeover requested (Meta):', data)
                     showTakeoverForm.value = true
-                    takeoverMessage.value = data.message || '检测到登录页面，请输入凭证'
-                    takeoverFields.value = data.fields || null
+                    takeoverMessage.value = data?.message || '检测到登录页面，请输入凭证'
+                    takeoverFields.value = data?.fields || null
+                }
+                if (metaType === 'credentials_received') {
+                    console.log('[VisionEvents] Credentials received (Meta):', data)
+                    showTakeoverForm.value = false
+                    takeoverMessage.value = ''
+                    takeoverFields.value = null
                 }
 
                 if (data?.type === 'api_discovered') {
