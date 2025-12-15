@@ -141,7 +141,6 @@ impl DatabaseService {
     pub async fn initialize(&mut self) -> Result<()> {
         tracing::info!("Database path: {}", self.db_path.display());
 
-        println!("----1");
         // 确保数据库目录存在
         if let Some(parent) = self.db_path.parent() {
             if !parent.exists() {
@@ -353,7 +352,6 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
-                println!("----2");
         // 创建扫描阶段表
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS scan_stages (
@@ -377,7 +375,6 @@ impl DatabaseService {
 
 
 
-                        println!("----3");
         // 创建资产表
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS assets (
@@ -439,7 +436,6 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
-        println!("----4");
 
         // 创建MCP工具表
         sqlx::query(

@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
-use rig::agent::MultiTurnStreamItem;
+use rig::agent::{AgentBuilder, MultiTurnStreamItem};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Message;
 use rig::providers::gemini::completion::gemini_api_types::{AdditionalParameters, GenerationConfig};
@@ -118,8 +118,8 @@ impl LlmClient {
             }
             _ => {
                 // 未知 provider 尝试使用 openai 兼容方式
-                info!("Unknown rig_provider '{}', trying OpenAI compatible mode", provider_for_agent);
-                self.chat_with_openai(model, preamble, user_message, chat_history, timeout).await?
+                info!("Unknown rig_provider '{}', trying OpenAI compatible mode (via Generic Client)", provider_for_agent);
+                self.chat_with_generic_openai(model, preamble, user_message, chat_history, timeout).await?
             }
         };
 
@@ -128,6 +128,46 @@ impl LlmClient {
 
         info!("LlmClient: Response length: {} chars", content.len());
         Ok(content)
+    }
+
+    async fn chat_with_generic_openai(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        // Use DeepSeek client as a generic OpenAI compatible client
+        // because rig's OpenAI client forces the new /v1/responses API
+        use rig::providers::deepseek;
+        
+        let api_key = self.config.api_key.clone().unwrap_or_default();
+        
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+        
+        let mut builder = deepseek::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client);
+
+        if let Some(base_url) = &self.config.base_url {
+             builder = builder.base_url(base_url);
+        }
+        
+        let client = builder.build()
+            .map_err(|e| anyhow::anyhow!("Failed to build generic client: {}", e))?;
+        
+        let agent = client.agent(model).preamble(preamble).build();
+        self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
     async fn chat_with_openai(
@@ -140,7 +180,12 @@ impl LlmClient {
     ) -> Result<String> {
         use rig::providers::openai;
         let client = openai::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        // Explicitly use completion_model to ensure we use the chat/completions API
+        // instead of the new responses API which rig's agent() helper might default to
+        let model = client.completion_model(model);
+        let agent = rig::agent::AgentBuilder::new(model)
+            .preamble(preamble)
+            .build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 

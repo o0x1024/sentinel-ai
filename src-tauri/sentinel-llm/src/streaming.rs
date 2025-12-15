@@ -1,7 +1,7 @@
 //! 流式 LLM 客户端
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
-use rig::agent::MultiTurnStreamItem;
+use rig::agent::{AgentBuilder, MultiTurnStreamItem};
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Message;
 use rig::providers::gemini::completion::gemini_api_types::{
@@ -177,10 +177,10 @@ impl StreamingLlmClient {
             }
             _ => {
                 info!(
-                    "Unknown provider '{}', trying OpenAI compatible mode",
+                    "Unknown provider '{}', trying OpenAI compatible mode (via Generic Client)",
                     provider_for_agent
                 );
-                self.stream_with_openai(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
+                self.stream_with_generic_openai(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
             }
         };
 
@@ -193,6 +193,55 @@ impl StreamingLlmClient {
     }
 
     // ==================== Provider 实现 ====================
+
+    async fn stream_with_generic_openai<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
+        on_content: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamContent),
+    {
+        use rig::providers::deepseek;
+        
+        let api_key = self.config.api_key.clone().unwrap_or_default();
+        
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+        
+        let mut builder = deepseek::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client);
+
+        if let Some(base_url) = &self.config.base_url {
+             builder = builder.base_url(base_url);
+        }
+        
+        let client = builder.build()
+            .map_err(|e| anyhow::anyhow!("Failed to build generic client: {}", e))?;
+        
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
+        let agent = client
+            .agent(model)
+            .preamble(preamble)
+            .tool_server_handle(tool_server_handle)
+            .build();
+            
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
+    }
 
     async fn stream_with_openai<F>(
         &self,
@@ -211,8 +260,10 @@ impl StreamingLlmClient {
         let client = openai::Client::from_env();
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
-            .agent(model)
+        // Explicitly use completion_model to ensure we use the chat/completions API
+        // instead of the new responses API which rig's agent() helper might default to
+        let model = client.completion_model(model);
+        let agent = rig::agent::AgentBuilder::new(model)
             .preamble(preamble)
             .tool_server_handle(tool_server_handle)
             .build();

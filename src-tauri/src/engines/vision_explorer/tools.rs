@@ -5,6 +5,7 @@
 
 use super::types::*;
 use crate::services::mcp::McpService;
+use crate::commands::passive_scan_commands::PassiveScanState;
 use anyhow::{anyhow, Result};
 // use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chrono::Utc;
@@ -18,11 +19,28 @@ use tracing::{debug, error, info, warn};
 pub struct BrowserTools {
     mcp_service: Arc<McpService>,
     config: VisionExplorerConfig,
+    /// 被动扫描状态，用于获取当前运行的代理配置
+    passive_scan_state: Option<Arc<PassiveScanState>>,
 }
 
 impl BrowserTools {
     pub fn new(mcp_service: Arc<McpService>, config: VisionExplorerConfig) -> Self {
-        Self { mcp_service, config }
+        Self { 
+            mcp_service, 
+            config,
+            passive_scan_state: None,
+        }
+    }
+
+    /// 设置被动扫描状态（用于动态获取代理配置）- builder pattern
+    pub fn with_passive_scan_state(mut self, state: Arc<PassiveScanState>) -> Self {
+        self.passive_scan_state = Some(state);
+        self
+    }
+
+    /// 设置被动扫描状态（用于动态获取代理配置）- mutable reference
+    pub fn set_passive_scan_state(&mut self, state: Arc<PassiveScanState>) {
+        self.passive_scan_state = Some(state);
     }
 
     /// 执行浏览器操作并自动截图
@@ -327,9 +345,24 @@ impl BrowserTools {
 
     /// 导航
     async fn navigate(&self, url: &str) -> Result<ActionResult> {
+        // 动态获取代理配置：优先从运行中的被动扫描服务获取，否则使用配置中的静态值
+        let effective_proxy = if let Some(ref state) = self.passive_scan_state {
+            // 尝试从运行中的代理服务获取当前地址
+            let running_proxy = state.get_running_proxy_address().await;
+            if running_proxy.is_some() {
+                running_proxy
+            } else {
+                // 代理未运行，使用配置中的静态值
+                self.config.browser_proxy.clone()
+            }
+        } else {
+            // 没有PassiveScanState，使用配置中的静态值
+            self.config.browser_proxy.clone()
+        };
+
         info!("Navigating to {} with viewport {}x{}, headless: {}, proxy: {:?}", 
             url, self.config.viewport_width, self.config.viewport_height, 
-            self.config.headless, self.config.browser_proxy);
+            self.config.headless, effective_proxy);
         
         let mut params = json!({
             "url": url,
@@ -338,8 +371,8 @@ impl BrowserTools {
             "headless": self.config.headless
         });
         
-        // 添加代理配置
-        if let Some(ref proxy_server) = self.config.browser_proxy {
+        // 添加代理配置（使用动态获取的代理地址）
+        if let Some(ref proxy_server) = effective_proxy {
             params["proxy"] = json!({"server": proxy_server});
         }
 

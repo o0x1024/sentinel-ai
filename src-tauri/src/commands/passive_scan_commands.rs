@@ -226,6 +226,24 @@ impl PassiveScanState {
         self.app_handle.clone()
     }
 
+    /// 获取当前运行的代理地址 (host:port)
+    /// 返回格式: "http://127.0.0.1:8081"
+    pub async fn get_running_proxy_address(&self) -> Option<String> {
+        let is_running = *self.is_running.read().await;
+        if !is_running {
+            return None;
+        }
+        
+        let proxy_opt = self.proxy_service.read().await;
+        if let Some(proxy) = proxy_opt.as_ref() {
+            if let Some(port) = proxy.get_port().await {
+                // 代理默认监听在 127.0.0.1
+                return Some(format!("http://127.0.0.1:{}", port));
+            }
+        }
+        None
+    }
+
     /// 内部方法：列出所有插件（数据库来源，供工具提供者使用）
     /// 只返回已批准（Approved）的插件，待审核和已拒绝的插件不显示
     pub async fn list_plugins_internal(&self) -> Result<Vec<PluginRecord>, String> {

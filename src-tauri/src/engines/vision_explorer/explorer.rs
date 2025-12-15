@@ -207,7 +207,9 @@ impl VisionExplorer {
 
     /// 设置被动扫描状态
     pub fn with_passive_scan_state(mut self, state: Arc<PassiveScanState>) -> Self {
-        self.passive_scan_state = Some(state);
+        self.passive_scan_state = Some(state.clone());
+        // 同时更新 browser_tools 以便导航时动态获取代理配置
+        self.browser_tools.set_passive_scan_state(state);
         self
     }
 

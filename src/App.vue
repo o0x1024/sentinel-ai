@@ -45,13 +45,13 @@ const handleKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'Escape' && showMobileMenu.value) {
     closeMobileMenu()
   }
-  
+
   if (e.key === 'Backspace') {
     const target = e.target as HTMLElement
     const tagName = target.tagName.toLowerCase()
     const isEditable = target.isContentEditable
     const isInput = tagName === 'input' || tagName === 'textarea'
-    
+
     if (!isInput && !isEditable) {
       e.preventDefault()
     }
@@ -94,12 +94,12 @@ function onLicenseActivated() {
 onMounted(async () => {
   // Check license first
   await checkLicenseStatus()
-  
+
   // 只有在根路径时才重定向，避免路由冲突
   if (router.currentRoute.value.path === '/') {
     router.replace('/dashboard')
   }
-  
+
   // 设置AI助手快捷键
   setupAIChatShortcut()
 })
@@ -227,47 +227,34 @@ window.updateUIScale = (newScale: number) => {
 <template>
   <div id="app" class="h-screen bg-base-100 overflow-hidden">
     <!-- License Activation Dialog -->
-    <LicenseActivation 
-      v-if="!isLicensed"
-      @activated="onLicenseActivated" 
-    />
+    <LicenseActivation v-if="!isLicensed" @activated="onLicenseActivated" />
 
     <!-- 主应用窗口 -->
-      <!-- 顶部导航栏 -->
-      <TopNavbar 
-        @toggle-sidebar="toggleSidebar"
-        @set-theme="setTheme"
-        @switch-language="switchLanguage"
-      />
+    <!-- 顶部导航栏 -->
+    <TopNavbar @toggle-sidebar="toggleSidebar" @set-theme="setTheme" @switch-language="switchLanguage" />
 
-      <!-- 主要内容区域 - 受缩放影响 -->
-      <div :class="appClasses" :style="appStyles" class="flex h-[calc(100vh-4rem)]">
-        <!-- 侧边栏 -->
-        <Sidebar 
-          :collapsed="sidebarCollapsed" 
-          class="fixed left-0 top-16 h-[calc(100vh-4rem)] transition-all duration-300 z-1000 "
-          :class="{
-            'w-16': sidebarCollapsed,
-            'w-64': !sidebarCollapsed
-          }"
-        />
-        
-        <!-- 主内容区 -->
-        <main 
-          class="flex-1 transition-all duration-300 overflow-y-auto mt-16"
-          :class="{
-            'ml-16': sidebarCollapsed,
-            'ml-64': !sidebarCollapsed
-          }"
-        >
-          <!-- 使用 keep-alive 保持组件活跃，确保事件监听器不会丢失 -->
-          <router-view v-slot="{ Component }">
-            <keep-alive :include="['Passive', 'AIAssistant', 'Vulnerabilities']">
-              <component :is="Component" class="min-h-full" />
-            </keep-alive>
-          </router-view>
-        </main>
-      </div>
+    <!-- 主要内容区域 - 受缩放影响 -->
+    <div :class="appClasses" :style="appStyles" class="flex h-[calc(100vh-4rem)]">
+      <!-- 侧边栏 -->
+      <Sidebar :collapsed="sidebarCollapsed"
+        class="fixed left-0 top-16 h-[calc(100vh-4rem)] transition-all duration-300 z-1000 " :class="{
+          'w-16': sidebarCollapsed,
+          'w-64': !sidebarCollapsed
+        }" />
+
+      <!-- 主内容区 -->
+      <main class="flex-1 transition-all duration-300 overflow-y-auto mt-16" :class="{
+        'ml-16': sidebarCollapsed,
+        'ml-64': !sidebarCollapsed
+      }">
+        <!-- 使用 keep-alive 保持组件活跃，确保事件监听器不会丢失 -->
+        <router-view v-slot="{ Component }">
+          <keep-alive :include="['Passive', 'AIAssistant', 'Vulnerabilities']">
+            <component :is="Component" class="min-h-full" />
+          </keep-alive>
+        </router-view>
+      </main>
+    </div>
 
     <Toast />
   </div>
@@ -412,6 +399,7 @@ body {
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -423,7 +411,7 @@ body {
   .navbar {
     min-height: 4rem;
   }
-  
+
   /* 当移动端菜单展开时，确保有足够的空间 */
   .dropdown.lg\:hidden .dropdown-content {
     position: absolute;
