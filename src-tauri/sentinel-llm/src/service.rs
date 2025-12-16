@@ -209,9 +209,35 @@ impl AiService {
         F: FnMut(StreamChunk),
     {
         use rig::providers::openai;
-        let client = openai::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?;
+        
+        let llm_config = self.to_llm_config();
+        
+        // If custom base_url is set, use Chat Completions API (for third-party providers)
+        // Otherwise use Responses API (for official OpenAI)
+        if let Some(base_url) = &llm_config.base_url {
+            info!("Using Chat Completions API with custom base URL: {}", base_url);
+            let client: openai::CompletionsClient = openai::Client::builder()
+                .api_key(api_key)
+                .base_url(base_url)
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
+                .completions_api();
+            
+            let agent = client.agent(model).preamble(preamble).build();
+            self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        } else {
+            info!("Using Responses API for official OpenAI");
+            let client: openai::Client = openai::Client::builder()
+                .api_key(api_key)
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
+            
+            let agent = client.agent(model).preamble(preamble).build();
+            self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        }
     }
 
     async fn stream_with_anthropic<F>(
@@ -317,12 +343,10 @@ impl AiService {
     {
         use rig::providers::deepseek;
         
-        // 使用 ClientBuilder 创建客户端，确保设置正确的 Content-Type
         let api_key = std::env::var("DEEPSEEK_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
         
-        // 创建带有正确 Content-Type 的 HTTP 客户端
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
@@ -334,10 +358,17 @@ impl AiService {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         
-        let client = deepseek::Client::<reqwest::Client>::builder()
+        let mut builder = deepseek::Client::<reqwest::Client>::builder()
             .api_key(api_key)
-            .http_client(http_client)
-            .build()
+            .http_client(http_client);
+        
+        // Use custom base_url if configured
+        if let Some(ref base_url) = self.config.api_base {
+            info!("Using custom DeepSeek base URL: {}", base_url);
+            builder = builder.base_url(base_url);
+        }
+        
+        let client = builder.build()
             .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
         
         let agent = client.agent(model).preamble(preamble).build();

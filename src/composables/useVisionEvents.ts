@@ -24,6 +24,24 @@ export interface VisionStep {
     error?: string
 }
 
+export interface VisionPlan {
+    phase: string
+    phase_name: string
+    goal: string
+    steps: string[]
+    completion_criteria: string
+    reason: string
+}
+
+export interface VisionProgress {
+    phase: string
+    iteration: number
+    max_iterations: number
+    pages_visited: number
+    apis_discovered: number
+    elements_interacted: number
+}
+
 export interface VisionCoverage {
     route_coverage: number
     element_coverage: number
@@ -48,6 +66,10 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     const isVisionActive = ref(false)
     const currentUrl = ref('')
 
+    // Planning & Progress State
+    const currentPlan = ref<VisionPlan | null>(null)
+    const currentProgress = ref<VisionProgress | null>(null)
+
     // Takeover State
     const showTakeoverForm = ref(false)
     const takeoverMessage = ref('')
@@ -62,6 +84,8 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
         discoveredApis.value = []
         isVisionActive.value = false
         currentUrl.value = ''
+        currentPlan.value = null
+        currentProgress.value = null
         showTakeoverForm.value = false
         takeoverMessage.value = ''
         takeoverFields.value = null
@@ -173,6 +197,32 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
                     }
                 }
 
+                // Handle vision_plan events
+                if (data?.type === 'vision_plan') {
+                    isVisionActive.value = true
+                    currentPlan.value = {
+                        phase: data.phase || '',
+                        phase_name: data.phase_name || '',
+                        goal: data.goal || '',
+                        steps: data.steps || [],
+                        completion_criteria: data.completion_criteria || '',
+                        reason: data.reason || ''
+                    }
+                }
+
+                // Handle vision_progress events
+                if (data?.type === 'vision_progress') {
+                    isVisionActive.value = true
+                    currentProgress.value = {
+                        phase: data.phase || '',
+                        iteration: data.iteration || 0,
+                        max_iterations: data.max_iterations || 100,
+                        pages_visited: data.pages_visited || 0,
+                        apis_discovered: data.apis_discovered || 0,
+                        elements_interacted: data.elements_interacted || 0
+                    }
+                }
+
                 if (data?.type === 'complete') {
                     // Auto close on completion as requested
                     isVisionActive.value = false
@@ -215,6 +265,8 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
         discoveredApis,
         isVisionActive,
         currentUrl,
+        currentPlan,
+        currentProgress,
         showTakeoverForm,
         takeoverMessage,
         takeoverFields,

@@ -40,11 +40,17 @@
             </div>
           </div>
 
-          <textarea class="textarea textarea-bordered font-mono text-sm h-96 w-full" :class="{
-            'textarea-error': configError,
-            'textarea-success': configValid && !configError
-          }" v-model="manualConfigText" @input="onManualConfigChange"
-            :placeholder="t('settings.ai.manualEditJsonPlaceholder')"></textarea>
+          <div class="relative">
+            <div ref="editorContainer" class="editor-container rounded-lg overflow-hidden border" :class="{
+              'border-error': configError,
+              'border-success': configValid && !configError,
+              'border-base-300': !configError && !configValid
+            }"></div>
+            <button class="fullscreen-btn" @click="toggleFullscreen"
+              :title="t('settings.ai.fullscreen')">
+              <i class="fas fa-expand"></i>
+            </button>
+          </div>
 
           <div v-if="configError" class="alert alert-error">
             <i class="fas fa-exclamation-triangle"></i>
@@ -65,6 +71,47 @@
               {{ t('settings.ai.resetToDefault') }}
             </button>
           </div>
+
+    <!-- 全屏编辑器模态框 -->
+    <div v-if="isFullscreen" class="fullscreen-editor-overlay">
+      <div class="fullscreen-editor-container">
+        <div class="fullscreen-editor-header">
+          <h3 class="text-lg font-semibold flex items-center gap-2">
+            <i class="fas fa-code"></i>
+            {{ t('settings.ai.manualEdit') }}
+          </h3>
+          <div class="flex items-center gap-2">
+            <div class="badge badge-warning badge-sm" v-if="configError">
+              {{ t('settings.ai.configError') }}
+            </div>
+            <div class="badge badge-success badge-sm" v-else-if="configValid">
+              {{ t('settings.ai.configValid') }}
+            </div>
+            <button class="btn btn-ghost btn-sm" @click="formatConfig">
+              <i class="fas fa-indent"></i>
+            </button>
+            <button class="btn btn-ghost btn-sm" @click="exitFullscreen">
+              <i class="fas fa-compress"></i>
+            </button>
+          </div>
+        </div>
+        <div ref="fullscreenEditorContainer" class="fullscreen-editor-content"></div>
+        <div class="fullscreen-editor-footer">
+          <div v-if="configError" class="text-error text-sm flex items-center gap-2">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>{{ configError }}</span>
+          </div>
+          <div class="flex-1"></div>
+          <button class="btn btn-outline btn-sm" @click="exitFullscreen">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="btn btn-primary btn-sm" @click="applyAndExitFullscreen" :disabled="!!configError">
+            <i class="fas fa-save"></i>
+            {{ t('settings.ai.applyManualConfig') }}
+          </button>
+        </div>
+      </div>
+    </div>
         </div>
       </div>
     </div>
@@ -228,12 +275,12 @@
               </div>
 
               <!-- API Base URL -->
-              <div class="form-control" v-if="selectedProviderConfig.api_base">
+              <div class="form-control" >
                 <label class="label">
                   <span class="label-text">{{ t('settings.ai.apiBaseUrl') }}</span>
                 </label>
                 <div class="input-group">
-                  <input type="url" :placeholder="t('settings.ai.apiBaseUrl')" class="input input-bordered flex-1"
+                  <input type="url" :placeholder="t('settings.ai.apiBaseUrl')" class="input input-bordered" style="width:300px"
                     v-model="selectedProviderConfig.api_base" @blur="saveAiConfig">
                   <!-- 为Ollama等不需要API密钥但需要测试连接的提供商添加按钮 -->
                   <button v-if="!needsApiKey(selectedAiProvider)" class="btn btn-outline"
@@ -637,10 +684,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import SearchableSelect from '@/components/SearchableSelect.vue'
+import { EditorView, basicSetup } from 'codemirror'
+import { EditorState } from '@codemirror/state'
+import { json } from '@codemirror/lang-json'
+import { oneDark } from '@codemirror/theme-one-dark'
+import { keymap } from '@codemirror/view'
+import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 
 const { t } = useI18n()
 
@@ -649,6 +702,13 @@ const useGuiMode = ref(true)
 const manualConfigText = ref('')
 const configError = ref('')
 const configValid = ref(false)
+
+// CodeMirror 相关
+const editorContainer = ref<HTMLDivElement | null>(null)
+const fullscreenEditorContainer = ref<HTMLDivElement | null>(null)
+let editorView: EditorView | null = null
+let fullscreenEditorView: EditorView | null = null
+const isFullscreen = ref(false)
 
 // Props
 interface Props {
@@ -1076,16 +1136,157 @@ const testAliyunConnection = async () => {
   }
 }
 
+// CodeMirror 初始化
+const initCodeMirror = () => {
+  if (!editorContainer.value) return
+  
+  if (editorView) {
+    editorView.destroy()
+    editorView = null
+  }
+  
+  editorContainer.value.innerHTML = ''
+  
+  const state = EditorState.create({
+    doc: manualConfigText.value,
+    extensions: [
+      basicSetup,
+      json(),
+      oneDark,
+      keymap.of([...defaultKeymap, indentWithTab]),
+      EditorView.lineWrapping,
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          manualConfigText.value = update.state.doc.toString()
+          validateConfigText()
+        }
+      }),
+    ],
+  })
+  
+  editorView = new EditorView({
+    state,
+    parent: editorContainer.value,
+  })
+}
+
+// 更新编辑器内容
+const updateEditorContent = (content: string) => {
+  if (!editorView) return
+  const currentContent = editorView.state.doc.toString()
+  if (currentContent !== content) {
+    editorView.dispatch({
+      changes: {
+        from: 0,
+        to: currentContent.length,
+        insert: content
+      }
+    })
+  }
+  // 同步更新全屏编辑器
+  if (fullscreenEditorView) {
+    const fsContent = fullscreenEditorView.state.doc.toString()
+    if (fsContent !== content) {
+      fullscreenEditorView.dispatch({
+        changes: {
+          from: 0,
+          to: fsContent.length,
+          insert: content
+        }
+      })
+    }
+  }
+}
+
+// 全屏编辑器初始化
+const initFullscreenEditor = () => {
+  if (!fullscreenEditorContainer.value) return
+  
+  if (fullscreenEditorView) {
+    fullscreenEditorView.destroy()
+    fullscreenEditorView = null
+  }
+  
+  fullscreenEditorContainer.value.innerHTML = ''
+  
+  const state = EditorState.create({
+    doc: manualConfigText.value,
+    extensions: [
+      basicSetup,
+      json(),
+      oneDark,
+      keymap.of([...defaultKeymap, indentWithTab]),
+      EditorView.lineWrapping,
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          manualConfigText.value = update.state.doc.toString()
+          validateConfigText()
+          // 同步到普通编辑器
+          if (editorView) {
+            const normalContent = editorView.state.doc.toString()
+            const newContent = update.state.doc.toString()
+            if (normalContent !== newContent) {
+              editorView.dispatch({
+                changes: {
+                  from: 0,
+                  to: normalContent.length,
+                  insert: newContent
+                }
+              })
+            }
+          }
+        }
+      }),
+    ],
+  })
+  
+  fullscreenEditorView = new EditorView({
+    state,
+    parent: fullscreenEditorContainer.value,
+  })
+  
+  fullscreenEditorView.focus()
+}
+
+// 切换全屏
+const toggleFullscreen = async () => {
+  isFullscreen.value = true
+  await nextTick()
+  initFullscreenEditor()
+}
+
+// 退出全屏
+const exitFullscreen = () => {
+  if (fullscreenEditorView) {
+    fullscreenEditorView.destroy()
+    fullscreenEditorView = null
+  }
+  isFullscreen.value = false
+}
+
+// 应用并退出全屏
+const applyAndExitFullscreen = () => {
+  applyManualConfig()
+  exitFullscreen()
+}
+
 onMounted(() => {
   loadTavilyConfig()
   loadAliyunConfig()
 })
 
-// 手动编辑相关方法
-const onManualConfigChange = () => {
-  validateConfigText()
-}
+onUnmounted(() => {
+  if (editorView) {
+    editorView.destroy()
+    editorView = null
+  }
+  if (fullscreenEditorView) {
+    fullscreenEditorView.destroy()
+    fullscreenEditorView = null
+  }
+})
 
+// 手动编辑相关方法
 const validateConfigText = () => {
   configError.value = ''
   configValid.value = false
@@ -1152,7 +1353,9 @@ const formatConfig = () => {
 
   try {
     const parsed = JSON.parse(manualConfigText.value)
-    manualConfigText.value = JSON.stringify(parsed, null, 2)
+    const formatted = JSON.stringify(parsed, null, 2)
+    manualConfigText.value = formatted
+    updateEditorContent(formatted)
     validateConfigText()
   } catch (error) {
     // 保持原始文本，不格式化无效的 JSON
@@ -1246,23 +1449,32 @@ const resetToDefault = () => {
     }
   }
 
-  manualConfigText.value = JSON.stringify(defaultConfig, null, 2)
+  const formatted = JSON.stringify(defaultConfig, null, 2)
+  manualConfigText.value = formatted
+  updateEditorContent(formatted)
   validateConfigText()
 }
 
 // 监听 aiConfig 变化，同步到手动编辑文本
 watch(() => props.aiConfig, (newConfig) => {
   if (newConfig && !useGuiMode.value) {
-    manualConfigText.value = JSON.stringify(newConfig, null, 2)
+    const newText = JSON.stringify(newConfig, null, 2)
+    manualConfigText.value = newText
+    updateEditorContent(newText)
     validateConfigText()
   }
 }, { immediate: true, deep: true })
 
 // 初始化手动编辑文本
-watch(useGuiMode, (isGuiMode) => {
+watch(useGuiMode, async (isGuiMode) => {
   if (!isGuiMode && props.aiConfig) {
     manualConfigText.value = JSON.stringify(props.aiConfig, null, 2)
     validateConfigText()
+    await nextTick()
+    initCodeMirror()
+  } else if (isGuiMode && editorView) {
+    editorView.destroy()
+    editorView = null
   }
 })
 
@@ -1291,5 +1503,94 @@ watch(useGuiMode, (isGuiMode) => {
 
 .tab-active {
   @apply bg-primary text-primary-content;
+}
+
+.editor-container {
+  height: 24rem;
+}
+
+.editor-container :deep(.cm-editor) {
+  height: 100%;
+  font-size: 0.875rem;
+}
+
+.editor-container :deep(.cm-scroller) {
+  overflow: auto;
+}
+
+/* 全屏按钮样式 */
+.fullscreen-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 10;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: #9ca3af;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fullscreen-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+/* 全屏编辑器样式 */
+.fullscreen-editor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.fullscreen-editor-container {
+  width: 100%;
+  height: 100%;
+  max-width: 1400px;
+  background: var(--fallback-b1, oklch(var(--b1)));
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullscreen-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--fallback-b3, oklch(var(--b3)));
+}
+
+.fullscreen-editor-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.fullscreen-editor-content :deep(.cm-editor) {
+  height: 100%;
+  font-size: 0.875rem;
+}
+
+.fullscreen-editor-content :deep(.cm-scroller) {
+  overflow: auto;
+}
+
+.fullscreen-editor-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--fallback-b3, oklch(var(--b3)));
 }
 </style>

@@ -85,11 +85,57 @@
         </div>
     </div>
 
+    <!-- Plan & Progress Section -->
+    <div class="p-3 bg-base-100/50 text-xs border-b border-base-300 flex flex-col gap-3" v-if="currentPlan || currentProgress">
+      <!-- Current Plan -->
+      <div v-if="currentPlan" class="plan-section">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-primary font-bold">📋</span>
+          <span class="font-bold text-primary">{{ currentPlan.phase_name || currentPlan.phase }}</span>
+        </div>
+        <div class="pl-5 space-y-1 text-base-content/80">
+          <div><span class="opacity-60">{{ t('agent.visionGoal') }}:</span> {{ currentPlan.goal }}</div>
+          <div v-if="currentPlan.steps && currentPlan.steps.length > 0">
+            <span class="opacity-60">{{ t('agent.visionSteps') }}:</span>
+            <ul class="list-disc list-inside pl-2 mt-1 space-y-0.5">
+              <li v-for="(step, idx) in currentPlan.steps" :key="idx" class="truncate" :title="step">{{ step }}</li>
+            </ul>
+          </div>
+          <div v-if="currentPlan.completion_criteria">
+            <span class="opacity-60">{{ t('agent.visionCompletion') }}:</span> {{ currentPlan.completion_criteria }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Current Progress -->
+      <div v-if="currentProgress" class="progress-section">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-secondary font-bold">📊</span>
+          <span class="font-bold text-secondary">{{ t('agent.visionProgress') }}</span>
+          <span class="ml-auto badge badge-sm badge-secondary">{{ currentProgress.iteration }}/{{ currentProgress.max_iterations }}</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-center">
+          <div class="bg-base-200 rounded p-2">
+            <div class="text-lg font-bold text-primary">{{ currentProgress.pages_visited }}</div>
+            <div class="text-[10px] opacity-60">{{ t('agent.visionPages') }}</div>
+          </div>
+          <div class="bg-base-200 rounded p-2">
+            <div class="text-lg font-bold text-accent">{{ currentProgress.apis_discovered }}</div>
+            <div class="text-[10px] opacity-60">APIs</div>
+          </div>
+          <div class="bg-base-200 rounded p-2">
+            <div class="text-lg font-bold text-info">{{ currentProgress.elements_interacted }}</div>
+            <div class="text-[10px] opacity-60">{{ t('agent.visionElements') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Coverage Stats -->
     <div class="p-3 bg-base-100/50 text-xs border-b border-base-300 flex flex-col gap-2" v-if="coverage">
       <div class="flex justify-between items-center">
          <span class="opacity-70">Target:</span>
-         <span class="font-mono truncate max-w-[150px]" :title="currentUrl">{{ currentUrl }}</span>
+         <span class="font-mono truncate max-w-[200px]" :title="currentUrl">{{ currentUrl }}</span>
       </div>
       
       <!-- Route Coverage -->
@@ -220,7 +266,7 @@
 import { ref, watch, nextTick, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
-import type { VisionStep, VisionCoverage } from '@/composables/useVisionEvents'
+import type { VisionStep, VisionCoverage, VisionPlan, VisionProgress } from '@/composables/useVisionEvents'
 
 const { t } = useI18n()
 
@@ -230,6 +276,9 @@ const props = defineProps<{
   discoveredApis: { method: string; url: string }[]
   isActive: boolean
   currentUrl: string
+  // Plan & Progress props
+  currentPlan?: VisionPlan | null
+  currentProgress?: VisionProgress | null
   // Takeover props
   showTakeoverForm?: boolean
   takeoverMessage?: string

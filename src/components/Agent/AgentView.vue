@@ -97,7 +97,7 @@
         />
         
         <!-- Side Panel (Vision or Todo) -->
-        <div class="sidebar-container w-80 flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100" v-if="isVisionActive || hasTodos">
+        <div class="sidebar-container w-[420px] flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100" v-if="isVisionActive || hasTodos">
             <VisionExplorerPanel 
                v-if="isVisionActive"
                :steps="visionEvents.steps.value" 
@@ -105,6 +105,8 @@
                :discovered-apis="visionEvents.discoveredApis.value"
                :is-active="isVisionActive"
                :current-url="visionEvents.currentUrl.value"
+               :current-plan="visionEvents.currentPlan.value"
+               :current-progress="visionEvents.currentProgress.value"
                :show-takeover-form="visionEvents.showTakeoverForm.value"
                :takeover-message="visionEvents.takeoverMessage.value"
                :takeover-fields="visionEvents.takeoverFields.value"

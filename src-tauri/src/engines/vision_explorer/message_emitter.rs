@@ -162,6 +162,74 @@ impl VisionExplorerMessageEmitter {
         self.emit_content(&content, false);
     }
 
+    /// 发送（可重规划）的探索计划信息
+    /// 使用 ChunkType::Meta，前端 VisionExplorerPanel 解析 structured_data 展示
+    pub fn emit_plan(
+        &self,
+        phase: &str,
+        phase_name: &str,
+        goal: &str,
+        steps: &[&str],
+        completion_criteria: &str,
+        reason: &str,
+    ) {
+        emit_message_chunk_with_arch(
+            &self.app_handle,
+            &self.execution_id,
+            &self.message_id,
+            self.conversation_id.as_deref(),
+            ChunkType::Meta,
+            "",
+            false,
+            Some("vision_plan"),
+            None,
+            Some(self.get_architecture()),
+            Some(serde_json::json!({
+                "type": "vision_plan",
+                "phase": phase,
+                "phase_name": phase_name,
+                "goal": goal,
+                "steps": steps,
+                "completion_criteria": completion_criteria,
+                "reason": reason,
+            })),
+        );
+    }
+
+    /// 发送探索进度
+    /// 使用 ChunkType::Meta，前端 VisionExplorerPanel 解析 structured_data 展示
+    pub fn emit_progress(
+        &self,
+        iteration: u32,
+        max_iterations: u32,
+        phase: &str,
+        pages_visited: usize,
+        apis_discovered: usize,
+        elements_interacted: usize,
+    ) {
+        emit_message_chunk_with_arch(
+            &self.app_handle,
+            &self.execution_id,
+            &self.message_id,
+            self.conversation_id.as_deref(),
+            ChunkType::Meta,
+            "",
+            false,
+            Some("vision_progress"),
+            None,
+            Some(self.get_architecture()),
+            Some(serde_json::json!({
+                "type": "vision_progress",
+                "phase": phase,
+                "iteration": iteration,
+                "max_iterations": max_iterations,
+                "pages_visited": pages_visited,
+                "apis_discovered": apis_discovered,
+                "elements_interacted": elements_interacted,
+            })),
+        );
+    }
+
     /// 发送探索完成信号
     pub fn emit_complete(&self, stats: VisionExplorationStats) {
         let content = format!(

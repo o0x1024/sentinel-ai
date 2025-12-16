@@ -66,9 +66,17 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
                 use rig::tool::Tool;
 
                 let rig_provider = params.rig_provider.to_lowercase();
-                let llm_config = sentinel_llm::LlmConfig::new(&rig_provider, &params.model)
+                let mut llm_config = sentinel_llm::LlmConfig::new(&rig_provider, &params.model)
                    .with_timeout(params.timeout_secs)
                    .with_rig_provider(&rig_provider);
+                
+                // Set api_key and base_url for VisionExplorer
+                if let Some(ref api_key) = params.api_key {
+                    llm_config = llm_config.with_api_key(api_key);
+                }
+                if let Some(ref api_base) = params.api_base {
+                    llm_config = llm_config.with_base_url(api_base);
+                }
 
                 let ve_tool = VisionExplorerTool::new(mcp_service.inner().clone(), llm_config)
                    .with_app_handle(app_handle.clone())

@@ -137,6 +137,10 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
   const streamingContent = ref('')
   const contentBuffer = ref('')
   const ragMetaInfo = ref<RagMetaInfo | null>(null)
+  
+  // Thinking content buffer for incremental display
+  const thinkingBuffer = ref('')
+  const currentThinkingMessageId = ref<string | null>(null)
 
   // 工具调用追踪 Map: tool_call_id -> { tool_name, arguments, message_id, message_index }
   const toolCallTracker = new Map<string, { tool_name: string; arguments: any; message_id: string; message_index: number }>()
@@ -160,6 +164,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     messages.value = []
     streamingContent.value = ''
     contentBuffer.value = ''
+    thinkingBuffer.value = ''
+    currentThinkingMessageId.value = null
     error.value = null
     isExecuting.value = false
     currentExecutionId.value = null
@@ -172,6 +178,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     isExecuting.value = false
     streamingContent.value = ''
     contentBuffer.value = ''
+    thinkingBuffer.value = ''
+    currentThinkingMessageId.value = null
 
     // 如果有正在流式输出的内容，将其作为最终消息添加
     // 注意：后端取消后可能不会发送 complete 事件，所以这里处理残留内容
@@ -193,6 +201,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       error.value = null
       contentBuffer.value = ''
       streamingContent.value = ''
+      thinkingBuffer.value = ''
+      currentThinkingMessageId.value = null
 
       // 添加用户消息
       messages.value.push({
@@ -214,6 +224,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       error.value = null
       contentBuffer.value = ''
       streamingContent.value = ''
+      thinkingBuffer.value = ''
+      currentThinkingMessageId.value = null
 
       // 添加用户任务消息（如果没有通过 user_message 事件收到）
       const hasUserMessage = messages.value.some(m =>
@@ -254,15 +266,34 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       if (!matchesTarget(payload.execution_id)) return
 
       if (payload.chunk_type === 'text') {
+        // Text content: reset thinking state and accumulate text
+        if (currentThinkingMessageId.value) {
+          currentThinkingMessageId.value = null
+          thinkingBuffer.value = ''
+        }
         contentBuffer.value += payload.content
         streamingContent.value = contentBuffer.value
       } else if (payload.chunk_type === 'reasoning') {
-        messages.value.push({
-          id: crypto.randomUUID(),
-          type: 'thinking',
-          content: payload.content,
-          timestamp: Date.now(),
-        })
+        // Reasoning content: accumulate in existing thinking message or create new one
+        thinkingBuffer.value += payload.content
+        
+        if (currentThinkingMessageId.value) {
+          // Update existing thinking message
+          const existingMsg = messages.value.find(m => m.id === currentThinkingMessageId.value)
+          if (existingMsg) {
+            existingMsg.content = thinkingBuffer.value
+          }
+        } else {
+          // Create new thinking message
+          const msgId = crypto.randomUUID()
+          currentThinkingMessageId.value = msgId
+          messages.value.push({
+            id: msgId,
+            type: 'thinking',
+            content: thinkingBuffer.value,
+            timestamp: Date.now(),
+          })
+        }
       }
     })
     unlisteners.push(unlistenChunk)
@@ -500,6 +531,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
 
       isExecuting.value = false
       streamingContent.value = ''
+      thinkingBuffer.value = ''
+      currentThinkingMessageId.value = null
 
       // 只有当缓冲区有内容时才尝试添加消息
       // 注意：agent:assistant_message_saved 事件已经会清空缓冲区，
@@ -566,6 +599,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       }
 
       const chunkType = chunk.chunk_type
+      const isVisionExplorer = chunk.architecture === 'VisionExplorer'
 
       if (chunkType === 'Meta' && chunk.stage === 'start') {
         isExecuting.value = true
@@ -602,7 +636,26 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         return
       }
 
+      // VisionExplorer: planning/progress now handled by VisionExplorerPanel via useVisionEvents
+      // Skip PlanInfo and vision_progress chunks here to avoid duplicate display
+      if (isVisionExplorer) {
+        if (chunkType === 'PlanInfo') {
+          return // Handled by VisionExplorerPanel
+        }
+        if (chunkType === 'Meta') {
+          const sd = (chunk as any).structured_data
+          if (sd?.type === 'vision_plan' || sd?.type === 'vision_progress') {
+            return // Handled by VisionExplorerPanel
+          }
+        }
+      }
+
       if (chunkType === 'Content') {
+        // Text content: reset thinking state and accumulate text
+        if (currentThinkingMessageId.value) {
+          currentThinkingMessageId.value = null
+          thinkingBuffer.value = ''
+        }
         contentBuffer.value += chunk.content
         streamingContent.value = contentBuffer.value
         return
@@ -610,12 +663,26 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
 
       if (chunkType === 'Thinking') {
         if (chunk.content.trim()) {
-          messages.value.push({
-            id: crypto.randomUUID(),
-            type: 'thinking',
-            content: chunk.content,
-            timestamp: Date.now(),
-          })
+          // Accumulate thinking content
+          thinkingBuffer.value += chunk.content
+          
+          if (currentThinkingMessageId.value) {
+            // Update existing thinking message
+            const existingMsg = messages.value.find(m => m.id === currentThinkingMessageId.value)
+            if (existingMsg) {
+              existingMsg.content = thinkingBuffer.value
+            }
+          } else {
+            // Create new thinking message
+            const msgId = crypto.randomUUID()
+            currentThinkingMessageId.value = msgId
+            messages.value.push({
+              id: msgId,
+              type: 'thinking',
+              content: thinkingBuffer.value,
+              timestamp: Date.now(),
+            })
+          }
         }
         return
       }

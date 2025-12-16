@@ -299,6 +299,13 @@ export default {
     component: 'Component',
     pendingRoutes: 'Pending Routes',
     pendingRoutesCount: 'Pending Routes ({count})',
+    // Vision Plan & Progress
+    visionGoal: 'Goal',
+    visionSteps: 'Steps',
+    visionCompletion: 'Completion',
+    visionProgress: 'Progress',
+    visionPages: 'Pages',
+    visionElements: 'Elements',
     // MarkdownRenderer
     sourceCitation: 'Source Citation #{number}'
   },

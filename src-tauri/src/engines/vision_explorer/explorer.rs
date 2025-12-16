@@ -50,6 +50,17 @@ Focus on:
 
 Provide a structured summary that can be used as context for continuing the exploration."#;
 
+/// Safely truncate a string to a maximum number of characters (not bytes).
+/// This handles UTF-8 multi-byte characters correctly.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
+    }
+}
+
 /// Takeover事件
 #[derive(Debug, Clone)]
 pub enum TakeoverEvent {
@@ -61,6 +72,47 @@ pub enum TakeoverEvent {
     UserAction { action_type: String, details: Value },
     /// 用户归还控制
     ReturnControl,
+}
+
+/// Vision 探索阶段（用于分阶段计划与可重规划）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VisionExplorePhase {
+    /// Phase 0: 态势识别/准入判断（不要在此阶段做全站计划）
+    Recon,
+    /// Phase 1: 前台/未登录可访问区域
+    Frontend,
+    /// Phase 2: 登录流程（需要凭据/验证码/接管）
+    Login,
+    /// Phase 3: 登录后后台/控制台
+    Backend,
+}
+
+impl VisionExplorePhase {
+    fn as_str(&self) -> &'static str {
+        match self {
+            VisionExplorePhase::Recon => "recon",
+            VisionExplorePhase::Frontend => "frontend",
+            VisionExplorePhase::Login => "login",
+            VisionExplorePhase::Backend => "backend",
+        }
+    }
+
+    fn display_name_zh(&self) -> &'static str {
+        match self {
+            VisionExplorePhase::Recon => "态势识别",
+            VisionExplorePhase::Frontend => "前台探索",
+            VisionExplorePhase::Login => "登录流程",
+            VisionExplorePhase::Backend => "后台探索",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct VisionExplorePlanState {
+    phase: VisionExplorePhase,
+    plan_markdown: String,
+    last_plan_reason: String,
+    last_progress_iteration: u32,
 }
 
 /// 视觉探索引擎
@@ -99,6 +151,8 @@ pub struct VisionExplorer {
     coverage_engine: Arc<RwLock<CoverageEngine>>,
     // 是否已注入路由监听脚本
     route_monitor_injected: Arc<RwLock<bool>>,
+    // 分阶段计划状态（可重规划）
+    plan_state: Arc<RwLock<VisionExplorePlanState>>,
 }
 
 impl VisionExplorer {
@@ -149,6 +203,14 @@ impl VisionExplorer {
         let element_manager = Arc::new(RwLock::new(ElementManager::new()));
         let coverage_engine = Arc::new(RwLock::new(CoverageEngine::new()));
 
+        // 初始化分阶段计划状态
+        let plan_state = Arc::new(RwLock::new(VisionExplorePlanState {
+            phase: VisionExplorePhase::Recon,
+            plan_markdown: String::new(),
+            last_plan_reason: "init".to_string(),
+            last_progress_iteration: 0,
+        }));
+
         Self {
             config,
             browser_tools,
@@ -171,6 +233,7 @@ impl VisionExplorer {
             element_manager,
             coverage_engine,
             route_monitor_injected: Arc::new(RwLock::new(false)),
+            plan_state,
         }
     }
 
@@ -470,6 +533,29 @@ impl VisionExplorer {
             emitter.emit_start(&self.config.target_url);
         }
 
+        // 初始化 Phase 0 计划（启动时只做态势识别，不做全站计划）
+        {
+            let phase = VisionExplorePhase::Recon;
+            let plan_text = self.build_phase_plan_markdown(phase, "startup");
+            let mut ps = self.plan_state.write().await;
+            ps.phase = phase;
+            ps.plan_markdown = plan_text.clone();
+            ps.last_plan_reason = "startup".to_string();
+            drop(ps);
+
+            if let Some(emitter) = &self.message_emitter {
+                let plan_info = Self::get_phase_plan_info(phase, "startup");
+                emitter.emit_plan(
+                    phase.as_str(),
+                    plan_info.0,
+                    plan_info.1,
+                    &plan_info.2,
+                    plan_info.3,
+                    "startup",
+                );
+            }
+        }
+
         // 第1步：导航到目标URL
         info!("Step 1: Navigating to target URL");
         let navigate_action = BrowserAction::Navigate {
@@ -508,6 +594,17 @@ impl VisionExplorer {
         {
             let mut state = self.state_manager.write().await;
             state.update_page_state(page_state);
+        }
+
+        // 基于初始页面状态立即重规划（例如：一开始就是登录页/已登录后台）
+        {
+            let state = self.state_manager.read().await;
+            let page_state = state.state().current_page.clone();
+            drop(state);
+            if let Some(ps) = page_state {
+                self.replan_on_page_state(&ps, "initial_capture").await;
+                self.emit_progress_update().await;
+            }
         }
 
         // 第3步：迭代探索循环
@@ -601,6 +698,9 @@ impl VisionExplorer {
                         info!("Exploration completed by VLM decision");
                         break;
                     }
+
+                    // 每轮成功后发送一次进度更新（前端以 Progress 消息块展示）
+                    self.emit_progress_update().await;
                 }
                 Err(e) => {
                     consecutive_errors += 1;
@@ -663,6 +763,9 @@ impl VisionExplorer {
             let mut state = self.state_manager.write().await;
             state.update_page_state(page_state.clone());
         }
+
+        // 2.0 根据当前页面状态进行阶段判断与重规划（登录门/登录成功等）
+        self.replan_on_page_state(&page_state, "page_captured").await;
 
         // 2.1. 检测登录页面并处理凭据/Takeover
         if let Some(login_fields) = self.detect_login_page(&page_state) {
@@ -1221,6 +1324,222 @@ impl VisionExplorer {
         DEFAULT_SYSTEM_PROMPT_TEMPLATE.to_string()
     }
 
+    /// 构建分阶段计划上下文（注入到 VLM 的 user_prompt 中）
+    async fn build_plan_context(&self) -> String {
+        let ps = self.plan_state.read().await.clone();
+        if ps.plan_markdown.trim().is_empty() {
+            return String::new();
+        }
+
+        format!(
+            r#"────────────────────────
+探索计划（可重规划）
+────────────────────────
+
+- 当前阶段: {} ({})
+- 规则:
+  - Phase 0 只做态势识别，不要一次性制定“全站计划”
+  - 发现登录门/登录成功/出现新区域入口时必须重规划（replan）
+  - 每轮输出：已完成 / 新发现(API/路由) / 下一步
+
+{}
+"#,
+            ps.phase.display_name_zh(),
+            ps.phase.as_str(),
+            ps.plan_markdown
+        )
+    }
+
+    /// 生成某阶段的计划文本（尽量短、可执行、可更新）
+    fn build_phase_plan_markdown(&self, phase: VisionExplorePhase, reason: &str) -> String {
+        match phase {
+            VisionExplorePhase::Recon => format!(
+                r#"**Phase 0: 态势识别（Plan）**
+
+- **目标**：识别是否存在登录门、前台/后台入口、关键导航与路由形态（SPA/多页）、初步 API 发现通道（被动代理/页面触发）。
+- **本阶段不做**：不要基于“当前页面”制定全站计划（避免仅针对登录页/前台）。
+- **本阶段步骤**：
+  - 识别登录门信号：`/login`、密码输入框、401/403、跳转到登录等
+  - 查找入口：导航栏/菜单/“控制台/后台/管理”入口、站点地图、页脚链接
+  - 触发最小交互：展开菜单、点击 1-2 个核心入口，观察是否出现新路由/API
+- **重规划触发器**：
+  - 检测到登录门 → 切换到 Phase 2（登录流程）
+  - 检测到登录成功 → 切换到 Phase 3（后台探索）
+  - 发现明显后台入口 → 记录入口，登录后优先覆盖
+
+- **当前原因**：{}"#,
+                reason
+            ),
+            VisionExplorePhase::Frontend => format!(
+                r#"**Phase 1: 前台探索（Plan）**
+
+- **目标**：覆盖未登录可访问的核心业务路径与 API（列表/详情/搜索/导出/注册/忘记密码等），并找到后台入口与登录路径。
+- **步骤**：
+  - 走通 1 条核心业务链路（首页 → 列表 → 详情 → 关键操作）
+  - 对关键交互进行轻量触发（筛选/分页/提交表单）以暴露 API
+  - 记录所有“需要登录”的跳转点/401/403
+- **下一阶段**：
+  - 一旦出现登录门或需要更深覆盖 → 切换 Phase 2（登录）
+
+- **当前原因**：{}"#,
+                reason
+            ),
+            VisionExplorePhase::Login => format!(
+                r#"**Phase 2: 登录流程（Plan）**
+
+- **目标**：完成登录（或请求接管/输入验证码），并验证登录成功信号（cookie/token/出现退出按钮/控制台菜单/接口从 401→200）。
+- **步骤**：
+  - 定位用户名/密码/验证码/额外字段并填写
+  - 点击登录并等待跳转/提示
+  - 登录失败：抓取错误提示；必要时请求用户接管
+- **完成标准**：
+  - URL 不再停留在登录页，且出现“退出/个人中心/控制台/管理”等已登录信号
+- **下一阶段**：
+  - 登录成功必须立即重规划 → Phase 3（后台探索）
+
+- **当前原因**：{}"#,
+                reason
+            ),
+            VisionExplorePhase::Backend => format!(
+                r#"**Phase 3: 后台探索（Plan）**
+
+- **目标**：覆盖后台核心模块与高价值 API（用户/权限/配置/业务管理/审计/导出等），并按模块记录路由与接口特征。
+- **步骤**：
+  - 枚举侧边栏/顶部菜单：逐项进入并触发列表/详情/创建/编辑/删除/导出
+  - 优先覆盖“权限/角色/用户/配置/系统设置/日志”等敏感模块
+  - 对关键表单操作触发请求，记录请求路径、参数、鉴权方式
+- **完成标准**：
+  - 核心菜单覆盖完成，API 增量趋于稳定（连续多轮无新发现）
+
+- **当前原因**：{}"#,
+                reason
+            ),
+        }
+    }
+
+    /// 根据页面状态判断是否需要切换阶段并更新计划
+    async fn replan_on_page_state(&self, page_state: &PageState, reason: &str) {
+        let current = { self.plan_state.read().await.phase };
+
+        // 登录成功优先级最高
+        let new_phase = if Self::has_logged_in_indicators(page_state) {
+            VisionExplorePhase::Backend
+        } else if self.detect_login_page(page_state).is_some() {
+            VisionExplorePhase::Login
+        } else {
+            match current {
+                VisionExplorePhase::Recon => VisionExplorePhase::Frontend,
+                VisionExplorePhase::Backend => VisionExplorePhase::Backend,
+                VisionExplorePhase::Login => VisionExplorePhase::Login,
+                VisionExplorePhase::Frontend => VisionExplorePhase::Frontend,
+            }
+        };
+
+        let mut ps = self.plan_state.write().await;
+        let should_emit = ps.plan_markdown.trim().is_empty()
+            || ps.phase != new_phase
+            || ps.last_plan_reason != reason;
+
+        if should_emit {
+            ps.phase = new_phase;
+            ps.last_plan_reason = reason.to_string();
+            ps.plan_markdown = self.build_phase_plan_markdown(new_phase, reason);
+            drop(ps);
+
+            if let Some(emitter) = &self.message_emitter {
+                let plan_info = Self::get_phase_plan_info(new_phase, reason);
+                emitter.emit_plan(
+                    new_phase.as_str(),
+                    plan_info.0,
+                    plan_info.1,
+                    &plan_info.2,
+                    plan_info.3,
+                    reason,
+                );
+            }
+        }
+    }
+
+    /// 发送一次进度更新（节流：同一 iteration 只发送一次）
+    async fn emit_progress_update(&self) {
+        let (iteration, visited, apis, interacted) = {
+            let state = self.state_manager.read().await;
+            (
+                state.state().iteration_count,
+                state.state().visited_pages.len(),
+                state.state().discovered_apis.len(),
+                state.state().interacted_elements.len(),
+            )
+        };
+
+        let phase = { self.plan_state.read().await.phase };
+        let max_iterations = self.config.max_iterations;
+
+        let mut ps = self.plan_state.write().await;
+        if ps.last_progress_iteration == iteration {
+            return;
+        }
+        ps.last_progress_iteration = iteration;
+        drop(ps);
+
+        if let Some(emitter) = &self.message_emitter {
+            emitter.emit_progress(
+                iteration,
+                max_iterations,
+                phase.as_str(),
+                visited,
+                apis,
+                interacted,
+            );
+        }
+    }
+
+    /// 返回阶段计划的结构化信息: (phase_name, goal, steps, completion_criteria)
+    fn get_phase_plan_info(phase: VisionExplorePhase, _reason: &str) -> (&'static str, &'static str, Vec<&'static str>, &'static str) {
+        match phase {
+            VisionExplorePhase::Recon => (
+                "态势识别",
+                "判断当前页面状态并确定下一阶段",
+                vec![
+                    "识别页面类型（登录/前台/后台）",
+                    "发现导航入口",
+                    "收集最小路由信息",
+                ],
+                "确认页面状态后切换到对应阶段",
+            ),
+            VisionExplorePhase::Frontend => (
+                "前台探索",
+                "覆盖公开页面与公开 API",
+                vec![
+                    "遍历公开菜单/导航",
+                    "触发公开接口",
+                    "发现登录入口后切换阶段",
+                ],
+                "前台路由覆盖完成或发现登录入口",
+            ),
+            VisionExplorePhase::Login => (
+                "登录流程",
+                "完成登录并验证成功信号",
+                vec![
+                    "填写用户名/密码/验证码",
+                    "点击登录并等待跳转",
+                    "失败时请求用户接管",
+                ],
+                "出现已登录信号后切换到后台探索",
+            ),
+            VisionExplorePhase::Backend => (
+                "后台探索",
+                "覆盖后台核心模块与高价值 API",
+                vec![
+                    "枚举侧边栏/顶部菜单",
+                    "优先覆盖敏感模块",
+                    "记录请求路径与鉴权方式",
+                ],
+                "核心菜单覆盖完成，API 增量趋于稳定",
+            ),
+        }
+    }
+
     /// 构建VLM提示词，返回 (system_prompt, user_prompt)
     async fn build_vlm_prompt(&self, page_state: &PageState) -> Result<(String, String)> {
         let state = self.state_manager.read().await;
@@ -1241,12 +1560,8 @@ impl VisionExplorer {
                     if title.is_empty() {
                         format!("  - {}", url)
                     } else {
-                        // 截断过长的标题
-                        let display_title = if title.len() > 40 {
-                            format!("{}...", &title[..40])
-                        } else {
-                            title.clone()
-                        };
+                        // 截断过长的标题（使用字符数而非字节数）
+                        let display_title = truncate_str(title, 40);
                         format!("  - {} ({})", url, display_title)
                     }
                 })
@@ -1294,7 +1609,6 @@ impl VisionExplorer {
         // 根据模态模式选择元素展示方式
         let elements_section = if !self.config.enable_multimodal {
             // 文本模式：必须包含标注元素列表，这是模型理解页面的唯一方式
-            // 使用CSV格式以节省token
             let elements_csv = Self::format_elements_as_csv(&page_state.annotated_elements, 100);
             format!(
                 r#"
@@ -1312,9 +1626,22 @@ impl VisionExplorer {
                 elements_csv
             )
         } else {
-            // 多模态模式：截图用于语义理解，同时保留元素列表以支持 index 操作
-            // 不在 prompt 中显示元素列表（模型通过截图中的标注看到 index）
-            String::new()
+            // 多模态模式：截图用于语义理解（截图不做覆盖层标注，以免遮挡内容）
+            // 仍提供元素列表用于 index 操作（截断以节省 token）
+            let elements_csv = Self::format_elements_as_csv(&page_state.annotated_elements, 60);
+            format!(
+                r#"
+────────────────────────
+Annotated elements (for index operations) — total {}, showing first 60
+────────────────────────
+
+Use the `index` from this list for click_by_index / fill_by_index / hover_by_index.
+Format: index,type,tag,text,href,name,value,placeholder,role,aria_label,aria_expanded,aria_haspopup,testid,class,selector
+{}
+"#,
+                page_state.annotated_elements.len(),
+                elements_csv
+            )
         };
         
         // 构建 system_prompt (优先从数据库读取，回退到默认模板)
@@ -1328,9 +1655,12 @@ impl VisionExplorer {
             // 文本模式：必须根据元素列表操作
             "**文本模式**：请根据上述「页面元素列表」中的 index 索引号，使用 click_by_index 或 fill_by_index 进行操作。"
         } else {
-            // 多模态模式：通过截图中的标注识别元素 index，使用 click_by_index / fill_by_index 操作
-            "**多模态模式**：请观察截图中的元素标注（带有索引号），使用 click_by_index / fill_by_index 进行操作。"
+            // 多模态模式：截图保持干净以便阅读内容；index 来自元素列表
+            "**多模态模式**：截图不包含索引标注以避免遮挡内容。请使用上方「Annotated elements」列表里的 index 索引号进行 click_by_index / fill_by_index / hover_by_index。"
         };
+
+        // 注入分阶段计划，指导模型按阶段执行并在关键状态变化时重规划
+        let plan_context = self.build_plan_context().await;
         
         // 构建 user_prompt
         let user_messages_context = self.drain_user_messages_context().await;
@@ -1351,6 +1681,8 @@ impl VisionExplorer {
 {}
 
 已发现 API（避免重复触发）：
+{}
+
 {}
 
 {}
@@ -1379,6 +1711,7 @@ URL: {}
             visited_urls_list,
             discovered_apis_list,
             coverage_context,
+            plan_context,
             action_history,
             user_messages_context,
             page_state.url,
@@ -1939,47 +2272,26 @@ Hover candidate indices (current page):
                 .unwrap_or("");
             let class_name = e.attributes.get("class").map(|s| s.as_str()).unwrap_or("");
             
-            // 截断过长文本并转义逗号
-            let text = if e.text.len() > 30 { 
-                format!("{}...", &e.text[..30]) 
-            } else { 
-                e.text.clone() 
-            };
-            let text = text.replace(',', ";").replace('\n', " ");
+            // 截断过长文本并转义逗号（使用字符数而非字节数，避免 UTF-8 边界问题）
+            let text = truncate_str(&e.text, 30).replace(',', ";").replace('\n', " ");
+            let href = truncate_str(href, 50).replace(',', ";");
+            let name = truncate_str(name, 30).replace(',', ";");
             
-            let href = if href.len() > 50 { format!("{}...", &href[..50]) } else { href.to_string() };
-            let href = href.replace(',', ";");
+            let value_str = if !value.is_empty() { value.to_string() } else { input_type.to_string() };
+            let value_str = truncate_str(&value_str, 50).replace(',', ";");
 
-            let name = if name.len() > 30 { format!("{}...", &name[..30]) } else { name.to_string() };
-            let name = name.replace(',', ";");
-
-            let mut value_str = if !value.is_empty() { value.to_string() } else { input_type.to_string() };
-            if value_str.len() > 50 {
-                value_str = format!("{}...", &value_str[..50]);
-            }
-            let value_str = value_str.replace(',', ";");
-
-            let placeholder = if placeholder.len() > 30 { format!("{}...", &placeholder[..30]) } else { placeholder.to_string() };
-            let placeholder = placeholder.replace(',', ";");
-
-            let role = if role.len() > 30 { format!("{}...", &role[..30]) } else { role.to_string() };
-            let role = role.replace(',', ";");
-
-            let aria_label = if aria_label.len() > 50 { format!("{}...", &aria_label[..50]) } else { aria_label.to_string() };
-            let aria_label = aria_label.replace(',', ";");
+            let placeholder = truncate_str(placeholder, 30).replace(',', ";");
+            let role = truncate_str(role, 30).replace(',', ";");
+            let aria_label = truncate_str(aria_label, 50).replace(',', ";");
 
             let aria_expanded = aria_expanded.to_string().replace(',', ";");
             let aria_haspopup = aria_haspopup.to_string().replace(',', ";");
 
-            let testid = if testid.len() > 30 { format!("{}...", &testid[..30]) } else { testid.to_string() };
-            let testid = testid.replace(',', ";");
+            let testid = truncate_str(testid, 30).replace(',', ";");
+            let class_name = truncate_str(class_name, 60).replace(',', ";");
 
-            let class_name = if class_name.len() > 60 { format!("{}...", &class_name[..60]) } else { class_name.to_string() };
-            let class_name = class_name.replace(',', ";");
-
-            // selector：用于区分“无文本的 clickable div”，做短截断
-            let selector = if e.selector.len() > 80 { format!("{}...", &e.selector[..80]) } else { e.selector.clone() };
-            let selector = selector.replace(',', ";").replace('\n', " ");
+            // selector：用于区分"无文本的 clickable div"，做短截断
+            let selector = truncate_str(&e.selector, 80).replace(',', ";").replace('\n', " ");
             
             // 构建CSV行
             let line = format!(

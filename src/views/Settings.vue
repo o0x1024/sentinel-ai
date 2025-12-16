@@ -146,6 +146,11 @@ const { t, locale } = useI18n()
 const activeCategory = ref('ai')
 const saving = ref(false)
 
+defineOptions({
+  name: 'Settings'
+});
+
+
 // 设置分类
 const categories = [
   { id: 'ai', icon: 'fas fa-robot' },

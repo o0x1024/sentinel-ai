@@ -309,6 +309,13 @@ export default {
     component: '组件',
     pendingRoutes: '待访问路由',
     pendingRoutesCount: '待访问路由 ({count})',
+    // Vision Plan & Progress
+    visionGoal: '目标',
+    visionSteps: '步骤',
+    visionCompletion: '完成标准',
+    visionProgress: '探索进度',
+    visionPages: '页面',
+    visionElements: '元素',
     // MarkdownRenderer
     sourceCitation: '知识库引用 #{number}'
   },
