@@ -1,5 +1,5 @@
 <template>
-  <div :class="['tool-call-block rounded-lg bg-base-200 border overflow-hidden my-2', borderClass]">
+  <div :class="['tool-call-block rounded-lg bg-base-200 border overflow-hidden my-2 ', borderClass]">
     <!-- Header -->
     <div class="tool-header flex items-center gap-2 px-4 py-3 bg-base-300 border-b border-base-300">
       <span class="tool-icon text-base">🔧</span>

@@ -57,6 +57,14 @@
             <span class="text-xs text-base-content/60">v{{ tool.version }}</span>
             <div class="flex gap-2">
               <button 
+                v-if="tool.name === 'shell'"
+                @click="showShellConfigModal = true"
+                class="btn btn-warning btn-sm"
+                title="安全配置"
+              >
+                <i class="fas fa-shield-alt"></i>
+              </button>
+              <button 
                 @click="quickTest(tool)"
                 class="btn btn-success btn-sm"
                 :disabled="tool.is_testing"
@@ -114,6 +122,14 @@
             <td class="text-xs text-base-content/60">v{{ tool.version }}</td>
             <td>
               <div class="flex gap-1">
+                <button 
+                  v-if="tool.name === 'shell'"
+                  @click="showShellConfigModal = true"
+                  class="btn btn-warning btn-xs"
+                  title="安全配置"
+                >
+                  <i class="fas fa-shield-alt"></i>
+                </button>
                 <button 
                   @click="quickTest(tool)"
                   class="btn btn-success btn-xs"
@@ -245,6 +261,9 @@
         </div>
       </div>
     </dialog>
+
+    <!-- Shell 配置模态框 -->
+    <ShellConfigModal v-model="showShellConfigModal" />
   </div>
 </template>
 
@@ -252,12 +271,14 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
+import ShellConfigModal from './ShellConfigModal.vue'
 
 // 状态
 const tools = ref<any[]>([])
 const isLoading = ref(false)
 const viewMode = ref('list')
 const showTestModal = ref(false)
+const showShellConfigModal = ref(false)
 const testingTool = ref<any>(null)
 const testParamsJson = ref('')
 const testResult = ref('')
@@ -268,6 +289,7 @@ function getToolIcon(toolName: string) {
   switch (toolName) {
     case 'subdomain_scanner': return 'fas fa-sitemap'
     case 'port_scanner': return 'fas fa-network-wired'
+    case 'shell': return 'fas fa-terminal'
     default: return 'fas fa-tools'
   }
 }
@@ -440,4 +462,3 @@ onMounted(() => {
   fetchTools()
 })
 </script>
-

@@ -307,7 +307,19 @@ export default {
     visionPages: 'Pages',
     visionElements: 'Elements',
     // MarkdownRenderer
-    sourceCitation: 'Source Citation #{number}'
+    sourceCitation: 'Source Citation #{number}',
+    // MessageBlock actions & status
+    detailsInVisionPanel: 'Details are shown in the Vision Explorer panel',
+    collapseDetails: 'Collapse details',
+    expandDetails: 'Expand details',
+    copyMessage: 'Copy message',
+    copy: 'Copy',
+    resendMessage: 'Resend message',
+    resend: 'Resend',
+    statusRunning: 'Running',
+    statusCompleted: 'Completed',
+    statusFailed: 'Failed',
+    statusPending: 'Pending'
   },
 
   // AI Assistant section

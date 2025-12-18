@@ -1,5 +1,5 @@
 <template>
-  <div class="message-flow flex flex-col gap-2 p-4 overflow-y-auto flex-1" ref="containerRef">
+  <div class="message-flow flex flex-col gap-2 pl-4  overflow-y-auto flex-1 " ref="containerRef">
     <div v-for="msg in messages" :key="msg.id" class="message-wrapper animate-fadeIn min-w-0">
       <MessageBlock :message="msg" :is-vision-active="isVisionActive" @resend="handleResend" />
     </div>
@@ -11,13 +11,13 @@
     </div>
     
     <!-- Streaming indicator (receiving content) -->
-    <div v-if="isStreaming && streamingContent" class="streaming-indicator inline-flex items-center px-4 py-2 bg-base-200 rounded-lg text-sm">
+    <div v-if="isStreaming && streamingContent" class="streaming-indicator  inline-flex items-center px-4 py-2 bg-base-200 rounded-lg text-sm">
       <span class="streaming-content text-base-content whitespace-pre-wrap">{{ streamingContent }}</span>
       <span class="cursor text-primary ml-0.5 animate-blink">▊</span>
     </div>
     
     <!-- Empty state -->
-    <div v-if="!hasMessages && !isStreaming" class="empty-state flex flex-col items-center justify-center flex-1 text-base-content/60 text-sm text-center py-8">
+    <div v-if="!hasMessages && !isStreaming" class="empty-state flex  flex-col items-center justify-center flex-1 text-base-content/60 text-sm text-center py-8">
       <div class="avatar placeholder mb-4">
         <div class="bg-primary text-primary-content rounded-full w-16 flex items-center justify-center">
           <i class="fas fa-robot text-2xl"></i>

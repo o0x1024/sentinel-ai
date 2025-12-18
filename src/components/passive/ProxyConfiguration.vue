@@ -11,116 +11,117 @@
           {{ $t('passiveScan.proxyConfiguration.proxyListenersDescription') }}
         </p>
 
-        <div class="overflow-x-auto">
-          <table class="table table-sm w-full">
-            <thead>
-              <tr>
-                <th class="w-12">
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    @change="toggleAllListeners"
-                    :checked="selectedListeners.length === proxyListeners.length && proxyListeners.length > 0"
-                  />
-                </th>
-                <th class="w-20">
-                  {{ $t('passiveScan.proxyConfiguration.running') }}
-                </th>
-                <th>{{ $t('passiveScan.proxyConfiguration.interface') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.invisible') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.redirect') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.certificate') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.tlsProtocols') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.http2Support') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr 
-                v-for="(listener, index) in proxyListeners" 
-                :key="index"
-                :class="{ 'bg-base-200': selectedListeners.includes(index) }"
-                @dblclick="editListenerByIndex(index)"
-                class="cursor-pointer hover:bg-base-300 transition-colors"
-              >
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    :checked="selectedListeners.includes(index)"
-                    @change="toggleListenerSelection(index)"
-                  />
-                </td>
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    v-model="listener.running"
-                    @change="toggleListenerRunning(listener, index)"
-                  />
-                </td>
-                <td>{{ listener.interface }}</td>
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    v-model="listener.invisible"
-                    disabled
-                  />
-                </td>
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    v-model="listener.redirect"
-                    disabled
-                  />
-                </td>
-                <td>{{ listener.certificate }}</td>
-                <td>{{ listener.tlsProtocols }}</td>
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    v-model="listener.supportHTTP2"
-                    disabled
-                  />
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="flex gap-2 mt-4">
-          <button class="btn btn-sm btn-primary" @click="addListener">
-            <i class="fas fa-plus mr-1"></i>
-            {{ $t('passiveScan.proxyConfiguration.addListener') }}
-          </button>
-          <button 
-            class="btn btn-sm btn-outline" 
-            @click="editListener"
-            :disabled="selectedListeners.length !== 1"
-          >
-            <i class="fas fa-edit mr-1"></i>
-            {{ $t('passiveScan.proxyConfiguration.editListener') }}
-          </button>
-          <button 
-            class="btn btn-sm btn-outline btn-error" 
-            @click="removeListener"
-            :disabled="selectedListeners.length === 0"
-          >
-            <i class="fas fa-trash mr-1"></i>
-            {{ $t('passiveScan.proxyConfiguration.removeListener') }}
-          </button>
+        <div class="flex gap-4">
+          <!-- Left side: buttons -->
+          <div class="flex flex-col gap-2 shrink-0">
+            <button class="btn btn-sm btn-outline w-24" @click="addListener">
+              {{ $t('passiveScan.proxyConfiguration.add') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="editListener"
+              :disabled="selectedListeners.length !== 1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.edit') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="removeListener"
+              :disabled="selectedListeners.length === 0"
+            >
+              {{ $t('passiveScan.proxyConfiguration.remove') }}
+            </button>
+          </div>
+          
+          <!-- Right side: table -->
+          <div class="flex-1 overflow-x-auto border border-base-300 rounded">
+            <table class="table table-sm w-full">
+              <thead>
+                <tr>
+                  <th class="w-12">
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      @change="toggleAllListeners"
+                      :checked="selectedListeners.length === proxyListeners.length && proxyListeners.length > 0"
+                    />
+                  </th>
+                  <th class="w-16">
+                    {{ $t('passiveScan.proxyConfiguration.running') }}
+                  </th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.interface') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.invisible') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.redirect') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.certificate') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.tlsProtocols') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.http2Support') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="(listener, index) in proxyListeners" 
+                  :key="index"
+                  :class="{ 'bg-primary/10': selectedListeners.includes(index) }"
+                  @click="toggleListenerSelection(index)"
+                  @dblclick="editListenerByIndex(index)"
+                  class="cursor-pointer hover:bg-base-200"
+                >
+                  <td @click.stop>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      :checked="selectedListeners.includes(index)"
+                      @change="toggleListenerSelection(index)"
+                    />
+                  </td>
+                  <td @click.stop>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="listener.running"
+                      @change="toggleListenerRunning(listener, index)"
+                    />
+                  </td>
+                  <td>{{ listener.interface }}</td>
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="listener.invisible"
+                      disabled
+                    />
+                  </td>
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="listener.redirect"
+                      disabled
+                    />
+                  </td>
+                  <td>{{ listener.certificate }}</td>
+                  <td>{{ listener.tlsProtocols }}</td>
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="listener.supportHTTP2"
+                      disabled
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div class="mt-4 space-y-2">
           <div class="flex gap-2">
             <button 
               class="btn btn-sm btn-outline"
-              @click="downloadCACert"
-              :disabled="isDownloadingCert"
+              @click="openCertDialog"
             >
-              <i :class="['fas fa-download mr-1', { 'fa-spin': isDownloadingCert }]"></i>
+              <i class="fas fa-certificate mr-1"></i>
               {{ $t('passiveScan.proxyConfiguration.exportCACert') }}
             </button>
             <button 
@@ -253,10 +254,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-filter mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.interceptionRules') }}
+          {{ $t('passiveScan.proxyConfiguration.requestInterceptionRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.interceptionRulesDesc') }}
+          {{ $t('passiveScan.proxyConfiguration.requestInterceptionRulesDesc') }}
         </p>
 
         <div class="form-control">
@@ -267,45 +268,83 @@
               v-model="interceptRequests"
             />
             <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptRequests') }}</span>
-            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm">{{ $t('passiveScan.proxyConfiguration.masterInterceptionDisabled') }}</span>
+            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm italic">{{ $t('passiveScan.proxyConfiguration.masterInterceptionDisabled') }}</span>
           </label>
         </div>
 
-        <div class="overflow-x-auto mt-2">
-          <table class="table table-sm w-full">
-            <thead>
-              <tr>
-                <th class="w-20">{{ $t('passiveScan.proxyConfiguration.enable') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.operator') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.matchType') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.relationship') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.condition') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(rule, index) in requestRules" :key="index">
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    v-model="rule.enabled"
-                  />
-                </td>
-                <td>{{ rule.operator }}</td>
-                <td>{{ rule.matchType }}</td>
-                <td>{{ rule.relationship }}</td>
-                <td class="font-mono text-xs">{{ rule.condition }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="flex gap-2 mt-4">
-          <button class="btn btn-sm btn-primary">{{ $t('passiveScan.proxyConfiguration.addRule') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.editRule') }}</button>
-          <button class="btn btn-sm btn-outline btn-error">{{ $t('passiveScan.proxyConfiguration.removeRule') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.moveUp') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.moveDown') }}</button>
+        <div class="flex gap-4 mt-2">
+          <!-- Left side: buttons -->
+          <div class="flex flex-col gap-2 shrink-0">
+            <button class="btn btn-sm btn-outline w-24" @click="addRequestRule">
+              {{ $t('passiveScan.proxyConfiguration.addRule') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="editRequestRule"
+              :disabled="selectedRequestRuleIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.editRule') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="removeRequestRule"
+              :disabled="selectedRequestRuleIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.removeRule') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="moveRequestRuleUp"
+              :disabled="selectedRequestRuleIndex <= 0"
+            >
+              {{ $t('passiveScan.proxyConfiguration.moveUp') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="moveRequestRuleDown"
+              :disabled="selectedRequestRuleIndex === -1 || selectedRequestRuleIndex >= requestRules.length - 1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.moveDown') }}
+            </button>
+          </div>
+          
+          <!-- Right side: table -->
+          <div class="flex-1 overflow-x-auto border border-base-300 rounded">
+            <table class="table table-sm w-full">
+              <thead>
+                <tr>
+                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enable') }}</th>
+                  <th class="w-20">{{ $t('passiveScan.proxyConfiguration.operator') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.matchType') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.relationship') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.condition') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="(rule, index) in requestRules" 
+                  :key="index"
+                  :class="{ 'bg-primary/10': selectedRequestRuleIndex === index }"
+                  @click="selectedRequestRuleIndex = index"
+                  @dblclick="editRequestRuleByIndex(index)"
+                  class="cursor-pointer hover:bg-base-200"
+                >
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="rule.enabled"
+                      @click.stop
+                    />
+                  </td>
+                  <td>{{ rule.operator || '-' }}</td>
+                  <td>{{ getMatchTypeLabel(rule.matchType) }}</td>
+                  <td>{{ getRelationshipLabel(rule.relationship) }}</td>
+                  <td class="font-mono text-xs max-w-xs truncate" :title="rule.condition">{{ rule.condition || '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div class="form-control mt-4">
@@ -329,10 +368,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-reply mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.interceptionRules') }}
+          {{ $t('passiveScan.proxyConfiguration.responseInterceptionRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.interceptionRulesDesc') }}
+          {{ $t('passiveScan.proxyConfiguration.responseInterceptionRulesDesc') }}
         </p>
 
         <div class="form-control">
@@ -343,37 +382,83 @@
               v-model="interceptResponses"
             />
             <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptResponses') }}</span>
-            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm">{{ $t('passiveScan.proxyConfiguration.masterInterceptionDisabled') }}</span>
+            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm italic">{{ $t('passiveScan.proxyConfiguration.masterInterceptionDisabled') }}</span>
           </label>
         </div>
 
-        <div class="overflow-x-auto mt-2">
-          <table class="table table-sm w-full">
-            <thead>
-              <tr>
-                <th class="w-20">{{ $t('passiveScan.proxyConfiguration.enable') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.operator') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.matchType') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.relationship') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.condition') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(rule, index) in responseRules" :key="index">
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    v-model="rule.enabled"
-                  />
-                </td>
-                <td>{{ rule.operator }}</td>
-                <td>{{ rule.matchType }}</td>
-                <td>{{ rule.relationship }}</td>
-                <td class="font-mono text-xs">{{ rule.condition }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="flex gap-4 mt-2">
+          <!-- Left side: buttons -->
+          <div class="flex flex-col gap-2 shrink-0">
+            <button class="btn btn-sm btn-outline w-24" @click="addResponseRule">
+              {{ $t('passiveScan.proxyConfiguration.addRule') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="editResponseRule"
+              :disabled="selectedResponseRuleIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.editRule') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="removeResponseRule"
+              :disabled="selectedResponseRuleIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.removeRule') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="moveResponseRuleUp"
+              :disabled="selectedResponseRuleIndex <= 0"
+            >
+              {{ $t('passiveScan.proxyConfiguration.moveUp') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="moveResponseRuleDown"
+              :disabled="selectedResponseRuleIndex === -1 || selectedResponseRuleIndex >= responseRules.length - 1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.moveDown') }}
+            </button>
+          </div>
+          
+          <!-- Right side: table -->
+          <div class="flex-1 overflow-x-auto border border-base-300 rounded">
+            <table class="table table-sm w-full">
+              <thead>
+                <tr>
+                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enable') }}</th>
+                  <th class="w-20">{{ $t('passiveScan.proxyConfiguration.operator') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.matchType') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.relationship') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.condition') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="(rule, index) in responseRules" 
+                  :key="index"
+                  :class="{ 'bg-primary/10': selectedResponseRuleIndex === index }"
+                  @click="selectedResponseRuleIndex = index"
+                  @dblclick="editResponseRuleByIndex(index)"
+                  class="cursor-pointer hover:bg-base-200"
+                >
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="rule.enabled"
+                      @click.stop
+                    />
+                  </td>
+                  <td>{{ rule.operator || '-' }}</td>
+                  <td>{{ getMatchTypeLabel(rule.matchType) }}</td>
+                  <td>{{ getRelationshipLabel(rule.relationship) }}</td>
+                  <td class="font-mono text-xs max-w-xs truncate" :title="rule.condition">{{ rule.condition || '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div class="form-control mt-4">
@@ -385,6 +470,152 @@
       </div>
     </div>
 
+    <!-- Rule Edit Dialog -->
+    <dialog ref="ruleDialogRef" class="modal">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+          {{ editingRuleIsNew ? $t('passiveScan.proxyConfiguration.addInterceptionRule') : $t('passiveScan.proxyConfiguration.editInterceptionRule') }}
+        </h3>
+        <p class="text-sm text-base-content/70 mb-4">
+          {{ $t('passiveScan.proxyConfiguration.specifyRuleDetails') }}
+        </p>
+        
+        <div class="space-y-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.booleanOperator') }}</span>
+            </label>
+            <select v-model="editingRule.operator" class="select select-bordered w-full">
+              <option value="">-</option>
+              <option value="Or">Or</option>
+              <option value="And">And</option>
+            </select>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.matchType') }}</span>
+            </label>
+            <select v-model="editingRule.matchType" class="select select-bordered w-full">
+              <option v-for="type in currentMatchTypes" :key="type.value" :value="type.value">
+                {{ type.label }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.matchRelationship') }}</span>
+            </label>
+            <select v-model="editingRule.relationship" class="select select-bordered w-full">
+              <option v-for="rel in relationshipOptions" :key="rel.value" :value="rel.value">
+                {{ rel.label }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.matchCondition') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingRule.condition"
+              class="input input-bordered w-full"
+              :placeholder="$t('passiveScan.proxyConfiguration.conditionPlaceholder')"
+            />
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="cancelRuleEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveRuleEdit">{{ $t('passiveScan.proxyConfiguration.ok') }}</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+      </form>
+    </dialog>
+
+    <!-- upstream proxy servers -->
+    <div class="card bg-base-100 shadow-xl">
+      <div class="card-body">
+        <h2 class="card-title text-base mb-3">
+          <i class="fas fa-server mr-2"></i>
+          {{ $t('passiveScan.proxyConfiguration.upstreamProxyServers') }}
+        </h2>
+        <p class="text-sm text-base-content/70 mb-4">
+          {{ $t('passiveScan.proxyConfiguration.upstreamProxyServersDesc') }}
+        </p>
+
+        <div class="flex gap-4">
+          <!-- Left side: buttons -->
+          <div class="flex flex-col gap-2 shrink-0">
+            <button class="btn btn-sm btn-outline w-24" @click="addUpstreamProxy">
+              {{ $t('passiveScan.proxyConfiguration.add') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="editUpstreamProxy"
+              :disabled="selectedUpstreamIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.edit') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="removeUpstreamProxy"
+              :disabled="selectedUpstreamIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.remove') }}
+            </button>
+          </div>
+          
+          <!-- Right side: table -->
+          <div class="flex-1 overflow-x-auto border border-base-300 rounded">
+            <table class="table table-sm w-full">
+              <thead>
+                <tr>
+                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.destinationHost') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.proxyHost') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.proxyPort') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.authType') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.username') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="(proxy, index) in upstreamProxies" 
+                  :key="index"
+                  :class="{ 'bg-primary/10': selectedUpstreamIndex === index }"
+                  @click="selectedUpstreamIndex = index"
+                  @dblclick="editUpstreamProxyByIndex(index)"
+                  class="cursor-pointer hover:bg-base-200"
+                >
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="proxy.enabled"
+                      @click.stop
+                      @change="onUpstreamProxyChange"
+                    />
+                  </td>
+                  <td>{{ proxy.destination_host || '*' }}</td>
+                  <td>{{ proxy.proxy_host || '-' }}</td>
+                  <td>{{ proxy.proxy_port || '-' }}</td>
+                  <td>{{ proxy.auth_type || '-' }}</td>
+                  <td>{{ proxy.username || '-' }}</td>
+                </tr>
+                <tr v-if="upstreamProxies.length === 0">
+                  <td colspan="6" class="text-center text-base-content/50">{{ $t('passiveScan.proxyConfiguration.noUpstreamProxy') }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
     <!-- WebSocket Interception -->
     <div class="card bg-base-100 shadow-xl">
       <div class="card-body">
@@ -496,46 +727,395 @@
           </label>
         </div>
 
-        <div class="overflow-x-auto">
-          <table class="table table-sm w-full">
-            <thead>
-              <tr>
-                <th class="w-20">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.item') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.match') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.replace') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.type') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.comment') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(rule, index) in matchReplaceRules" :key="index">
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    v-model="rule.enabled"
-                  />
-                </td>
-                <td class="text-xs">{{ rule.item }}</td>
-                <td class="font-mono text-xs">{{ rule.match }}</td>
-                <td class="text-xs">{{ rule.replace }}</td>
-                <td class="text-xs">{{ rule.type }}</td>
-                <td class="text-xs">{{ rule.comment }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="flex gap-2 mt-4">
-          <button class="btn btn-sm btn-primary">{{ $t('passiveScan.proxyConfiguration.add') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.edit') }}</button>
-          <button class="btn btn-sm btn-outline btn-error">{{ $t('passiveScan.proxyConfiguration.remove') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.moveUp') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.moveDown') }}</button>
+        <div class="flex gap-4">
+          <!-- Left side: buttons -->
+          <div class="flex flex-col gap-2 shrink-0">
+            <button class="btn btn-sm btn-outline w-24" @click="addMatchReplaceRule">
+              {{ $t('passiveScan.proxyConfiguration.add') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="editMatchReplaceRule"
+              :disabled="selectedMatchReplaceIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.edit') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="removeMatchReplaceRule"
+              :disabled="selectedMatchReplaceIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.remove') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="moveMatchReplaceRuleUp"
+              :disabled="selectedMatchReplaceIndex <= 0"
+            >
+              {{ $t('passiveScan.proxyConfiguration.moveUp') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="moveMatchReplaceRuleDown"
+              :disabled="selectedMatchReplaceIndex === -1 || selectedMatchReplaceIndex >= matchReplaceRules.length - 1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.moveDown') }}
+            </button>
+          </div>
+          
+          <!-- Right side: table -->
+          <div class="flex-1 overflow-x-auto border border-base-300 rounded">
+            <table class="table table-sm w-full">
+              <thead>
+                <tr>
+                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.type') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.match') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.replace') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.comment') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="(rule, index) in matchReplaceRules" 
+                  :key="index"
+                  :class="{ 'bg-primary/10': selectedMatchReplaceIndex === index }"
+                  @click="selectedMatchReplaceIndex = index"
+                  @dblclick="editMatchReplaceRuleByIndex(index)"
+                  class="cursor-pointer hover:bg-base-200"
+                >
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="rule.enabled"
+                      @click.stop
+                    />
+                  </td>
+                  <td class="text-xs">{{ rule.type }}</td>
+                  <td class="font-mono text-xs max-w-xs truncate" :title="rule.match">{{ rule.match }}</td>
+                  <td class="text-xs max-w-xs truncate" :title="rule.replace">{{ rule.replace }}</td>
+                  <td class="text-xs">{{ rule.comment }}</td>
+                </tr>
+                <tr v-if="matchReplaceRules.length === 0">
+                  <td colspan="5" class="text-center text-base-content/50">{{ $t('passiveScan.proxyConfiguration.noRules') }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
+
+    <!-- Upstream Proxy Servers -->
+
+
+    <!-- Upstream Proxy Edit Dialog -->
+    <dialog ref="upstreamDialogRef" class="modal">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+          {{ editingUpstreamIsNew ? $t('passiveScan.proxyConfiguration.addUpstreamProxy') : $t('passiveScan.proxyConfiguration.editUpstreamProxy') }}
+        </h3>
+        
+        <div class="space-y-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.destinationHost') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingUpstream.destination_host"
+              class="input input-bordered"
+              placeholder="*"
+            />
+            <label class="label">
+              <span class="label-text-alt text-base-content/60">{{ $t('passiveScan.proxyConfiguration.destinationHostHelp') }}</span>
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.proxyHost') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingUpstream.proxy_host"
+              class="input input-bordered"
+              placeholder="127.0.0.1"
+            />
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.proxyPort') }}</span>
+            </label>
+            <input 
+              type="number" 
+              v-model.number="editingUpstream.proxy_port"
+              class="input input-bordered"
+              placeholder="8080"
+              min="1"
+              max="65535"
+            />
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.authType') }}</span>
+            </label>
+            <select v-model="editingUpstream.auth_type" class="select select-bordered">
+              <option value="">{{ $t('passiveScan.proxyConfiguration.authNone') }}</option>
+              <option value="Basic">{{ $t('passiveScan.proxyConfiguration.authBasic') }}</option>
+            </select>
+          </div>
+
+          <div v-if="editingUpstream.auth_type === 'Basic'" class="space-y-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ $t('passiveScan.proxyConfiguration.username') }}</span>
+              </label>
+              <input 
+                type="text" 
+                v-model="editingUpstream.username"
+                class="input input-bordered"
+                placeholder=""
+              />
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ $t('passiveScan.proxyConfiguration.password') }}</span>
+              </label>
+              <input 
+                type="password" 
+                v-model="editingUpstream.password"
+                class="input input-bordered"
+                placeholder=""
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="cancelUpstreamEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveUpstreamEdit">{{ $t('passiveScan.proxyConfiguration.ok') }}</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+      </form>
+    </dialog>
+
+    <!-- Match and Replace Rule Edit Dialog -->
+    <dialog ref="matchReplaceDialogRef" class="modal">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+          {{ editingMatchReplaceIsNew ? $t('passiveScan.proxyConfiguration.addMatchReplaceRule') : $t('passiveScan.proxyConfiguration.editMatchReplaceRule') }}
+        </h3>
+        
+        <div class="space-y-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.type') }}</span>
+            </label>
+            <select v-model="editingMatchReplace.type" class="select select-bordered w-full">
+              <option value="Request header">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestHeader') }}</option>
+              <option value="Request body">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestBody') }}</option>
+              <option value="Request param name">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestParamName') }}</option>
+              <option value="Request param value">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestParamValue') }}</option>
+              <option value="Request first line">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestFirstLine') }}</option>
+              <option value="Response header">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.responseHeader') }}</option>
+              <option value="Response body">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.responseBody') }}</option>
+            </select>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.match') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingMatchReplace.match"
+              class="input input-bordered w-full font-mono"
+              :placeholder="$t('passiveScan.proxyConfiguration.matchPlaceholder')"
+            />
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.replace') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingMatchReplace.replace"
+              class="input input-bordered w-full"
+              :placeholder="$t('passiveScan.proxyConfiguration.replacePlaceholder')"
+            />
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.comment') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingMatchReplace.comment"
+              class="input input-bordered w-full"
+            />
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="cancelMatchReplaceEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveMatchReplaceEdit">{{ $t('passiveScan.proxyConfiguration.ok') }}</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+      </form>
+    </dialog>
+
+    <!-- TLS Pass Through Edit Dialog -->
+    <dialog ref="tlsPassThroughDialogRef" class="modal">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg mb-4">
+          {{ editingTlsIsNew ? $t('passiveScan.proxyConfiguration.addTlsPassThrough') : $t('passiveScan.proxyConfiguration.editTlsPassThrough') }}
+        </h3>
+        
+        <div class="space-y-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.hostIPRange') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingTlsPassThrough.host"
+              class="input input-bordered w-full"
+              :placeholder="$t('passiveScan.proxyConfiguration.hostPlaceholder')"
+            />
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.port') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="editingTlsPassThrough.port"
+              class="input input-bordered w-full"
+              placeholder="443"
+            />
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="cancelTlsPassThroughEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveTlsPassThroughEdit">{{ $t('passiveScan.proxyConfiguration.ok') }}</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+      </form>
+    </dialog>
+
+    <!-- CA Certificate Import/Export Dialog -->
+    <dialog ref="certDialogRef" class="modal">
+      <div class="modal-box max-w-lg">
+        <h3 class="font-bold text-lg mb-2">
+          {{ $t('passiveScan.proxyConfiguration.caCertDialogTitle') }}
+        </h3>
+        
+        <div class="flex items-start gap-3 mb-6">
+          <div class="text-info mt-1">
+            <i class="fas fa-question-circle text-lg"></i>
+          </div>
+          <p class="text-sm text-base-content/70">
+            {{ $t('passiveScan.proxyConfiguration.caCertDialogDesc') }}
+          </p>
+        </div>
+        
+        <div class="space-y-4">
+          <!-- Export Section -->
+          <div>
+            <h4 class="font-semibold mb-2">{{ $t('passiveScan.proxyConfiguration.exportSection') }}</h4>
+            <div class="space-y-2">
+              <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
+                <input 
+                  type="radio" 
+                  name="certOperation" 
+                  value="export_der_cert"
+                  v-model="certOperation"
+                  class="radio radio-sm"
+                />
+                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.certInDerFormat') }}</span>
+              </label>
+              <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
+                <input 
+                  type="radio" 
+                  name="certOperation" 
+                  value="export_der_key"
+                  v-model="certOperation"
+                  class="radio radio-sm"
+                />
+                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.privateKeyInDerFormat') }}</span>
+              </label>
+              <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
+                <input 
+                  type="radio" 
+                  name="certOperation" 
+                  value="export_pkcs12"
+                  v-model="certOperation"
+                  class="radio radio-sm"
+                />
+                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.certAndKeyInPkcs12') }}</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Import Section -->
+          <div>
+            <h4 class="font-semibold mb-2">{{ $t('passiveScan.proxyConfiguration.importSection') }}</h4>
+            <div class="space-y-2">
+              <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
+                <input 
+                  type="radio" 
+                  name="certOperation" 
+                  value="import_der"
+                  v-model="certOperation"
+                  class="radio radio-sm"
+                />
+                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.certAndKeyInDerFormat') }}</span>
+              </label>
+              <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
+                <input 
+                  type="radio" 
+                  name="certOperation" 
+                  value="import_pkcs12"
+                  v-model="certOperation"
+                  class="radio radio-sm"
+                />
+                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.certAndKeyFromPkcs12') }}</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="closeCertDialog">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
+          <button 
+            class="btn btn-primary" 
+            @click="executeCertOperation"
+            :disabled="!certOperation || isProcessingCert"
+          >
+            <i v-if="isProcessingCert" class="fas fa-spinner fa-spin mr-1"></i>
+            {{ $t('passiveScan.proxyConfiguration.next') }}
+          </button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+      </form>
+    </dialog>
 
     <!-- TLS Pass Through -->
     <div class="card bg-base-100 shadow-xl">
@@ -548,40 +1128,67 @@
           {{ $t('passiveScan.proxyConfiguration.tlsPassThroughDesc') }}
         </p>
 
-        <div class="overflow-x-auto">
-          <table class="table table-sm w-full">
-            <thead>
-              <tr>
-                <th class="w-20">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.hostIPRange') }}</th>
-                <th>{{ $t('passiveScan.proxyConfiguration.port') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="tlsPassThroughRules.length === 0">
-                <td colspan="3" class="text-center text-base-content/50">{{ $t('passiveScan.proxyConfiguration.noRules') }}</td>
-              </tr>
-              <tr v-for="(rule, index) in tlsPassThroughRules" :key="index">
-                <td>
-                  <input 
-                    type="checkbox" 
-                    class="checkbox checkbox-sm"
-                    v-model="rule.enabled"
-                  />
-                </td>
-                <td>{{ rule.host }}</td>
-                <td>{{ rule.port }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="flex gap-2 mt-4">
-          <button class="btn btn-sm btn-primary">{{ $t('passiveScan.proxyConfiguration.add') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.edit') }}</button>
-          <button class="btn btn-sm btn-outline btn-error">{{ $t('passiveScan.proxyConfiguration.remove') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.pasteURL') }}</button>
-          <button class="btn btn-sm btn-outline">{{ $t('passiveScan.proxyConfiguration.load') }}</button>
+        <div class="flex gap-4">
+          <!-- Left side: buttons -->
+          <div class="flex flex-col gap-2 shrink-0">
+            <button class="btn btn-sm btn-outline w-24" @click="addTlsPassThroughRule">
+              {{ $t('passiveScan.proxyConfiguration.add') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="editTlsPassThroughRule"
+              :disabled="selectedTlsPassThroughIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.edit') }}
+            </button>
+            <button 
+              class="btn btn-sm btn-outline w-24" 
+              @click="removeTlsPassThroughRule"
+              :disabled="selectedTlsPassThroughIndex === -1"
+            >
+              {{ $t('passiveScan.proxyConfiguration.remove') }}
+            </button>
+            <button class="btn btn-sm btn-outline w-24" @click="pasteUrlToTlsPassThrough">
+              {{ $t('passiveScan.proxyConfiguration.pasteURL') }}
+            </button>
+          </div>
+          
+          <!-- Right side: table -->
+          <div class="flex-1 overflow-x-auto border border-base-300 rounded">
+            <table class="table table-sm w-full">
+              <thead>
+                <tr>
+                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.hostIPRange') }}</th>
+                  <th>{{ $t('passiveScan.proxyConfiguration.port') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr 
+                  v-for="(rule, index) in tlsPassThroughRules" 
+                  :key="index"
+                  :class="{ 'bg-primary/10': selectedTlsPassThroughIndex === index }"
+                  @click="selectedTlsPassThroughIndex = index"
+                  @dblclick="editTlsPassThroughRuleByIndex(index)"
+                  class="cursor-pointer hover:bg-base-200"
+                >
+                  <td>
+                    <input 
+                      type="checkbox" 
+                      class="checkbox checkbox-sm"
+                      v-model="rule.enabled"
+                      @click.stop
+                    />
+                  </td>
+                  <td>{{ rule.host }}</td>
+                  <td>{{ rule.port }}</td>
+                </tr>
+                <tr v-if="tlsPassThroughRules.length === 0">
+                  <td colspan="3" class="text-center text-base-content/50">{{ $t('passiveScan.proxyConfiguration.noRules') }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div class="form-control mt-4">
@@ -826,10 +1433,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, inject, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0))
@@ -839,6 +1449,17 @@ const isSaving = ref(false)
 const saveTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
 const isInitialLoad = ref(true) // 标记是否是初始加载，避免初始加载时触发保存
 
+// Upstream proxy configuration interface
+interface UpstreamProxyConfig {
+  enabled: boolean
+  destination_host: string
+  proxy_host: string
+  proxy_port: number
+  auth_type: string
+  username?: string
+  password?: string
+}
+
 // Proxy configuration
 const proxyConfig = ref({
   start_port: 8080,
@@ -846,6 +1467,7 @@ const proxyConfig = ref({
   mitm_enabled: true,
   max_request_body_size: 2 * 1024 * 1024,
   max_response_body_size: 2 * 1024 * 1024,
+  upstream_proxy: null as UpstreamProxyConfig | null,
 })
 
 // 辅助变量：请求/响应体大小（MB）
@@ -878,29 +1500,29 @@ const requestRules = ref([
   {
     enabled: true,
     operator: '',
-    matchType: '文件扩展名',
-    relationship: '不匹配',
+    matchType: 'file_extension',
+    relationship: 'does_not_match',
     condition: '(^gif$|^jpg$|^png$|^css$|^js$|^ico$|^woff$)'
   },
   {
     enabled: false,
     operator: 'Or',
-    matchType: '请求',
-    relationship: '包含参数',
+    matchType: 'request',
+    relationship: 'contains_parameters',
     condition: ''
   },
   {
     enabled: false,
     operator: 'Or',
-    matchType: 'HTTP 方法',
-    relationship: '不匹配',
+    matchType: 'http_method',
+    relationship: 'does_not_match',
     condition: '(get|post)'
   },
   {
     enabled: false,
     operator: 'And',
-    matchType: 'URL',
-    relationship: '在目标范围内',
+    matchType: 'url',
+    relationship: 'is_in_target_scope',
     condition: ''
   }
 ])
@@ -910,36 +1532,36 @@ const responseRules = ref([
   {
     enabled: true,
     operator: '',
-    matchType: 'Content-type 标头',
-    relationship: '匹配',
+    matchType: 'content_type_header',
+    relationship: 'matches',
     condition: 'text'
   },
   {
     enabled: false,
     operator: 'Or',
-    matchType: '请求',
-    relationship: '已修改',
+    matchType: 'request',
+    relationship: 'was_modified',
     condition: ''
   },
   {
     enabled: false,
     operator: 'Or',
-    matchType: '请求',
-    relationship: '已被拦截',
+    matchType: 'request',
+    relationship: 'was_intercepted',
     condition: ''
   },
   {
     enabled: false,
     operator: 'And',
-    matchType: '状态码',
-    relationship: '不匹配',
+    matchType: 'status_code',
+    relationship: 'does_not_match',
     condition: '^304$'
   },
   {
     enabled: false,
     operator: 'And',
-    matchType: 'URL',
-    relationship: '在目标范围内',
+    matchType: 'url',
+    relationship: 'is_in_target_scope',
     condition: ''
   }
 ])
@@ -950,6 +1572,136 @@ const autoUpdateContentLength = ref(true)
 
 // Response settings
 const autoUpdateResponseContentLength = ref(true)
+
+// Rule selection and editing
+const selectedRequestRuleIndex = ref(-1)
+const selectedResponseRuleIndex = ref(-1)
+const ruleDialogRef = ref<HTMLDialogElement | null>(null)
+const editingRuleIsNew = ref(false)
+const editingRuleType = ref<'request' | 'response'>('request')
+const editingRuleIndex = ref(-1)
+
+// Rule interface
+interface InterceptionRule {
+  enabled: boolean
+  operator: string
+  matchType: string
+  relationship: string
+  condition: string
+}
+
+const editingRule = ref<InterceptionRule>({
+  enabled: true,
+  operator: '',
+  matchType: 'domain_name',
+  relationship: 'matches',
+  condition: ''
+})
+
+// Match type values for request rules
+const requestMatchTypeValues = [
+  'domain_name', 'ip_address', 'protocol', 'http_method', 'url', 
+  'file_extension', 'request', 'cookie_name', 'cookie_value', 
+  'any_header', 'body', 'param_name', 'param_value', 'listener_port'
+]
+
+// Match type values for response rules
+const responseMatchTypeValues = [
+  'domain_name', 'ip_address', 'protocol', 'http_method', 'url', 
+  'file_extension', 'request', 'cookie_name', 'cookie_value', 
+  'any_header', 'body', 'param_name', 'param_value', 
+  'status_code', 'content_type_header'
+]
+
+// Relationship values
+const relationshipValues = [
+  'matches', 'does_not_match', 'contains_parameters', 
+  'is_in_target_scope', 'was_modified', 'was_intercepted'
+]
+
+// Computed for current match types with i18n labels
+const currentMatchTypes = computed(() => {
+  const values = editingRuleType.value === 'request' ? requestMatchTypeValues : responseMatchTypeValues
+  return values.map(value => ({
+    value,
+    label: t(`passiveScan.proxyConfiguration.matchTypes.${value}`)
+  }))
+})
+
+// Computed for relationship options with i18n labels
+const relationshipOptions = computed(() => {
+  return relationshipValues.map(value => ({
+    value,
+    label: t(`passiveScan.proxyConfiguration.relationships.${value}`)
+  }))
+})
+
+// Get match type label
+const getMatchTypeLabel = (value: string) => {
+  return t(`passiveScan.proxyConfiguration.matchTypes.${value}`, value)
+}
+
+// Get relationship label
+const getRelationshipLabel = (value: string) => {
+  return t(`passiveScan.proxyConfiguration.relationships.${value}`, value)
+}
+
+// Upstream proxy settings - now supports multiple proxies
+const upstreamProxy = ref<UpstreamProxyConfig | null>(null)
+const upstreamProxies = ref<UpstreamProxyConfig[]>([])
+const selectedUpstreamIndex = ref(-1)
+const upstreamDialogRef = ref<HTMLDialogElement | null>(null)
+const editingUpstreamIsNew = ref(false)
+const editingUpstreamIndex = ref(-1)
+const editingUpstream = ref<UpstreamProxyConfig>({
+  enabled: false,
+  destination_host: '*',
+  proxy_host: '',
+  proxy_port: 8080,
+  auth_type: '',
+  username: '',
+  password: ''
+})
+
+// Match and Replace Rules selection
+const selectedMatchReplaceIndex = ref(-1)
+const matchReplaceDialogRef = ref<HTMLDialogElement | null>(null)
+const editingMatchReplaceIsNew = ref(false)
+const editingMatchReplaceIndex = ref(-1)
+
+interface MatchReplaceRule {
+  enabled: boolean
+  type: string
+  match: string
+  replace: string
+  comment: string
+}
+
+const editingMatchReplace = ref<MatchReplaceRule>({
+  enabled: true,
+  type: 'Request header',
+  match: '',
+  replace: '',
+  comment: ''
+})
+
+// TLS Pass Through selection
+const selectedTlsPassThroughIndex = ref(-1)
+const tlsPassThroughDialogRef = ref<HTMLDialogElement | null>(null)
+const editingTlsIsNew = ref(false)
+const editingTlsIndex = ref(-1)
+
+interface TlsPassThroughRule {
+  enabled: boolean
+  host: string
+  port: string
+}
+
+const editingTlsPassThrough = ref<TlsPassThroughRule>({
+  enabled: true,
+  host: '',
+  port: '443'
+})
 
 // WebSocket settings
 const interceptClientToServer = ref(true)
@@ -1030,6 +1782,9 @@ const dontSendToProxyHistoryIfOutOfScope = ref(false)
 const isDownloadingCert = ref(false)
 const isRegeneratingCert = ref(false)
 const isOpeningCertDir = ref(false)
+const certDialogRef = ref<HTMLDialogElement | null>(null)
+const certOperation = ref<string>('')
+const isProcessingCert = ref(false)
 
 // 编辑监听器相关状态
 const editDialogRef = ref<HTMLDialogElement | null>(null)
@@ -1201,6 +1956,383 @@ const cancelEdit = () => {
   editingIndex.value = -1
 }
 
+const onUpstreamProxyChange = () => {
+  // Sync changes to proxyConfig
+  if (upstreamProxies.value.length > 0) {
+    upstreamProxy.value = upstreamProxies.value[0]
+    proxyConfig.value.upstream_proxy = upstreamProxy.value
+    debouncedSave()
+  }
+}
+
+// Request rule methods
+const addRequestRule = () => {
+  editingRuleType.value = 'request'
+  editingRuleIsNew.value = true
+  editingRuleIndex.value = -1
+  editingRule.value = {
+    enabled: true,
+    operator: requestRules.value.length > 0 ? 'And' : '',
+    matchType: 'domain_name',
+    relationship: 'matches',
+    condition: ''
+  }
+  ruleDialogRef.value?.showModal()
+}
+
+const editRequestRule = () => {
+  if (selectedRequestRuleIndex.value === -1) return
+  editRequestRuleByIndex(selectedRequestRuleIndex.value)
+}
+
+const editRequestRuleByIndex = (index: number) => {
+  editingRuleType.value = 'request'
+  editingRuleIsNew.value = false
+  editingRuleIndex.value = index
+  const rule = requestRules.value[index]
+  editingRule.value = { ...rule }
+  ruleDialogRef.value?.showModal()
+}
+
+const removeRequestRule = () => {
+  if (selectedRequestRuleIndex.value === -1) return
+  requestRules.value.splice(selectedRequestRuleIndex.value, 1)
+  selectedRequestRuleIndex.value = -1
+  debouncedSave()
+}
+
+const moveRequestRuleUp = () => {
+  if (selectedRequestRuleIndex.value <= 0) return
+  const index = selectedRequestRuleIndex.value
+  const temp = requestRules.value[index]
+  requestRules.value[index] = requestRules.value[index - 1]
+  requestRules.value[index - 1] = temp
+  selectedRequestRuleIndex.value = index - 1
+  debouncedSave()
+}
+
+const moveRequestRuleDown = () => {
+  if (selectedRequestRuleIndex.value === -1 || selectedRequestRuleIndex.value >= requestRules.value.length - 1) return
+  const index = selectedRequestRuleIndex.value
+  const temp = requestRules.value[index]
+  requestRules.value[index] = requestRules.value[index + 1]
+  requestRules.value[index + 1] = temp
+  selectedRequestRuleIndex.value = index + 1
+  debouncedSave()
+}
+
+// Response rule methods
+const addResponseRule = () => {
+  editingRuleType.value = 'response'
+  editingRuleIsNew.value = true
+  editingRuleIndex.value = -1
+  editingRule.value = {
+    enabled: true,
+    operator: responseRules.value.length > 0 ? 'And' : '',
+    matchType: 'domain_name',
+    relationship: 'matches',
+    condition: ''
+  }
+  ruleDialogRef.value?.showModal()
+}
+
+const editResponseRule = () => {
+  if (selectedResponseRuleIndex.value === -1) return
+  editResponseRuleByIndex(selectedResponseRuleIndex.value)
+}
+
+const editResponseRuleByIndex = (index: number) => {
+  editingRuleType.value = 'response'
+  editingRuleIsNew.value = false
+  editingRuleIndex.value = index
+  const rule = responseRules.value[index]
+  editingRule.value = { ...rule }
+  ruleDialogRef.value?.showModal()
+}
+
+const removeResponseRule = () => {
+  if (selectedResponseRuleIndex.value === -1) return
+  responseRules.value.splice(selectedResponseRuleIndex.value, 1)
+  selectedResponseRuleIndex.value = -1
+  debouncedSave()
+}
+
+const moveResponseRuleUp = () => {
+  if (selectedResponseRuleIndex.value <= 0) return
+  const index = selectedResponseRuleIndex.value
+  const temp = responseRules.value[index]
+  responseRules.value[index] = responseRules.value[index - 1]
+  responseRules.value[index - 1] = temp
+  selectedResponseRuleIndex.value = index - 1
+  debouncedSave()
+}
+
+const moveResponseRuleDown = () => {
+  if (selectedResponseRuleIndex.value === -1 || selectedResponseRuleIndex.value >= responseRules.value.length - 1) return
+  const index = selectedResponseRuleIndex.value
+  const temp = responseRules.value[index]
+  responseRules.value[index] = responseRules.value[index + 1]
+  responseRules.value[index + 1] = temp
+  selectedResponseRuleIndex.value = index + 1
+  debouncedSave()
+}
+
+// Save and cancel rule edit
+const saveRuleEdit = () => {
+  const rules = editingRuleType.value === 'request' ? requestRules.value : responseRules.value
+  
+  if (editingRuleIsNew.value) {
+    rules.push({ ...editingRule.value })
+    // Select the newly added rule
+    if (editingRuleType.value === 'request') {
+      selectedRequestRuleIndex.value = rules.length - 1
+    } else {
+      selectedResponseRuleIndex.value = rules.length - 1
+    }
+  } else {
+    rules[editingRuleIndex.value] = { ...editingRule.value }
+  }
+  
+  ruleDialogRef.value?.close()
+  debouncedSave()
+}
+
+const cancelRuleEdit = () => {
+  ruleDialogRef.value?.close()
+}
+
+// Upstream Proxy methods (updated for list support)
+const addUpstreamProxy = () => {
+  editingUpstreamIsNew.value = true
+  editingUpstreamIndex.value = -1
+  editingUpstream.value = {
+    enabled: true,
+    destination_host: '*',
+    proxy_host: '127.0.0.1',
+    proxy_port: 10809,
+    auth_type: '',
+    username: '',
+    password: ''
+  }
+  upstreamDialogRef.value?.showModal()
+}
+
+const editUpstreamProxyByIndex = (index: number) => {
+  editingUpstreamIsNew.value = false
+  editingUpstreamIndex.value = index
+  const proxy = upstreamProxies.value[index]
+  editingUpstream.value = { ...proxy }
+  upstreamDialogRef.value?.showModal()
+}
+
+const editUpstreamProxy = () => {
+  if (selectedUpstreamIndex.value === -1) return
+  editUpstreamProxyByIndex(selectedUpstreamIndex.value)
+}
+
+const removeUpstreamProxy = () => {
+  if (selectedUpstreamIndex.value === -1) return
+  upstreamProxies.value.splice(selectedUpstreamIndex.value, 1)
+  selectedUpstreamIndex.value = -1
+  // Sync with single proxy for backwards compatibility
+  upstreamProxy.value = upstreamProxies.value.length > 0 ? upstreamProxies.value[0] : null
+  proxyConfig.value.upstream_proxy = upstreamProxy.value
+  debouncedSave()
+}
+
+const saveUpstreamEdit = () => {
+  if (!editingUpstream.value.proxy_host.trim()) {
+    dialog.toast.error('Proxy host is required')
+    return
+  }
+  if (editingUpstream.value.proxy_port < 1 || editingUpstream.value.proxy_port > 65535) {
+    dialog.toast.error('Port must be between 1 and 65535')
+    return
+  }
+  
+  if (editingUpstreamIsNew.value) {
+    upstreamProxies.value.push({ ...editingUpstream.value })
+    selectedUpstreamIndex.value = upstreamProxies.value.length - 1
+  } else {
+    upstreamProxies.value[editingUpstreamIndex.value] = { ...editingUpstream.value }
+  }
+  
+  // Sync with single proxy for backwards compatibility
+  upstreamProxy.value = upstreamProxies.value.length > 0 ? upstreamProxies.value[0] : null
+  proxyConfig.value.upstream_proxy = upstreamProxy.value
+  
+  upstreamDialogRef.value?.close()
+  dialog.toast.success('Upstream proxy saved')
+  debouncedSave()
+}
+
+const cancelUpstreamEdit = () => {
+  upstreamDialogRef.value?.close()
+}
+
+// Match and Replace Rule methods
+const addMatchReplaceRule = () => {
+  editingMatchReplaceIsNew.value = true
+  editingMatchReplaceIndex.value = -1
+  editingMatchReplace.value = {
+    enabled: true,
+    type: 'Request header',
+    match: '',
+    replace: '',
+    comment: ''
+  }
+  matchReplaceDialogRef.value?.showModal()
+}
+
+const editMatchReplaceRuleByIndex = (index: number) => {
+  editingMatchReplaceIsNew.value = false
+  editingMatchReplaceIndex.value = index
+  const rule = matchReplaceRules.value[index]
+  editingMatchReplace.value = { 
+    enabled: rule.enabled,
+    type: rule.type,
+    match: rule.match,
+    replace: rule.replace,
+    comment: rule.comment
+  }
+  matchReplaceDialogRef.value?.showModal()
+}
+
+const editMatchReplaceRule = () => {
+  if (selectedMatchReplaceIndex.value === -1) return
+  editMatchReplaceRuleByIndex(selectedMatchReplaceIndex.value)
+}
+
+const removeMatchReplaceRule = () => {
+  if (selectedMatchReplaceIndex.value === -1) return
+  matchReplaceRules.value.splice(selectedMatchReplaceIndex.value, 1)
+  selectedMatchReplaceIndex.value = -1
+  debouncedSave()
+}
+
+const moveMatchReplaceRuleUp = () => {
+  if (selectedMatchReplaceIndex.value <= 0) return
+  const index = selectedMatchReplaceIndex.value
+  const temp = matchReplaceRules.value[index]
+  matchReplaceRules.value[index] = matchReplaceRules.value[index - 1]
+  matchReplaceRules.value[index - 1] = temp
+  selectedMatchReplaceIndex.value = index - 1
+  debouncedSave()
+}
+
+const moveMatchReplaceRuleDown = () => {
+  if (selectedMatchReplaceIndex.value === -1 || selectedMatchReplaceIndex.value >= matchReplaceRules.value.length - 1) return
+  const index = selectedMatchReplaceIndex.value
+  const temp = matchReplaceRules.value[index]
+  matchReplaceRules.value[index] = matchReplaceRules.value[index + 1]
+  matchReplaceRules.value[index + 1] = temp
+  selectedMatchReplaceIndex.value = index + 1
+  debouncedSave()
+}
+
+const saveMatchReplaceEdit = () => {
+  if (editingMatchReplaceIsNew.value) {
+    matchReplaceRules.value.push({ 
+      ...editingMatchReplace.value,
+      scope: 'In scope',
+      item: String(matchReplaceRules.value.length + 1)
+    })
+    selectedMatchReplaceIndex.value = matchReplaceRules.value.length - 1
+  } else {
+    const existing = matchReplaceRules.value[editingMatchReplaceIndex.value]
+    matchReplaceRules.value[editingMatchReplaceIndex.value] = {
+      ...existing,
+      ...editingMatchReplace.value
+    }
+  }
+  
+  matchReplaceDialogRef.value?.close()
+  debouncedSave()
+}
+
+const cancelMatchReplaceEdit = () => {
+  matchReplaceDialogRef.value?.close()
+}
+
+// TLS Pass Through methods
+const addTlsPassThroughRule = () => {
+  editingTlsIsNew.value = true
+  editingTlsIndex.value = -1
+  editingTlsPassThrough.value = {
+    enabled: true,
+    host: '',
+    port: '443'
+  }
+  tlsPassThroughDialogRef.value?.showModal()
+}
+
+const editTlsPassThroughRuleByIndex = (index: number) => {
+  editingTlsIsNew.value = false
+  editingTlsIndex.value = index
+  const rule = tlsPassThroughRules.value[index]
+  editingTlsPassThrough.value = { ...rule }
+  tlsPassThroughDialogRef.value?.showModal()
+}
+
+const editTlsPassThroughRule = () => {
+  if (selectedTlsPassThroughIndex.value === -1) return
+  editTlsPassThroughRuleByIndex(selectedTlsPassThroughIndex.value)
+}
+
+const removeTlsPassThroughRule = () => {
+  if (selectedTlsPassThroughIndex.value === -1) return
+  tlsPassThroughRules.value.splice(selectedTlsPassThroughIndex.value, 1)
+  selectedTlsPassThroughIndex.value = -1
+  debouncedSave()
+}
+
+const saveTlsPassThroughEdit = () => {
+  if (!editingTlsPassThrough.value.host.trim()) {
+    dialog.toast.error('Host is required')
+    return
+  }
+  
+  if (editingTlsIsNew.value) {
+    tlsPassThroughRules.value.push({ 
+      ...editingTlsPassThrough.value,
+      destination: '*',
+      protocol: 'TLS'
+    })
+    selectedTlsPassThroughIndex.value = tlsPassThroughRules.value.length - 1
+  } else {
+    const existing = tlsPassThroughRules.value[editingTlsIndex.value]
+    tlsPassThroughRules.value[editingTlsIndex.value] = {
+      ...existing,
+      ...editingTlsPassThrough.value
+    }
+  }
+  
+  tlsPassThroughDialogRef.value?.close()
+  debouncedSave()
+}
+
+const cancelTlsPassThroughEdit = () => {
+  tlsPassThroughDialogRef.value?.close()
+}
+
+const pasteUrlToTlsPassThrough = async () => {
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text) {
+      const url = new URL(text)
+      editingTlsPassThrough.value = {
+        enabled: true,
+        host: url.hostname,
+        port: url.port || '443'
+      }
+      editingTlsIsNew.value = true
+      tlsPassThroughDialogRef.value?.showModal()
+    }
+  } catch {
+    dialog.toast.error('Failed to paste URL from clipboard')
+  }
+}
+
 const removeListener = async () => {
   if (selectedListeners.value.length === 0) {
     dialog.toast.warning('请至少选择一个监听器')
@@ -1289,10 +2421,99 @@ const resetToDefaults = () => {
     mitm_enabled: true,
     max_request_body_size: 2 * 1024 * 1024,
     max_response_body_size: 2 * 1024 * 1024,
+    upstream_proxy: null,
   }
   requestBodySizeMB.value = 2
   responseBodySizeMB.value = 2
+  upstreamProxy.value = null
   dialog.toast.info('已重置为默认配置')
+}
+
+// Certificate dialog methods
+function openCertDialog() {
+  certOperation.value = ''
+  certDialogRef.value?.showModal()
+}
+
+function closeCertDialog() {
+  certDialogRef.value?.close()
+  certOperation.value = ''
+}
+
+async function executeCertOperation() {
+  if (!certOperation.value) return
+  
+  isProcessingCert.value = true
+  try {
+    switch (certOperation.value) {
+      case 'export_der_cert':
+        await exportCertInDer()
+        break
+      case 'export_der_key':
+        await exportKeyInDer()
+        break
+      case 'export_pkcs12':
+        await exportPkcs12()
+        break
+      case 'import_der':
+        await importDerCert()
+        break
+      case 'import_pkcs12':
+        await importPkcs12()
+        break
+    }
+    closeCertDialog()
+  } catch (error: any) {
+    console.error('Certificate operation failed:', error)
+    dialog.toast.error(`${error}`)
+  } finally {
+    isProcessingCert.value = false
+  }
+}
+
+async function exportCertInDer() {
+  const response = await invoke<any>('export_ca_cert', { format: 'der' })
+  if (response.success && response.data) {
+    dialog.toast.success(`${t('passiveScan.proxyConfiguration.certInDerFormat')}: ${response.data.path}`)
+  } else {
+    throw new Error(response.error || 'Export failed')
+  }
+}
+
+async function exportKeyInDer() {
+  const response = await invoke<any>('export_ca_key', { format: 'der' })
+  if (response.success && response.data) {
+    dialog.toast.success(`${t('passiveScan.proxyConfiguration.privateKeyInDerFormat')}: ${response.data.path}`)
+  } else {
+    throw new Error(response.error || 'Export failed')
+  }
+}
+
+async function exportPkcs12() {
+  const response = await invoke<any>('export_ca_pkcs12', {})
+  if (response.success && response.data) {
+    dialog.toast.success(`${t('passiveScan.proxyConfiguration.certAndKeyInPkcs12')}: ${response.data.path}`)
+  } else {
+    throw new Error(response.error || 'Export failed')
+  }
+}
+
+async function importDerCert() {
+  const response = await invoke<any>('import_ca_der', {})
+  if (response.success) {
+    dialog.toast.success('Certificate imported successfully')
+  } else {
+    throw new Error(response.error || 'Import failed')
+  }
+}
+
+async function importPkcs12() {
+  const response = await invoke<any>('import_ca_pkcs12', {})
+  if (response.success) {
+    dialog.toast.success('Certificate imported successfully')
+  } else {
+    throw new Error(response.error || 'Import failed')
+  }
 }
 
 // Certificate management methods
@@ -1354,6 +2575,14 @@ const loadConfig = async () => {
       requestBodySizeMB.value = Math.round(configResponse.data.max_request_body_size / (1024 * 1024))
       responseBodySizeMB.value = Math.round(configResponse.data.max_response_body_size / (1024 * 1024))
       proxyListeners.value[0].interface = `127.0.0.1:${configResponse.data.start_port}`
+      
+      // Load upstream proxy config
+      if (configResponse.data.upstream_proxy) {
+        upstreamProxy.value = configResponse.data.upstream_proxy
+        console.log('[ProxyConfiguration] Loaded upstream proxy:', upstreamProxy.value)
+      } else {
+        upstreamProxy.value = null
+      }
     }
     
     // 检查代理实际运行状态

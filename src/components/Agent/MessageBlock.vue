@@ -1,8 +1,8 @@
 <template>
-  <div class="message-container group relative my-2 max-w-full">
-    <div :class="['message-block rounded-lg px-3 py-2 overflow-hidden', typeClass]">
+  <div class="message-container group relative my-2 max-w-full pt-2">
+    <div :class="['message-block rounded-lg px-3 py-2 overflow-hidden ', typeClass]">
       <!-- Header with type indicator -->
-      <div class="message-header flex items-center gap-2 mb-2 text-sm" v-if="showHeader">
+      <div class="message-header flex items-center gap-2 mb-23 text-sm" v-if="showHeader">
         <span class="message-type font-semibold text-base-content/70">{{ typeName }}</span>
         <span v-if="toolName" class="tool-name font-mono text-xs text-primary">`{{ toolName }}`</span>
         <!-- Tool Status Indicator -->
@@ -31,7 +31,7 @@
       <div class="message-content text-base-content break-words overflow-hidden">
         <div v-if="shouldHideContent" class="text-xs text-base-content/50 italic py-1 flex items-center gap-2">
           <i class="fas fa-external-link-alt"></i>
-          <span>详情显示在 Vision Explorer 面板中</span>
+          <span>{{ t('agent.detailsInVisionPanel') }}</span>
         </div>
         <MarkdownRenderer v-else :content="formattedContent" />
       </div>
@@ -39,7 +39,7 @@
       <!-- Tool details (collapsible) -->
       <div v-if="message.type === 'tool_call' && (hasToolArgs || hasToolResult)" class="tool-details mt-2 pt-2 border-t border-base-300">
         <button @click="toggleDetails" class="toggle-btn text-xs text-base-content/60 bg-transparent border-none cursor-pointer p-0 underline hover:text-base-content">
-          {{ isExpanded ? '收起详情' : '展开详情' }}
+          {{ isExpanded ? t('agent.collapseDetails') : t('agent.expandDetails') }}
         </button>
         <div v-if="isExpanded" class="mt-2 space-y-3">
           <!-- Tool Arguments -->
@@ -62,22 +62,22 @@
       <!-- 兜底：独立的 tool_result 消息显示（当无法合并时） -->
       <div v-else-if="message.type === 'tool_result' && (hasToolArgs || message.content)" class="tool-details mt-2 pt-2 border-t border-base-300">
         <button @click="toggleDetails" class="toggle-btn text-xs text-base-content/60 bg-transparent border-none cursor-pointer p-0 underline hover:text-base-content">
-          {{ isExpanded ? '收起详情' : '展开详情' }}
+          {{ isExpanded ? t('agent.collapseDetails') : t('agent.expandDetails') }}
         </button>
         <div v-if="isExpanded" class="mt-2 space-y-3">
           <!-- 工具参数 -->
           <div v-if="hasToolArgs" class="tool-args-section">
-            <div class="text-xs text-base-content/60 mb-1 font-medium">📥 输入参数:</div>
+            <div class="text-xs text-base-content/60 mb-1 font-medium">📥 {{ t('agent.inputParameters') }}:</div>
             <pre class="tool-args p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-48 overflow-y-auto">{{ formattedArgs }}</pre>
           </div>
           <!-- 工具结果 -->
           <div v-if="message.content" class="tool-result-section">
-            <div class="text-xs text-base-content/60 mb-1 font-medium">📤 执行结果:</div>
+            <div class="text-xs text-base-content/60 mb-1 font-medium">📤 {{ t('agent.executionResult') }}:</div>
             <pre class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap">{{ message.content }}</pre>
           </div>
           <!-- 工具调用 ID -->
           <div v-if="message.metadata?.tool_call_id" class="text-xs text-base-content/50">
-            ID: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
+            {{ t('agent.toolCallId') }}: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
           </div>
         </div>
       </div>
@@ -88,18 +88,18 @@
       <button
         @click="handleCopy"
         class="action-btn btn btn-xs btn-ghost text-base-content/50 hover:text-base-content hover:bg-base-200"
-        title="复制消息"
+        :title="t('agent.copyMessage')"
       >
         <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
-        <span class="text-xs ml-1">复制</span>
+        <span class="text-xs ml-1">{{ t('agent.copy') }}</span>
       </button>
       <button
         @click="handleResend"
         class="action-btn btn btn-xs btn-ghost text-base-content/50 hover:text-base-content hover:bg-base-200"
-        title="重新发送"
+        :title="t('agent.resendMessage')"
       >
         <i class="fas fa-redo"></i>
-        <span class="text-xs ml-1">重发</span>
+        <span class="text-xs ml-1">{{ t('agent.resend') }}</span>
       </button>
     </div>
     
@@ -108,10 +108,10 @@
       <button
         @click="handleCopy"
         class="action-btn btn btn-xs btn-ghost text-base-content/50 hover:text-base-content hover:bg-base-200"
-        title="复制消息"
+        :title="t('agent.copyMessage')"
       >
         <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
-        <span class="text-xs ml-1">复制</span>
+        <span class="text-xs ml-1">{{ t('agent.copy') }}</span>
       </button>
     </div>
   </div>
@@ -209,13 +209,13 @@ const toolStatusClass = computed(() => {
 const toolStatusText = computed(() => {
   switch (toolStatus.value) {
     case 'running':
-      return '⏳ 执行中'
+      return `⏳ ${t('agent.statusRunning')}`
     case 'completed':
-      return '✓ 已完成'
+      return `✓ ${t('agent.statusCompleted')}`
     case 'failed':
-      return '✗ 失败'
+      return `✗ ${t('agent.statusFailed')}`
     case 'pending':
-      return '等待中'
+      return t('agent.statusPending')
     default:
       return ''
   }

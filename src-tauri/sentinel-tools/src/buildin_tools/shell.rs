@@ -4,9 +4,12 @@ use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::process::Command;
+use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
+use once_cell::sync::Lazy;
 
 /// Shell command arguments
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -43,16 +46,86 @@ pub enum ShellError {
     Timeout(u64),
     #[error("Invalid command: {0}")]
     InvalidCommand(String),
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+}
+
+/// Shell permission action
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub enum ShellPermissionAction {
+    Allow,
+    Deny,
+    Ask,
+}
+
+/// Shell permission rule
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ShellRule {
+    pub pattern: String,
+    pub action: ShellPermissionAction,
+}
+
+/// Shell configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ShellConfig {
+    pub rules: Vec<ShellRule>,
+    pub default_action: ShellPermissionAction,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            rules: vec![
+                ShellRule {
+                    pattern: "rm -rf /".to_string(),
+                    action: ShellPermissionAction::Deny,
+                },
+                ShellRule {
+                    pattern: "mkfs".to_string(),
+                    action: ShellPermissionAction::Deny,
+                },
+                ShellRule {
+                    pattern: "dd if=/dev/zero".to_string(),
+                    action: ShellPermissionAction::Deny,
+                },
+            ],
+            default_action: ShellPermissionAction::Ask, // Default to Ask for safety
+        }
+    }
+}
+
+/// Trait for handling permission requests (implemented by app layer)
+#[async_trait::async_trait]
+pub trait ShellPermissionHandler: Send + Sync {
+    async fn check_permission(&self, command: &str) -> bool;
+}
+
+/// Global shell configuration
+static SHELL_CONFIG: Lazy<RwLock<ShellConfig>> = Lazy::new(|| RwLock::new(ShellConfig::default()));
+
+/// Global permission handler
+static PERMISSION_HANDLER: Lazy<RwLock<Option<Arc<dyn ShellPermissionHandler>>>> = Lazy::new(|| RwLock::new(None));
+
+/// Set the global permission handler
+pub async fn set_permission_handler(handler: Arc<dyn ShellPermissionHandler>) {
+    let mut h = PERMISSION_HANDLER.write().await;
+    *h = Some(handler);
+}
+
+/// Get current shell config
+pub async fn get_shell_config() -> ShellConfig {
+    SHELL_CONFIG.read().await.clone()
+}
+
+/// Update shell config
+pub async fn set_shell_config(config: ShellConfig) {
+    let mut c = SHELL_CONFIG.write().await;
+    *c = config;
 }
 
 /// Shell command tool
 #[derive(Debug, Clone)]
-pub struct ShellTool {
-    /// Allowed command prefixes (for security)
-    allowed_prefixes: Vec<String>,
-    /// Denied commands (for security)
-    denied_commands: Vec<String>,
-}
+pub struct ShellTool;
 
 impl Default for ShellTool {
     fn default() -> Self {
@@ -62,54 +135,44 @@ impl Default for ShellTool {
 
 impl ShellTool {
     pub fn new() -> Self {
-        Self {
-            allowed_prefixes: vec![],
-            denied_commands: vec![
-                "rm -rf /".to_string(),
-                "mkfs".to_string(),
-                "dd if=/dev/zero".to_string(),
-            ],
-        }
+        Self
     }
 
-    /// Create with allowed command prefixes
-    pub fn with_allowed_prefixes(prefixes: Vec<String>) -> Self {
-        Self {
-            allowed_prefixes: prefixes,
-            denied_commands: vec![
-                "rm -rf /".to_string(),
-                "mkfs".to_string(),
-                "dd if=/dev/zero".to_string(),
-            ],
-        }
-    }
-
-    /// Validate command for security
-    fn validate_command(&self, cmd: &str) -> Result<(), ShellError> {
-        let cmd_lower = cmd.to_lowercase();
-
-        // Check denied commands
-        for denied in &self.denied_commands {
-            if cmd_lower.contains(&denied.to_lowercase()) {
-                return Err(ShellError::InvalidCommand(
-                    format!("Command contains denied pattern: {}", denied)
-                ));
+    /// Validate command permissions
+    async fn check_permission(&self, cmd: &str) -> Result<(), ShellError> {
+        let config = SHELL_CONFIG.read().await;
+        
+        // Check rules
+        for rule in &config.rules {
+            if cmd.contains(&rule.pattern) {
+                match rule.action {
+                    ShellPermissionAction::Allow => return Ok(()),
+                    ShellPermissionAction::Deny => return Err(ShellError::PermissionDenied(format!("Command denied by rule: {}", rule.pattern))),
+                    ShellPermissionAction::Ask => return self.ask_permission(cmd).await,
+                }
             }
         }
 
-        // Check allowed prefixes if configured
-        if !self.allowed_prefixes.is_empty() {
-            let allowed = self.allowed_prefixes.iter().any(|prefix| {
-                cmd.starts_with(prefix) || cmd_lower.starts_with(&prefix.to_lowercase())
-            });
-            if !allowed {
-                return Err(ShellError::InvalidCommand(
-                    "Command not in allowed list".to_string()
-                ));
-            }
+        // Check default action
+        match config.default_action {
+            ShellPermissionAction::Allow => Ok(()),
+            ShellPermissionAction::Deny => Err(ShellError::PermissionDenied("Command denied by default policy".to_string())),
+            ShellPermissionAction::Ask => self.ask_permission(cmd).await,
         }
+    }
 
-        Ok(())
+    async fn ask_permission(&self, cmd: &str) -> Result<(), ShellError> {
+        let handler_guard = PERMISSION_HANDLER.read().await;
+        if let Some(handler) = &*handler_guard {
+            if handler.check_permission(cmd).await {
+                Ok(())
+            } else {
+                Err(ShellError::PermissionDenied("User rejected execution".to_string()))
+            }
+        } else {
+            // If no handler is registered, deny by default for safety
+            Err(ShellError::PermissionDenied("No permission handler registered to ask user".to_string()))
+        }
     }
 }
 
@@ -122,7 +185,7 @@ impl Tool for ShellTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Execute shell commands. Use with caution - some commands are restricted for security.".to_string(),
+            description: "Execute shell commands. Use with caution - commands are subject to security policies.".to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(ShellArgs))
                 .unwrap_or_default(),
         }
@@ -131,14 +194,14 @@ impl Tool for ShellTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let start_time = Instant::now();
 
-        // Validate command
-        self.validate_command(&args.command)?;
+        // Validate command permission
+        self.check_permission(&args.command).await?;
 
         // Determine shell
         #[cfg(target_os = "windows")]
         let (shell, shell_arg) = ("cmd", "/C");
         #[cfg(not(target_os = "windows"))]
-        let (shell, shell_arg) = ("sh", "-c");
+        let (shell, shell_arg) = ("bash", "-c");
 
         // Build command
         let mut cmd = Command::new(shell);
@@ -182,25 +245,14 @@ impl Tool for ShellTool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_validate_command() {
+    #[tokio::test]
+    async fn test_default_rules() {
         let tool = ShellTool::new();
         
-        // Denied commands should fail
-        assert!(tool.validate_command("rm -rf /").is_err());
-        
-        // Normal commands should pass
-        assert!(tool.validate_command("ls -la").is_ok());
-        assert!(tool.validate_command("echo hello").is_ok());
-    }
-
-    #[test]
-    fn test_allowed_prefixes() {
-        let tool = ShellTool::with_allowed_prefixes(vec!["ls".to_string(), "echo".to_string()]);
-        
-        assert!(tool.validate_command("ls -la").is_ok());
-        assert!(tool.validate_command("echo hello").is_ok());
-        assert!(tool.validate_command("cat /etc/passwd").is_err());
+        // Denied by default rule
+        assert!(matches!(
+            tool.check_permission("rm -rf /").await,
+            Err(ShellError::PermissionDenied(_))
+        ));
     }
 }
-

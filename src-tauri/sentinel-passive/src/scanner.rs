@@ -5,6 +5,7 @@
 //! - 扇出分发给已启用插件
 //! - 收集 Finding 并去重
 
+use crate::history_cache::{HttpRequestRecord, ProxyHistoryCache};
 use crate::{
     Finding, PassiveDatabaseService, PassiveError, PluginEngine, RequestContext, ResponseContext,
     Result,
@@ -41,8 +42,10 @@ pub struct ScanPipeline {
     /// 请求上下文缓存（request_id -> RequestContext）
     /// 用于匹配请求和响应
     request_cache: Arc<RwLock<HashMap<String, RequestContext>>>,
-    /// 数据库服务（用于记录请求历史）
+    /// 数据库服务（用于加载插件和存储漏洞）
     db_service: Option<Arc<PassiveDatabaseService>>,
+    /// 历史记录内存缓存（用于存储 HTTP/WebSocket 请求历史）
+    history_cache: Option<Arc<ProxyHistoryCache>>,
     /// App Handle (用于发送事件到前端)
     app_handle: Option<tauri::AppHandle>,
 }
@@ -56,6 +59,7 @@ impl ScanPipeline {
             plugin_engines: Arc::new(RwLock::new(HashMap::new())),
             request_cache: Arc::new(RwLock::new(HashMap::new())),
             db_service: None,
+            history_cache: None,
             app_handle: None,
         }
     }
@@ -109,9 +113,15 @@ impl ScanPipeline {
             .map_err(|e| PassiveError::Plugin(format!("Plugin execution error: {}", e)))
     }
 
-    /// 设置数据库服务
+    /// 设置数据库服务（用于加载插件和存储漏洞，不再用于请求历史）
     pub fn with_db_service(mut self, db_service: Arc<PassiveDatabaseService>) -> Self {
         self.db_service = Some(db_service);
+        self
+    }
+
+    /// 设置历史记录内存缓存
+    pub fn with_history_cache(mut self, cache: Arc<ProxyHistoryCache>) -> Self {
+        self.history_cache = Some(cache);
         self
     }
 
@@ -149,6 +159,12 @@ impl ScanPipeline {
                 }
                 ScanTask::FailedConnection(failed_conn) => {
                     self.process_failed_connection(failed_conn).await;
+                }
+                ScanTask::WebSocketConnection(ws_conn) => {
+                    self.process_websocket_connection(ws_conn).await;
+                }
+                ScanTask::WebSocketMessage(ws_msg) => {
+                    self.process_websocket_message(ws_msg).await;
                 }
             }
         }
@@ -226,11 +242,14 @@ impl ScanPipeline {
                                     Ok(s) => Some(s),
                                     Err(_) => {
                                         use base64::{engine::general_purpose, Engine as _};
-                                        Some(format!("[BASE64]{}", general_purpose::STANDARD.encode(&req_ctx.body)))
+                                        Some(format!(
+                                            "[BASE64]{}",
+                                            general_purpose::STANDARD.encode(&req_ctx.body)
+                                        ))
                                     }
                                 }
                             };
-                            
+
                             if let Err(e) = self.finding_tx.send(finding) {
                                 error!("Failed to send finding: {}", e);
                             }
@@ -267,9 +286,8 @@ impl ScanPipeline {
             }
         };
 
-        // 记录请求到数据库
-        if let Some(db) = &self.db_service {
-            use crate::database::ProxyRequestRecord;
+        // 记录请求到内存缓存
+        if let Some(cache) = &self.history_cache {
             use url::Url;
 
             let start_time = req_ctx.timestamp;
@@ -277,7 +295,7 @@ impl ScanPipeline {
             let response_time = (end_time - start_time).num_milliseconds().max(0) as i64;
 
             debug!(
-                "Recording request to database: url={}, req_body_len={}, resp_body_len={}",
+                "Recording request to cache: url={}, req_body_len={}, resp_body_len={}",
                 req_ctx.url,
                 req_ctx.body.len(),
                 resp_ctx.body.len()
@@ -338,8 +356,8 @@ impl ScanPipeline {
 
             let response_size = resp_ctx.body.len() as i64;
 
-            let record = ProxyRequestRecord {
-                id: None,
+            let record = HttpRequestRecord {
+                id: 0, // 将由缓存分配
                 url: req_ctx.url.clone(),
                 host,
                 protocol,
@@ -354,26 +372,20 @@ impl ScanPipeline {
                 timestamp: req_ctx.timestamp,
             };
 
-            match db.insert_proxy_request(&record).await {
-                Err(e) => {
-                    error!("Failed to record proxy request: {}", e);
-                }
-                Ok(inserted_id) => {
-                    debug!(
-                        "Successfully recorded request to database: id={}, url={}, response_body_saved={}",
-                        inserted_id,
-                        req_ctx.url,
-                        response_body.is_some()
-                    );
-                    
-                    // 发送事件通知前端更新流量历史记录，附带数据库 ID
-                    if let Some(ref app_handle) = self.app_handle {
-                        let mut record_with_id = record.clone();
-                        record_with_id.id = Some(inserted_id);
-                        if let Err(e) = app_handle.emit("proxy:request", &record_with_id) {
-                            warn!("Failed to emit proxy:request event: {}", e);
-                        }
-                    }
+            let inserted_id = cache.add_http_request(record.clone()).await;
+            debug!(
+                "Successfully recorded request to cache: id={}, url={}, response_body_saved={}",
+                inserted_id,
+                req_ctx.url,
+                response_body.is_some()
+            );
+
+            // 发送事件通知前端更新流量历史记录，附带 ID
+            if let Some(ref app_handle) = self.app_handle {
+                let mut record_with_id = record;
+                record_with_id.id = inserted_id;
+                if let Err(e) = app_handle.emit("proxy:request", &record_with_id) {
+                    warn!("Failed to emit proxy:request event: {}", e);
                 }
             }
         }
@@ -425,14 +437,18 @@ impl ScanPipeline {
                                     Ok(s) => Some(s),
                                     Err(_) => {
                                         use base64::{engine::general_purpose, Engine as _};
-                                        Some(format!("[BASE64]{}", general_purpose::STANDARD.encode(&req_ctx.body)))
+                                        Some(format!(
+                                            "[BASE64]{}",
+                                            general_purpose::STANDARD.encode(&req_ctx.body)
+                                        ))
                                     }
                                 }
                             };
-                            
+
                             // 添加响应状态、响应头和响应体
                             finding.response_status = Some(resp_ctx.status as i32);
-                            finding.response_headers = serde_json::to_string(&resp_ctx.headers).ok();
+                            finding.response_headers =
+                                serde_json::to_string(&resp_ctx.headers).ok();
                             finding.response_body = if resp_ctx.body.is_empty() {
                                 None
                             } else {
@@ -440,11 +456,14 @@ impl ScanPipeline {
                                     Ok(s) => Some(s),
                                     Err(_) => {
                                         use base64::{engine::general_purpose, Engine as _};
-                                        Some(format!("[BASE64]{}", general_purpose::STANDARD.encode(&resp_ctx.body)))
+                                        Some(format!(
+                                            "[BASE64]{}",
+                                            general_purpose::STANDARD.encode(&resp_ctx.body)
+                                        ))
                                     }
                                 }
                             };
-                            
+
                             if let Err(e) = self.finding_tx.send(finding) {
                                 error!("Failed to send finding: {}", e);
                             }
@@ -473,6 +492,106 @@ impl ScanPipeline {
         );
     }
 
+    /// 处理 WebSocket 连接建立
+    async fn process_websocket_connection(
+        &self,
+        ws_conn: crate::proxy::WebSocketConnectionContext,
+    ) {
+        debug!(
+            "WebSocket connection: id={}, url={}, host={}",
+            ws_conn.id, ws_conn.url, ws_conn.host
+        );
+
+        // 将连接记录到历史缓存
+        if let Some(cache) = &self.history_cache {
+            use crate::history_cache::{WebSocketConnectionRecord, WebSocketConnectionStatus};
+
+            let conn_record = WebSocketConnectionRecord {
+                id: ws_conn.id.clone(),
+                url: ws_conn.url.clone(),
+                host: ws_conn.host.clone(),
+                protocol: ws_conn.protocol.clone(),
+                request_headers: serde_json::to_string(&ws_conn.request_headers).ok(),
+                response_headers: ws_conn
+                    .response_headers
+                    .as_ref()
+                    .and_then(|h| serde_json::to_string(h).ok()),
+                status: WebSocketConnectionStatus::Open,
+                opened_at: ws_conn.opened_at,
+                closed_at: None,
+                close_code: None,
+                close_reason: None,
+                message_ids: Vec::new(),
+            };
+
+            cache.add_ws_connection(conn_record).await;
+            debug!("WebSocket connection recorded: {}", ws_conn.id);
+
+            // 发送事件通知前端
+            if let Some(ref app_handle) = self.app_handle {
+                use tauri::Emitter;
+                if let Err(e) = app_handle.emit("proxy:websocket_connection", &ws_conn) {
+                    warn!("Failed to emit WebSocket connection event: {}", e);
+                }
+            }
+        }
+    }
+
+    /// 处理 WebSocket 消息
+    async fn process_websocket_message(&self, ws_msg: crate::proxy::WebSocketMessageContext) {
+        debug!(
+            "WebSocket message: id={}, conn_id={}, type={}, length={}",
+            ws_msg.id, ws_msg.connection_id, ws_msg.message_type, ws_msg.content_length
+        );
+
+        // 将消息记录到历史缓存
+        if let Some(cache) = &self.history_cache {
+            use crate::history_cache::{
+                WebSocketDirection, WebSocketMessageRecord, WebSocketMessageType,
+            };
+
+            // 转换消息方向
+            let direction = match ws_msg.direction {
+                crate::proxy::WebSocketDirection::ClientToServer => WebSocketDirection::Send,
+                crate::proxy::WebSocketDirection::ServerToClient => WebSocketDirection::Receive,
+            };
+
+            // 转换消息类型
+            let message_type = match ws_msg.message_type.as_str() {
+                "text" => WebSocketMessageType::Text,
+                "binary" => WebSocketMessageType::Binary,
+                "ping" => WebSocketMessageType::Ping,
+                "pong" => WebSocketMessageType::Pong,
+                "close" => WebSocketMessageType::Close,
+                _ => WebSocketMessageType::Text,
+            };
+
+            let msg_record = WebSocketMessageRecord {
+                id: 0, // 将由缓存分配
+                connection_id: ws_msg.connection_id.clone(),
+                direction,
+                message_type,
+                content: ws_msg.content.clone(),
+                content_length: ws_msg.content_length,
+                timestamp: ws_msg.timestamp,
+            };
+
+            let inserted_id = cache.add_ws_message(msg_record).await;
+            debug!(
+                "WebSocket message recorded: id={}, orig_id={}",
+                inserted_id, ws_msg.id
+            );
+
+            // 发送事件通知前端
+            if let Some(ref app_handle) = self.app_handle {
+                use tauri::Emitter;
+                if let Err(e) = app_handle.emit("proxy:websocket_message", &ws_msg) {
+                    warn!("Failed to emit WebSocket message event: {}", e);
+                }
+            }
+        }
+    }
+
     /// 添加插件到启用列表（供 PluginManager 或测试调用）
     pub async fn add_plugin(&self, plugin_id: String, plugin: PassivePluginConfig) -> Result<()> {
         let mut engines = self.plugin_engines.write().await;
@@ -488,15 +607,15 @@ impl ScanPipeline {
     }
 
     /// 从数据库加载并注册已启用的插件
-    /// 
+    ///
     /// # 参数
     /// - `db_service`: 数据库服务，用于查询插件代码和元数据
-    /// 
+    ///
     /// # 说明
     /// 此方法查询数据库中所有 `enabled=true` 的插件，
     /// 为每个插件创建 PluginEngine 并加载代码，
     /// 然后注册到 ScanPipeline 中。
-    /// 
+    ///
     /// # TODO
     /// - 当前 PluginEngine 不支持 !Send，需要在 LocalSet 中执行
     /// - v8::Global 到 String 的转换尚未完全实现
@@ -505,20 +624,30 @@ impl ScanPipeline {
         db_service: &Arc<PassiveDatabaseService>,
     ) -> Result<usize> {
         use crate::types::PluginMetadata;
-        
+
         info!("Loading enabled plugins from database...");
-        
+
         // 查询所有启用的被动扫描插件（过滤掉 agent 工具插件）
-        let rows = sqlx::query_as::<_, (
-            String, String, String, Option<String>, String, Option<String>,
-            String, Option<String>, String
-        )>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                String,
+            ),
+        >(
             r#"
             SELECT id, name, version, author, category, description,
                    default_severity, tags, plugin_code
             FROM plugin_registry
             WHERE enabled = true AND main_category = 'passive'
-            "#
+            "#,
         )
         .fetch_all(db_service.pool())
         .await
@@ -527,7 +656,18 @@ impl ScanPipeline {
         let mut loaded_count = 0;
         let mut engines = self.plugin_engines.write().await;
 
-        for (id, name, version, author, category, description, default_severity, tags, plugin_code) in rows {
+        for (
+            id,
+            name,
+            version,
+            author,
+            category,
+            description,
+            default_severity,
+            tags,
+            plugin_code,
+        ) in rows
+        {
             // 解析标签
             let tags_array: Vec<String> = tags
                 .and_then(|t| serde_json::from_str(&t).ok())
@@ -562,7 +702,7 @@ impl ScanPipeline {
             };
 
             engines.insert(id.clone(), config);
-                    loaded_count += 1;
+            loaded_count += 1;
             info!("Plugin registered in pipeline: {} ({})", name, id);
         }
 
@@ -585,11 +725,11 @@ impl ScanPipeline {
     }
 
     /// 重新加载单个插件（从数据库）
-    /// 
+    ///
     /// # 参数
     /// - `plugin_id`: 插件ID
     /// - `db_service`: 数据库服务
-    /// 
+    ///
     /// # 说明
     /// 从数据库重新读取插件代码和元数据，移除旧实例并加载新实例。
     /// 适用于插件代码更新后的热重载场景。
@@ -599,28 +739,55 @@ impl ScanPipeline {
         db_service: &Arc<PassiveDatabaseService>,
     ) -> Result<()> {
         use crate::types::PluginMetadata;
-        
+
         info!("Reloading plugin from database: {}", plugin_id);
-        
+
         // 查询插件信息（仅加载 passive 类型的插件）
-        let row = sqlx::query_as::<_, (
-            String, String, String, Option<String>, String, Option<String>,
-            String, Option<String>, String, bool, String
-        )>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                String,
+                bool,
+                String,
+            ),
+        >(
             r#"
             SELECT id, name, version, author, category, description,
                    default_severity, tags, plugin_code, enabled, main_category
             FROM plugin_registry
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(plugin_id)
         .fetch_optional(db_service.pool())
         .await
-        .map_err(|e| PassiveError::Database(format!("Failed to query plugin {}: {}", plugin_id, e)))?;
+        .map_err(|e| {
+            PassiveError::Database(format!("Failed to query plugin {}: {}", plugin_id, e))
+        })?;
 
-        let (id, name, version, author, category, description, default_severity, tags, plugin_code, enabled, main_category) = 
-            row.ok_or_else(|| PassiveError::Plugin(format!("Plugin not found in database: {}", plugin_id)))?;
+        let (
+            id,
+            name,
+            version,
+            author,
+            category,
+            description,
+            default_severity,
+            tags,
+            plugin_code,
+            enabled,
+            main_category,
+        ) = row.ok_or_else(|| {
+            PassiveError::Plugin(format!("Plugin not found in database: {}", plugin_id))
+        })?;
 
         // 检查插件类型，只允许加载 passive 类型的插件
         if main_category != "passive" {

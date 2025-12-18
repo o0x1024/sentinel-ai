@@ -1,6 +1,6 @@
 export default {
   title: 'Sentinel AI - 智能安全扫描平台',
-  description: '基于AI的网络安全扫描和漏洞检测平台',
+  description: '描述',
   keywords: '安全扫描, 漏洞检测, AI安全, 网络安全, 渗透测试',
   author: 'Sentinel AI Team',
   unknownError: '未知错误',
@@ -637,7 +637,7 @@ export default {
   },
   
   // Success messages
-  success: {
+  successMessages: {
     operationCompleted: '操作完成',
     dataSaved: '数据已保存',
     dataUpdated: '数据已更新',

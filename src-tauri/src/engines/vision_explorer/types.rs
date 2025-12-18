@@ -2,9 +2,9 @@
 //!
 //! 定义VLM驱动的网站全流量发现所需的核心数据结构
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 // ============================================================================
 // 浏览器操作类型 (参考bytebot的computer_*风格)
@@ -64,9 +64,8 @@ pub enum BrowserAction {
     Navigate { url: String },
     /// 选择下拉选项
     SelectOption { selector: String, value: String },
-    
+
     // ========== 新增：元素标注相关操作 ==========
-    
     /// 标注页面所有可交互元素
     AnnotateElements,
     /// 通过标注索引点击元素
@@ -130,6 +129,32 @@ pub struct BoundingBox {
     pub height: f64,
 }
 
+/// 计算样式 (文本模式增强)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComputedStyles {
+    #[serde(rename = "colorSemantic")]
+    pub color_semantic: Option<String>,
+    pub cursor: Option<String>,
+    pub opacity: f32,
+    #[serde(rename = "isBold")]
+    pub is_bold: bool,
+}
+
+/// 增强属性 (文本模式增强)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhancedElementAttributes {
+    pub index: u32,
+    pub rect: BoundingBox,
+    #[serde(rename = "computedStyles")]
+    pub computed_styles: ComputedStyles,
+    #[serde(rename = "derivedState")]
+    pub derived_state: Vec<String>,
+    #[serde(default, rename = "isOccluded")]
+    pub is_occluded: bool,
+    #[serde(rename = "inferredLabel")]
+    pub inferred_label: Option<String>,
+}
+
 /// 标注的元素信息 (来自 playwright_annotate)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnotatedElement {
@@ -151,6 +176,9 @@ pub struct AnnotatedElement {
     /// 属性 (href, type, name, placeholder, value, role, aria-label 等)
     #[serde(default)]
     pub attributes: HashMap<String, String>,
+    /// 增强属性 (文本模式特有，由客户端脚本补充)
+    #[serde(default)]
+    pub enhanced_attributes: Option<EnhancedElementAttributes>,
 }
 
 /// 表单信息
@@ -202,6 +230,10 @@ pub struct PageState {
     pub visible_text_summary: Option<String>,
     /// 采集时间
     pub captured_at: DateTime<Utc>,
+    /// 元素快照 ID - 用于解决 index 漂移问题
+    /// 每次 capture_page_state 时生成，后续 click_by_index/fill_by_index 操作需验证此 ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_id: Option<String>,
 }
 
 // ============================================================================
@@ -465,12 +497,12 @@ impl Default for VisionExplorerConfig {
             vlm_provider: "anthropic".to_string(),
             vlm_model: "claude-sonnet-4-20250514".to_string(),
             credentials: None,
-            enable_multimodal: true, // 默认启用多模态
-            enable_context_summary: true, // 默认启用上下文摘要
-            context_summary_threshold: 50000, // 50k tokens触发摘要
+            enable_multimodal: true,           // 默认启用多模态
+            enable_context_summary: true,      // 默认启用上下文摘要
+            context_summary_threshold: 50000,  // 50k tokens触发摘要
             include_elements_in_prompt: false, // 默认关闭，多模态模型通过截图查看
-            enable_takeover: true, // 默认启用Takeover
-            api_poll_interval_ms: 2000, // 2秒轮询一次API
+            enable_takeover: true,             // 默认启用Takeover
+            api_poll_interval_ms: 2000,        // 2秒轮询一次API
             finalize_on_complete: true,
             headers: None,
             local_storage: None,
@@ -638,7 +670,6 @@ pub fn get_browser_tool_definitions() -> Vec<BrowserToolDefinition> {
                 "properties": {}
             }),
         },
-        
         // ========== 交互类工具（使用元素索引） ==========
         BrowserToolDefinition {
             name: "click_by_index".to_string(),
@@ -712,7 +743,6 @@ pub fn get_browser_tool_definitions() -> Vec<BrowserToolDefinition> {
                 "required": ["index"]
             }),
         },
-        
         // ========== 导航类工具 ==========
         BrowserToolDefinition {
             name: "navigate".to_string(),
@@ -742,7 +772,6 @@ pub fn get_browser_tool_definitions() -> Vec<BrowserToolDefinition> {
                 }
             }),
         },
-        
         // ========== 坐标类工具（备用） ==========
         BrowserToolDefinition {
             name: "click_mouse".to_string(),
@@ -762,7 +791,6 @@ pub fn get_browser_tool_definitions() -> Vec<BrowserToolDefinition> {
                 "required": ["coordinates"]
             }),
         },
-        
         // ========== 任务管理 ==========
         BrowserToolDefinition {
             name: "set_status".to_string(),

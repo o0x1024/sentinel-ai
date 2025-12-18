@@ -317,7 +317,19 @@ export default {
     visionPages: '页面',
     visionElements: '元素',
     // MarkdownRenderer
-    sourceCitation: '知识库引用 #{number}'
+    sourceCitation: '知识库引用 #{number}',
+    // MessageBlock actions & status
+    detailsInVisionPanel: '详情显示在 Vision Explorer 面板中',
+    collapseDetails: '收起详情',
+    expandDetails: '展开详情',
+    copyMessage: '复制消息',
+    copy: '复制',
+    resendMessage: '重新发送消息',
+    resend: '重发',
+    statusRunning: '执行中',
+    statusCompleted: '已完成',
+    statusFailed: '失败',
+    statusPending: '等待中'
   },
 
   // AI Assistant section

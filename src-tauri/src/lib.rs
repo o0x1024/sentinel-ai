@@ -44,6 +44,10 @@ struct TrayProxyMenuItem(MenuItem<tauri::Wry>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install rustls CryptoProvider (required for rustls 0.23+)
+    // Must be called before any rustls usage
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    
     let context = tauri::generate_context!();
 
     let logs_dir = "logs";
@@ -252,6 +256,11 @@ pub fn run() {
                 handle.manage(PacketCaptureState::default());
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
+
+                // Initialize shell permission handler
+                if let Err(e) = tool_commands::init_shell_permission_handler(handle.clone()).await {
+                    tracing::error!("Failed to init shell permission handler: {}", e);
+                }
 
                 match commands::prompt_api::initialize_default_prompts().await {
                     Ok(msg) => tracing::info!("Prompt initialization: {}", msg),
@@ -605,6 +614,11 @@ pub fn run() {
             passive_scan_commands::regenerate_ca_cert,
             passive_scan_commands::get_ca_fingerprint,
             passive_scan_commands::open_ca_cert_dir,
+            passive_scan_commands::export_ca_cert,
+            passive_scan_commands::export_ca_key,
+            passive_scan_commands::export_ca_pkcs12,
+            passive_scan_commands::import_ca_pkcs12,
+            passive_scan_commands::import_ca_der,
             passive_scan_commands::get_finding,
             passive_scan_commands::update_finding_status,
             passive_scan_commands::export_findings_html,
@@ -640,6 +654,19 @@ pub fn run() {
             passive_scan_commands::drop_intercepted_response,
             passive_scan_commands::replay_request,
             passive_scan_commands::replay_raw_request,
+            passive_scan_commands::list_websocket_connections,
+            passive_scan_commands::list_websocket_messages,
+            passive_scan_commands::clear_websocket_history,
+            passive_scan_commands::get_history_stats,
+            passive_scan_commands::clear_all_history,
+            passive_scan_commands::set_websocket_intercept_enabled,
+            passive_scan_commands::get_websocket_intercept_enabled,
+            passive_scan_commands::forward_intercepted_websocket,
+            passive_scan_commands::drop_intercepted_websocket,
+            passive_scan_commands::add_intercept_filter_rule,
+            passive_scan_commands::get_intercept_filter_rules,
+            passive_scan_commands::remove_intercept_filter_rule,
+            passive_scan_commands::update_intercept_filter_rule,
             // Proxifier commands
             proxifier_commands::get_proxifier_config,
             proxifier_commands::start_proxifier,
@@ -721,6 +748,11 @@ pub fn run() {
             tool_commands::vision_explorer_receive_credentials,
             tool_commands::vision_explorer_send_user_message,
             tool_commands::vision_explorer_skip_login,
+            // Shell Tool commands
+            tool_commands::init_shell_permission_handler,
+            tool_commands::get_shell_tool_config,
+            tool_commands::set_shell_tool_config,
+            tool_commands::respond_shell_permission,
             // MCP commands
             commands::mcp_commands::mcp_get_connections,
             commands::mcp_commands::mcp_get_connection_status,

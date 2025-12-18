@@ -6,11 +6,21 @@ use super::route_tracker::RouteStats;
 use super::element_manager::ElementStats;
 use tracing::info;
 
-/// 覆盖率目标阈值（95%）
-pub const COVERAGE_TARGET: f32 = 95.0;
+/// Coverage target threshold (lowered from 95% to 70% for practical use)
+pub const COVERAGE_TARGET: f32 = 70.0;
 
-/// 稳定性阈值（连续无新发现轮次）
+/// Stability threshold (consecutive rounds without new discoveries)
+/// Increased from 3 to 5 to avoid premature completion
 pub const STABILITY_THRESHOLD: u32 = 5;
+
+/// Minimum API count for completion (ensures meaningful exploration)
+pub const MIN_API_COUNT: usize = 5;
+
+/// Minimum pages visited for completion
+pub const MIN_PAGES_VISITED: usize = 3;
+
+/// Minimum stable rounds required when there are pending routes
+pub const MIN_STABLE_WITH_PENDING: u32 = 8;
 
 /// 覆盖率引擎
 #[derive(Debug, Clone)]
@@ -116,18 +126,34 @@ impl CoverageEngine {
         self.consecutive_no_discovery >= self.stability_threshold
     }
 
-    /// 检查是否满足完成条件
+    /// Check if completion conditions are met (more relaxed for practical use)
     pub fn is_completion_ready(&self, pending_routes: usize) -> bool {
-        // 条件1: 待访问路由为空
-        let routes_done = pending_routes == 0;
+        // If there are pending routes, require much longer stability
+        if pending_routes > 0 {
+            // With pending routes, only complete if very stable (8+ rounds)
+            if self.consecutive_no_discovery < MIN_STABLE_WITH_PENDING {
+                return false;
+            }
+        }
         
-        // 条件2: 元素覆盖率达标
-        let elements_done = self.element_coverage >= self.coverage_target;
+        // Condition 1: No pending routes OR stable for enough rounds
+        let routes_acceptable = pending_routes == 0 || 
+            (pending_routes <= 2 && self.consecutive_no_discovery >= MIN_STABLE_WITH_PENDING);
         
-        // 条件3: 稳定性确认
+        // Condition 2: Element coverage meets target OR stable
+        let elements_acceptable = self.element_coverage >= self.coverage_target ||
+            (self.element_coverage >= 50.0 && self.consecutive_no_discovery >= self.stability_threshold);
+        
+        // Condition 3: Minimum API discovery (ensures meaningful exploration)
+        let apis_acceptable = self.api_count >= MIN_API_COUNT ||
+            self.consecutive_no_discovery >= self.stability_threshold;
+        
+        // Condition 4: Stability confirmation
         let stable = self.is_stable_complete();
 
-        routes_done && elements_done && stable
+        // Complete if: (routes OK AND elements OK AND APIs OK) OR (very stable for long enough)
+        (routes_acceptable && elements_acceptable && apis_acceptable) || 
+        (stable && self.api_count >= MIN_API_COUNT)
     }
 
     /// 生成覆盖率报告
@@ -151,14 +177,23 @@ impl CoverageEngine {
         }
     }
 
-    /// 获取完成状态检查结果
+    /// Get completion status check result
     pub fn completion_check(&self, pending_routes: usize) -> CompletionCheck {
+        let routes_acceptable = pending_routes == 0 || 
+            (pending_routes <= 2 && self.consecutive_no_discovery >= MIN_STABLE_WITH_PENDING);
+        let elements_acceptable = self.element_coverage >= self.coverage_target ||
+            (self.element_coverage >= 50.0 && self.consecutive_no_discovery >= self.stability_threshold);
+        let apis_acceptable = self.api_count >= MIN_API_COUNT ||
+            self.consecutive_no_discovery >= self.stability_threshold;
+            
         CompletionCheck {
-            routes_done: pending_routes == 0,
-            elements_done: self.element_coverage >= self.coverage_target,
+            routes_done: routes_acceptable,
+            elements_done: elements_acceptable,
+            apis_done: apis_acceptable,
             stable: self.is_stable_complete(),
             pending_routes,
             element_coverage: self.element_coverage,
+            api_count: self.api_count,
             stable_rounds: self.consecutive_no_discovery,
             stability_threshold: self.stability_threshold,
             coverage_target: self.coverage_target,
@@ -212,57 +247,67 @@ pub struct CoverageReport {
     pub coverage_target: f32,
 }
 
-/// 完成状态检查
+/// Completion status check
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompletionCheck {
-    /// 路由是否完成
+    /// Routes acceptable
     pub routes_done: bool,
-    /// 元素是否达标
+    /// Elements acceptable
     pub elements_done: bool,
-    /// 是否稳定
+    /// APIs acceptable
+    pub apis_done: bool,
+    /// Is stable
     pub stable: bool,
-    /// 待访问路由数
+    /// Pending routes count
     pub pending_routes: usize,
-    /// 当前元素覆盖率
+    /// Current element coverage
     pub element_coverage: f32,
-    /// 稳定轮次
+    /// API count
+    pub api_count: usize,
+    /// Stable rounds
     pub stable_rounds: u32,
-    /// 稳定阈值
+    /// Stability threshold
     pub stability_threshold: u32,
-    /// 覆盖率目标
+    /// Coverage target
     pub coverage_target: f32,
 }
 
 impl CompletionCheck {
-    /// 是否可以完成
+    /// Can complete exploration
     pub fn can_complete(&self) -> bool {
-        self.routes_done && self.elements_done && self.stable
+        (self.routes_done && self.elements_done && self.apis_done) || self.stable
     }
 
-    /// 生成指导信息
+    /// Generate guidance message
     pub fn guidance(&self) -> String {
         let mut issues = Vec::new();
         
         if !self.routes_done {
-            issues.push(format!("还有 {} 个路由待访问", self.pending_routes));
+            issues.push(format!("{} routes pending", self.pending_routes));
         }
         if !self.elements_done {
             issues.push(format!(
-                "元素覆盖率 {:.1}% 未达到目标 {:.0}%",
+                "Element coverage {:.1}% below target {:.0}%",
                 self.element_coverage, self.coverage_target
+            ));
+        }
+        if !self.apis_done {
+            issues.push(format!(
+                "API count {} below minimum {}",
+                self.api_count, MIN_API_COUNT
             ));
         }
         if !self.stable {
             issues.push(format!(
-                "稳定轮次 {}/{} 未达标",
+                "Stable rounds {}/{} not met",
                 self.stable_rounds, self.stability_threshold
             ));
         }
 
         if issues.is_empty() {
-            "✅ 所有完成条件已满足，可以设置 completed 状态".to_string()
+            "All completion conditions met, can set completed status".to_string()
         } else {
-            format!("⚠️ 未满足完成条件:\n- {}", issues.join("\n- "))
+            format!("Incomplete:\n- {}", issues.join("\n- "))
         }
     }
 }

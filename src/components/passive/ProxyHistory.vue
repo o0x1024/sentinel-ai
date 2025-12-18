@@ -1,5 +1,60 @@
 <template>
   <div class="flex flex-col h-full bg-base-200 overflow-hidden" @contextmenu.prevent>
+    <!-- 证书错误提示弹窗 -->
+    <dialog ref="certErrorDialog" class="modal">
+      <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+          <i class="fas fa-exclamation-triangle text-warning"></i>
+          {{ $t('passiveScan.history.certificateError.title') }}
+        </h3>
+        
+        <div class="space-y-4">
+          <div class="alert alert-warning">
+            <i class="fas fa-info-circle"></i>
+            <span>{{ $t('passiveScan.history.certificateError.message') }}</span>
+          </div>
+          
+          <div v-if="certErrorInfo" class="bg-base-200 p-4 rounded-lg">
+            <h4 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.history.certificateError.details') }}</h4>
+            <div class="text-xs space-y-1 font-mono">
+              <div><span class="text-base-content/70">Host:</span> {{ certErrorInfo.host }}</div>
+              <div><span class="text-base-content/70">URL:</span> {{ certErrorInfo.url }}</div>
+              <div v-if="certErrorInfo.error"><span class="text-base-content/70">Error:</span> {{ certErrorInfo.error }}</div>
+            </div>
+          </div>
+          
+          <div class="bg-base-300/50 p-4 rounded-lg">
+            <h4 class="font-semibold mb-2 text-sm flex items-center gap-2">
+              <i class="fas fa-lightbulb text-info"></i>
+              {{ $t('passiveScan.history.certificateError.commonIssues.invalidCN') }}
+            </h4>
+            <ul class="text-xs space-y-1 list-disc list-inside text-base-content/80">
+              <li>{{ $t('passiveScan.history.certificateError.tips.installCA') }}</li>
+              <li>{{ $t('passiveScan.history.certificateError.tips.serverCertIssue') }}</li>
+            </ul>
+          </div>
+        </div>
+        
+        <div class="modal-action justify-between">
+          <button class="btn btn-sm btn-ghost" @click="closeCertErrorDialog">
+            {{ $t('passiveScan.history.detailsPanel.close') }}
+          </button>
+          <div class="flex gap-2">
+            <button class="btn btn-sm btn-info" @click="checkCAInstallation">
+              <i class="fas fa-certificate mr-2"></i>
+              {{ $t('passiveScan.history.certificateError.tips.checkCAInstallation') }}
+            </button>
+            <button class="btn btn-sm btn-primary" @click="closeCertErrorDialog">
+              {{ $t('passiveScan.history.certificateError.actions.ignore') }}
+            </button>
+          </div>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>{{ $t('passiveScan.history.detailsPanel.close') }}</button>
+      </form>
+    </dialog>
+    
     <!-- 历史列表右键菜单 -->
     <div 
       v-if="contextMenu.visible"
@@ -271,6 +326,27 @@
     <!-- 筛选器工具栏 -->
     <div class="bg-base-100 border-b border-base-300 p-2 flex-shrink-0">
       <div class="flex items-center gap-2">
+        <!-- 协议类型切换 -->
+        <div class="tabs tabs-boxed tabs-xs bg-base-200 p-0.5">
+          <a 
+            class="tab tab-xs"
+            :class="{ 'tab-active': protocolFilter === 'all' }"
+            @click="protocolFilter = 'all'"
+          >All</a>
+          <a 
+            class="tab tab-xs"
+            :class="{ 'tab-active': protocolFilter === 'http' }"
+            @click="protocolFilter = 'http'"
+          >HTTP</a>
+          <a 
+            class="tab tab-xs"
+            :class="{ 'tab-active': protocolFilter === 'websocket' }"
+            @click="protocolFilter = 'websocket'"
+          >
+            <i class="fas fa-plug mr-1"></i>WS
+          </a>
+        </div>
+        
         <!-- 筛选器状态按钮 -->
         <button 
           @click="openFilterDialog" 
@@ -352,8 +428,14 @@
       >
         <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
           <h3 class="font-semibold text-sm">
-            <i class="fas fa-history mr-2"></i>
-            {{ $t('passiveScan.history.title') }} ({{ filteredRequests.length }})
+            <template v-if="protocolFilter === 'websocket'">
+              <i class="fas fa-plug mr-2"></i>
+              WebSocket Connections ({{ wsConnections.length }})
+            </template>
+            <template v-else>
+              <i class="fas fa-history mr-2"></i>
+              {{ $t('passiveScan.history.title') }} ({{ filteredRequests.length }})
+            </template>
           </h3>
           <div class="dropdown dropdown-end">
             <label tabindex="0" class="btn btn-xs btn-ghost">
@@ -378,10 +460,125 @@
           class="flex-1 overflow-auto min-h-0"
           @scroll="handleScroll"
         >
-          <div v-if="isLoading" class="flex items-center justify-center h-full">
+          <div v-if="isLoading || isLoadingWs" class="flex items-center justify-center h-full">
             <i class="fas fa-spinner fa-spin text-2xl"></i>
           </div>
 
+          <!-- WebSocket 连接列表 -->
+          <div v-else-if="protocolFilter === 'websocket'" class="p-2">
+            <div v-if="wsConnections.length === 0" class="flex flex-col items-center justify-center h-32 text-base-content/50">
+              <i class="fas fa-plug text-3xl mb-2"></i>
+              <span class="text-sm">No WebSocket connections yet</span>
+            </div>
+            <div v-else class="space-y-2">
+              <div 
+                v-for="conn in wsConnections" 
+                :key="conn.id"
+                class="bg-base-100 border border-base-300 rounded-lg overflow-hidden"
+              >
+                <!-- 连接头部 -->
+                <div 
+                  class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-base-200"
+                  @click="toggleWsConnection(conn.id)"
+                >
+                  <i 
+                    class="fas fa-chevron-right transition-transform duration-200"
+                    :class="{ 'rotate-90': expandedWsConnections.has(conn.id) }"
+                  ></i>
+                  <span 
+                    class="badge badge-xs"
+                    :class="{
+                      'badge-success': conn.status === 'open',
+                      'badge-ghost': conn.status === 'closed',
+                      'badge-error': conn.status === 'error'
+                    }"
+                  >
+                    {{ conn.status }}
+                  </span>
+                  <span class="text-xs font-mono text-primary truncate flex-1">{{ conn.url }}</span>
+                  <span class="text-xs text-base-content/50">{{ conn.host }}</span>
+                  <span class="text-xs text-base-content/40">{{ formatWsTime(conn.opened_at) }}</span>
+                </div>
+                
+                <!-- 展开区域 -->
+                <div 
+                  v-if="expandedWsConnections.has(conn.id)"
+                  class="border-t border-base-300 bg-base-200/30"
+                >
+                  <!-- 内部 Tabs -->
+                  <div class="tabs tabs-boxed tabs-xs bg-transparent p-2 justify-start rounded-none border-b border-base-300/50">
+                    <a 
+                      class="tab tab-xs" 
+                      :class="{ 'tab-active': getWsActiveTab(conn.id) === 'messages' }"
+                      @click.stop="setWsActiveTab(conn.id, 'messages')"
+                    >
+                      Messages ({{ conn.message_ids?.length || 0 }})
+                    </a>
+                    <a 
+                      class="tab tab-xs" 
+                      :class="{ 'tab-active': getWsActiveTab(conn.id) === 'handshake' }"
+                      @click.stop="setWsActiveTab(conn.id, 'handshake')"
+                    >
+                      Handshake
+                    </a>
+                  </div>
+
+                  <!-- 消息列表 -->
+                  <div v-if="getWsActiveTab(conn.id) === 'messages'" class="max-h-64 overflow-y-auto">
+                    <div 
+                      v-for="msg in getWsMessagesForConnection(conn.id)"
+                      :key="msg.id"
+                      class="flex items-start gap-2 px-4 py-1.5 text-xs border-b border-base-300/50 last:border-0 hover:bg-base-200/50 transition-colors"
+                      :class="{
+                        'bg-success/5': msg.direction === 'send',
+                        'bg-info/5': msg.direction === 'receive'
+                      }"
+                    >
+                      <i 
+                        class="text-base"
+                        :class="{
+                          'fas fa-arrow-up text-success': msg.direction === 'send',
+                          'fas fa-arrow-down text-info': msg.direction === 'receive'
+                        }"
+                        :title="msg.direction === 'send' ? $t('passiveScan.history.websocket.toServer') : $t('passiveScan.history.websocket.fromServer')"
+                      ></i>
+                      <span 
+                        class="badge badge-xs font-mono"
+                        :class="{
+                          'badge-primary': msg.message_type === 'text',
+                          'badge-secondary': msg.message_type === 'binary',
+                          'badge-ghost': ['ping', 'pong'].includes(msg.message_type),
+                          'badge-warning': msg.message_type === 'close'
+                        }"
+                      >{{ msg.message_type }}</span>
+                      <div class="flex-1 min-w-0 font-mono break-all select-text">
+                        {{ truncateWsContent(msg.content) }}
+                      </div>
+                      <span class="text-base-content/40 whitespace-nowrap">{{ msg.content_length }}B</span>
+                      <span class="text-base-content/40 whitespace-nowrap">{{ formatWsTime(msg.timestamp) }}</span>
+                    </div>
+                    <div v-if="getWsMessagesForConnection(conn.id).length === 0" class="text-center py-4 text-base-content/50 text-xs">
+                      No messages recorded yet
+                    </div>
+                  </div>
+
+                  <!-- 握手详情 -->
+                  <div v-else class="p-4 grid grid-cols-2 gap-4 text-xs font-mono">
+                    <div class="bg-base-100 p-3 rounded border border-base-300">
+                      <div class="font-bold mb-2 text-base-content/70">Request Headers</div>
+                      <pre class="whitespace-pre-wrap break-all select-text overflow-x-auto max-h-48">{{ conn.request_headers || 'No headers captured' }}</pre>
+                    </div>
+                    <div class="bg-base-100 p-3 rounded border border-base-300">
+                      <div class="font-bold mb-2 text-base-content/70">Response Headers</div>
+                      <pre class="whitespace-pre-wrap break-all select-text overflow-x-auto max-h-48">{{ conn.response_headers || 'No headers captured' }}</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- HTTP 请求列表 -->
           <div v-else-if="filteredRequests.length > 0" :style="{ height: totalHeight + 'px', position: 'relative' }">
             <!-- 表头 -->
             <div 
@@ -417,22 +614,23 @@
             </div>
 
             <!-- 数据行 -->
-            <div 
-              v-for="item in visibleItems" 
-              :key="item.data.id"
-              class="absolute left-0 right-0 flex hover:bg-base-200 cursor-pointer border-b border-base-300 table-row-text"
-              :class="{ 
-                'bg-primary/10': selectedRequest?.id === item.data.id,
-                'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data)
-              }"
-              :style="{ 
-                top: (item.offset + headerHeight) + 'px', 
-                height: itemHeight + 'px',
-                minWidth: 'max-content'
-              }"
-              @click="isMultiSelectMode ? toggleSelectRequest(item.data) : selectRequest(item.data)"
-              @contextmenu.prevent="showContextMenu($event, item.data)"
-            >
+              <div 
+                v-for="item in visibleItems" 
+                :key="item.data.id"
+                class="absolute left-0 right-0 flex hover:bg-base-200 cursor-pointer border-b border-base-300 table-row-text"
+                :class="{ 
+                  'bg-primary/10': selectedRequest?.id === item.data.id,
+                  'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data),
+                  'bg-error/10 hover:bg-error/20': item.data.status_code === 0
+                }"
+                :style="{ 
+                  top: (item.offset + headerHeight) + 'px', 
+                  height: itemHeight + 'px',
+                  minWidth: 'max-content'
+                }"
+                @click="isMultiSelectMode ? toggleSelectRequest(item.data) : (item.data.status_code === 0 ? showCertificateError(item.data) : selectRequest(item.data))"
+                @contextmenu.prevent="showContextMenu($event, item.data)"
+              >
               <!-- 多选复选框列 -->
               <div 
                 v-if="isMultiSelectMode"
@@ -460,9 +658,17 @@
                   </span>
                 </template>
                 <template v-else-if="col.id === 'status'">
-                  <span :class="['badge badge-xs', getStatusClass(item.data.status_code)]" :title="getStatusTitle(item.data.status_code)">
-                    {{ getStatusText(item.data.status_code) }}
-                  </span>
+                  <div class="flex items-center gap-1">
+                    <span :class="['badge badge-xs', getStatusClass(item.data.status_code)]" :title="getStatusTitle(item.data.status_code)">
+                      {{ getStatusText(item.data.status_code) }}
+                    </span>
+                    <i 
+                      v-if="item.data.status_code === 0" 
+                      class="fas fa-exclamation-circle text-error text-xs cursor-help"
+                      :title="$t('passiveScan.history.certificateError.title')"
+                      @click.stop="showCertificateError(item.data)"
+                    ></i>
+                  </div>
                 </template>
                 <template v-else-if="col.id === 'params'">
                   <span v-if="hasParams(item.data.url)" class="text-success">✓</span>
@@ -539,7 +745,7 @@
               <template v-if="requestTab !== 'hex'">
                 <HttpCodeEditor
                   :modelValue="formatRequest(selectedRequest, requestTab)"
-                  
+                  :readonly="true"
                   height="100%"
                 />
               </template>
@@ -690,9 +896,48 @@ interface Column {
   minWidth: number;
 }
 
+// WebSocket 连接记录
+interface WebSocketConnection {
+  id: string;
+  url: string;
+  host: string;
+  protocol: string;
+  request_headers?: string;
+  response_headers?: string;
+  status: 'open' | 'closed' | 'error';
+  opened_at: string;
+  closed_at?: string;
+  close_code?: number;
+  close_reason?: string;
+  message_ids?: number[];
+}
+
+// WebSocket 消息记录
+interface WebSocketMessage {
+  id: number;
+  connection_id: string;
+  direction: 'send' | 'receive';
+  message_type: 'text' | 'binary' | 'ping' | 'pong' | 'close';
+  content?: string;
+  content_length: number;
+  timestamp: string;
+}
+
 // 响应式状态
 const requests = ref<ProxyRequest[]>([]);
 const selectedRequest = ref<ProxyRequest | null>(null);
+// 协议类型过滤: 'all' | 'http' | 'websocket'
+const protocolFilter = ref<'all' | 'http' | 'websocket'>('all');
+
+// WebSocket 状态
+const wsConnections = ref<WebSocketConnection[]>([]);
+const wsMessages = ref<WebSocketMessage[]>([]);
+const selectedWsConnection = ref<WebSocketConnection | null>(null);
+const expandedWsConnections = ref<Set<string>>(new Set());
+// WebSocket 连接内部 Tab 状态: connectionId -> 'messages' | 'handshake'
+const activeWsTabs = ref<Map<string, 'messages' | 'handshake'>>(new Map());
+const isLoadingWs = ref(false);
+
 const showDetailsModal = ref(false);
 const showColumnSettings = ref(false);
 const isLoading = ref(false);
@@ -744,6 +989,10 @@ const stats = ref({
 
 // 筛选器弹窗引用
 const filterDialog = ref<HTMLDialogElement | null>(null);
+
+// 证书错误弹窗引用
+const certErrorDialog = ref<HTMLDialogElement | null>(null);
+const certErrorInfo = ref<{host: string; url: string; error?: string} | null>(null);
 
 // 默认筛选器配置
 const defaultFilterConfig = () => ({
@@ -851,7 +1100,6 @@ const headerHeight = 34;
 const scrollTop = ref(0);
 const containerHeight = ref(600);
 const bufferSize = 5;
-const maxVisibleItems = 20;
 
 // 事件监听器
 let unlistenRequest: (() => void) | null = null;
@@ -1078,9 +1326,9 @@ const visibleItems = computed((): VirtualItem[] => {
   const startIndex = Math.max(0, Math.floor(scrollTop.value / itemHeight) - bufferSize);
   const visibleCount = Math.ceil(containerHeight.value / itemHeight);
   
-  // 限制最大可见数量为 maxVisibleItems
-  const maxEndIndex = startIndex + Math.min(visibleCount + bufferSize * 2, maxVisibleItems);
-  const endIndex = Math.min(filteredRequests.value.length, maxEndIndex);
+  // 计算需要渲染的项目数量，确保覆盖可见区域 + 缓冲区
+  const neededCount = visibleCount + bufferSize * 2;
+  const endIndex = Math.min(filteredRequests.value.length, startIndex + neededCount);
   
   const items: VirtualItem[] = [];
   for (let i = startIndex; i < endIndex; i++) {
@@ -1367,8 +1615,39 @@ function getStatusText(statusCode: number): string {
 
 function getStatusTitle(statusCode: number): string {
   if (statusCode === -1) return 'HTTPS Tunnel (CONNECT) - TLS handshake may have failed';
-  if (statusCode === 0) return 'TLS Handshake Failed';
+  if (statusCode === 0) return 'TLS Handshake Failed - Certificate Error';
   return '';
+}
+
+// 显示证书错误弹窗
+function showCertificateError(request: ProxyRequest) {
+  certErrorInfo.value = {
+    host: request.host,
+    url: request.url,
+    error: request.status_code === 0 ? 'TLS Handshake Failed' : 'Certificate validation error'
+  };
+  certErrorDialog.value?.showModal();
+}
+
+// 关闭证书错误弹窗
+function closeCertErrorDialog() {
+  certErrorDialog.value?.close();
+  certErrorInfo.value = null;
+}
+
+// 检查CA证书安装
+async function checkCAInstallation() {
+  try {
+    const response = await invoke<any>('export_root_ca');
+    if (response.success && response.data) {
+      dialog.toast.info(t('passiveScan.history.certificateError.tips.installCA'));
+      // 打开证书文件位置
+      await invoke('show_in_folder', { path: response.data });
+    }
+  } catch (error: any) {
+    console.error('Failed to check CA installation:', error);
+    dialog.toast.error(`Failed to check certificate: ${error}`);
+  }
 }
 
 function formatBytes(bytes: number) {
@@ -1472,6 +1751,103 @@ function updateStats() {
   };
 }
 
+// ========================================
+// WebSocket 相关函数
+// ========================================
+
+// 切换 WebSocket 连接展开状态
+function toggleWsConnection(connectionId: string) {
+  if (expandedWsConnections.value.has(connectionId)) {
+    expandedWsConnections.value.delete(connectionId);
+  } else {
+    expandedWsConnections.value.add(connectionId);
+    // 默认选中 Messages 标签
+    if (!activeWsTabs.value.has(connectionId)) {
+      activeWsTabs.value.set(connectionId, 'messages');
+    }
+    // 加载该连接的消息
+    loadWsMessages(connectionId);
+  }
+  // 触发响应式更新
+  expandedWsConnections.value = new Set(expandedWsConnections.value);
+}
+
+// 获取 WebSocket 连接的当前活动标签页
+function getWsActiveTab(connectionId: string): 'messages' | 'handshake' {
+  return activeWsTabs.value.get(connectionId) || 'messages';
+}
+
+// 设置 WebSocket 连接的当前活动标签页
+function setWsActiveTab(connectionId: string, tab: 'messages' | 'handshake') {
+  activeWsTabs.value.set(connectionId, tab);
+  // 触发响应式更新
+  activeWsTabs.value = new Map(activeWsTabs.value);
+}
+
+// 格式化 WebSocket 时间
+function formatWsTime(timestamp: string): string {
+  try {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return timestamp;
+  }
+}
+
+// 获取特定连接的消息
+function getWsMessagesForConnection(connectionId: string): WebSocketMessage[] {
+  return wsMessages.value.filter(msg => msg.connection_id === connectionId);
+}
+
+// 截断 WebSocket 消息内容
+function truncateWsContent(content?: string, maxLength: number = 100): string {
+  if (!content) return '[empty]';
+  if (content.startsWith('[BASE64]')) {
+    return '[binary data]';
+  }
+  if (content.length <= maxLength) return content;
+  return content.substring(0, maxLength) + '...';
+}
+
+// 加载 WebSocket 连接列表
+async function loadWsConnections() {
+  isLoadingWs.value = true;
+  try {
+    const response = await invoke<any>('list_websocket_connections', {
+      limit: 100,
+      offset: 0,
+    });
+    
+    if (response.success && response.data) {
+      wsConnections.value = response.data;
+    }
+  } catch (error: any) {
+    console.error('Failed to load WebSocket connections:', error);
+  } finally {
+    isLoadingWs.value = false;
+  }
+}
+
+// 加载特定连接的消息
+async function loadWsMessages(connectionId: string) {
+  try {
+    const response = await invoke<any>('list_websocket_messages', {
+      connectionId,
+      limit: 100,
+      offset: 0,
+    });
+    
+    if (response.success && response.data) {
+      // 合并消息（避免重复）
+      const existingIds = new Set(wsMessages.value.map(m => m.id));
+      const newMessages = (response.data as WebSocketMessage[]).filter(m => !existingIds.has(m.id));
+      wsMessages.value = [...wsMessages.value, ...newMessages];
+    }
+  } catch (error: any) {
+    console.error('Failed to load WebSocket messages:', error);
+  }
+}
+
 // 增量更新统计（用于新请求）
 function updateStatsIncremental(newRequest: ProxyRequest) {
   stats.value.total++;
@@ -1480,11 +1856,15 @@ function updateStatsIncremental(newRequest: ProxyRequest) {
   } else if (newRequest.protocol === 'http') {
     stats.value.http++;
   }
-  
-  // 重新计算平均响应时间
-  const totalResponseTime = (stats.value.avgResponseTime * (stats.value.total - 1)) + newRequest.response_time;
-  stats.value.avgResponseTime = Math.round(totalResponseTime / stats.value.total);
+  // 简单平均，不完全准确但足够快
+  if (stats.value.total > 0) {
+    stats.value.avgResponseTime = Math.round(
+      (stats.value.avgResponseTime * (stats.value.total - 1) + newRequest.response_time) / stats.value.total
+    );
+  }
 }
+
+
 
 // 批量处理待更新的请求
 function processPendingUpdates() {
@@ -1610,6 +1990,7 @@ async function clearHistory() {
     if (response.success) {
       requests.value = [];
       updateStats();
+      closeDetails();
       dialog.toast.success('请求历史已清空');
     }
   } catch (error: any) {
@@ -2199,6 +2580,36 @@ function setupMainContainerResizeObserver() {
   }
 }
 
+// 键盘快捷键处理
+function handleKeydown(event: KeyboardEvent) {
+  // Cmd/Ctrl + R 发送到 Repeater
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') {
+    // 如果有选中的请求，发送到 Repeater
+    if (selectedRequest.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      
+      const req = selectedRequest.value;
+      let headers: Record<string, string> = {};
+      
+      if (req.request_headers) {
+        try {
+          headers = JSON.parse(req.request_headers);
+        } catch {
+          // ignore
+        }
+      }
+      
+      emit('sendToRepeater', {
+        method: req.method,
+        url: req.url,
+        headers,
+        body: req.request_body || undefined,
+      });
+    }
+  }
+}
+
 // 生命周期
 onMounted(async () => {
   // 加载筛选器配置
@@ -2213,6 +2624,9 @@ onMounted(async () => {
   setupResizeObserver();
   setupMainContainerResizeObserver();
   initPanelHeights();
+  
+  // 添加键盘快捷键监听
+  document.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
@@ -2234,6 +2648,8 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', stopHorizontalResize);
   document.removeEventListener('mousemove', handleVerticalResize);
   document.removeEventListener('mouseup', stopVerticalResize);
+  // 清理键盘快捷键监听
+  document.removeEventListener('keydown', handleKeydown);
 });
 
 // 监听详情面板的打开/关闭，更新容器高度
@@ -2246,6 +2662,67 @@ watch(selectedRequest, async () => {
 watch(refreshTrigger, async () => {
   console.log('[ProxyHistory] Refresh triggered by parent');
   await refreshRequests();
+});
+
+// 监听协议类型切换
+// 监听协议类型切换
+watch(protocolFilter, async (newFilter) => {
+  console.log('[ProxyHistory] Protocol filter changed to:', newFilter);
+  
+  // 清除详情面板选择，避免混淆
+  selectedRequest.value = null;
+  
+  if (newFilter === 'websocket') {
+    // 切换到 WebSocket 时加载连接列表
+    await loadWsConnections();
+  } else {
+    // 切换到 HTTP 时刷新请求
+    await refreshRequests();
+  }
+});
+
+// 设置 WebSocket 事件监听
+let unlistenWsConnection: (() => void) | null = null;
+let unlistenWsMessage: (() => void) | null = null;
+
+async function setupWsEventListeners() {
+  try {
+    unlistenWsConnection = await listen<any>('proxy:websocket_connection', (event) => {
+      console.log('[ProxyHistory] WebSocket connection event:', event.payload);
+      // 添加到连接列表
+      const conn = event.payload as WebSocketConnection;
+      // 确保 message_ids 字段存在
+      if (!conn.message_ids) {
+        conn.message_ids = [];
+      }
+      const existingIndex = wsConnections.value.findIndex(c => c.id === conn.id);
+      if (existingIndex >= 0) {
+        wsConnections.value[existingIndex] = conn;
+      } else {
+        wsConnections.value.unshift(conn);
+      }
+    });
+
+    unlistenWsMessage = await listen<any>('proxy:websocket_message', (event) => {
+      console.log('[ProxyHistory] WebSocket message event:', event.payload);
+      // 添加到消息列表
+      const msg = event.payload as WebSocketMessage;
+      wsMessages.value.push(msg);
+    });
+  } catch (error) {
+    console.error('Failed to setup WebSocket event listeners:', error);
+  }
+}
+
+// 在 onMounted 时也设置 WebSocket 事件
+onMounted(async () => {
+  await setupWsEventListeners();
+});
+
+// 在 onUnmounted 时清理 WebSocket 事件
+onUnmounted(() => {
+  if (unlistenWsConnection) unlistenWsConnection();
+  if (unlistenWsMessage) unlistenWsMessage();
 });
 </script>
 

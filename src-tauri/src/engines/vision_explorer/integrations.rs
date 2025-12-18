@@ -539,18 +539,55 @@ impl TakeoverManager {
         })
     }
 
-    /// 获取完整的凭据信息（仅供 LLM 使用）
+    /// Get credentials for LLM (with security considerations)
+    /// Password is masked in logs but provided to LLM for automated login
     pub fn get_credentials_for_llm(&self) -> Option<String> {
         self.session.user_credentials.as_ref().map(|creds| {
-            let mut info = format!("登录凭据 - 用户名: {}, 密码: {}", creds.username, creds.password);
+            // Build credential info for LLM to perform login
+            // Note: LLM needs actual values to fill login forms
+            let mut info = format!(
+                "Username: {}\nPassword: {}",
+                creds.username,
+                creds.password
+            );
             
             if let Some(ref code) = creds.verification_code {
-                info.push_str(&format!(", 验证码: {}", code));
+                if !code.is_empty() {
+                    info.push_str(&format!("\nVerification code: {}", code));
+                }
             }
             
             if let Some(ref extras) = creds.extra_fields {
                 for (key, value) in extras {
-                    info.push_str(&format!(", {}: {}", key, value));
+                    if !value.is_empty() {
+                        info.push_str(&format!("\n{}: {}", key, value));
+                    }
+                }
+            }
+            
+            // Security note: This info is only sent to the LLM, not logged
+            info
+        })
+    }
+    
+    /// Get masked credentials for logging/display (password hidden)
+    pub fn get_credentials_masked(&self) -> Option<String> {
+        self.session.user_credentials.as_ref().map(|creds| {
+            let password_mask = "*".repeat(creds.password.len().min(8));
+            let mut info = format!(
+                "Username: {}, Password: {}",
+                creds.username,
+                password_mask
+            );
+            
+            if creds.verification_code.is_some() {
+                info.push_str(", Verification code: ***");
+            }
+            
+            if let Some(ref extras) = creds.extra_fields {
+                let extra_count = extras.len();
+                if extra_count > 0 {
+                    info.push_str(&format!(", +{} extra fields", extra_count));
                 }
             }
             

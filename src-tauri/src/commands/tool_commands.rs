@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
+use sentinel_tools::buildin_tools::shell::{
+    ShellConfig, ShellPermissionAction, ShellRule, ShellPermissionHandler, 
+    get_shell_config, set_shell_config, set_permission_handler
+};
 use sentinel_tools::{get_tool_server, ToolServer};
 
 /// Builtin tool info for frontend
@@ -1023,4 +1027,87 @@ pub async fn vision_explorer_skip_login(
     let _ = app.emit("vision:credentials_received", payload);
 
     Ok(())
+}
+
+// ============================================================================
+// Shell Tool Permission Commands
+// ============================================================================
+
+// Global storage for permission response channels
+static SHELL_PERMISSION_SENDERS: Lazy<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+
+struct ShellPermissionImpl {
+    app: tauri::AppHandle,
+}
+
+#[async_trait::async_trait]
+impl ShellPermissionHandler for ShellPermissionImpl {
+    async fn check_permission(&self, command: &str) -> bool {
+        let id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        
+        {
+            let mut senders = SHELL_PERMISSION_SENDERS.write().await;
+            senders.insert(id.clone(), tx);
+        }
+        
+        // Emit event to frontend
+        use tauri::Emitter;
+        tracing::info!("Requesting permission for command: {} (id: {})", command, id);
+        if let Err(e) = self.app.emit("shell-permission-request", serde_json::json!({
+            "id": id,
+            "command": command
+        })) {
+            tracing::error!("Failed to emit permission request: {}", e);
+            return false;
+        }
+        
+        // Wait for response with timeout (e.g. 5 minutes)
+        match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+            Ok(Ok(allowed)) => {
+                tracing::info!("Permission response for {}: {}", id, allowed);
+                allowed
+            },
+            Ok(Err(_)) => {
+                tracing::warn!("Permission channel dropped for {}", id);
+                false
+            },
+            Err(_) => {
+                tracing::warn!("Permission request timed out for {}", id);
+                false
+            },
+        }
+    }
+}
+
+/// Initialize the shell permission handler
+#[tauri::command]
+pub async fn init_shell_permission_handler(app: tauri::AppHandle) -> Result<(), String> {
+    set_permission_handler(Arc::new(ShellPermissionImpl { app })).await;
+    Ok(())
+}
+
+/// Get shell tool configuration
+#[tauri::command]
+pub async fn get_shell_tool_config() -> Result<ShellConfig, String> {
+    Ok(get_shell_config().await)
+}
+
+/// Set shell tool configuration
+#[tauri::command]
+pub async fn set_shell_tool_config(config: ShellConfig) -> Result<(), String> {
+    set_shell_config(config).await;
+    Ok(())
+}
+
+/// Respond to a shell permission request
+#[tauri::command]
+pub async fn respond_shell_permission(id: String, allowed: bool) -> Result<(), String> {
+    let mut senders = SHELL_PERMISSION_SENDERS.write().await;
+    if let Some(tx) = senders.remove(&id) {
+        let _ = tx.send(allowed);
+        Ok(())
+    } else {
+        Err(format!("Request ID {} not found or already handled", id))
+    }
 }

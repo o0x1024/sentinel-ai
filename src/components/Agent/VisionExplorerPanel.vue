@@ -93,17 +93,23 @@
           <span class="text-primary font-bold">📋</span>
           <span class="font-bold text-primary">{{ currentPlan.phase_name || currentPlan.phase }}</span>
         </div>
-        <div class="pl-5 space-y-1 text-base-content/80">
-          <div><span class="opacity-60">{{ t('agent.visionGoal') }}:</span> {{ currentPlan.goal }}</div>
-          <div v-if="currentPlan.steps && currentPlan.steps.length > 0">
-            <span class="opacity-60">{{ t('agent.visionSteps') }}:</span>
-            <ul class="list-disc list-inside pl-2 mt-1 space-y-0.5">
-              <li v-for="(step, idx) in currentPlan.steps" :key="idx" class="truncate" :title="step">{{ step }}</li>
-            </ul>
-          </div>
-          <div v-if="currentPlan.completion_criteria">
-            <span class="opacity-60">{{ t('agent.visionCompletion') }}:</span> {{ currentPlan.completion_criteria }}
-          </div>
+        <div class="pl-3 space-y-1">
+          <ul class="space-y-1.5">
+            <li v-for="(step, idx) in currentPlan.steps" :key="idx" class="flex items-center gap-2 text-xs">
+              <span v-if="parseStepStatus(step) === 'done'" class="text-success">✓</span>
+              <span v-else-if="parseStepStatus(step) === 'skip'" class="text-base-content/40">✗</span>
+              <span v-else-if="parseStepStatus(step) === 'loading'" class="loading loading-spinner loading-xs text-primary"></span>
+              <span v-else class="text-base-content/30">○</span>
+              <span 
+                :class="{
+                  'line-through text-base-content/40': parseStepStatus(step) === 'skip',
+                  'text-success': parseStepStatus(step) === 'done',
+                  'text-primary font-medium': parseStepStatus(step) === 'loading',
+                  'text-base-content/60': parseStepStatus(step) === 'pending'
+                }"
+              >{{ parseStepText(step) }}</span>
+            </li>
+          </ul>
         </div>
       </div>
 
@@ -289,6 +295,29 @@ const props = defineProps<{
 defineEmits<{
   (e: 'close'): void
 }>()
+
+// Parse step status from "status:text" format
+const parseStepStatus = (step: string): string => {
+  if (typeof step !== 'string') return 'pending'
+  const parts = step.split(':')
+  if (parts.length >= 2) {
+    const status = parts[0].trim()
+    if (['done', 'skip', 'loading', 'pending'].includes(status)) {
+      return status
+    }
+  }
+  return 'pending'
+}
+
+// Parse step text from "status:text" format
+const parseStepText = (step: string): string => {
+  if (typeof step !== 'string') return step
+  const parts = step.split(':')
+  if (parts.length >= 2) {
+    return parts.slice(1).join(':').trim()
+  }
+  return step
+}
 
 const stepsContainer = ref<HTMLElement | null>(null)
 

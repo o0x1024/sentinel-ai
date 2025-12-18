@@ -56,6 +56,16 @@ pub mod element_manager;
 pub mod coverage_engine;
 pub mod browser_scripts;
 
+// Refactored modules (split from explorer.rs)
+pub mod login_detector;
+pub mod vlm_parser;
+pub mod element_formatter;
+pub mod action_builder;
+
+// Refactored modules (split from tools.rs)
+pub mod text_mode_types;
+pub mod playwright_bridge;
+
 // 导出核心类型
 pub use types::{
     VisionExplorerConfig, ExplorationState, ExplorationStatus,

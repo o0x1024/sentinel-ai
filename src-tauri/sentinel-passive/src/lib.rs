@@ -13,42 +13,47 @@
 //! - 插件管理器（加载、启用/禁用、注册表）
 //! - 内置插件（SQL 注入、XSS、敏感信息检测）
 
-pub mod proxy;
 pub mod certificate;
 pub mod certificate_authority;
-pub mod scanner;
-pub mod finding;
 pub mod database;
 pub mod error;
-pub mod types;
-pub mod system_proxy;
+pub mod finding;
+pub mod history_cache;
 pub mod packet_capture;
+pub mod proxy;
+pub mod scanner;
+pub mod system_proxy;
+pub mod types;
 
-pub use error::{PassiveError, Result};
-pub use types::*;
-pub use proxy::{ProxyConfig, ProxyService, ScanTask, ScanSender, InterceptState, InterceptAction, PendingInterceptRequest, PendingInterceptResponse, FailedConnection};
-pub use scanner::{ScanPipeline, FindingDeduplicator, FindingSender, FindingReceiver};
-pub use database::{
-    PassiveDatabaseService, 
-    VulnerabilityFilters, 
-    VulnerabilityRecord, 
-    EvidenceRecord,
-    VulnerabilityWithEvidence,
-    ProxyRequestRecord,
-    ProxyRequestFilters,
-};
 pub use certificate::CertificateService;
 pub use certificate_authority::ChainedCertificateAuthority;
-pub use packet_capture::{PacketCaptureService, InterfaceInfo, CapturedPacket, ProtocolLayer, ExtractedFile, PcapFileOps, FileExtractor};
+pub use database::{
+    EvidenceRecord, PassiveDatabaseService, ProxyRequestFilters, ProxyRequestRecord,
+    VulnerabilityFilters, VulnerabilityRecord, VulnerabilityWithEvidence,
+};
+pub use error::{PassiveError, Result};
+pub use history_cache::{
+    HistoryCacheConfig, HistoryCacheStats, HttpRequestFilters, HttpRequestRecord,
+    ProxyHistoryCache, ProxyHistoryFilters, ProxyHistoryItem, WebSocketConnectionRecord,
+    WebSocketConnectionStatus, WebSocketDirection, WebSocketFilters, WebSocketMessageRecord,
+    WebSocketMessageType,
+};
+pub use packet_capture::{
+    CapturedPacket, ExtractedFile, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps,
+    ProtocolLayer,
+};
+pub use proxy::{
+    FailedConnection, InterceptAction, InterceptState, PendingInterceptRequest,
+    PendingInterceptResponse, PendingInterceptWebSocketMessage, ProxyConfig, ProxyService,
+    ScanSender, ScanTask, UpstreamProxyConfig, WebSocketConnectionContext,
+    WebSocketDirection as ProxyWebSocketDirection, WebSocketMessageContext,
+};
+pub use scanner::{FindingDeduplicator, FindingReceiver, FindingSender, ScanPipeline};
+pub use types::*;
 
 // 重导出插件系统（来自 sentinel-plugins）
 pub use sentinel_plugins::{
-    PluginManager, 
-    PluginEngine, 
-    PluginStatus, 
-    PluginRecord,
-    PluginMetadata,
-    PluginError,
+    PluginEngine, PluginError, PluginManager, PluginMetadata, PluginRecord, PluginStatus,
 };
 
 /// 被动扫描系统版本

@@ -11,18 +11,25 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::{AppHandle, State};
-use tokio::sync::{RwLock, mpsc::UnboundedSender};
+use tauri::{AppHandle, Emitter, State};
+use tokio::sync::{mpsc::UnboundedSender, RwLock};
 
 use sentinel_passive::{
-    CertificateService, Finding, FindingDeduplicator, PassiveDatabaseService, PluginManager,
-    PluginRecord, PluginStatus, PluginMetadata, ProxyConfig, ProxyService, ProxyStats, ProxyStatus, ScanPipeline, ScanTask,
-    VulnerabilityFilters, VulnerabilityRecord, EvidenceRecord,
-    InterceptState, InterceptAction as PassiveInterceptAction, PendingInterceptRequest, PendingInterceptResponse,
+    CertificateService, EvidenceRecord, Finding, FindingDeduplicator,
+    InterceptAction as PassiveInterceptAction, InterceptState, PassiveDatabaseService,
+    PendingInterceptRequest, PendingInterceptResponse, PendingInterceptWebSocketMessage,
+    PluginManager, PluginMetadata, PluginRecord, PluginStatus, ProxyConfig, ProxyService,
+    ProxyStats, ProxyStatus, ScanPipeline, ScanTask, VulnerabilityFilters, VulnerabilityRecord,
 };
 
-use crate::events::{emit_finding, emit_plugin_changed, emit_proxy_status, emit_scan_stats, emit_intercept_request, emit_intercept_response};
-use crate::events::{FindingEvent, PluginChangedEvent, ProxyStatusEvent, ScanStatsEvent, InterceptRequestEvent, InterceptResponseEvent};
+use crate::events::{
+    emit_finding, emit_intercept_request, emit_intercept_response, emit_plugin_changed,
+    emit_proxy_status, emit_scan_stats,
+};
+use crate::events::{
+    FindingEvent, InterceptRequestEvent, InterceptResponseEvent, PluginChangedEvent,
+    ProxyStatusEvent, ScanStatsEvent,
+};
 
 /// 拦截请求（用于前端展示）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,15 +84,40 @@ pub struct PassiveScanState {
     /// 是否启用响应拦截
     response_intercept_enabled: Arc<RwLock<bool>>,
     /// 待处理的拦截请求（内部使用，包含响应通道）
-    intercepted_requests: Arc<RwLock<std::collections::HashMap<String, InterceptedRequestInternal>>>,
+    intercepted_requests:
+        Arc<RwLock<std::collections::HashMap<String, InterceptedRequestInternal>>>,
     /// 待处理的拦截响应（内部使用，包含响应通道）
-    intercepted_responses: Arc<RwLock<std::collections::HashMap<String, InterceptedResponseInternal>>>,
+    intercepted_responses:
+        Arc<RwLock<std::collections::HashMap<String, InterceptedResponseInternal>>>,
     /// 应用句柄（用于发送事件）
     app_handle: Arc<RwLock<Option<AppHandle>>>,
     /// 拦截请求接收端（用于处理从代理发来的拦截请求）
-    intercept_pending_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptRequest>>>>,
-    /// 拦截响应接收端（用于处理从代理发来的拦截响应）
-    intercept_response_pending_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptResponse>>>>,
+    intercept_pending_tx:
+        Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptRequest>>>>,
+    /// 待处理的拦截响应发送端（用于传递给 start_proxy）
+    pub intercept_response_pending_tx:
+        Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptResponse>>>>,
+    /// 是否启用 WebSocket 拦截
+    pub websocket_intercept_enabled: Arc<RwLock<bool>>,
+    /// 待处理的拦截 WebSocket 消息（等待用户操作）
+    pub intercepted_websocket_messages:
+        Arc<RwLock<std::collections::HashMap<String, InterceptedWebSocketMessageInternal>>>,
+    /// 待处理的 WebSocket 拦截消息发送端
+    pub intercept_websocket_pending_tx:
+        Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptWebSocketMessage>>>>,
+    /// 历史记录缓存
+    pub history_cache: Arc<sentinel_passive::ProxyHistoryCache>,
+}
+
+/// 内部使用的拦截 WebSocket 消息结构（包含响应通道）
+struct InterceptedWebSocketMessageInternal {
+    pub id: String,
+    pub connection_id: String,
+    pub direction: sentinel_passive::ProxyWebSocketDirection,
+    pub message_type: String,
+    pub content: Option<String>,
+    pub timestamp: i64,
+    pub response_tx: tokio::sync::oneshot::Sender<InterceptAction>,
 }
 
 impl Clone for PassiveScanState {
@@ -105,6 +137,10 @@ impl Clone for PassiveScanState {
             app_handle: self.app_handle.clone(),
             intercept_pending_tx: self.intercept_pending_tx.clone(),
             intercept_response_pending_tx: self.intercept_response_pending_tx.clone(),
+            websocket_intercept_enabled: self.websocket_intercept_enabled.clone(),
+            intercepted_websocket_messages: self.intercepted_websocket_messages.clone(),
+            intercept_websocket_pending_tx: self.intercept_websocket_pending_tx.clone(),
+            history_cache: self.history_cache.clone(),
         }
     }
 }
@@ -151,6 +187,10 @@ impl PassiveScanState {
             app_handle: Arc::new(RwLock::new(None)),
             intercept_pending_tx: Arc::new(RwLock::new(None)),
             intercept_response_pending_tx: Arc::new(RwLock::new(None)),
+            websocket_intercept_enabled: Arc::new(RwLock::new(false)),
+            intercepted_websocket_messages: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            intercept_websocket_pending_tx: Arc::new(RwLock::new(None)),
+            history_cache: Arc::new(sentinel_passive::ProxyHistoryCache::with_defaults()),
         }
     }
 
@@ -193,34 +233,41 @@ impl PassiveScanState {
     pub fn get_proxy_service(&self) -> Arc<RwLock<Option<ProxyService>>> {
         self.proxy_service.clone()
     }
-    
+
+    /// 公开方法：获取代理历史记录缓存（用于工具提供者和命令）
+    pub fn get_history_cache(&self) -> Arc<sentinel_passive::ProxyHistoryCache> {
+        self.history_cache.clone()
+    }
+
     /// Public method: Get scan_tx (for tool providers)
     pub fn get_scan_tx(&self) -> Arc<RwLock<Option<UnboundedSender<ScanTask>>>> {
         self.scan_tx.clone()
     }
-    
+
     /// Public method: Set scan_tx (for tool providers)
     pub async fn set_scan_tx(&self, tx: UnboundedSender<ScanTask>) {
         let mut scan_tx_guard = self.scan_tx.write().await;
         *scan_tx_guard = Some(tx);
     }
-    
+
     /// 获取拦截启用状态
     pub fn get_intercept_enabled(&self) -> Arc<RwLock<bool>> {
         self.intercept_enabled.clone()
     }
-    
+
     /// 获取拦截请求映射
-    pub fn get_intercepted_requests(&self) -> Arc<RwLock<std::collections::HashMap<String, InterceptedRequestInternal>>> {
+    pub fn get_intercepted_requests(
+        &self,
+    ) -> Arc<RwLock<std::collections::HashMap<String, InterceptedRequestInternal>>> {
         self.intercepted_requests.clone()
     }
-    
+
     /// 设置应用句柄
     pub async fn set_app_handle(&self, app: AppHandle) {
         let mut handle = self.app_handle.write().await;
         *handle = Some(app);
     }
-    
+
     /// 获取应用句柄
     pub fn get_app_handle(&self) -> Arc<RwLock<Option<AppHandle>>> {
         self.app_handle.clone()
@@ -233,7 +280,7 @@ impl PassiveScanState {
         if !is_running {
             return None;
         }
-        
+
         let proxy_opt = self.proxy_service.read().await;
         if let Some(proxy) = proxy_opt.as_ref() {
             if let Some(port) = proxy.get_port().await {
@@ -250,20 +297,23 @@ impl PassiveScanState {
         let db = self.get_db_service().await.map_err(|e| e.to_string())?;
         // 查询数据库中所有插件（包含 main_category 和收藏状态）
         // 只查询已批准的插件：validation_status = 'Approved'
-        let rows = sqlx::query_as::<_, (
-            String, // id
-            String, // name
-            String, // version
-            Option<String>, // author
-            String, // main_category
-            String, // category
-            Option<String>, // description
-            String, // default_severity
-            Option<String>, // tags (JSON)
-            bool,   // enabled
-            Option<String>, // plugin_code
-            i64,    // is_favorited (0 or 1)
-        )>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,         // id
+                String,         // name
+                String,         // version
+                Option<String>, // author
+                String,         // main_category
+                String,         // category
+                Option<String>, // description
+                String,         // default_severity
+                Option<String>, // tags (JSON)
+                bool,           // enabled
+                Option<String>, // plugin_code
+                i64,            // is_favorited (0 or 1)
+            ),
+        >(
             r#"
             SELECT p.id, p.name, p.version, p.author, p.main_category, p.category, p.description,
                    p.default_severity, p.tags, p.enabled, p.plugin_code,
@@ -271,14 +321,28 @@ impl PassiveScanState {
             FROM plugin_registry p
             LEFT JOIN plugin_favorites f ON p.id = f.plugin_id AND f.user_id = 'default'
             WHERE p.validation_status = 'Approved'
-            "#
+            "#,
         )
         .fetch_all(db.pool())
         .await
         .map_err(|e| format!("Failed to query database plugins: {}", e))?;
 
         let mut records = Vec::new();
-        for (id, name, version, author, main_category, category, description, default_severity, tags, enabled, _plugin_code, is_favorited) in rows {
+        for (
+            id,
+            name,
+            version,
+            author,
+            main_category,
+            category,
+            description,
+            default_severity,
+            tags,
+            enabled,
+            _plugin_code,
+            is_favorited,
+        ) in rows
+        {
             let tags_array: Vec<String> = tags
                 .and_then(|t| serde_json::from_str(&t).ok())
                 .unwrap_or_default();
@@ -305,11 +369,15 @@ impl PassiveScanState {
                 tags: tags_array,
             };
 
-            let status = if enabled { PluginStatus::Enabled } else { PluginStatus::Disabled };
+            let status = if enabled {
+                PluginStatus::Enabled
+            } else {
+                PluginStatus::Disabled
+            };
 
             records.push(PluginRecord {
                 metadata,
-                path: None,  // 插件存储在数据库中，不再使用文件路径
+                path: None, // 插件存储在数据库中，不再使用文件路径
                 status,
                 last_error: None,
                 is_favorited: is_favorited == 1,
@@ -324,7 +392,13 @@ impl PassiveScanState {
         &self,
         plugin_id: &str,
         inputs: &serde_json::Value,
-    ) -> Result<(Vec<sentinel_passive::types::Finding>, Option<serde_json::Value>), String> {
+    ) -> Result<
+        (
+            Vec<sentinel_passive::types::Finding>,
+            Option<serde_json::Value>,
+        ),
+        String,
+    > {
         self.plugin_manager
             .execute_agent(plugin_id, inputs)
             .await
@@ -370,19 +444,26 @@ pub async fn start_passive_scan_internal(
     }
 
     let config = config.unwrap_or_default();
-    
+
     // 证书目录固定在用户数据目录下
     let ca_dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("sentinel-ai")
         .join("ca");
-    
+
     // 创建请求拦截通道
-    let (intercept_pending_tx, mut intercept_pending_rx) = tokio::sync::mpsc::unbounded_channel::<PendingInterceptRequest>();
-    
+    let (intercept_pending_tx, mut intercept_pending_rx) =
+        tokio::sync::mpsc::unbounded_channel::<PendingInterceptRequest>();
+
     // 创建响应拦截通道
-    let (intercept_response_pending_tx, mut intercept_response_pending_rx) = tokio::sync::mpsc::unbounded_channel::<PendingInterceptResponse>();
-    
+    let (intercept_response_pending_tx, mut intercept_response_pending_rx) =
+        tokio::sync::mpsc::unbounded_channel::<PendingInterceptResponse>();
+
+    // 创建 WebSocket 拦截通道
+    let (intercept_websocket_pending_tx, mut intercept_websocket_pending_rx) =
+        tokio::sync::mpsc::unbounded_channel::<sentinel_passive::PendingInterceptWebSocketMessage>(
+        );
+
     // 保存拦截发送端到 state
     {
         let mut tx_guard = state.intercept_pending_tx.write().await;
@@ -392,15 +473,21 @@ pub async fn start_passive_scan_internal(
         let mut tx_guard = state.intercept_response_pending_tx.write().await;
         *tx_guard = Some(intercept_response_pending_tx.clone());
     }
-    
+    {
+        let mut tx_guard = state.intercept_websocket_pending_tx.write().await;
+        *tx_guard = Some(intercept_websocket_pending_tx.clone());
+    }
+
     // 创建拦截状态
     let intercept_state = InterceptState {
         enabled: state.intercept_enabled.clone(),
         response_enabled: state.response_intercept_enabled.clone(),
+        websocket_enabled: state.websocket_intercept_enabled.clone(),
         pending_tx: Some(intercept_pending_tx),
         pending_response_tx: Some(intercept_response_pending_tx),
+        pending_websocket_tx: Some(intercept_websocket_pending_tx),
     };
-    
+
     // 创建代理服务（支持拦截）
     let proxy = ProxyService::with_intercept(config, ca_dir, intercept_state);
 
@@ -418,8 +505,12 @@ pub async fn start_passive_scan_internal(
     // 获取数据库服务（懒加载初始化）
     let db_service = state.get_db_service().await.map_err(|e| e.to_string())?;
 
+    // 获取历史记录缓存
+    let history_cache = state.get_history_cache();
+
     // 将非 Send 的 ScanPipeline 放入独立线程 + current-thread tokio runtime 中运行
     let db_for_pipeline = db_service.clone();
+    let cache_for_pipeline = history_cache.clone();
     let app_for_pipeline = app.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -429,20 +520,26 @@ pub async fn start_passive_scan_internal(
         rt.block_on(async move {
             // 使用 LocalSet 确保所有 !Send 任务固定在该线程执行
             let local = tokio::task::LocalSet::new();
-            local.run_until(async move {
-            let pipeline = ScanPipeline::new(scan_rx, finding_tx)
-                .with_db_service(db_for_pipeline.clone())
-                .with_app_handle(app_for_pipeline);
-            match pipeline.load_enabled_plugins_from_db(&db_for_pipeline).await {
-                Ok(n) => tracing::info!("Loaded {} enabled plugins into ScanPipeline", n),
-                Err(e) => tracing::error!("Failed to load enabled plugins: {}", e),
-            }
-            if let Err(e) = pipeline.start().await {
-                tracing::error!("ScanPipeline exited with error: {}", e);
-            } else {
-                tracing::info!("ScanPipeline stopped normally");
-            }
-            }).await;
+            local
+                .run_until(async move {
+                    let pipeline = ScanPipeline::new(scan_rx, finding_tx)
+                        .with_db_service(db_for_pipeline.clone())
+                        .with_history_cache(cache_for_pipeline)
+                        .with_app_handle(app_for_pipeline);
+                    match pipeline
+                        .load_enabled_plugins_from_db(&db_for_pipeline)
+                        .await
+                    {
+                        Ok(n) => tracing::info!("Loaded {} enabled plugins into ScanPipeline", n),
+                        Err(e) => tracing::error!("Failed to load enabled plugins: {}", e),
+                    }
+                    if let Err(e) = pipeline.start().await {
+                        tracing::error!("ScanPipeline exited with error: {}", e);
+                    } else {
+                        tracing::info!("ScanPipeline stopped normally");
+                    }
+                })
+                .await;
         });
     });
 
@@ -458,9 +555,7 @@ pub async fn start_passive_scan_internal(
     // 启动代理服务（绑定端口，并将 scan_tx 注入）
     let port = match proxy.start(Some(scan_tx)).await {
         Ok(port) => port,
-        Err(e) => {
-            return Err(format!("Failed to start proxy: {}", e))
-        }
+        Err(e) => return Err(format!("Failed to start proxy: {}", e)),
     };
 
     // 事件监听（发现推送给前端）
@@ -470,74 +565,137 @@ pub async fn start_passive_scan_internal(
             emit_finding(&app_clone, FindingEvent::from(finding));
         }
     });
-    
+
     // 处理拦截请求（从代理发来的待处理请求）
     let app_for_intercept = app.clone();
     let intercepted_requests_arc = state.intercepted_requests.clone();
     tokio::spawn(async move {
         while let Some(pending_req) = intercept_pending_rx.recv().await {
-            tracing::info!("Received intercept request: {} {}", pending_req.method, pending_req.url);
-            
+            tracing::info!(
+                "Received intercept request: {} {}",
+                pending_req.method,
+                pending_req.url
+            );
+
             // 发送事件到前端
-            emit_intercept_request(&app_for_intercept, InterceptRequestEvent {
-                id: pending_req.id.clone(),
-                method: pending_req.method.clone(),
-                url: pending_req.url.clone(),
-                path: pending_req.path.clone(),
-                protocol: pending_req.protocol.clone(),
-                headers: pending_req.headers.clone(),
-                body: pending_req.body.clone(),
-                timestamp: pending_req.timestamp,
-            });
-            
-            // 保存到待处理列表（带响应通道）
-            let mut requests = intercepted_requests_arc.write().await;
-            requests.insert(pending_req.id.clone(), InterceptedRequestInternal {
-                request: InterceptedRequest {
+            emit_intercept_request(
+                &app_for_intercept,
+                InterceptRequestEvent {
                     id: pending_req.id.clone(),
-                    method: pending_req.method,
-                    url: pending_req.url,
-                    path: pending_req.path,
-                    protocol: pending_req.protocol,
-                    headers: pending_req.headers,
-                    body: pending_req.body,
+                    method: pending_req.method.clone(),
+                    url: pending_req.url.clone(),
+                    path: pending_req.path.clone(),
+                    protocol: pending_req.protocol.clone(),
+                    headers: pending_req.headers.clone(),
+                    body: pending_req.body.clone(),
                     timestamp: pending_req.timestamp,
                 },
-                response_tx: pending_req.response_tx,
-            });
+            );
+
+            // 保存到待处理列表（带响应通道）
+            let mut requests = intercepted_requests_arc.write().await;
+            requests.insert(
+                pending_req.id.clone(),
+                InterceptedRequestInternal {
+                    request: InterceptedRequest {
+                        id: pending_req.id.clone(),
+                        method: pending_req.method,
+                        url: pending_req.url,
+                        path: pending_req.path,
+                        protocol: pending_req.protocol,
+                        headers: pending_req.headers,
+                        body: pending_req.body,
+                        timestamp: pending_req.timestamp,
+                    },
+                    response_tx: pending_req.response_tx,
+                },
+            );
         }
     });
-    
-    // 处理拦截响应（从代理发来的待处理响应）
+
+    // 处理 WebSocket 拦截消息
+    let app_for_ws_intercept = app.clone();
+    let intercepted_ws_arc = state.intercepted_websocket_messages.clone();
+    tokio::spawn(async move {
+        while let Some(pending_msg) = intercept_websocket_pending_rx.recv().await {
+            tracing::info!(
+                "Received intercept websocket: {} {}",
+                pending_msg.connection_id,
+                pending_msg.message_type
+            );
+
+            // 发送事件到前端
+            // 注意：因为 PendingInterceptWebSocketMessage 包含 oneshot sender，不能直接发送
+            // 这里我们构造一个前端友好的结构体
+            let event_payload = serde_json::json!({
+                "id": pending_msg.id,
+                "connection_id": pending_msg.connection_id,
+                "direction": pending_msg.direction,
+                "message_type": pending_msg.message_type,
+                "content": pending_msg.content,
+                "timestamp": pending_msg.timestamp,
+            });
+
+            if let Err(e) = app_for_ws_intercept.emit("proxy:intercept_websocket", event_payload) {
+                tracing::error!("Failed to emit proxy:intercept_websocket event: {}", e);
+            }
+
+            // 保存到待处理列表（带响应通道）
+            let mut messages = intercepted_ws_arc.write().await;
+            let msg_id = pending_msg.id.clone();
+            messages.insert(
+                msg_id,
+                InterceptedWebSocketMessageInternal {
+                    id: pending_msg.id,
+                    connection_id: pending_msg.connection_id,
+                    direction: pending_msg.direction,
+                    message_type: pending_msg.message_type,
+                    content: pending_msg.content,
+                    timestamp: pending_msg.timestamp,
+                    response_tx: pending_msg.response_tx,
+                },
+            );
+        }
+    });
     let app_for_response_intercept = app.clone();
     let intercepted_responses_arc = state.intercepted_responses.clone();
     tokio::spawn(async move {
         while let Some(pending_resp) = intercept_response_pending_rx.recv().await {
-            tracing::info!("Received intercept response: {} (status: {})", pending_resp.id, pending_resp.status);
-            
+            tracing::info!(
+                "Received intercept response: {} (status: {})",
+                pending_resp.id,
+                pending_resp.status
+            );
+
             // 发送事件到前端
-            emit_intercept_response(&app_for_response_intercept, InterceptResponseEvent {
-                id: pending_resp.id.clone(),
-                request_id: pending_resp.request_id.clone(),
-                status: pending_resp.status,
-                headers: pending_resp.headers.clone(),
-                body: pending_resp.body.clone(),
-                timestamp: pending_resp.timestamp,
-            });
-            
-            // 保存到待处理列表（带响应通道）
-            let mut responses = intercepted_responses_arc.write().await;
-            responses.insert(pending_resp.id.clone(), InterceptedResponseInternal {
-                response: InterceptedResponse {
+            emit_intercept_response(
+                &app_for_response_intercept,
+                InterceptResponseEvent {
                     id: pending_resp.id.clone(),
-                    request_id: pending_resp.request_id,
+                    request_id: pending_resp.request_id.clone(),
                     status: pending_resp.status,
-                    headers: pending_resp.headers,
-                    body: pending_resp.body,
+                    headers: pending_resp.headers.clone(),
+                    body: pending_resp.body.clone(),
                     timestamp: pending_resp.timestamp,
                 },
-                response_tx: pending_resp.response_tx,
-            });
+            );
+
+            // 保存到待处理列表（带响应通道）
+            let mut responses = intercepted_responses_arc.write().await;
+            responses.insert(
+                pending_resp.id.clone(),
+                InterceptedResponseInternal {
+                    response: InterceptedResponse {
+                        id: pending_resp.id.clone(),
+                        request_id: pending_resp.request_id,
+                        status: pending_resp.status,
+                        headers: pending_resp.headers,
+                        body: pending_resp.body,
+                        timestamp: pending_resp.timestamp,
+                    },
+                    response_tx: pending_resp.response_tx,
+                },
+            );
         }
     });
 
@@ -595,7 +753,10 @@ pub async fn start_passive_scan_internal(
         },
     );
 
-    tracing::info!("Passive scan started on port {} (ScanPipeline running in dedicated thread)", port);
+    tracing::info!(
+        "Passive scan started on port {} (ScanPipeline running in dedicated thread)",
+        port
+    );
     Ok(port)
 }
 
@@ -609,7 +770,9 @@ pub async fn start_passive_scan(
     // Multi-point license verification
     #[cfg(not(debug_assertions))]
     if !sentinel_license::is_licensed() {
-        return Ok(CommandResponse::err("License required for this feature".to_string()));
+        return Ok(CommandResponse::err(
+            "License required for this feature".to_string(),
+        ));
     }
 
     match start_passive_scan_internal(&app, &state, config).await {
@@ -672,21 +835,24 @@ pub async fn reload_plugin_in_pipeline(
     plugin_id: String,
 ) -> Result<CommandResponse<String>, String> {
     tracing::info!("Reload plugin request: {}", plugin_id);
-    
+
     // 检查是否正在运行
     if !*state.is_running.read().await {
         return Ok(CommandResponse::err("被动扫描未运行".to_string()));
     }
-    
+
     // 发送重载任务到 ScanPipeline
     if let Some(scan_tx) = state.scan_tx.read().await.as_ref() {
         if let Err(e) = scan_tx.send(sentinel_passive::ScanTask::ReloadPlugin(plugin_id.clone())) {
             tracing::error!("Failed to send reload task for plugin {}: {}", plugin_id, e);
             return Ok(CommandResponse::err(format!("发送重载任务失败: {}", e)));
         }
-        
+
         tracing::info!("Sent reload task for plugin: {}", plugin_id);
-        Ok(CommandResponse::ok(format!("插件 {} 重载任务已发送", plugin_id)))
+        Ok(CommandResponse::ok(format!(
+            "插件 {} 重载任务已发送",
+            plugin_id
+        )))
     } else {
         Ok(CommandResponse::err("扫描通道不可用".to_string()))
     }
@@ -748,7 +914,10 @@ pub async fn list_findings(
     let db_service = state.get_db_service().await?;
     match db_service.list_vulnerabilities_with_evidence(filters).await {
         Ok(records) => {
-            tracing::info!("Loaded {} findings with evidence from database", records.len());
+            tracing::info!(
+                "Loaded {} findings with evidence from database",
+                records.len()
+            );
             Ok(CommandResponse::ok(records))
         }
         Err(e) => {
@@ -793,23 +962,20 @@ pub async fn enable_plugin(
 ) -> Result<CommandResponse<()>, String> {
     // DB-only：直接更新数据库中的插件状态
     let db = state.get_db_service().await?;
-    
+
     // 获取插件的main_category
-    let main_category: Option<String> = sqlx::query_scalar(
-        "SELECT main_category FROM plugin_registry WHERE id = ?"
-    )
-    .bind(&plugin_id)
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
-    
-    let result = sqlx::query(
-        "UPDATE plugin_registry SET enabled = ? WHERE id = ?"
-    )
-    .bind(true)
-    .bind(&plugin_id)
-    .execute(db.pool())
-    .await;
+    let main_category: Option<String> =
+        sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+
+    let result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
+        .bind(true)
+        .bind(&plugin_id)
+        .execute(db.pool())
+        .await;
 
     match result {
         Ok(result) => {
@@ -817,7 +983,7 @@ pub async fn enable_plugin(
                 tracing::info!("Plugin enabled in database: {}", plugin_id);
 
                 let plugin_name = sqlx::query_scalar::<_, String>(
-                    "SELECT name FROM plugin_registry WHERE id = ?"
+                    "SELECT name FROM plugin_registry WHERE id = ?",
                 )
                 .bind(&plugin_id)
                 .fetch_optional(db.pool())
@@ -834,7 +1000,7 @@ pub async fn enable_plugin(
                         name: plugin_name,
                     },
                 );
-                
+
                 Ok(CommandResponse::ok(()))
             } else {
                 Ok(CommandResponse::err(format!(
@@ -859,23 +1025,20 @@ pub async fn disable_plugin(
 ) -> Result<CommandResponse<()>, String> {
     // DB-only：直接更新数据库中的插件状态
     let db = state.get_db_service().await?;
-    
+
     // 获取插件的main_category
-    let main_category: Option<String> = sqlx::query_scalar(
-        "SELECT main_category FROM plugin_registry WHERE id = ?"
-    )
-    .bind(&plugin_id)
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
-    
-    let result = sqlx::query(
-        "UPDATE plugin_registry SET enabled = ? WHERE id = ?"
-    )
-    .bind(false)
-    .bind(&plugin_id)
-    .execute(db.pool())
-    .await;
+    let main_category: Option<String> =
+        sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+
+    let result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
+        .bind(false)
+        .bind(&plugin_id)
+        .execute(db.pool())
+        .await;
 
     match result {
         Ok(result) => {
@@ -883,7 +1046,7 @@ pub async fn disable_plugin(
                 tracing::info!("Plugin disabled in database: {}", plugin_id);
 
                 let plugin_name = sqlx::query_scalar::<_, String>(
-                    "SELECT name FROM plugin_registry WHERE id = ?"
+                    "SELECT name FROM plugin_registry WHERE id = ?",
                 )
                 .bind(&plugin_id)
                 .fetch_optional(db.pool())
@@ -900,7 +1063,7 @@ pub async fn disable_plugin(
                         name: plugin_name,
                     },
                 );
-                
+
                 Ok(CommandResponse::ok(()))
             } else {
                 Ok(CommandResponse::err(format!(
@@ -957,21 +1120,18 @@ pub async fn batch_enable_plugins(
     let mut agent_toggled: bool = false;
 
     for plugin_id in plugin_ids.iter() {
-        let main_category: Option<String> = sqlx::query_scalar(
-            "SELECT main_category FROM plugin_registry WHERE id = ?",
-        )
-        .bind(plugin_id)
-        .fetch_optional(db.pool())
-        .await
-        .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+        let main_category: Option<String> =
+            sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
+                .bind(plugin_id)
+                .fetch_optional(db.pool())
+                .await
+                .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
 
-        let result = sqlx::query(
-            "UPDATE plugin_registry SET enabled = ? WHERE id = ?",
-        )
-        .bind(true)
-        .bind(plugin_id)
-        .execute(db.pool())
-        .await;
+        let result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
+            .bind(true)
+            .bind(plugin_id)
+            .execute(db.pool())
+            .await;
 
         match result {
             Ok(exec) => {
@@ -1031,21 +1191,18 @@ pub async fn batch_disable_plugins(
     let mut agent_toggled: bool = false;
 
     for plugin_id in plugin_ids.iter() {
-        let main_category: Option<String> = sqlx::query_scalar(
-            "SELECT main_category FROM plugin_registry WHERE id = ?",
-        )
-        .bind(plugin_id)
-        .fetch_optional(db.pool())
-        .await
-        .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+        let main_category: Option<String> =
+            sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
+                .bind(plugin_id)
+                .fetch_optional(db.pool())
+                .await
+                .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
 
-        let result = sqlx::query(
-            "UPDATE plugin_registry SET enabled = ? WHERE id = ?",
-        )
-        .bind(false)
-        .bind(plugin_id)
-        .execute(db.pool())
-        .await;
+        let result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
+            .bind(false)
+            .bind(plugin_id)
+            .execute(db.pool())
+            .await;
 
         match result {
             Ok(exec) => {
@@ -1108,7 +1265,10 @@ pub async fn download_ca_cert(
             tracing::info!("CA certificate available at: {}", path_str);
             Ok(CommandResponse::ok(CaCertPath { path: path_str }))
         }
-        Err(e) => Ok(CommandResponse::err(format!("Failed to get CA path: {}", e))),
+        Err(e) => Ok(CommandResponse::err(format!(
+            "Failed to get CA path: {}",
+            e
+        ))),
     }
 }
 
@@ -1128,7 +1288,10 @@ pub async fn get_ca_cert_path(
             tracing::info!("CA certificate path: {}", path_str);
             Ok(CommandResponse::ok(path_str))
         }
-        Err(e) => Ok(CommandResponse::err(format!("Failed to get CA path: {}", e))),
+        Err(e) => Ok(CommandResponse::err(format!(
+            "Failed to get CA path: {}",
+            e
+        ))),
     }
 }
 
@@ -1175,16 +1338,16 @@ pub async fn regenerate_ca_cert(
     // 检查代理是否正在运行
     let was_running = *state.is_running.read().await;
     let mut saved_port = None;
-    
+
     // 如果代理正在运行，先停止它
     if was_running {
         tracing::info!("Proxy is running, stopping before regenerating CA...");
-        
+
         // 获取当前端口（用于日志）
         if let Some(proxy) = state.proxy_service.read().await.as_ref() {
             saved_port = proxy.get_port().await;
         }
-        
+
         // 停止代理
         let mut proxy = state.proxy_service.write().await;
         if let Some(p) = proxy.take() {
@@ -1192,10 +1355,10 @@ pub async fn regenerate_ca_cert(
                 tracing::error!("Failed to stop proxy before regenerating CA: {}", e);
             }
         }
-        
+
         // 更新运行状态
         *state.is_running.write().await = false;
-        
+
         // 发送停止事件
         emit_proxy_status(
             &app,
@@ -1207,7 +1370,7 @@ pub async fn regenerate_ca_cert(
             },
         );
     }
-    
+
     // 重新生成证书
     match state.certificate_service.regenerate_root_ca().await {
         Ok(_) => {
@@ -1216,17 +1379,20 @@ pub async fn regenerate_ca_cert(
                 .export_root_ca()
                 .map_err(|e| format!("Failed to get CA path: {}", e))?;
             let path_str = path.to_string_lossy().to_string();
-            
+
             tracing::info!("CA certificate regenerated at: {}", path_str);
-            
+
             // 如果之前代理正在运行，重新启动它
             if was_running {
                 tracing::info!("Restarting proxy with new CA certificate...");
-                
+
                 // 使用默认配置重新启动代理
                 match start_passive_scan_internal(&app, &state, None).await {
                     Ok(new_port) => {
-                        tracing::info!("Proxy restarted on port {} with new CA certificate", new_port);
+                        tracing::info!(
+                            "Proxy restarted on port {} with new CA certificate",
+                            new_port
+                        );
                         Ok(CommandResponse::ok(format!(
                             "CA certificate regenerated and proxy restarted on port {}. Please re-import: {}",
                             new_port, path_str
@@ -1271,6 +1437,159 @@ pub async fn get_ca_fingerprint(
     }
 }
 
+/// 导出 CA 证书为 DER 格式
+#[tauri::command]
+pub async fn export_ca_cert(
+    state: State<'_, PassiveScanState>,
+    format: String,
+) -> Result<CommandResponse<CaCertPath>, String> {
+    if let Err(e) = state.certificate_service.ensure_root_ca().await {
+        return Ok(CommandResponse::err(format!("Failed to ensure CA: {}", e)));
+    }
+
+    match format.as_str() {
+        "der" => match state.certificate_service.export_cert_der() {
+            Ok(path) => {
+                let path_str = path.to_string_lossy().to_string();
+                tracing::info!("Exported CA certificate in DER format: {}", path_str);
+                Ok(CommandResponse::ok(CaCertPath { path: path_str }))
+            }
+            Err(e) => Ok(CommandResponse::err(format!("Failed to export: {}", e))),
+        },
+        _ => match state.certificate_service.export_root_ca() {
+            Ok(path) => {
+                let path_str = path.to_string_lossy().to_string();
+                Ok(CommandResponse::ok(CaCertPath { path: path_str }))
+            }
+            Err(e) => Ok(CommandResponse::err(format!("Failed to export: {}", e))),
+        },
+    }
+}
+
+/// 导出 CA 私钥为 DER 格式
+#[tauri::command]
+pub async fn export_ca_key(
+    state: State<'_, PassiveScanState>,
+    format: String,
+) -> Result<CommandResponse<CaCertPath>, String> {
+    if let Err(e) = state.certificate_service.ensure_root_ca().await {
+        return Ok(CommandResponse::err(format!("Failed to ensure CA: {}", e)));
+    }
+
+    match format.as_str() {
+        "der" => match state.certificate_service.export_key_der() {
+            Ok(path) => {
+                let path_str = path.to_string_lossy().to_string();
+                tracing::info!("Exported CA private key in DER format: {}", path_str);
+                Ok(CommandResponse::ok(CaCertPath { path: path_str }))
+            }
+            Err(e) => Ok(CommandResponse::err(format!("Failed to export: {}", e))),
+        },
+        _ => Ok(CommandResponse::err("Unsupported format".to_string())),
+    }
+}
+
+/// 导出 CA 证书和私钥为 PKCS#12 格式
+#[tauri::command]
+pub async fn export_ca_pkcs12(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<CaCertPath>, String> {
+    if let Err(e) = state.certificate_service.ensure_root_ca().await {
+        return Ok(CommandResponse::err(format!("Failed to ensure CA: {}", e)));
+    }
+
+    // Use empty password for easier import
+    match state.certificate_service.export_pkcs12(Some("")) {
+        Ok(path) => {
+            let path_str = path.to_string_lossy().to_string();
+            tracing::info!("Exported CA in PKCS#12 format: {}", path_str);
+            Ok(CommandResponse::ok(CaCertPath { path: path_str }))
+        }
+        Err(e) => Ok(CommandResponse::err(format!("Failed to export: {}", e))),
+    }
+}
+
+/// 从 PKCS#12 文件导入证书和私钥
+#[tauri::command]
+pub async fn import_ca_pkcs12(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    
+    // Open file dialog to select PKCS#12 file
+    let file_path = app.dialog()
+        .file()
+        .add_filter("PKCS#12 Files", &["p12", "pfx"])
+        .blocking_pick_file();
+    
+    let file_path = match file_path {
+        Some(path) => path.into_path().map_err(|e| format!("Invalid path: {}", e))?,
+        None => return Ok(CommandResponse::err("No file selected".to_string())),
+    };
+    
+    // Read file
+    let data = std::fs::read(&file_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    
+    // Import with empty password (user can be prompted for password if needed)
+    match state.certificate_service.import_pkcs12(&data, "") {
+        Ok(_) => {
+            tracing::info!("Imported CA from PKCS#12: {}", file_path.display());
+            Ok(CommandResponse::ok("Certificate imported successfully".to_string()))
+        }
+        Err(e) => Ok(CommandResponse::err(format!("Failed to import: {}", e))),
+    }
+}
+
+/// 从 DER 格式导入证书和私钥
+#[tauri::command]
+pub async fn import_ca_der(
+    app: AppHandle,
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    
+    // Select certificate file
+    let cert_path = app.dialog()
+        .file()
+        .set_title("Select Certificate (DER format)")
+        .add_filter("DER Certificate", &["der", "cer", "crt"])
+        .blocking_pick_file();
+    
+    let cert_path = match cert_path {
+        Some(path) => path.into_path().map_err(|e| format!("Invalid path: {}", e))?,
+        None => return Ok(CommandResponse::err("No certificate file selected".to_string())),
+    };
+    
+    // Select key file
+    let key_path = app.dialog()
+        .file()
+        .set_title("Select Private Key (DER format)")
+        .add_filter("DER Key", &["der", "key"])
+        .blocking_pick_file();
+    
+    let key_path = match key_path {
+        Some(path) => path.into_path().map_err(|e| format!("Invalid path: {}", e))?,
+        None => return Ok(CommandResponse::err("No key file selected".to_string())),
+    };
+    
+    // Read files
+    let cert_data = std::fs::read(&cert_path)
+        .map_err(|e| format!("Failed to read certificate: {}", e))?;
+    let key_data = std::fs::read(&key_path)
+        .map_err(|e| format!("Failed to read key: {}", e))?;
+    
+    // Import
+    match state.certificate_service.import_der(&cert_data, &key_data) {
+        Ok(_) => {
+            tracing::info!("Imported CA from DER format");
+            Ok(CommandResponse::ok("Certificate imported successfully".to_string()))
+        }
+        Err(e) => Ok(CommandResponse::err(format!("Failed to import: {}", e))),
+    }
+}
+
 /// 打开 CA 证书目录
 #[tauri::command]
 pub async fn open_ca_cert_dir(
@@ -1279,9 +1598,11 @@ pub async fn open_ca_cert_dir(
     match state.certificate_service.export_root_ca() {
         Ok(cert_path) => {
             // 获取父目录
-            let dir_path = cert_path.parent().ok_or_else(|| "Failed to get parent directory".to_string())?;
+            let dir_path = cert_path
+                .parent()
+                .ok_or_else(|| "Failed to get parent directory".to_string())?;
             let dir_str = dir_path.to_string_lossy().to_string();
-            
+
             // 使用系统命令打开目录
             #[cfg(target_os = "macos")]
             {
@@ -1290,10 +1611,13 @@ pub async fn open_ca_cert_dir(
                         tracing::info!("Opened CA cert directory: {}", dir_str);
                         Ok(CommandResponse::ok(dir_str))
                     }
-                    Err(e) => Ok(CommandResponse::err(format!("Failed to open directory: {}", e))),
+                    Err(e) => Ok(CommandResponse::err(format!(
+                        "Failed to open directory: {}",
+                        e
+                    ))),
                 }
             }
-            
+
             #[cfg(target_os = "windows")]
             {
                 match std::process::Command::new("explorer").arg(&dir_str).spawn() {
@@ -1301,10 +1625,13 @@ pub async fn open_ca_cert_dir(
                         tracing::info!("Opened CA cert directory: {}", dir_str);
                         Ok(CommandResponse::ok(dir_str))
                     }
-                    Err(e) => Ok(CommandResponse::err(format!("Failed to open directory: {}", e))),
+                    Err(e) => Ok(CommandResponse::err(format!(
+                        "Failed to open directory: {}",
+                        e
+                    ))),
                 }
             }
-            
+
             #[cfg(target_os = "linux")]
             {
                 match std::process::Command::new("xdg-open").arg(&dir_str).spawn() {
@@ -1312,11 +1639,17 @@ pub async fn open_ca_cert_dir(
                         tracing::info!("Opened CA cert directory: {}", dir_str);
                         Ok(CommandResponse::ok(dir_str))
                     }
-                    Err(e) => Ok(CommandResponse::err(format!("Failed to open directory: {}", e))),
+                    Err(e) => Ok(CommandResponse::err(format!(
+                        "Failed to open directory: {}",
+                        e
+                    ))),
                 }
             }
         }
-        Err(e) => Ok(CommandResponse::err(format!("Failed to get CA path: {}", e))),
+        Err(e) => Ok(CommandResponse::err(format!(
+            "Failed to get CA path: {}",
+            e
+        ))),
     }
 }
 
@@ -1365,7 +1698,11 @@ pub async fn get_finding(
         evidence,
     };
 
-    tracing::debug!("Fetched finding detail: {} with {} evidence", finding_id, detail.evidence.len());
+    tracing::debug!(
+        "Fetched finding detail: {} with {} evidence",
+        finding_id,
+        detail.evidence.len()
+    );
 
     Ok(CommandResponse::ok(Some(detail)))
 }
@@ -1454,14 +1791,14 @@ pub async fn export_findings_html(
     state: State<'_, PassiveScanState>,
     filters: Option<VulnerabilityFilters>,
 ) -> Result<CommandResponse<String>, String> {
-    use tera::{Tera, Context};
     use std::fs;
-    
+    use tera::{Context, Tera};
+
     tracing::info!("Exporting HTML report with filters: {:?}", filters);
-    
+
     // 获取数据库服务
     let db_service = state.get_db_service().await?;
-    
+
     // 查询漏洞数据
     let filters = filters.unwrap_or_else(|| VulnerabilityFilters {
         vuln_type: None,
@@ -1471,20 +1808,35 @@ pub async fn export_findings_html(
         limit: Some(1000), // 默认最多导出1000条
         offset: Some(0),
     });
-    
+
     let vulnerabilities = db_service
         .list_vulnerabilities(filters.clone())
         .await
         .map_err(|e| format!("Failed to list vulnerabilities: {}", e))?;
-    
+
     // 统计数据
     let total = vulnerabilities.len();
-    let critical = vulnerabilities.iter().filter(|v| v.severity == "critical").count();
-    let high = vulnerabilities.iter().filter(|v| v.severity == "high").count();
-    let medium = vulnerabilities.iter().filter(|v| v.severity == "medium").count();
-    let low = vulnerabilities.iter().filter(|v| v.severity == "low").count();
-    let info = vulnerabilities.iter().filter(|v| v.severity == "info").count();
-    
+    let critical = vulnerabilities
+        .iter()
+        .filter(|v| v.severity == "critical")
+        .count();
+    let high = vulnerabilities
+        .iter()
+        .filter(|v| v.severity == "high")
+        .count();
+    let medium = vulnerabilities
+        .iter()
+        .filter(|v| v.severity == "medium")
+        .count();
+    let low = vulnerabilities
+        .iter()
+        .filter(|v| v.severity == "low")
+        .count();
+    let info = vulnerabilities
+        .iter()
+        .filter(|v| v.severity == "info")
+        .count();
+
     let total_f = total as f64;
     let summary = ReportSummary {
         total,
@@ -1493,25 +1845,45 @@ pub async fn export_findings_html(
         medium,
         low,
         info,
-        critical_percent: if total > 0 { (critical as f64 / total_f) * 100.0 } else { 0.0 },
-        high_percent: if total > 0 { (high as f64 / total_f) * 100.0 } else { 0.0 },
-        medium_percent: if total > 0 { (medium as f64 / total_f) * 100.0 } else { 0.0 },
-        low_percent: if total > 0 { (low as f64 / total_f) * 100.0 } else { 0.0 },
-        info_percent: if total > 0 { (info as f64 / total_f) * 100.0 } else { 0.0 },
+        critical_percent: if total > 0 {
+            (critical as f64 / total_f) * 100.0
+        } else {
+            0.0
+        },
+        high_percent: if total > 0 {
+            (high as f64 / total_f) * 100.0
+        } else {
+            0.0
+        },
+        medium_percent: if total > 0 {
+            (medium as f64 / total_f) * 100.0
+        } else {
+            0.0
+        },
+        low_percent: if total > 0 {
+            (low as f64 / total_f) * 100.0
+        } else {
+            0.0
+        },
+        info_percent: if total > 0 {
+            (info as f64 / total_f) * 100.0
+        } else {
+            0.0
+        },
     };
-    
+
     // 转换为报告格式（获取第一个 evidence）
     let mut findings: Vec<ReportFinding> = Vec::new();
-    
+
     for v in vulnerabilities {
         // 尝试获取第一个证据
         let evidence_list = db_service
             .get_evidence_by_vuln_id(&v.id)
             .await
             .unwrap_or_default();
-        
+
         let first_evidence = evidence_list.first();
-        
+
         findings.push(ReportFinding {
             id: v.id.clone(),
             title: v.title.clone(),
@@ -1521,8 +1893,12 @@ pub async fn export_findings_html(
             plugin_id: v.plugin_id.clone(),
             url: first_evidence.map(|e| e.url.clone()).unwrap_or_default(),
             method: first_evidence.map(|e| e.method.clone()).unwrap_or_default(),
-            location: first_evidence.map(|e| e.location.clone()).unwrap_or_default(),
-            evidence: first_evidence.map(|e| e.evidence_snippet.clone()).unwrap_or_default(),
+            location: first_evidence
+                .map(|e| e.location.clone())
+                .unwrap_or_default(),
+            evidence: first_evidence
+                .map(|e| e.evidence_snippet.clone())
+                .unwrap_or_default(),
             confidence: v.confidence.clone(),
             cwe: v.cwe.clone(),
             owasp: v.owasp.clone(),
@@ -1530,72 +1906,74 @@ pub async fn export_findings_html(
             created_at: v.first_seen_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         });
     }
-    
+
     // 准备模板数据
     let now = chrono::Utc::now();
     let report_data = ReportData {
         report_title: format!("被动扫描报告 - {}", now.format("%Y年%m月%d日")),
         generated_at: now.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-        scan_scope: filters.plugin_id.clone()
+        scan_scope: filters
+            .plugin_id
+            .clone()
             .map(|p| format!("插件: {}", p))
             .unwrap_or_else(|| "全部".to_string()),
         summary,
         findings,
     };
-    
+
     // 加载模板
     let template_path = std::env::current_dir()
         .map_err(|e| format!("Failed to get current dir: {}", e))?
         .join("templates/vulnerability_report.html");
-    
+
     if !template_path.exists() {
         return Err(format!("Template not found: {:?}", template_path));
     }
-    
+
     let template_content = fs::read_to_string(&template_path)
         .map_err(|e| format!("Failed to read template: {}", e))?;
-    
+
     // 渲染模板
     let mut tera = Tera::default();
     tera.add_raw_template("report", &template_content)
         .map_err(|e| format!("Failed to parse template: {}", e))?;
-    
+
     let mut context = Context::new();
     context.insert("report_title", &report_data.report_title);
     context.insert("generated_at", &report_data.generated_at);
     context.insert("scan_scope", &report_data.scan_scope);
     context.insert("summary", &report_data.summary);
     context.insert("findings", &report_data.findings);
-    
-    let html = tera.render("report", &context)
+
+    let html = tera
+        .render("report", &context)
         .map_err(|e| format!("Failed to render template: {}", e))?;
-    
+
     // 保存报告
     let output_dir = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(".sentinel-ai")
         .join("reports");
-    
+
     fs::create_dir_all(&output_dir)
         .map_err(|e| format!("Failed to create output directory: {}", e))?;
-    
+
     let filename = format!("passive_scan_report_{}.html", now.format("%Y%m%d_%H%M%S"));
     let output_path = output_dir.join(&filename);
-    
-    fs::write(&output_path, html)
-        .map_err(|e| format!("Failed to write report: {}", e))?;
-    
+
+    fs::write(&output_path, html).map_err(|e| format!("Failed to write report: {}", e))?;
+
     let path_str = output_path.to_string_lossy().to_string();
     tracing::info!("HTML report exported to: {}", path_str);
-    
+
     Ok(CommandResponse::ok(path_str))
 }
 
 // ============================================================
-// 代理请求历史相关命令
+// 代理请求历史相关命令（使用内存缓存）
 // ============================================================
 
-/// 列出代理请求历史
+/// 列出代理请求历史（从内存缓存）
 #[tauri::command]
 pub async fn list_proxy_requests(
     state: State<'_, PassiveScanState>,
@@ -1606,86 +1984,187 @@ pub async fn list_proxy_requests(
     host: Option<String>,
     status_code_min: Option<i32>,
     status_code_max: Option<i32>,
-) -> Result<CommandResponse<Vec<sentinel_passive::ProxyRequestRecord>>, String> {
-    let db = state.get_db_service().await?;
-    
-    let filters = sentinel_passive::ProxyRequestFilters {
+) -> Result<CommandResponse<Vec<sentinel_passive::HttpRequestRecord>>, String> {
+    let cache = state.get_history_cache();
+
+    let filters = sentinel_passive::HttpRequestFilters {
         protocol,
         method,
         host,
         status_code_min,
         status_code_max,
-        limit,
-        offset,
+        search: None,
+        limit: limit.map(|l| l as usize),
+        offset: offset.map(|o| o as usize),
     };
-    
-    let requests = db
-        .list_proxy_requests(filters)
-        .await
-        .map_err(|e| format!("Failed to list proxy requests: {}", e))?;
-    
+
+    let requests = cache.list_http_requests(filters).await;
+
     Ok(CommandResponse::ok(requests))
 }
 
-/// 获取代理请求详情
+/// 获取代理请求详情（从内存缓存）
 #[tauri::command]
 pub async fn get_proxy_request(
     state: State<'_, PassiveScanState>,
     id: i64,
-) -> Result<CommandResponse<Option<sentinel_passive::ProxyRequestRecord>>, String> {
-    let db = state.get_db_service().await?;
-    
-    let request = db
-        .get_proxy_request_by_id(id)
-        .await
-        .map_err(|e| format!("Failed to get proxy request: {}", e))?;
-    
+) -> Result<CommandResponse<Option<sentinel_passive::HttpRequestRecord>>, String> {
+    let cache = state.get_history_cache();
+
+    let request = cache.get_http_request_by_id(id).await;
+
     Ok(CommandResponse::ok(request))
 }
 
-/// 清空代理请求历史
+/// 清空代理请求历史（清空内存缓存）
 #[tauri::command]
 pub async fn clear_proxy_requests(
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<u64>, String> {
-    let db = state.get_db_service().await?;
-    
-    let count = db
-        .clear_proxy_requests()
-        .await
-        .map_err(|e| format!("Failed to clear proxy requests: {}", e))?;
-    
+    let cache = state.get_history_cache();
+
+    let count = cache.count_http_requests().await as u64;
+    cache.clear_http_requests().await;
+
     Ok(CommandResponse::ok(count))
 }
 
-/// 统计代理请求
+/// 统计代理请求数量（从内存缓存）
 #[tauri::command]
 pub async fn count_proxy_requests(
     state: State<'_, PassiveScanState>,
-    protocol: Option<String>,
-    method: Option<String>,
-    host: Option<String>,
-    status_code_min: Option<i32>,
-    status_code_max: Option<i32>,
+    _protocol: Option<String>,
+    _method: Option<String>,
+    _host: Option<String>,
+    _status_code_min: Option<i32>,
+    _status_code_max: Option<i32>,
 ) -> Result<CommandResponse<i64>, String> {
-    let db = state.get_db_service().await?;
-    
-    let filters = sentinel_passive::ProxyRequestFilters {
-        protocol,
-        method,
-        host,
-        status_code_min,
-        status_code_max,
-        limit: None,
-        offset: None,
-    };
-    
-    let count = db
-        .count_proxy_requests(filters)
-        .await
-        .map_err(|e| format!("Failed to count proxy requests: {}", e))?;
-    
+    let cache = state.get_history_cache();
+
+    // 注意：当前内存缓存的 count 方法不支持过滤，返回总数
+    // 如需过滤统计，可以扩展 ProxyHistoryCache
+    let count = cache.count_http_requests().await as i64;
+
     Ok(CommandResponse::ok(count))
+}
+
+// ============================================================
+// WebSocket 历史相关命令（使用内存缓存）
+// ============================================================
+
+/// 列出 WebSocket 连接（从内存缓存）
+#[tauri::command]
+pub async fn list_websocket_connections(
+    state: State<'_, PassiveScanState>,
+    host: Option<String>,
+    status: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<CommandResponse<Vec<sentinel_passive::WebSocketConnectionRecord>>, String> {
+    let cache = state.get_history_cache();
+
+    // 转换状态过滤
+    let status_filter = status.as_ref().and_then(|s| match s.as_str() {
+        "open" => Some(sentinel_passive::WebSocketConnectionStatus::Open),
+        "closed" => Some(sentinel_passive::WebSocketConnectionStatus::Closed),
+        "error" => Some(sentinel_passive::WebSocketConnectionStatus::Error),
+        _ => None,
+    });
+
+    let filters = sentinel_passive::WebSocketFilters {
+        host,
+        status: status_filter,
+        direction: None,
+        message_type: None,
+        search: None,
+        limit,
+        offset,
+    };
+
+    let connections = cache.list_ws_connections(filters).await;
+
+    Ok(CommandResponse::ok(connections))
+}
+
+/// 列出 WebSocket 消息（从内存缓存）
+#[tauri::command]
+pub async fn list_websocket_messages(
+    state: State<'_, PassiveScanState>,
+    connection_id: String,
+    direction: Option<String>,
+    message_type: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<CommandResponse<Vec<sentinel_passive::WebSocketMessageRecord>>, String> {
+    let cache = state.get_history_cache();
+
+    // 转换方向过滤
+    let direction_filter = direction.as_ref().and_then(|d| match d.as_str() {
+        "send" => Some(sentinel_passive::WebSocketDirection::Send),
+        "receive" => Some(sentinel_passive::WebSocketDirection::Receive),
+        _ => None,
+    });
+
+    // 转换消息类型过滤
+    let type_filter = message_type.as_ref().and_then(|t| match t.as_str() {
+        "text" => Some(sentinel_passive::WebSocketMessageType::Text),
+        "binary" => Some(sentinel_passive::WebSocketMessageType::Binary),
+        "ping" => Some(sentinel_passive::WebSocketMessageType::Ping),
+        "pong" => Some(sentinel_passive::WebSocketMessageType::Pong),
+        "close" => Some(sentinel_passive::WebSocketMessageType::Close),
+        _ => None,
+    });
+
+    let filters = sentinel_passive::WebSocketFilters {
+        host: None,
+        status: None,
+        direction: direction_filter,
+        message_type: type_filter,
+        search: None,
+        limit,
+        offset,
+    };
+
+    let messages = cache.list_ws_messages(&connection_id, filters).await;
+
+    Ok(CommandResponse::ok(messages))
+}
+
+/// 清空 WebSocket 历史（清空内存缓存）
+#[tauri::command]
+pub async fn clear_websocket_history(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<u64>, String> {
+    let cache = state.get_history_cache();
+
+    let count = cache.count_ws_connections().await as u64;
+    cache.clear_ws_data().await;
+
+    Ok(CommandResponse::ok(count))
+}
+
+/// 获取历史缓存统计信息
+#[tauri::command]
+pub async fn get_history_stats(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<sentinel_passive::HistoryCacheStats>, String> {
+    let cache = state.get_history_cache();
+
+    let stats = cache.stats().await;
+
+    Ok(CommandResponse::ok(stats))
+}
+
+/// 清空所有历史记录（HTTP + WebSocket）
+#[tauri::command]
+pub async fn clear_all_history(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<String>, String> {
+    let cache = state.get_history_cache();
+
+    cache.clear_all().await;
+
+    Ok(CommandResponse::ok("All history cleared".to_string()))
 }
 
 // ============================================================
@@ -1700,32 +2179,35 @@ pub async fn create_plugin_in_db(
     plugin_code: String,
 ) -> Result<CommandResponse<String>, String> {
     let db = state.get_db_service().await?;
-    
+
     // 解析元数据
-    let plugin: sentinel_passive::PluginMetadata = serde_json::from_value(metadata)
-        .map_err(|e| format!("Invalid plugin metadata: {}", e))?;
-    
+    let plugin: sentinel_passive::PluginMetadata =
+        serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
+
     let plugin_id = plugin.id.clone();
     let main_category = plugin.main_category.clone();
-    
+
     // 注册插件到数据库
     db.register_plugin_with_code(&plugin, &plugin_code)
         .await
         .map_err(|e| format!("Failed to create plugin in database: {}", e))?;
-    
+
     tracing::info!("Plugin created/updated in database: {}", plugin_id);
-    
+
     // **关键修复**：更新 PluginManager 的代码缓存（如果插件已在内存中）
     let plugin_manager = state.get_plugin_manager();
     if plugin_manager.get_plugin(&plugin_id).await.is_some() {
         // 插件已在内存中，更新代码缓存
-        if let Err(e) = plugin_manager.set_plugin_code(plugin_id.clone(), plugin_code.clone()).await {
+        if let Err(e) = plugin_manager
+            .set_plugin_code(plugin_id.clone(), plugin_code.clone())
+            .await
+        {
             tracing::warn!("Failed to update plugin code cache after create: {}", e);
         } else {
             tracing::info!("Plugin code cache updated after create: {}", plugin_id);
         }
     }
-    
+
     Ok(CommandResponse::ok(plugin_id))
 }
 
@@ -1737,59 +2219,69 @@ pub async fn update_plugin(
     plugin_code: String,
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service().await?;
-    
-    let plugin_id = metadata.get("id")
+
+    let plugin_id = metadata
+        .get("id")
         .and_then(|v| v.as_str())
         .ok_or("Missing plugin id")?
         .to_string();
-    
-    let plugin_name = metadata.get("name")
+
+    let plugin_name = metadata
+        .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or(&plugin_id)
         .to_string();
-    
-    let plugin_description = metadata.get("description")
+
+    let plugin_description = metadata
+        .get("description")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    
-    let main_category = metadata.get("main_category")
+
+    let main_category = metadata
+        .get("main_category")
         .and_then(|v| v.as_str())
         .unwrap_or("passive")
         .to_string();
-    
+
     // 解析为 PluginMetadata 用于数据库更新
-    let plugin: sentinel_passive::PluginMetadata = serde_json::from_value(metadata)
-        .map_err(|e| format!("Invalid plugin metadata: {}", e))?;
-    
+    let plugin: sentinel_passive::PluginMetadata =
+        serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
+
     db.update_plugin(&plugin, &plugin_code)
         .await
         .map_err(|e| format!("Failed to update plugin: {}", e))?;
-    
+
     tracing::info!("Plugin updated in database: {}", plugin_id);
-    
+
     // 更新 PluginManager 的代码缓存
     let plugin_manager = state.get_plugin_manager();
-    if let Err(e) = plugin_manager.set_plugin_code(plugin_id.clone(), plugin_code.clone()).await {
+    if let Err(e) = plugin_manager
+        .set_plugin_code(plugin_id.clone(), plugin_code.clone())
+        .await
+    {
         tracing::warn!("Failed to update plugin code cache: {}", e);
     } else {
         tracing::info!("Plugin code cache updated: {}", plugin_id);
     }
-    
+
     // **关键修复**：如果是 Agent 工具类插件，重新注册到 ToolServer
     if main_category == "agent" {
         let tool_server = sentinel_tools::tool_server::get_tool_server();
-        
+
         // 构造工具名称
         let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
         let tool_name = format!("plugin__{}", sanitized_id);
-        
+
         // 先注销旧的工具
         tool_server.unregister_tool(&tool_name).await;
-        
+
         // 解析新的 input_schema
-        let input_schema = sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(&plugin_code);
-        
+        let input_schema =
+            sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(
+                &plugin_code,
+            );
+
         // 创建执行器
         let executor = sentinel_tools::dynamic_tool::create_executor({
             let pid = plugin_id.clone();
@@ -1797,7 +2289,9 @@ pub async fn update_plugin(
                 let plugin_id = pid.clone();
                 async move {
                     // 调用插件执行逻辑
-                    if let Some(ctx) = sentinel_tools::plugin_adapter::get_plugin_context(&plugin_id).await {
+                    if let Some(ctx) =
+                        sentinel_tools::plugin_adapter::get_plugin_context(&plugin_id).await
+                    {
                         tracing::info!("Executing plugin: {} (id: {})", ctx.name, ctx.plugin_id);
                         Ok(serde_json::json!({
                             "plugin_id": ctx.plugin_id,
@@ -1811,19 +2305,21 @@ pub async fn update_plugin(
                 }
             }
         });
-        
+
         // 重新注册工具
-        tool_server.register_plugin_tool(
-            &plugin_id,
-            &plugin_name,
-            &plugin_description,
-            input_schema,
-            executor,
-        ).await;
-        
+        tool_server
+            .register_plugin_tool(
+                &plugin_id,
+                &plugin_name,
+                &plugin_description,
+                input_schema,
+                executor,
+            )
+            .await;
+
         tracing::info!("Plugin tool re-registered to ToolServer: {}", tool_name);
     }
-    
+
     Ok(CommandResponse::ok(()))
 }
 
@@ -1834,12 +2330,12 @@ pub async fn get_plugin_code(
     plugin_id: String,
 ) -> Result<CommandResponse<Option<String>>, String> {
     let db = state.get_db_service().await?;
-    
+
     let code = db
         .get_plugin_code(&plugin_id)
         .await
         .map_err(|e| format!("Failed to get plugin code: {}", e))?;
-    
+
     Ok(CommandResponse::ok(code))
 }
 
@@ -1850,12 +2346,12 @@ pub async fn get_plugin_by_id(
     plugin_id: String,
 ) -> Result<CommandResponse<Option<serde_json::Value>>, String> {
     let db = state.get_db_service().await?;
-    
+
     let plugin = db
         .get_plugin_by_id(&plugin_id)
         .await
         .map_err(|e| format!("Failed to get plugin: {}", e))?;
-    
+
     Ok(CommandResponse::ok(plugin))
 }
 
@@ -1870,22 +2366,42 @@ pub async fn test_plugin(
     let db = state.get_db_service().await?;
 
     let row: Option<(
-        String, String, String, Option<String>, String, String, Option<String>,
-        String, Option<String>, bool
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        bool,
     )> = sqlx::query_as(
         r#"
         SELECT id, name, version, author, main_category, category, description,
                default_severity, tags, enabled
         FROM plugin_registry
         WHERE id = ?
-        "#
+        "#,
     )
     .bind(&plugin_id)
     .fetch_optional(db.pool())
     .await
     .map_err(|e| format!("Failed to query plugin: {}", e))?;
 
-    if let Some((id, name, version, author, main_category, category, description, _sev, _tags, enabled)) = row {
+    if let Some((
+        id,
+        name,
+        version,
+        author,
+        main_category,
+        category,
+        description,
+        _sev,
+        _tags,
+        enabled,
+    )) = row
+    {
         // 如果是 Agent 插件，提示使用 Agent 测试入口
         if main_category == "agent" {
             return Ok(CommandResponse::ok(TestPluginResult {
@@ -1898,10 +2414,7 @@ pub async fn test_plugin(
         if !enabled {
             return Ok(CommandResponse::ok(TestPluginResult {
                 success: false,
-                message: Some(format!(
-                    "插件 '{}' 当前未启用。请先启用插件。",
-                    name
-                )),
+                message: Some(format!("插件 '{}' 当前未启用。请先启用插件。", name)),
                 findings: None,
                 error: Some("Plugin is not enabled".to_string()),
             }));
@@ -1913,18 +2426,21 @@ pub async fn test_plugin(
             // 如果内存中尚未注册插件元数据或代码，尝试从数据库加载
             if plugin_manager.get_plugin(&plugin_id).await.is_none() {
                 // 加载代码
-                let code_opt = sqlx::query_scalar::<_, Option<String>>("SELECT plugin_code FROM plugin_registry WHERE id = ?")
-                    .bind(&plugin_id)
-                    .fetch_optional(db.pool())
-                    .await
-                    .map_err(|e| format!("Failed to load plugin code: {}", e))?;
+                let code_opt = sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT plugin_code FROM plugin_registry WHERE id = ?",
+                )
+                .bind(&plugin_id)
+                .fetch_optional(db.pool())
+                .await
+                .map_err(|e| format!("Failed to load plugin code: {}", e))?;
                 if let Some(code) = code_opt.flatten() {
                     // 构造 PluginMetadata 供注册（保持与 list_plugins_internal 构建一致）
-                    let tags_json: Option<String> = sqlx::query_scalar("SELECT tags FROM plugin_registry WHERE id = ?")
-                        .bind(&plugin_id)
-                        .fetch_optional(db.pool())
-                        .await
-                        .map_err(|e| format!("Failed to query plugin tags: {}", e))?;
+                    let tags_json: Option<String> =
+                        sqlx::query_scalar("SELECT tags FROM plugin_registry WHERE id = ?")
+                            .bind(&plugin_id)
+                            .fetch_optional(db.pool())
+                            .await
+                            .map_err(|e| format!("Failed to query plugin tags: {}", e))?;
                     let tags: Vec<String> = tags_json
                         .and_then(|t| serde_json::from_str(&t).ok())
                         .unwrap_or_default();
@@ -1956,8 +2472,12 @@ pub async fn test_plugin(
                         tags,
                     };
                     // 注册并缓存代码（忽略可能的并发注册错误）
-                    let _ = plugin_manager.register_plugin(plugin_id.clone(), metadata, enabled).await;
-                    let _ = plugin_manager.set_plugin_code(plugin_id.clone(), code).await;
+                    let _ = plugin_manager
+                        .register_plugin(plugin_id.clone(), metadata, enabled)
+                        .await;
+                    let _ = plugin_manager
+                        .set_plugin_code(plugin_id.clone(), code)
+                        .await;
                 }
             }
         }
@@ -2016,7 +2536,10 @@ pub async fn test_plugin(
         }
     }
 
-    Ok(CommandResponse::err(format!("Plugin not found: {}", plugin_id)))
+    Ok(CommandResponse::err(format!(
+        "Plugin not found: {}",
+        plugin_id
+    )))
 }
 
 /// 测试插件结果
@@ -2082,11 +2605,12 @@ pub async fn test_plugin_advanced(
     let _ = test_plugin(state.clone(), plugin_id.clone()).await; // 忽略结果，只用于触发注册（若未启用会返回提示）
 
     // 再次确认是否启用
-    let enabled: Option<bool> = sqlx::query_scalar("SELECT enabled FROM plugin_registry WHERE id = ?")
-        .bind(&plugin_id)
-        .fetch_optional(db.pool())
-        .await
-        .map_err(|e| format!("Failed to query plugin enabled: {}", e))?;
+    let enabled: Option<bool> =
+        sqlx::query_scalar("SELECT enabled FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin enabled: {}", e))?;
     if enabled != Some(true) {
         return Ok(CommandResponse::ok(AdvancedTestResult {
             plugin_id,
@@ -2152,7 +2676,14 @@ pub async fn test_plugin_advanced(
                 };
                 match plugin_manager.scan_request(&plugin_id, &ctx).await {
                     Ok(foundings) => {
-                        let mapped: Vec<TestFinding> = foundings.into_iter().map(|f| TestFinding { title: f.title, description: f.description, severity: f.severity.to_string() }).collect();
+                        let mapped: Vec<TestFinding> = foundings
+                            .into_iter()
+                            .map(|f| TestFinding {
+                                title: f.title,
+                                description: f.description,
+                                severity: f.severity.to_string(),
+                            })
+                            .collect();
                         let dur = run_start.elapsed().as_millis();
                         (i, Ok((dur, mapped)))
                     }
@@ -2170,17 +2701,31 @@ pub async fn test_plugin_advanced(
     for (idx, res) in results.into_iter() {
         match res {
             Ok((dur, findings)) => {
-                run_stats.push(AdvancedRunStat { run_index: idx, duration_ms: dur, findings: findings.len(), error: None });
+                run_stats.push(AdvancedRunStat {
+                    run_index: idx,
+                    duration_ms: dur,
+                    findings: findings.len(),
+                    error: None,
+                });
                 all_findings.extend(findings);
             }
             Err((dur, err)) => {
-                run_stats.push(AdvancedRunStat { run_index: idx, duration_ms: dur, findings: 0, error: Some(err) });
+                run_stats.push(AdvancedRunStat {
+                    run_index: idx,
+                    duration_ms: dur,
+                    findings: 0,
+                    error: Some(err),
+                });
             }
         }
     }
 
     let total_duration_ms = start_all.elapsed().as_millis();
-    let avg_duration_ms = if run_stats.is_empty() { 0.0 } else { (run_stats.iter().map(|r| r.duration_ms).sum::<u128>() as f64) / (run_stats.len() as f64) };
+    let avg_duration_ms = if run_stats.is_empty() {
+        0.0
+    } else {
+        (run_stats.iter().map(|r| r.duration_ms).sum::<u128>() as f64) / (run_stats.len() as f64)
+    };
     // 去重唯一发现（按 title+severity+description）
     use std::collections::HashSet;
     let mut uniq = HashSet::new();
@@ -2227,16 +2772,15 @@ pub async fn test_agent_plugin(
     inputs: Option<serde_json::Value>,
 ) -> Result<CommandResponse<AgentTestResult>, String> {
     let db = state.get_db_service().await?;
-    
+
     // 验证插件存在且是 Agent 类型
-    let row: Option<(String, String, bool)> = sqlx::query_as(
-        "SELECT id, main_category, enabled FROM plugin_registry WHERE id = ?"
-    )
-    .bind(&plugin_id)
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| format!("Failed to query plugin: {}", e))?;
-    
+    let row: Option<(String, String, bool)> =
+        sqlx::query_as("SELECT id, main_category, enabled FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin: {}", e))?;
+
     let (id, main_category, enabled) = match row {
         Some(r) => r,
         None => {
@@ -2249,7 +2793,7 @@ pub async fn test_agent_plugin(
             }));
         }
     };
-    
+
     if main_category != "agent" {
         return Ok(CommandResponse::ok(AgentTestResult {
             success: false,
@@ -2259,7 +2803,7 @@ pub async fn test_agent_plugin(
             error: Some("WrongPluginType".to_string()),
         }));
     }
-    
+
     if !enabled {
         return Ok(CommandResponse::ok(AgentTestResult {
             success: false,
@@ -2269,17 +2813,16 @@ pub async fn test_agent_plugin(
             error: Some("PluginDisabled".to_string()),
         }));
     }
-    
+
     // 获取插件代码
-    let code: Option<String> = sqlx::query_scalar(
-        "SELECT plugin_code FROM plugin_registry WHERE id = ?"
-    )
-    .bind(&plugin_id)
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| format!("Failed to query plugin code: {}", e))?
-    .flatten();
-    
+    let code: Option<String> =
+        sqlx::query_scalar("SELECT plugin_code FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin code: {}", e))?
+            .flatten();
+
     let code = match code {
         Some(c) => c,
         None => {
@@ -2292,18 +2835,16 @@ pub async fn test_agent_plugin(
             }));
         }
     };
-    
+
     // 获取插件名称
-    let name: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM plugin_registry WHERE id = ?"
-    )
-    .bind(&plugin_id)
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| format!("Failed to query plugin name: {}", e))?
-    .flatten();
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = ?")
+        .bind(&plugin_id)
+        .fetch_optional(db.pool())
+        .await
+        .map_err(|e| format!("Failed to query plugin name: {}", e))?
+        .flatten();
     let name = name.unwrap_or_else(|| plugin_id.clone());
-    
+
     // 注册插件上下文
     let ctx = sentinel_tools::plugin_adapter::PluginContext {
         plugin_id: plugin_id.clone(),
@@ -2311,25 +2852,25 @@ pub async fn test_agent_plugin(
         code: code.clone(),
     };
     sentinel_tools::plugin_adapter::register_plugin_context(ctx).await;
-    
+
     // 准备输入参数
     let inputs = inputs.unwrap_or(serde_json::json!({}));
-    
+
     // 执行插件
     let start = std::time::Instant::now();
     let name_for_result = name.clone();
-    
+
     let result = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|e| format!("Failed to create runtime: {}", e))?;
-        
+
         let local = tokio::task::LocalSet::new();
         local.block_on(&rt, async {
             let mut engine = sentinel_plugins::PluginEngine::new()
                 .map_err(|e| format!("Failed to create plugin engine: {}", e))?;
-            
+
             let metadata = sentinel_plugins::PluginMetadata {
                 id: plugin_id.clone(),
                 name: name.clone(),
@@ -2341,28 +2882,33 @@ pub async fn test_agent_plugin(
                 tags: vec![],
                 description: Some(format!("Agent tool plugin: {}", name)),
             };
-            
-            engine.load_plugin_with_metadata(&code, metadata)
+
+            engine
+                .load_plugin_with_metadata(&code, metadata)
                 .await
                 .map_err(|e| format!("Failed to load plugin: {}", e))?;
-            
-            let (findings, result) = engine.execute_agent(&inputs)
+
+            let (findings, result) = engine
+                .execute_agent(&inputs)
                 .await
                 .map_err(|e| format!("Plugin execution failed: {}", e))?;
-            
+
             // 构建输出
             let output = if let Some(r) = result {
                 r
             } else if !findings.is_empty() {
-                let findings_json: Vec<serde_json::Value> = findings.into_iter().map(|f| {
-                    serde_json::json!({
-                        "id": f.id,
-                        "vuln_type": f.vuln_type,
-                        "severity": format!("{:?}", f.severity).to_lowercase(),
-                        "title": f.title,
-                        "description": f.description,
+                let findings_json: Vec<serde_json::Value> = findings
+                    .into_iter()
+                    .map(|f| {
+                        serde_json::json!({
+                            "id": f.id,
+                            "vuln_type": f.vuln_type,
+                            "severity": format!("{:?}", f.severity).to_lowercase(),
+                            "title": f.title,
+                            "description": f.description,
+                        })
                     })
-                }).collect();
+                    .collect();
                 serde_json::json!({
                     "findings": findings_json,
                     "findings_count": findings_json.len()
@@ -2372,34 +2918,33 @@ pub async fn test_agent_plugin(
                     "message": "Plugin executed successfully with no output"
                 })
             };
-            
+
             Ok::<serde_json::Value, String>(output)
         })
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?;
-    
+
     let execution_time_ms = start.elapsed().as_millis();
-    
+
     match result {
-        Ok(output) => {
-            Ok(CommandResponse::ok(AgentTestResult {
-                success: true,
-                message: Some(format!("插件 '{}' 执行成功 ({}ms)", name_for_result, execution_time_ms)),
-                output: Some(output),
-                execution_time_ms,
-                error: None,
-            }))
-        }
-        Err(e) => {
-            Ok(CommandResponse::ok(AgentTestResult {
-                success: false,
-                message: Some(format!("插件执行失败: {}", e)),
-                output: None,
-                execution_time_ms,
-                error: Some(e),
-            }))
-        }
+        Ok(output) => Ok(CommandResponse::ok(AgentTestResult {
+            success: true,
+            message: Some(format!(
+                "插件 '{}' 执行成功 ({}ms)",
+                name_for_result, execution_time_ms
+            )),
+            output: Some(output),
+            execution_time_ms,
+            error: None,
+        })),
+        Err(e) => Ok(CommandResponse::ok(AgentTestResult {
+            success: false,
+            message: Some(format!("插件执行失败: {}", e)),
+            output: None,
+            execution_time_ms,
+            error: Some(e),
+        })),
     }
 }
 
@@ -2410,17 +2955,16 @@ pub async fn get_plugin_input_schema(
     plugin_id: String,
 ) -> Result<CommandResponse<serde_json::Value>, String> {
     let db = state.get_db_service().await?;
-    
+
     // 获取插件代码
-    let code: Option<String> = sqlx::query_scalar(
-        "SELECT plugin_code FROM plugin_registry WHERE id = ?"
-    )
-    .bind(&plugin_id)
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| format!("Failed to query plugin code: {}", e))?
-    .flatten();
-    
+    let code: Option<String> =
+        sqlx::query_scalar("SELECT plugin_code FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin code: {}", e))?
+            .flatten();
+
     let code = match code {
         Some(c) => c,
         None => {
@@ -2430,10 +2974,10 @@ pub async fn get_plugin_input_schema(
             })));
         }
     };
-    
+
     // 解析 ToolInput interface
     let schema = sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(&code);
-    
+
     Ok(CommandResponse::ok(schema))
 }
 
@@ -2444,17 +2988,17 @@ pub async fn delete_plugin(
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service().await?;
-    
+
     // 先禁用插件
     db.update_plugin_enabled(&plugin_id, false)
         .await
         .map_err(|e| format!("Failed to disable plugin before deletion: {}", e))?;
-    
+
     // 删除插件
     db.delete_plugin(&plugin_id)
         .await
         .map_err(|e| format!("Failed to delete plugin: {}", e))?;
-    
+
     tracing::info!("Plugin deleted: {}", plugin_id);
     Ok(CommandResponse::ok(()))
 }
@@ -2466,11 +3010,11 @@ pub async fn delete_passive_vulnerability(
     vuln_id: String,
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service().await?;
-    
+
     db.delete_vulnerability(&vuln_id)
         .await
         .map_err(|e| format!("Failed to delete vulnerability: {}", e))?;
-    
+
     tracing::info!("Vulnerability deleted: {}", vuln_id);
     Ok(CommandResponse::ok(()))
 }
@@ -2482,7 +3026,7 @@ pub async fn delete_passive_vulnerabilities_batch(
     vuln_ids: Vec<String>,
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service().await?;
-    
+
     let mut deleted_count = 0;
     for vuln_id in &vuln_ids {
         match db.delete_vulnerability(vuln_id).await {
@@ -2492,8 +3036,12 @@ pub async fn delete_passive_vulnerabilities_batch(
             }
         }
     }
-    
-    tracing::info!("Batch deleted {} vulnerabilities out of {}", deleted_count, vuln_ids.len());
+
+    tracing::info!(
+        "Batch deleted {} vulnerabilities out of {}",
+        deleted_count,
+        vuln_ids.len()
+    );
     Ok(CommandResponse::ok(()))
 }
 
@@ -2503,11 +3051,11 @@ pub async fn delete_all_passive_vulnerabilities(
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service().await?;
-    
+
     db.delete_all_vulnerabilities()
         .await
         .map_err(|e| format!("Failed to delete all vulnerabilities: {}", e))?;
-    
+
     tracing::info!("All vulnerabilities deleted");
     Ok(CommandResponse::ok(()))
 }
@@ -2529,34 +3077,94 @@ pub async fn start_proxy_listener(
     port: u16,
     index: usize,
 ) -> Result<CommandResponse<String>, String> {
-    tracing::info!("Starting proxy listener on {}:{} (index: {})", host, port, index);
-    
+    tracing::info!(
+        "Starting proxy listener on {}:{} (index: {})",
+        host,
+        port,
+        index
+    );
+
     // 检查代理是否已经在运行
     let is_running = *state.is_running.read().await;
     if is_running {
         // 如果代理已经在运行，直接返回成功
         tracing::info!("Proxy already running, listener request acknowledged");
-        return Ok(CommandResponse::ok(format!("Listener {}:{} is already running", host, port)));
+        return Ok(CommandResponse::ok(format!(
+            "Listener {}:{} is already running",
+            host, port
+        )));
     }
-    
-    // 创建代理配置
-    let config = ProxyConfig {
-        start_port: port,
-        max_port_attempts: 1,
-        mitm_enabled: true,
-        max_request_body_size: 2 * 1024 * 1024,
-        max_response_body_size: 2 * 1024 * 1024,
-        mitm_bypass_fail_threshold: 3,
+
+    // 从数据库加载代理配置
+    let db = state.get_db_service().await.map_err(|e| {
+        tracing::error!("Failed to get database service: {}", e);
+        format!("Failed to get database service: {}", e)
+    })?;
+
+    let mut config = match db.load_config("proxy_config").await {
+        Ok(Some(config_json)) => {
+            match serde_json::from_str::<ProxyConfig>(&config_json) {
+                Ok(config) => {
+                    tracing::info!("Loaded proxy configuration from database for listener: {:?}", config);
+                    config
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize config, using default: {}", e);
+                    ProxyConfig {
+                        start_port: port,
+                        max_port_attempts: 1,
+                        mitm_enabled: true,
+                        max_request_body_size: 2 * 1024 * 1024,
+                        max_response_body_size: 2 * 1024 * 1024,
+                        mitm_bypass_fail_threshold: 3,
+                        upstream_proxy: None,
+                    }
+                }
+            }
+        }
+        Ok(None) => {
+            tracing::info!("No saved configuration found, using default");
+            ProxyConfig {
+                start_port: port,
+                max_port_attempts: 1,
+                mitm_enabled: true,
+                max_request_body_size: 2 * 1024 * 1024,
+                max_response_body_size: 2 * 1024 * 1024,
+                mitm_bypass_fail_threshold: 3,
+                upstream_proxy: None,
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load config from database, using default: {}", e);
+            ProxyConfig {
+                start_port: port,
+                max_port_attempts: 1,
+                mitm_enabled: true,
+                max_request_body_size: 2 * 1024 * 1024,
+                max_response_body_size: 2 * 1024 * 1024,
+                mitm_bypass_fail_threshold: 3,
+                upstream_proxy: None,
+            }
+        }
     };
-    
+
+    // 使用传入的端口覆盖配置中的端口
+    config.start_port = port;
+    config.max_port_attempts = 1;
+
     // 调用启动代理的命令
     match start_passive_scan(app, state, Some(config)).await {
         Ok(response) => {
             if response.success {
                 tracing::info!("Proxy listener started successfully on {}:{}", host, port);
-                Ok(CommandResponse::ok(format!("Listener started on {}:{}", host, port)))
+                Ok(CommandResponse::ok(format!(
+                    "Listener started on {}:{}",
+                    host, port
+                )))
             } else {
-                let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
+                let error_msg = response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string());
                 Ok(CommandResponse::err(error_msg))
             }
         }
@@ -2575,7 +3183,7 @@ pub async fn stop_proxy_listener(
     index: usize,
 ) -> Result<CommandResponse<String>, String> {
     tracing::info!("Stopping proxy listener at index: {}", index);
-    
+
     // 调用停止代理的命令
     match stop_passive_scan(app, state).await {
         Ok(response) => {
@@ -2583,7 +3191,9 @@ pub async fn stop_proxy_listener(
                 tracing::info!("Proxy listener stopped successfully");
                 Ok(CommandResponse::ok("Listener stopped".to_string()))
             } else {
-                let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
+                let error_msg = response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string());
                 Ok(CommandResponse::err(error_msg))
             }
         }
@@ -2601,25 +3211,27 @@ pub async fn save_proxy_config(
     config: ProxyConfig,
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Saving proxy configuration: {:?}", config);
-    
+
     // 获取数据库服务
     let db = state.get_db_service().await.map_err(|e| {
         tracing::error!("Failed to get database service: {}", e);
         format!("Failed to get database service: {}", e)
     })?;
-    
+
     // 将配置序列化为 JSON
     let config_json = serde_json::to_string(&config).map_err(|e| {
         tracing::error!("Failed to serialize config: {}", e);
         format!("Failed to serialize config: {}", e)
     })?;
-    
+
     // 保存到数据库
-    db.save_config("proxy_config", &config_json).await.map_err(|e| {
-        tracing::error!("Failed to save config to database: {}", e);
-        format!("Failed to save config: {}", e)
-    })?;
-    
+    db.save_config("proxy_config", &config_json)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to save config to database: {}", e);
+            format!("Failed to save config: {}", e)
+        })?;
+
     tracing::info!("Proxy configuration saved successfully");
     Ok(CommandResponse::ok(()))
 }
@@ -2630,13 +3242,13 @@ pub async fn get_proxy_config(
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<ProxyConfig>, String> {
     tracing::info!("Getting proxy configuration");
-    
+
     // 获取数据库服务
     let db = state.get_db_service().await.map_err(|e| {
         tracing::error!("Failed to get database service: {}", e);
         format!("Failed to get database service: {}", e)
     })?;
-    
+
     // 从数据库加载配置
     let config = match db.load_config("proxy_config").await {
         Ok(Some(config_json)) => {
@@ -2661,7 +3273,7 @@ pub async fn get_proxy_config(
             ProxyConfig::default()
         }
     };
-    
+
     Ok(CommandResponse::ok(config))
 }
 
@@ -2677,14 +3289,17 @@ pub async fn set_intercept_enabled(
     enabled: bool,
 ) -> Result<CommandResponse<bool>, String> {
     tracing::info!("Setting intercept enabled: {}", enabled);
-    
+
     // 保存 AppHandle
     state.set_app_handle(app).await;
-    
+
     let mut intercept = state.intercept_enabled.write().await;
     *intercept = enabled;
-    
-    tracing::info!("Intercept mode {}", if enabled { "enabled" } else { "disabled" });
+
+    tracing::info!(
+        "Intercept mode {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
     Ok(CommandResponse::ok(enabled))
 }
 
@@ -2703,9 +3318,7 @@ pub async fn get_intercepted_requests(
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<Vec<InterceptedRequest>>, String> {
     let requests = state.intercepted_requests.read().await;
-    let list: Vec<InterceptedRequest> = requests.values()
-        .map(|r| r.request.clone())
-        .collect();
+    let list: Vec<InterceptedRequest> = requests.values().map(|r| r.request.clone()).collect();
     Ok(CommandResponse::ok(list))
 }
 
@@ -2717,15 +3330,20 @@ pub async fn forward_intercepted_request(
     modified_content: Option<String>,
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Forwarding intercepted request: {}", request_id);
-    
+
     let mut requests = state.intercepted_requests.write().await;
     if let Some(req_internal) = requests.remove(&request_id) {
-        let _ = req_internal.response_tx.send(InterceptAction::Forward(modified_content));
+        let _ = req_internal
+            .response_tx
+            .send(InterceptAction::Forward(modified_content));
         tracing::info!("Request forwarded: {}", request_id);
         Ok(CommandResponse::ok(()))
     } else {
         tracing::warn!("Request not found: {}", request_id);
-        Ok(CommandResponse::err(format!("Request not found: {}", request_id)))
+        Ok(CommandResponse::err(format!(
+            "Request not found: {}",
+            request_id
+        )))
     }
 }
 
@@ -2736,7 +3354,7 @@ pub async fn drop_intercepted_request(
     request_id: String,
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Dropping intercepted request: {}", request_id);
-    
+
     let mut requests = state.intercepted_requests.write().await;
     if let Some(req_internal) = requests.remove(&request_id) {
         let _ = req_internal.response_tx.send(InterceptAction::Drop);
@@ -2744,7 +3362,10 @@ pub async fn drop_intercepted_request(
         Ok(CommandResponse::ok(()))
     } else {
         tracing::warn!("Request not found: {}", request_id);
-        Ok(CommandResponse::err(format!("Request not found: {}", request_id)))
+        Ok(CommandResponse::err(format!(
+            "Request not found: {}",
+            request_id
+        )))
     }
 }
 
@@ -2760,14 +3381,17 @@ pub async fn set_response_intercept_enabled(
     enabled: bool,
 ) -> Result<CommandResponse<bool>, String> {
     tracing::info!("Setting response intercept enabled: {}", enabled);
-    
+
     // 保存 AppHandle
     state.set_app_handle(app).await;
-    
+
     let mut intercept = state.response_intercept_enabled.write().await;
     *intercept = enabled;
-    
-    tracing::info!("Response intercept mode {}", if enabled { "enabled" } else { "disabled" });
+
+    tracing::info!(
+        "Response intercept mode {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
     Ok(CommandResponse::ok(enabled))
 }
 
@@ -2786,9 +3410,7 @@ pub async fn get_intercepted_responses(
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<Vec<InterceptedResponse>>, String> {
     let responses = state.intercepted_responses.read().await;
-    let list: Vec<InterceptedResponse> = responses.values()
-        .map(|r| r.response.clone())
-        .collect();
+    let list: Vec<InterceptedResponse> = responses.values().map(|r| r.response.clone()).collect();
     Ok(CommandResponse::ok(list))
 }
 
@@ -2800,15 +3422,20 @@ pub async fn forward_intercepted_response(
     modified_content: Option<String>,
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Forwarding intercepted response: {}", response_id);
-    
+
     let mut responses = state.intercepted_responses.write().await;
     if let Some(resp_internal) = responses.remove(&response_id) {
-        let _ = resp_internal.response_tx.send(InterceptAction::Forward(modified_content));
+        let _ = resp_internal
+            .response_tx
+            .send(InterceptAction::Forward(modified_content));
         tracing::info!("Response forwarded: {}", response_id);
         Ok(CommandResponse::ok(()))
     } else {
         tracing::warn!("Response not found: {}", response_id);
-        Ok(CommandResponse::err(format!("Response not found: {}", response_id)))
+        Ok(CommandResponse::err(format!(
+            "Response not found: {}",
+            response_id
+        )))
     }
 }
 
@@ -2819,7 +3446,7 @@ pub async fn drop_intercepted_response(
     response_id: String,
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Dropping intercepted response: {}", response_id);
-    
+
     let mut responses = state.intercepted_responses.write().await;
     if let Some(resp_internal) = responses.remove(&response_id) {
         let _ = resp_internal.response_tx.send(InterceptAction::Drop);
@@ -2827,7 +3454,10 @@ pub async fn drop_intercepted_response(
         Ok(CommandResponse::ok(()))
     } else {
         tracing::warn!("Response not found: {}", response_id);
-        Ok(CommandResponse::err(format!("Response not found: {}", response_id)))
+        Ok(CommandResponse::err(format!(
+            "Response not found: {}",
+            response_id
+        )))
     }
 }
 
@@ -2853,17 +3483,17 @@ pub async fn replay_request(
     body: Option<String>,
 ) -> Result<CommandResponse<ReplayResult>, String> {
     tracing::info!("Replaying request: {} {}", method, url);
-    
+
     let start = std::time::Instant::now();
-    
+
     // 创建 HTTP 客户端（禁用证书验证和代理以避免循环）
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
-        .no_proxy()  // 禁用代理，避免通过自身代理造成循环
+        .no_proxy() // 禁用代理，避免通过自身代理造成循环
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
+
     // 构建请求
     let mut request = match method.to_uppercase().as_str() {
         "GET" => client.get(&url),
@@ -2873,27 +3503,34 @@ pub async fn replay_request(
         "PATCH" => client.patch(&url),
         "HEAD" => client.head(&url),
         "OPTIONS" => client.request(reqwest::Method::OPTIONS, &url),
-        _ => return Ok(CommandResponse::err(format!("Unsupported method: {}", method))),
+        _ => {
+            return Ok(CommandResponse::err(format!(
+                "Unsupported method: {}",
+                method
+            )))
+        }
     };
-    
+
     // 添加请求头
     if let Some(hdrs) = headers {
         for (key, value) in hdrs {
             request = request.header(&key, &value);
         }
     }
-    
+
     // 添加请求体
     if let Some(body_content) = body {
         request = request.body(body_content);
     }
-    
+
     // 发送请求
-    let response = request.send().await
+    let response = request
+        .send()
+        .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
-    
+
     let elapsed = start.elapsed().as_millis() as u64;
-    
+
     // 提取响应信息
     let status_code = response.status().as_u16();
     let mut resp_headers = std::collections::HashMap::new();
@@ -2902,13 +3539,21 @@ pub async fn replay_request(
             resp_headers.insert(name.to_string(), v.to_string());
         }
     }
-    
+
     // 读取响应体
-    let body = response.text().await
+    let body = response
+        .text()
+        .await
         .unwrap_or_else(|e| format!("[Failed to read body: {}]", e));
-    
-    tracing::info!("Replay completed: {} {} - {} in {}ms", method, url, status_code, elapsed);
-    
+
+    tracing::info!(
+        "Replay completed: {} {} - {} in {}ms",
+        method,
+        url,
+        status_code,
+        elapsed
+    );
+
     Ok(CommandResponse::ok(ReplayResult {
         status_code,
         headers: resp_headers,
@@ -2921,16 +3566,18 @@ pub async fn replay_request(
 fn decode_chunked(data: &[u8]) -> Vec<u8> {
     let mut result = Vec::new();
     let mut pos = 0;
-    
+
     while pos < data.len() {
         // 查找 chunk size 行结束
         let line_end = data[pos..]
             .windows(2)
             .position(|w| w == b"\r\n")
             .map(|p| pos + p);
-        
-        let Some(line_end) = line_end else { break; };
-        
+
+        let Some(line_end) = line_end else {
+            break;
+        };
+
         // 解析 chunk size（十六进制）
         let size_str = String::from_utf8_lossy(&data[pos..line_end]);
         let size_str = size_str.split(';').next().unwrap_or("").trim();
@@ -2938,22 +3585,26 @@ fn decode_chunked(data: &[u8]) -> Vec<u8> {
             Ok(s) => s,
             Err(_) => break,
         };
-        
+
         // chunk size 为 0 表示结束
-        if chunk_size == 0 { break; }
-        
+        if chunk_size == 0 {
+            break;
+        }
+
         // 读取 chunk 数据
         let chunk_start = line_end + 2;
         let chunk_end = chunk_start + chunk_size;
-        
-        if chunk_end > data.len() { break; }
-        
+
+        if chunk_end > data.len() {
+            break;
+        }
+
         result.extend_from_slice(&data[chunk_start..chunk_end]);
-        
+
         // 跳过 chunk 数据后的 \r\n
         pos = chunk_end + 2;
     }
-    
+
     if result.is_empty() {
         data.to_vec()
     } else {
@@ -2963,44 +3614,44 @@ fn decode_chunked(data: &[u8]) -> Vec<u8> {
 
 /// 解码 HTTP 响应（处理 chunked 传输编码和 gzip/deflate 压缩）
 fn decode_http_response(response_buf: &[u8]) -> String {
-    use flate2::read::{GzDecoder, DeflateDecoder};
+    use flate2::read::{DeflateDecoder, GzDecoder};
     use std::io::Read;
-    
+
     // 查找响应头和响应体的分隔点
     let header_end = response_buf
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
         .map(|p| p + 4);
-    
+
     let Some(header_end) = header_end else {
         return String::from_utf8_lossy(response_buf).to_string();
     };
-    
+
     let header_bytes = &response_buf[..header_end];
     let body_bytes = &response_buf[header_end..];
-    
+
     // 解析响应头
     let header_str = String::from_utf8_lossy(header_bytes);
     let header_lower = header_str.to_lowercase();
-    
+
     // 检查 Transfer-Encoding
     let is_chunked = header_lower
         .lines()
         .any(|line| line.starts_with("transfer-encoding:") && line.contains("chunked"));
-    
+
     // 检查 Content-Encoding
     let content_encoding = header_str
         .lines()
         .find(|line| line.to_lowercase().starts_with("content-encoding:"))
         .map(|line| line.split(':').nth(1).unwrap_or("").trim().to_lowercase());
-    
+
     // 1. 先处理 chunked 编码
     let body_bytes = if is_chunked {
         decode_chunked(body_bytes)
     } else {
         body_bytes.to_vec()
     };
-    
+
     // 2. 再处理压缩编码
     let decoded_body = match content_encoding.as_deref() {
         Some("gzip") => {
@@ -3008,8 +3659,11 @@ fn decode_http_response(response_buf: &[u8]) -> String {
             let mut decoded = Vec::new();
             match decoder.read_to_end(&mut decoded) {
                 Ok(_) => {
-                    tracing::debug!("Successfully decoded gzip response, {} -> {} bytes", 
-                        body_bytes.len(), decoded.len());
+                    tracing::debug!(
+                        "Successfully decoded gzip response, {} -> {} bytes",
+                        body_bytes.len(),
+                        decoded.len()
+                    );
                     decoded
                 }
                 Err(e) => {
@@ -3036,7 +3690,7 @@ fn decode_http_response(response_buf: &[u8]) -> String {
         }
         _ => body_bytes,
     };
-    
+
     // 组合响应头和解码后的响应体
     let mut result = String::from_utf8_lossy(header_bytes).to_string();
     result.push_str(&String::from_utf8_lossy(&decoded_body));
@@ -3046,29 +3700,29 @@ fn decode_http_response(response_buf: &[u8]) -> String {
 /// 智能读取 HTTP 响应（根据 Content-Length 或 chunked 编码判断响应结束）
 async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
-    
+
     let mut response_buf = Vec::new();
     let mut buf = [0u8; 8192];
     let mut headers_parsed = false;
     let mut content_length: Option<usize> = None;
     let mut is_chunked = false;
     let mut header_end_pos: Option<usize> = None;
-    
+
     // 短超时用于检测响应结束（500ms 没有新数据就认为响应完成）
     let read_timeout = std::time::Duration::from_millis(500);
-    
+
     loop {
         match tokio::time::timeout(read_timeout, stream.read(&mut buf)).await {
             Ok(Ok(0)) => break, // EOF
             Ok(Ok(n)) => {
                 response_buf.extend_from_slice(&buf[..n]);
-                
+
                 // 解析响应头（只解析一次）
                 if !headers_parsed {
                     if let Some(pos) = response_buf.windows(4).position(|w| w == b"\r\n\r\n") {
                         header_end_pos = Some(pos + 4);
                         headers_parsed = true;
-                        
+
                         // 解析头部
                         let header_str = String::from_utf8_lossy(&response_buf[..pos]);
                         for line in header_str.lines() {
@@ -3077,25 +3731,27 @@ async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> 
                                 if let Some(len_str) = line.split(':').nth(1) {
                                     content_length = len_str.trim().parse().ok();
                                 }
-                            } else if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
+                            } else if lower.starts_with("transfer-encoding:")
+                                && lower.contains("chunked")
+                            {
                                 is_chunked = true;
                             }
                         }
                     }
                 }
-                
+
                 // 检查是否已读取完整响应
                 if headers_parsed {
                     if let Some(header_end) = header_end_pos {
                         let body_len = response_buf.len() - header_end;
-                        
+
                         // 有 Content-Length：检查是否已读取足够字节
                         if let Some(expected_len) = content_length {
                             if body_len >= expected_len {
                                 break;
                             }
                         }
-                        
+
                         // chunked 编码：检查是否以 0\r\n\r\n 结尾
                         if is_chunked && response_buf.len() >= 5 {
                             let tail = &response_buf[response_buf.len().saturating_sub(7)..];
@@ -3124,7 +3780,7 @@ async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> 
             }
         }
     }
-    
+
     response_buf
 }
 
@@ -3146,19 +3802,24 @@ pub async fn replay_raw_request(
 ) -> Result<CommandResponse<RawReplayResult>, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
-    
-    tracing::info!("Replaying raw request to {}:{} (TLS: {})", host, port, use_tls);
-    
+
+    tracing::info!(
+        "Replaying raw request to {}:{} (TLS: {})",
+        host,
+        port,
+        use_tls
+    );
+
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(30));
-    
+
     // 连接到目标服务器
     let addr = format!("{}:{}", host, port);
     let stream = tokio::time::timeout(timeout, TcpStream::connect(&addr))
         .await
         .map_err(|_| format!("Connection timeout to {}", addr))?
         .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
-    
+
     let response_buf = if use_tls {
         // TLS 连接
         let connector = tokio_native_tls::TlsConnector::from(
@@ -3166,49 +3827,284 @@ pub async fn replay_raw_request(
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true)
                 .build()
-                .map_err(|e| format!("Failed to create TLS connector: {}", e))?
+                .map_err(|e| format!("Failed to create TLS connector: {}", e))?,
         );
-        
+
         let mut tls_stream = tokio::time::timeout(timeout, connector.connect(&host, stream))
             .await
             .map_err(|_| "TLS handshake timeout".to_string())?
             .map_err(|e| format!("TLS handshake failed: {}", e))?;
-        
+
         // 发送原始请求
-        tls_stream.write_all(raw_request.as_bytes())
+        tls_stream
+            .write_all(raw_request.as_bytes())
             .await
             .map_err(|e| format!("Failed to send request: {}", e))?;
-        tls_stream.flush()
+        tls_stream
+            .flush()
             .await
             .map_err(|e| format!("Failed to flush: {}", e))?;
-        
+
         // 智能读取响应
         read_http_response(&mut tls_stream).await
     } else {
         // 普通 TCP 连接
         let mut stream = stream;
-        
+
         // 发送原始请求
-        stream.write_all(raw_request.as_bytes())
+        stream
+            .write_all(raw_request.as_bytes())
             .await
             .map_err(|e| format!("Failed to send request: {}", e))?;
-        stream.flush()
+        stream
+            .flush()
             .await
             .map_err(|e| format!("Failed to flush: {}", e))?;
-        
+
         // 智能读取响应
         read_http_response(&mut stream).await
     };
-    
+
     // 处理响应：检查是否需要解压 gzip
     let raw_response = decode_http_response(&response_buf);
-    
+
     let elapsed = start.elapsed().as_millis() as u64;
-    tracing::info!("Raw replay completed to {}:{} in {}ms, response size: {} bytes", 
-        host, port, elapsed, raw_response.len());
-    
+    tracing::info!(
+        "Raw replay completed to {}:{} in {}ms, response size: {} bytes",
+        host,
+        port,
+        elapsed,
+        raw_response.len()
+    );
+
     Ok(CommandResponse::ok(RawReplayResult {
         raw_response,
         response_time_ms: elapsed,
     }))
+}
+
+// ==========================================
+// WebSocket 拦截控制命令
+// ==========================================
+
+/// 获取 WebSocket 拦截状态
+#[tauri::command]
+pub async fn get_websocket_intercept_enabled(
+    state: tauri::State<'_, PassiveScanState>,
+) -> Result<CommandResponse<bool>, String> {
+    let enabled = *state.websocket_intercept_enabled.read().await;
+    Ok(CommandResponse::ok(enabled))
+}
+
+/// 设置 WebSocket 拦截是否启用
+#[tauri::command]
+pub async fn set_websocket_intercept_enabled(
+    state: tauri::State<'_, PassiveScanState>,
+    enabled: bool,
+) -> Result<CommandResponse<()>, String> {
+    let mut guard = state.websocket_intercept_enabled.write().await;
+    *guard = enabled;
+    tracing::info!("WebSocket intercept enabled set to: {}", enabled);
+    Ok(CommandResponse::ok(()))
+}
+
+/// 转发拦截的 WebSocket 消息（可选修改内容）
+#[tauri::command]
+pub async fn forward_intercepted_websocket(
+    state: tauri::State<'_, PassiveScanState>,
+    id: String,
+    content: Option<String>,
+) -> Result<CommandResponse<()>, String> {
+    let mut messages = state.intercepted_websocket_messages.write().await;
+    if let Some(msg) = messages.remove(&id) {
+        if msg
+            .response_tx
+            .send(sentinel_passive::InterceptAction::Forward(content))
+            .is_err()
+        {
+            return Err("Failed to send forward action: receiver dropped".to_string());
+        }
+        tracing::info!("Forwarded intercepted WebSocket message: {}", id);
+        Ok(CommandResponse::ok(()))
+    } else {
+        Err(format!("Intercepted message not found: {}", id))
+    }
+}
+
+/// 丢弃拦截的 WebSocket 消息
+#[tauri::command]
+pub async fn drop_intercepted_websocket(
+    state: tauri::State<'_, PassiveScanState>,
+    id: String,
+) -> Result<CommandResponse<()>, String> {
+    let mut messages = state.intercepted_websocket_messages.write().await;
+    if let Some(msg) = messages.remove(&id) {
+        if msg
+            .response_tx
+            .send(sentinel_passive::InterceptAction::Drop)
+            .is_err()
+        {
+            return Err("Failed to send drop action: receiver dropped".to_string());
+        }
+        tracing::info!("Dropped intercepted WebSocket message: {}", id);
+        Ok(CommandResponse::ok(()))
+    } else {
+        Err(format!("Intercepted message not found: {}", id))
+    }
+}
+
+// ============================================================
+// 拦截过滤规则相关命令
+// ============================================================
+
+/// 拦截过滤规则
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InterceptFilterRule {
+    /// 规则 ID
+    pub id: String,
+    /// 规则类型: request, response
+    pub rule_type: String,
+    /// 匹配类型: domain, url, method, fileExt, header, status, contentType
+    pub match_type: String,
+    /// 匹配关系: matches, notMatches, contains, notContains
+    pub relationship: String,
+    /// 匹配条件
+    pub condition: String,
+    /// 动作: exclude, include
+    pub action: String,
+    /// 是否启用
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+/// 拦截过滤规则列表
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct InterceptFilterRules {
+    pub rules: Vec<InterceptFilterRule>,
+}
+
+/// 添加拦截过滤规则
+#[tauri::command]
+pub async fn add_intercept_filter_rule(
+    state: State<'_, PassiveScanState>,
+    rule: InterceptFilterRule,
+) -> Result<CommandResponse<InterceptFilterRule>, String> {
+    tracing::info!("Adding intercept filter rule: {:?}", rule);
+
+    let db = state.get_db_service().await.map_err(|e| {
+        tracing::error!("Failed to get database service: {}", e);
+        format!("Failed to get database service: {}", e)
+    })?;
+
+    // Load existing rules
+    let mut rules = match db.load_config("intercept_filter_rules").await {
+        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
+        _ => InterceptFilterRules::default(),
+    };
+
+    // Create new rule with ID
+    let new_rule = InterceptFilterRule {
+        id: uuid::Uuid::new_v4().to_string(),
+        rule_type: rule.rule_type,
+        match_type: rule.match_type,
+        relationship: rule.relationship,
+        condition: rule.condition,
+        action: rule.action,
+        enabled: rule.enabled,
+    };
+
+    rules.rules.push(new_rule.clone());
+
+    // Save rules
+    let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
+    db.save_config("intercept_filter_rules", &json)
+        .await
+        .map_err(|e| format!("Failed to save rules: {}", e))?;
+
+    tracing::info!("Intercept filter rule added: {}", new_rule.id);
+    Ok(CommandResponse::ok(new_rule))
+}
+
+/// 获取所有拦截过滤规则
+#[tauri::command]
+pub async fn get_intercept_filter_rules(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<Vec<InterceptFilterRule>>, String> {
+    let db = state.get_db_service().await.map_err(|e| {
+        format!("Failed to get database service: {}", e)
+    })?;
+
+    let rules = match db.load_config("intercept_filter_rules").await {
+        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json)
+            .unwrap_or_default()
+            .rules,
+        _ => Vec::new(),
+    };
+
+    Ok(CommandResponse::ok(rules))
+}
+
+/// 删除拦截过滤规则
+#[tauri::command]
+pub async fn remove_intercept_filter_rule(
+    state: State<'_, PassiveScanState>,
+    rule_id: String,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Removing intercept filter rule: {}", rule_id);
+
+    let db = state.get_db_service().await.map_err(|e| {
+        format!("Failed to get database service: {}", e)
+    })?;
+
+    let mut rules = match db.load_config("intercept_filter_rules").await {
+        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
+        _ => InterceptFilterRules::default(),
+    };
+
+    rules.rules.retain(|r| r.id != rule_id);
+
+    let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
+    db.save_config("intercept_filter_rules", &json)
+        .await
+        .map_err(|e| format!("Failed to save rules: {}", e))?;
+
+    tracing::info!("Intercept filter rule removed: {}", rule_id);
+    Ok(CommandResponse::ok(()))
+}
+
+/// 更新拦截过滤规则
+#[tauri::command]
+pub async fn update_intercept_filter_rule(
+    state: State<'_, PassiveScanState>,
+    rule: InterceptFilterRule,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Updating intercept filter rule: {:?}", rule);
+
+    let db = state.get_db_service().await.map_err(|e| {
+        format!("Failed to get database service: {}", e)
+    })?;
+
+    let mut rules = match db.load_config("intercept_filter_rules").await {
+        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
+        _ => InterceptFilterRules::default(),
+    };
+
+    // Find and update the rule
+    if let Some(existing) = rules.rules.iter_mut().find(|r| r.id == rule.id) {
+        *existing = rule;
+    } else {
+        return Ok(CommandResponse::err(format!("Rule not found: {}", rule.id)));
+    }
+
+    let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
+    db.save_config("intercept_filter_rules", &json)
+        .await
+        .map_err(|e| format!("Failed to save rules: {}", e))?;
+
+    tracing::info!("Intercept filter rule updated");
+    Ok(CommandResponse::ok(()))
 }

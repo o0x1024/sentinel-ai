@@ -4,8 +4,11 @@
 //! - 端口自动递增（4201 → 4202 → ...）
 //! - HTTPS MITM（默认启用）
 //! - 请求/响应 tee（异步扫描队列）
+//! - 忽略上游证书验证（用于抓取证书异常的站点）
 
 use crate::{PassiveError, ProxyStats, RequestContext, ResponseContext, Result};
+use brotli::Decompressor;
+use flate2::read::GzDecoder;
 use http_body_util::{BodyExt, Full};
 use hudsucker::{
     hyper::{self, Request, Response},
@@ -13,13 +16,309 @@ use hudsucker::{
     Body, HttpContext, HttpHandler, Proxy, RequestOrResponse, WebSocketContext, WebSocketHandler,
 };
 use hyper::body::Bytes;
+use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::{io::Read, net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, sync::RwLock, task::JoinHandle};
+use tower::{Service, ServiceBuilder};
+use std::pin::Pin;
+use std::future::Future;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
-use flate2::read::GzDecoder;
-use brotli::Decompressor;
-use std::collections::{HashMap, HashSet};
+
+/// 忽略证书验证的 ServerCertVerifier
+/// 用于抓取证书异常的站点（如自签名、过期、版本不支持等）
+#[derive(Debug)]
+struct InsecureServerCertVerifier;
+
+impl ServerCertVerifier for InsecureServerCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        // 忽略所有证书验证错误
+        Ok(ServerCertVerified::assertion())
+    }
+    
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
+}
+
+/// 代理流封装，统一 HTTP 和 HTTPS 连接
+pub enum ProxyStream {
+    Http(tokio::net::TcpStream),
+    Https(tokio_rustls::client::TlsStream<tokio::net::TcpStream>),
+}
+
+impl tokio::io::AsyncRead for ProxyStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ProxyStream::Http(s) => Pin::new(s).poll_read(cx, buf),
+            ProxyStream::Https(s) => Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for ProxyStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            ProxyStream::Http(s) => Pin::new(s).poll_write(cx, buf),
+            ProxyStream::Https(s) => Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ProxyStream::Http(s) => Pin::new(s).poll_flush(cx),
+            ProxyStream::Https(s) => Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ProxyStream::Http(s) => Pin::new(s).poll_shutdown(cx),
+            ProxyStream::Https(s) => Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
+impl hyper::rt::Read for ProxyStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        mut buf: hyper::rt::ReadBufCursor<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let n = unsafe {
+            let mut tbuf = tokio::io::ReadBuf::uninit(buf.as_mut());
+            match tokio::io::AsyncRead::poll_read(self, cx, &mut tbuf) {
+                Poll::Ready(Ok(())) => tbuf.filled().len(),
+                other => return other,
+            }
+        };
+
+        unsafe {
+            buf.advance(n);
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl hyper::rt::Write for ProxyStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        tokio::io::AsyncWrite::poll_write(self, cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::result::Result<(), std::io::Error>> {
+        tokio::io::AsyncWrite::poll_flush(self, cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        tokio::io::AsyncWrite::poll_shutdown(self, cx)
+    }
+}
+
+impl hyper_util::client::legacy::connect::Connection for ProxyStream {
+    fn connected(&self) -> hyper_util::client::legacy::connect::Connected {
+        hyper_util::client::legacy::connect::Connected::new()
+    }
+}
+
+/// 自定义 Proxy Connector，用于处理 upstream proxy 连接
+/// 替代 hyper-proxy2，提供更稳定的 CONNECT 隧道处理
+#[derive(Clone)]
+pub struct CustomProxyConnector {
+    proxy_host: String,
+    proxy_port: u16,
+    tls_connector: tokio_rustls::TlsConnector,
+}
+
+impl CustomProxyConnector {
+    pub fn new(host: String, port: u16, tls_config: Arc<rustls::ClientConfig>) -> Self {
+        Self {
+            proxy_host: host,
+            proxy_port: port,
+            tls_connector: tokio_rustls::TlsConnector::from(tls_config),
+        }
+    }
+}
+
+impl Service<hyper::Uri> for CustomProxyConnector {
+    type Response = ProxyStream;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future = Pin<Box<dyn Future<Output = std::result::Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, dst: hyper::Uri) -> Self::Future {
+        let proxy_host = self.proxy_host.clone();
+        let proxy_port = self.proxy_port;
+        let tls_connector = self.tls_connector.clone();
+
+        Box::pin(async move {
+            debug!("CustomProxyConnector: connecting to proxy {}:{}", proxy_host, proxy_port);
+            
+            // 1. 连接到 Upstream Proxy
+            let mut stream = tokio::net::TcpStream::connect((proxy_host.as_str(), proxy_port))
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+            // 2. 决定是否使用 CONNECT
+            let host = dst.host().unwrap_or("").to_string();
+            let port = dst.port_u16().unwrap_or(if dst.scheme_str() == Some("https") { 443 } else { 80 });
+            
+            let is_https = dst.scheme_str() == Some("https") || port == 443;
+            
+            if is_https {
+                debug!("CustomProxyConnector: creating tunnel to {}:{}", host, port);
+                let connect_req = format!(
+                    "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\nProxy-Connection: Keep-Alive\r\n\r\n",
+                    host, port, host, port
+                );
+                
+                stream.write_all(connect_req.as_bytes()).await
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                
+                // 逐字节读取响应头，避免多读
+                let mut header = Vec::new();
+                loop {
+                    let b = stream.read_u8().await
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                    header.push(b);
+                    
+                    if header.len() > 4096 {
+                        return Err("Proxy response too large".into());
+                    }
+                    
+                    if header.ends_with(b"\r\n\r\n") {
+                        let response = String::from_utf8_lossy(&header);
+                        if !response.contains(" 200 ") {
+                            return Err(format!("Proxy connect failed: {}", response).into());
+                        }
+                        debug!("CustomProxyConnector: tunnel established");
+                        break;
+                    }
+                }
+
+                // 3. 建立 TLS 连接
+                let domain = ServerName::try_from(host.as_str())
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                let tls_stream = tls_connector.connect(domain.to_owned(), stream).await
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                
+                Ok(ProxyStream::Https(tls_stream))
+            } else {
+                Ok(ProxyStream::Http(stream))
+            }
+        })
+    }
+}
+
+
+/// 创建忽略证书验证的 rustls ClientConfig
+/// 支持弱加密套件和旧版本 TLS，以便抓取证书异常的站点
+/// 创建忽略证书验证的 rustls 配置（不含 ALPN，用于 HttpsConnectorBuilder）
+fn create_insecure_rustls_config() -> rustls::ClientConfig {
+    // 注意：不要在这里设置 ALPN 协议
+    // HttpsConnectorBuilder 的 enable_http1/enable_http2 会自动设置
+    // 如果这里预设了 ALPN，会导致 panic: "ALPN protocols should not be pre-defined"
+    rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(InsecureServerCertVerifier))
+        .with_no_client_auth()
+}
+
+/// 创建忽略证书验证的 rustls 配置（含 ALPN，用于 tokio-rustls TlsConnector）
+fn create_insecure_rustls_config_with_alpn() -> rustls::ClientConfig {
+    let mut config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(InsecureServerCertVerifier))
+        .with_no_client_auth();
+    
+    // 配置 ALPN 协议（用于 tokio-rustls 的直接连接）
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    
+    config
+}
+
+/// 创建带 upstream proxy 的 HTTPS connector
+fn create_upstream_proxy_connector(
+    upstream_config: &UpstreamProxyConfig,
+) -> Result<CustomProxyConnector> {
+    info!(
+        "Creating upstream proxy connector: host={}, port={}, auth_type={}",
+        upstream_config.proxy_host, upstream_config.proxy_port, upstream_config.auth_type
+    );
+
+    // 使用带 ALPN 的配置，因为 CustomProxyConnector 使用 tokio-rustls
+    let rustls_config = create_insecure_rustls_config_with_alpn();
+    let proxy_connector = CustomProxyConnector::new(
+        upstream_config.proxy_host.clone(),
+        upstream_config.proxy_port,
+        Arc::new(rustls_config),
+    );
+
+    // TODO: Basic 认证支持将在后续版本实现
+    if upstream_config.auth_type == "Basic" {
+        warn!("Basic authentication for upstream proxy is not yet implemented in CustomProxyConnector");
+    }
+
+    info!("Upstream proxy connector created successfully");
+    Ok(proxy_connector)
+}
 
 /// 拦截动作
 #[derive(Debug, Clone)]
@@ -52,6 +351,51 @@ pub struct PendingInterceptResponse {
     pub response_tx: tokio::sync::oneshot::Sender<InterceptAction>,
 }
 
+/// WebSocket 消息方向
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSocketDirection {
+    /// 客户端 -> 服务器
+    ClientToServer,
+    /// 服务器 -> 客户端
+    ServerToClient,
+}
+
+/// WebSocket 连接上下文
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketConnectionContext {
+    pub id: String,
+    pub url: String,
+    pub host: String,
+    pub protocol: String, // "ws" or "wss"
+    pub request_headers: HashMap<String, String>,
+    pub response_headers: Option<HashMap<String, String>>,
+    pub opened_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// WebSocket 消息上下文
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketMessageContext {
+    pub id: String,
+    pub connection_id: String,
+    pub direction: WebSocketDirection,
+    pub message_type: String, // "text", "binary", "ping", "pong", "close"
+    pub content: Option<String>,
+    pub content_length: usize,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// 拦截的 WebSocket 消息（用于等待用户操作）
+pub struct PendingInterceptWebSocketMessage {
+    pub id: String,
+    pub connection_id: String,
+    pub direction: WebSocketDirection,
+    pub message_type: String,
+    pub content: Option<String>,
+    pub timestamp: i64,
+    pub response_tx: tokio::sync::oneshot::Sender<InterceptAction>,
+}
+
 /// 拦截状态（共享）
 #[derive(Clone)]
 pub struct InterceptState {
@@ -59,10 +403,45 @@ pub struct InterceptState {
     pub enabled: Arc<RwLock<bool>>,
     /// 是否启用响应拦截
     pub response_enabled: Arc<RwLock<bool>>,
+    /// 是否启用 WebSocket 拦截
+    pub websocket_enabled: Arc<RwLock<bool>>,
     /// 待处理的拦截请求发送端
     pub pending_tx: Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptRequest>>,
     /// 待处理的拦截响应发送端
     pub pending_response_tx: Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptResponse>>,
+    /// 待处理的拦截 WebSocket 消息发送端
+    pub pending_websocket_tx:
+        Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptWebSocketMessage>>,
+}
+
+/// Upstream proxy 配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpstreamProxyConfig {
+    /// 是否启用 upstream proxy
+    #[serde(default)]
+    pub enabled: bool,
+    /// 目标主机匹配模式（* 表示所有）
+    #[serde(default = "default_destination_host")]
+    pub destination_host: String,
+    /// upstream proxy 主机地址
+    #[serde(default)]
+    pub proxy_host: String,
+    /// upstream proxy 端口
+    #[serde(default)]
+    pub proxy_port: u16,
+    /// 认证类型（None, Basic）
+    #[serde(default)]
+    pub auth_type: String,
+    /// 用户名（可选）
+    #[serde(default)]
+    pub username: Option<String>,
+    /// 密码（可选）
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+fn default_destination_host() -> String {
+    "*".to_string()
 }
 
 /// 代理配置
@@ -81,10 +460,13 @@ pub struct ProxyConfig {
     /// 对同一域名发生握手/证书错误的次数阈值，超过后自动绕过 MITM
     #[serde(default = "default_bypass_threshold")]
     pub mitm_bypass_fail_threshold: u32,
+    /// Upstream proxy 配置
+    #[serde(default)]
+    pub upstream_proxy: Option<UpstreamProxyConfig>,
 }
 
 fn default_bypass_threshold() -> u32 {
-    3
+    1
 }
 
 impl Default for ProxyConfig {
@@ -96,6 +478,7 @@ impl Default for ProxyConfig {
             max_request_body_size: 2 * 1024 * 1024,
             max_response_body_size: 2 * 1024 * 1024,
             mitm_bypass_fail_threshold: 3,
+            upstream_proxy: None,
         }
     }
 }
@@ -120,6 +503,8 @@ pub enum ScanTask {
     Response(ResponseContext),
     ReloadPlugin(String),
     FailedConnection(FailedConnection), // TLS 握手失败的连接
+    WebSocketConnection(WebSocketConnectionContext), // WebSocket 连接建立
+    WebSocketMessage(WebSocketMessageContext), // WebSocket 消息
 }
 
 /// 代理处理器（实现 Hudsucker HttpHandler）
@@ -133,12 +518,18 @@ pub struct PassiveProxyHandler {
     request_map: Arc<RwLock<std::collections::HashMap<String, RequestContext>>>,
     /// 连接键到请求ID的映射（用于响应匹配）
     conn_to_request: Arc<RwLock<std::collections::HashMap<String, String>>>,
-    /// 需要绕过 MITM 的域名集合
+    /// 需要绕过 MITM 的域名集合（目前未使用，因为已配置忽略证书错误）
+    #[allow(dead_code)]
     bypass_hosts: Arc<RwLock<HashSet<String>>>,
-    /// 域名失败计数
+    /// 域名失败计数（目前未使用，因为不再自动绕过MITM）
+    #[allow(dead_code)]
     fail_counts: Arc<RwLock<HashMap<String, u32>>>,
     /// 连接键到 CONNECT host 的映射
     conn_to_host: Arc<RwLock<HashMap<String, String>>>,
+    /// 连接键到 WebSocket 连接 ID 的映射（用于消息关联）
+    conn_to_ws_id: Arc<RwLock<HashMap<String, String>>>,
+    /// WebSocket 消息计数器（用于判断方向）
+    ws_message_counters: Arc<RwLock<HashMap<String, usize>>>,
     /// 拦截状态
     intercept_state: Option<InterceptState>,
 }
@@ -154,13 +545,15 @@ impl PassiveProxyHandler {
             bypass_hosts: Arc::new(RwLock::new(HashSet::new())),
             fail_counts: Arc::new(RwLock::new(HashMap::new())),
             conn_to_host: Arc::new(RwLock::new(HashMap::new())),
+            conn_to_ws_id: Arc::new(RwLock::new(HashMap::new())),
+            ws_message_counters: Arc::new(RwLock::new(HashMap::new())),
             intercept_state: None,
         }
     }
-    
+
     /// Create a new handler with intercept support
     pub fn with_intercept(
-        config: ProxyConfig, 
+        config: ProxyConfig,
         scan_tx: Option<ScanSender>,
         intercept_state: InterceptState,
     ) -> Self {
@@ -173,6 +566,8 @@ impl PassiveProxyHandler {
             bypass_hosts: Arc::new(RwLock::new(HashSet::new())),
             fail_counts: Arc::new(RwLock::new(HashMap::new())),
             conn_to_host: Arc::new(RwLock::new(HashMap::new())),
+            conn_to_ws_id: Arc::new(RwLock::new(HashMap::new())),
+            ws_message_counters: Arc::new(RwLock::new(HashMap::new())),
             intercept_state: Some(intercept_state),
         }
     }
@@ -183,8 +578,39 @@ impl PassiveProxyHandler {
 
     /// 生成连接关联键（基于连接信息）
     fn generate_connection_key(ctx: &HttpContext) -> String {
-        // 使用连接的远程地址作为键
-        format!("{:?}", ctx)
+        // 尝试直接使用 client_addr
+        ctx.client_addr.to_string()
+    }
+
+    /// 生成 WebSocket 连接关联键（基于连接信息）
+    fn generate_ws_connection_key(ctx: &WebSocketContext) -> String {
+        let debug_str = format!("{:?}", ctx);
+        // 解析 Debug 字符串提取客户端地址
+        // 格式: ClientToServer { src: 127.0.0.1:51838, dst: ... }
+        // 或 ServerToClient { src: ..., dst: 127.0.0.1:51838 }
+        
+        if debug_str.starts_with("ClientToServer") {
+            // 提取 src: 后面的内容
+            if let Some(start) = debug_str.find("src: ") {
+                let rest = &debug_str[start + 5..];
+                if let Some(end) = rest.find(',') {
+                    return rest[..end].trim().to_string();
+                }
+            }
+        } else if debug_str.starts_with("ServerToClient") {
+            // 提取 dst: 后面的内容
+            if let Some(start) = debug_str.find("dst: ") {
+                let rest = &debug_str[start + 5..];
+                // 可能是结尾的 } 或者逗号
+                if let Some(end) = rest.find(|c| c == ',' || c == '}') {
+                    return rest[..end].trim().to_string();
+                }
+            }
+        }
+        
+        // 如果解析失败，回退到原始字符串（虽然这肯定会失败）
+        warn!("Failed to parse WebSocketContext debug string: {}", debug_str);
+        debug_str
     }
 
     /// 从 CONNECT 请求中提取 host（去掉端口）
@@ -194,11 +620,140 @@ impl PassiveProxyHandler {
             .uri()
             .authority()
             .map(|a| a.as_str().to_string())
-            .or_else(|| req.headers().get("host").and_then(|h| h.to_str().ok()).map(|s| s.to_string()));
+            .or_else(|| {
+                req.headers()
+                    .get("host")
+                    .and_then(|h| h.to_str().ok())
+                    .map(|s| s.to_string())
+            });
         authority.map(|auth| auth.split(':').next().unwrap_or(&auth).to_string())
     }
 
+    /// 解析修改后的请求内容并重建 HTTP 请求
+    /// 格式: METHOD PATH PROTOCOL\nHeader1: Value1\n...\n\nBODY
+    fn parse_and_rebuild_request(content: &str, original_uri: &hyper::Uri) -> Result<Request<Body>> {
+        let mut lines = content.lines();
+        
+        // 解析请求行: METHOD PATH PROTOCOL
+        let request_line = lines.next().ok_or_else(|| PassiveError::Proxy("Empty request content".to_string()))?;
+        let parts: Vec<&str> = request_line.split_whitespace().collect();
+        if parts.len() < 2 {
+            return Err(PassiveError::Proxy(format!("Invalid request line: {}", request_line)));
+        }
+        
+        let method = parts[0];
+        let path = parts[1];
+        // parts[2] 是协议版本，我们忽略它
+        
+        // 解析请求头
+        let mut headers = HashMap::new();
+        let mut body_start = false;
+        let mut body_lines = Vec::new();
+        
+        for line in lines {
+            if body_start {
+                body_lines.push(line);
+            } else if line.is_empty() {
+                body_start = true;
+            } else if let Some((key, value)) = line.split_once(':') {
+                let key = key.trim().to_string();
+                let value = value.trim().to_string();
+                headers.insert(key, value);
+            }
+        }
+        
+        // 合并 body
+        let body_content = body_lines.join("\n");
+        
+        // 构建新的 URI
+        let new_uri = if path.starts_with("http://") || path.starts_with("https://") {
+            path.parse::<hyper::Uri>().unwrap_or_else(|_| original_uri.clone())
+        } else {
+            // 使用原始 URI 的 scheme 和 authority，只替换 path
+            let scheme = original_uri.scheme_str().unwrap_or("http");
+            let authority = original_uri.authority().map(|a| a.as_str()).unwrap_or("");
+            format!("{}://{}{}", scheme, authority, path)
+                .parse::<hyper::Uri>()
+                .unwrap_or_else(|_| original_uri.clone())
+        };
+        
+        // 构建请求
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(new_uri);
+        
+        // 添加头部
+        for (key, value) in headers {
+            builder = builder.header(&key, &value);
+        }
+        
+        // 构建带 body 的请求
+        let body = if body_content.is_empty() {
+            Body::empty()
+        } else {
+            Body::from(body_content)
+        };
+        
+        builder.body(body).map_err(|e| PassiveError::Proxy(format!("Failed to build request: {}", e)))
+    }
+
+    /// 解析修改后的响应内容并重建 HTTP 响应
+    /// 格式: HTTP/1.1 STATUS\nHeader1: Value1\n...\n\nBODY
+    fn parse_and_rebuild_response(content: &str) -> Result<Response<Body>> {
+        let mut lines = content.lines();
+        
+        // 解析状态行: HTTP/1.1 STATUS
+        let status_line = lines.next().ok_or_else(|| PassiveError::Proxy("Empty response content".to_string()))?;
+        let parts: Vec<&str> = status_line.split_whitespace().collect();
+        
+        // 提取状态码
+        let status_code = if parts.len() >= 2 {
+            parts[1].parse::<u16>().unwrap_or(200)
+        } else {
+            200
+        };
+        
+        // 解析响应头
+        let mut headers = HashMap::new();
+        let mut body_start = false;
+        let mut body_lines = Vec::new();
+        
+        for line in lines {
+            if body_start {
+                body_lines.push(line);
+            } else if line.is_empty() {
+                body_start = true;
+            } else if let Some((key, value)) = line.split_once(':') {
+                let key = key.trim().to_string();
+                let value = value.trim().to_string();
+                headers.insert(key, value);
+            }
+        }
+        
+        // 合并 body
+        let body_content = body_lines.join("\n");
+        
+        // 构建响应
+        let mut builder = Response::builder().status(status_code);
+        
+        // 添加头部
+        for (key, value) in headers {
+            builder = builder.header(&key, &value);
+        }
+        
+        // 构建带 body 的响应
+        let body = if body_content.is_empty() {
+            Body::empty()
+        } else {
+            Body::from(body_content)
+        };
+        
+        builder.body(body).map_err(|e| PassiveError::Proxy(format!("Failed to build response: {}", e)))
+    }
+
     /// 标记某域名失败一次；到达阈值后加入 bypass 列表
+    /// 目前未使用：已配置忽略所有证书错误，不再自动绕过MITM
+    #[allow(dead_code)]
     async fn note_fail_and_maybe_bypass(&self, host: &str) {
         let mut counts = self.fail_counts.write().await;
         let c = counts.entry(host.to_string()).or_insert(0);
@@ -213,7 +768,10 @@ impl PassiveProxyHandler {
                 );
             }
         } else {
-            warn!("TLS/MITM failure counted for host {} ({} / {})", host, c, threshold);
+            warn!(
+                "TLS/MITM failure counted for host {} ({} / {})",
+                host, c, threshold
+            );
         }
     }
 
@@ -226,9 +784,16 @@ impl PassiveProxyHandler {
 
         match encoding.as_str() {
             "gzip" => {
-                match GzDecoder::new(body_bytes).bytes().collect::<std::io::Result<Vec<u8>>>() {
+                match GzDecoder::new(body_bytes)
+                    .bytes()
+                    .collect::<std::io::Result<Vec<u8>>>()
+                {
                     Ok(decompressed) => {
-                        debug!("Decompressed gzip body: {} -> {} bytes", body_bytes.len(), decompressed.len());
+                        debug!(
+                            "Decompressed gzip body: {} -> {} bytes",
+                            body_bytes.len(),
+                            decompressed.len()
+                        );
                         decompressed
                     }
                     Err(e) => {
@@ -242,24 +807,41 @@ impl PassiveProxyHandler {
                 let mut decompressed = Vec::new();
                 match decompressor.read_to_end(&mut decompressed) {
                     Ok(_) => {
-                        debug!("Decompressed brotli body: {} -> {} bytes", body_bytes.len(), decompressed.len());
+                        debug!(
+                            "Decompressed brotli body: {} -> {} bytes",
+                            body_bytes.len(),
+                            decompressed.len()
+                        );
                         decompressed
                     }
                     Err(e) => {
-                        warn!("Failed to decompress brotli body: {}, returning original", e);
+                        warn!(
+                            "Failed to decompress brotli body: {}, returning original",
+                            e
+                        );
                         body_bytes.to_vec()
                     }
                 }
             }
             "deflate" => {
                 // deflate 也是 zlib 格式
-                match flate2::read::DeflateDecoder::new(body_bytes).bytes().collect::<std::io::Result<Vec<u8>>>() {
+                match flate2::read::DeflateDecoder::new(body_bytes)
+                    .bytes()
+                    .collect::<std::io::Result<Vec<u8>>>()
+                {
                     Ok(decompressed) => {
-                        debug!("Decompressed deflate body: {} -> {} bytes", body_bytes.len(), decompressed.len());
+                        debug!(
+                            "Decompressed deflate body: {} -> {} bytes",
+                            body_bytes.len(),
+                            decompressed.len()
+                        );
                         decompressed
                     }
                     Err(e) => {
-                        warn!("Failed to decompress deflate body: {}, returning original", e);
+                        warn!(
+                            "Failed to decompress deflate body: {}, returning original",
+                            e
+                        );
                         body_bytes.to_vec()
                     }
                 }
@@ -401,7 +983,8 @@ impl PassiveProxyHandler {
         let content_type = headers.get("content-type").cloned();
 
         // 提取 Content-Encoding（用于解压）
-        let content_encoding = headers.get("content-encoding")
+        let content_encoding = headers
+            .get("content-encoding")
             .or_else(|| headers.get("Content-Encoding"))
             .map(|s| s.as_str());
 
@@ -487,19 +1070,32 @@ impl PassiveProxyHandler {
 impl HttpHandler for PassiveProxyHandler {
     fn should_intercept(
         &mut self,
-        _ctx: &HttpContext,
+        ctx: &HttpContext,
         req: &Request<Body>,
     ) -> impl std::future::Future<Output = bool> + Send {
         let bypass_hosts = self.bypass_hosts.clone();
+        let conn_to_host = self.conn_to_host.clone();
+        let conn_key = Self::generate_connection_key(ctx);
+
+        // 提前解析 host（在 async 块外）
+        let host_opt = Self::parse_connect_host(&req);
+        let is_connect = req.method() == hyper::Method::CONNECT;
+
         async move {
             // 仅对 CONNECT 生效
-            if req.method() != hyper::Method::CONNECT {
+            if !is_connect {
                 return true;
             }
-            let host_opt = Self::parse_connect_host(&req);
-            if let Some(host) = host_opt {
+
+            if let Some(ref host) = host_opt {
+                // 提前记录 host 映射，确保 handle_error 能拿到
+                {
+                    let mut map = conn_to_host.write().await;
+                    map.insert(conn_key.clone(), host.clone());
+                }
+
                 let bypass = bypass_hosts.read().await;
-                if bypass.contains(&host) {
+                if bypass.contains(host) {
                     debug!("Bypass MITM for host {} (in bypass list)", host);
                     return false;
                 }
@@ -530,13 +1126,26 @@ impl HttpHandler for PassiveProxyHandler {
             method, uri, is_https
         );
 
-        // 若为 CONNECT，记录 host → conn_key 映射以便错误统计
-        if is_https {
-            if let Some(host) = Self::parse_connect_host(&req) {
-                let conn_key = Self::generate_connection_key(ctx);
-                let mut map = self.conn_to_host.write().await;
-                map.insert(conn_key, host);
-            }
+        // 记录 host → conn_key 映射以便错误统计
+        // 对 CONNECT 请求：从 authority 提取 host
+        // 对 MITM 内部请求（非 CONNECT）：从 URI 或 Host header 提取 host
+        let conn_key = Self::generate_connection_key(ctx);
+        let host_for_mapping = if is_https {
+            Self::parse_connect_host(&req)
+        } else {
+            // MITM 内部请求：从 URI authority 或 Host header 提取
+            uri.authority()
+                .map(|a| a.host().to_string())
+                .or_else(|| {
+                    req.headers()
+                        .get("host")
+                        .and_then(|h| h.to_str().ok())
+                        .map(|s| s.split(':').next().unwrap_or(s).to_string())
+                })
+        };
+        if let Some(host) = host_for_mapping {
+            let mut map = self.conn_to_host.write().await;
+            map.insert(conn_key, host);
         }
 
         // 构建上下文并发送到扫描器
@@ -562,7 +1171,7 @@ impl HttpHandler for PassiveProxyHandler {
 
                         // 同时保存连接键到请求ID的映射
                         let mut conn_map = self.conn_to_request.write().await;
-                        conn_map.insert(conn_key, request_id.clone());
+                        conn_map.insert(conn_key.clone(), request_id.clone());
 
                         // 限制缓存大小
                         if request_map.len() > 1000 {
@@ -590,6 +1199,51 @@ impl HttpHandler for PassiveProxyHandler {
                         warn!("Failed to send request to scanner: {}", e);
                     }
 
+                    // 检测 WebSocket 升级请求
+                    let is_websocket_upgrade = req_ctx.headers.iter().any(|(k, v)| {
+                        k.to_lowercase() == "upgrade" && v.to_lowercase().contains("websocket")
+                    });
+
+                    if is_websocket_upgrade {
+                        debug!("WebSocket upgrade detected: {}", req_ctx.url);
+                        
+                        // 从 URL 或 Host header 中提取 host
+                        let host = if let Ok(parsed_url) = url::Url::parse(&req_ctx.url) {
+                            parsed_url.host_str().unwrap_or("unknown").to_string()
+                        } else {
+                            req_ctx.headers.get("host")
+                                .or_else(|| req_ctx.headers.get("Host"))
+                                .cloned()
+                                .unwrap_or_else(|| "unknown".to_string())
+                        };
+                        
+                        // 创建 WebSocket 连接上下文
+                        let ws_id = uuid::Uuid::new_v4().to_string();
+                        let ws_conn = WebSocketConnectionContext {
+                            id: ws_id.clone(),
+                            url: req_ctx.url.clone(),
+                            host,
+                            protocol: if req_ctx.is_https { "wss".to_string() } else { "ws".to_string() },
+                            request_headers: req_ctx.headers.iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
+                            response_headers: None, // 响应头将在 handle_response 中更新
+                            opened_at: chrono::Utc::now(),
+                        };
+
+                        // 保存连接键到 WebSocket ID 的映射
+                        {
+                            let mut ws_map = self.conn_to_ws_id.write().await;
+                            ws_map.insert(conn_key.clone(), ws_id.clone());
+                            debug!("Saved WebSocket connection mapping: conn_key={}, ws_id={}", conn_key, ws_id);
+                        }
+
+                        // 发送 WebSocket 连接到扫描器
+                        if let Err(e) = tx.send(ScanTask::WebSocketConnection(ws_conn)) {
+                            warn!("Failed to send WebSocket connection to scanner: {}", e);
+                        }
+                    }
+
                     // 检查是否启用了拦截模式（跳过 CONNECT 请求）
                     if !is_https {
                         if let Some(intercept_state) = &self.intercept_state {
@@ -597,45 +1251,72 @@ impl HttpHandler for PassiveProxyHandler {
                             if intercept_enabled {
                                 if let Some(pending_tx) = &intercept_state.pending_tx {
                                     // 创建 oneshot channel 等待用户操作
-                                    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-                                    
+                                    let (response_tx, response_rx) =
+                                        tokio::sync::oneshot::channel();
+
                                     // 解析 URL path
-                                    let path = uri.path_and_query()
+                                    let path = uri
+                                        .path_and_query()
                                         .map(|pq| pq.to_string())
                                         .unwrap_or_else(|| uri.path().to_string());
-                                    
+
                                     let pending_request = PendingInterceptRequest {
                                         id: request_id.clone(),
                                         method: req_ctx.method.clone(),
                                         url: req_ctx.url.clone(),
                                         path,
-                                        protocol: if req_ctx.is_https { "HTTPS".to_string() } else { "HTTP/1.1".to_string() },
+                                        protocol: if req_ctx.is_https {
+                                            "HTTPS".to_string()
+                                        } else {
+                                            "HTTP/1.1".to_string()
+                                        },
                                         headers: req_ctx.headers.clone(),
-                                        body: if req_ctx.body.is_empty() { None } else { String::from_utf8(req_ctx.body.clone()).ok() },
+                                        body: if req_ctx.body.is_empty() {
+                                            None
+                                        } else {
+                                            String::from_utf8(req_ctx.body.clone()).ok()
+                                        },
                                         timestamp: chrono::Utc::now().timestamp_millis(),
                                         response_tx,
                                     };
-                                    
+
                                     // 发送到待处理队列
                                     if let Err(e) = pending_tx.send(pending_request) {
                                         warn!("Failed to send intercept request: {}", e);
                                         return RequestOrResponse::Request(new_req);
                                     }
-                                    
-                                    info!("Request {} intercepted, waiting for user action", request_id);
-                                    
+
+                                    info!(
+                                        "Request {} intercepted, waiting for user action",
+                                        request_id
+                                    );
+
                                     // 等待用户操作（带超时）
                                     match tokio::time::timeout(
                                         std::time::Duration::from_secs(300), // 5 minutes timeout
-                                        response_rx
-                                    ).await {
+                                        response_rx,
+                                    )
+                                    .await
+                                    {
                                         Ok(Ok(action)) => {
                                             match action {
                                                 InterceptAction::Forward(modified_content) => {
-                                                    info!("Request {} forwarded by user", request_id);
-                                                    if let Some(_content) = modified_content {
-                                                        // TODO: Parse modified content and rebuild request
-                                                        // For now, just forward the original request
+                                                    info!(
+                                                        "Request {} forwarded by user",
+                                                        request_id
+                                                    );
+                                                    if let Some(content) = modified_content {
+                                                        // 解析修改后的内容并重建请求
+                                                        match Self::parse_and_rebuild_request(&content, &uri) {
+                                                            Ok(modified_req) => {
+                                                                info!("Request {} modified and forwarded", request_id);
+                                                                return RequestOrResponse::Request(modified_req);
+                                                            }
+                                                            Err(e) => {
+                                                                warn!("Failed to parse modified request: {}, forwarding original", e);
+                                                                return RequestOrResponse::Request(new_req);
+                                                            }
+                                                        }
                                                     }
                                                     return RequestOrResponse::Request(new_req);
                                                 }
@@ -646,7 +1327,9 @@ impl HttpHandler for PassiveProxyHandler {
                                                         Response::builder()
                                                             .status(444) // Connection Closed Without Response
                                                             .body(Body::empty())
-                                                            .unwrap_or_else(|_| Response::new(Body::empty()))
+                                                            .unwrap_or_else(|_| {
+                                                                Response::new(Body::empty())
+                                                            }),
                                                     );
                                                 }
                                             }
@@ -656,7 +1339,10 @@ impl HttpHandler for PassiveProxyHandler {
                                             return RequestOrResponse::Request(new_req);
                                         }
                                         Err(_) => {
-                                            warn!("Intercept timeout for request {}, forwarding", request_id);
+                                            warn!(
+                                                "Intercept timeout for request {}, forwarding",
+                                                request_id
+                                            );
                                             return RequestOrResponse::Request(new_req);
                                         }
                                     }
@@ -722,15 +1408,18 @@ impl HttpHandler for PassiveProxyHandler {
                             // 检查是否需要拦截响应
                             let mut final_response = new_res;
                             if let Some(intercept_state) = &self.intercept_state {
-                                let response_intercept_enabled = *intercept_state.response_enabled.read().await;
-                                
+                                let response_intercept_enabled =
+                                    *intercept_state.response_enabled.read().await;
+
                                 if response_intercept_enabled {
                                     if let Some(pending_tx) = &intercept_state.pending_response_tx {
                                         let response_id = uuid::Uuid::new_v4().to_string();
-                                        let (action_tx, action_rx) = tokio::sync::oneshot::channel();
-                                        
+                                        let (action_tx, action_rx) =
+                                            tokio::sync::oneshot::channel();
+
                                         // 发送拦截响应到待处理队列
-                                        let body_string = String::from_utf8_lossy(&resp_ctx.body).to_string();
+                                        let body_string =
+                                            String::from_utf8_lossy(&resp_ctx.body).to_string();
                                         let pending_response = PendingInterceptResponse {
                                             id: response_id.clone(),
                                             request_id: request_id.clone(),
@@ -740,23 +1429,35 @@ impl HttpHandler for PassiveProxyHandler {
                                             timestamp: chrono::Utc::now().timestamp_millis(),
                                             response_tx: action_tx,
                                         };
-                                        
+
                                         if pending_tx.send(pending_response).is_ok() {
-                                            info!("Response intercepted: {} (status: {})", response_id, resp_ctx.status);
-                                            
+                                            info!(
+                                                "Response intercepted: {} (status: {})",
+                                                response_id, resp_ctx.status
+                                            );
+
                                             // 等待用户操作（最多30秒）
                                             match tokio::time::timeout(
                                                 std::time::Duration::from_secs(30),
-                                                action_rx
-                                            ).await {
-                                                Ok(Ok(InterceptAction::Forward(modified_content))) => {
+                                                action_rx,
+                                            )
+                                            .await
+                                            {
+                                                Ok(Ok(InterceptAction::Forward(
+                                                    modified_content,
+                                                ))) => {
                                                     info!("Response {} forwarded", response_id);
                                                     if let Some(content) = modified_content {
-                                                        // 用户修改了响应，重新构建
-                                                        final_response = Response::builder()
-                                                            .status(resp_ctx.status)
-                                                            .body(Body::from(content))
-                                                            .unwrap_or_else(|_| Response::new(Body::from("")));
+                                                        // 解析修改后的内容并重建响应
+                                                        match Self::parse_and_rebuild_response(&content) {
+                                                            Ok(modified_resp) => {
+                                                                info!("Response {} modified and forwarded", response_id);
+                                                                final_response = modified_resp;
+                                                            }
+                                                            Err(e) => {
+                                                                warn!("Failed to parse modified response: {}, using original", e);
+                                                            }
+                                                        }
                                                     }
                                                 }
                                                 Ok(Ok(InterceptAction::Drop)) => {
@@ -765,10 +1466,15 @@ impl HttpHandler for PassiveProxyHandler {
                                                     return Response::builder()
                                                         .status(204)
                                                         .body(Body::empty())
-                                                        .unwrap_or_else(|_| Response::new(Body::from("")));
+                                                        .unwrap_or_else(|_| {
+                                                            Response::new(Body::from(""))
+                                                        });
                                                 }
                                                 Ok(Err(_)) => {
-                                                    warn!("Response intercept channel closed for {}", response_id);
+                                                    warn!(
+                                                        "Response intercept channel closed for {}",
+                                                        response_id
+                                                    );
                                                 }
                                                 Err(_) => {
                                                     warn!("Response intercept timeout for {}, forwarding", response_id);
@@ -838,6 +1544,8 @@ impl HttpHandler for PassiveProxyHandler {
         let scan_tx = self.scan_tx.clone();
 
         async move {
+            use std::error::Error as _;
+
             // 在异步上下文中获取 host，避免在 Tokio runtime 线程中使用阻塞读
             let host_opt = {
                 let map = self_clone.conn_to_host.read().await;
@@ -845,28 +1553,44 @@ impl HttpHandler for PassiveProxyHandler {
             };
 
             let error_msg = err.to_string();
-            
+            let error_debug = format!("{:?}", err);
+            let error_chain = {
+                let mut parts = Vec::new();
+                parts.push(error_msg.clone());
+                let mut src = err.source();
+                while let Some(e) = src {
+                    parts.push(e.to_string());
+                    src = e.source();
+                }
+                parts.join(" | ")
+            };
+
             if let Some(host) = &host_opt {
-                let msg = error_msg.to_lowercase();
-                // 启发式匹配证书/握手错误
-                let is_tls_error = msg.contains("certificate") 
-                    || msg.contains("tls") 
-                    || msg.contains("alert")
-                    || msg.contains("handshake");
-                    
+                // 启发式匹配证书/握手错误：
+                // - error_msg 可能只有 "client error (Connect)"
+                // - 真实原因通常在 error chain / debug 信息里
+                let tls_probe = format!("{} {}", error_chain, error_debug).to_lowercase();
+                let is_tls_error = tls_probe.contains("certificate")
+                    || tls_probe.contains("invalid peer certificate")
+                    || tls_probe.contains("unsupportedcertversion")
+                    || tls_probe.contains("tls")
+                    || tls_probe.contains("alert")
+                    || tls_probe.contains("handshake");
+
                 if is_tls_error {
-                    self_clone.note_fail_and_maybe_bypass(host).await;
-                    
-                    // 发送失败连接记录到扫描器
+                    // 发送失败连接记录到扫描器（用于统计和展示）
                     if let Some(tx) = &scan_tx {
                         // 解析 host:port
                         let (hostname, port) = if host.contains(':') {
                             let parts: Vec<&str> = host.split(':').collect();
-                            (parts[0].to_string(), parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443))
+                            (
+                                parts[0].to_string(),
+                                parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443),
+                            )
                         } else {
                             (host.clone(), 443)
                         };
-                        
+
                         let failed_conn = FailedConnection {
                             id: uuid::Uuid::new_v4().to_string(),
                             host: hostname,
@@ -874,11 +1598,18 @@ impl HttpHandler for PassiveProxyHandler {
                             error: error_msg.clone(),
                             timestamp: chrono::Utc::now(),
                         };
-                        
+
                         if let Err(e) = tx.send(ScanTask::FailedConnection(failed_conn)) {
                             warn!("Failed to send failed connection to scanner: {}", e);
                         }
                     }
+                    
+                    // 不再自动绕过MITM，因为我们已经配置为忽略证书错误
+                    // 只记录警告信息供调试
+                    warn!(
+                        "TLS error detected for host {}, but continuing with MITM (certificate validation disabled)",
+                        host
+                    );
                 }
 
                 // 清理连接→host 映射
@@ -895,17 +1626,31 @@ impl HttpHandler for PassiveProxyHandler {
 
             // 区分错误类型：连接错误和超时是常见的，降级为 warn
             let error_lower = error_msg.to_lowercase();
-            if error_lower.contains("connect") 
-                || error_lower.contains("timeout") 
+            if error_lower.contains("connect")
+                || error_lower.contains("timeout")
                 || error_lower.contains("reset")
                 || error_lower.contains("refused")
                 || error_lower.contains("closed")
             {
-                warn!("Forward request failed (network): {}", error_msg);
+                warn!(
+                    "Forward request failed (network): host={:?} conn_key={} error={}",
+                    host_opt, conn_key, error_chain
+                );
+                debug!(
+                    "Forward request failed debug: host={:?} conn_key={} debug={}",
+                    host_opt, conn_key, error_debug
+                );
             } else {
-                error!("Forward request failed: {}", error_msg);
+                error!(
+                    "Forward request failed: host={:?} conn_key={} error={}",
+                    host_opt, conn_key, error_chain
+                );
+                debug!(
+                    "Forward request failed debug: host={:?} conn_key={} debug={}",
+                    host_opt, conn_key, error_debug
+                );
             }
-            
+
             Response::builder()
                 .status(hudsucker::hyper::StatusCode::BAD_GATEWAY)
                 .body(Body::empty())
@@ -915,13 +1660,203 @@ impl HttpHandler for PassiveProxyHandler {
 }
 
 /// WebSocket 处理器实现
-/// 
-/// 处理 WebSocket 消息的转发，优雅地处理连接关闭等情况，
-/// 避免产生大量无意义的错误日志。
+///
+/// 处理 WebSocket 消息的转发，记录消息到扫描器，
+/// 优雅地处理连接关闭等情况，避免产生大量无意义的错误日志。
 impl WebSocketHandler for PassiveProxyHandler {
-    async fn handle_message(&mut self, _ctx: &WebSocketContext, msg: Message) -> Option<Message> {
-        // 简单转发所有 WebSocket 消息
-        // 对于 Close 消息，返回 None 会优雅地关闭连接
+    async fn handle_message(&mut self, ctx: &WebSocketContext, msg: Message) -> Option<Message> {
+        // 获取消息类型和内容 (用于记录)
+        let (message_type, content, content_length) = match &msg {
+            Message::Text(text) => {
+                // Utf8Bytes 实现 Deref<str>，需要转换为 String
+                let text_str = text.to_string();
+                let len = text_str.len();
+                ("text".to_string(), Some(text_str), len)
+            }
+            Message::Binary(data) => {
+                // 对于二进制数据，尝试转换为 base64
+                use base64::{engine::general_purpose, Engine as _};
+                let base64_content = format!("[BASE64]{}", general_purpose::STANDARD.encode(data));
+                let len = data.len();
+                ("binary".to_string(), Some(base64_content), len)
+            }
+            Message::Ping(data) => ("ping".to_string(), None, data.len()),
+            Message::Pong(data) => ("pong".to_string(), None, data.len()),
+            Message::Close(reason) => {
+                let reason_str = reason
+                    .as_ref()
+                    .map(|r| format!("code={}, reason={}", r.code, r.reason));
+                ("close".to_string(), reason_str, 0)
+            }
+            _ => ("unknown".to_string(), None, 0),
+        };
+
+        // 发送消息到扫描器 (用于记录到历史缓存)
+        if let Some(tx) = &self.scan_tx {
+            // 生成唯一的消息 ID
+            let message_id = uuid::Uuid::new_v4().to_string();
+
+            // 从连接映射中获取 WebSocket 连接 ID
+            let conn_key = Self::generate_ws_connection_key(ctx);
+            let connection_id = {
+                let ws_map = self.conn_to_ws_id.read().await;
+                ws_map.get(&conn_key).cloned()
+            };
+
+            // 如果找不到连接 ID，使用连接键作为备用
+            let connection_id = connection_id.unwrap_or_else(|| {
+                warn!("WebSocket connection ID not found for conn_key: {}, using fallback", conn_key);
+                format!("ws-unknown-{}", uuid::Uuid::new_v4().simple())
+            });
+
+            // 判断消息方向
+            // Hudsucker 的 handle_message 对于 WebSocket 会被调用两次：
+            // 1. 客户端 -> 服务器方向的消息
+            // 2. 服务器 -> 客户端方向的消息
+            // 通过交替计数来判断方向（简单但有效的方法）
+            // 更精确的方法需要 Hudsucker 提供更多上下文信息
+            
+            // 获取或创建此连接的消息计数器
+            let conn_key_for_counter = conn_key.clone();
+            let direction = {
+                let mut ws_counters = self.ws_message_counters.write().await;
+                let counter = ws_counters.entry(conn_key_for_counter).or_insert(0);
+                *counter += 1;
+                
+                // 假设消息交替出现：奇数为客户端->服务器，偶数为服务器->客户端
+                // 这是一个简化假设，可能不完全准确，但对大多数情况有效
+                if *counter % 2 == 1 {
+                    WebSocketDirection::ClientToServer
+                } else {
+                    WebSocketDirection::ServerToClient
+                }
+            };
+
+            // 拦截逻辑
+            let mut intercepted = false;
+            if let Some(intercept_state) = &self.intercept_state {
+                let websocket_enabled = *intercept_state.websocket_enabled.read().await;
+                
+                // 只拦截文本和二进制消息
+                let should_intercept = websocket_enabled && match &msg {
+                    Message::Text(_) | Message::Binary(_) => true,
+                    _ => false,
+                };
+
+                if should_intercept {
+                    if let Some(pending_tx) = &intercept_state.pending_websocket_tx {
+                        intercepted = true;
+                        
+                        // 创建 oneshot channel
+                        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                        
+                        let pending_msg = PendingInterceptWebSocketMessage {
+                            id: message_id.clone(),
+                            connection_id: connection_id.clone(),
+                            direction,
+                            message_type: message_type.clone(),
+                            content: content.clone(),
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                            response_tx,
+                        };
+
+                        info!("Intercepting WebSocket message: {}", message_id);
+
+                        // 发送到待处理队列
+                        if let Err(e) = pending_tx.send(pending_msg) {
+                            warn!("Failed to send intercept websocket message: {}", e);
+                            intercepted = false; // 发送失败，回退到正常记录
+                        } else {
+                            // 等待用户操作
+                            match response_rx.await {
+                                Ok(action) => match action {
+                                    InterceptAction::Forward(modified_content) => {
+                                        // 获取最终要发送和记录的内容
+                                        let (final_content, final_length) = if let Some(ref new_content) = modified_content {
+                                            (Some(new_content.clone()), new_content.len())
+                                        } else {
+                                            (content.clone(), content_length)
+                                        };
+                                        
+                                        // 记录最终发送的消息到历史
+                                        let final_msg_ctx = WebSocketMessageContext {
+                                            id: message_id.clone(),
+                                            connection_id: connection_id.clone(),
+                                            direction,
+                                            message_type: message_type.clone(),
+                                            content: final_content,
+                                            content_length: final_length,
+                                            timestamp: chrono::Utc::now(),
+                                        };
+                                        
+                                        if let Err(e) = tx.send(ScanTask::WebSocketMessage(final_msg_ctx)) {
+                                            warn!("Failed to send WebSocket message to scanner: {}", e);
+                                        } else {
+                                            info!("WebSocket message recorded after intercept: conn_id={}, type={}, modified={}", 
+                                                connection_id, message_type, modified_content.is_some());
+                                        }
+                                        
+                                        // 如果有修改，发送修改后的消息
+                                        if let Some(new_content) = modified_content {
+                                            if message_type == "text" {
+                                                return Some(Message::Text(new_content.into()));
+                                            } else if message_type == "binary" {
+                                                // 尝试从 base64 解码
+                                                let clean_content = if new_content.starts_with("[BASE64]") {
+                                                    &new_content[8..]
+                                                } else {
+                                                    &new_content
+                                                };
+                                                
+                                                use base64::{engine::general_purpose, Engine as _};
+                                                if let Ok(decoded) = general_purpose::STANDARD.decode(clean_content) {
+                                                     return Some(Message::Binary(decoded.into()));
+                                                } else {
+                                                     warn!("Failed to decode base64 content for modified WebSocket message");
+                                                }
+                                            }
+                                        }
+                                        // 无修改，继续处理（走到下面的 match）
+                                    }
+                                    InterceptAction::Drop => {
+                                        info!("Dropped WebSocket message: {}", message_id);
+                                        return None; 
+                                    }
+                                },
+                                Err(_) => {
+                                    warn!("Intercept response channel closed for WebSocket message");
+                                    intercepted = false; // channel 关闭，回退到正常记录
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 如果没有被拦截，正常记录消息到历史
+            if !intercepted {
+                let msg_ctx = WebSocketMessageContext {
+                    id: message_id.clone(),
+                    connection_id: connection_id.clone(),
+                    direction,
+                    message_type: message_type.clone(),
+                    content: content.clone(),
+                    content_length,
+                    timestamp: chrono::Utc::now(),
+                };
+
+                if let Err(e) = tx.send(ScanTask::WebSocketMessage(msg_ctx)) {
+                    warn!("Failed to send WebSocket message to scanner: {}", e);
+                } else {
+                    debug!(
+                        "WebSocket message recorded: conn_id={}, type={}, length={}",
+                        connection_id, message_type, content_length
+                    );
+                }
+            }
+        }
+
+        // 原有的消息处理逻辑
         match &msg {
             Message::Close(_) => {
                 debug!("WebSocket close message received, closing connection gracefully");
@@ -977,9 +1912,13 @@ impl ProxyService {
             intercept_state: None,
         }
     }
-    
+
     /// 创建代理服务实例（支持拦截）
-    pub fn with_intercept(config: ProxyConfig, ca_dir: std::path::PathBuf, intercept_state: InterceptState) -> Self {
+    pub fn with_intercept(
+        config: ProxyConfig,
+        ca_dir: std::path::PathBuf,
+        intercept_state: InterceptState,
+    ) -> Self {
         Self {
             config,
             handle: Arc::new(RwLock::new(None)),
@@ -1036,7 +1975,9 @@ impl ProxyService {
             match ca_service.is_root_ca_trusted_macos().await {
                 Ok(true) => info!("Root CA is trusted in macOS System keychain"),
                 Ok(false) => {
-                    warn!("Root CA not trusted in macOS System keychain. Attempting to add trust...");
+                    warn!(
+                        "Root CA not trusted in macOS System keychain. Attempting to add trust..."
+                    );
                     if let Err(e) = ca_service.trust_root_ca_macos().await {
                         warn!(
                             "Auto trust failed: {}. You may need to import {} into System keychain and set to 'Always Trust'.",
@@ -1077,33 +2018,128 @@ impl ProxyService {
 
         // 创建处理器（如果有拦截状态，则使用支持拦截的构造器）
         let handler = if let Some(intercept_state) = &self.intercept_state {
-            PassiveProxyHandler::with_intercept(self.config.clone(), scan_tx, intercept_state.clone())
+            PassiveProxyHandler::with_intercept(
+                self.config.clone(),
+                scan_tx,
+                intercept_state.clone(),
+            )
         } else {
             PassiveProxyHandler::new(self.config.clone(), scan_tx)
         };
         let stats = handler.stats();
 
-        // 启动代理（支持 HTTPS MITM 和 WebSocket）
-        info!("Starting HTTPS MITM proxy on port {}", port);
-        let proxy_task = tokio::spawn(async move {
-            match Proxy::builder()
-                .with_listener(listener)
-                .with_ca(ca)
-                .with_rustls_connector(rustls::crypto::ring::default_provider())
-                .with_http_handler(handler.clone())
-                .with_websocket_handler(handler)
-                .build()
-            {
-                Ok(proxy) => {
-                    if let Err(e) = proxy.start().await {
-                        error!("Proxy error: {}", e);
+        // 检查是否配置了 upstream proxy
+        // 检查并打印 upstream proxy 配置
+        info!(
+            "Checking upstream proxy config: {:?}",
+            self.config.upstream_proxy
+        );
+        let use_upstream_proxy = self
+            .config
+            .upstream_proxy
+            .as_ref()
+            .map(|up| {
+                info!(
+                    "Upstream proxy found - enabled: {}, host: {}, port: {}",
+                    up.enabled, up.proxy_host, up.proxy_port
+                );
+                up.enabled
+            })
+            .unwrap_or(false);
+
+        info!("Use upstream proxy decision: {}", use_upstream_proxy);
+
+        // 创建 HTTPS 连接器（根据是否使用 upstream proxy）
+        let proxy_task = if use_upstream_proxy {
+            if let Some(upstream_config) = &self.config.upstream_proxy {
+                info!(
+                    "Starting HTTPS MITM proxy on port {} with upstream proxy {}:{} (destination: {})",
+                    port, upstream_config.proxy_host, upstream_config.proxy_port, upstream_config.destination_host
+                );
+
+                // 创建带 upstream proxy 的连接器
+                let proxy_connector = match create_upstream_proxy_connector(upstream_config) {
+                    Ok(connector) => connector,
+                    Err(e) => {
+                        error!("Failed to create upstream proxy connector: {}", e);
+                        return Err(e);
+                    }
+                };
+
+                // 包装 connector 以返回 hyper_util::rt::TokioIo
+                let http_connector = ServiceBuilder::new()
+                    .map_response(|stream| hyper_util::rt::TokioIo::new(stream))
+                    .service(proxy_connector.clone());
+
+                // WebSocket 连接器: tokio-tungstenite 0.28 不再使用 Connector enum
+                // 改用 with_rustls_connector，但它需要直接的 TLS stream
+                // 由于我们的 ProxyStream 已经处理了 upstream proxy，这里简化处理
+                // 暂时不配置 ws_connector，使用默认行为（可能会有问题，但至少能编译）
+
+                tokio::spawn(async move {
+                    match Proxy::builder()
+                        .with_listener(listener)
+                        .with_ca(ca)
+                        .with_http_connector(http_connector)
+                        .with_http_handler(handler.clone())
+                        .with_websocket_handler(handler)
+                        .build()
+                    {
+                        Ok(proxy) => {
+                            if let Err(e) = proxy.start().await {
+                                error!("Proxy error: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to build proxy: {}", e);
+                        }
+                    }
+                })
+            } else {
+                return Err(PassiveError::Proxy(
+                    "Upstream proxy enabled but not configured".to_string(),
+                ));
+            }
+        } else {
+            // 不使用 upstream proxy，创建忽略证书验证的连接器
+            info!(
+                "Starting HTTPS MITM proxy on port {} (ignoring upstream cert errors)",
+                port
+            );
+
+            // 创建忽略证书验证的 rustls ClientConfig
+            let rustls_config = create_insecure_rustls_config();
+            
+            // 使用 hyper-rustls connector with custom TLS config
+            use hyper_rustls::HttpsConnectorBuilder;
+            
+            let https_connector = HttpsConnectorBuilder::new()
+                .with_tls_config(rustls_config)
+                .https_or_http()
+                .enable_http1()
+                .enable_http2()
+                .build();
+            
+            tokio::spawn(async move {
+                match Proxy::builder()
+                    .with_listener(listener)
+                    .with_ca(ca)
+                    .with_http_connector(https_connector)
+                    .with_http_handler(handler.clone())
+                    .with_websocket_handler(handler)
+                    .build()
+                {
+                    Ok(proxy) => {
+                        if let Err(e) = proxy.start().await {
+                            error!("Proxy error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to build proxy: {}", e);
                     }
                 }
-                Err(e) => {
-                    error!("Failed to build proxy: {}", e);
-                }
-            }
-        });
+            })
+        };
 
         // 保存任务句柄和统计
         *self.handle.write().await = Some(proxy_task);

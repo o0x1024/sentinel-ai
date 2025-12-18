@@ -3,11 +3,21 @@
 //! 追踪 SPA 应用的路由变化，确保所有发现的路由都被访问
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use tracing::{debug, info};
+use regex::Regex;
+use tracing::{debug, info, warn};
 use url::Url;
 
-/// 路由追踪器
+/// Route ignore pattern (supports both string contains and regex)
 #[derive(Debug, Clone)]
+pub enum IgnorePattern {
+    /// Simple string contains match
+    Contains(String),
+    /// Regex pattern match
+    Regex(String),
+}
+
+/// 路由追踪器
+#[derive(Clone)]
 pub struct RouteTracker {
     /// 目标域名（用于过滤外部链接）
     target_domain: String,
@@ -19,8 +29,22 @@ pub struct RouteTracker {
     pending_routes: VecDeque<String>,
     /// 路由来源记录 (route -> source_route)
     route_sources: HashMap<String, String>,
-    /// 忽略的路由模式（如登出、外部链接等）
-    ignored_patterns: Vec<String>,
+    /// 忽略的路由模式（支持字符串和正则）
+    ignored_patterns: Vec<IgnorePattern>,
+    /// 编译后的正则缓存
+    #[allow(dead_code)]
+    compiled_regexes: Vec<Regex>,
+}
+
+impl std::fmt::Debug for RouteTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouteTracker")
+            .field("target_domain", &self.target_domain)
+            .field("discovered_routes", &self.discovered_routes.len())
+            .field("visited_routes", &self.visited_routes.len())
+            .field("pending_routes", &self.pending_routes.len())
+            .finish()
+    }
 }
 
 impl RouteTracker {
@@ -28,24 +52,52 @@ impl RouteTracker {
     pub fn new(target_url: &str) -> Self {
         let target_domain = Self::extract_domain(target_url).unwrap_or_default();
         
+        // Default ignore patterns with smart matching
+        let ignored_patterns = vec![
+            // Exact action paths (use word boundary regex)
+            IgnorePattern::Regex(r"(?i)/logout\b".to_string()),
+            IgnorePattern::Regex(r"(?i)/sign[-_]?out\b".to_string()),
+            IgnorePattern::Regex(r"(?i)/log[-_]?out\b".to_string()),
+            IgnorePattern::Regex(r"(?i)/exit\b".to_string()),
+            // Destructive actions (only match as action, not as part of path)
+            IgnorePattern::Regex(r"(?i)/delete/?\?".to_string()),  // /delete?id=xxx
+            IgnorePattern::Regex(r"(?i)/remove/?\?".to_string()),  // /remove?id=xxx
+            // Protocol prefixes
+            IgnorePattern::Contains("javascript:".to_string()),
+            IgnorePattern::Contains("mailto:".to_string()),
+            IgnorePattern::Contains("tel:".to_string()),
+            IgnorePattern::Contains("data:".to_string()),
+            IgnorePattern::Contains("blob:".to_string()),
+            // External services
+            IgnorePattern::Contains("oauth".to_string()),
+            IgnorePattern::Contains("sso/callback".to_string()),
+        ];
+        
+        // Compile regexes
+        let compiled_regexes = ignored_patterns.iter()
+            .filter_map(|p| {
+                if let IgnorePattern::Regex(pattern) = p {
+                    match Regex::new(pattern) {
+                        Ok(re) => Some(re),
+                        Err(e) => {
+                            warn!("Failed to compile ignore pattern '{}': {}", pattern, e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
         let mut tracker = Self {
             target_domain,
             discovered_routes: HashSet::new(),
             visited_routes: HashSet::new(),
             pending_routes: VecDeque::new(),
             route_sources: HashMap::new(),
-            ignored_patterns: vec![
-                "logout".to_string(),
-                "signout".to_string(),
-                "sign-out".to_string(),
-                "log-out".to_string(),
-                "exit".to_string(),
-                "delete".to_string(),
-                "remove".to_string(),
-                "javascript:".to_string(),
-                "mailto:".to_string(),
-                "tel:".to_string(),
-            ],
+            ignored_patterns,
+            compiled_regexes,
         };
         
         // 将目标 URL 标记为已发现和已访问
@@ -116,8 +168,27 @@ impl RouteTracker {
             return false;
         }
 
-        let lower = trimmed.to_lowercase();
-        self.ignored_patterns.iter().any(|p| lower.contains(p))
+        // Check each pattern
+        for pattern in &self.ignored_patterns {
+            match pattern {
+                IgnorePattern::Contains(s) => {
+                    if trimmed.to_lowercase().contains(&s.to_lowercase()) {
+                        debug!("Route ignored by contains pattern '{}': {}", s, trimmed);
+                        return true;
+                    }
+                }
+                IgnorePattern::Regex(pattern_str) => {
+                    if let Ok(re) = Regex::new(pattern_str) {
+                        if re.is_match(trimmed) {
+                            debug!("Route ignored by regex pattern '{}': {}", pattern_str, trimmed);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        false
     }
 
     /// 检查是否是同域路由
@@ -245,9 +316,18 @@ impl RouteTracker {
         self.discovered_routes.len() == self.visited_routes.len()
     }
 
-    /// 添加忽略模式
+    /// 添加忽略模式 (string contains)
     pub fn add_ignored_pattern(&mut self, pattern: &str) {
-        self.ignored_patterns.push(pattern.to_lowercase());
+        self.ignored_patterns.push(IgnorePattern::Contains(pattern.to_lowercase()));
+    }
+    
+    /// 添加正则忽略模式
+    pub fn add_ignored_regex(&mut self, pattern: &str) {
+        if Regex::new(pattern).is_ok() {
+            self.ignored_patterns.push(IgnorePattern::Regex(pattern.to_string()));
+        } else {
+            warn!("Invalid regex pattern: {}", pattern);
+        }
     }
 }
 

@@ -166,6 +166,14 @@ impl Tool for VisionExplorerTool {
                      explorer = explorer.with_passive_db(db);
                  }
              }
+             
+             // Inject PromptRepository if available
+             if let Some(db) = app.try_state::<Arc<crate::services::database::DatabaseService>>() {
+                 if let Ok(pool) = db.get_pool() {
+                     let prompt_repo = Arc::new(crate::services::prompt_db::PromptRepository::new(pool.clone()));
+                     explorer = explorer.with_prompt_repo(prompt_repo);
+                 }
+             }
         }
 
         // Register and inject cancellation token so UI "Stop" can cancel this execution.

@@ -8,19 +8,41 @@
             <i class="fas fa-shield-alt mr-2"></i>
             {{ $t('passiveScan.intercept.title') }}
           </h2>
-          <div class="badge badge-sm" :class="interceptEnabled ? 'badge-success' : 'badge-error'">
-            <i :class="['fas fa-circle mr-2', interceptEnabled ? 'text-success-content' : 'text-error-content']"></i>
-            {{ interceptEnabled ? $t('passiveScan.intercept.status.on') : $t('passiveScan.intercept.status.off') }}
+          <!-- HTTP Intercept Status -->
+          <div class="tooltip" :data-tip="$t('passiveScan.intercept.tooltip.http')">
+            <div class="badge badge-sm cursor-help" :class="interceptEnabled ? 'badge-success' : 'badge-neutral'">
+              <i :class="['fas fa-circle mr-2', interceptEnabled ? 'text-success-content' : 'text-neutral-content']"></i>
+              HTTP
+            </div>
+          </div>
+          <!-- WebSocket Intercept Status -->
+          <div class="tooltip" :data-tip="$t('passiveScan.intercept.tooltip.websocket')">
+            <div class="badge badge-sm cursor-help" :class="websocketInterceptEnabled ? 'badge-success' : 'badge-neutral'">
+              <i :class="['fas fa-circle mr-2', websocketInterceptEnabled ? 'text-success-content' : 'text-neutral-content']"></i>
+              WS
+            </div>
           </div>
         </div>
         
         <div class="flex items-center gap-2">
+          <!-- HTTP Toggle -->
           <button 
             @click="toggleIntercept"
             :class="['btn btn-sm', interceptEnabled ? 'btn-error' : 'btn-success']"
+            :title="$t('passiveScan.intercept.buttons.toggleHttp')"
           >
             <i :class="['fas', interceptEnabled ? 'fa-stop' : 'fa-play', 'mr-1']"></i>
-            {{ interceptEnabled ? $t('passiveScan.intercept.buttons.turnOff') : $t('passiveScan.intercept.buttons.turnOn') }}
+            HTTP
+          </button>
+
+          <!-- WebSocket Toggle -->
+          <button 
+            @click="toggleWebSocketIntercept"
+            :class="['btn btn-sm', websocketInterceptEnabled ? 'btn-error' : 'btn-success']"
+            :title="$t('passiveScan.intercept.buttons.toggleWs')"
+          >
+            <i :class="['fas', websocketInterceptEnabled ? 'fa-stop' : 'fa-plug', 'mr-1']"></i>
+            WS
           </button>
           
           <div class="divider divider-horizontal mx-0"></div>
@@ -53,7 +75,7 @@
           <i class="fas fa-hourglass-half text-6xl text-base-content/30 mb-4"></i>
           <p class="text-lg font-semibold text-base-content/70">{{ $t('passiveScan.intercept.waiting') }}</p>
           <p class="text-sm text-base-content/50 mt-2">
-            {{ interceptEnabled || responseInterceptEnabled ? $t('passiveScan.intercept.enabled') : $t('passiveScan.intercept.disabled') }}
+            {{ interceptEnabled || websocketInterceptEnabled ? $t('passiveScan.intercept.enabled') : $t('passiveScan.intercept.disabled') }}
           </p>
           <p class="text-sm text-base-content/50">
             {{ $t('passiveScan.intercept.proxyConfig') }} 127.0.0.1:{{ proxyStatus.port || 8080 }}
@@ -101,6 +123,7 @@
                 class="flex items-center gap-3 text-sm p-2 rounded cursor-pointer hover:bg-base-200 border border-transparent"
                 :class="{ 'bg-primary/10 border-primary/30': currentItemIndex === index }"
                 @click="selectItem(index)"
+                @contextmenu.prevent="showContextMenu($event, item, index)"
               >
                 <!-- 请求显示 -->
                 <template v-if="item.type === 'request'">
@@ -109,15 +132,172 @@
                   <span class="truncate flex-1 font-mono text-xs">{{ (item.data as any).url }}</span>
                 </template>
                 <!-- 响应显示 -->
-                <template v-else>
+                <template v-else-if="item.type === 'response'">
                   <span class="badge badge-sm badge-secondary">RES</span>
                   <span class="badge badge-sm" :class="getStatusClass((item.data as any).status)">{{ (item.data as any).status }}</span>
                   <span class="truncate flex-1 font-mono text-xs text-base-content/70">{{ $t('passiveScan.intercept.response') }} #{{ (item.data as any).request_id.slice(0, 8) }}</span>
+                </template>
+                <!-- WebSocket 显示 -->
+                <template v-else-if="item.type === 'websocket'">
+                  <span class="badge badge-sm badge-accent">WS</span>
+                  <i 
+                    class="fas text-xs w-4 text-center"
+                    :class="(item.data as any).direction === 'client_to_server' ? 'fa-arrow-up text-success' : 'fa-arrow-down text-info'"
+                  ></i>
+                  <span class="badge badge-xs badge-ghost font-mono">{{ (item.data as any).message_type }}</span>
+                  <span class="truncate flex-1 font-mono text-xs text-base-content/70">
+                    {{ (item.data as any).content ? truncate((item.data as any).content, 50) : '[No Content]' }}
+                  </span>
                 </template>
                 <span class="text-xs text-base-content/50">{{ formatTimestamp(item.data.timestamp) }}</span>
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Context Menu -->
+        <div 
+          v-if="contextMenu.visible"
+          class="fixed z-50 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-48"
+          :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+          @click.stop
+        >
+          <!-- Forward/Drop -->
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuForward"
+          >
+            <i class="fas fa-arrow-right w-4 text-success"></i>
+            {{ $t('passiveScan.intercept.buttons.forward') }}
+          </button>
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuDrop"
+          >
+            <i class="fas fa-times w-4 text-error"></i>
+            {{ $t('passiveScan.intercept.buttons.drop') }}
+          </button>
+          
+          <div class="divider my-1 h-px"></div>
+          
+          <!-- Send to -->
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuSendToRepeater"
+            :disabled="contextMenu.item?.type !== 'request'"
+            :class="{ 'opacity-50 cursor-not-allowed': contextMenu.item?.type !== 'request' }"
+          >
+            <i class="fas fa-redo w-4 text-primary"></i>
+            {{ $t('passiveScan.intercept.contextMenu.sendToRepeater') }}
+          </button>
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuSendToAI"
+          >
+            <i class="fas fa-robot w-4 text-secondary"></i>
+            {{ $t('passiveScan.intercept.contextMenu.sendToAI') }}
+          </button>
+          
+          <div class="divider my-1 h-px"></div>
+          
+          <!-- Filter submenu -->
+          <div class="relative group">
+            <button 
+              class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2 justify-between"
+            >
+              <span class="flex items-center gap-2">
+                <i class="fas fa-filter w-4 text-warning"></i>
+                {{ $t('passiveScan.intercept.contextMenu.addFilter') }}
+              </span>
+              <i class="fas fa-chevron-right text-xs"></i>
+            </button>
+            <!-- Filter submenu -->
+            <div class="absolute left-full top-0 ml-1 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-56 hidden group-hover:block">
+              <template v-if="contextMenu.item?.type === 'request'">
+                <button 
+                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
+                  @click="addFilterByDomain"
+                >
+                  {{ $t('passiveScan.intercept.contextMenu.filterByDomain') }}: {{ getItemDomain() }}
+                </button>
+                <button 
+                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
+                  @click="addFilterByUrl"
+                >
+                  {{ $t('passiveScan.intercept.contextMenu.filterByUrl') }}
+                </button>
+                <button 
+                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
+                  @click="addFilterByMethod"
+                >
+                  {{ $t('passiveScan.intercept.contextMenu.filterByMethod') }}: {{ getItemMethod() }}
+                </button>
+                <button 
+                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
+                  @click="addFilterByFileExt"
+                >
+                  {{ $t('passiveScan.intercept.contextMenu.filterByFileExt') }}
+                </button>
+              </template>
+              <template v-else-if="contextMenu.item?.type === 'response'">
+                <button 
+                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
+                  @click="addFilterByStatus"
+                >
+                  {{ $t('passiveScan.intercept.contextMenu.filterByStatus') }}: {{ getItemStatus() }}
+                </button>
+                <button 
+                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
+                  @click="addFilterByContentType"
+                >
+                  {{ $t('passiveScan.intercept.contextMenu.filterByContentType') }}
+                </button>
+              </template>
+              <template v-else-if="contextMenu.item?.type === 'websocket'">
+                <button 
+                  class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
+                  @click="addFilterByWsDirection"
+                >
+                  {{ $t('passiveScan.intercept.contextMenu.filterByDirection') }}: {{ getItemDirection() }}
+                </button>
+              </template>
+              <div class="divider my-1 h-px"></div>
+              <button 
+                class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
+                @click="openFilterDialog"
+              >
+                <i class="fas fa-cog mr-2"></i>
+                {{ $t('passiveScan.intercept.contextMenu.customFilter') }}
+              </button>
+            </div>
+          </div>
+          
+          <div class="divider my-1 h-px"></div>
+          
+          <!-- Copy -->
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuCopyUrl"
+            v-if="contextMenu.item?.type === 'request'"
+          >
+            <i class="fas fa-copy w-4"></i>
+            {{ $t('passiveScan.intercept.contextMenu.copyUrl') }}
+          </button>
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuCopyAsCurl"
+            v-if="contextMenu.item?.type === 'request'"
+          >
+            <i class="fas fa-terminal w-4"></i>
+            {{ $t('passiveScan.intercept.contextMenu.copyAsCurl') }}
+          </button>
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuCopyRaw"
+          >
+            <i class="fas fa-file-alt w-4"></i>
+            {{ $t('passiveScan.intercept.contextMenu.copyRaw') }}
+          </button>
         </div>
 
         <!-- 分割条 -->
@@ -151,16 +331,6 @@
             <div class="divider divider-horizontal mx-1"></div>
             
             <button 
-              @click="toggleEdit"
-              class="btn btn-outline btn-sm"
-              :class="{ 'btn-primary': isEditable }"
-              :disabled="!currentItem"
-            >
-              <i :class="['fas', isEditable ? 'fa-check' : 'fa-edit', 'mr-1']"></i>
-              {{ isEditable ? $t('passiveScan.intercept.buttons.save') : $t('passiveScan.intercept.buttons.edit') }}
-            </button>
-            
-            <button 
               @click="sendToRepeater"
               class="btn btn-outline btn-sm"
               :disabled="!currentItem || currentItem.type !== 'request'"
@@ -176,13 +346,16 @@
               <template v-if="currentItem.type === 'request'">
                 {{ (currentItem.data as any).method }} {{ (currentItem.data as any).url }}
               </template>
-              <template v-else>
-                {{ $t('passiveScan.intercept.response') }} {{ (currentItem.data as any).status }} - #{{ (currentItem.data as any).request_id.slice(0, 8) }}
+              <template v-else-if="currentItem.type === 'response'">
+                {{ $t('passiveScan.intercept.response') }} {{ (currentItem.data as any).status }}
+              </template>
+              <template v-else-if="currentItem.type === 'websocket'">
+                WS {{ (currentItem.data as any).direction === 'client_to_server' ? '↑' : '↓' }} {{ (currentItem.data as any).message_type }}
               </template>
             </div>
           </div>
 
-          <!-- Request Content Tabs -->
+          <!-- Content Tabs -->
           <div class="tabs tabs-boxed bg-base-200 border-b border-base-300 px-3 py-1 flex-shrink-0">
             <a 
               :class="['tab tab-sm', activeTab === 'raw' ? 'tab-active' : '']"
@@ -204,7 +377,7 @@
             </a>
           </div>
 
-          <!-- Request/Response Content -->
+          <!-- Content View -->
           <div class="flex-1 overflow-hidden bg-base-100 min-h-0 flex flex-col">
             <template v-if="currentItem">
               <!-- Raw View -->
@@ -221,7 +394,7 @@
 
               <!-- Pretty View -->
               <div v-else-if="activeTab === 'pretty'" class="flex-1 overflow-auto p-4 space-y-4">
-                <!-- 请求的 Pretty View -->
+                <!-- HTTP Request -->
                 <template v-if="currentItem.type === 'request'">
                   <div class="card bg-base-200">
                     <div class="card-body p-4">
@@ -231,10 +404,27 @@
                       </div>
                     </div>
                   </div>
+                  <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.headers') }}</h3>
+                      <div class="space-y-1">
+                        <div v-for="(value, key) in (currentItem.data as any).headers" :key="key" class="flex text-sm font-mono">
+                          <span class="font-semibold text-primary w-48 flex-shrink-0">{{ key }}:</span>
+                          <span class="flex-1 break-all">{{ value }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="(currentItem.data as any).body" class="card bg-base-200">
+                    <div class="card-body p-4">
+                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.body') }}</h3>
+                      <pre class="font-mono text-sm whitespace-pre-wrap break-all">{{ (currentItem.data as any).body }}</pre>
+                    </div>
+                  </div>
                 </template>
                 
-                <!-- 响应的 Pretty View -->
-                <template v-else>
+                <!-- HTTP Response -->
+                <template v-else-if="currentItem.type === 'response'">
                   <div class="card bg-base-200">
                     <div class="card-body p-4">
                       <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.statusLine') }}</h3>
@@ -243,30 +433,45 @@
                       </div>
                     </div>
                   </div>
-                </template>
-
-                <div class="card bg-base-200">
-                  <div class="card-body p-4">
-                    <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.headers') }}</h3>
-                    <div class="space-y-1">
-                      <div 
-                        v-for="(value, key) in currentItem.data.headers" 
-                        :key="key"
-                        class="flex text-sm font-mono"
-                      >
-                        <span class="font-semibold text-primary w-48 flex-shrink-0">{{ key }}:</span>
-                        <span class="flex-1 break-all">{{ value }}</span>
+                  <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.headers') }}</h3>
+                      <div class="space-y-1">
+                        <div v-for="(value, key) in (currentItem.data as any).headers" :key="key" class="flex text-sm font-mono">
+                          <span class="font-semibold text-primary w-48 flex-shrink-0">{{ key }}:</span>
+                          <span class="flex-1 break-all">{{ value }}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-
-                <div v-if="currentItem.data.body" class="card bg-base-200">
-                  <div class="card-body p-4">
-                    <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.body') }}</h3>
-                    <pre class="font-mono text-sm whitespace-pre-wrap break-all">{{ currentItem.data.body }}</pre>
+                  <div v-if="(currentItem.data as any).body" class="card bg-base-200">
+                    <div class="card-body p-4">
+                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.body') }}</h3>
+                      <pre class="font-mono text-sm whitespace-pre-wrap break-all">{{ (currentItem.data as any).body }}</pre>
+                    </div>
                   </div>
-                </div>
+                </template>
+
+                <!-- WebSocket -->
+                <template v-else-if="currentItem.type === 'websocket'">
+                  <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                      <h3 class="font-semibold mb-2 text-sm">WebSocket Message Info</h3>
+                      <div class="grid grid-cols-2 gap-2 text-sm">
+                        <div><span class="font-semibold">Type:</span> {{ (currentItem.data as any).message_type }}</div>
+                        <div><span class="font-semibold">Direction:</span> {{ (currentItem.data as any).direction }}</div>
+                        <div><span class="font-semibold">Connection ID:</span> <span class="font-mono text-xs">{{ (currentItem.data as any).connection_id }}</span></div>
+                        <div><span class="font-semibold">Time:</span> {{ formatTimestamp((currentItem.data as any).timestamp) }}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="card bg-base-200">
+                    <div class="card-body p-4">
+                      <h3 class="font-semibold mb-2 text-sm">Content</h3>
+                      <pre class="font-mono text-sm whitespace-pre-wrap break-all">{{ (currentItem.data as any).content || '[Empty]' }}</pre>
+                    </div>
+                  </div>
+                </template>
               </div>
 
               <!-- Hex View -->
@@ -286,14 +491,113 @@
         </div>
       </div>
     </div>
+
+    <!-- Filter Rule Dialog -->
+    <dialog ref="filterDialogRef" class="modal">
+      <div class="modal-box max-w-lg">
+        <h3 class="font-bold text-lg mb-4">
+          <i class="fas fa-filter mr-2"></i>
+          {{ $t('passiveScan.intercept.filterDialog.title') }}
+        </h3>
+        
+        <div class="space-y-4">
+          <!-- Filter Type -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.filterType') }}</span>
+            </label>
+            <select v-model="filterRule.type" class="select select-bordered w-full">
+              <option value="request">{{ $t('passiveScan.intercept.filterDialog.typeRequest') }}</option>
+              <option value="response">{{ $t('passiveScan.intercept.filterDialog.typeResponse') }}</option>
+            </select>
+          </div>
+          
+          <!-- Match Type -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.matchType') }}</span>
+            </label>
+            <select v-model="filterRule.matchType" class="select select-bordered w-full">
+              <template v-if="filterRule.type === 'request'">
+                <option value="domain">{{ $t('passiveScan.intercept.filterDialog.matchDomain') }}</option>
+                <option value="url">{{ $t('passiveScan.intercept.filterDialog.matchUrl') }}</option>
+                <option value="method">{{ $t('passiveScan.intercept.filterDialog.matchMethod') }}</option>
+                <option value="fileExt">{{ $t('passiveScan.intercept.filterDialog.matchFileExt') }}</option>
+                <option value="header">{{ $t('passiveScan.intercept.filterDialog.matchHeader') }}</option>
+              </template>
+              <template v-else>
+                <option value="status">{{ $t('passiveScan.intercept.filterDialog.matchStatus') }}</option>
+                <option value="contentType">{{ $t('passiveScan.intercept.filterDialog.matchContentType') }}</option>
+                <option value="header">{{ $t('passiveScan.intercept.filterDialog.matchHeader') }}</option>
+              </template>
+            </select>
+          </div>
+          
+          <!-- Relationship -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.relationship') }}</span>
+            </label>
+            <select v-model="filterRule.relationship" class="select select-bordered w-full">
+              <option value="matches">{{ $t('passiveScan.intercept.filterDialog.matches') }}</option>
+              <option value="notMatches">{{ $t('passiveScan.intercept.filterDialog.notMatches') }}</option>
+              <option value="contains">{{ $t('passiveScan.intercept.filterDialog.contains') }}</option>
+              <option value="notContains">{{ $t('passiveScan.intercept.filterDialog.notContains') }}</option>
+            </select>
+          </div>
+          
+          <!-- Condition -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.condition') }}</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="filterRule.condition"
+              class="input input-bordered w-full"
+              :placeholder="$t('passiveScan.intercept.filterDialog.conditionPlaceholder')"
+            />
+          </div>
+          
+          <!-- Action -->
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.action') }}</span>
+            </label>
+            <select v-model="filterRule.action" class="select select-bordered w-full">
+              <option value="exclude">{{ $t('passiveScan.intercept.filterDialog.actionExclude') }}</option>
+              <option value="include">{{ $t('passiveScan.intercept.filterDialog.actionInclude') }}</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="closeFilterDialog">
+            {{ $t('passiveScan.intercept.filterDialog.cancel') }}
+          </button>
+          <button class="btn btn-primary" @click="saveFilterRule" :disabled="!filterRule.condition">
+            {{ $t('passiveScan.intercept.filterDialog.save') }}
+          </button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+      </form>
+    </dialog>
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
+import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
+
+const { t } = useI18n();
+const router = useRouter();
 
 // 注入父组件的刷新触发器
 const refreshTrigger = inject<any>('refreshTrigger', ref(0));
@@ -301,7 +605,25 @@ const refreshTrigger = inject<any>('refreshTrigger', ref(0));
 // 发送到 Repeater 的事件
 const emit = defineEmits<{
   (e: 'sendToRepeater', request: InterceptedRequest): void
+  (e: 'sendToAssistant', requests: any[]): void
 }>();
+
+// 用于发送到 AI 助手的请求格式（兼容 ProxyHistory）
+interface ProxyRequestForAI {
+  id: number;
+  url: string;
+  host: string;
+  protocol: string;
+  method: string;
+  status_code: number;
+  request_headers?: string;
+  request_body?: string;
+  response_headers?: string;
+  response_body?: string;
+  response_size: number;
+  response_time: number;
+  timestamp: string;
+}
 
 // 类型定义
 interface ProxyStats {
@@ -338,10 +660,20 @@ interface InterceptedResponse {
   timestamp: number;
 }
 
+interface InterceptedWebSocketMessage {
+  id: string;
+  connection_id: string;
+  direction: 'client_to_server' | 'server_to_client';
+  message_type: 'text' | 'binary' | 'ping' | 'pong' | 'close';
+  content?: string;
+  timestamp: number;
+}
+
 // 拦截项类型
 type InterceptedItem = 
   | { type: 'request'; data: InterceptedRequest }
-  | { type: 'response'; data: InterceptedResponse };
+  | { type: 'response'; data: InterceptedResponse }
+  | { type: 'websocket'; data: InterceptedWebSocketMessage };
 
 // 响应式状态
 const proxyStatus = ref<ProxyStatus>({
@@ -359,16 +691,55 @@ const proxyStatus = ref<ProxyStatus>({
 // Intercept 状态
 const interceptEnabled = ref(false);
 const responseInterceptEnabled = ref(false);
+const websocketInterceptEnabled = ref(false);
+
 const interceptedRequests = ref<InterceptedRequest[]>([]);
 const interceptedResponses = ref<InterceptedResponse[]>([]);
+const interceptedWebsockets = ref<InterceptedWebSocketMessage[]>([]);
+
 const currentItemIndex = ref(0);
-const currentItemType = ref<'request' | 'response'>('request');
+const currentItemType = ref<'request' | 'response' | 'websocket'>('request');
 const activeTab = ref<'raw' | 'pretty' | 'hex'>('raw');
-const isEditable = ref(false);
+const isEditable = ref(true); // 默认可编辑
 const isProcessing = ref(false);
 const requestContent = ref('');
 
-// 合并的拦截队列（请求和响应）
+// Context menu state
+interface ContextMenuState {
+  visible: boolean;
+  x: number;
+  y: number;
+  item: InterceptedItem | null;
+  index: number;
+}
+
+const contextMenu = ref<ContextMenuState>({
+  visible: false,
+  x: 0,
+  y: 0,
+  item: null,
+  index: -1
+});
+
+// Filter dialog state
+interface FilterRule {
+  type: 'request' | 'response';
+  matchType: string;
+  relationship: string;
+  condition: string;
+  action: 'exclude' | 'include';
+}
+
+const filterDialogRef = ref<HTMLDialogElement | null>(null);
+const filterRule = ref<FilterRule>({
+  type: 'request',
+  matchType: 'domain',
+  relationship: 'matches',
+  condition: '',
+  action: 'exclude'
+});
+
+// 合并的拦截队列（请求、响应、WebSocket）
 const interceptedItems = computed<InterceptedItem[]>(() => {
   const items: InterceptedItem[] = [];
   interceptedRequests.value.forEach(req => {
@@ -376,6 +747,9 @@ const interceptedItems = computed<InterceptedItem[]>(() => {
   });
   interceptedResponses.value.forEach(resp => {
     items.push({ type: 'response', data: resp });
+  });
+  interceptedWebsockets.value.forEach(ws => {
+    items.push({ type: 'websocket', data: ws });
   });
   // 按时间戳排序
   items.sort((a, b) => a.data.timestamp - b.data.timestamp);
@@ -389,7 +763,6 @@ const currentItem = computed(() => {
 });
 
 // 兼容性：当前请求（用于现有代码）
-const currentRequestIndex = ref(0);
 const currentRequest = computed(() => {
   const item = currentItem.value;
   if (!item || item.type !== 'request') return null;
@@ -423,6 +796,8 @@ const hexView = computed(() => {
 // 事件监听器
 let unlistenProxyStatus: (() => void) | null = null;
 let unlistenInterceptRequest: (() => void) | null = null;
+let unlistenInterceptResponse: (() => void) | null = null;
+let unlistenInterceptWebSocket: (() => void) | null = null;
 
 // 拖拽调整高度
 function startResize(event: MouseEvent) {
@@ -457,11 +832,378 @@ function formatTimestamp(timestamp: number): string {
   return date.toLocaleTimeString('zh-CN');
 }
 
+function truncate(str: string, len: number) {
+  if (!str) return '';
+  return str.length > len ? str.substring(0, len) + '...' : str;
+}
+
+// Context Menu Methods
+function showContextMenu(event: MouseEvent, item: InterceptedItem, index: number) {
+  selectItem(index);
+  contextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    item,
+    index
+  };
+  // Close menu on click outside
+  document.addEventListener('click', closeContextMenu);
+}
+
+function closeContextMenu() {
+  contextMenu.value.visible = false;
+  document.removeEventListener('click', closeContextMenu);
+}
+
+async function contextMenuForward() {
+  closeContextMenu();
+  await forwardCurrentItem();
+}
+
+async function contextMenuDrop() {
+  closeContextMenu();
+  await dropCurrentItem();
+}
+
+function contextMenuSendToRepeater() {
+  if (contextMenu.value.item?.type === 'request') {
+    emit('sendToRepeater', contextMenu.value.item.data as InterceptedRequest);
+    dialog.toast.success('Sent to Repeater');
+  }
+  closeContextMenu();
+}
+
+async function contextMenuSendToAI() {
+  const item = contextMenu.value.item;
+  if (!item) {
+    closeContextMenu();
+    return;
+  }
+  
+  // Convert intercepted item to ProxyRequest format for AI assistant
+  const proxyRequest = convertToProxyRequest(item);
+  if (!proxyRequest) {
+    closeContextMenu();
+    return;
+  }
+  
+  // Determine send type based on item type
+  const sendType = item.type === 'response' ? 'response' : 'request';
+  
+  // Send event to AI assistant
+  await tauriEmit('traffic:send-to-assistant', { 
+    requests: [proxyRequest], 
+    type: sendType 
+  });
+  emit('sendToAssistant', [proxyRequest]);
+  
+  const typeText = sendType === 'request' ? t('passiveScan.intercept.request') : t('passiveScan.intercept.response');
+  dialog.toast.success(t('passiveScan.intercept.sentToAssistant', { type: typeText }));
+  
+  closeContextMenu();
+  
+  // Navigate to AI assistant page
+  router.push('/ai-assistant');
+}
+
+// Convert intercepted item to ProxyRequest format for AI assistant
+function convertToProxyRequest(item: InterceptedItem): ProxyRequestForAI | null {
+  if (item.type === 'request') {
+    const req = item.data as InterceptedRequest;
+    let host = '';
+    try {
+      const url = new URL(req.url);
+      host = url.hostname;
+    } catch {
+      host = '';
+    }
+    
+    return {
+      id: Date.now(),
+      url: req.url,
+      host,
+      protocol: req.protocol || 'HTTP/1.1',
+      method: req.method,
+      status_code: 0,
+      request_headers: JSON.stringify(req.headers),
+      request_body: req.body,
+      response_headers: undefined,
+      response_body: undefined,
+      response_size: 0,
+      response_time: 0,
+      timestamp: new Date(req.timestamp).toISOString()
+    };
+  } else if (item.type === 'response') {
+    const res = item.data as InterceptedResponse;
+    return {
+      id: Date.now(),
+      url: '', // Response doesn't have URL directly
+      host: '',
+      protocol: 'HTTP/1.1',
+      method: '',
+      status_code: res.status,
+      request_headers: undefined,
+      request_body: undefined,
+      response_headers: JSON.stringify(res.headers),
+      response_body: res.body,
+      response_size: res.body?.length || 0,
+      response_time: 0,
+      timestamp: new Date(res.timestamp).toISOString()
+    };
+  } else if (item.type === 'websocket') {
+    const ws = item.data as InterceptedWebSocketMessage;
+    return {
+      id: Date.now(),
+      url: `ws://${ws.connection_id}`,
+      host: '',
+      protocol: 'WebSocket',
+      method: ws.direction === 'client_to_server' ? 'WS_SEND' : 'WS_RECV',
+      status_code: 0,
+      request_headers: undefined,
+      request_body: ws.content,
+      response_headers: undefined,
+      response_body: undefined,
+      response_size: ws.content?.length || 0,
+      response_time: 0,
+      timestamp: new Date(ws.timestamp).toISOString()
+    };
+  }
+  return null;
+}
+
+// Get item properties for context menu
+function getItemDomain(): string {
+  const item = contextMenu.value.item;
+  if (item?.type === 'request') {
+    try {
+      const url = new URL((item.data as InterceptedRequest).url);
+      return url.hostname;
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function getItemMethod(): string {
+  const item = contextMenu.value.item;
+  if (item?.type === 'request') {
+    return (item.data as InterceptedRequest).method;
+  }
+  return '';
+}
+
+function getItemStatus(): number {
+  const item = contextMenu.value.item;
+  if (item?.type === 'response') {
+    return (item.data as InterceptedResponse).status;
+  }
+  return 0;
+}
+
+function getItemDirection(): string {
+  const item = contextMenu.value.item;
+  if (item?.type === 'websocket') {
+    return (item.data as InterceptedWebSocketMessage).direction === 'client_to_server' 
+      ? 'Client → Server' 
+      : 'Server → Client';
+  }
+  return '';
+}
+
+// Filter methods
+function openFilterDialog() {
+  const item = contextMenu.value.item;
+  closeContextMenu();
+  
+  if (item) {
+    filterRule.value.type = item.type === 'response' ? 'response' : 'request';
+    filterRule.value.matchType = item.type === 'response' ? 'status' : 'domain';
+    filterRule.value.condition = '';
+  }
+  
+  filterDialogRef.value?.showModal();
+}
+
+function closeFilterDialog() {
+  filterDialogRef.value?.close();
+}
+
+async function addFilterByDomain() {
+  const domain = getItemDomain();
+  if (domain) {
+    filterRule.value = {
+      type: 'request',
+      matchType: 'domain',
+      relationship: 'matches',
+      condition: domain,
+      action: 'exclude'
+    };
+    await saveFilterRule();
+  }
+  closeContextMenu();
+}
+
+async function addFilterByUrl() {
+  const item = contextMenu.value.item;
+  if (item?.type === 'request') {
+    filterRule.value = {
+      type: 'request',
+      matchType: 'url',
+      relationship: 'contains',
+      condition: (item.data as InterceptedRequest).path,
+      action: 'exclude'
+    };
+    closeContextMenu();
+    filterDialogRef.value?.showModal();
+  }
+}
+
+async function addFilterByMethod() {
+  const method = getItemMethod();
+  if (method) {
+    filterRule.value = {
+      type: 'request',
+      matchType: 'method',
+      relationship: 'matches',
+      condition: method,
+      action: 'exclude'
+    };
+    await saveFilterRule();
+  }
+  closeContextMenu();
+}
+
+async function addFilterByFileExt() {
+  const item = contextMenu.value.item;
+  if (item?.type === 'request') {
+    const path = (item.data as InterceptedRequest).path;
+    const match = path.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+    const ext = match ? match[1] : '';
+    filterRule.value = {
+      type: 'request',
+      matchType: 'fileExt',
+      relationship: 'matches',
+      condition: ext,
+      action: 'exclude'
+    };
+    closeContextMenu();
+    filterDialogRef.value?.showModal();
+  }
+}
+
+async function addFilterByStatus() {
+  const status = getItemStatus();
+  if (status) {
+    filterRule.value = {
+      type: 'response',
+      matchType: 'status',
+      relationship: 'matches',
+      condition: status.toString(),
+      action: 'exclude'
+    };
+    await saveFilterRule();
+  }
+  closeContextMenu();
+}
+
+async function addFilterByContentType() {
+  const item = contextMenu.value.item;
+  if (item?.type === 'response') {
+    const headers = (item.data as InterceptedResponse).headers;
+    const contentType = headers['content-type'] || headers['Content-Type'] || '';
+    filterRule.value = {
+      type: 'response',
+      matchType: 'contentType',
+      relationship: 'contains',
+      condition: contentType.split(';')[0],
+      action: 'exclude'
+    };
+    closeContextMenu();
+    filterDialogRef.value?.showModal();
+  }
+}
+
+async function addFilterByWsDirection() {
+  const item = contextMenu.value.item;
+  if (item?.type === 'websocket') {
+    const direction = (item.data as InterceptedWebSocketMessage).direction;
+    // For now, just show a toast - WebSocket filtering would need backend support
+    dialog.toast.info(`Filter by direction: ${direction}`);
+  }
+  closeContextMenu();
+}
+
+async function saveFilterRule() {
+  try {
+    const response = await invoke<any>('add_intercept_filter_rule', {
+      rule: {
+        id: '', // Will be generated by backend
+        rule_type: filterRule.value.type,
+        match_type: filterRule.value.matchType,
+        relationship: filterRule.value.relationship,
+        condition: filterRule.value.condition,
+        action: filterRule.value.action,
+        enabled: true
+      }
+    });
+    
+    if (response.success) {
+      dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+      closeFilterDialog();
+    } else {
+      dialog.toast.error(response.error || t('passiveScan.intercept.filterDialog.addFailed'));
+    }
+  } catch (error: any) {
+    console.error('Failed to save filter rule:', error);
+    dialog.toast.error(`${error}`);
+  }
+}
+
+// Copy methods
+async function contextMenuCopyUrl() {
+  const item = contextMenu.value.item;
+  if (item?.type === 'request') {
+    await navigator.clipboard.writeText((item.data as InterceptedRequest).url);
+    dialog.toast.success('URL copied');
+  }
+  closeContextMenu();
+}
+
+async function contextMenuCopyAsCurl() {
+  const item = contextMenu.value.item;
+  if (item?.type === 'request') {
+    const req = item.data as InterceptedRequest;
+    let curl = `curl -X ${req.method} '${req.url}'`;
+    for (const [key, value] of Object.entries(req.headers)) {
+      curl += ` -H '${key}: ${value}'`;
+    }
+    if (req.body) {
+      curl += ` -d '${req.body}'`;
+    }
+    await navigator.clipboard.writeText(curl);
+    dialog.toast.success('cURL command copied');
+  }
+  closeContextMenu();
+}
+
+async function contextMenuCopyRaw() {
+  await navigator.clipboard.writeText(requestContent.value);
+  dialog.toast.success('Raw content copied');
+  closeContextMenu();
+}
+
 // 方法
 async function toggleIntercept() {
   const newState = !interceptEnabled.value;
   
   try {
+    // 关闭拦截时，自动转发所有待处理的请求和响应
+    if (!newState && interceptedItems.value.length > 0) {
+      await forwardAllSilent();
+    }
+    
     const response = await invoke<any>('set_intercept_enabled', { enabled: newState });
     if (response.success) {
       interceptEnabled.value = newState;
@@ -474,146 +1216,130 @@ async function toggleIntercept() {
   }
 }
 
-async function forwardRequest() {
-  if (!currentRequest.value || isProcessing.value) return;
+async function toggleWebSocketIntercept() {
+  const newState = !websocketInterceptEnabled.value;
   
-  isProcessing.value = true;
   try {
-    const modifiedContent = isEditable.value ? requestContent.value : undefined;
-    const response = await invoke<any>('forward_intercepted_request', { 
-      requestId: currentRequest.value.id,
-      modifiedContent
-    });
-    
+    const response = await invoke<any>('set_websocket_intercept_enabled', { enabled: newState });
     if (response.success) {
-      removeCurrentRequest();
-      isEditable.value = false;
+      websocketInterceptEnabled.value = newState;
     } else {
-      dialog.toast.error(response.error || '转发失败');
+      dialog.toast.error(response.error || '操作失败');
     }
   } catch (error: any) {
-    console.error('Failed to forward request:', error);
-    dialog.toast.error(`转发请求失败: ${error}`);
-  } finally {
-    isProcessing.value = false;
-  }
-}
-
-async function dropRequest() {
-  if (!currentRequest.value || isProcessing.value) return;
-  
-  isProcessing.value = true;
-  try {
-    const response = await invoke<any>('drop_intercepted_request', { 
-      requestId: currentRequest.value.id 
-    });
-    
-    if (response.success) {
-      removeCurrentRequest();
-      isEditable.value = false;
-      dialog.toast.info('请求已丢弃');
-    } else {
-      dialog.toast.error(response.error || '丢弃失败');
-    }
-  } catch (error: any) {
-    console.error('Failed to drop request:', error);
-    dialog.toast.error(`丢弃请求失败: ${error}`);
-  } finally {
-    isProcessing.value = false;
+    console.error('[ProxyIntercept] Failed to toggle WS intercept:', error);
+    dialog.toast.error(`切换 WS 拦截状态失败: ${error}`);
   }
 }
 
 async function forwardAll() {
-  if (isProcessing.value || interceptedRequests.value.length === 0) return;
+  if (isProcessing.value || interceptedItems.value.length === 0) return;
   
   isProcessing.value = true;
-  const total = interceptedRequests.value.length;
-  let forwarded = 0;
+  let successCount = 0;
   
   try {
+    // Requests
     for (const req of [...interceptedRequests.value]) {
       const response = await invoke<any>('forward_intercepted_request', { 
-        requestId: req.id,
-        modifiedContent: undefined
+        requestId: req.id, modifiedContent: undefined
       });
-      if (response.success) {
-        forwarded++;
-      }
+      if (response.success) successCount++;
     }
     interceptedRequests.value = [];
-    currentRequestIndex.value = 0;
-    dialog.toast.success(`已转发 ${forwarded}/${total} 个请求`);
+
+    // Responses
+    for (const resp of [...interceptedResponses.value]) {
+      const response = await invoke<any>('forward_intercepted_response', { 
+        responseId: resp.id, modifiedContent: undefined
+      });
+      if (response.success) successCount++;
+    }
+    interceptedResponses.value = [];
+
+    // WebSockets
+    for (const ws of [...interceptedWebsockets.value]) {
+      const response = await invoke<any>('forward_intercepted_websocket', { 
+        id: ws.id, content: undefined
+      });
+      if (response.success) successCount++;
+    }
+    interceptedWebsockets.value = [];
+    
+    currentItemIndex.value = 0;
+    dialog.toast.success(`已批量转发 ${successCount} 个项目`);
   } catch (error: any) {
-    console.error('Failed to forward all requests:', error);
+    console.error('Failed to forward all:', error);
     dialog.toast.error(`批量转发失败: ${error}`);
   } finally {
     isProcessing.value = false;
   }
 }
 
-async function dropAll() {
-  if (isProcessing.value || interceptedRequests.value.length === 0) return;
-  
-  const confirmed = await dialog.confirm(`确定要丢弃所有 ${interceptedRequests.value.length} 个请求吗？`);
-  if (!confirmed) return;
-  
-  isProcessing.value = true;
-  const total = interceptedRequests.value.length;
-  let dropped = 0;
+// 静默转发所有（关闭拦截时调用，不显示 toast）
+async function forwardAllSilent() {
+  if (interceptedItems.value.length === 0) return;
   
   try {
     for (const req of [...interceptedRequests.value]) {
-      const response = await invoke<any>('drop_intercepted_request', { 
-        requestId: req.id 
-      });
-      if (response.success) {
-        dropped++;
-      }
+      await invoke<any>('forward_intercepted_request', { requestId: req.id, modifiedContent: undefined });
+    }
+    for (const resp of [...interceptedResponses.value]) {
+      await invoke<any>('forward_intercepted_response', { responseId: resp.id, modifiedContent: undefined });
+    }
+    // Note: We might want to forward WebSockets too if WS intercept is also turned off, 
+    // but this function is called when HTTP intercept is toggled. 
+    // If we toggle WS separately, we should handle WS forwarding there.
+    
+    interceptedRequests.value = [];
+    interceptedResponses.value = [];
+    currentItemIndex.value = 0;
+  } catch (error: any) {
+    console.error('Failed to forward all silently:', error);
+  }
+}
+
+async function dropAll() {
+  if (isProcessing.value || interceptedItems.value.length === 0) return;
+  
+  const confirmed = await dialog.confirm(`确定要丢弃所有 ${interceptedItems.value.length} 个拦截项吗？`);
+  if (!confirmed) return;
+  
+  isProcessing.value = true;
+  let droppedCount = 0;
+  
+  try {
+    for (const req of [...interceptedRequests.value]) {
+      await invoke<any>('drop_intercepted_request', { requestId: req.id });
+      droppedCount++;
     }
     interceptedRequests.value = [];
-    currentRequestIndex.value = 0;
-    dialog.toast.info(`已丢弃 ${dropped}/${total} 个请求`);
+
+    for (const resp of [...interceptedResponses.value]) {
+      await invoke<any>('drop_intercepted_response', { responseId: resp.id });
+      droppedCount++;
+    }
+    interceptedResponses.value = [];
+
+    for (const ws of [...interceptedWebsockets.value]) {
+      await invoke<any>('drop_intercepted_websocket', { id: ws.id });
+      droppedCount++;
+    }
+    interceptedWebsockets.value = [];
+
+    currentItemIndex.value = 0;
+    dialog.toast.info(`已丢弃 ${droppedCount} 个项目`);
   } catch (error: any) {
-    console.error('Failed to drop all requests:', error);
+    console.error('Failed to drop all:', error);
     dialog.toast.error(`批量丢弃失败: ${error}`);
   } finally {
     isProcessing.value = false;
   }
 }
 
-function toggleEdit() {
-  isEditable.value = !isEditable.value;
-  if (!isEditable.value) {
-    dialog.toast.info('编辑已保存，点击 Forward 发送修改后的请求');
-  }
-}
-
 function sendToRepeater() {
   if (!currentRequest.value) return;
   emit('sendToRepeater', currentRequest.value);
-}
-
-function selectRequest(index: number) {
-  currentRequestIndex.value = index;
-  if (currentRequest.value) {
-    loadRequestContent(currentRequest.value);
-  }
-}
-
-function removeCurrentRequest() {
-  if (interceptedRequests.value.length === 0) return;
-  
-  interceptedRequests.value = interceptedRequests.value.filter(
-    (_, i) => i !== currentRequestIndex.value
-  );
-  
-  if (currentRequestIndex.value >= interceptedRequests.value.length) {
-    currentRequestIndex.value = Math.max(0, interceptedRequests.value.length - 1);
-  }
-  
-  if (currentRequest.value) {
-    loadRequestContent(currentRequest.value);
-  }
 }
 
 function loadRequestContent(request: InterceptedRequest) {
@@ -638,6 +1364,10 @@ function loadResponseContent(response: InterceptedResponse) {
   requestContent.value = content;
 }
 
+function loadWebSocketContent(msg: InterceptedWebSocketMessage) {
+  requestContent.value = msg.content || '';
+}
+
 // 加载当前项的内容
 function loadCurrentItemContent() {
   const item = currentItem.value;
@@ -645,8 +1375,10 @@ function loadCurrentItemContent() {
   
   if (item.type === 'request') {
     loadRequestContent(item.data as InterceptedRequest);
-  } else {
+  } else if (item.type === 'response') {
     loadResponseContent(item.data as InterceptedResponse);
+  } else if (item.type === 'websocket') {
+    loadWebSocketContent(item.data as InterceptedWebSocketMessage);
   }
 }
 
@@ -660,36 +1392,40 @@ function selectItem(index: number) {
   }
 }
 
-// 转发当前项（请求或响应）
+// 转发当前项
 async function forwardCurrentItem() {
   const item = currentItem.value;
   if (!item || isProcessing.value) return;
   
   isProcessing.value = true;
   try {
-    const modifiedContent = isEditable.value ? requestContent.value : undefined;
+    // 始终传递当前编辑的内容（默认可编辑）
+    const modifiedContent = requestContent.value;
     
     if (item.type === 'request') {
       const response = await invoke<any>('forward_intercepted_request', { 
-        requestId: item.data.id,
-        modifiedContent
+        requestId: item.data.id, modifiedContent
       });
-      
       if (response.success) {
         interceptedRequests.value = interceptedRequests.value.filter(r => r.id !== item.data.id);
-        isEditable.value = false;
       } else {
         dialog.toast.error(response.error || '转发失败');
       }
-    } else {
+    } else if (item.type === 'response') {
       const response = await invoke<any>('forward_intercepted_response', { 
-        responseId: item.data.id,
-        modifiedContent
+        responseId: item.data.id, modifiedContent
       });
-      
       if (response.success) {
         interceptedResponses.value = interceptedResponses.value.filter(r => r.id !== item.data.id);
-        isEditable.value = false;
+      } else {
+        dialog.toast.error(response.error || '转发失败');
+      }
+    } else if (item.type === 'websocket') {
+      const response = await invoke<any>('forward_intercepted_websocket', { 
+        id: item.data.id, content: modifiedContent
+      });
+      if (response.success) {
+        interceptedWebsockets.value = interceptedWebsockets.value.filter(w => w.id !== item.data.id);
       } else {
         dialog.toast.error(response.error || '转发失败');
       }
@@ -708,7 +1444,7 @@ async function forwardCurrentItem() {
   }
 }
 
-// 丢弃当前项（请求或响应）
+// 丢弃当前项
 async function dropCurrentItem() {
   const item = currentItem.value;
   if (!item || isProcessing.value) return;
@@ -716,28 +1452,22 @@ async function dropCurrentItem() {
   isProcessing.value = true;
   try {
     if (item.type === 'request') {
-      const response = await invoke<any>('drop_intercepted_request', { 
-        requestId: item.data.id 
-      });
-      
+      const response = await invoke<any>('drop_intercepted_request', { requestId: item.data.id });
       if (response.success) {
         interceptedRequests.value = interceptedRequests.value.filter(r => r.id !== item.data.id);
-        isEditable.value = false;
         dialog.toast.info('请求已丢弃');
-      } else {
-        dialog.toast.error(response.error || '丢弃失败');
       }
-    } else {
-      const response = await invoke<any>('drop_intercepted_response', { 
-        responseId: item.data.id 
-      });
-      
+    } else if (item.type === 'response') {
+      const response = await invoke<any>('drop_intercepted_response', { responseId: item.data.id });
       if (response.success) {
         interceptedResponses.value = interceptedResponses.value.filter(r => r.id !== item.data.id);
-        isEditable.value = false;
         dialog.toast.info('响应已丢弃');
-      } else {
-        dialog.toast.error(response.error || '丢弃失败');
+      }
+    } else if (item.type === 'websocket') {
+      const response = await invoke<any>('drop_intercepted_websocket', { id: item.data.id });
+      if (response.success) {
+        interceptedWebsockets.value = interceptedWebsockets.value.filter(w => w.id !== item.data.id);
+        dialog.toast.info('消息已丢弃');
       }
     }
     
@@ -780,24 +1510,27 @@ async function refreshStatus() {
       proxyStatus.value = response.data;
     }
     
-    // 同步获取请求拦截状态
+    // 请求拦截状态
     const interceptResponse = await invoke<any>('get_intercept_enabled');
     if (interceptResponse.success) {
       interceptEnabled.value = interceptResponse.data;
     }
     
-    // 同步获取响应拦截状态
+    // 响应拦截状态
     const responseInterceptResponse = await invoke<any>('get_response_intercept_enabled');
     if (responseInterceptResponse.success) {
       responseInterceptEnabled.value = responseInterceptResponse.data;
+    }
+
+    // WebSocket 拦截状态
+    const wsInterceptResponse = await invoke<any>('get_websocket_intercept_enabled');
+    if (wsInterceptResponse.success) {
+      websocketInterceptEnabled.value = wsInterceptResponse.data;
     }
   } catch (error: any) {
     console.error('Failed to refresh proxy status:', error);
   }
 }
-
-// 设置事件监听
-let unlistenInterceptResponse: (() => void) | null = null;
 
 async function setupEventListeners() {
   // 监听代理状态事件
@@ -808,7 +1541,6 @@ async function setupEventListeners() {
   // 监听拦截请求事件
   unlistenInterceptRequest = await listen<InterceptedRequest>('intercept:request', (event) => {
     const request = event.payload;
-    console.log('[ProxyIntercept] Received intercept request:', request);
     interceptedRequests.value.push(request);
     
     // 如果是第一个项目，自动加载内容
@@ -822,14 +1554,25 @@ async function setupEventListeners() {
   // 监听拦截响应事件
   unlistenInterceptResponse = await listen<InterceptedResponse>('intercept:response', (event) => {
     const response = event.payload;
-    console.log('[ProxyIntercept] Received intercept response:', response);
     interceptedResponses.value.push(response);
     
-    // 如果是第一个项目，自动加载内容
     if (interceptedItems.value.length === 1) {
       currentItemIndex.value = 0;
       currentItemType.value = 'response';
       loadResponseContent(response);
+    }
+  });
+
+  // 监听拦截 WebSocket 事件
+  unlistenInterceptWebSocket = await listen<InterceptedWebSocketMessage>('proxy:intercept_websocket', (event) => {
+    const msg = event.payload;
+    console.log('[ProxyIntercept] Received intercept websocket:', msg);
+    interceptedWebsockets.value.push(msg);
+
+    if (interceptedItems.value.length === 1) {
+      currentItemIndex.value = 0;
+      currentItemType.value = 'websocket';
+      loadWebSocketContent(msg);
     }
   });
 }
@@ -851,13 +1594,13 @@ onUnmounted(() => {
   if (unlistenProxyStatus) unlistenProxyStatus();
   if (unlistenInterceptRequest) unlistenInterceptRequest();
   if (unlistenInterceptResponse) unlistenInterceptResponse();
+  if (unlistenInterceptWebSocket) unlistenInterceptWebSocket();
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
 });
 
 // 监听父组件的刷新触发器
 watch(refreshTrigger, async () => {
-  console.log('[ProxyIntercept] Refresh triggered by parent');
   await refreshStatus();
 });
 </script>

@@ -1,5 +1,5 @@
 <template>
-  <div class="todo-item-wrapper flex flex-col">
+  <div class="todo-item-wrapper flex flex-col ">
     <!-- Current task -->
     <div :class="['todo-item flex items-center gap-2 text-sm py-1 leading-snug', statusClass]">
       <span :class="['todo-indicator w-4 text-center font-bold flex-shrink-0', indicatorClass]">{{ indicator }}</span>

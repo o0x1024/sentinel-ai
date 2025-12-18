@@ -76,11 +76,6 @@ impl SniCertResolver {
             return key;
         }
 
-        // tracing::info!(
-        //     "SniCertResolver: Generating certificate for SNI host: {}",
-        //     host
-        // );
-
         let mut params = CertificateParams::default();
         params.serial_number = Some(rand::thread_rng().gen::<u64>().into());
 
@@ -89,19 +84,47 @@ impl SniCertResolver {
         params.not_after = not_before + Duration::seconds(TTL_SECS);
 
         let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(DnType::CommonName, host);
+        // 规范化主机名 - 移除非法字符
+        let sanitized_host = Self::sanitize_hostname(host);
+        distinguished_name.push(DnType::CommonName, sanitized_host.as_str());
+        
+        // 添加组织信息以提高兼容性
+        distinguished_name.push(DnType::OrganizationName, "Sentinel AI Proxy");
+        
         params.distinguished_name = distinguished_name;
 
         // 添加 SAN (Subject Alternative Name)
         if let Ok(ip) = host.parse::<IpAddr>() {
             params.subject_alt_names.push(SanType::IpAddress(ip));
-            // tracing::info!("Generated cert with IP SAN: {}", ip);
         } else {
+            // 尝试添加原始主机名和规范化后的主机名
             if let Ok(ia5) = hudsucker::rcgen::string::Ia5String::try_from(host) {
                 params.subject_alt_names.push(SanType::DnsName(ia5));
-                // tracing::info!("Generated cert with DNS SAN: {}", host);
+            } else if let Ok(ia5) = hudsucker::rcgen::string::Ia5String::try_from(sanitized_host.as_str()) {
+                params.subject_alt_names.push(SanType::DnsName(ia5));
+                tracing::warn!("Original hostname '{}' invalid, using sanitized '{}'", host, sanitized_host);
+            }
+            
+            // 如果主机名包含通配符，也添加非通配符版本
+            if host.starts_with("*.") {
+                let base_domain = &host[2..];
+                if let Ok(ia5) = hudsucker::rcgen::string::Ia5String::try_from(base_domain) {
+                    params.subject_alt_names.push(SanType::DnsName(ia5));
+                }
             }
         }
+
+        // 添加 Key Usage 扩展
+        params.key_usages = vec![
+            hudsucker::rcgen::KeyUsagePurpose::DigitalSignature,
+            hudsucker::rcgen::KeyUsagePurpose::KeyEncipherment,
+        ];
+        
+        // 添加 Extended Key Usage
+        params.extended_key_usages = vec![
+            hudsucker::rcgen::ExtendedKeyUsagePurpose::ServerAuth,
+            hudsucker::rcgen::ExtendedKeyUsagePurpose::ClientAuth,
+        ];
 
         let leaf_cert: CertificateDer<'static> = params
             .signed_by(self.issuer.key(), self.issuer.as_ref())
@@ -124,6 +147,19 @@ impl SniCertResolver {
         self.cache.insert(host.to_string(), certified_key.clone());
 
         certified_key
+    }
+    
+    /// 规范化主机名 - 移除或替换非法字符
+    fn sanitize_hostname(host: &str) -> String {
+        host.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '*' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
     }
 }
 
@@ -189,11 +225,6 @@ impl ChainedCertificateAuthority {
 
 impl CertificateAuthority for ChainedCertificateAuthority {
     async fn gen_server_config(&self, authority: &Authority) -> Arc<ServerConfig> {
-        // tracing::info!(
-        //     "ChainedCertificateAuthority: Creating ServerConfig with SNI resolver for {}",
-        //     authority
-        // );
-
         // 创建 SNI 证书解析器
         let cert_resolver = SniCertResolver::new(
             self.issuer.clone(),
@@ -212,6 +243,9 @@ impl CertificateAuthority for ChainedCertificateAuthority {
 
         // 配置 ALPN 协议
         server_cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        
+        // 允许使用弱加密套件以支持旧版本服务器
+        server_cfg.ignore_client_order = true;
 
         Arc::new(server_cfg)
     }

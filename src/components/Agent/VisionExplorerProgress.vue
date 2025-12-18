@@ -91,39 +91,56 @@
       <div v-if="showTakeoverForm" class="p-3 bg-warning/10 border-b border-warning/30">
         <div class="flex items-center gap-2 text-sm text-warning font-medium mb-2">
           <i class="fas fa-key"></i>
-          <span>{{ takeoverMessage || '检测到登录页面，请输入凭证' }}</span>
+          <span>{{ takeoverMessage || 'Login page detected. Please enter credentials below or click "Skip Login" to continue without authentication.' }}</span>
         </div>
         
         <div class="space-y-2">
-          <input
-            v-model="credentials.username"
-            type="text"
-            placeholder="用户名/账号"
-            class="input input-sm input-bordered w-full text-xs"
-            @keyup.enter="submitCredentials"
-          />
-          <input
-            v-model="credentials.password"
-            type="password"
-            placeholder="密码"
-            class="input input-sm input-bordered w-full text-xs"
-            @keyup.enter="submitCredentials"
-          />
-          <div class="flex gap-2">
+          <!-- 动态渲染登录字段 -->
+          <template v-if="loginFields.length > 0">
+            <div v-for="field in loginFields" :key="field.id" class="w-full">
+              <input
+                v-model="dynamicCredentials[field.id]"
+                :type="field.field_type === 'password' ? 'password' : 'text'"
+                :placeholder="field.placeholder || field.label"
+                class="input input-sm input-bordered w-full text-xs"
+                @keyup.enter="submitCredentials"
+              />
+            </div>
+          </template>
+          
+          <!-- 回退：如果没有检测到字段，使用默认的账号密码 -->
+          <template v-else>
             <input
-              v-model="credentials.verificationCode"
+              v-model="dynamicCredentials.username"
               type="text"
-              placeholder="验证码（可选）"
-              class="input input-sm input-bordered flex-1 text-xs"
+              placeholder="请输入账号"
+              class="input input-sm input-bordered w-full text-xs"
               @keyup.enter="submitCredentials"
             />
+            <input
+              v-model="dynamicCredentials.password"
+              type="password"
+              placeholder="请输入密码"
+              class="input input-sm input-bordered w-full text-xs"
+              @keyup.enter="submitCredentials"
+            />
+          </template>
+          
+          <div class="flex gap-2">
             <button
-              class="btn btn-sm btn-warning shrink-0"
-              :disabled="!credentials.username || !credentials.password || isSubmittingCredentials"
+              class="btn btn-sm btn-warning flex-1"
+              :disabled="!canSubmitCredentials || isSubmittingCredentials"
               @click="submitCredentials"
             >
               <span v-if="isSubmittingCredentials" class="loading loading-spinner loading-xs"></span>
               <span v-else>继续探索</span>
+            </button>
+            <button
+              class="btn btn-sm btn-ghost"
+              :disabled="isSubmittingCredentials"
+              @click="skipLogin"
+            >
+              跳过登录
             </button>
           </div>
         </div>
@@ -149,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
@@ -179,10 +196,40 @@ const showCoverage = ref(false)
 const showTakeoverForm = ref(false)
 const takeoverMessage = ref('')
 const isSubmittingCredentials = ref(false)
+
+// 登录字段定义接口
+interface LoginField {
+  id: string
+  label: string
+  field_type: string
+  required: boolean
+  placeholder?: string
+}
+
+// 动态登录字段列表（从后端检测获取）
+const loginFields = ref<LoginField[]>([])
+
+// 动态凭据输入（key 为字段 id）
+const dynamicCredentials = ref<Record<string, string>>({})
+
+// 旧的固定格式凭据（保留作为向后兼容）
 const credentials = ref({
   username: '',
   password: '',
   verificationCode: ''
+})
+
+// 计算是否可以提交凭据
+const canSubmitCredentials = computed(() => {
+  if (loginFields.value.length > 0) {
+    // 检查所有必填字段是否已填写
+    return loginFields.value
+      .filter(f => f.required)
+      .every(f => dynamicCredentials.value[f.id]?.trim())
+  } else {
+    // 回退模式：检查账号密码
+    return dynamicCredentials.value.username?.trim() && dynamicCredentials.value.password?.trim()
+  }
 })
 
 const unlisteners: UnlistenFn[] = []
@@ -224,22 +271,65 @@ const getLogClass = (type: string) => {
 const submitCredentials = async () => {
   isSubmittingCredentials.value = true
   try {
+    // 构建凭据对象
+    let username = ''
+    let password = ''
+    let verificationCode: string | null = null
+    const extraFields: Record<string, string> = {}
+    
+    if (loginFields.value.length > 0) {
+      // 从动态字段获取凭据
+      for (const field of loginFields.value) {
+        const value = dynamicCredentials.value[field.id] || ''
+        if (field.id === 'username' || field.field_type === 'email' || field.id.includes('user') || field.id.includes('account')) {
+          username = value
+        } else if (field.id === 'password' || field.field_type === 'password') {
+          password = value
+        } else if (field.id === 'verification_code' || field.id.includes('code') || field.id.includes('captcha')) {
+          verificationCode = value || null
+        } else {
+          extraFields[field.id] = value
+        }
+      }
+    } else {
+      // 使用回退模式的固定字段
+      username = dynamicCredentials.value.username || ''
+      password = dynamicCredentials.value.password || ''
+    }
+    
     await invoke('vision_explorer_receive_credentials', {
       executionId: props.executionId,
-      username: credentials.value.username,
-      password: credentials.value.password,
-      verificationCode: credentials.value.verificationCode || null,
-      extraFields: null
+      username,
+      password,
+      verificationCode,
+      extraFields: Object.keys(extraFields).length > 0 ? extraFields : null
     })
     pushLog('Credentials submitted, resuming exploration...', 'success')
     showTakeoverForm.value = false
-    // Reset credentials for security
-    credentials.value = { username: '', password: '', verificationCode: '' }
+    // 重置凭据
+    dynamicCredentials.value = {}
+    loginFields.value = []
   } catch (error) {
     console.error('Failed to submit credentials:', error)
     pushLog(`Failed to submit credentials: ${error}`, 'error')
   } finally {
     isSubmittingCredentials.value = false
+  }
+}
+
+// Skip login and continue without credentials
+const skipLogin = async () => {
+  try {
+    await invoke('vision_explorer_skip_login', {
+      executionId: props.executionId
+    })
+    pushLog('Login skipped, continuing exploration...', 'info')
+    showTakeoverForm.value = false
+    dynamicCredentials.value = {}
+    loginFields.value = []
+  } catch (error) {
+    console.error('Failed to skip login:', error)
+    pushLog(`Failed to skip login: ${error}`, 'error')
   }
 }
 
@@ -336,8 +426,30 @@ onMounted(async () => {
   unlisteners.push(await listen<any>('vision:takeover_request', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     showTakeoverForm.value = true
-    takeoverMessage.value = e.payload.message || 'Login page detected. Please enter your credentials.'
-    pushLog('Login page detected - waiting for credentials', 'action')
+    takeoverMessage.value = e.payload.message || 'Login page detected. Please enter credentials below or click "Skip Login" to continue without authentication.'
+    
+    // 解析登录字段
+    if (e.payload.fields && Array.isArray(e.payload.fields)) {
+      loginFields.value = e.payload.fields.map((f: any) => ({
+        id: f.id || '',
+        label: f.label || f.id || '',
+        field_type: f.field_type || 'text',
+        required: f.required !== false,
+        placeholder: f.placeholder || undefined
+      }))
+      // 初始化动态凭据对象
+      dynamicCredentials.value = {}
+      for (const field of loginFields.value) {
+        dynamicCredentials.value[field.id] = ''
+      }
+      pushLog(`Login page detected with ${loginFields.value.length} field(s) - waiting for credentials`, 'action')
+    } else {
+      // 没有字段信息，使用默认的账号密码
+      loginFields.value = []
+      dynamicCredentials.value = { username: '', password: '' }
+      pushLog('Login page detected - waiting for credentials', 'action')
+    }
+    
     currentStep.value = 'Waiting for credentials'
   }))
 

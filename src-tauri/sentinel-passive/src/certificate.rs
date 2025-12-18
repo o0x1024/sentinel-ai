@@ -315,6 +315,158 @@ impl CertificateService {
         Ok(cert_path)
     }
 
+    /// 导出证书为 DER 格式
+    pub fn export_cert_der(&self) -> Result<PathBuf> {
+        let cert_path = self.ca_dir.join("root-ca.pem");
+        let der_path = self.ca_dir.join("root-ca.der");
+        
+        if !cert_path.exists() {
+            return Err(PassiveError::Certificate("Root CA not found".to_string()));
+        }
+
+        let cert_pem = fs::read(&cert_path)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to read certificate: {}", e)))?;
+        
+        let pem = pem::parse(&cert_pem)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to parse PEM: {}", e)))?;
+        
+        fs::write(&der_path, pem.contents())
+            .map_err(|e| PassiveError::Certificate(format!("Failed to write DER: {}", e)))?;
+        
+        tracing::info!("Exported certificate in DER format: {}", der_path.display());
+        Ok(der_path)
+    }
+
+    /// 导出私钥为 DER 格式
+    pub fn export_key_der(&self) -> Result<PathBuf> {
+        let key_path = self.ca_dir.join("root-ca.key");
+        let der_path = self.ca_dir.join("root-ca-key.der");
+        
+        if !key_path.exists() {
+            return Err(PassiveError::Certificate("Root CA key not found".to_string()));
+        }
+
+        let key_pem = fs::read(&key_path)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to read key: {}", e)))?;
+        
+        let pem = pem::parse(&key_pem)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to parse PEM: {}", e)))?;
+        
+        fs::write(&der_path, pem.contents())
+            .map_err(|e| PassiveError::Certificate(format!("Failed to write DER: {}", e)))?;
+        
+        tracing::info!("Exported private key in DER format: {}", der_path.display());
+        Ok(der_path)
+    }
+
+    /// 导出为 PKCS#12 格式 (Windows compatible)
+    pub fn export_pkcs12(&self, password: Option<&str>) -> Result<PathBuf> {
+        let cert_path = self.ca_dir.join("root-ca.pem");
+        let key_path = self.ca_dir.join("root-ca.key");
+        let p12_path = self.ca_dir.join("root-ca.p12");
+        
+        if !cert_path.exists() || !key_path.exists() {
+            return Err(PassiveError::Certificate("Root CA not found".to_string()));
+        }
+
+        let cert_pem = fs::read_to_string(&cert_path)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to read certificate: {}", e)))?;
+        let key_pem = fs::read_to_string(&key_path)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to read key: {}", e)))?;
+        
+        // Parse certificate
+        let cert = openssl::x509::X509::from_pem(cert_pem.as_bytes())
+            .map_err(|e| PassiveError::Certificate(format!("Failed to parse certificate: {}", e)))?;
+        
+        // Parse private key
+        let pkey = openssl::pkey::PKey::private_key_from_pem(key_pem.as_bytes())
+            .map_err(|e| PassiveError::Certificate(format!("Failed to parse private key: {}", e)))?;
+        
+        // Create PKCS#12
+        let pwd = password.unwrap_or("");
+        let pkcs12 = openssl::pkcs12::Pkcs12::builder()
+            .name("Sentinel AI CA")
+            .pkey(&pkey)
+            .cert(&cert)
+            .build2(pwd)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to create PKCS#12: {}", e)))?;
+        
+        let der = pkcs12.to_der()
+            .map_err(|e| PassiveError::Certificate(format!("Failed to encode PKCS#12: {}", e)))?;
+        
+        fs::write(&p12_path, der)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to write PKCS#12: {}", e)))?;
+        
+        tracing::info!("Exported certificate in PKCS#12 format: {}", p12_path.display());
+        Ok(p12_path)
+    }
+
+    /// 从 PKCS#12 文件导入证书和私钥
+    pub fn import_pkcs12(&self, p12_data: &[u8], password: &str) -> Result<()> {
+        let pkcs12 = openssl::pkcs12::Pkcs12::from_der(p12_data)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to parse PKCS#12: {}", e)))?;
+        
+        let parsed = pkcs12.parse2(password)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to decrypt PKCS#12: {}", e)))?;
+        
+        let cert = parsed.cert.ok_or_else(|| {
+            PassiveError::Certificate("PKCS#12 does not contain certificate".to_string())
+        })?;
+        let pkey = parsed.pkey.ok_or_else(|| {
+            PassiveError::Certificate("PKCS#12 does not contain private key".to_string())
+        })?;
+        
+        // Save certificate
+        let cert_pem = cert.to_pem()
+            .map_err(|e| PassiveError::Certificate(format!("Failed to encode certificate: {}", e)))?;
+        let cert_path = self.ca_dir.join("root-ca.pem");
+        fs::write(&cert_path, cert_pem)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to write certificate: {}", e)))?;
+        
+        // Save private key
+        let key_pem = pkey.private_key_to_pem_pkcs8()
+            .map_err(|e| PassiveError::Certificate(format!("Failed to encode private key: {}", e)))?;
+        let key_path = self.ca_dir.join("root-ca.key");
+        fs::write(&key_path, key_pem)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to write private key: {}", e)))?;
+        
+        tracing::info!("Imported certificate and key from PKCS#12");
+        Ok(())
+    }
+
+    /// 从 DER 格式导入证书和私钥
+    pub fn import_der(&self, cert_der: &[u8], key_der: &[u8]) -> Result<()> {
+        // Parse and convert certificate
+        let cert = openssl::x509::X509::from_der(cert_der)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to parse DER certificate: {}", e)))?;
+        
+        // Parse and convert private key
+        let pkey = openssl::pkey::PKey::private_key_from_der(key_der)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to parse DER private key: {}", e)))?;
+        
+        // Save certificate
+        let cert_pem = cert.to_pem()
+            .map_err(|e| PassiveError::Certificate(format!("Failed to encode certificate: {}", e)))?;
+        let cert_path = self.ca_dir.join("root-ca.pem");
+        fs::write(&cert_path, cert_pem)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to write certificate: {}", e)))?;
+        
+        // Save private key
+        let key_pem = pkey.private_key_to_pem_pkcs8()
+            .map_err(|e| PassiveError::Certificate(format!("Failed to encode private key: {}", e)))?;
+        let key_path = self.ca_dir.join("root-ca.key");
+        fs::write(&key_path, key_pem)
+            .map_err(|e| PassiveError::Certificate(format!("Failed to write private key: {}", e)))?;
+        
+        tracing::info!("Imported certificate and key from DER format");
+        Ok(())
+    }
+
+    /// 获取 CA 目录路径
+    pub fn get_ca_dir(&self) -> &PathBuf {
+        &self.ca_dir
+    }
+
     /// macOS Keychain 信任 Root CA（需要用户授权）
     #[cfg(target_os = "macos")]
     pub async fn trust_root_ca_macos(&self) -> Result<()> {

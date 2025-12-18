@@ -1909,5 +1909,40 @@ export default {
     invalid: '许可证无效',
     expired: '许可证已过期',
     machineMismatch: '机器码不匹配'
+  },
+
+  // Agent 组件
+  agent: {
+    // MessageBlock
+    detailsInVisionPanel: '详情显示在 Vision Explorer 面板中',
+    collapseDetails: '收起详情',
+    expandDetails: '展开详情',
+    inputParameters: '输入参数',
+    executionResult: '执行结果',
+    toolCallId: '工具调用 ID',
+    copyMessage: '复制消息',
+    copy: '复制',
+    resendMessage: '重新发送',
+    resend: '重发',
+    statusRunning: '执行中',
+    statusCompleted: '已完成',
+    statusFailed: '失败',
+    statusPending: '等待中',
+    // 知识库引用
+    knowledgeBaseCited: '已引用知识库 ({count} 处)',
+    noKnowledgeBaseCitations: '未引用知识库',
+    // VisionExplorerProgress
+    route: '路由',
+    element: '元素',
+    component: '组件',
+    pendingRoutes: '待访问路由',
+    pendingRoutesCount: '待访问路由 ({count})',
+    // Vision Plan & Progress
+    visionGoal: '目标',
+    visionSteps: '步骤',
+    visionCompletion: '完成条件',
+    visionProgress: '进度',
+    visionPages: '页面',
+    visionElements: '元素'
   }
 }

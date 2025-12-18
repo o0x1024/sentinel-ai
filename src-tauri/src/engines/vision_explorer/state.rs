@@ -4,6 +4,8 @@
 
 use super::types::*;
 use chrono::Utc;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use tracing::{debug, info};
 
 /// 探索状态管理器
@@ -68,17 +70,64 @@ impl StateManager {
         self.state.interacted_elements.contains_key(element_id)
     }
 
-    /// 添加发现的API
+    /// 添加发现的API (with deduplication and static resource filtering)
     pub fn add_discovered_api(&mut self, api: ApiEndpoint) {
-        // 检查是否已存在相同的API
+        // Filter static resources
+        if Self::is_static_resource(&api.path) {
+            debug!("Skipping static resource: {} {}", api.method, api.path);
+            return;
+        }
+        
+        // Generate fingerprint for deduplication (method + path + params hash)
+        let fingerprint = Self::generate_api_fingerprint(&api);
+        
+        // Check if API with same fingerprint exists
         let exists = self.state.discovered_apis.iter().any(|existing| {
-            existing.method == api.method && existing.path == api.path
+            Self::generate_api_fingerprint(existing) == fingerprint
         });
         
         if !exists {
             info!("Discovered new API: {} {}", api.method, api.path);
             self.state.discovered_apis.push(api);
         }
+    }
+    
+    /// Generate API fingerprint for deduplication
+    fn generate_api_fingerprint(api: &ApiEndpoint) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        api.method.hash(&mut hasher);
+        api.path.hash(&mut hasher);
+        // Include sorted parameter keys for differentiation
+        let mut param_keys: Vec<_> = api.parameters.keys().collect();
+        param_keys.sort();
+        for key in param_keys {
+            key.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+    
+    /// Check if path is a static resource
+    fn is_static_resource(path: &str) -> bool {
+        let lower = path.to_lowercase();
+        let static_extensions = [
+            ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+            ".woff", ".woff2", ".ttf", ".eot", ".otf", ".map", ".webp",
+            ".mp3", ".mp4", ".webm", ".ogg", ".wav", ".pdf", ".zip",
+        ];
+        
+        // Check file extension
+        if static_extensions.iter().any(|ext| lower.ends_with(ext)) {
+            return true;
+        }
+        
+        // Check common static paths
+        let static_paths = [
+            "/static/", "/assets/", "/dist/", "/build/", "/public/",
+            "/_next/", "/__webpack", "/node_modules/", "/vendor/",
+            "/fonts/", "/images/", "/img/", "/css/", "/js/",
+        ];
+        
+        static_paths.iter().any(|p| lower.contains(p))
     }
 
     /// 批量添加发现的API
