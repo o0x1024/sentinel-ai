@@ -109,7 +109,7 @@ impl ModuleLoader for PluginModuleLoader {
                 .map_err(|e| JsErrorBox::generic(format!("Failed to parse referrer: {}", e)))?;
             base.join(specifier)
                 .map_err(|e| JsErrorBox::generic(format!("Failed to join specifier: {}", e)))
-        } else if specifier.starts_with("file://") || specifier.starts_with("sentinel://") {
+        } else if specifier.starts_with("file://") || specifier.starts_with("sentinel://") || specifier.starts_with("ext:") || specifier.starts_with("internal:") {
             Url::parse(specifier)
                 .map_err(|e| JsErrorBox::generic(format!("Failed to parse URL: {}", e)))
         } else {
@@ -196,6 +196,19 @@ impl PluginEngine {
             // sentinel_plugin_ext: custom ops for plugin system (emitFinding, log, fetch)
             sentinel_plugin_ext::init(),
         ];
+
+        // Register extension ESM modules in our loader so they can be imported
+        for ext in &extensions {
+            for file in ext.esm_files.iter() {
+                let code = match &file.code {
+                    deno_core::ExtensionFileSourceCode::IncludedInBinary(s) => s.as_str().to_string(),
+                    deno_core::ExtensionFileSourceCode::LoadedFromMemoryDuringSnapshot(s) => s.as_str().to_string(),
+                    deno_core::ExtensionFileSourceCode::Computed(s) => s.to_string(),
+                    _ => continue,
+                };
+                loader.register_module(file.specifier, code);
+            }
+        }
 
         // Create Deno Runtime with extensions and module loader
         let runtime = JsRuntime::new(RuntimeOptions {
@@ -375,8 +388,34 @@ if (typeof execute === 'function') {
         })?;
 
         // Inject Sentinel plugin API and fetch polyfill
-        // Note: deno_web provides TextEncoder, TextDecoder, URL, URLSearchParams, console, timers, Headers, etc.
+        // Note: We need to make sure deno_web/deno_webidl modules are evaluated
         let init_script = r#"
+            // Internal bootstrap to ensure extension modules are evaluated
+            // These are side-effect imports that set up globals like TextEncoder, URL, etc.
+            import "ext:deno_webidl/00_webidl.js";
+            import "ext:deno_web/00_infra.js";
+            import "ext:deno_web/01_dom_exception.js";
+            import "ext:deno_web/01_mimesniff.js";
+            import "ext:deno_web/02_event.js";
+            import "ext:deno_web/02_structured_clone.js";
+            import "ext:deno_web/02_timers.js";
+            import "ext:deno_web/03_abort_signal.js";
+            import "ext:deno_web/04_global_interfaces.js";
+            import "ext:deno_web/05_base64.js";
+            import "ext:deno_web/06_streams.js";
+            import "ext:deno_web/08_text_encoding.js";
+            import "ext:deno_web/09_file.js";
+            import "ext:deno_web/10_filereader.js";
+            import "ext:deno_web/12_location.js";
+            import "ext:deno_web/13_message_port.js";
+            import "ext:deno_web/14_compression.js";
+            import "ext:deno_web/15_performance.js";
+            import "ext:deno_web/16_image_data.js";
+            import "ext:deno_web/01_urlpattern.js";
+            import "ext:deno_web/01_broadcast_channel.js";
+            import "ext:deno_web/01_console.js";
+            import "ext:deno_web/00_url.js";
+
             // Sentinel plugin API for vulnerability reporting
             globalThis.Sentinel = {
                 emitFinding: function(finding) {
@@ -424,11 +463,21 @@ if (typeof execute === 'function') {
         "#
         .to_string();
 
-        self.runtime
-            .execute_script(
-                "init_sentinel_api",
-                deno_core::FastString::from(init_script),
-            )
+        // Use a module instead of a script to support top-level imports
+        let bootstrap_specifier = deno_core::ModuleSpecifier::parse("internal:bootstrap").unwrap();
+        self.loader.register_module("internal:bootstrap", init_script);
+        
+        let mod_id = self.runtime.load_side_es_module(&bootstrap_specifier).await
+            .map_err(|e| {
+                PluginError::Load(format!(
+                    "Failed to load Sentinel bootstrap for {}: {}",
+                    plugin_id, e
+                ))
+            })?;
+            
+        let _ = self.runtime.mod_evaluate(mod_id);
+        
+        self.runtime.run_event_loop(Default::default()).await
             .map_err(|e| {
                 PluginError::Load(format!(
                     "Failed to initialize Sentinel API for {}: {}",
