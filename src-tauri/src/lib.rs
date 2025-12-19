@@ -254,6 +254,7 @@ pub fn run() {
                 handle.manage(PacketCaptureState::default());
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
+                handle.manage(commands::vision_explorer_v2::VisionExplorerV2State::default());
 
                 // Initialize shell permission handler
                 if let Err(e) = tool_commands::init_shell_permission_handler(handle.clone()).await {
@@ -406,6 +407,7 @@ pub fn run() {
             ai::get_ai_config,
             ai::print_ai_conversations,
             ai::set_default_chat_model,
+            ai::set_default_vision_model,
             ai::set_default_provider,
             ai::upload_image_attachment,
             ai::upload_multiple_images,
@@ -748,6 +750,14 @@ pub fn run() {
             tool_commands::vision_explorer_send_user_message,
             tool_commands::vision_explorer_skip_login,
             tool_commands::vision_explorer_manual_login_complete,
+            // Vision Explorer V2 commands
+            commands::vision_explorer_v2::start_vision_explorer_v2,
+            commands::vision_explorer_v2::stop_vision_explorer_v2,
+            commands::vision_explorer_v2::vision_explorer_v2_receive_credentials,
+            commands::vision_explorer_v2::vision_explorer_v2_skip_login,
+            commands::vision_explorer_v2::get_vision_explorer_v2_status,
+            commands::vision_explorer_v2::list_vision_explorer_v2_sessions,
+
             // Shell Tool commands
             tool_commands::init_shell_permission_handler,
             tool_commands::get_shell_tool_config,

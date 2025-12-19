@@ -5,7 +5,7 @@
 
 pub mod memory;
 pub mod types;
-pub mod vision_explorer;
+pub mod vision_explorer_v2;
 
 pub use types::*;
 

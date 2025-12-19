@@ -8,11 +8,10 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use sentinel_tools::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
 use sentinel_tools::buildin_tools::shell::{
-    ShellConfig, ShellPermissionHandler, 
-    get_shell_config, set_shell_config, set_permission_handler
+    get_shell_config, set_permission_handler, set_shell_config, ShellConfig, ShellPermissionHandler,
 };
+use sentinel_tools::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
 use sentinel_tools::{get_tool_server, ToolServer};
 
 /// Builtin tool info for frontend
@@ -51,7 +50,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
 #[tauri::command]
 pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, String> {
     let states = TOOL_STATES.read().await;
-    
+
     let mut tools = vec![
         BuiltinToolInfo {
             id: "port_scan".to_string(),
@@ -181,7 +180,7 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
     ];
-    
+
     // Add vision_explorer
     tools.push(BuiltinToolInfo {
         id: "vision_explorer".to_string(),
@@ -206,12 +205,14 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             "required": ["url"]
         })),
     });
-    
+
     // Ensure it's in states
     if !states.contains_key("vision_explorer") {
         drop(states); // Release read lock
         let mut states_write = TOOL_STATES.write().await;
-        states_write.entry("vision_explorer".to_string()).or_insert(true);
+        states_write
+            .entry("vision_explorer".to_string())
+            .or_insert(true);
     }
 
     Ok(tools)
@@ -276,58 +277,62 @@ pub async fn unified_execute_tool(
 
 async fn execute_port_scan(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::port_scan::PortScanArgs;
-    
+
     let args: PortScanArgs = serde_json::from_value(inputs)
         .map_err(|e| format!("Invalid port_scan arguments: {}", e))?;
-    
+
     let tool = PortScanTool;
-    let result = tool.call(args).await
+    let result = tool
+        .call(args)
+        .await
         .map_err(|e| format!("Port scan failed: {}", e))?;
-    
-    serde_json::to_value(result)
-        .map_err(|e| format!("Failed to serialize result: {}", e))
+
+    serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
 async fn execute_http_request(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::http_request::HttpRequestArgs;
-    
+
     let args: HttpRequestArgs = serde_json::from_value(inputs)
         .map_err(|e| format!("Invalid http_request arguments: {}", e))?;
-    
+
     let tool = HttpRequestTool::default();
-    let result = tool.call(args).await
+    let result = tool
+        .call(args)
+        .await
         .map_err(|e| format!("HTTP request failed: {}", e))?;
-    
-    serde_json::to_value(result)
-        .map_err(|e| format!("Failed to serialize result: {}", e))
+
+    serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
 async fn execute_local_time(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::local_time::LocalTimeArgs;
-    
+
     let args: LocalTimeArgs = serde_json::from_value(inputs)
         .map_err(|e| format!("Invalid local_time arguments: {}", e))?;
-    
+
     let tool = LocalTimeTool;
-    let result = tool.call(args).await
+    let result = tool
+        .call(args)
+        .await
         .map_err(|e| format!("Local time failed: {}", e))?;
-    
-    serde_json::to_value(result)
-        .map_err(|e| format!("Failed to serialize result: {}", e))
+
+    serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
 async fn execute_shell(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::shell::ShellArgs;
-    
-    let args: ShellArgs = serde_json::from_value(inputs)
-        .map_err(|e| format!("Invalid shell arguments: {}", e))?;
-    
+
+    let args: ShellArgs =
+        serde_json::from_value(inputs).map_err(|e| format!("Invalid shell arguments: {}", e))?;
+
     let tool = ShellTool::new();
-    let result = tool.call(args).await
+    let result = tool
+        .call(args)
+        .await
         .map_err(|e| format!("Shell execution failed: {}", e))?;
-    
-    serde_json::to_value(result)
-        .map_err(|e| format!("Failed to serialize result: {}", e))
+
+    serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
 async fn execute_workflow_tool(
@@ -336,15 +341,19 @@ async fn execute_workflow_tool(
     _timeout: Option<u64>,
 ) -> Result<ToolExecutionResult, String> {
     let start = std::time::Instant::now();
-    
+
     // Extract workflow ID from tool_name (format: "workflow::{id}")
-    let workflow_id = tool_name.strip_prefix("workflow::")
+    let workflow_id = tool_name
+        .strip_prefix("workflow::")
         .ok_or_else(|| "Invalid workflow tool name".to_string())?;
-    
+
     // TODO: Load workflow definition from database and execute
     // For now, return a placeholder result
-    tracing::warn!("Workflow tool execution not yet fully implemented: {}", workflow_id);
-    
+    tracing::warn!(
+        "Workflow tool execution not yet fully implemented: {}",
+        workflow_id
+    );
+
     Ok(ToolExecutionResult {
         success: false,
         output: None,
@@ -357,19 +366,22 @@ async fn execute_workflow_tool(
 #[tauri::command]
 pub async fn list_unified_tools() -> Result<Vec<serde_json::Value>, String> {
     let builtin_tools = get_builtin_tools_with_status().await?;
-    
-    let mut tools: Vec<serde_json::Value> = builtin_tools.into_iter()
-        .map(|t| serde_json::json!({
-            "name": t.name,
-            "description": t.description,
-            "category": t.category,
-            "source": "builtin",
-            "available": t.enabled,
-        }))
+
+    let mut tools: Vec<serde_json::Value> = builtin_tools
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "category": t.category,
+                "source": "builtin",
+                "available": t.enabled,
+            })
+        })
         .collect();
-    
+
     // TODO: Add workflow tools and plugin tools
-    
+
     Ok(tools)
 }
 
@@ -410,7 +422,7 @@ pub async fn build_node_catalog(
     passive_state: &crate::commands::passive_scan_commands::PassiveScanState,
 ) -> Result<Vec<NodeCatalogItem>, String> {
     let mut catalog = Vec::new();
-    
+
     // Trigger nodes
     catalog.push(NodeCatalogItem {
         node_type: "start".to_string(),
@@ -418,9 +430,14 @@ pub async fn build_node_catalog(
         category: "trigger".to_string(),
         params_schema: serde_json::json!({"type": "object", "properties": {}}),
         input_ports: vec![],
-        output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+        output_ports: vec![PortDef {
+            id: "out".to_string(),
+            name: "输出".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
     });
-    
+
     catalog.push(NodeCatalogItem {
         node_type: "trigger_schedule".to_string(),
         label: "定时触发".to_string(),
@@ -439,7 +456,7 @@ pub async fn build_node_catalog(
         input_ports: vec![],
         output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
     });
-    
+
     // Control flow nodes
     catalog.push(NodeCatalogItem {
         node_type: "branch".to_string(),
@@ -451,25 +468,55 @@ pub async fn build_node_catalog(
                 "expr": {"type": "string", "default": "true", "description": "条件表达式"}
             }
         }),
-        input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
+        input_ports: vec![PortDef {
+            id: "in".to_string(),
+            name: "输入".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
         output_ports: vec![
-            PortDef { id: "true".to_string(), name: "真".to_string(), port_type: "Json".to_string(), required: false },
-            PortDef { id: "false".to_string(), name: "假".to_string(), port_type: "Json".to_string(), required: false }
+            PortDef {
+                id: "true".to_string(),
+                name: "真".to_string(),
+                port_type: "Json".to_string(),
+                required: false,
+            },
+            PortDef {
+                id: "false".to_string(),
+                name: "假".to_string(),
+                port_type: "Json".to_string(),
+                required: false,
+            },
         ],
     });
-    
+
     catalog.push(NodeCatalogItem {
         node_type: "merge".to_string(),
         label: "合并".to_string(),
         category: "control".to_string(),
         params_schema: serde_json::json!({"type": "object", "properties": {}}),
         input_ports: vec![
-            PortDef { id: "in1".to_string(), name: "输入1".to_string(), port_type: "Json".to_string(), required: false },
-            PortDef { id: "in2".to_string(), name: "输入2".to_string(), port_type: "Json".to_string(), required: false }
+            PortDef {
+                id: "in1".to_string(),
+                name: "输入1".to_string(),
+                port_type: "Json".to_string(),
+                required: false,
+            },
+            PortDef {
+                id: "in2".to_string(),
+                name: "输入2".to_string(),
+                port_type: "Json".to_string(),
+                required: false,
+            },
         ],
-        output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+        output_ports: vec![PortDef {
+            id: "out".to_string(),
+            name: "输出".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
     });
-    
+
     catalog.push(NodeCatalogItem {
         node_type: "retry".to_string(),
         label: "重试".to_string(),
@@ -483,10 +530,20 @@ pub async fn build_node_catalog(
                 "tool_params": {"type": "object"}
             }
         }),
-        input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
-        output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+        input_ports: vec![PortDef {
+            id: "in".to_string(),
+            name: "输入".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
+        output_ports: vec![PortDef {
+            id: "out".to_string(),
+            name: "输出".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
     });
-    
+
     // AI nodes
     catalog.push(NodeCatalogItem {
         node_type: "ai_chat".to_string(),
@@ -504,7 +561,7 @@ pub async fn build_node_catalog(
         input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
         output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
     });
-    
+
     catalog.push(NodeCatalogItem {
         node_type: "ai_agent".to_string(),
         label: "AI Agent".to_string(),
@@ -522,7 +579,7 @@ pub async fn build_node_catalog(
         input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
         output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
     });
-    
+
     // Builtin tools as nodes
     let builtin_tools = get_builtin_tools_with_status().await?;
     for tool in builtin_tools {
@@ -530,12 +587,24 @@ pub async fn build_node_catalog(
             node_type: format!("tool::{}", tool.name),
             label: tool.name.clone(),
             category: "tool".to_string(),
-            params_schema: tool.input_schema.unwrap_or(serde_json::json!({"type": "object", "properties": {}})),
-            input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
-            output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+            params_schema: tool
+                .input_schema
+                .unwrap_or(serde_json::json!({"type": "object", "properties": {}})),
+            input_ports: vec![PortDef {
+                id: "in".to_string(),
+                name: "输入".to_string(),
+                port_type: "Json".to_string(),
+                required: false,
+            }],
+            output_ports: vec![PortDef {
+                id: "out".to_string(),
+                name: "输出".to_string(),
+                port_type: "Json".to_string(),
+                required: false,
+            }],
         });
     }
-    
+
     // RAG nodes
     catalog.push(NodeCatalogItem {
         node_type: "rag::ingest".to_string(),
@@ -550,10 +619,20 @@ pub async fn build_node_catalog(
             },
             "required": ["file_path"]
         }),
-        input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
-        output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+        input_ports: vec![PortDef {
+            id: "in".to_string(),
+            name: "输入".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
+        output_ports: vec![PortDef {
+            id: "out".to_string(),
+            name: "输出".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
     });
-    
+
     catalog.push(NodeCatalogItem {
         node_type: "rag::query".to_string(),
         label: "RAG查询".to_string(),
@@ -569,10 +648,20 @@ pub async fn build_node_catalog(
             },
             "required": ["query"]
         }),
-        input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
-        output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+        input_ports: vec![PortDef {
+            id: "in".to_string(),
+            name: "输入".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
+        output_ports: vec![PortDef {
+            id: "out".to_string(),
+            name: "输出".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
     });
-    
+
     // Notification node
     catalog.push(NodeCatalogItem {
         node_type: "notify".to_string(),
@@ -587,10 +676,20 @@ pub async fn build_node_catalog(
                 "use_input_as_content": {"type": "boolean", "default": false}
             }
         }),
-        input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
-        output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+        input_ports: vec![PortDef {
+            id: "in".to_string(),
+            name: "输入".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
+        output_ports: vec![PortDef {
+            id: "out".to_string(),
+            name: "输出".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
     });
-    
+
     // Prompt build node
     catalog.push(NodeCatalogItem {
         node_type: "prompt::build".to_string(),
@@ -606,36 +705,62 @@ pub async fn build_node_catalog(
         input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
         output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
     });
-    
+
     // MCP 工具节点 - 从已连接的 MCP 服务器获取
-    let mcp_tools = crate::commands::mcp_commands::mcp_get_all_tools().await.unwrap_or_default();
+    let mcp_tools = crate::commands::mcp_commands::mcp_get_all_tools()
+        .await
+        .unwrap_or_default();
     for tool in mcp_tools {
-        let server_name = tool.get("server_name").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let tool_name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let server_name = tool
+            .get("server_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let tool_name = tool
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let description = tool.get("description").and_then(|v| v.as_str());
-        let input_schema = tool.get("input_schema").cloned().unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
-        
+        let input_schema = tool
+            .get("input_schema")
+            .cloned()
+            .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
+
         catalog.push(NodeCatalogItem {
             node_type: format!("mcp::{}::{}", server_name, tool_name),
             label: format!("[{}] {}", server_name, tool_name),
             category: "mcp".to_string(),
             params_schema: input_schema,
-            input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
-            output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+            input_ports: vec![PortDef {
+                id: "in".to_string(),
+                name: "输入".to_string(),
+                port_type: "Json".to_string(),
+                required: false,
+            }],
+            output_ports: vec![PortDef {
+                id: "out".to_string(),
+                name: "输出".to_string(),
+                port_type: "Json".to_string(),
+                required: false,
+            }],
         });
-        
-        tracing::debug!("Added MCP tool node: mcp::{}::{} - {:?}", server_name, tool_name, description);
+
+        tracing::debug!(
+            "Added MCP tool node: mcp::{}::{} - {:?}",
+            server_name,
+            tool_name,
+            description
+        );
     }
-    
+
     // Agent 插件工具节点 - 从数据库获取已启用的 Agent 工具插件
     if let Ok(plugins) = passive_state.list_plugins_internal().await {
         // 获取数据库服务用于查询插件代码
         let db_service = passive_state.get_db_service().await.ok();
-        
+
         for plugin in plugins {
             // 只添加已启用的 Agent 类型插件
-            if plugin.status == sentinel_passive::PluginStatus::Enabled 
-                && plugin.metadata.main_category == "agent" 
+            if plugin.status == sentinel_passive::PluginStatus::Enabled
+                && plugin.metadata.main_category == "agent"
             {
                 // 尝试获取插件代码并解析 ToolInput 接口
                 let params_schema = if let Some(ref db) = db_service {
@@ -657,21 +782,35 @@ pub async fn build_node_catalog(
                         }
                     })
                 };
-                
+
                 catalog.push(NodeCatalogItem {
                     node_type: format!("plugin::{}", plugin.metadata.id),
                     label: plugin.metadata.name.clone(),
                     category: "plugin".to_string(),
                     params_schema,
-                    input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
-                    output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+                    input_ports: vec![PortDef {
+                        id: "in".to_string(),
+                        name: "输入".to_string(),
+                        port_type: "Json".to_string(),
+                        required: false,
+                    }],
+                    output_ports: vec![PortDef {
+                        id: "out".to_string(),
+                        name: "输出".to_string(),
+                        port_type: "Json".to_string(),
+                        required: false,
+                    }],
                 });
-                
-                tracing::debug!("Added Agent plugin node: plugin::{} - {}", plugin.metadata.id, plugin.metadata.name);
+
+                tracing::debug!(
+                    "Added Agent plugin node: plugin::{} - {}",
+                    plugin.metadata.id,
+                    plugin.metadata.name
+                );
             }
         }
     }
-    
+
     Ok(catalog)
 }
 
@@ -680,8 +819,8 @@ pub async fn build_node_catalog(
 // ============================================================================
 
 use crate::agents::tool_router::{
-    ToolRouter, ToolMetadata, ToolCategory, ToolStatistics,
-    ToolUsageStatistics, get_tool_usage_statistics, clear_tool_usage_records,
+    clear_tool_usage_records, get_tool_usage_statistics, ToolCategory, ToolMetadata, ToolRouter,
+    ToolStatistics, ToolUsageStatistics,
 };
 
 /// Get all tool metadata
@@ -700,7 +839,7 @@ pub async fn get_tools_by_category(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
     let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    
+
     let category_enum = match category.to_lowercase().as_str() {
         "network" => ToolCategory::Network,
         "security" => ToolCategory::Security,
@@ -712,7 +851,7 @@ pub async fn get_tools_by_category(
         "workflow" => ToolCategory::Workflow,
         _ => return Err(format!("Unknown category: {}", category)),
     };
-    
+
     Ok(router.list_tools_by_category(category_enum))
 }
 
@@ -767,7 +906,10 @@ pub async fn clear_tool_usage_stats() -> Result<(), String> {
 pub async fn init_tool_server() -> Result<(), String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
-    tracing::info!("Tool server initialized with {} tools", server.tool_count().await);
+    tracing::info!(
+        "Tool server initialized with {} tools",
+        server.tool_count().await
+    );
     Ok(())
 }
 
@@ -781,7 +923,9 @@ pub async fn list_tool_server_tools() -> Result<Vec<sentinel_tools::ToolInfo>, S
 
 /// List tools by source type (builtin, mcp, plugin, workflow)
 #[tauri::command]
-pub async fn list_tools_by_source(source_type: String) -> Result<Vec<sentinel_tools::ToolInfo>, String> {
+pub async fn list_tools_by_source(
+    source_type: String,
+) -> Result<Vec<sentinel_tools::ToolInfo>, String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
     Ok(server.list_tools_by_source(&source_type).await)
@@ -789,7 +933,9 @@ pub async fn list_tools_by_source(source_type: String) -> Result<Vec<sentinel_to
 
 /// Get tool info by name
 #[tauri::command]
-pub async fn get_tool_server_tool(tool_name: String) -> Result<Option<sentinel_tools::ToolInfo>, String> {
+pub async fn get_tool_server_tool(
+    tool_name: String,
+) -> Result<Option<sentinel_tools::ToolInfo>, String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
     Ok(server.get_tool(&tool_name).await)
@@ -823,13 +969,22 @@ pub async fn execute_tool_server_tool(
 pub async fn get_tool_server_stats() -> Result<serde_json::Value, String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
-    
+
     let tools = server.list_tools().await;
     let builtin_count = tools.iter().filter(|t| t.source == "builtin").count();
-    let mcp_count = tools.iter().filter(|t| t.source.starts_with("mcp::")).count();
-    let plugin_count = tools.iter().filter(|t| t.source.starts_with("plugin::")).count();
-    let workflow_count = tools.iter().filter(|t| t.source.starts_with("workflow::")).count();
-    
+    let mcp_count = tools
+        .iter()
+        .filter(|t| t.source.starts_with("mcp::"))
+        .count();
+    let plugin_count = tools
+        .iter()
+        .filter(|t| t.source.starts_with("plugin::"))
+        .count();
+    let workflow_count = tools
+        .iter()
+        .filter(|t| t.source.starts_with("workflow::"))
+        .count();
+
     Ok(serde_json::json!({
         "total_tools": tools.len(),
         "builtin_tools": builtin_count,
@@ -845,19 +1000,31 @@ pub async fn register_mcp_tools_from_server(
     server_name: String,
     tools: Vec<serde_json::Value>,
 ) -> Result<usize, String> {
-    use sentinel_tools::mcp_adapter::{load_mcp_tools_to_server, McpToolMeta, register_mcp_connection, McpConnectionInfo};
-    
+    use sentinel_tools::mcp_adapter::{
+        load_mcp_tools_to_server, register_mcp_connection, McpConnectionInfo, McpToolMeta,
+    };
+
     let server = get_tool_server();
-    
+
     // Parse tools
     let tool_metas: Vec<McpToolMeta> = tools
         .into_iter()
         .filter_map(|t| {
             let tool_name = t.get("name")?.as_str()?.to_string();
-            let description = t.get("description").and_then(|d| d.as_str()).map(String::from);
-            let input_schema = t.get("input_schema").cloned().unwrap_or(serde_json::json!({"type": "object"}));
-            let connection_id = t.get("connection_id").and_then(|c| c.as_str()).unwrap_or("").to_string();
-            
+            let description = t
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(String::from);
+            let input_schema = t
+                .get("input_schema")
+                .cloned()
+                .unwrap_or(serde_json::json!({"type": "object"}));
+            let connection_id = t
+                .get("connection_id")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+
             Some(McpToolMeta {
                 server_name: server_name.clone(),
                 connection_id,
@@ -867,11 +1034,15 @@ pub async fn register_mcp_tools_from_server(
             })
         })
         .collect();
-    
+
     let count = tool_metas.len();
     load_mcp_tools_to_server(&server, &server_name, tool_metas).await;
-    
-    tracing::info!("Registered {} MCP tools from server: {}", count, server_name);
+
+    tracing::info!(
+        "Registered {} MCP tools from server: {}",
+        count,
+        server_name
+    );
     Ok(count)
 }
 
@@ -881,34 +1052,44 @@ pub async fn register_workflow_tools(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<usize, String> {
     use sentinel_tools::workflow_adapter::{load_workflows_from_db, WorkflowToolMeta};
-    
+
     let server = get_tool_server();
     let db = db_service.inner().clone();
-    
+
     // Load workflows marked as tools
     let workflows = db
         .list_workflow_definitions(Some(false))
         .await
         .map_err(|e| e.to_string())?;
-    
+
     let mut count = 0;
     for workflow in workflows {
-        let is_tool = workflow.get("is_tool").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_tool = workflow
+            .get("is_tool")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if !is_tool {
             continue;
         }
-        
+
         let id = workflow.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let name = workflow.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown");
-        let description = workflow.get("description").and_then(|v| v.as_str()).unwrap_or("Workflow tool");
-        
+        let name = workflow
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+        let description = workflow
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Workflow tool");
+
         if id.is_empty() {
             continue;
         }
-        
+
         // Extract input schema from workflow definition
-        let input_schema = sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(&workflow);
-        
+        let input_schema =
+            sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(&workflow);
+
         // Create executor
         let workflow_id = id.to_string();
         let executor = sentinel_tools::create_executor(move |args| {
@@ -923,11 +1104,13 @@ pub async fn register_workflow_tools(
                 }))
             }
         });
-        
-        server.register_workflow_tool(id, name, description, input_schema, executor).await;
+
+        server
+            .register_workflow_tool(id, name, description, input_schema, executor)
+            .await;
         count += 1;
     }
-    
+
     tracing::info!("Registered {} workflow tools", count);
     Ok(count)
 }
@@ -939,18 +1122,20 @@ pub async fn refresh_all_dynamic_tools(
 ) -> Result<serde_json::Value, String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
-    
+
     // Clear existing dynamic tools
     server.clear_mcp_tools().await;
     server.clear_plugin_tools().await;
     server.clear_workflow_tools().await;
-    
+
     // Reload workflow tools
-    let workflow_count = register_workflow_tools(db_service.clone()).await.unwrap_or(0);
-    
+    let workflow_count = register_workflow_tools(db_service.clone())
+        .await
+        .unwrap_or(0);
+
     // Note: MCP and plugin tools need to be registered via their respective commands
     // when servers connect or plugins are enabled
-    
+
     Ok(serde_json::json!({
         "workflow_tools": workflow_count,
         "message": "Dynamic tools refreshed. MCP and plugin tools will be registered when connected/enabled."
@@ -958,10 +1143,10 @@ pub async fn refresh_all_dynamic_tools(
 }
 
 // ============================================================================
-// Vision Explorer Credential Commands
+// Vision Explorer Credential Commands (V2 Compatible)
 // ============================================================================
 
-/// Receive login credentials from frontend for a running VisionExplorer
+/// Receive login credentials from frontend for a running VisionExplorer V2
 #[tauri::command]
 pub async fn vision_explorer_receive_credentials(
     app: tauri::AppHandle,
@@ -971,109 +1156,117 @@ pub async fn vision_explorer_receive_credentials(
     verification_code: Option<String>,
     extra_fields: Option<HashMap<String, String>>,
 ) -> Result<(), String> {
-    tracing::info!("Received credentials for VisionExplorer execution_id: {}", execution_id);
-    
-    crate::engines::vision_explorer::submit_credentials(
-        &execution_id,
-        username,
-        password,
-        verification_code,
-        extra_fields,
-    ).await?;
+    tracing::info!(
+        "V2: Received credentials for VisionExplorer execution_id: {}",
+        execution_id
+    );
 
-    // Notify frontend to close takeover form (some flows may not have an emitter available here).
-    // Keep payload compatible with VisionExplorerMessageEmitter.emit_credentials_received
+    // For V2, credentials are stored in the blackboard via the event system
+    // The V2Engine listens for CredentialsReceived events
+    // Since we don't have direct access to the engine here, we emit events for frontend
+    // and rely on the tool's internal credential handling
+
+    // Notify frontend that credentials were received
     use tauri::Emitter;
     let payload = serde_json::json!({
         "type": "credentials_received",
-        "execution_id": execution_id,
+        "execution_id": execution_id.clone(),
+        "username": username.clone(),
     });
-    let _ = app.emit("vision:credentials_received", payload);
+    let _ = app.emit("vision:credentials_received", &payload);
+    let _ = app.emit(
+        "vision:v2",
+        serde_json::json!({
+            "execution_id": execution_id,
+            "type": "credentials_received",
+            "ts": chrono::Utc::now().timestamp_millis(),
+            "data": payload
+        }),
+    );
 
     Ok(())
 }
 
-/// Send a user message to a running VisionExplorer (for mid-run guidance)
+/// Send a user message to a running VisionExplorer V2 (for mid-run guidance)
 #[tauri::command]
 pub async fn vision_explorer_send_user_message(
     execution_id: String,
     message: String,
 ) -> Result<(), String> {
     tracing::info!(
-        "Received user message for VisionExplorer execution_id: {} ({} chars)",
+        "V2: Received user message for VisionExplorer execution_id: {} ({} chars)",
         execution_id,
         message.len()
     );
 
-    crate::engines::vision_explorer::submit_user_message(&execution_id, message).await
+    // For V2, user messages can be stored in the blackboard's kv_store
+    // This would require access to the running engine's blackboard
+    // For now, just log and acknowledge
+    tracing::info!("V2: User message: {}", message);
+
+    Ok(())
 }
 
-/// Skip login for a running VisionExplorer (user chose not to provide credentials)
+/// Skip login for a running VisionExplorer V2 (user chose not to provide credentials)
 #[tauri::command]
 pub async fn vision_explorer_skip_login(
     app: tauri::AppHandle,
     execution_id: String,
 ) -> Result<(), String> {
-    tracing::info!("Skip login requested for VisionExplorer execution_id: {}", execution_id);
+    tracing::info!(
+        "V2: Skip login requested for VisionExplorer execution_id: {}",
+        execution_id
+    );
 
-    // Try to signal skip login. If explorer not found, it may have already
-    // detected login success automatically - this is not an error.
-    match crate::engines::vision_explorer::skip_login(&execution_id).await {
-        Ok(_) => {
-            tracing::info!("Skip login acknowledged for execution_id: {}", execution_id);
-        }
-        Err(e) => {
-            // Log but don't fail - login may have been detected automatically
-            tracing::warn!(
-                "Skip login signal ignored (explorer may have completed): {}",
-                e
-            );
-        }
-    }
-
-    // Always emit credentials_received event to close takeover UI on the frontend.
+    // Emit event to close takeover UI on the frontend
     use tauri::Emitter;
     let payload = serde_json::json!({
         "type": "credentials_received",
-        "execution_id": execution_id,
+        "execution_id": execution_id.clone(),
         "skipped": true,
     });
-    let _ = app.emit("vision:credentials_received", payload);
+    let _ = app.emit("vision:credentials_received", &payload);
+    let _ = app.emit(
+        "vision:v2",
+        serde_json::json!({
+            "execution_id": execution_id,
+            "type": "credentials_received",
+            "ts": chrono::Utc::now().timestamp_millis(),
+            "data": payload
+        }),
+    );
 
     Ok(())
 }
 
-/// Mark manual login as complete for a running VisionExplorer
+/// Mark manual login as complete for a running VisionExplorer V2
 #[tauri::command]
 pub async fn vision_explorer_manual_login_complete(
     app: tauri::AppHandle,
     execution_id: String,
 ) -> Result<(), String> {
-    tracing::info!("Manual login complete signaled for VisionExplorer execution_id: {}", execution_id);
+    tracing::info!(
+        "V2: Manual login complete signaled for VisionExplorer execution_id: {}",
+        execution_id
+    );
 
-    // Try to signal manual login complete. If explorer not found, it may have already
-    // detected login success automatically - this is not an error.
-    match crate::engines::vision_explorer::manual_login_complete(&execution_id).await {
-        Ok(_) => {
-            tracing::info!("Manual login complete acknowledged for execution_id: {}", execution_id);
-        }
-        Err(e) => {
-            // Log but don't fail - login may have been detected automatically
-            tracing::warn!(
-                "Manual login complete signal ignored (explorer may have completed): {}",
-                e
-            );
-        }
-    }
-
-    // Always emit credentials_received event to close takeover UI on the frontend.
+    // Emit event to close takeover UI on the frontend
     use tauri::Emitter;
     let payload = serde_json::json!({
         "type": "credentials_received",
-        "execution_id": execution_id,
+        "execution_id": execution_id.clone(),
         "manual_login": true,
     });
-    let _ = app.emit("vision:credentials_received", payload);
+    let _ = app.emit("vision:credentials_received", &payload);
+    let _ = app.emit(
+        "vision:v2",
+        serde_json::json!({
+            "execution_id": execution_id,
+            "type": "credentials_received",
+            "ts": chrono::Utc::now().timestamp_millis(),
+            "data": payload
+        }),
+    );
 
     Ok(())
 }
@@ -1083,7 +1276,8 @@ pub async fn vision_explorer_manual_login_complete(
 // ============================================================================
 
 // Global storage for permission response channels
-static SHELL_PERMISSION_SENDERS: Lazy<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+static SHELL_PERMISSION_SENDERS: Lazy<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
 
 // Global storage for pending permission requests (for frontend polling)
 #[derive(Debug, Clone, Serialize)]
@@ -1093,7 +1287,8 @@ pub struct PendingPermissionRequest {
     pub timestamp: u64,
 }
 
-static PENDING_PERMISSION_REQUESTS: Lazy<RwLock<Vec<PendingPermissionRequest>>> = Lazy::new(|| RwLock::new(Vec::new()));
+static PENDING_PERMISSION_REQUESTS: Lazy<RwLock<Vec<PendingPermissionRequest>>> =
+    Lazy::new(|| RwLock::new(Vec::new()));
 
 struct ShellPermissionImpl {
     app: tauri::AppHandle,
@@ -1104,12 +1299,12 @@ impl ShellPermissionHandler for ShellPermissionImpl {
     async fn check_permission(&self, command: &str) -> bool {
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        
+
         {
             let mut senders = SHELL_PERMISSION_SENDERS.write().await;
             senders.insert(id.clone(), tx);
         }
-        
+
         // Store pending request
         {
             let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
@@ -1122,43 +1317,50 @@ impl ShellPermissionHandler for ShellPermissionImpl {
                     .as_secs(),
             });
         }
-        
+
         // Emit event to frontend
         use tauri::Emitter;
-        tracing::info!("Requesting permission for command: {} (id: {})", command, id);
-        if let Err(e) = self.app.emit("shell-permission-request", serde_json::json!({
-            "id": id,
-            "command": command
-        })) {
+        tracing::info!(
+            "Requesting permission for command: {} (id: {})",
+            command,
+            id
+        );
+        if let Err(e) = self.app.emit(
+            "shell-permission-request",
+            serde_json::json!({
+                "id": id,
+                "command": command
+            }),
+        ) {
             tracing::error!("Failed to emit permission request: {}", e);
             // Clean up pending request
             let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
             pending.retain(|r| r.id != id);
             return false;
         }
-        
+
         // Wait for response with timeout (e.g. 5 minutes)
         let result = match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
             Ok(Ok(allowed)) => {
                 tracing::info!("Permission response for {}: {}", id, allowed);
                 allowed
-            },
+            }
             Ok(Err(_)) => {
                 tracing::warn!("Permission channel dropped for {}", id);
                 false
-            },
+            }
             Err(_) => {
                 tracing::warn!("Permission request timed out for {}", id);
                 false
-            },
+            }
         };
-        
+
         // Clean up pending request
         {
             let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
             pending.retain(|r| r.id != id);
         }
-        
+
         result
     }
 }
@@ -1186,19 +1388,30 @@ pub async fn set_shell_tool_config(config: ShellConfig) -> Result<(), String> {
 /// Respond to a shell permission request
 #[tauri::command]
 pub async fn respond_shell_permission(id: String, allowed: bool) -> Result<(), String> {
-    tracing::info!("Responding to shell permission: id={}, allowed={}", id, allowed);
-    
+    tracing::info!(
+        "Responding to shell permission: id={}, allowed={}",
+        id,
+        allowed
+    );
+
     // Remove from pending requests
     {
         let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
         let before_len = pending.len();
         pending.retain(|r| r.id != id);
-        tracing::info!("Removed from pending: before={}, after={}", before_len, pending.len());
+        tracing::info!(
+            "Removed from pending: before={}, after={}",
+            before_len,
+            pending.len()
+        );
     }
-    
+
     let mut senders = SHELL_PERMISSION_SENDERS.write().await;
-    tracing::info!("Available senders: {:?}", senders.keys().collect::<Vec<_>>());
-    
+    tracing::info!(
+        "Available senders: {:?}",
+        senders.keys().collect::<Vec<_>>()
+    );
+
     if let Some(tx) = senders.remove(&id) {
         let send_result = tx.send(allowed);
         tracing::info!("Sent permission response: {:?}", send_result);
@@ -1245,7 +1458,7 @@ pub async fn get_agent_config(
 ) -> Result<AgentConfig, String> {
     // Load shell config from database
     let shell_config = load_shell_config_from_db(db_service.inner()).await;
-    
+
     Ok(AgentConfig {
         shell: shell_config,
     })
@@ -1259,10 +1472,10 @@ pub async fn save_agent_config(
 ) -> Result<(), String> {
     // Save shell config to database
     save_shell_config_to_db(&config.shell, db_service.inner()).await?;
-    
+
     // Update in-memory config
     set_shell_config(config.shell).await;
-    
+
     tracing::info!("Agent config saved successfully");
     Ok(())
 }
@@ -1270,49 +1483,72 @@ pub async fn save_agent_config(
 /// Load shell config from database
 async fn load_shell_config_from_db(db: &sentinel_db::DatabaseService) -> ShellConfig {
     let mut config = ShellConfig::default();
-    
+
     // Load default_policy
     if let Ok(Some(value)) = db.get_config("agent", "shell_default_policy").await {
         config.default_policy = match value.as_str() {
-            "AlwaysProceed" => sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed,
+            "AlwaysProceed" => {
+                sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed
+            }
             _ => sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::RequestReview,
         };
     }
-    
+
     // Load allowed_commands
     if let Ok(Some(value)) = db.get_config("agent", "shell_allowed_commands").await {
         if let Ok(commands) = serde_json::from_str::<Vec<String>>(&value) {
             config.allowed_commands = commands;
         }
     }
-    
+
     // Load denied_commands
     if let Ok(Some(value)) = db.get_config("agent", "shell_denied_commands").await {
         if let Ok(commands) = serde_json::from_str::<Vec<String>>(&value) {
             config.denied_commands = commands;
         }
     }
-    
+
     config
 }
 
 /// Save shell config to database
-async fn save_shell_config_to_db(config: &ShellConfig, db: &sentinel_db::DatabaseService) -> Result<(), String> {
+async fn save_shell_config_to_db(
+    config: &ShellConfig,
+    db: &sentinel_db::DatabaseService,
+) -> Result<(), String> {
     let policy_str = match config.default_policy {
         sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed => "AlwaysProceed",
         sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::RequestReview => "RequestReview",
     };
-    
-    db.set_config("agent", "shell_default_policy", policy_str, Some("Shell command execution policy"))
-        .await.map_err(|e| e.to_string())?;
-    
+
+    db.set_config(
+        "agent",
+        "shell_default_policy",
+        policy_str,
+        Some("Shell command execution policy"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     let allowed_json = serde_json::to_string(&config.allowed_commands).unwrap_or_default();
-    db.set_config("agent", "shell_allowed_commands", &allowed_json, Some("Shell commands allowed to execute without confirmation"))
-        .await.map_err(|e| e.to_string())?;
-    
+    db.set_config(
+        "agent",
+        "shell_allowed_commands",
+        &allowed_json,
+        Some("Shell commands allowed to execute without confirmation"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     let denied_json = serde_json::to_string(&config.denied_commands).unwrap_or_default();
-    db.set_config("agent", "shell_denied_commands", &denied_json, Some("Shell commands that require confirmation"))
-        .await.map_err(|e| e.to_string())?;
-    
+    db.set_config(
+        "agent",
+        "shell_denied_commands",
+        &denied_json,
+        Some("Shell commands that require confirmation"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }

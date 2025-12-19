@@ -149,11 +149,47 @@ function getActionClass(action: string) {
   }
 }
 
+// Backend interface matching Rust struct
+interface BackendShellConfig {
+  default_policy: 'Allow' | 'Deny' | 'RequestReview'
+  allowed_commands: string[]
+  denied_commands: string[]
+}
+
 async function loadConfig() {
   loading.value = true
   try {
-    const res = await invoke<ShellConfig>('get_shell_tool_config')
-    config.value = res
+    // Cast to unknown first if types conflict, or use any
+    const res = await invoke<any>('get_shell_tool_config')
+    
+    if (res) {
+      // Map Backend -> Frontend
+      const rules: ShellRule[] = []
+      
+      // Add denied commands first (usually higher priority)
+      if (Array.isArray(res.denied_commands)) {
+        res.denied_commands.forEach((cmd: string) => {
+          rules.push({ pattern: cmd, action: 'Deny' })
+        })
+      }
+      
+      // Add allowed commands
+      if (Array.isArray(res.allowed_commands)) {
+        res.allowed_commands.forEach((cmd: string) => {
+          rules.push({ pattern: cmd, action: 'Allow' })
+        })
+      }
+      
+      let default_action: 'Allow' | 'Deny' | 'Ask' = 'Ask'
+      if (res.default_policy === 'Allow') default_action = 'Allow'
+      else if (res.default_policy === 'Deny') default_action = 'Deny'
+      else if (res.default_policy === 'RequestReview') default_action = 'Ask'
+      
+      config.value = {
+        default_action,
+        rules
+      }
+    }
   } catch (e: any) {
     console.error('Failed to load shell config:', e)
     dialog.toast.error('加载配置失败: ' + e)
@@ -171,7 +207,14 @@ async function save() {
 
   loading.value = true
   try {
-    await invoke('set_shell_tool_config', { config: config.value })
+    // Map Frontend -> Backend
+    const backendConfig: BackendShellConfig = {
+      default_policy: config.value.default_action === 'Ask' ? 'RequestReview' : config.value.default_action,
+      allowed_commands: config.value.rules.filter(r => r.action === 'Allow').map(r => r.pattern),
+      denied_commands: config.value.rules.filter(r => r.action === 'Deny').map(r => r.pattern)
+    }
+
+    await invoke('set_shell_tool_config', { config: backendConfig })
     dialog.toast.success('配置已保存')
     close()
   } catch (e: any) {

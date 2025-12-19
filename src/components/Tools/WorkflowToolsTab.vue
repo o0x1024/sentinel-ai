@@ -65,15 +65,7 @@
           <div class="card-actions justify-between items-center mt-4">
             <span class="text-xs text-base-content/60">{{ formatDate(workflow.updated_at) }}</span>
             <div class="flex gap-2">
-              <button 
-                @click="viewInStudio(workflow)"
-                class="btn btn-outline btn-secondary btn-sm"
-                title="在工作流工作室中查看"
-              >
-                <i class="fas fa-external-link-alt mr-1"></i>
-                查看
-              </button>
-              <button 
+                <button 
                 @click="openTestModal(workflow)"
                 class="btn btn-outline btn-info btn-sm"
                 title="测试工作流工具"
@@ -125,16 +117,9 @@
             <td>
               <div class="flex gap-1">
                 <button 
-                  @click="viewInStudio(workflow)"
-                  class="btn btn-outline btn-secondary btn-xs"
-                  title="在工作流工作室中查看"
-                >
-                  <i class="fas fa-external-link-alt"></i>
-                </button>
-                <button 
                   @click="openTestModal(workflow)"
                   class="btn btn-outline btn-info btn-xs"
-                  title="测试工作流工具"
+                title="测试工作流工具"
                 >
                   <i class="fas fa-play"></i>
                 </button>
@@ -155,67 +140,20 @@
       </button>
     </div>
 
-    <!-- 测试模态框 -->
-    <dialog :class="['modal', { 'modal-open': showTestModal }]">
-      <div v-if="testingWorkflow" class="modal-box w-11/12 max-w-3xl">
-        <div class="flex justify-between items-center mb-4">
-          <h3 class="font-bold text-lg">
-            测试工作流工具: {{ testingWorkflow.name }}
-          </h3>
-          <button @click="closeTestModal" class="btn btn-sm btn-ghost">✕</button>
-        </div>
-
-        <div class="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
-          <div class="alert alert-info">
-            <i class="fas fa-info-circle"></i>
-            <span>输入测试参数后点击运行测试，验证工作流是否正常执行。</span>
-          </div>
-
-          <!-- 工作流描述 -->
-          <div class="bg-base-200 p-4 rounded-lg">
-            <p class="text-sm">{{ testingWorkflow.description || '暂无描述' }}</p>
-            <div class="flex gap-2 mt-2">
-              <span class="badge badge-secondary badge-sm">v{{ testingWorkflow.version }}</span>
-              <span class="text-xs text-base-content/60">更新于 {{ formatDate(testingWorkflow.updated_at) }}</span>
-            </div>
-          </div>
-
-          <!-- 测试参数输入 -->
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">测试参数 (JSON, 可选)</span>
-              <span class="label-text-alt text-xs opacity-60">参数已从 Start 节点自动提取</span>
-            </label>
-            <textarea
-              v-model="testParamsJson"
-              class="textarea textarea-bordered font-mono text-sm"
-              placeholder='输入 JSON 格式的测试参数'
-              rows="8"
-              spellcheck="false"
-            ></textarea>
-          </div>
-
-          <!-- 测试结果 -->
-          <div class="form-control">
-            <label class="label"><span class="label-text">测试结果</span></label>
-            <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-40 bg-base-200 overflow-auto">{{ testResult || '点击"运行测试"查看结果' }}</pre>
-          </div>
-        </div>
-
-        <div class="modal-action">
-          <button @click="closeTestModal" class="btn">取消</button>
-          <button 
-            class="btn btn-primary"
-            :disabled="isTesting"
-            @click="runTest"
-          >
-            <i v-if="isTesting" class="fas fa-spinner fa-spin mr-1"></i>
-            <i v-else class="fas fa-play mr-1"></i>
-            运行测试
-          </button>
-        </div>
-      </div>
-    </dialog>
+    <!-- 统一测试组件 -->
+    <UnifiedToolTest
+      v-model="showTestModal"
+      tool-type="workflow"
+      :tool-name="testingWorkflow?.name || ''"
+      :tool-description="testingWorkflow?.description"
+      :tool-version="testingWorkflow?.version"
+      :tool-category="'Workflow'"
+      :input-schema="testingInputSchema"
+      :execution-info="{
+        type: 'workflow',
+        id: testingWorkflow?.id
+      }"
+    />
   </div>
 </template>
 
@@ -223,6 +161,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
+import UnifiedToolTest from './UnifiedToolTest.vue'
 
 // 状态
 const workflows = ref<any[]>([])
@@ -230,9 +169,7 @@ const isLoading = ref(false)
 const viewMode = ref('list')
 const showTestModal = ref(false)
 const testingWorkflow = ref<any>(null)
-const testParamsJson = ref('')
-const testResult = ref('')
-const isTesting = ref(false)
+const testingInputSchema = ref<any>({})
 
 // 方法
 function parseTags(tags: string | null): string[] {
@@ -293,26 +230,36 @@ function viewInStudio(workflow: any) {
 
 async function openTestModal(workflow: any) {
   testingWorkflow.value = { ...workflow }
-  testResult.value = ''
+  testingInputSchema.value = {}
   
   // 加载完整的工作流定义以获取输入参数
   try {
     const fullDef = await invoke<any>('get_workflow_definition', { id: workflow.id })
     if (fullDef && fullDef.graph) {
       const defaultParams = extractInputParams(fullDef.graph)
-      testParamsJson.value = JSON.stringify(defaultParams, null, 2)
-    } else {
-      testParamsJson.value = '{}'
+      // 构造 JSON Schema
+      testingInputSchema.value = {
+        type: 'object',
+        properties: Object.keys(defaultParams).reduce((acc: any, key) => {
+          const val = defaultParams[key]
+          acc[key] = {
+            type: typeof val,
+            default: val,
+            description: `工作流输入参数: ${key}`
+          }
+          if (Array.isArray(val)) acc[key].type = 'array'
+          return acc
+        }, {})
+      }
     }
   } catch (e) {
     console.error('Failed to load workflow definition:', e)
-    testParamsJson.value = '{}'
   }
   
-  nextTick(() => {
-    showTestModal.value = true
-  })
+  showTestModal.value = true
 }
+
+
 
 // 从工作流图中提取输入参数定义
 function extractInputParams(graph: any): Record<string, any> {
@@ -385,60 +332,6 @@ function getDefaultValueForType(portType: string | any): any {
     case 'object':
     case 'json': return {}
     default: return ''
-  }
-}
-
-function closeTestModal() {
-  showTestModal.value = false
-  setTimeout(() => {
-    testingWorkflow.value = null
-    testParamsJson.value = ''
-    testResult.value = ''
-  }, 350)
-}
-
-async function runTest() {
-  if (!testingWorkflow.value) {
-    dialog.toast.error('请选择要测试的工作流')
-    return
-  }
-
-  let inputs: any = {}
-  if (testParamsJson.value.trim()) {
-    try {
-      inputs = JSON.parse(testParamsJson.value)
-    } catch (e) {
-      dialog.toast.error('参数 JSON 格式错误，请检查')
-      return
-    }
-  }
-
-  isTesting.value = true
-  testResult.value = '正在执行工作流测试...'
-  
-  try {
-    const result = await invoke<any>('unified_execute_tool', {
-      toolName: `workflow::${testingWorkflow.value.id}`,
-      inputs,
-      context: null,
-      timeout: 120,
-    })
-
-    if (result.success) {
-      testResult.value = typeof result.output === 'string'
-        ? result.output
-        : JSON.stringify(result.output, null, 2)
-      dialog.toast.success('工作流测试完成')
-    } else {
-      testResult.value = `测试失败: ${result.error || '未知错误'}`
-      dialog.toast.error('工作流测试失败')
-    }
-  } catch (error: any) {
-    console.error('Failed to test workflow tool:', error)
-    testResult.value = `测试失败: ${error?.message || String(error)}`
-    dialog.toast.error('工作流测试失败')
-  } finally {
-    isTesting.value = false
   }
 }
 

@@ -65,6 +65,8 @@
                     @apply-manual-config="applyManualConfig"
                     @set-default-provider="setDefaultProvider"
                     @set-default-chat-model="setDefaultChatModel"
+                    @set-default-vlm-provider="setDefaultVlmProvider"
+                    @set-default-vision-model="setDefaultVisionModel"
                     @set-enable-multimodal="setEnableMultimodal" />
 
         <!-- 知识库配置 -->
@@ -781,8 +783,75 @@ const setDefaultChatModel = async (model: string) => {
     
     dialog.toast.success(`默认 Chat 模型已设置为 ${modelInfo.name}`)
   } catch (e) {
-    console.error('Failed to set default chat model', e)
     dialog.toast.error('设置默认 Chat 模型失败')
+  }
+}
+
+const setDefaultVlmProvider = async (provider: string) => {
+  try {
+    await invoke('save_config_batch', {
+      configs: [{
+        category: 'ai',
+        key: 'default_vlm_provider',
+        value: String(provider),
+        description: 'Default VLM provider',
+        is_encrypted: false
+      }, {
+        category: 'ai',
+        key: 'default_vision_provider',
+        value: String(provider),
+        description: 'Deprecated: use default_vlm_provider',
+        is_encrypted: false
+      }]
+    })
+    aiConfig.value.default_vlm_provider = provider
+    dialog.toast.success(`默认 VLM Provider 已设置为 ${provider}`)
+  } catch (e) {
+    console.error('Failed to set default VLM provider', e)
+    dialog.toast.error('设置默认 VLM Provider 失败')
+  }
+}
+
+const setDefaultVisionModel = async (model: string) => {
+  try {
+    if (!model) {
+      // 清空默认模型
+      aiConfig.value.default_vision_model = ''
+      console.log('Settings: Cleared default_vision_model')
+      dialog.toast.success('已清空默认 VLM 模型')
+      return
+    }
+    
+    // 保存默认 VLM 模型配置
+    await invoke('save_config_batch', {
+      configs: [{
+        category: 'ai',
+        key: 'default_vision_model',
+        value: String(model),
+        description: 'Default VLM model',
+        is_encrypted: false
+      }]
+    })
+    
+    // 同步前端状态 - 保存为 'provider/model' 格式
+    aiConfig.value.default_vision_model = model
+    console.log('Updated frontend default_vision_model state:', model)
+    
+    let modelName = model
+    if (model.includes('/')) {
+      const [providerLower, modelId] = model.split('/', 2)
+      const providerConfigKey = Object.keys(aiConfig.value.providers || {}).find(key => 
+        key.toLowerCase() === providerLower.toLowerCase()
+      )
+      const providerConfig = providerConfigKey ? aiConfig.value.providers[providerConfigKey] : null
+      const modelInfo = providerConfig?.models?.find((m: any) => m.id === modelId)
+      modelName = modelInfo?.name || modelId
+    }
+    
+    dialog.toast.success(`默认 VLM 模型已设置为 ${modelName}`)
+  } catch (e) {
+    console.error('Failed to set default vision model', e)
+    dialog.toast.error('设置默认 VLM 模型失败')
   }
 }
 
@@ -1566,4 +1635,3 @@ watch(() => settings.value.general, (newGeneral, oldGeneral) => {
   }
 }
 </style>
-

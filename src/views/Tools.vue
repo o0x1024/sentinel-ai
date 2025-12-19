@@ -89,7 +89,7 @@
 
     <!-- 服务器详情模态框 -->
     <dialog :class="['modal', { 'modal-open': showDetailsModal }]">
-      <div v-if="showDetailsModal" class="modal-box w-11/12 max-w-5xl">
+      <div class="modal-box w-11/12 max-w-5xl" v-show="showDetailsModal">
         <div v-if="selectedServer">
           <div class="flex justify-between items-center mb-4">
             <h3 class="font-bold text-lg">{{ $t('Tools.serverDetails.title') }}: {{ selectedServer.name }}</h3>
@@ -210,7 +210,7 @@
 
     <!-- 添加服务器模态框 -->
     <dialog :class="['modal', { 'modal-open': showAddServerModal }]">
-      <div v-if="showAddServerModal" class="modal-box w-11/12 max-w-5xl">
+      <div class="modal-box w-11/12 max-w-5xl" v-show="showAddServerModal">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-bold text-lg">{{ $t('Tools.addServer.title') }}</h3>
           <button @click="showAddServerModal = false" class="btn btn-sm btn-ghost">✕</button>
@@ -245,7 +245,7 @@
 
     <!-- 服务器工具测试模态框 -->
     <dialog :class="['modal', { 'modal-open': showTestServerModal }]">
-      <div v-if="showTestServerModal" class="modal-box w-11/12 max-w-5xl">
+      <div class="modal-box w-11/12 max-w-5xl" v-show="showTestServerModal">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-bold text-lg">{{ $t('Tools.testServerTitle') }}: {{ testingServer?.name }}</h3>
           <button @click="closeTestServerModal" class="btn btn-sm btn-ghost">✕</button>

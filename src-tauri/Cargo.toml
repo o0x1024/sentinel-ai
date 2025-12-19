@@ -58,6 +58,7 @@ rsubdomain = "1.2.6"
 
 
 rustscan = "2.4.1"
+petgraph = "0.6"
 
 # MCP协议支持 - 使用官方Rust SDK，启用所有新特性
 rmcp = { workspace = true }

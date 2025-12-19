@@ -7,7 +7,9 @@ use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{message::Image, Message};
-use rig::message::{AssistantContent, DocumentSourceKind, ImageDetail, ImageMediaType, UserContent};
+use rig::message::{
+    AssistantContent, DocumentSourceKind, ImageDetail, ImageMediaType, UserContent,
+};
 use rig::one_or_many::OneOrMany;
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
@@ -18,7 +20,7 @@ use tracing::{debug, error, info};
 use crate::agent::validate_config;
 use crate::config::LlmConfig;
 use crate::log::{log_request, log_response};
-use crate::message::ChatMessage;
+use crate::message::{ChatMessage, ImageAttachment};
 use crate::types::AiConfig;
 
 /// AI 服务 - 无应用依赖版本
@@ -132,10 +134,7 @@ impl AiService {
 
         // 转换历史消息
         let chat_history = Self::convert_history(history);
-        debug!(
-            "Chat history: {} messages converted",
-            chat_history.len()
-        );
+        debug!("Chat history: {} messages converted", chat_history.len());
 
         let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
         let timeout = std::time::Duration::from_secs(120);
@@ -143,7 +142,9 @@ impl AiService {
         // 记录请求日志
         info!(
             "LLM Request - Provider: {}, Model: {}, Input length: {} chars",
-            provider, model, user_prompt.len()
+            provider,
+            model,
+            user_prompt.len()
         );
         log_request(
             execution_id,
@@ -157,39 +158,116 @@ impl AiService {
         // 根据 provider 创建 agent 并执行流式调用
         let content = match provider_for_agent.as_str() {
             "openai" => {
-                self.stream_with_openai(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                self.stream_with_openai(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
             "anthropic" => {
-                self.stream_with_anthropic(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                self.stream_with_anthropic(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
             "gemini" | "google" => {
-                self.stream_with_gemini(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                self.stream_with_gemini(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
             "ollama" => {
-                self.stream_with_ollama(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                self.stream_with_ollama(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
             "deepseek" => {
-                self.stream_with_deepseek(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                self.stream_with_deepseek(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
             "openrouter" => {
-                self.stream_with_openrouter(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                self.stream_with_openrouter(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
             "xai" => {
-                self.stream_with_xai(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                self.stream_with_xai(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
             "groq" => {
-                self.stream_with_groq(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                self.stream_with_groq(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
             _ => {
-                info!("Unknown provider '{}', trying OpenAI compatible mode", provider_for_agent);
-                self.stream_with_openai(&model, preamble, user_message, chat_history, timeout, &mut on_chunk).await?
+                info!(
+                    "Unknown provider '{}', trying OpenAI compatible mode",
+                    provider_for_agent
+                );
+                self.stream_with_openai(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
             }
         };
 
         // 记录响应日志
         info!(
             "LLM Response - Provider: {}, Model: {}, Output length: {} chars",
-            provider, model, content.len()
+            provider,
+            model,
+            content.len()
         );
         log_response(execution_id, conversation_id, &provider, &model, &content);
 
@@ -209,34 +287,39 @@ impl AiService {
         F: FnMut(StreamChunk),
     {
         use rig::providers::openai;
-        
+
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?;
-        
+
         let llm_config = self.to_llm_config();
-        
+
         // If custom base_url is set, use Chat Completions API (for third-party providers)
         // Otherwise use Responses API (for official OpenAI)
         if let Some(base_url) = &llm_config.base_url {
-            info!("Using Chat Completions API with custom base URL: {}", base_url);
+            info!(
+                "Using Chat Completions API with custom base URL: {}",
+                base_url
+            );
             let client: openai::CompletionsClient = openai::Client::builder()
                 .api_key(api_key)
                 .base_url(base_url)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
                 .completions_api();
-            
+
             let agent = client.agent(model).preamble(preamble).build();
-            self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+            self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+                .await
         } else {
             info!("Using Responses API for official OpenAI");
             let client: openai::Client = openai::Client::builder()
                 .api_key(api_key)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
-            
+
             let agent = client.agent(model).preamble(preamble).build();
-            self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+            self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+                .await
         }
     }
 
@@ -253,26 +336,26 @@ impl AiService {
         F: FnMut(StreamChunk),
     {
         use rig::providers::anthropic;
-        
+
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
-        
+
         // 创建带有正确 Content-Type 的 HTTP 客户端
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
         );
-        
+
         let http_client = reqwest::Client::builder()
             .default_headers(headers)
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-        
+
         let mut builder = anthropic::Client::<reqwest::Client>::builder()
             .api_key(api_key)
             .http_client(http_client);
-        
+
         // 检查是否设置了自定义 base_url
         if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
             if !base_url.is_empty() {
@@ -280,12 +363,18 @@ impl AiService {
                 builder = builder.base_url(&base_url);
             }
         }
-        
-        let client = builder.build()
+
+        let client = builder
+            .build()
             .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {:?}", e))?;
-        
-        let agent = client.agent(model).preamble(preamble).max_tokens(4096).build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+
+        let agent = client
+            .agent(model)
+            .preamble(preamble)
+            .max_tokens(4096)
+            .build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+            .await
     }
 
     async fn stream_with_gemini<F>(
@@ -304,11 +393,13 @@ impl AiService {
         let client = gemini::Client::from_env();
         let gen_cfg = GenerationConfig::default();
         let cfg = AdditionalParameters::default().with_config(gen_cfg);
-        let agent = client.agent(model)
+        let agent = client
+            .agent(model)
             .preamble(preamble)
             .additional_params(serde_json::to_value(cfg).unwrap())
             .build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+            .await
     }
 
     async fn stream_with_ollama<F>(
@@ -326,7 +417,8 @@ impl AiService {
         use rig::providers::ollama;
         let client = ollama::Client::from_env();
         let agent = client.agent(model).preamble(preamble).build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+            .await
     }
 
     async fn stream_with_deepseek<F>(
@@ -342,37 +434,39 @@ impl AiService {
         F: FnMut(StreamChunk),
     {
         use rig::providers::deepseek;
-        
+
         let api_key = std::env::var("DEEPSEEK_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
-        
+
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
         );
-        
+
         let http_client = reqwest::Client::builder()
             .default_headers(headers)
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-        
+
         let mut builder = deepseek::Client::<reqwest::Client>::builder()
             .api_key(api_key)
             .http_client(http_client);
-        
+
         // Use custom base_url if configured
         if let Some(ref base_url) = self.config.api_base {
             info!("Using custom DeepSeek base URL: {}", base_url);
             builder = builder.base_url(base_url);
         }
-        
-        let client = builder.build()
+
+        let client = builder
+            .build()
             .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
-        
+
         let agent = client.agent(model).preamble(preamble).build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+            .await
     }
 
     async fn stream_with_openrouter<F>(
@@ -390,7 +484,8 @@ impl AiService {
         use rig::providers::openrouter;
         let client = openrouter::Client::from_env();
         let agent = client.agent(model).preamble(preamble).build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+            .await
     }
 
     async fn stream_with_xai<F>(
@@ -408,7 +503,8 @@ impl AiService {
         use rig::providers::xai;
         let client = xai::Client::from_env();
         let agent = client.agent(model).preamble(preamble).build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+            .await
     }
 
     async fn stream_with_groq<F>(
@@ -426,7 +522,8 @@ impl AiService {
         use rig::providers::groq;
         let client = groq::Client::from_env();
         let agent = client.agent(model).preamble(preamble).build();
-        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk).await
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+            .await
     }
 
     async fn execute_stream<M, F>(
@@ -445,7 +542,9 @@ impl AiService {
         // 流式调用
         let stream_result = tokio::time::timeout(
             timeout,
-            agent.stream_chat(user_message, chat_history).multi_turn(100),
+            agent
+                .stream_chat(user_message, chat_history)
+                .multi_turn(100),
         )
         .await;
 
@@ -555,30 +654,4 @@ pub enum StreamChunk {
     Reasoning(String),
     /// 完成
     Done,
-}
-
-/// 图片附件
-#[derive(Debug, Clone)]
-pub struct ImageAttachment {
-    pub base64_data: String,
-    pub media_type: String,
-}
-
-impl ImageAttachment {
-    pub fn new(base64_data: String, media_type: String) -> Self {
-        Self {
-            base64_data,
-            media_type,
-        }
-    }
-
-    pub(crate) fn to_image_media_type(&self) -> ImageMediaType {
-        match self.media_type.to_lowercase().as_str() {
-            "png" => ImageMediaType::PNG,
-            "webp" => ImageMediaType::WEBP,
-            "gif" => ImageMediaType::GIF,
-            "jpeg" | "jpg" => ImageMediaType::JPEG,
-            _ => ImageMediaType::JPEG,
-        }
-    }
 }

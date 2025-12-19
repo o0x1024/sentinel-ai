@@ -139,16 +139,17 @@
                   </span>
                 </label>
                 <SearchableSelect v-model="defaultProviderLocal" :options="providerOptions"
-                  :placeholder="t('settings.ai.selectProvider', '选择提供商')"
+                  :placeholder="t('settings.ai.selectProvider', 'Select Provider')"
                   :search-placeholder="t('settings.ai.searchProvider')" @change="onChangeDefaultProvider" />
               </div>
 
-              <!-- 默认模型选择器 -->
+              <!-- Default Chat Model Selector -->
               <div class="space-y-2">
                 <label class="label">
                   <span class="label-text font-medium flex items-center gap-2">
-                    <i class="fas fa-robot text-primary"></i>
+                    <i class="fas fa-comment-dots text-primary"></i>
                     {{ t('settings.ai.defaultChatModel') }}
+                    <span class="badge badge-sm badge-ghost">{{ t('settings.ai.fastModel') }}</span>
                   </span>
                 </label>
                 <SearchableSelect v-model="defaultChatModelLocal" :options="chatModelOptions"
@@ -156,24 +157,42 @@
                   :disabled="!defaultProviderLocal || !getProviderModels(defaultProviderLocal).length"
                   @change="onChangeDefaultChatModel" />
               </div>
+
+              <!-- Default VLM Provider Selector -->
+              <div class="space-y-2">
+                <label class="label">
+                  <span class="label-text font-medium flex items-center gap-2">
+                    <i class="fas fa-sitemap text-secondary"></i>
+                    {{ t('settings.ai.defaultVlmProvider') }}
+                  </span>
+                </label>
+                <SearchableSelect v-model="defaultVlmProviderLocal" :options="providerOptions"
+                  :placeholder="t('settings.ai.selectProvider')" :search-placeholder="t('settings.ai.searchProvider')"
+                  @change="onChangeDefaultVlmProvider" />
+              </div>
+
+              <!-- Default VLM Model Selector -->
+              <div class="space-y-2">
+                <label class="label">
+                  <span class="label-text font-medium flex items-center gap-2">
+                    <i class="fas fa-eye text-accent"></i>
+                    {{ t('settings.ai.defaultVlmModel') }}
+                    <span class="badge badge-sm badge-ghost">{{ t('settings.ai.smartModel') }}</span>
+                  </span>
+                </label>
+                <SearchableSelect v-model="defaultVlmModelLocal" :options="vlmModelOptions"
+                  :placeholder="t('settings.ai.selectModel')" :search-placeholder="t('settings.ai.searchModel')"
+                  :disabled="!defaultVlmProviderLocal || !getProviderModels(defaultVlmProviderLocal).length"
+                  @change="onChangeDefaultVisionModel" />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.visionModelDescription') }}
+                  </span>
+                </label>
+              </div>
             </div>
 
-            <!-- 多模态选项 -->
-            <div class="form-control mt-4">
-              <label class="label cursor-pointer justify-start gap-4">
-                <input type="checkbox" class="toggle toggle-primary" v-model="enableMultimodalLocal"
-                  @change="onChangeEnableMultimodal">
-                <div class="flex flex-col">
-                  <span class="label-text font-medium flex items-center gap-2">
-                    <i class="fas fa-image text-accent"></i>
-                    {{ t('settings.ai.multimodalMode') }}
-                  </span>
-                  <span class="label-text-alt text-base-content/60">
-                    {{ t('settings.ai.multimodalModeDescription') }}
-                  </span>
-                </div>
-              </label>
-            </div>
+
 
             <!-- 提示信息 -->
             <div class="flex items-center gap-2 mt-3 text-sm text-base-content/70">
@@ -742,7 +761,8 @@ interface Emits {
   'applyManualConfig': [config: any]
   'setDefaultProvider': [provider: string]
   'setDefaultChatModel': [model: string]
-  'setEnableMultimodal': [enabled: boolean]
+  'setDefaultVisionModel': [model: string]
+  'setDefaultVlmProvider': [provider: string]
 }
 
 const emit = defineEmits<Emits>()
@@ -832,8 +852,10 @@ const rigProviderLocal = computed({
 const defaultProviderLocal = ref('')
 // 默认 Chat 模型选择
 const defaultChatModelLocal = ref('')
-// 多模态模式开关
-const enableMultimodalLocal = ref(true)
+// 默认 VLM Provider 选择
+const defaultVlmProviderLocal = ref('')
+// 默认 VLM 模型选择
+const defaultVlmModelLocal = ref('')
 
 watch(() => props.aiConfig, (cfg: any) => {
 
@@ -846,11 +868,7 @@ watch(() => props.aiConfig, (cfg: any) => {
 
   // 初始化默认 Chat 模型
   const dcm = (cfg && (cfg as any).default_chat_model) || ''
-
-  // 解析 default_chat_model 格式：provider/model_name
   if (dcm && dcm.includes('/')) {
-    // 处理复杂的模型ID，如 "modelscope/Qwen/Qwen2-VL-7B-Instruct"
-    // 提取 provider/ 之后的所有内容作为模型名
     const slashIndex = dcm.indexOf('/')
     const modelName = slashIndex !== -1 ? dcm.substring(slashIndex + 1) : dcm
     defaultChatModelLocal.value = modelName || ''
@@ -858,9 +876,24 @@ watch(() => props.aiConfig, (cfg: any) => {
     defaultChatModelLocal.value = String(dcm)
   }
 
-  // 初始化多模态模式设置
-  const em = (cfg && (cfg as any).enable_multimodal)
-  enableMultimodalLocal.value = em !== false // 默认为 true
+  // 初始化默认 VLM 配置
+  const dvm = (cfg && (cfg as any).default_vision_model) || ''
+  let dvmProvider = ''
+  let dvmModel = ''
+  if (dvm && dvm.includes('/')) {
+    const slashIndex = dvm.indexOf('/')
+    dvmProvider = slashIndex !== -1 ? dvm.substring(0, slashIndex) : ''
+    dvmModel = slashIndex !== -1 ? dvm.substring(slashIndex + 1) : dvm
+  } else {
+    dvmModel = String(dvm)
+  }
+
+  const dvp = (cfg && (cfg as any).default_vlm_provider) || dvmProvider || dp
+  const matchedVlmProvider = Object.keys(cfg?.providers || {}).find(key =>
+    key.toLowerCase() === String(dvp).toLowerCase()
+  )
+  defaultVlmProviderLocal.value = matchedVlmProvider || String(dvp || '')
+  defaultVlmModelLocal.value = dvmModel || ''
 }, { immediate: true, deep: true })
 
 const onChangeDefaultProvider = async () => {
@@ -877,6 +910,19 @@ const onChangeDefaultProvider = async () => {
   }
 }
 
+const onChangeDefaultVlmProvider = async () => {
+  try {
+    const provider = defaultVlmProviderLocal.value
+    emit('setDefaultVlmProvider', provider.toLowerCase())
+
+    // 当VLM提供商变化时，清空默认模型选择
+    defaultVlmModelLocal.value = ''
+    emit('setDefaultVisionModel', '')
+  } catch (e) {
+    console.error('Failed to set default VLM provider', e)
+  }
+}
+
 const onChangeDefaultChatModel = async () => {
   try {
     const model = defaultChatModelLocal.value
@@ -886,12 +932,19 @@ const onChangeDefaultChatModel = async () => {
   }
 }
 
-const onChangeEnableMultimodal = async () => {
+const onChangeDefaultVisionModel = async () => {
   try {
-    const enabled = enableMultimodalLocal.value
-    emit('setEnableMultimodal', enabled)
+    const model = defaultVlmModelLocal.value
+    if (!model) {
+      emit('setDefaultVisionModel', '')
+      return
+    }
+    const provider = defaultVlmProviderLocal.value
+    const providerValue = provider ? provider.toLowerCase() : ''
+    const modelValue = providerValue ? `${providerValue}/${model}` : model
+    emit('setDefaultVisionModel', modelValue)
   } catch (e) {
-    console.error('Failed to set enable multimodal', e)
+    console.error('Failed to set default vision model', e)
   }
 }
 
@@ -922,6 +975,16 @@ const chatModelOptions = computed(() => {
   return models.map((model: any) => ({
     value: model.id,
     label: model.name,
+    description: model.description || ''
+  }))
+})
+
+// VLM 模型选项（用于可搜索下拉）
+const vlmModelOptions = computed(() => {
+  const models = getProviderModels(defaultVlmProviderLocal.value)
+  return models.map((model: any) => ({
+    value: model.id,
+    label: model.supports_vision ? `👁️ ${model.name}` : model.name,
     description: model.description || ''
   }))
 })

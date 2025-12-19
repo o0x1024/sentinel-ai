@@ -44,9 +44,9 @@ pub use agent::{get_rig_provider, needs_gemini_config, validate_config};
 pub use client::LlmClient;
 pub use config::LlmConfig;
 pub use log::{log_request, log_request_with_image, log_response, write_llm_log};
+pub use message::ImageAttachment;
 pub use message::{build_user_message, convert_chat_history, parse_image_from_json, ChatMessage};
-pub use message::ImageAttachment as MessageImageAttachment;
-pub use service::{AiService, ImageAttachment, StreamChunk};
+pub use service::{AiService, StreamChunk};
 pub use streaming::{StreamContent, StreamingLlmClient};
 pub use types::{
     AiConfig, AiToolCall, SchedulerConfig, SchedulerStage, StreamError, StreamMessage,
@@ -106,7 +106,7 @@ impl StreamingLlmClient {
     where
         F: FnMut(StreamContent),
     {
-        self.stream_chat(system_prompt, user_prompt, &[], None, on_content).await
+        self.stream_chat(system_prompt, user_prompt, &[], None, on_content)
+            .await
     }
 }
-

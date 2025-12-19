@@ -15,10 +15,13 @@ export default {
 
   // 默认配置
   defaultConfig: '默认配置',
-  defaultProvider: '默认 Provider',
+  defaultProvider: '默认 LLM Provider',
   selectProvider: '选择提供商',
   searchProvider: '搜索提供商...',
-  defaultChatModel: '默认 Chat 模型',
+  defaultChatModel: '默认 LLM 模型',
+  defaultVlmProvider: '默认 VLM Provider',
+  defaultVlmModel: '默认 VLM 模型',
+  visionModelDescription: '用于视觉探索引擎的截图与多模态任务',
   searchModel: '搜索模型...',
   multimodalMode: '多模态模式',
   multimodalModeDescription: '启用后，视觉探索引擎将发送截图给模型；关闭后使用文本元素列表（适用于非多模态模型）',

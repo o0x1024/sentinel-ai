@@ -340,13 +340,24 @@ const submitCredentials = async () => {
       password = dynamicCredentials.value.password || ''
     }
     
-    await invoke('vision_explorer_receive_credentials', {
-      executionId: props.executionId,
-      username,
-      password,
-      verificationCode,
-      extraFields: Object.keys(extraFields).length > 0 ? extraFields : null
-    })
+    // Try V2 first, fallback to V1
+    try {
+      await invoke('vision_explorer_v2_receive_credentials', {
+        executionId: props.executionId,
+        username,
+        password,
+        verificationCode,
+        extraFields: Object.keys(extraFields).length > 0 ? extraFields : null
+      })
+    } catch {
+      await invoke('vision_explorer_receive_credentials', {
+        executionId: props.executionId,
+        username,
+        password,
+        verificationCode,
+        extraFields: Object.keys(extraFields).length > 0 ? extraFields : null
+      })
+    }
     pushLog('Credentials submitted, resuming exploration...', 'success')
     showTakeoverForm.value = false
     // 重置凭据
@@ -363,9 +374,16 @@ const submitCredentials = async () => {
 // Skip login and continue without credentials
 const skipLogin = async () => {
   try {
-    await invoke('vision_explorer_skip_login', {
-      executionId: props.executionId
-    })
+    // Try V2 first, fallback to V1
+    try {
+      await invoke('vision_explorer_v2_skip_login', {
+        executionId: props.executionId
+      })
+    } catch {
+      await invoke('vision_explorer_skip_login', {
+        executionId: props.executionId
+      })
+    }
     pushLog('Login skipped, continuing exploration...', 'info')
     showTakeoverForm.value = false
     dynamicCredentials.value = {}

@@ -20,7 +20,7 @@ interface InputDialogOptions extends DialogOptions {
 class DialogService {
   private modalId = 'global-dialog-modal';
   private modalContainer: HTMLElement | null = null;
-  
+
   constructor() {
     // 在构造函数中创建模态框容器
     this.ensureModalContainer();
@@ -31,7 +31,7 @@ class DialogService {
     if (!this.modalContainer) {
       // 检查是否已存在
       const existingContainer = document.getElementById(this.modalId);
-      
+
       if (!existingContainer) {
         // 创建模态框容器
         this.modalContainer = document.createElement('dialog');
@@ -116,16 +116,16 @@ class DialogService {
   // Toast提示方法
   toast = {
     success: (message: string, title?: string, duration?: number) => {
-      toast.success(message, title, duration);
+      toast.success(message, duration);
     },
     error: (message: string, title?: string, duration?: number) => {
-      toast.error(message, title, duration);
+      toast.error(message, duration);
     },
     warning: (message: string, title?: string, duration?: number) => {
-      toast.warning(message, title, duration);
+      toast.warning(message, duration);
     },
     info: (message: string, title?: string, duration?: number) => {
-      toast.info(message, title, duration);
+      toast.info(message, duration);
     }
   }
 
@@ -134,7 +134,7 @@ class DialogService {
     if (typeof options === 'string') {
       options = { message: options };
     }
-    
+
     return this.alert({
       ...options,
       variant: 'info'
@@ -144,12 +144,12 @@ class DialogService {
   // 显示模态框
   private showModal(options: any) {
     this.ensureModalContainer();
-    
+
     if (!this.modalContainer) return;
-    
+
     // 获取图标
     const icon = this.getIconForVariant(options.variant);
-    
+
     // 创建模态框内容
     const isInput = options.type === 'input';
     const inputHtml = isInput
@@ -177,14 +177,14 @@ class DialogService {
         <button>close</button>
       </form>
     `;
-    
+
     // 设置内容
     this.modalContainer.innerHTML = modalContent;
-    
+
     // 显示模态框
     const modal = this.modalContainer as HTMLDialogElement;
     modal.showModal();
-    
+
     // 添加事件监听
     const confirmBtn = document.getElementById('dialog-confirm-btn');
     if (confirmBtn) {
@@ -199,7 +199,7 @@ class DialogService {
         }
       });
     }
-    
+
     const cancelBtn = document.getElementById('dialog-cancel-btn');
     if (cancelBtn) {
       cancelBtn.addEventListener('click', () => {
@@ -221,7 +221,7 @@ class DialogService {
         });
       }
     }
-    
+
     // 点击背景关闭（仅对alert类型）
     if (options.type === 'alert') {
       const backdrop = modal.querySelector('.modal-backdrop');
@@ -232,7 +232,7 @@ class DialogService {
       }
     }
   }
-  
+
   // 根据变体类型获取图标
   private getIconForVariant(variant: string): string {
     switch (variant) {

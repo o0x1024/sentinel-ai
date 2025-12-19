@@ -56,6 +56,7 @@
           <div class="card-actions justify-between items-center mt-4">
             <span class="text-xs text-base-content/60">v{{ tool.version }}</span>
             <div class="flex gap-2">
+              <!-- Shell Tool Special Actions -->
               <button 
                 v-if="tool.name === 'shell'"
                 @click="showShellTerminal = true"
@@ -73,23 +74,25 @@
               >
                 <i class="fas fa-shield-alt"></i>
               </button>
+              <!-- Vision Explorer V2 Special Actions -->
               <button 
-                v-if="tool.name !== 'shell'"
-                @click="quickTest(tool)"
-                class="btn btn-success btn-sm"
-                :disabled="tool.is_testing"
-                title="快速测试（使用默认参数）"
+                v-if="tool.name === 'vision_explorer' || tool.name === 'vision_explorer_v2'"
+                @click="openVisionExplorerModal(tool)"
+                class="btn btn-primary btn-sm"
+                title="测试 Vision Explorer"
               >
-                <i v-if="tool.is_testing" class="fas fa-spinner fa-spin mr-1"></i>
-                <i v-else class="fas fa-play mr-1"></i>
+                <i class="fas fa-play mr-1"></i>
                 测试
               </button>
+              <!-- Regular Tools -->
               <button 
+                v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
                 @click="openTestModal(tool)"
-                class="btn btn-outline btn-info btn-sm"
-                title="高级测试（自定义参数）"
+                class="btn btn-primary btn-sm"
+                title="测试工具"
               >
-                <i class="fas fa-cog"></i>
+                <i class="fas fa-play mr-1"></i>
+                测试
               </button>
             </div>
           </div>
@@ -132,6 +135,7 @@
             <td class="text-xs text-base-content/60">v{{ tool.version }}</td>
             <td>
               <div class="flex gap-1">
+                <!-- Shell Tool -->
                 <button 
                   v-if="tool.name === 'shell'"
                   @click="showShellTerminal = true"
@@ -148,22 +152,23 @@
                 >
                   <i class="fas fa-shield-alt"></i>
                 </button>
+                <!-- Vision Explorer V2 -->
                 <button 
-                  v-if="tool.name !== 'shell'"
-                  @click="quickTest(tool)"
-                  class="btn btn-success btn-xs"
-                  :disabled="tool.is_testing"
-                  title="快速测试（使用默认参数）"
+                  v-if="tool.name === 'vision_explorer' || tool.name === 'vision_explorer_v2'"
+                  @click="openVisionExplorerModal(tool)"
+                  class="btn btn-primary btn-xs"
+                  title="测试 Vision Explorer"
                 >
-                  <i v-if="tool.is_testing" class="fas fa-spinner fa-spin mr-1"></i>
-                  <i v-else class="fas fa-play"></i>
+                  <i class="fas fa-play"></i>
                 </button>
+                <!-- Regular Tools -->
                 <button 
+                  v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
                   @click="openTestModal(tool)"
-                  class="btn btn-outline btn-info btn-xs"
-                  title="高级测试（自定义参数）"
+                  class="btn btn-primary btn-xs"
+                  title="测试工具"
                 >
-                  <i class="fas fa-cog"></i>
+                  <i class="fas fa-play"></i>
                 </button>
               </div>
             </td>
@@ -182,110 +187,109 @@
       </button>
     </div>
 
-    <!-- 测试模态框 -->
-    <dialog :class="['modal', { 'modal-open': showTestModal }]">
-      <div v-if="testingTool" class="modal-box w-11/12 max-w-5xl">
-        <div class="flex justify-between items-center mb-4">
-          <h3 class="font-bold text-lg">
-            测试内置工具: {{ testingTool.name }}
-          </h3>
-          <button @click="closeTestModal" class="btn btn-sm btn-ghost">✕</button>
-        </div>
-
-        <div class="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
-          <div class="alert alert-info">
-            <i class="fas fa-info-circle"></i>
-            <span>输入测试参数后点击运行测试，可以验证工具是否正常工作。</span>
-          </div>
-
-          <!-- 工具描述 -->
-          <div class="bg-base-200 p-4 rounded-lg">
-            <p class="text-sm">{{ testingTool.description }}</p>
-            <div class="flex gap-2 mt-2">
-              <span class="badge badge-success badge-sm">{{ testingTool.category }}</span>
-              <span class="badge badge-ghost badge-sm">v{{ testingTool.version }}</span>
-            </div>
-          </div>
-
-          <!-- 参数说明 -->
-          <div v-if="testingTool.input_schema && testingTool.input_schema.properties && Object.keys(testingTool.input_schema.properties).length > 0" class="collapse collapse-arrow border border-base-300 bg-base-100">
-            <input type="checkbox" checked />
-            <div class="collapse-title text-md font-medium">
-              输入参数说明
-            </div>
-            <div class="collapse-content">
-              <div class="overflow-x-auto">
-                <table class="table table-sm w-full">
-                  <thead>
-                    <tr>
-                      <th>参数名</th>
-                      <th>类型</th>
-                      <th>必填</th>
-                      <th>描述</th>
-                      <th>约束</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="prop in getToolProperties(testingTool.input_schema)" :key="prop.name">
-                      <td class="font-mono text-primary">{{ prop.name }}</td>
-                      <td><span class="badge badge-outline">{{ prop.type }}</span></td>
-                      <td>
-                        <span v-if="prop.required" class="badge badge-error badge-sm">必填</span>
-                      </td>
-                      <td>{{ prop.description }}</td>
-                      <td class="font-mono text-xs">{{ prop.constraints }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          <!-- 无参数工具提示 -->
-          <div v-else class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle"></i>
-            <span>此工具没有输入参数或参数信息暂未提供，可直接运行测试。</span>
-          </div>
-
-          <!-- 测试参数输入 -->
-          <div class="form-control">
-            <label class="label"><span class="label-text">测试参数 (JSON)</span></label>
-            <textarea
-              v-model="testParamsJson"
-              class="textarea textarea-bordered font-mono text-sm"
-              placeholder="输入 JSON 格式的测试参数，例如: {}"
-              rows="6"
-              spellcheck="false"
-            ></textarea>
-          </div>
-
-          <!-- 测试结果 -->
-          <div class="form-control">
-            <label class="label"><span class="label-text">测试结果</span></label>
-            <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-40 bg-base-200 overflow-auto">{{ testResult || '点击"运行测试"查看结果' }}</pre>
-          </div>
-        </div>
-
-        <div class="modal-action">
-          <button @click="closeTestModal" class="btn">取消</button>
-          <button 
-            class="btn btn-primary"
-            :disabled="isTesting"
-            @click="runTest"
-          >
-            <i v-if="isTesting" class="fas fa-spinner fa-spin mr-1"></i>
-            <i v-else class="fas fa-play mr-1"></i>
-            运行测试
-          </button>
-        </div>
-      </div>
-    </dialog>
+    <!-- 统一测试组件 -->
+    <UnifiedToolTest
+      v-model="showTestModal"
+      tool-type="builtin"
+      :tool-name="testingTool?.name || ''"
+      :tool-description="testingTool?.description"
+      :tool-version="testingTool?.version"
+      :tool-category="testingTool?.category"
+      :input-schema="testingTool?.input_schema"
+      :execution-info="{
+        type: 'unified', // or 'builtin', handled as direct toolName call
+        name: testingTool?.name
+      }"
+    />
 
     <!-- Shell 配置模态框 -->
     <ShellConfigModal v-model="showShellConfigModal" />
 
     <!-- Shell 终端模态框 -->
     <ShellTerminal v-model="showShellTerminal" />
+
+    <!-- Vision Explorer V2 测试模态框 -->
+    <dialog :class="['modal', { 'modal-open': showVisionExplorerModal }]">
+      <div class="modal-box w-11/12 max-w-3xl">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="font-bold text-lg">
+            <i class="fas fa-eye text-primary mr-2"></i>
+            Vision Explorer V2 测试
+          </h3>
+          <button @click="closeVisionExplorerModal" class="btn btn-sm btn-ghost">✕</button>
+        </div>
+
+        <div class="space-y-4">
+          <div class="alert alert-info">
+            <i class="fas fa-info-circle"></i>
+            <span>Vision Explorer V2 会自动探索目标网站，识别导航、表单和交互元素。</span>
+          </div>
+
+          <!-- 目标 URL -->
+          <div class="form-control">
+            <label class="label"><span class="label-text">目标 URL</span></label>
+            <input 
+              v-model="veTargetUrl"
+              type="url"
+              class="input input-bordered"
+              placeholder="https://example.com"
+            />
+          </div>
+
+          <!-- 最大深度 -->
+          <div class="form-control">
+            <label class="label"><span class="label-text">最大探索深度</span></label>
+            <input 
+              v-model.number="veMaxDepth"
+              type="number"
+              min="1"
+              max="10"
+              class="input input-bordered w-24"
+            />
+          </div>
+
+          <!-- 测试结果/状态 -->
+          <div v-if="veStatus" class="form-control">
+            <label class="label"><span class="label-text">探索状态</span></label>
+            <div class="bg-base-200 p-4 rounded-lg">
+              <div class="flex items-center gap-2 mb-2">
+                <span :class="veStatus.is_running ? 'badge badge-info' : 'badge badge-success'">
+                  {{ veStatus.is_running ? '运行中' : '已完成' }}
+                </span>
+                <span class="text-sm">{{ veStatus.session_id }}</span>
+              </div>
+              <p class="text-sm">目标: {{ veStatus.target_url }}</p>
+            </div>
+          </div>
+
+          <div v-if="veResult" class="form-control">
+            <label class="label"><span class="label-text">执行结果</span></label>
+            <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-40 bg-base-200 overflow-auto">{{ veResult }}</pre>
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button @click="closeVisionExplorerModal" class="btn">关闭</button>
+          <button 
+            v-if="veStatus?.is_running"
+            @click="stopVisionExplorer"
+            class="btn btn-warning"
+          >
+            <i class="fas fa-stop mr-1"></i>
+            停止
+          </button>
+          <button 
+            @click="startVisionExplorer"
+            class="btn btn-primary"
+            :disabled="isVeTesting || !veTargetUrl"
+          >
+            <i v-if="isVeTesting" class="fas fa-spinner fa-spin mr-1"></i>
+            <i v-else class="fas fa-play mr-1"></i>
+            开始探索
+          </button>
+        </div>
+      </div>
+    </dialog>
   </div>
 </template>
 
@@ -295,6 +299,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import ShellConfigModal from './ShellConfigModal.vue'
 import ShellTerminal from './ShellTerminal.vue'
+import UnifiedToolTest from './UnifiedToolTest.vue'
 
 // 状态
 const tools = ref<any[]>([])
@@ -304,9 +309,15 @@ const showTestModal = ref(false)
 const showShellConfigModal = ref(false)
 const showShellTerminal = ref(false)
 const testingTool = ref<any>(null)
-const testParamsJson = ref('')
-const testResult = ref('')
-const isTesting = ref(false)
+
+// Vision Explorer V2 状态
+const showVisionExplorerModal = ref(false)
+const veTargetUrl = ref('https://example.com')
+const veMaxDepth = ref(5)
+const veStatus = ref<any>(null)
+const veResult = ref('')
+const isVeTesting = ref(false)
+const veExecutionId = ref('')
 
 // 方法
 function getToolIcon(toolName: string) {
@@ -393,89 +404,97 @@ async function toggleTool(tool: any) {
   }
 }
 
-async function quickTest(tool: any) {
-  tool.is_testing = true
-  try {
-    const defaultParams = tool.input_schema ? JSON.parse(generateDefaultParams(tool.input_schema)) : {}
-    const result = await invoke<any>('unified_execute_tool', {
-      toolName: tool.name,
-      inputs: defaultParams,
-      context: null,
-      timeout: 60,
-    })
-    if (result.success) {
-      dialog.toast.success(`工具 ${tool.name} 测试成功`)
-    } else {
-      dialog.toast.error(`工具 ${tool.name} 测试失败：${result.error || '未知错误'}`)
-    }
-  } catch (error: any) {
-    console.error(`Failed to test tool ${tool.name}:`, error)
-    dialog.toast.error(`工具 ${tool.name} 测试失败：${error?.message || error}`)
-  } finally {
-    tool.is_testing = false
-  }
-}
+
 
 function openTestModal(tool: any) {
   testingTool.value = { ...tool }
-  testResult.value = ''
-  testParamsJson.value = tool.input_schema ? generateDefaultParams(tool.input_schema) : '{}'
-  nextTick(() => {
-    showTestModal.value = true
-  })
+  showTestModal.value = true
 }
 
-function closeTestModal() {
-  showTestModal.value = false
-  setTimeout(() => {
-    testingTool.value = null
-    testParamsJson.value = ''
-    testResult.value = ''
-  }, 350)
+
+// ============================================================================
+// Vision Explorer V2 方法
+// ============================================================================
+
+function openVisionExplorerModal(tool: any) {
+  veStatus.value = null
+  veResult.value = ''
+  showVisionExplorerModal.value = true
 }
 
-async function runTest() {
-  if (!testingTool.value) {
-    dialog.toast.error('请选择要测试的工具')
+function closeVisionExplorerModal() {
+  showVisionExplorerModal.value = false
+}
+
+
+
+async function startVisionExplorer() {
+  if (!veTargetUrl.value) {
+    dialog.toast.warning('请输入目标 URL')
     return
   }
 
-  let inputs: any = {}
-  if (testParamsJson.value.trim()) {
-    try {
-      inputs = JSON.parse(testParamsJson.value)
-    } catch (e) {
-      dialog.toast.error('参数 JSON 格式错误，请检查')
-      return
-    }
-  }
+  isVeTesting.value = true
+  veResult.value = '正在启动 Vision Explorer V2...'
 
-  isTesting.value = true
-  testResult.value = '正在执行测试...'
-  
   try {
-    const result = await invoke<any>('unified_execute_tool', {
-      toolName: testingTool.value.name,
-      inputs,
-      context: null,
-      timeout: 60,
+    const executionId = await invoke<string>('start_vision_explorer_v2', {
+      config: {
+        target_url: veTargetUrl.value,
+        max_depth: veMaxDepth.value,
+        ai_config: {}
+      }
     })
 
-    if (result.success) {
-      testResult.value = typeof result.output === 'string'
-        ? result.output
-        : JSON.stringify(result.output, null, 2)
-      dialog.toast.success('工具测试完成')
+    veExecutionId.value = executionId
+    dialog.toast.success(`探索已启动，执行ID: ${executionId.substring(0, 8)}...`)
+    
+    // Poll status periodically
+    await pollVeStatus(executionId)
+  } catch (error: any) {
+    console.error('Failed to start Vision Explorer V2:', error)
+    veResult.value = `启动失败: ${error?.message || error}`
+    dialog.toast.error('启动 Vision Explorer V2 失败')
+  } finally {
+    isVeTesting.value = false
+  }
+}
+
+async function stopVisionExplorer() {
+  if (!veExecutionId.value) return
+
+  try {
+    await invoke('stop_vision_explorer_v2', {
+      executionId: veExecutionId.value
+    })
+    dialog.toast.success('已发送停止请求')
+    veResult.value = '探索已停止'
+    
+    // Refresh status
+    await pollVeStatus(veExecutionId.value)
+  } catch (error: any) {
+    console.error('Failed to stop Vision Explorer V2:', error)
+    dialog.toast.error(`停止失败: ${error?.message || error}`)
+  }
+}
+
+async function pollVeStatus(executionId: string) {
+  try {
+    const status = await invoke<any>('get_vision_explorer_v2_status', { executionId })
+    veStatus.value = status
+    
+    if (status.is_running) {
+      veResult.value = `探索进行中...\n会话ID: ${status.session_id}\n目标: ${status.target_url}`
+      // Continue polling
+      setTimeout(() => pollVeStatus(executionId), 2000)
     } else {
-      testResult.value = `测试失败: ${result.error || '未知错误'}`
-      dialog.toast.error('工具测试失败')
+      veResult.value = `探索已完成\n会话ID: ${status.session_id}\n目标: ${status.target_url}`
     }
   } catch (error: any) {
-    console.error('Failed to test builtin tool:', error)
-    testResult.value = `测试失败: ${error?.message || String(error)}`
-    dialog.toast.error('工具测试失败')
-  } finally {
-    isTesting.value = false
+    console.warn('Failed to get V2 status:', error)
+    // Session may have ended or not found
+    veResult.value = '会话已结束或未找到'
+    veStatus.value = null
   }
 }
 

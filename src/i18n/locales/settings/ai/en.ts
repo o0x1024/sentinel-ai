@@ -15,10 +15,13 @@ export default {
 
   // Default configuration
   defaultConfig: 'Default Configuration',
-  defaultProvider: 'Default Provider',
+  defaultProvider: 'Default LLM Provider',
   selectProvider: 'Select Provider',
   searchProvider: 'Search providers...',
-  defaultChatModel: 'Default Chat Model',
+  defaultChatModel: 'Default LLM Model',
+  defaultVlmProvider: 'Default VLM Provider',
+  defaultVlmModel: 'Default VLM Model',
+  visionModelDescription: 'Used by the Vision Explorer for screenshots and multimodal tasks',
   searchModel: 'Search models...',
   multimodalMode: 'Multimodal Mode',
   multimodalModeDescription: 'When enabled, the vision explorer engine will send screenshots to the model; when disabled, it uses text element lists (suitable for non-multimodal models)',

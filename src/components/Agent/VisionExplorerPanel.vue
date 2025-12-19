@@ -606,7 +606,12 @@ const skipLogin = async () => {
 
   isSkippingLogin.value = true
   try {
-    await invoke('vision_explorer_skip_login', { executionId: eid })
+    // Try V2 first, fallback to V1
+    try {
+      await invoke('vision_explorer_v2_skip_login', { executionId: eid })
+    } catch {
+      await invoke('vision_explorer_skip_login', { executionId: eid })
+    }
     credentialsSubmitted.value = true
     console.log('[VisionPanel] Skip login requested')
   } catch (error) {
@@ -686,13 +691,24 @@ const submitCredentials = async () => {
         verificationCode = credentials.value.verificationCode || null
     }
     
-    await invoke('vision_explorer_receive_credentials', {
-      executionId: eid,
-      username,
-      password,
-      verificationCode,
-      extraFields
-    })
+    // Try V2 first, fallback to V1
+    try {
+      await invoke('vision_explorer_v2_receive_credentials', {
+        executionId: eid,
+        username,
+        password,
+        verificationCode,
+        extraFields
+      })
+    } catch {
+      await invoke('vision_explorer_receive_credentials', {
+        executionId: eid,
+        username,
+        password,
+        verificationCode,
+        extraFields
+      })
+    }
     console.log('[VisionPanel] Credentials submitted successfully')
     
     // Mark as submitted to immediately hide the form

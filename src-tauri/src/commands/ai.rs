@@ -1,7 +1,10 @@
+use crate::commands::passive_scan_commands::PassiveScanState;
+use crate::commands::tool_commands;
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::{Database, DatabaseService};
 use crate::services::prompt_db::PromptRepository;
+use crate::services::SchedulerStage;
 use crate::utils::global_proxy::create_client_with_proxy;
 use crate::utils::ordered_message::ChunkType;
 use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
@@ -10,6 +13,7 @@ use chrono::Utc;
 use sentinel_llm::{
     parse_image_from_json, ChatMessage as LlmChatMessage, StreamContent, StreamingLlmClient,
 };
+use sentinel_workflow::WorkflowGraph;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::HashMap;
@@ -17,10 +21,6 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use sentinel_workflow::WorkflowGraph;
-use crate::services::SchedulerStage;
-use crate::commands::passive_scan_commands::PassiveScanState;
-use crate::commands::tool_commands;
 
 // DTO for Tauri command argument to avoid CommandArg bound issues
 #[derive(Debug, Clone, Deserialize)]
@@ -448,7 +448,7 @@ pub async fn cancel_ai_stream(
     // Also cancel long-running tool executions (e.g. VisionExplorer) that use the global cancellation manager.
     // conversation_id is used as execution_id across the app.
     let _ = crate::managers::cancellation_manager::cancel_execution(&conversation_id).await;
-    
+
     // 发送取消事件通知前端
     let _ = app_handle.emit(
         "agent:cancelled",
@@ -457,7 +457,7 @@ pub async fn cancel_ai_stream(
             "message": "Execution cancelled by user"
         }),
     );
-    
+
     Ok(())
 }
 
@@ -1840,6 +1840,26 @@ pub async fn set_default_chat_model(
     Ok(())
 }
 
+/// 设置默认Vision模型
+#[tauri::command]
+pub async fn set_default_vision_model(
+    model: String,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    // 保存完整的模型ID到数据库
+    db.set_config(
+        "ai",
+        "default_vision_model",
+        &model,
+        Some("Default vision model for Vision Explorer"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tracing::info!("Set default vision model to: {}", model);
+    Ok(())
+}
+
 // 获取AI配置
 #[tauri::command]
 pub async fn get_ai_config(
@@ -1882,6 +1902,14 @@ pub async fn get_ai_config(
 
     if let Ok(Some(default_chat_model)) = db.get_config("ai", "default_chat_model").await {
         ai_config["default_chat_model"] = serde_json::Value::String(default_chat_model);
+    }
+
+    if let Ok(Some(default_vlm_provider)) = db.get_config("ai", "default_vlm_provider").await {
+        ai_config["default_vlm_provider"] = serde_json::Value::String(default_vlm_provider);
+    }
+
+    if let Ok(Some(default_vision_model)) = db.get_config("ai", "default_vision_model").await {
+        ai_config["default_vision_model"] = serde_json::Value::String(default_vision_model);
     }
 
     if let Ok(Some(temperature_str)) = db.get_config("ai", "temperature").await {
@@ -1966,14 +1994,18 @@ pub async fn generate_workflow_from_nl(
         Ok(catalog) => {
             let mut lines = Vec::new();
             for item in catalog.into_iter().take(80) {
-                lines.push(format!("- {} [{}]: {}", item.node_type, item.category, item.label));
+                lines.push(format!(
+                    "- {} [{}]: {}",
+                    item.node_type, item.category, item.label
+                ));
             }
             lines.join("\n")
         }
         Err(_) => "".to_string(),
     };
 
-    let system_prompt = format!(r#"你是 Sentinel AI 的工作流设计助手。
+    let system_prompt = format!(
+        r#"你是 Sentinel AI 的工作流设计助手。
 根据用户的自然语言描述，输出一个严格符合下面 JSON Schema 的 WorkflowGraph。
 只输出 JSON，不要解释，不要包含 Markdown。
 
@@ -2012,7 +2044,9 @@ Schema:
 2) 每个节点给出 node_name 与简短 params.description。
 3) 至少包含一个入口节点（node_type 可以为 "start"）。
 4) 给出合理的 x/y 布局（从左到右）。
-"#, tools_summary, catalog_summary);
+"#,
+        tools_summary, catalog_summary
+    );
 
     let user_prompt = format!("用户描述：{}\n请生成 WorkflowGraph JSON。", desc);
 
