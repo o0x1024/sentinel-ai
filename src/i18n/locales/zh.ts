@@ -1900,7 +1900,30 @@ export default {
       analyzer: '分析器',
       reporter: '报告生成',
       custom: '自定义'
-    }
+    },
+    // AI Assistant in code editor
+    aiAssistant: 'AI 助手',
+    aiAssistantHint: '描述你想要的修改，AI 将帮助你编辑代码',
+    aiInputPlaceholder: '描述你想要的修改...',
+    includeCodeContext: '包含代码上下文',
+    explainCode: '解释代码',
+    optimizeCode: '优化代码',
+    fixBugs: '修复问题',
+    applyChanges: '应用修改',
+    previewChanges: '预览',
+    exitFullscreen: '退出全屏',
+    cancelEdit: '取消编辑',
+    creating: '创建中...',
+    // Code selection
+    fullCode: '完整代码',
+    selectedLines: '选中代码',
+    lines: '行',
+    addSelection: '添加选中',
+    addAll: '添加全部',
+    addSelectedCode: '添加选中代码到上下文',
+    addFullCode: '添加完整代码到上下文',
+    noCodeSelected: '请先在编辑器中选择代码',
+    noCode: '没有代码'
   },
   license: {
     title: '软件激活',

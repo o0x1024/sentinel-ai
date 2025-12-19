@@ -399,8 +399,24 @@ impl AiServiceManager {
             info!("'providers_config' not found in database.");
         }
 
-        if let Ok(Some(default_provider)) = self.db.get_config("ai", "default_provider").await {
-            let provider_key = default_provider.to_lowercase();
+        // Try new config key first, fallback to legacy key and migrate
+        let default_llm_provider = match self.db.get_config("ai", "default_llm_provider").await {
+            Ok(Some(v)) => Some(v),
+            _ => {
+                // Migrate from legacy key if exists
+                if let Ok(Some(legacy)) = self.db.get_config("ai", "default_provider").await {
+                    info!("Migrating default_provider to default_llm_provider: {}", legacy);
+                    let _ = self.db.set_config("ai", "default_llm_provider", &legacy, 
+                        Some("Global default LLM provider")).await;
+                    Some(legacy)
+                } else {
+                    None
+                }
+            }
+        };
+        
+        if let Some(provider) = default_llm_provider {
+            let provider_key = provider.to_lowercase();
             if self.get_service(&provider_key).is_some() {
                 if let Err(e) = self.set_default_alias_to(&provider_key).await {
                     warn!("Failed to set default alias to '{}': {}", provider_key, e);
@@ -729,8 +745,8 @@ impl AiServiceManager {
         Ok(vec![])
     }
 
-    pub async fn get_default_chat_model(&self) -> Result<Option<(String, String)>> {
-        if let Ok(Some(model_str)) = self.db.get_config("ai", "default_chat_model").await {
+    pub async fn get_default_llm_model(&self) -> Result<Option<(String, String)>> {
+        if let Ok(Some(model_str)) = self.db.get_config("ai", "default_llm_model").await {
             if let Some((provider, model_name)) = model_str.split_once('/') {
                 return Ok(Some((provider.to_string(), model_name.to_string())));
             }
@@ -738,14 +754,14 @@ impl AiServiceManager {
         Ok(None)
     }
 
-    pub async fn set_default_chat_model(&self, provider: &str, model_name: &str) -> Result<()> {
+    pub async fn set_default_llm_model(&self, provider: &str, model_name: &str) -> Result<()> {
         let model_value = format!("{}/{}", provider, model_name);
         self.db
             .set_config(
                 "ai",
-                "default_chat_model",
+                "default_llm_model",
                 &model_value,
-                Some("Default chat model"),
+                Some("Default LLM model"),
             )
             .await?;
         info!("Set default chat model to: {}", model_value);

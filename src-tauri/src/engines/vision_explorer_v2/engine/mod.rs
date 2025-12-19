@@ -9,8 +9,9 @@
 
 use crate::engines::vision_explorer_v2::blackboard::{Blackboard, ExplorationConfig};
 use crate::engines::vision_explorer_v2::brain::{AuthAgent, PlannerAgent};
-use crate::engines::vision_explorer_v2::core::{Agent, Event};
+use crate::engines::vision_explorer_v2::core::{Agent, Event, PageContext};
 use crate::engines::vision_explorer_v2::driver::{BrowserDriver, NavigatorAgent, OperatorAgent};
+use crate::engines::vision_explorer_v2::emitter::V2MessageEmitter;
 use crate::engines::vision_explorer_v2::graph::ExplorationGraph;
 use crate::engines::vision_explorer_v2::perception::{
     PerceptionAgent, StructuralAnalyst, VisualAnalyst,
@@ -55,6 +56,9 @@ pub struct V2Engine {
 
     /// Statistics
     stats: Arc<RwLock<ExplorationStats>>,
+
+    /// Message emitter for frontend communication
+    emitter: Option<V2MessageEmitter>,
 }
 
 impl V2Engine {
@@ -88,7 +92,14 @@ impl V2Engine {
             event_rx: Some(rx),
             session_id,
             stats: Arc::new(RwLock::new(ExplorationStats::default())),
+            emitter: None,
         }
+    }
+
+    /// Set message emitter for frontend communication
+    pub fn with_emitter(mut self, emitter: V2MessageEmitter) -> Self {
+        self.emitter = Some(emitter);
+        self
     }
 
     /// Enable persistence with the given storage directory
@@ -229,6 +240,10 @@ impl V2Engine {
             self.config.target_url
         );
 
+        if let Some(ref emitter) = self.emitter {
+            emitter.emit_start(&self.config.target_url);
+        }
+
         self.event_tx
             .send(Event::TaskAssigned {
                 agent_id: "navigator_1".to_string(),
@@ -248,6 +263,10 @@ impl V2Engine {
             match &event {
                 Event::Stop => {
                     log::info!("Stopping V2 Engine");
+                    if let Some(ref emitter) = self.emitter {
+                        let stats = self.stats.read().await;
+                        emitter.emit_complete(&stats, "stopped", 0);
+                    }
                     // Save final snapshot
                     self.save_snapshot().await?;
                     break;
@@ -281,6 +300,9 @@ impl V2Engine {
 
                 Event::LoginTakeoverRequest { url, fields } => {
                     log::info!("V2Engine: Login takeover requested for {}", url);
+                    if let Some(ref emitter) = self.emitter {
+                        emitter.emit_takeover_request(&format!("Login required at {}", url));
+                    }
                     // This is typically emitted by AuthAgent when login is needed
                     // The emitter/frontend handler should pick this up
                     self.blackboard.set_login_url(url.clone()).await;
@@ -296,15 +318,43 @@ impl V2Engine {
                 Event::TaskAssigned { agent_id, .. } => {
                     // Route to appropriate agent
                     if agent_id == &navigator.id() {
-                        let _ = navigator.handle_event(&event).await;
+                        if let Err(e) = navigator.handle_event(&event).await {
+                            log::error!("NavigatorAgent error: {}", e);
+                            if let Some(ref emitter) = self.emitter {
+                                emitter.emit_error(step_count, &format!("Navigator error: {}", e));
+                            }
+                        }
                     } else if agent_id == &analyst_agent.id() {
-                        let _ = analyst_agent.handle_event(&event).await;
+                        if let Err(e) = analyst_agent.handle_event(&event).await {
+                            log::error!("StructuralAnalyst error: {}", e);
+                            if let Some(ref emitter) = self.emitter {
+                                emitter.emit_error(step_count, &format!("Analyst error: {}", e));
+                            }
+                        }
                     } else if agent_id == &visual_agent.id() {
-                        let _ = visual_agent.handle_event(&event).await;
+                        if let Err(e) = visual_agent.handle_event(&event).await {
+                            log::error!("VisualAnalyst error: {}", e);
+                            if let Some(ref emitter) = self.emitter {
+                                emitter.emit_error(
+                                    step_count,
+                                    &format!("Visual Analyst error: {}", e),
+                                );
+                            }
+                        }
                     } else if agent_id == &operator.id() {
-                        let _ = operator.handle_event(&event).await;
+                        if let Err(e) = operator.handle_event(&event).await {
+                            log::error!("OperatorAgent error: {}", e);
+                            if let Some(ref emitter) = self.emitter {
+                                emitter.emit_error(step_count, &format!("Operator error: {}", e));
+                            }
+                        }
                     } else if agent_id == &auth_agent.id() {
-                        let _ = auth_agent.handle_event(&event).await;
+                        if let Err(e) = auth_agent.handle_event(&event).await {
+                            log::error!("AuthAgent error: {}", e);
+                            if let Some(ref emitter) = self.emitter {
+                                emitter.emit_error(step_count, &format!("Auth error: {}", e));
+                            }
+                        }
                     }
                 }
 
@@ -317,6 +367,53 @@ impl V2Engine {
                         stats.actions_performed += 1;
                         if agent_id.contains("navigator") {
                             stats.pages_visited += 1;
+                        }
+                    }
+
+                    // Emit to frontend
+                    if let Some(ref emitter) = self.emitter {
+                        if agent_id.contains("navigator") {
+                            if let Some(data) = &result.data {
+                                if let Ok(ctx) = serde_json::from_value::<PageContext>(data.clone())
+                                {
+                                    emitter.emit_screenshot(
+                                        step_count,
+                                        &ctx.url,
+                                        &ctx.title,
+                                        ctx.screenshot
+                                            .as_ref()
+                                            .map(|b| {
+                                                base64::Engine::encode(
+                                                    &base64::engine::general_purpose::STANDARD,
+                                                    b,
+                                                )
+                                            })
+                                            .as_deref(),
+                                    );
+                                }
+                            }
+                        } else if agent_id.contains("analyst") {
+                            if let Some(data) = &result.data {
+                                if let Ok(perception) =
+                                    serde_json::from_value::<
+                                        crate::engines::vision_explorer_v2::core::PerceptionResult,
+                                    >(data.clone())
+                                {
+                                    emitter.emit_analysis(
+                                        step_count,
+                                        &perception.summary,
+                                        &perception.suggested_actions,
+                                        0.0,
+                                    );
+                                }
+                            }
+                        } else if agent_id.contains("operator") || agent_id.contains("navigator") {
+                            // Actions are usually handled by Navigator/Operator
+                            // In V2, we might want to emit action when it's assigned or completed
+                        }
+
+                        if !result.success {
+                            emitter.emit_error(step_count, &result.message);
                         }
                     }
 
@@ -338,12 +435,17 @@ impl V2Engine {
                     }
                 }
 
-                Event::Log { level, message } => match level.as_str() {
-                    "error" => log::error!("[V2] {}", message),
-                    "warn" => log::warn!("[V2] {}", message),
-                    "info" => log::info!("[V2] {}", message),
-                    _ => log::debug!("[V2] {}", message),
-                },
+                Event::Log { level, message } => {
+                    match level.as_str() {
+                        "error" => log::error!("[V2] {}", message),
+                        "warn" => log::warn!("[V2] {}", message),
+                        "info" => log::info!("[V2] {}", message),
+                        _ => log::debug!("[V2] {}", message),
+                    }
+                    if let Some(ref emitter) = self.emitter {
+                        emitter.emit_log(level, message);
+                    }
+                }
 
                 Event::NodeDiscovered { .. } => {
                     // Could log or track discovery
@@ -354,9 +456,32 @@ impl V2Engine {
             if let Ok(Some(next_task)) = planner.decide_next_step().await {
                 // Apply safety filter before dispatching
                 if self.is_task_safe(&next_task).await {
+                    // If it's an action (TaskAssigned to navigator/operator with payload), emit it
+                    if let Some(ref emitter) = self.emitter {
+                        if let Event::TaskAssigned {
+                            agent_id, payload, ..
+                        } = &next_task
+                        {
+                            if (agent_id.contains("navigator") || agent_id.contains("operator"))
+                                && payload.is_some()
+                            {
+                                if let Ok(action) = serde_json::from_value::<
+                                    crate::engines::vision_explorer_v2::core::SuggestedAction,
+                                >(
+                                    payload.as_ref().unwrap().clone()
+                                ) {
+                                    emitter.emit_action(step_count, &action, true, None);
+                                }
+                            }
+                        }
+                    }
+
                     self.event_tx.send(next_task).await?;
                 } else {
                     log::warn!("Safety layer blocked a task");
+                    if let Some(ref emitter) = self.emitter {
+                        emitter.emit_log("warn", "Safety layer blocked a restricted action");
+                    }
                 }
             }
         }

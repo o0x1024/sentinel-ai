@@ -57,22 +57,22 @@ pub async fn start_vision_explorer_v2(
     log::info!("Starting Vision Explorer V2 with config: {:?}", config);
 
     // Read LLM/VLM settings from database
-    let default_provider = db
-        .get_config("ai", "default_provider")
+    let default_llm_provider = db
+        .get_config("ai", "default_llm_provider")
         .await
         .ok()
         .flatten()
         .unwrap_or_else(|| "anthropic".to_string());
 
-    let mut default_chat_model = db
-        .get_config("ai", "default_chat_model")
+    let mut default_llm_model = db
+        .get_config("ai", "default_llm_model")
         .await
         .ok()
         .flatten()
         .unwrap_or_else(|| "claude-3-haiku".to_string());
 
-    if default_chat_model.trim().is_empty() {
-        default_chat_model = "claude-3-haiku".to_string();
+    if default_llm_model.trim().is_empty() {
+        default_llm_model = "claude-3-haiku".to_string();
     }
 
     let mut default_vlm_provider = match db
@@ -84,7 +84,7 @@ pub async fn start_vision_explorer_v2(
         Some(value) => value,
         None => {
             let legacy_provider = db
-                .get_config("ai", "default_vision_provider")
+                .get_config("ai", "default_vlm_provider")
                 .await
                 .ok()
                 .flatten();
@@ -98,30 +98,29 @@ pub async fn start_vision_explorer_v2(
                     )
                     .await;
             }
-            legacy_provider.unwrap_or_else(|| default_provider.clone())
+            legacy_provider.unwrap_or_else(|| default_llm_provider.clone())
         }
     };
 
     if default_vlm_provider.trim().is_empty() {
-        default_vlm_provider = default_provider.clone();
+        default_vlm_provider = default_llm_provider.clone();
     }
 
-    let mut default_vision_model = db
-        .get_config("ai", "default_vision_model")
+    let mut default_vlm_model = db
+        .get_config("ai", "default_vlm_model")
         .await
         .ok()
         .flatten()
         .unwrap_or_else(|| "claude-3-sonnet".to_string());
 
-    if default_vision_model.trim().is_empty() {
-        default_vision_model = "claude-3-sonnet".to_string();
+    if default_vlm_model.trim().is_empty() {
+        default_vlm_model = "claude-3-sonnet".to_string();
     }
 
-    let (fast_provider_override, fast_model_id) = split_model_with_provider(&default_chat_model);
-    let (vision_provider_override, vision_model_id) =
-        split_model_with_provider(&default_vision_model);
+    let (fast_provider_override, fast_model_id) = split_model_with_provider(&default_llm_model);
+    let (vision_provider_override, vision_model_id) = split_model_with_provider(&default_vlm_model);
 
-    let fast_provider = fast_provider_override.unwrap_or_else(|| default_provider.clone());
+    let fast_provider = fast_provider_override.unwrap_or_else(|| default_llm_provider.clone());
     let vision_provider = vision_provider_override.unwrap_or_else(|| default_vlm_provider.clone());
 
     // Get API keys from AiServiceManager
@@ -190,6 +189,8 @@ pub async fn start_vision_explorer_v2(
         session_id.clone(),
     );
 
+    engine = engine.with_emitter(emitter.clone());
+
     // Emit start event
     emitter.emit_start(&target_url);
 
@@ -248,7 +249,9 @@ pub async fn stop_vision_explorer_v2(
 
     let event_tx = {
         let sessions = state.sessions.read().await;
-        sessions.get(&execution_id).map(|session| session.event_tx.clone())
+        sessions
+            .get(&execution_id)
+            .map(|session| session.event_tx.clone())
     };
 
     if let Some(event_tx) = event_tx {
@@ -281,7 +284,10 @@ pub async fn vision_explorer_v2_receive_credentials(
         let mut sessions = state.sessions.write().await;
         if let Some(session) = sessions.get_mut(&execution_id) {
             session.credentials = Some((username.clone(), password.clone()));
-            (Some(session.event_tx.clone()), Some(session.session_id.clone()))
+            (
+                Some(session.event_tx.clone()),
+                Some(session.session_id.clone()),
+            )
         } else {
             (None, None)
         }
@@ -301,11 +307,7 @@ pub async fn vision_explorer_v2_receive_credentials(
             log::warn!("Failed to send credentials event: {}", e);
         }
 
-        let emitter = V2MessageEmitter::new(
-            Arc::new(app_handle),
-            execution_id.clone(),
-            session_id,
-        );
+        let emitter = V2MessageEmitter::new(Arc::new(app_handle), execution_id.clone(), session_id);
         emitter.emit_credentials_received(&username);
 
         Ok(())
@@ -324,7 +326,9 @@ pub async fn vision_explorer_v2_skip_login(
 
     let event_tx = {
         let sessions = state.sessions.read().await;
-        sessions.get(&execution_id).map(|session| session.event_tx.clone())
+        sessions
+            .get(&execution_id)
+            .map(|session| session.event_tx.clone())
     };
 
     if let Some(event_tx) = event_tx {

@@ -1,8 +1,8 @@
 //! Plugin code validator
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use deno_ast::{MediaType, ParseParams, SourceTextInfo};
+use serde::{Deserialize, Serialize};
 
 /// Validation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,13 +78,17 @@ impl PluginValidator {
             }
             Ok(false) => {
                 result.syntax_valid = false;
-                result.errors.push("TypeScript syntax validation failed".to_string());
+                result
+                    .errors
+                    .push("TypeScript syntax validation failed".to_string());
                 result.is_valid = false;
             }
             Err(e) => {
                 // Deno not available, skip syntax validation
                 log::warn!("TypeScript syntax validation skipped: {}", e);
-                result.warnings.push(format!("Syntax validation skipped: {}", e));
+                result
+                    .warnings
+                    .push(format!("Syntax validation skipped: {}", e));
                 result.syntax_valid = true; // Don't fail if Deno not available
             }
         }
@@ -113,7 +117,7 @@ impl PluginValidator {
 
         // Recommended functions
         let recommended = [
-            ("scan_request", "function scan_request"),
+            ("scan_transaction", "function scan_transaction"),
             ("op_emit_finding", "op_emit_finding"),
         ];
 
@@ -125,7 +129,8 @@ impl PluginValidator {
 
         // Check metadata structure
         if !code.contains("id:") || !code.contains("name:") {
-            errors.push("get_metadata() must return object with 'id' and 'name' fields".to_string());
+            errors
+                .push("get_metadata() must return object with 'id' and 'name' fields".to_string());
             all_present = false;
         }
 
@@ -153,7 +158,10 @@ impl PluginValidator {
 
         // Warning-level issues
         let warning_issues = [
-            ("dangerouslySetInnerHTML", "Potentially unsafe: dangerouslySetInnerHTML"),
+            (
+                "dangerouslySetInnerHTML",
+                "Potentially unsafe: dangerouslySetInnerHTML",
+            ),
             (".innerHTML", "Potentially unsafe: innerHTML usage"),
             ("__proto__", "Prototype pollution risk"),
         ];
@@ -171,10 +179,10 @@ impl PluginValidator {
     /// Validate TypeScript syntax using Deno AST
     async fn validate_typescript_syntax(&self, code: &str) -> Result<bool> {
         log::debug!("Validating TypeScript syntax using deno_ast");
-        
+
         // Use deno_ast to parse TypeScript code
         let source_code: std::sync::Arc<str> = std::sync::Arc::<str>::from(code.to_string());
-        
+
         let parse_params = deno_ast::ParseParams {
             specifier: deno_ast::ModuleSpecifier::parse("file:///plugin.ts").unwrap(),
             text: source_code,
@@ -183,12 +191,12 @@ impl PluginValidator {
             scope_analysis: false,
             maybe_syntax: None,
         };
-        
+
         // Parse the code and check for syntax errors
         match deno_ast::parse_module(parse_params) {
             Ok(parsed) => {
                 log::debug!("TypeScript syntax validation passed");
-                
+
                 // Check for any diagnostics
                 if parsed.diagnostics().is_empty() {
                     Ok(true)
@@ -324,4 +332,3 @@ function test() {
         assert!(result2.0, "Should pass security check");
     }
 }
-

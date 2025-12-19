@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use sentinel_llm::LlmClient;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::auto_approval::{ApprovalDecision, PluginAutoApprovalConfig, PluginAutoApprovalEngine};
@@ -442,9 +442,9 @@ impl AdvancedPluginGenerator {
     async fn call_llm_for_generation(&self, prompt: &str) -> Result<(String, String)> {
         log::debug!("Calling LLM for code generation");
 
-        // 优先使用 UI 配置的默认 Chat 模型
+        // 优先使用 UI 配置的默认 LLM 模型
         let service = if let Ok(Some((provider, model_name))) =
-            self.ai_manager.get_default_chat_model().await
+            self.ai_manager.get_default_llm_model().await
         {
             log::info!(
                 "AdvancedPluginGenerator using default chat model: {}/{}",
@@ -640,9 +640,8 @@ impl AdvancedPluginGenerator {
         let mut score: f32 = 0.0;
         let checks = [
             ("get_metadata", 20.0),
-            ("scan_request", 25.0),
-            ("scan_response", 25.0),
-            ("op_emit_finding", 20.0),
+            ("scan_transaction", 50.0),
+            ("Sentinel.emitFinding", 20.0),
             ("vuln_type:", 10.0),
         ];
 
@@ -718,48 +717,4 @@ impl AdvancedPluginGenerator {
             _ => vuln_type,
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-//     #[test]
-//     fn test_extract_from_markdown() {
-//         let generator = AdvancedPluginGenerator::new(Arc::new(AiServiceManager::new(Arc::new(
-//             crate::services::database::DatabaseService::new().unwrap(),
-//         ))));
-
-//         let response = r#"
-// Here's the plugin:
-
-// ```typescript
-// function get_metadata() {
-//     return { id: "test" };
-// }
-// ```
-
-// That's it!
-//         "#;
-
-//         let code = generator.extract_from_markdown(response).unwrap();
-//         assert!(code.contains("get_metadata"));
-//     }
-
-//     #[test]
-//     fn test_calculate_logic_score() {
-//         let generator = AdvancedPluginGenerator::new(Arc::new(AiServiceManager::new(Arc::new(
-//             crate::services::database::DatabaseService::new().unwrap(),
-//         ))));
-
-//         let code = r#"
-// function get_metadata() {}
-// function scan_request() {}
-// function scan_response() {}
-// Deno.core.ops.op_emit_finding({ vuln_type: "xss" });
-//         "#;
-
-//         let score = generator.calculate_logic_score(code);
-//         assert_eq!(score, 100.0);
-//     }
 }

@@ -72,20 +72,37 @@ impl Agent for PerceptionAgent {
                     // If not present, maybe we are just asking for text analysis on what `target_node_id` represents (if we had a store)?
                     // We will fail for now if no payload.
                     if let Ok(context) = serde_json::from_value::<PageContext>(val.clone()) {
-                        let result = self.engine.analyze(&context).await?;
-
-                        self.event_tx
-                            .send(Event::TaskCompleted {
-                                agent_id: self.id.clone(),
-                                task_id: task_id.clone(),
-                                result: TaskResult {
-                                    success: true,
-                                    message: "Analysis complete".to_string(),
-                                    new_nodes: vec![],
-                                    data: Some(serde_json::to_value(result)?),
-                                },
-                            })
-                            .await?;
+                        match self.engine.analyze(&context).await {
+                            Ok(result) => {
+                                self.event_tx
+                                    .send(Event::TaskCompleted {
+                                        agent_id: self.id.clone(),
+                                        task_id: task_id.clone(),
+                                        result: TaskResult {
+                                            success: true,
+                                            message: "Analysis complete".to_string(),
+                                            new_nodes: vec![],
+                                            data: Some(serde_json::to_value(result)?),
+                                        },
+                                    })
+                                    .await?;
+                            }
+                            Err(e) => {
+                                log::error!("PerceptionAgent {} error: {}", self.id, e);
+                                self.event_tx
+                                    .send(Event::TaskCompleted {
+                                        agent_id: self.id.clone(),
+                                        task_id: task_id.clone(),
+                                        result: TaskResult {
+                                            success: false,
+                                            message: format!("Analysis failed: {}", e),
+                                            new_nodes: vec![],
+                                            data: None,
+                                        },
+                                    })
+                                    .await?;
+                            }
+                        }
                     } else {
                         log::error!(
                             "PerceptionAgent received task without valid PageContext payload"

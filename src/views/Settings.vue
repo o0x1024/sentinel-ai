@@ -309,7 +309,7 @@ const settings = ref({
 // AI相关数据
 const selectedAiProvider = ref('OpenAI')
 const aiServiceStatus = ref([])
-const aiConfig = ref<any>({ providers: {}, default_provider: 'openai' })
+const aiConfig = ref<any>({ providers: {}, default_llm_provider: 'openai' })
 const aiUsageStats = ref({})
 
 // RAG配置数据
@@ -720,9 +720,9 @@ const saveAiConfig = async () => {
 
 const setDefaultProvider = async (provider: string) => {
   try {
-    await invoke('set_default_provider', { request: { provider } })
+    await invoke('set_default_llm_provider', { request: { provider } })
     // 同步前端状态
-    aiConfig.value.default_provider = provider
+    aiConfig.value.default_llm_provider = provider
     dialog.toast.success(`默认 Provider 已设置为 ${provider}`)
   } catch (e) {
     console.error('Failed to set default provider', e)
@@ -734,14 +734,14 @@ const setDefaultChatModel = async (model: string) => {
   try {
     if (!model) {
       // 清空默认模型
-      aiConfig.value.default_chat_model = ''
-      console.log('Settings: Cleared default_chat_model')
+      aiConfig.value.default_llm_model = ''
+      console.log('Settings: Cleared default_llm_model')
       dialog.toast.success('已清空默认 Chat 模型')
       return
     }
     
     // 获取当前默认提供商（小写格式）
-    const currentProviderLower = aiConfig.value.default_provider || 'openai'
+    const currentProviderLower = aiConfig.value.default_llm_provider || 'openai'
     
     // 在提供商配置中查找匹配的提供商（不区分大小写）
     const providerConfigKey = Object.keys(aiConfig.value.providers || {}).find(key => 
@@ -753,7 +753,7 @@ const setDefaultChatModel = async (model: string) => {
       console.error('Provider not found:', {
         searchFor: currentProviderLower,
         availableProviders: Object.keys(aiConfig.value.providers || {}),
-        aiConfigDefaultProvider: aiConfig.value.default_provider
+        aiConfigDefaultLlmProvider: aiConfig.value.default_llm_provider
       })
       return
     }
@@ -771,15 +771,15 @@ const setDefaultChatModel = async (model: string) => {
       return
     }
     
-    // 调用后端API设置默认Chat模型 - 使用正确的命令
+    // 调用后端API设置默认LLM模型 - 使用正确的命令
     const modelValue = `${currentProviderLower.toLowerCase()}/${model}`
-    await invoke('set_default_chat_model', {
+    await invoke('set_default_llm_model', {
       model: modelValue
     })
     
     // 同步前端状态 - 保存为 'provider/model' 格式
-    aiConfig.value.default_chat_model = modelValue
-    console.log('Updated frontend default_chat_model state:', modelValue)
+    aiConfig.value.default_llm_model = modelValue
+    console.log('Updated frontend default_llm_model state:', modelValue)
     
     dialog.toast.success(`默认 Chat 模型已设置为 ${modelInfo.name}`)
   } catch (e) {
@@ -798,7 +798,7 @@ const setDefaultVlmProvider = async (provider: string) => {
         is_encrypted: false
       }, {
         category: 'ai',
-        key: 'default_vision_provider',
+        key: 'default_vlm_provider',
         value: String(provider),
         description: 'Deprecated: use default_vlm_provider',
         is_encrypted: false
@@ -816,8 +816,8 @@ const setDefaultVisionModel = async (model: string) => {
   try {
     if (!model) {
       // 清空默认模型
-      aiConfig.value.default_vision_model = ''
-      console.log('Settings: Cleared default_vision_model')
+      aiConfig.value.default_vlm_model = ''
+      console.log('Settings: Cleared default_vlm_model')
       dialog.toast.success('已清空默认 VLM 模型')
       return
     }
@@ -826,7 +826,7 @@ const setDefaultVisionModel = async (model: string) => {
     await invoke('save_config_batch', {
       configs: [{
         category: 'ai',
-        key: 'default_vision_model',
+        key: 'default_vlm_model',
         value: String(model),
         description: 'Default VLM model',
         is_encrypted: false
@@ -834,8 +834,8 @@ const setDefaultVisionModel = async (model: string) => {
     })
     
     // 同步前端状态 - 保存为 'provider/model' 格式
-    aiConfig.value.default_vision_model = model
-    console.log('Updated frontend default_vision_model state:', model)
+    aiConfig.value.default_vlm_model = model
+    console.log('Updated frontend default_vlm_model state:', model)
     
     let modelName = model
     if (model.includes('/')) {

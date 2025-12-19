@@ -22,16 +22,18 @@
 //! - `plugins/README.md` - 开发指南
 
 pub mod error;
-pub mod types;
-pub mod plugin_ops;
-pub mod plugin_engine;
+pub mod executor;
 pub mod plugin;
+pub mod plugin_engine;
+pub mod plugin_ops;
+pub mod types;
 
-pub use plugin_engine::PluginEngine;
-pub use plugin::{PluginManager, PluginStatus, PluginRecord};
-pub use plugin_ops::{PluginContext, sentinel_plugin_ext};
-pub use types::*;
 pub use error::{PluginError, Result};
+pub use executor::PluginExecutor;
+pub use plugin::{PluginManager, PluginRecord, PluginStatus};
+pub use plugin_engine::PluginEngine;
+pub use plugin_ops::{sentinel_plugin_ext, PluginContext};
+pub use types::*;
 
 /// 获取内置插件目录路径
 pub fn get_builtin_plugins_dir() -> &'static str {

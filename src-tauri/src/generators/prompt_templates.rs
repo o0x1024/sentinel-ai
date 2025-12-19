@@ -1,11 +1,11 @@
 //! Prompt templates for AI plugin generation
 
-use anyhow::Result;
-use crate::analyzers::WebsiteAnalysis;
 use super::few_shot_examples::FewShotExample;
-use std::sync::Arc;
+use crate::analyzers::WebsiteAnalysis;
 use crate::services::DatabaseService;
+use anyhow::Result;
 use sentinel_core::models::prompt::TemplateType;
+use std::sync::Arc;
 
 /// Prompt template builder
 pub struct PromptTemplateBuilder {
@@ -16,7 +16,7 @@ impl PromptTemplateBuilder {
     pub fn new() -> Self {
         Self { db: None }
     }
-    
+
     pub fn with_database(db: Arc<DatabaseService>) -> Self {
         Self { db: Some(db) }
     }
@@ -31,9 +31,11 @@ impl PromptTemplateBuilder {
                     None,
                     Some(template_type.clone()),
                     None,
-                ).await?;
-                
-                if let Some(template) = templates.into_iter()
+                )
+                .await?;
+
+                if let Some(template) = templates
+                    .into_iter()
                     .filter(|t| t.is_active)
                     .max_by_key(|t| (t.is_default, t.priority, t.updated_at.clone()))
                 {
@@ -41,7 +43,7 @@ impl PromptTemplateBuilder {
                 }
             }
         }
-        
+
         // Fallback to built-in templates (合并后的完整模板)
         match template_type {
             TemplateType::PluginGeneration => {
@@ -52,13 +54,14 @@ impl PromptTemplateBuilder {
                 // Agent 工具插件生成 - 使用合并后的完整模板
                 Ok(include_str!("templates/agent_plugin_generation.txt").to_string())
             }
-            TemplateType::PluginFix => {
-                Ok(include_str!("templates/plugin_fix.txt").to_string())
-            }
+            TemplateType::PluginFix => Ok(include_str!("templates/plugin_fix.txt").to_string()),
             TemplateType::AgentPluginFix => {
                 Ok(include_str!("templates/agent_plugin_fix.txt").to_string())
             }
-            _ => Err(anyhow::anyhow!("Unsupported template type: {:?}", template_type))
+            _ => Err(anyhow::anyhow!(
+                "Unsupported template type: {:?}",
+                template_type
+            )),
         }
     }
 
@@ -70,7 +73,14 @@ impl PromptTemplateBuilder {
         target_endpoints: Option<&[String]>,
         requirements: Option<&str>,
     ) -> Result<String> {
-        self.build_generation_prompt_with_examples_async(analysis, vuln_type, target_endpoints, requirements, &[]).await
+        self.build_generation_prompt_with_examples_async(
+            analysis,
+            vuln_type,
+            target_endpoints,
+            requirements,
+            &[],
+        )
+        .await
     }
 
     /// Build generation prompt for LLM with Few-shot examples (sync version, uses built-in templates)
@@ -81,7 +91,13 @@ impl PromptTemplateBuilder {
         target_endpoints: Option<&[String]>,
         requirements: Option<&str>,
     ) -> Result<String> {
-        self.build_generation_prompt_with_examples(analysis, vuln_type, target_endpoints, requirements, &[])
+        self.build_generation_prompt_with_examples(
+            analysis,
+            vuln_type,
+            target_endpoints,
+            requirements,
+            &[],
+        )
     }
 
     /// Build fix prompt for LLM to repair broken plugin code (async version with DB support)
@@ -95,7 +111,7 @@ impl PromptTemplateBuilder {
     ) -> Result<String> {
         // Try to get template from database first
         let base_template = self.get_template_content(TemplateType::PluginFix).await?;
-        
+
         // Build context for variable replacement
         let mut context = serde_json::json!({
             "original_code": original_code,
@@ -103,11 +119,11 @@ impl PromptTemplateBuilder {
             "vuln_type": vuln_type,
             "attempt": attempt
         });
-        
+
         if let Some(details) = error_details {
             context["error_details"] = serde_json::Value::String(details.to_string());
         }
-        
+
         // Simple variable replacement
         let mut prompt = base_template;
         if let Some(context_obj) = context.as_object() {
@@ -122,7 +138,7 @@ impl PromptTemplateBuilder {
                 prompt = prompt.replace(&placeholder_double, &replacement);
             }
         }
-        
+
         Ok(prompt)
     }
 
@@ -151,7 +167,7 @@ impl PromptTemplateBuilder {
         // Error information
         prompt.push_str("## Error Information\n\n");
         prompt.push_str(&format!("**Error**: {}\n\n", error_message));
-        
+
         if let Some(details) = error_details {
             prompt.push_str("**Detailed Error**:\n```\n");
             prompt.push_str(details);
@@ -170,9 +186,11 @@ impl PromptTemplateBuilder {
         prompt.push_str("1. **Fix the specific error** mentioned above\n");
         prompt.push_str("2. **Maintain the plugin interface**:\n");
         prompt.push_str("   - `function get_metadata()` - returns plugin metadata with id, name, version, etc.\n");
-        prompt.push_str("   - `function scan_response(ctx)` - scans HTTP response for vulnerabilities\n");
-        prompt.push_str("   - Optionally `function scan_request(ctx)` - scans HTTP request\n");
-        prompt.push_str(&format!("3. **Detect {} vulnerabilities** correctly\n", vuln_type));
+        prompt.push_str("   - `function scan_transaction(transaction)` - scans HTTP transaction for vulnerabilities\n");
+        prompt.push_str(&format!(
+            "3. **Detect {} vulnerabilities** correctly\n",
+            vuln_type
+        ));
         prompt.push_str("4. **Use proper TypeScript syntax** - no syntax errors\n");
         prompt.push_str("5. **Emit findings** using `Sentinel.emitFinding()` or `Deno.core.ops.op_emit_finding()`\n");
         prompt.push_str("6. **Include error handling** - use try-catch blocks\n");
@@ -182,7 +200,9 @@ impl PromptTemplateBuilder {
         prompt.push_str("## Common Issues to Check\n\n");
         prompt.push_str("- Missing or incorrect function signatures\n");
         prompt.push_str("- Undefined variables or functions\n");
-        prompt.push_str("- Incorrect API usage (Sentinel.emitFinding vs Deno.core.ops.op_emit_finding)\n");
+        prompt.push_str(
+            "- Incorrect API usage (Sentinel.emitFinding vs Deno.core.ops.op_emit_finding)\n",
+        );
         prompt.push_str("- Missing metadata fields (id, name, version, category, etc.)\n");
         prompt.push_str("- Syntax errors (missing brackets, semicolons, etc.)\n");
         prompt.push_str("- Type errors in TypeScript\n");
@@ -200,7 +220,7 @@ impl PromptTemplateBuilder {
     }
 
     /// Build generation prompt with Few-shot examples (async version with DB support)
-    /// 
+    ///
     /// 使用合并后的完整模板，模板中已包含接口定义和输出格式要求
     pub async fn build_generation_prompt_with_examples_async(
         &self,
@@ -211,13 +231,15 @@ impl PromptTemplateBuilder {
         examples: &[&FewShotExample],
     ) -> Result<String> {
         // 获取合并后的完整模板（已包含接口和输出格式）
-        let base_template = self.get_template_content(TemplateType::PluginGeneration).await?;
-        
+        let base_template = self
+            .get_template_content(TemplateType::PluginGeneration)
+            .await?;
+
         let mut prompt = base_template;
-        
+
         // Add dynamic content
         prompt.push_str("\n\n---\n\n## 动态上下文\n\n");
-        
+
         // Few-shot examples (if provided)
         if !examples.is_empty() {
             prompt.push_str(&self.build_few_shot_examples(examples));
@@ -317,35 +339,53 @@ The plugin should:
 
     fn build_few_shot_examples(&self, examples: &[&FewShotExample]) -> String {
         let mut section = String::from("## Few-Shot Examples\n\n");
-        section.push_str("Here are high-quality examples of similar plugins to guide your implementation:\n\n");
-        
+        section.push_str(
+            "Here are high-quality examples of similar plugins to guide your implementation:\n\n",
+        );
+
         for (idx, example) in examples.iter().enumerate() {
-            section.push_str(&format!("### Example {} - {} Plugin\n\n", idx + 1, example.vuln_type.to_uppercase()));
+            section.push_str(&format!(
+                "### Example {} - {} Plugin\n\n",
+                idx + 1,
+                example.vuln_type.to_uppercase()
+            ));
             section.push_str(&format!("**Context**: {}\n\n", example.context));
-            section.push_str(&format!("**Quality Score**: {:.1}/100\n\n", example.quality_score));
+            section.push_str(&format!(
+                "**Quality Score**: {:.1}/100\n\n",
+                example.quality_score
+            ));
             section.push_str("**Implementation**:\n\n");
             section.push_str("```typescript\n");
             section.push_str(&example.code);
             section.push_str("\n```\n\n");
-            
+
             if idx < examples.len() - 1 {
                 section.push_str("---\n\n");
             }
         }
-        
+
         section.push_str("**Important**: Use these examples as inspiration. Generate GENERIC detection patterns that work across different websites, not just the current target.\n");
-        
+
         section
     }
 
     fn build_analysis_context(&self, analysis: &WebsiteAnalysis) -> String {
         let mut context = String::from("## Website Analysis Context\n\n");
         context.push_str("The following analysis is from a sample website. Use it as REFERENCE for common patterns, but generate GENERIC detection logic that works across different websites.\n\n");
-        
+
         context.push_str(&format!("**Sample Domain**: {}\n", analysis.domain));
-        context.push_str(&format!("**Total Requests Analyzed**: {}\n", analysis.total_requests));
-        context.push_str(&format!("**API Endpoints**: {}\n", analysis.api_endpoints_count));
-        context.push_str(&format!("**Unique Parameters**: {}\n\n", analysis.all_parameters.len()));
+        context.push_str(&format!(
+            "**Total Requests Analyzed**: {}\n",
+            analysis.total_requests
+        ));
+        context.push_str(&format!(
+            "**API Endpoints**: {}\n",
+            analysis.api_endpoints_count
+        ));
+        context.push_str(&format!(
+            "**Unique Parameters**: {}\n\n",
+            analysis.all_parameters.len()
+        ));
 
         // Technology stack
         context.push_str("**Technology Stack**:\n");
@@ -375,7 +415,9 @@ The plugin should:
                 ));
 
                 if !endpoint.query_params.is_empty() {
-                    let params: Vec<String> = endpoint.query_params.iter()
+                    let params: Vec<String> = endpoint
+                        .query_params
+                        .iter()
                         .take(5)
                         .map(|p| format!("{}", p.name))
                         .collect();
@@ -383,7 +425,9 @@ The plugin should:
                 }
 
                 if !endpoint.body_params.is_empty() {
-                    let params: Vec<String> = endpoint.body_params.iter()
+                    let params: Vec<String> = endpoint
+                        .body_params
+                        .iter()
                         .take(5)
                         .map(|p| format!("{}", p.name))
                         .collect();
@@ -395,7 +439,9 @@ The plugin should:
         // Common parameters
         if !analysis.all_parameters.is_empty() {
             context.push_str("\n**Common Parameters** (for detection patterns):\n");
-            let param_names: Vec<String> = analysis.all_parameters.iter()
+            let param_names: Vec<String> = analysis
+                .all_parameters
+                .iter()
                 .take(30)
                 .map(|p| p.name.clone())
                 .collect();
@@ -405,7 +451,11 @@ The plugin should:
         context
     }
 
-    fn build_vuln_specific_instructions(&self, vuln_type: &str, analysis: &WebsiteAnalysis) -> String {
+    fn build_vuln_specific_instructions(
+        &self,
+        vuln_type: &str,
+        analysis: &WebsiteAnalysis,
+    ) -> String {
         match vuln_type {
             "sqli" => self.build_sqli_instructions(analysis),
             "xss" => self.build_xss_instructions(analysis),
@@ -418,14 +468,18 @@ The plugin should:
             "path_traversal" => self.build_path_traversal_instructions(analysis),
             "xxe" => self.build_xxe_instructions(analysis),
             "ssrf" => self.build_ssrf_instructions(analysis),
-            _ => format!("## {}\n\nGenerate a plugin to detect {} vulnerabilities.", vuln_type, vuln_type),
+            _ => format!(
+                "## {}\n\nGenerate a plugin to detect {} vulnerabilities.",
+                vuln_type, vuln_type
+            ),
         }
     }
 
     fn build_sqli_instructions(&self, analysis: &WebsiteAnalysis) -> String {
         let db_hint = analysis.tech_stack.database.as_deref().unwrap_or("MySQL");
-        
-        format!(r#"## SQL Injection Detection Requirements
+
+        format!(
+            r#"## SQL Injection Detection Requirements
 
 **Vulnerability Type**: SQL Injection (SQLi)
 **Target Database**: {} (detected)
@@ -501,13 +555,15 @@ The plugin should:
 - UUID/GUID parameters
 - Object references in POST/PUT bodies
 
-**Priority Parameters**: id, user_id, account_id, order_id, document_id, file_id"#.to_string()
+**Priority Parameters**: id, user_id, account_id, order_id, document_id, file_id"#
+            .to_string()
     }
 
     fn build_info_leak_instructions(&self, analysis: &WebsiteAnalysis) -> String {
         let server = analysis.tech_stack.server.as_deref().unwrap_or("unknown");
-        
-        format!(r#"## Information Disclosure Detection Requirements
+
+        format!(
+            r#"## Information Disclosure Detection Requirements
 
 **Vulnerability Type**: Information Leakage
 **Detected Server**: {}
@@ -538,7 +594,9 @@ The plugin should:
 - Stack traces (at line, Traceback, Exception)
 - SQL errors
 - PHP/Python/Java error messages
-- Configuration dumps (JSON/XML config)"#, server)
+- Configuration dumps (JSON/XML config)"#,
+            server
+        )
     }
 
     fn build_csrf_instructions(&self, _analysis: &WebsiteAnalysis) -> String {
@@ -569,7 +627,8 @@ The plugin should:
 - csrf_token, _csrf, authenticity_token
 - X-CSRF-Token header
 - Cookie: csrf_token
-"#.to_string()
+"#
+        .to_string()
     }
 
     fn build_file_upload_instructions(&self, _analysis: &WebsiteAnalysis) -> String {
@@ -591,7 +650,8 @@ The plugin should:
 **Detection Approach**:
 - Track requests with multipart/form-data
 - Analyze filename and Content-Type headers
-- Look for responses that reflect uploaded file URLs without sanitization"#.to_string()
+- Look for responses that reflect uploaded file URLs without sanitization"#
+            .to_string()
     }
 
     fn build_file_inclusion_instructions(&self, _analysis: &WebsiteAnalysis) -> String {
@@ -610,7 +670,8 @@ The plugin should:
 
 **Detection Approach**:
 - Analyze query/body parameters for path-like values
-- Check responses for known file content signatures"#.to_string()
+- Check responses for known file content signatures"#
+            .to_string()
     }
 
     fn build_command_injection_instructions(&self, _analysis: &WebsiteAnalysis) -> String {
@@ -629,7 +690,8 @@ The plugin should:
 
 **Detection Approach**:
 - Focus on parameters like host, ip, command, cmd, target
-- Analyze responses for echoed command output"#.to_string()
+- Analyze responses for echoed command output"#
+            .to_string()
     }
 
     fn build_path_traversal_instructions(&self, _analysis: &WebsiteAnalysis) -> String {
@@ -647,7 +709,8 @@ The plugin should:
 
 **Detection Approach**:
 - Focus on parameters like path, file, filename, dir, template
-- Check for responses that contain file content outside expected directories"#.to_string()
+- Check for responses that contain file content outside expected directories"#
+            .to_string()
     }
 
     fn build_xxe_instructions(&self, _analysis: &WebsiteAnalysis) -> String {
@@ -665,7 +728,8 @@ The plugin should:
 
 **Detection Approach**:
 - Analyze request bodies for XML with DOCTYPE
-- Check responses for error messages indicating entity resolution"#.to_string()
+- Check responses for error messages indicating entity resolution"#
+            .to_string()
     }
 
     fn build_ssrf_instructions(&self, _analysis: &WebsiteAnalysis) -> String {
@@ -701,18 +765,24 @@ try {
 } catch (e) {
     // Network error - might still be SSRF attempt
 }
-```"#.to_string()
+```"#
+            .to_string()
     }
 
     fn get_db_error_patterns(&self, db_type: &str) -> String {
         match db_type.to_lowercase().as_str() {
-            "mysql" | "mariadb" => "- MySQL syntax error\n- You have an error in your SQL syntax\n- mysql_fetch",
+            "mysql" | "mariadb" => {
+                "- MySQL syntax error\n- You have an error in your SQL syntax\n- mysql_fetch"
+            }
             "postgresql" | "postgres" => "- PostgreSQL ERROR\n- pg_query()\n- PSQLException",
-            "mssql" | "sqlserver" => "- Microsoft SQL Server error\n- ODBC SQL Server Driver\n- SqlException",
+            "mssql" | "sqlserver" => {
+                "- Microsoft SQL Server error\n- ODBC SQL Server Driver\n- SqlException"
+            }
             "oracle" => "- ORA-[0-9]{5}\n- Oracle error",
             "mongodb" => "- MongoError\n- MongoDB Error",
             _ => "- SQL syntax error\n- Database error\n- Query failed",
-        }.to_string()
+        }
+        .to_string()
     }
 
     fn build_target_endpoints(&self, endpoints: &[String]) -> String {
@@ -744,14 +814,8 @@ function get_metadata(): PluginMetadata {
     };
 }
 
-// Analyze HTTP request (optional but recommended)
-export function scan_request(ctx: RequestContext): void {
-    // Analyze request parameters, headers, body
-    // Emit findings if vulnerabilities detected
-}
-
-// Analyze HTTP response (required)
-export function scan_response(ctx: CombinedContext): void {
+// Analyze HTTP transaction (required)
+export function scan_transaction(ctx: HttpTransaction): void {
     // Analyze request + response together
     // Check for vulnerability indicators in response
     // Emit findings if vulnerabilities detected
@@ -761,8 +825,7 @@ export function scan_response(ctx: CombinedContext): void {
 // Without these exports, the plugin will fail with "Function not found" error
 // Use direct assignment without type casting to ensure proper execution
 globalThis.get_metadata = get_metadata;
-globalThis.scan_request = scan_request;
-globalThis.scan_response = scan_response;
+globalThis.scan_transaction = scan_transaction;
 
 // Emit finding when vulnerability is detected
 Deno.core.ops.op_emit_finding({
@@ -857,11 +920,7 @@ function get_metadata(): PluginMetadata {
     // ...
 }
 
-export function scan_request(ctx: RequestContext): void {
-    // ...
-}
-
-export function scan_response(ctx: CombinedContext): void {
+export function scan_transaction(ctx: HttpTransaction): void {
     // ...
 }
 
@@ -869,8 +928,7 @@ export function scan_response(ctx: CombinedContext): void {
 // The plugin engine calls functions from globalThis, not from module exports
 // Use direct assignment without type casting to ensure proper execution
 globalThis.get_metadata = get_metadata;
-globalThis.scan_request = scan_request;
-globalThis.scan_response = scan_response;
+globalThis.scan_transaction = scan_transaction;
 ```
 
 **Requirements**:
@@ -892,4 +950,3 @@ impl Default for PromptTemplateBuilder {
         Self::new()
     }
 }
-

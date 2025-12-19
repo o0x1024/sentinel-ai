@@ -181,6 +181,22 @@ impl Agent for PlannerAgent {
             Event::TaskCompleted {
                 agent_id, result, ..
             } => {
+                // If the task failed, we need to reset the node status to prevent hanging
+                if !result.success {
+                    let mut graph = self.graph.write().await;
+                    let current_opt = self.current_node_id.read().await.clone();
+                    if let Some(current_id) = current_opt {
+                        if let Some(node) = graph.get_node_mut(&current_id) {
+                            log::warn!(
+                                "Task failed for node {}, resetting to Unvisited",
+                                current_id
+                            );
+                            node.status = ExplorationStatus::Unvisited;
+                        }
+                    }
+                    return Ok(());
+                }
+
                 // If Navigator finished, we have a new Context -> New Node
                 if agent_id.contains("navigator") {
                     if let Some(data) = &result.data {

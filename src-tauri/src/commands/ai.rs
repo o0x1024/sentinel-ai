@@ -328,6 +328,14 @@ pub struct SendMessageRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct SendStreamMessageRequest {
+    pub conversation_id: String,
+    pub message: String,
+    pub service_name: Option<String>,
+    pub system_prompt: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SaveMessageRequest {
     pub id: Option<String>,
     pub conversation_id: String,
@@ -458,6 +466,142 @@ pub async fn cancel_ai_stream(
         }),
     );
 
+    Ok(())
+}
+
+// 轻量级流式生成请求（不保存消息到数据库）
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenerateStreamRequest {
+    pub stream_id: String,
+    pub message: String,
+    pub system_prompt: Option<String>,
+    pub service_name: Option<String>,
+}
+
+// 轻量级流式生成（插件生成专用，不保存消息）
+#[tauri::command]
+pub async fn generate_plugin_stream(
+    request: GenerateStreamRequest,
+    app_handle: AppHandle,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<String, String> {
+    // Get actual default LLM provider from database config
+    let mut service_name = request.service_name.clone().unwrap_or_else(|| "default".to_string());
+    
+    // If using default, try to get the actual provider name from config
+    if service_name == "default" {
+        if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+            if let Ok(Some(default_llm_provider)) = db.get_config("ai", "default_llm_provider").await {
+                let provider_lc = default_llm_provider.to_lowercase();
+                if ai_manager.get_service(&provider_lc).is_some() {
+                    service_name = provider_lc;
+                    tracing::debug!("Using default LLM provider from config: {}", service_name);
+                }
+            }
+        }
+    }
+
+    let service = ai_manager
+        .get_service(&service_name)
+        .or_else(|| ai_manager.get_service("default"))
+        .ok_or_else(|| format!("AI service '{}' not found", service_name))?;
+    
+    tracing::info!("Plugin generation using provider: {}, model: {}", 
+        service.get_config().provider, service.get_config().model);
+
+    let stream_id = request.stream_id.clone();
+    let user_message = request.message.clone();
+    let system_prompt = request.system_prompt.clone();
+    let service_clone = service.clone();
+
+    let _cancellation_token = create_cancellation_token(&stream_id);
+    let app_clone = app_handle.clone();
+    let sid = stream_id.clone();
+
+    tokio::spawn(async move {
+        // Start event
+        let _ = app_clone.emit("plugin_gen_start", &serde_json::json!({ "stream_id": sid }));
+
+        // Create LLM client and stream
+        let llm_config = service_clone.service.to_llm_config();
+        let streaming_client = StreamingLlmClient::new(llm_config);
+        let app_for_callback = app_clone.clone();
+        let sid_for_callback = sid.clone();
+
+        let result = streaming_client
+            .stream_chat(
+                system_prompt.as_deref(),
+                &user_message,
+                &[], // No history for one-shot generation
+                None,
+                move |chunk| {
+                    if is_conversation_cancelled(&sid_for_callback) {
+                        return;
+                    }
+                    match chunk {
+                        StreamContent::Text(text) => {
+                            let _ = app_for_callback.emit(
+                                "plugin_gen_delta",
+                                serde_json::json!({
+                                    "stream_id": sid_for_callback,
+                                    "delta": text
+                                }),
+                            );
+                        }
+                        StreamContent::Reasoning(text) => {
+                            let _ = app_for_callback.emit(
+                                "plugin_gen_thinking",
+                                serde_json::json!({
+                                    "stream_id": sid_for_callback,
+                                    "delta": text
+                                }),
+                            );
+                        }
+                        StreamContent::Done => {}
+                        _ => {}
+                    }
+                },
+            )
+            .await;
+
+        match result {
+            Ok(content) => {
+                let _ = app_clone.emit(
+                    "plugin_gen_complete",
+                    serde_json::json!({
+                        "stream_id": sid,
+                        "content": content
+                    }),
+                );
+            }
+            Err(e) => {
+                let _ = app_clone.emit(
+                    "plugin_gen_error",
+                    serde_json::json!({
+                        "stream_id": sid,
+                        "error": e.to_string()
+                    }),
+                );
+            }
+        }
+
+        remove_cancellation_token(&sid);
+    });
+
+    Ok(stream_id)
+}
+
+// 取消插件生成
+#[tauri::command]
+pub async fn cancel_plugin_generation(
+    stream_id: String,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    cancel_conversation_stream(&stream_id);
+    let _ = app_handle.emit(
+        "plugin_gen_cancelled",
+        &serde_json::json!({ "stream_id": stream_id }),
+    );
     Ok(())
 }
 
@@ -1729,16 +1873,16 @@ pub async fn save_ai_config(
         } else {
             tracing::info!("AI services reloaded after saving config");
         }
-        // 尝试应用数据库中的默认 provider 到 default 别名
-        if let Ok(Some(default_provider)) = db.inner().get_config("ai", "default_provider").await {
-            if let Err(e) = ai_manager.set_default_alias_to(&default_provider).await {
+        // 尝试应用数据库中的默认 LLM provider 到 default 别名
+        if let Ok(Some(default_llm_provider)) = db.inner().get_config("ai", "default_llm_provider").await {
+            if let Err(e) = ai_manager.set_default_alias_to(&default_llm_provider).await {
                 tracing::warn!(
                     "Failed to set default alias to '{}': {}",
-                    default_provider,
+                    default_llm_provider,
                     e
                 );
             } else {
-                tracing::info!("Default provider alias updated to '{}'", default_provider);
+                tracing::info!("Default LLM provider alias updated to '{}'", default_llm_provider);
             }
         }
     }
@@ -1775,9 +1919,9 @@ pub async fn save_ai_config(
     Ok(())
 }
 
-/// 设置全局默认 AI Provider（保存到DB并更新运行态别名与全局适配器默认）
+/// 设置全局默认 LLM Provider（保存到DB并更新运行态别名与全局适配器默认）
 #[tauri::command]
-pub async fn set_default_provider(
+pub async fn set_default_llm_provider(
     request: SetDefaultProviderRequest,
     db: State<'_, Arc<DatabaseService>>,
     app: AppHandle,
@@ -1787,9 +1931,9 @@ pub async fn set_default_provider(
     // 保存到数据库
     db.set_config(
         "ai",
-        "default_provider",
+        "default_llm_provider",
         &provider,
-        Some("Global default AI provider"),
+        Some("Global default LLM provider"),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -1802,16 +1946,16 @@ pub async fn set_default_provider(
     }
 
     // 通知前端
-    if let Err(e) = app.emit("ai_default_provider_updated", &provider) {
-        tracing::warn!("Failed to emit ai_default_provider_updated event: {}", e);
+    if let Err(e) = app.emit("ai_default_llm_provider_updated", &provider) {
+        tracing::warn!("Failed to emit ai_default_llm_provider_updated event: {}", e);
     }
 
     Ok(())
 }
 
-/// 设置默认Chat模型（UI专用）
+/// 设置默认LLM模型（UI专用）
 #[tauri::command]
-pub async fn set_default_chat_model(
+pub async fn set_default_llm_model(
     model: String,
     ai_manager: State<'_, Arc<AiServiceManager>>,
     db: State<'_, Arc<DatabaseService>>,
@@ -1819,9 +1963,9 @@ pub async fn set_default_chat_model(
     // 保存完整的模型ID到数据库
     db.set_config(
         "ai",
-        "default_chat_model",
+        "default_llm_model",
         &model,
-        Some("Default chat model"),
+        Some("Default LLM model"),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -1829,7 +1973,7 @@ pub async fn set_default_chat_model(
     // 如果模型格式为 provider/model_name，解析并更新AI管理器
     if let Some((provider, model_name)) = model.split_once('/') {
         if let Err(e) = ai_manager
-            .set_default_chat_model(provider, model_name)
+            .set_default_llm_model(provider, model_name)
             .await
         {
             tracing::warn!("Failed to update AI manager default chat model: {}", e);
@@ -1840,18 +1984,18 @@ pub async fn set_default_chat_model(
     Ok(())
 }
 
-/// 设置默认Vision模型
+/// 设置默认VLM模型
 #[tauri::command]
-pub async fn set_default_vision_model(
+pub async fn set_default_vlm_model(
     model: String,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     // 保存完整的模型ID到数据库
     db.set_config(
         "ai",
-        "default_vision_model",
+        "default_vlm_model",
         &model,
-        Some("Default vision model for Vision Explorer"),
+        Some("Default VLM model"),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -1892,24 +2036,24 @@ pub async fn get_ai_config(
     }
 
     // 获取其他AI配置项
-    if let Ok(Some(default_provider)) = db.get_config("ai", "default_provider").await {
-        ai_config["default_provider"] = serde_json::Value::String(default_provider);
+    if let Ok(Some(default_llm_provider)) = db.get_config("ai", "default_llm_provider").await {
+        ai_config["default_llm_provider"] = serde_json::Value::String(default_llm_provider);
     }
 
     if let Ok(Some(default_model)) = db.get_config("ai", "default_model").await {
         ai_config["default_model"] = serde_json::Value::String(default_model);
     }
 
-    if let Ok(Some(default_chat_model)) = db.get_config("ai", "default_chat_model").await {
-        ai_config["default_chat_model"] = serde_json::Value::String(default_chat_model);
+    if let Ok(Some(default_llm_model)) = db.get_config("ai", "default_llm_model").await {
+        ai_config["default_llm_model"] = serde_json::Value::String(default_llm_model);
     }
 
     if let Ok(Some(default_vlm_provider)) = db.get_config("ai", "default_vlm_provider").await {
         ai_config["default_vlm_provider"] = serde_json::Value::String(default_vlm_provider);
     }
 
-    if let Ok(Some(default_vision_model)) = db.get_config("ai", "default_vision_model").await {
-        ai_config["default_vision_model"] = serde_json::Value::String(default_vision_model);
+    if let Ok(Some(default_vlm_model)) = db.get_config("ai", "default_vlm_model").await {
+        ai_config["default_vlm_model"] = serde_json::Value::String(default_vlm_model);
     }
 
     if let Ok(Some(temperature_str)) = db.get_config("ai", "temperature").await {
@@ -2724,7 +2868,7 @@ pub async fn agent_execute(
     );
 
     // 获取默认模型配置
-    let (provider, model_name) = match ai_manager.get_default_chat_model().await {
+    let (provider, model_name) = match ai_manager.get_default_llm_model().await {
         Ok(Some((p, m))) => {
             tracing::info!("Using default chat model: {}/{}", p, m);
             (p, m)

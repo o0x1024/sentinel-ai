@@ -148,25 +148,169 @@
   <!-- Fullscreen Editor Overlay -->
   <Teleport to="body">
     <div v-if="isFullscreenEditor" class="fullscreen-editor-overlay">
-      <div class="fullscreen-editor-content">
-        <div ref="fullscreenCodeEditorContainerRef" class="h-full w-full"></div>
+      <!-- Main content with AI panel -->
+      <div class="fullscreen-editor-layout">
+        <!-- Code Editor Area -->
+        <div class="fullscreen-editor-content" :class="{ 'with-ai-panel': showAiPanel }">
+          <div ref="fullscreenCodeEditorContainerRef" class="h-full w-full"></div>
+        </div>
+
+        <!-- AI Chat Panel -->
+        <div v-if="showAiPanel" class="ai-chat-panel">
+          <div class="ai-chat-header">
+            <div class="flex items-center gap-2">
+              <i class="fas fa-robot text-primary"></i>
+              <span class="font-semibold">{{ $t('plugins.aiAssistant', 'AI 助手') }}</span>
+            </div>
+            <button class="btn btn-xs btn-ghost btn-circle" @click="$emit('toggleAiPanel')">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          
+          <!-- Chat Messages -->
+          <div class="ai-chat-messages" ref="aiChatMessagesRef">
+            <div v-if="aiMessages.length === 0" class="ai-chat-empty">
+              <i class="fas fa-comments text-4xl opacity-30 mb-3"></i>
+              <p class="text-sm opacity-60">{{ $t('plugins.aiAssistantHint', '描述你想要的修改，AI 将帮助你编辑代码') }}</p>
+              <div class="ai-quick-actions mt-4">
+                <button class="btn btn-xs btn-outline" @click="$emit('aiQuickAction', 'explain')">
+                  <i class="fas fa-lightbulb mr-1"></i>{{ $t('plugins.explainCode', '解释代码') }}
+                </button>
+                <button class="btn btn-xs btn-outline" @click="$emit('aiQuickAction', 'optimize')">
+                  <i class="fas fa-bolt mr-1"></i>{{ $t('plugins.optimizeCode', '优化代码') }}
+                </button>
+                <button class="btn btn-xs btn-outline" @click="$emit('aiQuickAction', 'fix')">
+                  <i class="fas fa-bug mr-1"></i>{{ $t('plugins.fixBugs', '修复问题') }}
+                </button>
+              </div>
+            </div>
+            
+            <template v-else>
+              <div v-for="(msg, idx) in aiMessages" :key="idx" 
+                   class="ai-chat-message" :class="msg.role">
+                <div class="message-avatar">
+                  <i :class="msg.role === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
+                </div>
+                <div class="message-content">
+                  <!-- Code reference in user message -->
+                  <div v-if="msg.role === 'user' && msg.codeRef" class="message-code-ref">
+                    <div class="code-ref-label">
+                      <i class="fas fa-code text-xs mr-1"></i>
+                      {{ msg.codeRef.isFullCode 
+                        ? $t('plugins.fullCode', '完整代码') 
+                        : `${$t('plugins.lines', '行')} ${msg.codeRef.startLine}-${msg.codeRef.endLine}` 
+                      }}
+                    </div>
+                    <pre class="code-ref-content"><code>{{ msg.codeRef.preview }}</code></pre>
+                  </div>
+                  <div class="message-text" v-html="msg.content"></div>
+                  <div v-if="msg.role === 'assistant' && msg.codeBlock" class="message-code-action">
+                    <button class="btn btn-xs btn-primary" @click="$emit('applyAiCode', msg.codeBlock)">
+                      <i class="fas fa-check mr-1"></i>{{ $t('plugins.applyChanges', '应用修改') }}
+                    </button>
+                    <button class="btn btn-xs btn-ghost" @click="$emit('previewAiCode', msg.codeBlock)">
+                      <i class="fas fa-eye mr-1"></i>{{ $t('plugins.previewChanges', '预览') }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Streaming indicator -->
+              <div v-if="aiStreaming" class="ai-chat-message assistant">
+                <div class="message-avatar">
+                  <i class="fas fa-robot"></i>
+                </div>
+                <div class="message-content">
+                  <div class="message-text">
+                    <span v-if="aiStreamingContent">{{ aiStreamingContent }}</span>
+                    <span class="typing-indicator">
+                      <span></span><span></span><span></span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+          
+          <!-- Chat Input -->
+          <div class="ai-chat-input">
+            <!-- Code Reference Badge -->
+            <div v-if="selectedCodeRef" class="code-reference-badge">
+              <div class="code-ref-header">
+                <i class="fas fa-code text-xs"></i>
+                <span class="text-xs font-medium">
+                  {{ selectedCodeRef.isFullCode 
+                    ? $t('plugins.fullCode', '完整代码') 
+                    : $t('plugins.selectedLines', '选中代码') + ` (${selectedCodeRef.startLine}-${selectedCodeRef.endLine})` 
+                  }}
+                </span>
+                <button class="btn btn-xs btn-ghost btn-circle ml-auto" @click="$emit('clearCodeRef')">
+                  <i class="fas fa-times text-xs"></i>
+                </button>
+              </div>
+              <div class="code-ref-preview">
+                <pre><code>{{ selectedCodeRef.preview }}</code></pre>
+              </div>
+            </div>
+            
+            <textarea 
+              v-model="aiInputText"
+              :placeholder="$t('plugins.aiInputPlaceholder', '描述你想要的修改...')"
+              class="textarea textarea-bordered w-full resize-none"
+              rows="2"
+              :disabled="aiStreaming"
+              @keydown.enter.exact.prevent="$emit('sendAiMessage', aiInputText)"
+            ></textarea>
+            <div class="ai-chat-input-actions">
+              <div class="flex items-center gap-3">
+                <button class="btn btn-xs btn-ghost" @click="$emit('addSelectedCode')" 
+                        :title="$t('plugins.addSelectedCode', '添加选中代码')">
+                  <i class="fas fa-plus-circle mr-1"></i>
+                  {{ $t('plugins.addSelection', '添加选中') }}
+                </button>
+                <button class="btn btn-xs btn-ghost" @click="$emit('addFullCode')"
+                        :title="$t('plugins.addFullCode', '添加完整代码')">
+                  <i class="fas fa-file-code mr-1"></i>
+                  {{ $t('plugins.addAll', '添加全部') }}
+                </button>
+              </div>
+              <button 
+                class="btn btn-sm btn-primary" 
+                :disabled="!aiInputText.trim() || aiStreaming"
+                @click="$emit('sendAiMessage', aiInputText)"
+              >
+                <span v-if="aiStreaming" class="loading loading-spinner loading-xs"></span>
+                <i v-else class="fas fa-paper-plane"></i>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- Floating Toolbar -->
-      <div class="fullscreen-floating-toolbar shadow-lg border border-base-content/10">
+      <!-- Floating Toolbar - centered in editor area -->
+      <div class="fullscreen-floating-toolbar shadow-lg" :class="{ 'with-ai-panel': showAiPanel }">
         <div class="flex items-center gap-3">
           <!-- Info Section -->
           <div class="flex flex-col">
             <span class="font-bold text-sm">
               {{ editingPlugin ? editingPlugin.metadata.name : $t('plugins.newPlugin', '新增插件') }}
             </span>
-            <span v-if="editingPlugin" class="text-xs opacity-80 font-mono">{{ editingPlugin.metadata.id }}</span>
+            <span v-if="editingPlugin" class="text-xs font-mono">{{ editingPlugin.metadata.id }}</span>
           </div>
 
-          <div class="divider divider-horizontal mx-0 my-1 h-8"></div>
+          <div class="toolbar-divider"></div>
 
           <!-- Actions -->
           <div class="flex items-center gap-2">
+            <!-- AI Toggle Button -->
+            <button class="btn btn-sm" :class="showAiPanel ? 'btn-primary' : 'btn-ghost'" 
+                    @click="$emit('toggleAiPanel')" :title="$t('plugins.aiAssistant', 'AI 助手')">
+              <i class="fas fa-robot"></i>
+              <span class="ml-1">AI</span>
+            </button>
+
+            <div class="toolbar-divider"></div>
+
             <button v-if="!editingPlugin" class="btn btn-sm btn-ghost" @click="$emit('insertTemplate')" :title="$t('plugins.insertTemplate', '插入模板')">
               <i class="fas fa-file-code"></i>
             </button>
@@ -190,12 +334,12 @@
               </template>
             </button>
 
-            <div class="divider divider-horizontal mx-0 my-1 h-8"></div>
+            <div class="toolbar-divider"></div>
 
             <button class="btn btn-sm btn-ghost" @click="$emit('toggleFullscreen')">
               <i class="fas fa-compress mr-1"></i>{{ $t('plugins.exitFullscreen', '退出全屏') }}
             </button>
-            <kbd class="kbd kbd-sm opacity-70">ESC</kbd>
+            <kbd class="kbd kbd-sm">ESC</kbd>
           </div>
         </div>
       </div>
@@ -210,9 +354,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import type { PluginRecord, NewPluginMetadata, SubCategory } from './types'
 import { mainCategories } from './types'
+
+// AI Message type
+interface AiMessage {
+  role: 'user' | 'assistant'
+  content: string
+  codeBlock?: string
+  codeRef?: CodeReference
+}
+
+// Code reference type
+interface CodeReference {
+  code: string
+  preview: string
+  startLine: number
+  endLine: number
+  isFullCode: boolean
+}
 
 const props = defineProps<{
   editingPlugin: PluginRecord | null
@@ -222,6 +383,12 @@ const props = defineProps<{
   codeError: string
   isFullscreenEditor: boolean
   subCategories: SubCategory[]
+  // AI related props
+  showAiPanel: boolean
+  aiMessages: AiMessage[]
+  aiStreaming: boolean
+  aiStreamingContent: string
+  selectedCodeRef: CodeReference | null
 }>()
 
 const emit = defineEmits<{
@@ -234,11 +401,25 @@ const emit = defineEmits<{
   'savePlugin': []
   'createNewPlugin': []
   'close': []
+  // AI related emits
+  'toggleAiPanel': []
+  'sendAiMessage': [message: string]
+  'aiQuickAction': [action: string]
+  'applyAiCode': [code: string]
+  'previewAiCode': [code: string]
+  'addSelectedCode': []
+  'addFullCode': []
+  'clearCodeRef': []
 }>()
 
 const codeEditorDialogRef = ref<HTMLDialogElement>()
 const codeEditorContainerRef = ref<HTMLDivElement>()
 const fullscreenCodeEditorContainerRef = ref<HTMLDivElement>()
+const aiChatMessagesRef = ref<HTMLDivElement>()
+
+// AI chat state
+const aiInputText = ref('')
+const includeCodeContext = ref(true)
 
 const isNewPluginValid = computed(() => {
   return props.newPluginMetadata.id.trim() !== '' && props.newPluginMetadata.name.trim() !== ''
@@ -268,10 +449,27 @@ const restoreModal = () => {
   codeEditorDialogRef.value?.showModal()
 }
 
+// Auto scroll to bottom when new messages arrive
+watch(() => props.aiMessages.length, () => {
+  nextTick(() => {
+    if (aiChatMessagesRef.value) {
+      aiChatMessagesRef.value.scrollTop = aiChatMessagesRef.value.scrollHeight
+    }
+  })
+})
+
+// Clear input after sending
+watch(() => props.aiStreaming, (streaming, wasStreaming) => {
+  if (wasStreaming && !streaming) {
+    aiInputText.value = ''
+  }
+})
+
 defineExpose({
   showDialog, closeDialog,
   hideModalTemporary, restoreModal,
-  codeEditorContainerRef, fullscreenCodeEditorContainerRef
+  codeEditorContainerRef, fullscreenCodeEditorContainerRef,
+  aiInputText, includeCodeContext
 })
 </script>
 
@@ -285,7 +483,7 @@ defineExpose({
   width: 100vw;
   height: calc(100vh - 4rem);
   z-index: 999999;
-  background-color: hsl(var(--b1));
+  background: oklch(var(--b1));
   display: block;
 }
 
@@ -304,36 +502,119 @@ defineExpose({
   pointer-events: auto;
 }
 
-.fullscreen-floating-toolbar:hover {
-  opacity: 1;
-}
-
+/* Floating Toolbar - centered in editor area, follows theme */
 .fullscreen-floating-toolbar {
   position: absolute;
   top: 1rem;
-  right: 2rem;
-  padding: 0.5rem 1rem;
-  /* Use base-300 for better contrast against the base-100/editor background */
-  background-color: hsl(var(--b3));
-  border: 1px solid hsl(var(--bc) / 0.2);
-  backdrop-filter: blur(8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.75rem 1.25rem;
+  background: oklch(var(--b2));
+  border: 1px solid oklch(var(--bc) / 0.2);
   border-radius: 1rem;
   z-index: 100;
-  /* Stronger shadow for "floating" effect */
-  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.3), 0 8px 10px -6px rgb(0 0 0 / 0.3);
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  /* Enforce high contrast text color */
-  color: hsl(var(--bc));
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.2), 0 8px 10px -6px rgb(0 0 0 / 0.15);
+  transition: left 0.3s ease, transform 0.3s ease;
+  color: oklch(var(--bc));
+}
+
+/* When AI panel is open, center toolbar in editor area only */
+.fullscreen-floating-toolbar.with-ai-panel {
+  left: calc((100% - 400px) / 2);
+}
+
+/* Toolbar text follows theme */
+.fullscreen-floating-toolbar span,
+.fullscreen-floating-toolbar .font-bold,
+.fullscreen-floating-toolbar .text-xs {
+  color: oklch(var(--bc)) !important;
+}
+
+/* Toolbar divider */
+.fullscreen-floating-toolbar .toolbar-divider {
+  width: 1px;
+  height: 1.5rem;
+  background: oklch(var(--bc) / 0.2);
+  margin: 0 0.25rem;
+}
+
+/* Buttons follow theme */
+.fullscreen-floating-toolbar .btn {
+  color: oklch(var(--bc));
+  border-color: oklch(var(--bc) / 0.2);
+  background: oklch(var(--b1));
+}
+
+.fullscreen-floating-toolbar .btn:hover {
+  background: oklch(var(--b3));
 }
 
 .fullscreen-floating-toolbar .btn-ghost {
-  color: hsl(var(--bc));
+  color: oklch(var(--bc));
+  background: transparent;
+  border-color: transparent;
+}
+
+.fullscreen-floating-toolbar .btn-ghost:hover {
+  background: oklch(var(--b3));
+}
+
+.fullscreen-floating-toolbar .btn-primary {
+  background: oklch(var(--p));
+  color: oklch(var(--pc));
+  border-color: oklch(var(--p));
+}
+
+.fullscreen-floating-toolbar .btn-primary:hover {
+  filter: brightness(0.9);
+}
+
+.fullscreen-floating-toolbar .btn-success {
+  background: oklch(var(--su));
+  color: oklch(var(--suc));
+  border-color: oklch(var(--su));
+}
+
+.fullscreen-floating-toolbar .btn-success:hover {
+  filter: brightness(0.9);
+}
+
+.fullscreen-floating-toolbar .btn-warning {
+  background: oklch(var(--wa));
+  color: oklch(var(--wac));
+  border-color: oklch(var(--wa));
+}
+
+.fullscreen-floating-toolbar .btn-warning:hover {
+  filter: brightness(0.9);
+}
+
+.fullscreen-floating-toolbar .kbd {
+  background: oklch(var(--b3));
+  color: oklch(var(--bc));
+  border-color: oklch(var(--bc) / 0.2);
+}
+
+/* Layout for fullscreen with AI panel */
+.fullscreen-editor-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: oklch(var(--b1));
+  position: relative;
+  isolation: isolate;
 }
 
 .fullscreen-editor-content {
-  width: 100%;
+  flex: 1;
   height: 100%;
   overflow: hidden;
+  transition: width 0.3s ease;
+  background: oklch(var(--b1));
+}
+
+.fullscreen-editor-content.with-ai-panel {
+  width: calc(100% - 400px);
 }
 
 .fullscreen-editor-content :deep(.cm-editor) {
@@ -342,16 +623,346 @@ defineExpose({
 
 .fullscreen-editor-content :deep(.cm-scroller) {
   overflow: auto;
-  padding-top: 1rem; /* Spacing for aesthetics */
-  /* Ensure content doesn't get hidden behind floating toolbar initially by adding some top padding 
-     or relying on user to scroll. Since the toolbar is floating on the right, it might not obscure critical code */
+  padding-top: 1rem;
 }
 
-/* Add padding to the top of the editor content so the first few lines aren't hidden by the floating toolbar if code is long?
-   Actually, the toolbar is on the right. Usually code starts on the left. So standard padding is fine. 
-   But let's add a bit of padding to the editor container generally for aesthetic */
 .fullscreen-editor-content :deep(.cm-content) {
   padding-top: 1rem;
   padding-bottom: 2rem;
+}
+
+/* AI Chat Panel Styles - uses oklch for DaisyUI 4.x compatibility */
+.ai-chat-panel {
+  width: 400px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: oklch(var(--b2));
+  color: oklch(var(--bc));
+  border-left: 1px solid oklch(var(--bc) / 0.15);
+  position: relative;
+  z-index: 10;
+  box-shadow: -4px 0 20px oklch(var(--bc) / 0.1);
+}
+
+.ai-chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: oklch(var(--b3));
+  border-bottom: 1px solid oklch(var(--bc) / 0.15);
+  color: oklch(var(--bc));
+}
+
+.ai-chat-header .text-primary {
+  color: oklch(var(--p)) !important;
+}
+
+.ai-chat-header .btn-ghost {
+  color: oklch(var(--bc) / 0.7);
+}
+
+.ai-chat-header .btn-ghost:hover {
+  background: oklch(var(--b1));
+  color: oklch(var(--bc));
+}
+
+.ai-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: oklch(var(--b2));
+}
+
+.ai-chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: 2rem;
+  color: oklch(var(--bc) / 0.6);
+}
+
+.ai-chat-empty i {
+  color: oklch(var(--bc) / 0.3);
+}
+
+.ai-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.ai-quick-actions .btn-outline {
+  border-color: oklch(var(--bc) / 0.3);
+  color: oklch(var(--bc) / 0.8);
+}
+
+.ai-quick-actions .btn-outline:hover {
+  background: oklch(var(--b3));
+  border-color: oklch(var(--p));
+  color: oklch(var(--bc));
+}
+
+.ai-chat-message {
+  display: flex;
+  gap: 0.75rem;
+  max-width: 100%;
+}
+
+.ai-chat-message.user {
+  flex-direction: row-reverse;
+}
+
+.ai-chat-message .message-avatar {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.875rem;
+}
+
+.ai-chat-message.user .message-avatar {
+  background: oklch(var(--p));
+  color: oklch(var(--pc));
+}
+
+.ai-chat-message.assistant .message-avatar {
+  background: oklch(var(--su));
+  color: oklch(var(--suc));
+}
+
+.ai-chat-message .message-content {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Code reference in message */
+.ai-chat-message .message-code-ref {
+  background: oklch(var(--b1));
+  border: 1px solid oklch(var(--bc) / 0.15);
+  border-radius: 0.5rem;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+}
+
+.ai-chat-message .message-code-ref .code-ref-label {
+  padding: 0.375rem 0.75rem;
+  background: oklch(var(--b3));
+  color: oklch(var(--bc) / 0.7);
+  font-size: 0.75rem;
+  border-bottom: 1px solid oklch(var(--bc) / 0.15);
+}
+
+.ai-chat-message .message-code-ref .code-ref-content {
+  padding: 0.5rem 0.75rem;
+  margin: 0;
+  font-size: 0.75rem;
+  color: oklch(var(--bc));
+  max-height: 100px;
+  overflow: auto;
+  background: oklch(var(--b1));
+}
+
+.ai-chat-message .message-code-ref .code-ref-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.ai-chat-message .message-text {
+  padding: 0.75rem 1rem;
+  border-radius: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.ai-chat-message.user .message-text {
+  background: oklch(var(--p));
+  color: oklch(var(--pc));
+  border-bottom-right-radius: 0.25rem;
+}
+
+.ai-chat-message.assistant .message-text {
+  background: oklch(var(--b3));
+  color: oklch(var(--bc));
+  border-bottom-left-radius: 0.25rem;
+}
+
+.ai-chat-message .message-code-action {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.ai-chat-message .message-code-action .btn-primary {
+  background: oklch(var(--p));
+  border-color: oklch(var(--p));
+  color: oklch(var(--pc));
+}
+
+.ai-chat-message .message-code-action .btn-ghost {
+  color: oklch(var(--bc) / 0.7);
+}
+
+.ai-chat-message .message-code-action .btn-ghost:hover {
+  background: oklch(var(--b1));
+  color: oklch(var(--bc));
+}
+
+/* Typing indicator */
+.typing-indicator {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+}
+
+.typing-indicator span {
+  width: 0.5rem;
+  height: 0.5rem;
+  background: oklch(var(--p));
+  border-radius: 50%;
+  animation: typing 1.4s infinite ease-in-out both;
+  opacity: 0.4;
+}
+
+.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0s; }
+
+@keyframes typing {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* Chat Input */
+.ai-chat-input {
+  padding: 1rem;
+  background: oklch(var(--b3));
+  border-top: 1px solid oklch(var(--bc) / 0.15);
+}
+
+/* Code reference badge in input area */
+.ai-chat-input .code-reference-badge {
+  background: oklch(var(--b1));
+  border: 1px solid oklch(var(--bc) / 0.15);
+  border-radius: 0.5rem;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+
+.ai-chat-input .code-reference-badge .code-ref-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: oklch(var(--b2));
+  color: oklch(var(--bc));
+}
+
+.ai-chat-input .code-reference-badge .code-ref-preview {
+  max-height: 80px;
+  overflow: auto;
+  background: oklch(var(--b1));
+}
+
+.ai-chat-input .code-reference-badge .code-ref-preview pre {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: oklch(var(--p));
+}
+
+.ai-chat-input .code-reference-badge .code-ref-preview code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.ai-chat-input .textarea {
+  font-size: 0.875rem;
+  min-height: 3rem;
+  max-height: 8rem;
+  background: oklch(var(--b1));
+  border-color: oklch(var(--bc) / 0.2);
+  color: oklch(var(--bc));
+}
+
+.ai-chat-input .textarea:focus {
+  border-color: oklch(var(--p));
+  outline: none;
+}
+
+.ai-chat-input .textarea::placeholder {
+  color: oklch(var(--bc) / 0.4);
+}
+
+.ai-chat-input-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.ai-chat-input-actions .btn-ghost {
+  color: oklch(var(--bc) / 0.7);
+  border-color: transparent;
+}
+
+.ai-chat-input-actions .btn-ghost:hover {
+  background: oklch(var(--b2));
+  color: oklch(var(--bc));
+}
+
+.ai-chat-input-actions .btn-primary {
+  background: oklch(var(--p));
+  border-color: oklch(var(--p));
+  color: oklch(var(--pc));
+}
+
+.ai-chat-input-actions .btn-primary:hover {
+  filter: brightness(0.9);
+}
+
+.ai-chat-input-actions .btn-primary:disabled {
+  background: oklch(var(--bc) / 0.2);
+  border-color: oklch(var(--bc) / 0.2);
+  color: oklch(var(--bc) / 0.4);
+}
+
+/* Code block in messages */
+.ai-chat-message .message-text :deep(pre) {
+  background: oklch(var(--b1));
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+  font-size: 0.75rem;
+}
+
+.ai-chat-message .message-text :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .ai-chat-panel {
+    width: 320px;
+  }
+  
+  .fullscreen-editor-content.with-ai-panel {
+    width: calc(100% - 320px);
+  }
+  
+  .fullscreen-floating-toolbar.with-ai-panel {
+    left: calc((100% - 320px) / 2);
+  }
 }
 </style>

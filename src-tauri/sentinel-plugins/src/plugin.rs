@@ -4,7 +4,7 @@
 
 use crate::error::{PluginError, Result};
 use crate::plugin_engine::PluginEngine;
-use crate::types::{Finding, PluginMetadata, RequestContext, ResponseContext};
+use crate::types::{Finding, HttpTransaction, PluginMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -312,15 +312,18 @@ impl PluginManager {
     /// 调用插件扫描请求
     ///
     /// 在数据库模式下，插件代码存储在 DB 中。
+    /// 调用插件扫描完整的 HTTP 事务
+    ///
+    /// 在数据库模式下，插件代码存储在 DB 中。
     /// 此方法验证插件存在性和启用状态，然后使用 PluginEngine 执行插件代码。
-    pub async fn scan_request(
+    pub async fn scan_transaction(
         &self,
         plugin_id: &str,
-        ctx: &RequestContext,
+        transaction: &HttpTransaction,
     ) -> Result<Vec<Finding>> {
         info!(
-            "Scanning request with plugin '{}': request_id={} method={} url={}",
-            plugin_id, ctx.id, ctx.method, ctx.url
+            "Scanning transaction with plugin '{}': request_id={}",
+            plugin_id, transaction.request.id
         );
 
         // 验证插件是否存在且已启用
@@ -345,13 +348,8 @@ impl PluginManager {
             (metadata, code)
         };
 
-        info!(
-            "Scanning request with plugin '{}' ({}): {} {}",
-            metadata.name, plugin_id, ctx.method, ctx.url
-        );
-
-        // 克隆上下文以移动到 spawn_blocking
-        let ctx_clone = ctx.clone();
+        // 克隆事务以移动到 spawn_blocking
+        let tx_clone = transaction.clone();
 
         // 使用 PluginEngine 执行
         let findings = tokio::task::spawn_blocking(move || {
@@ -363,99 +361,17 @@ impl PluginManager {
             rt.block_on(async move {
                 let mut engine = PluginEngine::new()?;
                 engine.load_plugin_with_metadata(&code, metadata).await?;
-                engine.scan_request(&ctx_clone).await
+                engine.scan_transaction(&tx_clone).await
             })
         })
         .await
         .map_err(|e| PluginError::Execution(format!("Task join error: {}", e)))??;
 
         debug!(
-            "Plugin {} found {} issues in request {}",
+            "Plugin {} found {} issues in transaction {}",
             plugin_id,
             findings.len(),
-            ctx.url
-        );
-
-        Ok(findings)
-    }
-
-    /// 调用插件扫描响应
-    ///
-    /// 在数据库模式下，插件代码存储在 DB 中。
-    /// 此方法验证插件存在性和启用状态，然后使用 PluginEngine 执行插件代码。
-    pub async fn scan_response(
-        &self,
-        plugin_id: &str,
-        ctx: &ResponseContext,
-    ) -> Result<Vec<Finding>> {
-        info!(
-            "Scanning response with plugin '{}': request_id={} status={}",
-            plugin_id, ctx.request_id, ctx.status
-        );
-
-        // 验证插件是否存在且已启用
-        let (metadata, code, req_ctx) = {
-            let registry = self.registry.read().await;
-            let record = registry
-                .get(plugin_id)
-                .ok_or_else(|| PluginError::NotFound(format!("Plugin not found: {}", plugin_id)))?;
-
-            if record.status != PluginStatus::Enabled {
-                return Err(PluginError::Execution(format!(
-                    "Plugin '{}' is not enabled (status: {:?})",
-                    plugin_id, record.status
-                )));
-            }
-
-            let metadata = record.metadata.clone();
-            drop(registry);
-
-            // 获取插件代码
-            let code = self.get_plugin_code(plugin_id).await?;
-
-            // 构造请求上下文（scan_response 需要）
-            let req_ctx = RequestContext {
-                id: ctx.request_id.clone(),
-                method: "".to_string(), // 这些信息在 ResponseContext 中没有，需要从其他地方获取
-                url: "".to_string(),
-                headers: HashMap::new(),
-                body: Vec::new(),
-                content_type: None,
-                query_params: HashMap::new(),
-                is_https: false,
-                timestamp: chrono::Utc::now(),
-                was_edited: false,
-                edited_method: None,
-                edited_url: None,
-                edited_headers: None,
-                edited_body: None,
-            };
-
-            (metadata, code, req_ctx)
-        };
-
-        // 使用 PluginEngine 执行
-        let ctx_clone = ctx.clone();
-        let findings = tokio::task::spawn_blocking(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
-
-            rt.block_on(async move {
-                let mut engine = PluginEngine::new()?;
-                engine.load_plugin_with_metadata(&code, metadata).await?;
-                engine.scan_response(&req_ctx, &ctx_clone).await
-            })
-        })
-        .await
-        .map_err(|e| PluginError::Execution(format!("Task join error: {}", e)))??;
-
-        debug!(
-            "Plugin {} found {} issues in response for request_id={}",
-            plugin_id,
-            findings.len(),
-            ctx.request_id
+            transaction.request.id
         );
 
         Ok(findings)

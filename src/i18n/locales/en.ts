@@ -1785,7 +1785,30 @@ export default {
       analyzer: 'Analyzer',
       reporter: 'Reporter',
       custom: 'Custom'
-    }
+    },
+    // AI Assistant in code editor
+    aiAssistant: 'AI Assistant',
+    aiAssistantHint: 'Describe your changes and AI will help you edit the code',
+    aiInputPlaceholder: 'Describe your changes...',
+    includeCodeContext: 'Include code context',
+    explainCode: 'Explain Code',
+    optimizeCode: 'Optimize Code',
+    fixBugs: 'Fix Issues',
+    applyChanges: 'Apply Changes',
+    previewChanges: 'Preview',
+    exitFullscreen: 'Exit Fullscreen',
+    cancelEdit: 'Cancel Edit',
+    creating: 'Creating...',
+    // Code selection
+    fullCode: 'Full Code',
+    selectedLines: 'Selected Code',
+    lines: 'Lines',
+    addSelection: 'Add Selection',
+    addAll: 'Add All',
+    addSelectedCode: 'Add selected code to context',
+    addFullCode: 'Add full code to context',
+    noCodeSelected: 'Please select code in the editor first',
+    noCode: 'No code available'
   },
   license: {
     title: 'Software Activation',

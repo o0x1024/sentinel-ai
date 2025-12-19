@@ -1,8 +1,8 @@
 //! 插件系统类型定义
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use sha2::{Sha256, Digest};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// 插件元数据
@@ -125,6 +125,13 @@ pub struct ResponseContext {
     /// 修改后的响应体（如果经过拦截修改）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edited_body: Option<Vec<u8>>,
+}
+
+/// HTTP 事务（包含请求和响应）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpTransaction {
+    pub request: RequestContext,
+    pub response: Option<ResponseContext>,
 }
 
 /// 漏洞发现

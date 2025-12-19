@@ -203,7 +203,7 @@ pub struct AiRole {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
     pub providers: HashMap<AiProvider, AiProviderConfig>,
-    pub default_provider: AiProvider,
+    pub default_llm_provider: AiProvider,
     pub default_model: String,
     pub system_prompt: String,
     pub temperature: f32,
@@ -239,7 +239,7 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             providers: HashMap::new(),
-            default_provider: AiProvider::OpenAI,
+            default_llm_provider: AiProvider::OpenAI,
             default_model: "gpt-4".to_string(),
             system_prompt: "You are a professional security and vulnerability detection assistant. Please provide accurate and practical advice and help based on user needs.".to_string(),
             temperature: 0.7,

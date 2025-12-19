@@ -709,7 +709,7 @@ pub async fn assistant_rag_answer(
             (p, m)
         } else {
             match ai_manager
-                .get_default_chat_model()
+                .get_default_llm_model()
                 .await
                 .map_err(|e| e.to_string())?
             {

@@ -4,7 +4,6 @@
 //! - ESM/TypeScript 模块加载
 //! - 插件加载与热重载
 //! - 全权限沙箱（--allow-all）
-//! - 插件 API 注入（scan_request, scan_response, emit_finding）
 
 use crate::error::{PluginError, Result};
 use crate::plugin_ops::{sentinel_plugin_ext, PluginContext};
@@ -295,7 +294,13 @@ impl PluginEngine {
         // 对 plugin_id 进行 URL 安全化处理（替换特殊字符）
         let safe_id: String = plugin_id
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
 
         // 确定模块 URL（使用 sentinel:// 协议）
@@ -687,71 +692,41 @@ impl PluginEngine {
         Ok(())
     }
 
-    /// 扫描请求（调用插件的 scan_request）
-    pub async fn scan_request(&mut self, ctx: &RequestContext) -> Result<Vec<Finding>> {
-        let ctx_json = serde_json::to_value(ctx)
-            .map_err(|e| PluginError::Execution(format!("Failed to serialize request: {}", e)))?;
-
-        // 调用插件函数
-        self.call_plugin_function("scan_request", &ctx_json).await?;
-
-        // 从 PluginContext 中获取插件发送的漏洞
-        let findings = {
-            let op_state = self.runtime.op_state();
-            let op_state_borrow = op_state.borrow();
-            let plugin_ctx = op_state_borrow.borrow::<PluginContext>();
-            plugin_ctx.take_findings()
-        };
-
-        debug!(
-            "Plugin {} found {} issues in request",
-            self.metadata
-                .as_ref()
-                .map(|m| m.id.as_str())
-                .unwrap_or("unknown"),
-            findings.len()
-        );
-
-        Ok(findings)
-    }
-
-    /// 扫描响应（调用插件的 scan_response）
-    pub async fn scan_response(
+    /// 扫描完整 HTTP 事务
+    ///
+    /// 仅调用插件的 `scan_transaction`。
+    pub async fn scan_transaction(
         &mut self,
-        req_ctx: &RequestContext,
-        resp_ctx: &ResponseContext,
+        transaction: &crate::types::HttpTransaction,
     ) -> Result<Vec<Finding>> {
-        let combined = serde_json::json!({
-            "request": req_ctx,
-            "response": resp_ctx,
-        });
+        let combined = serde_json::to_value(transaction).map_err(|e| {
+            PluginError::Execution(format!("Failed to serialize transaction: {}", e))
+        })?;
 
-        // 调用插件函数
-        self.call_plugin_function("scan_response", &combined)
-            .await?;
+        // 仅调用 scan_transaction
+        let result = self
+            .call_plugin_function("scan_transaction", &combined)
+            .await;
 
-        // 从 PluginContext 中获取插件发送的漏洞
+        if let Err(e) = result {
+            debug!("Plugin execution failed or function not found: {}", e);
+        }
+
         let findings = {
             let op_state = self.runtime.op_state();
             let op_state_borrow = op_state.borrow();
             let plugin_ctx = op_state_borrow.borrow::<PluginContext>();
             plugin_ctx.take_findings()
         };
-
-        debug!(
-            "Plugin {} found {} issues in response",
-            self.metadata
-                .as_ref()
-                .map(|m| m.id.as_str())
-                .unwrap_or("unknown"),
-            findings.len()
-        );
 
         Ok(findings)
     }
 
     /// 执行Agent工具（调用插件的 analyze/run/execute）
-    pub async fn execute_agent(&mut self, input: &serde_json::Value) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
+    pub async fn execute_agent(
+        &mut self,
+        input: &serde_json::Value,
+    ) -> Result<(Vec<Finding>, Option<serde_json::Value>)> {
         // 依次尝试常见的Agent入口函数名称: analyze -> run -> execute
         if let Err(e1) = self.call_plugin_function("analyze", input).await {
             if let Err(e2) = self.call_plugin_function("run", input).await {

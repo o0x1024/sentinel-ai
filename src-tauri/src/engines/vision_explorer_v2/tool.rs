@@ -2,6 +2,7 @@
 //!
 //! This tool allows the AI Agent to invoke the V2 Engine for website exploration.
 
+use crate::engines::vision_explorer_v2::emitter::V2MessageEmitter;
 use crate::engines::vision_explorer_v2::{V2Engine, VisionExplorerV2Config};
 use crate::engines::LlmConfig;
 use crate::services::mcp::McpService;
@@ -121,6 +122,20 @@ impl Tool for VisionExplorerV2Tool {
         // Create and start engine
         let mut engine = V2Engine::new(config);
         let session_id = engine.session_id().to_string();
+        let execution_id = self
+            .execution_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        // Setup emitter if app_handle is available
+        if let Some(ref app_handle) = self.app_handle {
+            let emitter = V2MessageEmitter::new(
+                Arc::new(app_handle.clone()),
+                execution_id.clone(),
+                session_id.clone(),
+            );
+            engine = engine.with_emitter(emitter);
+        }
 
         // Configure safety based on args
         if args.allow_destructive.unwrap_or(false) {

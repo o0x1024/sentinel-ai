@@ -176,6 +176,11 @@
       :code-error="codeError"
       :is-fullscreen-editor="isFullscreenEditor"
       :sub-categories="subCategories"
+      :show-ai-panel="showAiPanel"
+      :ai-messages="aiChatMessages"
+      :ai-streaming="aiChatStreaming"
+      :ai-streaming-content="aiChatStreamingContent"
+      :selected-code-ref="selectedCodeRef"
       @update:new-plugin-metadata="newPluginMetadata = $event"
       @insert-template="insertTemplate"
       @format-code="formatCode"
@@ -185,6 +190,14 @@
       @save-plugin="savePlugin"
       @create-new-plugin="createNewPlugin"
       @close="closeCodeEditorDialog"
+      @toggle-ai-panel="toggleAiPanel"
+      @send-ai-message="sendAiChatMessage"
+      @ai-quick-action="handleAiQuickAction"
+      @apply-ai-code="applyAiCode"
+      @preview-ai-code="previewAiCode"
+      @add-selected-code="addSelectedCodeToContext"
+      @add-full-code="addFullCodeToContext"
+      @clear-code-ref="clearCodeRef"
     />
   </div>
 </template>
@@ -278,10 +291,32 @@ const newPluginMetadata = ref<NewPluginMetadata>({
 
 // AI Generate State
 const aiPrompt = ref('')
-const aiPluginType = ref('vulnerability')
+const aiPluginType = ref('passive')
 const aiSeverity = ref('medium')
 const aiGenerating = ref(false)
 const aiGenerateError = ref('')
+
+// Code reference type
+interface CodeReference {
+  code: string
+  preview: string
+  startLine: number
+  endLine: number
+  isFullCode: boolean
+}
+
+// AI Chat State (for code editor)
+interface AiChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  codeBlock?: string
+  codeRef?: CodeReference
+}
+const showAiPanel = ref(false)
+const aiChatMessages = ref<AiChatMessage[]>([])
+const aiChatStreaming = ref(false)
+const aiChatStreamingContent = ref('')
+const selectedCodeRef = ref<CodeReference | null>(null)
 
 // Test State
 const testing = ref(false)
@@ -872,49 +907,49 @@ const generatePluginWithAI = async () => {
   aiGenerateError.value = ''
   
   const isAgentPlugin = aiPluginType.value === 'agent'
-  const tempConversationId = `plugin_gen_${Date.now()}`
+  const streamId = `plugin_gen_${Date.now()}`
   
   try {
-    const systemPromptResponse = await invoke<string>('get_combined_plugin_prompt_api', {
+    const systemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
       pluginType: isAgentPlugin ? 'agent' : 'passive',
       vulnType: 'custom',
       severity: aiSeverity.value
     })
     
-    const systemPrompt = systemPromptResponse
     const userPrompt = `请根据以下需求生成${isAgentPlugin ? 'Agent工具' : '被动扫描'}插件代码：\n\n${aiPrompt.value}`
 
     let generatedCode = ''
     let streamCompleted = false
     let streamError = ''
 
-    const unlisten = await listen('ai_stream_delta', (event: any) => {
-      const payload = event.payload
-      if (payload.conversation_id === tempConversationId) {
-        generatedCode += payload.delta || ''
+    // Listen to lightweight plugin generation events
+    const unlistenDelta = await listen('plugin_gen_delta', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        generatedCode += event.payload.delta || ''
       }
     })
 
-    const unlistenComplete = await listen('ai_stream_complete', (event: any) => {
-      if (event.payload.conversation_id === tempConversationId) {
+    const unlistenComplete = await listen('plugin_gen_complete', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        generatedCode = event.payload.content || generatedCode
         streamCompleted = true
       }
     })
 
-    const unlistenError = await listen('ai_stream_error', (event: any) => {
-      if (event.payload.conversation_id === tempConversationId) {
+    const unlistenError = await listen('plugin_gen_error', (event: any) => {
+      if (event.payload.stream_id === streamId) {
         streamError = event.payload.error || 'AI生成失败'
         streamCompleted = true
       }
     })
 
     try {
-      await invoke('send_ai_stream_message', {
+      await invoke('generate_plugin_stream', {
         request: {
-          conversation_id: tempConversationId,
+          stream_id: streamId,
           message: userPrompt,
-          service_name: 'default',
           system_prompt: systemPrompt,
+          service_name: 'default_llm_provider',
         }
       })
 
@@ -954,12 +989,9 @@ const generatePluginWithAI = async () => {
       await nextTick()
       initCodeEditor()
     } finally {
-      unlisten()
+      unlistenDelta()
       unlistenComplete()
       unlistenError()
-      try {
-        await invoke('delete_ai_conversation', { conversationId: tempConversationId })
-      } catch (e) { }
     }
   } catch (error) {
     aiGenerateError.value = error instanceof Error ? error.message : 'AI生成失败'
@@ -1030,6 +1062,231 @@ const closeCodeEditorDialog = () => {
   originalCode.value = ''
   isEditing.value = false
   codeError.value = ''
+  // Reset AI chat state
+  showAiPanel.value = false
+  aiChatMessages.value = []
+  aiChatStreaming.value = false
+  aiChatStreamingContent.value = ''
+  selectedCodeRef.value = null
+}
+
+// AI Chat methods
+const toggleAiPanel = () => {
+  showAiPanel.value = !showAiPanel.value
+}
+
+// Get selected code from editor
+const getSelectedCode = (): { code: string; from: number; to: number } | null => {
+  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
+  if (!editorView) return null
+  
+  const selection = editorView.state.selection.main
+  if (selection.empty) return null
+  
+  const code = editorView.state.sliceDoc(selection.from, selection.to)
+  return { code, from: selection.from, to: selection.to }
+}
+
+// Get line numbers from position
+const getLineNumbers = (from: number, to: number): { startLine: number; endLine: number } => {
+  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
+  if (!editorView) return { startLine: 1, endLine: 1 }
+  
+  const doc = editorView.state.doc
+  const startLine = doc.lineAt(from).number
+  const endLine = doc.lineAt(to).number
+  return { startLine, endLine }
+}
+
+// Create preview with ellipsis for long code
+const createCodePreview = (code: string, maxLines: number = 5): string => {
+  const lines = code.split('\n')
+  if (lines.length <= maxLines) return code
+  return lines.slice(0, maxLines).join('\n') + '\n... (' + (lines.length - maxLines) + ' more lines)'
+}
+
+// Add selected code to context
+const addSelectedCodeToContext = () => {
+  const selected = getSelectedCode()
+  if (!selected || !selected.code.trim()) {
+    showToast(t('plugins.noCodeSelected', '请先选择代码'), 'warning')
+    return
+  }
+  
+  const { startLine, endLine } = getLineNumbers(selected.from, selected.to)
+  selectedCodeRef.value = {
+    code: selected.code,
+    preview: createCodePreview(selected.code),
+    startLine,
+    endLine,
+    isFullCode: false
+  }
+}
+
+// Add full code to context
+const addFullCodeToContext = () => {
+  if (!pluginCode.value.trim()) {
+    showToast(t('plugins.noCode', '没有代码'), 'warning')
+    return
+  }
+  
+  const lines = pluginCode.value.split('\n')
+  selectedCodeRef.value = {
+    code: pluginCode.value,
+    preview: createCodePreview(pluginCode.value),
+    startLine: 1,
+    endLine: lines.length,
+    isFullCode: true
+  }
+}
+
+// Clear code reference
+const clearCodeRef = () => {
+  selectedCodeRef.value = null
+}
+
+const sendAiChatMessage = async (message: string) => {
+  if (!message.trim() || aiChatStreaming.value) return
+  
+  // Get current code reference
+  const codeRef = selectedCodeRef.value
+  
+  // Add user message with code reference
+  aiChatMessages.value.push({ 
+    role: 'user', 
+    content: message,
+    codeRef: codeRef || undefined
+  })
+  aiChatStreaming.value = true
+  aiChatStreamingContent.value = ''
+  
+  const streamId = `plugin_edit_${Date.now()}`
+  
+  try {
+    // Build system prompt for code editing
+    const isAgentPlugin = newPluginMetadata.value.mainCategory === 'agent'
+    const systemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
+      pluginType: isAgentPlugin ? 'agent' : 'passive',
+      vulnType: 'custom',
+      severity: newPluginMetadata.value.default_severity
+    })
+    
+    // Build user prompt with context
+    let userPrompt = message
+    if (codeRef) {
+      // Use specific code reference
+      if (codeRef.isFullCode) {
+        userPrompt = `完整插件代码：\n\`\`\`typescript\n${codeRef.code}\n\`\`\`\n\n用户需求：${message}\n\n请根据需求修改代码，直接返回完整的修改后代码。`
+      } else {
+        userPrompt = `选中的代码片段 (第${codeRef.startLine}-${codeRef.endLine}行)：\n\`\`\`typescript\n${codeRef.code}\n\`\`\`\n\n完整代码上下文：\n\`\`\`typescript\n${pluginCode.value}\n\`\`\`\n\n用户需求：${message}\n\n请根据需求修改选中的代码片段，返回修改后的完整代码。`
+      }
+    } else if (pluginCode.value) {
+      // Fallback to full code if no reference
+      userPrompt = `当前插件代码：\n\`\`\`typescript\n${pluginCode.value}\n\`\`\`\n\n用户需求：${message}\n\n请根据需求修改代码，直接返回完整的修改后代码。`
+    }
+    
+    // Clear code reference after sending
+    selectedCodeRef.value = null
+    
+    let generatedContent = ''
+    
+    const unlistenDelta = await listen('plugin_gen_delta', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        const delta = event.payload.delta || ''
+        generatedContent += delta
+        aiChatStreamingContent.value = generatedContent
+      }
+    })
+    
+    const unlistenComplete = await listen('plugin_gen_complete', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        generatedContent = event.payload.content || generatedContent
+        finishAiChat(generatedContent)
+      }
+    })
+    
+    const unlistenError = await listen('plugin_gen_error', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        const errorMsg = event.payload.error || 'AI 处理失败'
+        aiChatMessages.value.push({ role: 'assistant', content: `❌ ${errorMsg}` })
+        aiChatStreaming.value = false
+        aiChatStreamingContent.value = ''
+      }
+    })
+    
+    await invoke('generate_plugin_stream', {
+      request: {
+        stream_id: streamId,
+        message: userPrompt,
+        system_prompt: systemPrompt,
+        service_name: 'default',
+      }
+    })
+    
+    // Cleanup listeners after timeout
+    setTimeout(() => {
+      unlistenDelta()
+      unlistenComplete()
+      unlistenError()
+    }, 180000)
+    
+  } catch (error) {
+    aiChatMessages.value.push({ 
+      role: 'assistant', 
+      content: `❌ ${error instanceof Error ? error.message : 'AI 处理失败'}` 
+    })
+    aiChatStreaming.value = false
+    aiChatStreamingContent.value = ''
+  }
+}
+
+const finishAiChat = (content: string) => {
+  aiChatStreaming.value = false
+  aiChatStreamingContent.value = ''
+  
+  // Extract code block if present
+  const codeMatch = content.match(/```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/)
+  const codeBlock = codeMatch ? codeMatch[1].trim() : undefined
+  
+  // Format content for display
+  let displayContent = content
+  if (codeBlock) {
+    displayContent = content.replace(/```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/, 
+      '<pre><code>$1</code></pre>')
+  }
+  
+  aiChatMessages.value.push({ 
+    role: 'assistant', 
+    content: displayContent,
+    codeBlock 
+  })
+}
+
+const handleAiQuickAction = async (action: string) => {
+  const actions: Record<string, string> = {
+    'explain': '请解释这段插件代码的功能和工作原理',
+    'optimize': '请优化这段代码，提高性能和可读性',
+    'fix': '请检查并修复这段代码中可能存在的问题'
+  }
+  const message = actions[action] || action
+  await sendAiChatMessage(message)
+}
+
+const applyAiCode = (code: string) => {
+  if (!code) return
+  pluginCode.value = code
+  updateCodeEditorContent(code)
+  updateFullscreenCodeEditorContent(code)
+  if (!isEditing.value && editingPlugin.value) {
+    enableEditing()
+  }
+  showToast('代码已应用', 'success')
+}
+
+const previewAiCode = (code: string) => {
+  // For now, just show in a simple way - could be enhanced with diff view
+  console.log('Preview code:', code)
+  showToast('预览功能开发中', 'info')
 }
 
 const enableEditing = () => {

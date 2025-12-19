@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::debug;
 
 /// V2 Message Emitter - Sends events to the frontend
+#[derive(Clone)]
 pub struct V2MessageEmitter {
     app_handle: Arc<AppHandle>,
     execution_id: String,
@@ -92,6 +93,9 @@ impl V2MessageEmitter {
         if let Err(e) = self.app_handle.emit("vision:start", &payload) {
             debug!("Failed to emit vision:start: {}", e);
         }
+
+        // Also emit as V2 event for useVisionEvents
+        self.emit_v2_event("start", &payload);
     }
 
     /// Emit screenshot captured event
@@ -129,6 +133,9 @@ impl V2MessageEmitter {
         if let Err(e) = self.app_handle.emit("vision:screenshot", &payload) {
             debug!("Failed to emit vision:screenshot: {}", e);
         }
+
+        // Also emit as V2 event
+        self.emit_v2_event("vision_step", &serde_json::json!({ "step": step }));
     }
 
     /// Emit analysis result event
@@ -183,6 +190,9 @@ impl V2MessageEmitter {
         if let Err(e) = self.app_handle.emit("vision:analysis", &payload) {
             debug!("Failed to emit vision:analysis: {}", e);
         }
+
+        // Also emit as V2 event
+        self.emit_v2_event("vision_step", &serde_json::json!({ "step": step }));
     }
 
     /// Emit action execution event
@@ -237,6 +247,9 @@ impl V2MessageEmitter {
         if let Err(e) = self.app_handle.emit("vision:action", &payload) {
             debug!("Failed to emit vision:action: {}", e);
         }
+
+        // Also emit as V2 event
+        self.emit_v2_event("vision_step", &serde_json::json!({ "step": step }));
     }
 
     /// Emit error event
@@ -264,6 +277,9 @@ impl V2MessageEmitter {
         if let Err(e) = self.app_handle.emit("vision:error", &payload) {
             debug!("Failed to emit vision:error: {}", e);
         }
+
+        // Also emit as V2 event
+        self.emit_v2_event("vision_step", &serde_json::json!({ "step": step }));
     }
 
     /// Emit exploration complete event
@@ -293,6 +309,9 @@ impl V2MessageEmitter {
         if let Err(e) = self.app_handle.emit("vision:complete", &payload) {
             debug!("Failed to emit vision:complete: {}", e);
         }
+
+        // Also emit as V2 event
+        self.emit_v2_event("complete", &payload);
     }
 
     /// Emit login takeover request
@@ -309,6 +328,9 @@ impl V2MessageEmitter {
         if let Err(e) = self.app_handle.emit("vision:takeover_request", &payload) {
             debug!("Failed to emit vision:takeover_request: {}", e);
         }
+
+        // Also emit as V2 event
+        self.emit_v2_event("takeover_request", &payload);
     }
 
     /// Emit credentials received confirmation
@@ -325,6 +347,9 @@ impl V2MessageEmitter {
         {
             debug!("Failed to emit vision:credentials_received: {}", e);
         }
+
+        // Also emit as V2 event
+        self.emit_v2_event("credentials_received", &payload);
     }
 
     /// Emit a V2-specific event (for graph state updates, etc.)

@@ -9,6 +9,7 @@
 //! - disable_plugin: 禁用插件
 //! - list_plugins: 列出所有插件
 
+use sentinel_plugins::HttpTransaction;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -1128,7 +1129,6 @@ pub async fn batch_enable_plugins(
 
     let mut enabled_count: usize = 0;
     let mut failed_ids: Vec<String> = Vec::new();
-    let mut agent_toggled: bool = false;
 
     for plugin_id in plugin_ids.iter() {
         let main_category: Option<String> =
@@ -1166,12 +1166,6 @@ pub async fn batch_enable_plugins(
                             name: plugin_name,
                         },
                     );
-
-                    if let Some(cat) = main_category.as_ref() {
-                        if cat == "agent" {
-                            agent_toggled = true;
-                        }
-                    }
                 } else {
                     failed_ids.push(plugin_id.clone());
                 }
@@ -1199,7 +1193,6 @@ pub async fn batch_disable_plugins(
 
     let mut disabled_count: usize = 0;
     let mut failed_ids: Vec<String> = Vec::new();
-    let mut agent_toggled: bool = false;
 
     for plugin_id in plugin_ids.iter() {
         let main_category: Option<String> =
@@ -1237,12 +1230,6 @@ pub async fn batch_disable_plugins(
                             name: plugin_name,
                         },
                     );
-
-                    if let Some(cat) = main_category.as_ref() {
-                        if cat == "agent" {
-                            agent_toggled = true;
-                        }
-                    }
                 } else {
                     failed_ids.push(plugin_id.clone());
                 }
@@ -1527,27 +1514,31 @@ pub async fn import_ca_pkcs12(
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    
+
     // Open file dialog to select PKCS#12 file
-    let file_path = app.dialog()
+    let file_path = app
+        .dialog()
         .file()
         .add_filter("PKCS#12 Files", &["p12", "pfx"])
         .blocking_pick_file();
-    
+
     let file_path = match file_path {
-        Some(path) => path.into_path().map_err(|e| format!("Invalid path: {}", e))?,
+        Some(path) => path
+            .into_path()
+            .map_err(|e| format!("Invalid path: {}", e))?,
         None => return Ok(CommandResponse::err("No file selected".to_string())),
     };
-    
+
     // Read file
-    let data = std::fs::read(&file_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
-    
+    let data = std::fs::read(&file_path).map_err(|e| format!("Failed to read file: {}", e))?;
+
     // Import with empty password (user can be prompted for password if needed)
     match state.certificate_service.import_pkcs12(&data, "") {
         Ok(_) => {
             tracing::info!("Imported CA from PKCS#12: {}", file_path.display());
-            Ok(CommandResponse::ok("Certificate imported successfully".to_string()))
+            Ok(CommandResponse::ok(
+                "Certificate imported successfully".to_string(),
+            ))
         }
         Err(e) => Ok(CommandResponse::err(format!("Failed to import: {}", e))),
     }
@@ -1560,42 +1551,53 @@ pub async fn import_ca_der(
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    
+
     // Select certificate file
-    let cert_path = app.dialog()
+    let cert_path = app
+        .dialog()
         .file()
         .set_title("Select Certificate (DER format)")
         .add_filter("DER Certificate", &["der", "cer", "crt"])
         .blocking_pick_file();
-    
+
     let cert_path = match cert_path {
-        Some(path) => path.into_path().map_err(|e| format!("Invalid path: {}", e))?,
-        None => return Ok(CommandResponse::err("No certificate file selected".to_string())),
+        Some(path) => path
+            .into_path()
+            .map_err(|e| format!("Invalid path: {}", e))?,
+        None => {
+            return Ok(CommandResponse::err(
+                "No certificate file selected".to_string(),
+            ))
+        }
     };
-    
+
     // Select key file
-    let key_path = app.dialog()
+    let key_path = app
+        .dialog()
         .file()
         .set_title("Select Private Key (DER format)")
         .add_filter("DER Key", &["der", "key"])
         .blocking_pick_file();
-    
+
     let key_path = match key_path {
-        Some(path) => path.into_path().map_err(|e| format!("Invalid path: {}", e))?,
+        Some(path) => path
+            .into_path()
+            .map_err(|e| format!("Invalid path: {}", e))?,
         None => return Ok(CommandResponse::err("No key file selected".to_string())),
     };
-    
+
     // Read files
-    let cert_data = std::fs::read(&cert_path)
-        .map_err(|e| format!("Failed to read certificate: {}", e))?;
-    let key_data = std::fs::read(&key_path)
-        .map_err(|e| format!("Failed to read key: {}", e))?;
-    
+    let cert_data =
+        std::fs::read(&cert_path).map_err(|e| format!("Failed to read certificate: {}", e))?;
+    let key_data = std::fs::read(&key_path).map_err(|e| format!("Failed to read key: {}", e))?;
+
     // Import
     match state.certificate_service.import_der(&cert_data, &key_data) {
         Ok(_) => {
             tracing::info!("Imported CA from DER format");
-            Ok(CommandResponse::ok("Certificate imported successfully".to_string()))
+            Ok(CommandResponse::ok(
+                "Certificate imported successfully".to_string(),
+            ))
         }
         Err(e) => Ok(CommandResponse::err(format!("Failed to import: {}", e))),
     }
@@ -2516,7 +2518,13 @@ pub async fn test_plugin(
         };
 
         // 调用插件进行一次扫描，捕获真实 findings。
-        let findings_result = plugin_manager.scan_request(&plugin_id, &request_ctx).await;
+        let transaction = HttpTransaction {
+            request: request_ctx.clone(),
+            response: None,
+        };
+        let findings_result = plugin_manager
+            .scan_transaction(&plugin_id, &transaction)
+            .await;
 
         match findings_result {
             Ok(foundings) => {
@@ -2609,7 +2617,7 @@ pub async fn test_plugin_advanced(
     plugin_id: String,
     url: Option<String>,
     method: Option<String>,
-    headers: Option<String>, // JSON 字符串 {"Key":"Value"}
+    headers: Option<std::collections::HashMap<String, String>>,
     body: Option<String>,
     runs: Option<u32>,
     concurrency: Option<u32>,
@@ -2648,14 +2656,12 @@ pub async fn test_plugin_advanced(
     use sentinel_passive::RequestContext;
     let plugin_manager = state.get_plugin_manager();
 
-    // 解析 headers JSON
-    let parsed_headers: std::collections::HashMap<String, String> = headers
-        .and_then(|h| serde_json::from_str(&h).ok())
-        .unwrap_or_else(|| {
-            let mut m = std::collections::HashMap::new();
-            m.insert("User-Agent".to_string(), "Sentinel-AdvTest/1.0".to_string());
-            m
-        });
+    // 解析 headers
+    let parsed_headers = headers.unwrap_or_else(|| {
+        let mut m = std::collections::HashMap::new();
+        m.insert("User-Agent".to_string(), "Sentinel-AdvTest/1.0".to_string());
+        m
+    });
 
     let req_url = url.unwrap_or_else(|| "https://example.com/test".to_string());
     let req_method = method.unwrap_or_else(|| "GET".to_string());
@@ -2695,7 +2701,14 @@ pub async fn test_plugin_advanced(
                     edited_headers: None,
                     edited_body: None,
                 };
-                match plugin_manager.scan_request(&plugin_id, &ctx).await {
+                let transaction = HttpTransaction {
+                    request: ctx.clone(),
+                    response: None,
+                };
+                match plugin_manager
+                    .scan_transaction(&plugin_id, &transaction)
+                    .await
+                {
                     Ok(foundings) => {
                         let mapped: Vec<TestFinding> = foundings
                             .into_iter()
@@ -3123,26 +3136,27 @@ pub async fn start_proxy_listener(
     })?;
 
     let mut config = match db.load_config("proxy_config").await {
-        Ok(Some(config_json)) => {
-            match serde_json::from_str::<ProxyConfig>(&config_json) {
-                Ok(config) => {
-                    tracing::info!("Loaded proxy configuration from database for listener: {:?}", config);
+        Ok(Some(config_json)) => match serde_json::from_str::<ProxyConfig>(&config_json) {
+            Ok(config) => {
+                tracing::info!(
+                    "Loaded proxy configuration from database for listener: {:?}",
                     config
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to deserialize config, using default: {}", e);
-                    ProxyConfig {
-                        start_port: port,
-                        max_port_attempts: 1,
-                        mitm_enabled: true,
-                        max_request_body_size: 2 * 1024 * 1024,
-                        max_response_body_size: 2 * 1024 * 1024,
-                        mitm_bypass_fail_threshold: 3,
-                        upstream_proxy: None,
-                    }
+                );
+                config
+            }
+            Err(e) => {
+                tracing::warn!("Failed to deserialize config, using default: {}", e);
+                ProxyConfig {
+                    start_port: port,
+                    max_port_attempts: 1,
+                    mitm_enabled: true,
+                    max_request_body_size: 2 * 1024 * 1024,
+                    max_response_body_size: 2 * 1024 * 1024,
+                    mitm_bypass_fail_threshold: 3,
+                    upstream_proxy: None,
                 }
             }
-        }
+        },
         Ok(None) => {
             tracing::info!("No saved configuration found, using default");
             ProxyConfig {
@@ -4055,14 +4069,17 @@ pub async fn add_intercept_filter_rule(
 pub async fn get_intercept_filter_rules(
     state: State<'_, PassiveScanState>,
 ) -> Result<CommandResponse<Vec<InterceptFilterRule>>, String> {
-    let db = state.get_db_service().await.map_err(|e| {
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state
+        .get_db_service()
+        .await
+        .map_err(|e| format!("Failed to get database service: {}", e))?;
 
     let rules = match db.load_config("intercept_filter_rules").await {
-        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json)
-            .unwrap_or_default()
-            .rules,
+        Ok(Some(json)) => {
+            serde_json::from_str::<InterceptFilterRules>(&json)
+                .unwrap_or_default()
+                .rules
+        }
         _ => Vec::new(),
     };
 
@@ -4077,9 +4094,10 @@ pub async fn remove_intercept_filter_rule(
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Removing intercept filter rule: {}", rule_id);
 
-    let db = state.get_db_service().await.map_err(|e| {
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state
+        .get_db_service()
+        .await
+        .map_err(|e| format!("Failed to get database service: {}", e))?;
 
     let mut rules = match db.load_config("intercept_filter_rules").await {
         Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
@@ -4105,9 +4123,10 @@ pub async fn update_intercept_filter_rule(
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Updating intercept filter rule: {:?}", rule);
 
-    let db = state.get_db_service().await.map_err(|e| {
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state
+        .get_db_service()
+        .await
+        .map_err(|e| format!("Failed to get database service: {}", e))?;
 
     let mut rules = match db.load_config("intercept_filter_rules").await {
         Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),

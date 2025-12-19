@@ -859,15 +859,15 @@ const defaultVlmModelLocal = ref('')
 
 watch(() => props.aiConfig, (cfg: any) => {
 
-  const dp = (cfg && (cfg as any).default_provider) || 'modelscope'
+  const dp = (cfg && (cfg as any).default_llm_provider) || 'modelscope'
   // 查找匹配的提供商名称（不区分大小写）
   const matchedProvider = Object.keys(cfg?.providers || {}).find(key =>
     key.toLowerCase() === String(dp).toLowerCase()
   )
   defaultProviderLocal.value = matchedProvider || String(dp)
 
-  // 初始化默认 Chat 模型
-  const dcm = (cfg && (cfg as any).default_chat_model) || ''
+  // 初始化默认 LLM 模型
+  const dcm = (cfg && (cfg as any).default_llm_model) || ''
   if (dcm && dcm.includes('/')) {
     const slashIndex = dcm.indexOf('/')
     const modelName = slashIndex !== -1 ? dcm.substring(slashIndex + 1) : dcm
@@ -877,7 +877,7 @@ watch(() => props.aiConfig, (cfg: any) => {
   }
 
   // 初始化默认 VLM 配置
-  const dvm = (cfg && (cfg as any).default_vision_model) || ''
+  const dvm = (cfg && (cfg as any).default_vlm_model) || ''
   let dvmProvider = ''
   let dvmModel = ''
   if (dvm && dvm.includes('/')) {
