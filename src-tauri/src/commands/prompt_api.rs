@@ -336,6 +336,8 @@ export async function scan_transaction(transaction) {
       });
   }
 }
+  
+globalThis.scan_transaction = scan_transaction;
 ```
 
 **Requirements**:
@@ -344,6 +346,7 @@ export async function scan_transaction(transaction) {
 3. **Handle `transaction.response` being potentially null**.
 4. **Use `Sentinel.emitFinding`** for reporting.
 5. **No network calls** (fetch, etc.) are allowed in passive plugins.
+6. **MUST include the `globalThis` export at the end** - Without this, the plugin will fail with "Function not found" error.
 
 Now generate the Passive Scan Plugin.
 "#;

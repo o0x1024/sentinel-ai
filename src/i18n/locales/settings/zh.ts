@@ -258,7 +258,16 @@ export default {
     preload: '预加载资源',
     preloadHint: '预加载常用资源以获得更好的性能',
     enabled: '已启用',
-    disabled: '已禁用'
+    disabled: '已禁用',
+    logLevel: '日志级别',
+    logLevelHint: '控制应用程序输出日志的详细程度',
+    logLevels: {
+      trace: 'Trace - 最详细',
+      debug: 'Debug - 调试信息',
+      info: 'Info - 常规信息',
+      warn: 'Warn - 警告',
+      error: 'Error - 仅错误'
+    }
   },
   themes: {
     light: '浅色主题',

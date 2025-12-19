@@ -267,6 +267,15 @@ export default {
     preloadHint: 'Preload frequently used resources for better performance',
     enabled: 'Enabled',
     disabled: 'Disabled',
+    logLevel: 'Log Level',
+    logLevelHint: 'Control the verbosity of application logs',
+    logLevels: {
+      trace: 'Trace - Most Detailed',
+      debug: 'Debug - Debug Info',
+      info: 'Info - General Info',
+      warn: 'Warn - Warnings',
+      error: 'Error - Errors Only'
+    },
   },
   themes: {
     light: 'Light Theme',

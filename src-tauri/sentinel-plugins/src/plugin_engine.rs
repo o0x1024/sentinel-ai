@@ -306,9 +306,31 @@ impl PluginEngine {
         // 确定模块 URL（使用 sentinel:// 协议）
         let module_specifier = format!("sentinel://plugin_{}.ts", safe_id);
 
+        // 自动在 ESM 模块末尾追加代码，将导出的函数绑定到 globalThis
+        // 这解决了 ESM 导出函数无法被 call_plugin_function 正确调用的问题
+        let binding_code = r#"
+// Auto-generated: Bind ESM exports to globalThis for plugin engine compatibility
+if (typeof scan_transaction === 'function') {
+    globalThis.scan_transaction = scan_transaction;
+}
+if (typeof get_metadata === 'function') {
+    globalThis.get_metadata = get_metadata;
+}
+if (typeof analyze === 'function') {
+    globalThis.analyze = analyze;
+}
+if (typeof run === 'function') {
+    globalThis.run = run;
+}
+if (typeof execute === 'function') {
+    globalThis.execute = execute;
+}
+"#;
+        let augmented_code = format!("{}\n{}", code, binding_code);
+
         // 注册模块到加载器
         self.loader
-            .register_module(&module_specifier, code.to_string());
+            .register_module(&module_specifier, augmented_code);
 
         // 加载主模块
         let specifier = ModuleSpecifier::parse(&module_specifier)
@@ -492,6 +514,9 @@ impl PluginEngine {
                         [Symbol.iterator]() {
                             return this._params[Symbol.iterator]();
                         }
+                        get size() {
+                            return this._params.length;
+                        }
                     }
                     globalThis.URLSearchParams = SimpleURLSearchParams;
                 }
@@ -512,19 +537,25 @@ impl PluginEngine {
                                     }
                                 }
                             }
-                            this.href = url;
+                            this._originalHref = url;
                             const m = url.match(/^(https?:)(\/\/([^\/?#]*))?([^?#]*)(\?[^#]*)?(#.*)?$/i);
                             this.protocol = m && m[1] ? m[1].toLowerCase() : "";
                             this.host = m && m[3] ? m[3] : "";
                             const hostParts = this.host.split(":");
                             this.hostname = hostParts[0] || "";
                             this.port = hostParts[1] || "";
-                            this.pathname = m && m[4] ? (m[4] || "/") : url;
-                            this.search = m && m[5] ? m[5] : "";
+                            this.pathname = m && m[4] ? (m[4] || "/") : "/";
                             this.hash = m && m[6] ? m[6] : "";
                             this.origin = this.protocol && this.host ? this.protocol + "//" + this.host : "";
-                            const searchWithoutQ = this.search.startsWith("?") ? this.search.substring(1) : this.search;
+                            const searchWithoutQ = (m && m[5]) ? (m[5].startsWith("?") ? m[5].substring(1) : m[5]) : "";
                             this.searchParams = new globalThis.URLSearchParams(searchWithoutQ);
+                        }
+                        get search() {
+                            const s = this.searchParams.toString();
+                            return s ? "?" + s : "";
+                        }
+                        get href() {
+                            return this.origin + this.pathname + this.search + this.hash;
                         }
                         toString() {
                             return this.href;

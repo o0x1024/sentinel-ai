@@ -99,7 +99,7 @@ impl From<JsFinding> for Finding {
         } else {
             js.url.clone()
         };
-        
+
         let method = if let Some(ref req) = js.request {
             if !req.method.is_empty() {
                 req.method.clone()
@@ -109,23 +109,34 @@ impl From<JsFinding> for Finding {
         } else {
             js.method.clone()
         };
-        
+
         // 根据 param_name 和 param_value 构造 location
         let location = if !js.param_name.is_empty() {
             format!("param:{}", js.param_name)
         } else {
             String::from("unknown")
         };
-        
+
         // 使用提供的 title 或构造默认 title
         let title = if !js.title.is_empty() {
             js.title.clone()
         } else if !js.description.is_empty() {
-            js.description.lines().next().unwrap_or("Vulnerability detected").to_string()
+            js.description
+                .lines()
+                .next()
+                .unwrap_or("Vulnerability detected")
+                .to_string()
         } else {
-            format!("{} detected", if js.vuln_type.is_empty() { "Vulnerability" } else { &js.vuln_type })
+            format!(
+                "{} detected",
+                if js.vuln_type.is_empty() {
+                    "Vulnerability"
+                } else {
+                    &js.vuln_type
+                }
+            )
         };
-        
+
         // 构造 evidence（包含 param_value 如果存在）
         let evidence = if !js.evidence.is_empty() {
             js.evidence.clone()
@@ -134,11 +145,15 @@ impl From<JsFinding> for Finding {
         } else {
             String::new()
         };
-        
+
         Finding {
             id: uuid::Uuid::new_v4().to_string(),
             plugin_id: String::new(), // 将在 PluginEngine 中设置
-            vuln_type: if js.vuln_type.is_empty() { "unknown".to_string() } else { js.vuln_type },
+            vuln_type: if js.vuln_type.is_empty() {
+                "unknown".to_string()
+            } else {
+                js.vuln_type
+            },
             severity: parse_severity(&js.severity),
             confidence: parse_confidence(&js.confidence),
             title,
@@ -147,9 +162,21 @@ impl From<JsFinding> for Finding {
             location,
             url,
             method,
-            cwe: if js.cwe.is_empty() { None } else { Some(js.cwe) },
-            owasp: if js.owasp.is_empty() { None } else { Some(js.owasp) },
-            remediation: if js.remediation.is_empty() { None } else { Some(js.remediation) },
+            cwe: if js.cwe.is_empty() {
+                None
+            } else {
+                Some(js.cwe)
+            },
+            owasp: if js.owasp.is_empty() {
+                None
+            } else {
+                Some(js.owasp)
+            },
+            remediation: if js.remediation.is_empty() {
+                None
+            } else {
+                Some(js.remediation)
+            },
             created_at: chrono::Utc::now(),
             // 这些字段将在扫描流水线中填充（从 RequestContext/ResponseContext）
             request_headers: None,
@@ -199,17 +226,11 @@ extension!(
 
 /// Op: 发送漏洞发现
 #[op2]
-fn op_emit_finding(
-    state: &mut OpState,
-    #[serde] finding: JsFinding,
-) -> bool {
+fn op_emit_finding(state: &mut OpState, #[serde] finding: JsFinding) -> bool {
     let ctx = state.borrow::<PluginContext>().clone();
     let rust_finding = Finding::from(finding.clone());
 
-    debug!(
-        "Plugin emitted finding: {:?}",
-        rust_finding
-    );
+    debug!("Plugin emitted finding: {:?}", rust_finding);
 
     ctx.findings.lock().unwrap().push(rust_finding);
 
@@ -218,10 +239,7 @@ fn op_emit_finding(
 
 /// Op: 插件日志输出
 #[op2(fast)]
-fn op_plugin_log(
-    #[string] level: String,
-    #[string] message: String,
-) {
+fn op_plugin_log(#[string] level: String, #[string] message: String) {
     match level.to_lowercase().as_str() {
         "error" => error!("[Plugin] {}", message),
         "warn" => warn!("[Plugin] {}", message),
@@ -231,13 +249,13 @@ fn op_plugin_log(
     }
 }
 
-    #[op2]
-    fn op_plugin_return(state: &mut OpState, #[serde] value: serde_json::Value) -> bool {
-        let ctx = state.borrow::<PluginContext>().clone();
-        let mut last = ctx.last_result.lock().unwrap();
-        *last = Some(value);
-        true
-    }
+#[op2]
+fn op_plugin_return(state: &mut OpState, #[serde] value: serde_json::Value) -> bool {
+    let ctx = state.borrow::<PluginContext>().clone();
+    let mut last = ctx.last_result.lock().unwrap();
+    *last = Some(value);
+    true
+}
 
 /// Fetch request options from JavaScript
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,22 +284,19 @@ pub struct FetchResponse {
 /// Op: HTTP fetch (网络请求)
 #[op2(async)]
 #[serde]
-async fn op_fetch(
-    #[string] url: String,
-    #[serde] options: Option<FetchOptions>,
-) -> FetchResponse {
-    debug!("[Plugin] Fetching URL: {}", url);
-    
+async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>) -> FetchResponse {
+    info!("[Plugin] Fetching URL: {}", url);
+
     let opts = options.unwrap_or_else(|| FetchOptions {
         method: "GET".to_string(),
         headers: std::collections::HashMap::new(),
         body: None,
         timeout: Some(30000), // 30s default
     });
-    
+
     let method = opts.method.to_uppercase();
     let timeout_ms = opts.timeout.unwrap_or(30000);
-    
+
     // Build reqwest client
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(timeout_ms))
@@ -299,7 +314,7 @@ async fn op_fetch(
             };
         }
     };
-    
+
     // Build request
     let mut req_builder = match method.as_str() {
         "GET" => client.get(&url),
@@ -310,17 +325,17 @@ async fn op_fetch(
         "HEAD" => client.head(&url),
         _ => client.get(&url),
     };
-    
+
     // Add headers
     for (key, value) in opts.headers {
         req_builder = req_builder.header(&key, &value);
     }
-    
+
     // Add body if present
     if let Some(body) = opts.body {
         req_builder = req_builder.body(body);
     }
-    
+
     // Execute request
     let response = match req_builder.send().await {
         Ok(r) => r,
@@ -335,10 +350,10 @@ async fn op_fetch(
             };
         }
     };
-    
+
     let status = response.status().as_u16();
     let ok = response.status().is_success();
-    
+
     // Extract headers
     let mut headers = std::collections::HashMap::new();
     for (key, value) in response.headers() {
@@ -346,7 +361,7 @@ async fn op_fetch(
             headers.insert(key.to_string(), v.to_string());
         }
     }
-    
+
     // Read body
     let body = match response.text().await {
         Ok(b) => b,
@@ -361,9 +376,9 @@ async fn op_fetch(
             };
         }
     };
-    
+
     debug!("[Plugin] Fetch completed: {} (status: {})", url, status);
-    
+
     FetchResponse {
         success: true,
         status,

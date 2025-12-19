@@ -237,6 +237,23 @@
                        v-model="settings.general.checkUpdates">
               </label>
             </div>
+            
+            <!-- 日志级别 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.general.logLevel') }}</span>
+              </label>
+              <select class="select select-bordered" v-model="settings.general.logLevel">
+                <option value="trace">{{ t('settings.general.logLevels.trace') }}</option>
+                <option value="debug">{{ t('settings.general.logLevels.debug') }}</option>
+                <option value="info">{{ t('settings.general.logLevels.info') }}</option>
+                <option value="warn">{{ t('settings.general.logLevels.warn') }}</option>
+                <option value="error">{{ t('settings.general.logLevels.error') }}</option>
+              </select>
+              <label class="label">
+                <span class="label-text-alt">{{ t('settings.general.logLevelHint') }}</span>
+              </label>
+            </div>
           </div>
           
           <!-- 窗口设置 -->

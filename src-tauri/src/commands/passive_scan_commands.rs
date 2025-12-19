@@ -2278,6 +2278,21 @@ pub async fn update_plugin(
         tracing::info!("Plugin code cache updated: {}", plugin_id);
     }
 
+    // **热更新支持**：如果是被动扫描插件且代理正在运行，触发 ScanPipeline 热更新
+    if main_category == "passive" {
+        if *state.is_running.read().await {
+            if let Some(scan_tx) = state.scan_tx.read().await.as_ref() {
+                if let Err(e) =
+                    scan_tx.send(sentinel_passive::ScanTask::ReloadPlugin(plugin_id.clone()))
+                {
+                    tracing::error!("Failed to send reload task for plugin {}: {}", plugin_id, e);
+                } else {
+                    tracing::info!("Sent hot-reload task for passive plugin: {}", plugin_id);
+                }
+            }
+        }
+    }
+
     // **关键修复**：如果是 Agent 工具类插件，重新注册到 ToolServer
     if main_category == "agent" {
         let tool_server = sentinel_tools::tool_server::get_tool_server();
