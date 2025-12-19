@@ -3290,7 +3290,7 @@ pub async fn get_proxy_config(
             // 反序列化配置
             match serde_json::from_str::<ProxyConfig>(&config_json) {
                 Ok(config) => {
-                    tracing::info!("Loaded proxy configuration from database: {:?}", config);
+                    tracing::debug!("Loaded proxy configuration from database: {:?}", config);
                     config
                 }
                 Err(e) => {

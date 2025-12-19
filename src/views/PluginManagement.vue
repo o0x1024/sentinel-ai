@@ -1705,7 +1705,7 @@ const runAdvancedTest = async () => {
         return
       }
 
-      const response = await invoke<CommandResponse<AdvancedTestResult>>('advanced_test_plugin', {
+      const response = await invoke<CommandResponse<AdvancedTestResult>>('test_plugin_advanced', {
         pluginId: advancedPlugin.value.metadata.id,
         runs: advancedForm.value.runs,
         concurrency: advancedForm.value.concurrency,
