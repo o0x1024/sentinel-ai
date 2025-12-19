@@ -63,6 +63,13 @@ pub struct AuthState {
 
     /// Login page URL (for recovery)
     pub login_url: Option<String>,
+
+    /// Whether we are waiting for user to login manually
+    pub is_waiting_for_login: bool,
+
+    /// Timestamp when login wait started (Unix millis)
+    #[serde(default)]
+    pub login_wait_started: Option<u64>,
 }
 
 /// User info
@@ -202,6 +209,35 @@ impl Blackboard {
     pub async fn set_login_url(&self, url: String) {
         let mut data = self.inner.write().await;
         data.auth.login_url = Some(url);
+    }
+
+    /// Start waiting for user login
+    pub async fn start_login_wait(&self) {
+        let mut data = self.inner.write().await;
+        data.auth.is_waiting_for_login = true;
+        data.auth.login_wait_started = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        );
+    }
+
+    /// Clear login wait state
+    pub async fn clear_login_wait(&self) {
+        let mut data = self.inner.write().await;
+        data.auth.is_waiting_for_login = false;
+        data.auth.login_wait_started = None;
+    }
+
+    /// Check if we are waiting for login
+    pub async fn is_waiting_for_login(&self) -> bool {
+        self.inner.read().await.auth.is_waiting_for_login
+    }
+
+    /// Get login wait started timestamp
+    pub async fn get_login_wait_started(&self) -> Option<u64> {
+        self.inner.read().await.auth.login_wait_started
     }
 
     // ==================== Config Operations ====================

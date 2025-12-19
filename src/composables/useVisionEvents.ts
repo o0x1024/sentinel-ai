@@ -125,6 +125,7 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
   const showTakeoverForm = ref(false)
   const takeoverMessage = ref('')
   const takeoverFields = ref<any[] | null>(null)
+  const loginTimeoutSeconds = ref<number | null>(null)  // Timeout for manual login
   const currentExecutionId = ref<string | null>(null)
 
   const multiAgent = ref<MultiAgentState>({
@@ -150,6 +151,7 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     showTakeoverForm.value = false
     takeoverMessage.value = ''
     takeoverFields.value = null
+    loginTimeoutSeconds.value = null
     currentExecutionId.value = null
     activity.value = []
     multiAgent.value = {
@@ -222,6 +224,7 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
         showTakeoverForm.value = true
         takeoverMessage.value = data?.message || ''
         takeoverFields.value = data?.fields || null
+        loginTimeoutSeconds.value = data?.timeout_seconds ?? null
         pushActivity({ type: 'takeover_request', ts: now, request_type: data?.request_type || 'login' })
         return
       }
@@ -230,6 +233,18 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
         showTakeoverForm.value = false
         takeoverMessage.value = ''
         takeoverFields.value = null
+        loginTimeoutSeconds.value = null
+        return
+      }
+
+      case 'login_wait_status': {
+        // Update timeout remaining if provided
+        if (data?.waiting === false) {
+          showTakeoverForm.value = false
+          loginTimeoutSeconds.value = null
+        } else if (data?.remaining_seconds !== undefined) {
+          loginTimeoutSeconds.value = data.remaining_seconds
+        }
         return
       }
 
@@ -449,6 +464,7 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     showTakeoverForm,
     takeoverMessage,
     takeoverFields,
+    loginTimeoutSeconds,
     currentExecutionId,
     hasHistory,
     resetstate,

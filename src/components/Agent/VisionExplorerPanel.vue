@@ -18,9 +18,18 @@
 
     <!-- Login Takeover Form - only show if not yet submitted in this session -->
     <div v-if="showTakeoverForm && !credentialsSubmitted" class="p-3 bg-warning/10 border-b border-warning/30">
-      <div class="flex items-center gap-2 text-sm text-warning font-medium mb-2">
-        <i class="fas fa-key"></i>
-        <span>{{ takeoverMessage || t('agent.loginPageDetected') }}</span>
+      <div class="flex items-center justify-between text-sm text-warning font-medium mb-2">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-key"></i>
+          <span>{{ takeoverMessage || t('agent.loginPageDetected') }}</span>
+        </div>
+        <!-- Timeout countdown -->
+        <div v-if="loginTimeoutRemaining !== null && loginTimeoutRemaining > 0" 
+             class="text-xs bg-warning/20 px-2 py-1 rounded"
+             :class="{ 'animate-pulse': loginTimeoutRemaining <= 30 }">
+          <i class="fas fa-clock mr-1"></i>
+          {{ formatTimeRemaining(loginTimeoutRemaining) }}
+        </div>
       </div>
       
       <div class="space-y-2">
@@ -339,7 +348,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { VisionStep, VisionCoverage, VisionPlan, VisionProgress, MultiAgentState, WorkerProgress, VisionActivityEvent } from '@/composables/useVisionEvents'
@@ -359,6 +368,7 @@ const props = defineProps<{
   showTakeoverForm?: boolean
   takeoverMessage?: string
   takeoverFields?: any[]
+  loginTimeoutSeconds?: number | null  // Timeout in seconds for manual login
   executionId?: string | null
   // Multi-Agent props
   multiAgent?: MultiAgentState | null
@@ -414,6 +424,20 @@ const isSkippingLogin = ref(false)
 const credentials = ref<Record<string, string>>({})
 const credentialsSubmitted = ref(false) // Track if credentials were submitted in this session
 
+// Login timeout state
+const loginTimeoutRemaining = ref<number | null>(null)
+let loginTimeoutInterval: ReturnType<typeof setInterval> | null = null
+
+// Format remaining time as "Xm Xs" or "Xs"
+const formatTimeRemaining = (seconds: number): string => {
+  if (seconds >= 60) {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}m ${secs}s`
+  }
+  return `${seconds}s`
+}
+
 // User message state
 const userMessage = ref('')
 const isSendingMessage = ref(false)
@@ -426,6 +450,38 @@ watch(
   ([show]) => {
     if (show) credentialsSubmitted.value = false
   }
+)
+
+// Start/stop login timeout countdown when takeoverForm is shown/hidden
+watch(
+  () => [props.showTakeoverForm, props.loginTimeoutSeconds],
+  ([show, timeout]) => {
+    // Clear any existing interval
+    if (loginTimeoutInterval) {
+      clearInterval(loginTimeoutInterval)
+      loginTimeoutInterval = null
+    }
+    
+    if (show && timeout && typeof timeout === 'number' && timeout > 0) {
+      // Start countdown
+      loginTimeoutRemaining.value = timeout
+      loginTimeoutInterval = setInterval(() => {
+        if (loginTimeoutRemaining.value !== null && loginTimeoutRemaining.value > 0) {
+          loginTimeoutRemaining.value -= 1
+        } else {
+          // Timeout reached, clear interval
+          if (loginTimeoutInterval) {
+            clearInterval(loginTimeoutInterval)
+            loginTimeoutInterval = null
+          }
+        }
+      }, 1000)
+    } else {
+      // Reset countdown
+      loginTimeoutRemaining.value = null
+    }
+  },
+  { immediate: true }
 )
 
 // Initialize credentials when fields change
@@ -737,6 +793,14 @@ watch(() => props.steps.length, async () => {
     if (stepsContainer.value) {
         stepsContainer.value.scrollTop = stepsContainer.value.scrollHeight
     }
+})
+
+// Cleanup timer on unmount
+onUnmounted(() => {
+  if (loginTimeoutInterval) {
+    clearInterval(loginTimeoutInterval)
+    loginTimeoutInterval = null
+  }
 })
 </script>
 

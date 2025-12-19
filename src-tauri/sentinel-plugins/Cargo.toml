@@ -6,15 +6,15 @@ description = "Built-in security scanning plugins for Sentinel AI passive scanne
 authors = ["Sentinel AI Team"]
 
 [dependencies]
-# Deno Core for plugin execution
-deno_core = "0.376.0"
+# Deno Core and extensions for plugin execution
+# deno_core 0.373.0 is required for compatibility with deno_web/deno_fetch
+deno_core = "0.373.0"
 deno_ast = { version = "0.51.0", features = ["transpiling"] }
 deno_error = "0.7.0"
 
-# Deno Web Extensions (Web APIs)
+# Deno extensions for native Web APIs (TextEncoder, URL, console, Headers, etc.)
 deno_webidl = "0.223.0"
 deno_web = "0.254.0"
-deno_fetch = "0.247.0"
 
 anyhow = "1.0"
 

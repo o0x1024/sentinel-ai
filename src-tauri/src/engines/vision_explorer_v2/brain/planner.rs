@@ -125,6 +125,23 @@ impl PlannerAgent {
                         action.action_type,
                         action.selector
                     );
+
+                    // Remove the action from possible_actions to prevent infinite loop
+                    // If we execute an action and the page fingerprint doesn't change,
+                    // we don't want to execute the same action again.
+                    {
+                        let mut graph = self.graph.write().await;
+                        if let Some(node) = graph.get_node_mut(&current_id) {
+                            if !node.possible_actions.is_empty() {
+                                node.possible_actions.remove(0);
+                                log::debug!(
+                                    "Removed executed action, {} actions remaining",
+                                    node.possible_actions.len()
+                                );
+                            }
+                        }
+                    }
+
                     return Ok(Some(Event::TaskAssigned {
                         agent_id: "navigator_1".to_string(),
                         task_id: uuid::Uuid::new_v4().to_string(),
@@ -132,8 +149,17 @@ impl PlannerAgent {
                         payload: Some(serde_json::to_value(&action)?),
                     }));
                 } else {
-                    log::info!("No actions available on node {}.", current_id);
-                    // TODO: Mark as Visited/Exhausted and Backtrack
+                    log::info!(
+                        "No actions available on node {}, marking as Visited.",
+                        current_id
+                    );
+                    // Mark as Visited/Exhausted and allow backtracking
+                    {
+                        let mut graph = self.graph.write().await;
+                        if let Some(node) = graph.get_node_mut(&current_id) {
+                            node.status = ExplorationStatus::Visited;
+                        }
+                    }
                 }
             }
         }

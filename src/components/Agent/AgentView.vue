@@ -113,6 +113,7 @@
                :show-takeover-form="visionEvents.showTakeoverForm.value"
                :takeover-message="visionEvents.takeoverMessage.value"
                :takeover-fields="visionEvents.takeoverFields.value"
+               :login-timeout-seconds="visionEvents.loginTimeoutSeconds.value"
                :execution-id="visionEvents.currentExecutionId.value"
                class="h-full border-0 rounded-none bg-transparent"
                @close="visionEvents.close()"

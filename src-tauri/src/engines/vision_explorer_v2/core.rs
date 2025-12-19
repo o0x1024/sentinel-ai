@@ -39,6 +39,10 @@ pub enum Event {
     },
     /// User chose to skip login
     SkipLogin,
+    /// User manually completed login (via browser window)
+    ManualLoginComplete,
+    /// Login wait timeout expired - LLM should attempt auto-login
+    LoginTimeout { url: String },
     /// System log/status update
     Log { level: String, message: String },
     /// Stop signal

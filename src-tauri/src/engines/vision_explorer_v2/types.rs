@@ -19,8 +19,19 @@ pub struct VisionExplorerV2Config {
     /// Headless mode
     pub headless: bool,
 
+    /// Login timeout in seconds.
+    /// When a login page is detected, the system will wait for this duration
+    /// for user to manually login. After timeout, LLM will attempt auto-login.
+    /// Default: 120 seconds (2 minutes)
+    #[serde(default = "default_login_timeout_seconds")]
+    pub login_timeout_seconds: u64,
+
     /// AI Configuration
     pub ai_config: AIConfig,
+}
+
+fn default_login_timeout_seconds() -> u64 {
+    120
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +100,7 @@ impl Default for VisionExplorerV2Config {
             max_steps: 100,
             user_agent: None,
             headless: false,
+            login_timeout_seconds: 120, // 2 minutes
             ai_config: AIConfig {
                 fast_model_id: "claude-3-haiku".to_string(),
                 vision_model_id: "claude-3-sonnet".to_string(),

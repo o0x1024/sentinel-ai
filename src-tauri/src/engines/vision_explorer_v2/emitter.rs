@@ -314,11 +314,17 @@ impl V2MessageEmitter {
         self.emit_v2_event("complete", &payload);
     }
 
-    /// Emit login takeover request
+    /// Emit login takeover request with timeout info
     pub fn emit_takeover_request(&self, message: &str) {
+        self.emit_takeover_request_with_timeout(message, None);
+    }
+
+    /// Emit login takeover request with timeout info
+    pub fn emit_takeover_request_with_timeout(&self, message: &str, timeout_seconds: Option<u64>) {
         let payload = serde_json::json!({
             "execution_id": self.execution_id,
             "message": message,
+            "timeout_seconds": timeout_seconds,
             "fields": [
                 {"id": "username", "label": "Username", "field_type": "text", "required": true},
                 {"id": "password", "label": "Password", "field_type": "password", "required": true}
@@ -331,6 +337,28 @@ impl V2MessageEmitter {
 
         // Also emit as V2 event
         self.emit_v2_event("takeover_request", &payload);
+    }
+
+    /// Emit login wait status update
+    pub fn emit_login_wait_status(
+        &self,
+        waiting: bool,
+        remaining_seconds: Option<u64>,
+        message: &str,
+    ) {
+        let payload = serde_json::json!({
+            "execution_id": self.execution_id,
+            "waiting": waiting,
+            "remaining_seconds": remaining_seconds,
+            "message": message
+        });
+
+        if let Err(e) = self.app_handle.emit("vision:login_wait_status", &payload) {
+            debug!("Failed to emit vision:login_wait_status: {}", e);
+        }
+
+        // Also emit as V2 event
+        self.emit_v2_event("login_wait_status", &payload);
     }
 
     /// Emit credentials received confirmation

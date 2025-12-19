@@ -3,6 +3,7 @@
 //! 提供 JavaScript 插件可以调用的 Rust 函数，用于：
 //! - 发送漏洞发现 (emit_finding)
 //! - 日志输出 (log)
+//! - HTTP 请求 (fetch)
 
 use deno_core::{extension, op2, OpState};
 use serde::{Deserialize, Serialize};
@@ -214,7 +215,7 @@ fn parse_confidence(s: &str) -> Confidence {
 
 extension!(
     sentinel_plugin_ext,
-    ops = [op_emit_finding, op_plugin_log, op_fetch, op_plugin_return],
+    ops = [op_emit_finding, op_plugin_log, op_plugin_return, op_fetch],
     state = |state| {
         state.put(PluginContext::new());
     }
@@ -284,19 +285,22 @@ pub struct FetchResponse {
 /// Op: HTTP fetch (网络请求)
 #[op2(async)]
 #[serde]
-async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>) -> FetchResponse {
-    info!("[Plugin] Fetching URL: {}", url);
-
+async fn op_fetch(
+    #[string] url: String,
+    #[serde] options: Option<FetchOptions>,
+) -> FetchResponse {
+    debug!("[Plugin] Fetching URL: {}", url);
+    
     let opts = options.unwrap_or_else(|| FetchOptions {
         method: "GET".to_string(),
         headers: std::collections::HashMap::new(),
         body: None,
         timeout: Some(30000), // 30s default
     });
-
+    
     let method = opts.method.to_uppercase();
     let timeout_ms = opts.timeout.unwrap_or(30000);
-
+    
     // Build reqwest client
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(timeout_ms))
@@ -314,7 +318,7 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
             };
         }
     };
-
+    
     // Build request
     let mut req_builder = match method.as_str() {
         "GET" => client.get(&url),
@@ -325,17 +329,17 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         "HEAD" => client.head(&url),
         _ => client.get(&url),
     };
-
+    
     // Add headers
     for (key, value) in opts.headers {
         req_builder = req_builder.header(&key, &value);
     }
-
+    
     // Add body if present
     if let Some(body) = opts.body {
         req_builder = req_builder.body(body);
     }
-
+    
     // Execute request
     let response = match req_builder.send().await {
         Ok(r) => r,
@@ -350,10 +354,10 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
             };
         }
     };
-
+    
     let status = response.status().as_u16();
     let ok = response.status().is_success();
-
+    
     // Extract headers
     let mut headers = std::collections::HashMap::new();
     for (key, value) in response.headers() {
@@ -361,7 +365,7 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
             headers.insert(key.to_string(), v.to_string());
         }
     }
-
+    
     // Read body
     let body = match response.text().await {
         Ok(b) => b,
@@ -376,9 +380,9 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
             };
         }
     };
-
+    
     debug!("[Plugin] Fetch completed: {} (status: {})", url, status);
-
+    
     FetchResponse {
         success: true,
         status,

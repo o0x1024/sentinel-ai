@@ -15,6 +15,7 @@ enum PluginCommand {
 /// 维护一个长期运行的专用线程和 V8 Runtime，避免重复创建开销。
 pub struct PluginExecutor {
     sender: mpsc::Sender<PluginCommand>,
+    #[allow(dead_code)]
     plugin_id: String,
 }
 

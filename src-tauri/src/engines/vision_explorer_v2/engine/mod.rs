@@ -300,12 +300,22 @@ impl V2Engine {
 
                 Event::LoginTakeoverRequest { url, fields } => {
                     log::info!("V2Engine: Login takeover requested for {}", url);
-                    if let Some(ref emitter) = self.emitter {
-                        emitter.emit_takeover_request(&format!("Login required at {}", url));
-                    }
-                    // This is typically emitted by AuthAgent when login is needed
-                    // The emitter/frontend handler should pick this up
+                    // Start login wait
                     self.blackboard.set_login_url(url.clone()).await;
+                    self.blackboard.start_login_wait().await;
+
+                    // Notify frontend with timeout info
+                    if let Some(ref emitter) = self.emitter {
+                        emitter.emit_takeover_request_with_timeout(
+                            &format!("Login required at {}", url),
+                            Some(self.config.login_timeout_seconds),
+                        );
+                        emitter.emit_login_wait_status(
+                            true,
+                            Some(self.config.login_timeout_seconds),
+                            "Waiting for user login...",
+                        );
+                    }
                 }
 
                 Event::SkipLogin => {
@@ -313,6 +323,45 @@ impl V2Engine {
                     self.blackboard
                         .set_kv("skip_login".to_string(), serde_json::json!(true))
                         .await;
+                    // Clear login wait state
+                    self.blackboard.clear_login_wait().await;
+                    if let Some(ref emitter) = self.emitter {
+                        emitter.emit_login_wait_status(false, None, "Login skipped by user");
+                    }
+                }
+
+                Event::ManualLoginComplete => {
+                    log::info!("V2Engine: User signaled manual login complete");
+                    // Mark as authenticated
+                    self.blackboard.set_authenticated(true).await;
+                    // Clear login wait state
+                    self.blackboard.clear_login_wait().await;
+                    if let Some(ref emitter) = self.emitter {
+                        emitter.emit_login_wait_status(false, None, "Manual login completed");
+                        emitter.emit_credentials_received("manual_login_user");
+                    }
+                    // The next iteration will re-capture context and continue exploration
+                }
+
+                Event::LoginTimeout { url } => {
+                    log::info!("V2Engine: Login timeout expired for {}", url);
+                    // Clear login wait state
+                    self.blackboard.clear_login_wait().await;
+                    // Set a flag to indicate LLM should attempt auto-login
+                    self.blackboard
+                        .set_kv(
+                            "login_timeout_triggered".to_string(),
+                            serde_json::json!(true),
+                        )
+                        .await;
+                    if let Some(ref emitter) = self.emitter {
+                        emitter.emit_login_wait_status(
+                            false,
+                            None,
+                            "Login timeout - attempting auto-login",
+                        );
+                    }
+                    // The AuthAgent will detect this flag and attempt auto-login using LLM
                 }
 
                 Event::TaskAssigned { agent_id, .. } => {
@@ -450,6 +499,52 @@ impl V2Engine {
                 Event::NodeDiscovered { .. } => {
                     // Could log or track discovery
                 }
+            }
+
+            // Check for login timeout
+            if self.blackboard.is_waiting_for_login().await {
+                if let Some(started) = self.blackboard.get_login_wait_started().await {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    let elapsed_seconds = (now - started) / 1000;
+
+                    if elapsed_seconds >= self.config.login_timeout_seconds {
+                        log::info!("Login wait timeout reached ({} seconds)", elapsed_seconds);
+                        // Get login URL for the timeout event
+                        let login_url = if let Some(url) = self.blackboard.get_kv("login_url").await
+                        {
+                            url.as_str().unwrap_or("unknown").to_string()
+                        } else {
+                            "unknown".to_string()
+                        };
+
+                        // Trigger timeout event
+                        self.event_tx
+                            .send(Event::LoginTimeout { url: login_url })
+                            .await?;
+                        continue; // Process the timeout event in next iteration
+                    } else {
+                        // Still waiting, emit remaining time update
+                        let remaining = self.config.login_timeout_seconds - elapsed_seconds;
+                        if elapsed_seconds % 10 == 0 {
+                            // Update every 10 seconds
+                            if let Some(ref emitter) = self.emitter {
+                                emitter.emit_login_wait_status(
+                                    true,
+                                    Some(remaining),
+                                    &format!(
+                                        "Waiting for login... {} seconds remaining",
+                                        remaining
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+                // While waiting for login, don't ask planner for next step
+                continue;
             }
 
             // Ask planner for next task

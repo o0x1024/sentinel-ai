@@ -4,10 +4,13 @@
 //! - ESM/TypeScript 模块加载
 //! - 插件加载与热重载
 //! - 全权限沙箱（--allow-all）
+//! - 原生 Web API 支持（via deno_web/deno_webidl/deno_fetch）
+//!
+//! 基于 deno_core 0.373.0 + deno_web 0.254.0 + deno_fetch 0.247.0
 
 use crate::error::{PluginError, Result};
 use crate::plugin_ops::{sentinel_plugin_ext, PluginContext};
-use crate::types::{Finding, PluginMetadata, RequestContext, ResponseContext};
+use crate::types::{Finding, PluginMetadata};
 use deno_ast::{
     EmitOptions, MediaType, ParseParams, SourceMapOption, TranspileModuleOptions, TranspileOptions,
 };
@@ -19,6 +22,7 @@ use deno_core::{
 use deno_error::JsErrorBox;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use tracing::{debug, info};
 
 /// 插件模块加载器
@@ -178,14 +182,27 @@ impl PluginEngine {
     pub fn new() -> Result<Self> {
         let loader = Rc::new(PluginModuleLoader::new());
 
-        // 创建 Deno Runtime，注入自定义 extension 和模块加载器
+        // Create extensions for native Web API support
+        // Order matters: deno_webidl -> deno_web -> sentinel_plugin_ext
+        let extensions = vec![
+            // deno_webidl: WebIDL bindings (required by deno_web)
+            deno_webidl::deno_webidl::init(),
+            // deno_web: TextEncoder, TextDecoder, URL, URLSearchParams, console, timers, Headers, etc.
+            deno_web::deno_web::init(
+                Arc::new(deno_web::BlobStore::default()),
+                None, // maybe_location
+                deno_web::InMemoryBroadcastChannel::default(),
+            ),
+            // sentinel_plugin_ext: custom ops for plugin system (emitFinding, log, fetch)
+            sentinel_plugin_ext::init(),
+        ];
+
+        // Create Deno Runtime with extensions and module loader
         let runtime = JsRuntime::new(RuntimeOptions {
             module_loader: Some(loader.clone()),
-            extensions: vec![sentinel_plugin_ext::init()],
+            extensions,
             ..Default::default()
         });
-
-        // info!("PluginEngine initialized with ESM/TS support via ModuleLoader");
 
         Ok(Self {
             runtime,
@@ -357,9 +374,10 @@ if (typeof execute === 'function') {
             PluginError::Load(format!("Module evaluation error {}: {:?}", plugin_id, e))
         })?;
 
-        // 注入 Sentinel 全局对象和必要的运行时 polyfill（如 TextDecoder、URL 等），提供插件 API
+        // Inject Sentinel plugin API and fetch polyfill
+        // Note: deno_web provides TextEncoder, TextDecoder, URL, URLSearchParams, console, timers, Headers, etc.
         let init_script = r#"
-            // Sentinel plugin API
+            // Sentinel plugin API for vulnerability reporting
             globalThis.Sentinel = {
                 emitFinding: function(finding) {
                     Deno.core.ops.op_emit_finding(finding);
@@ -369,334 +387,40 @@ if (typeof execute === 'function') {
                 }
             };
 
-            // Polyfill TextDecoder / TextEncoder for plugin environment
-            (function () {
-                if (typeof TextDecoder === "undefined") {
-                    class SimpleTextDecoder {
-                        constructor(label = "utf-8", options) {
-                            this.encoding = label.toLowerCase();
-                        }
-                        decode(input) {
-                            if (input == null) {
-                                return "";
-                            }
-                            if (input instanceof Uint8Array) {
-                                let s = "";
-                                for (let i = 0; i < input.length; i++) {
-                                    s += String.fromCharCode(input[i]);
-                                }
-                                try {
-                                    // 尝试按 UTF-8 解码
-                                    return decodeURIComponent(escape(s));
-                                } catch (_) {
-                                    return s;
-                                }
-                            }
-                            return String(input);
-                        }
+            // Fetch API polyfill using custom op
+            globalThis.fetch = async function(input, init = {}) {
+                const url = typeof input === 'string' ? input : input.url;
+                const method = init.method || (input.method || 'GET');
+                const headers = {};
+                
+                if (init.headers) {
+                    if (init.headers instanceof Headers) {
+                        init.headers.forEach((v, k) => headers[k] = v);
+                    } else if (Array.isArray(init.headers)) {
+                        init.headers.forEach(([k, v]) => headers[k] = v);
+                    } else {
+                        Object.assign(headers, init.headers);
                     }
-                    globalThis.TextDecoder = SimpleTextDecoder;
                 }
-
-                if (typeof TextEncoder === "undefined") {
-                    class SimpleTextEncoder {
-                        constructor() {}
-                        encode(input) {
-                            input = input == null ? "" : String(input);
-                            const utf8 = unescape(encodeURIComponent(input));
-                            const arr = new Uint8Array(utf8.length);
-                            for (let i = 0; i < utf8.length; i++) {
-                                arr[i] = utf8.charCodeAt(i);
-                            }
-                            return arr;
-                        }
-                    }
-                    globalThis.TextEncoder = SimpleTextEncoder;
+                
+                const body = init.body || null;
+                const timeout = init.timeout || 30000; // default 30s
+                const result = await Deno.core.ops.op_fetch(url, { method, headers, body, timeout });
+                
+                if (!result.success) {
+                    throw new Error(result.error || 'Fetch failed');
                 }
-
-                // Minimal URLSearchParams polyfill
-                if (typeof URLSearchParams === "undefined") {
-                    class SimpleURLSearchParams {
-                        constructor(init) {
-                            this._params = [];
-                            if (!init) return;
-                            let query = typeof init === "string" ? init : "";
-                            if (query.startsWith("?")) {
-                                query = query.substring(1);
-                            }
-                            if (query.length === 0) return;
-                            const pairs = query.split("&");
-                            for (const pair of pairs) {
-                                if (!pair) continue;
-                                const [k, v = ""] = pair.split("=");
-                                const key = decodeURIComponent(k.replace(/\+/g, " "));
-                                const value = decodeURIComponent(v.replace(/\+/g, " "));
-                                this._params.push([key, value]);
-                            }
-                        }
-                        append(name, value) {
-                            this._params.push([String(name), String(value)]);
-                        }
-                        delete(name) {
-                            name = String(name);
-                            this._params = this._params.filter(([k]) => k !== name);
-                        }
-                        get(name) {
-                            name = String(name);
-                            for (const [k, v] of this._params) {
-                                if (k === name) return v;
-                            }
-                            return null;
-                        }
-                        getAll(name) {
-                            name = String(name);
-                            const res = [];
-                            for (const [k, v] of this._params) {
-                                if (k === name) res.push(v);
-                            }
-                            return res;
-                        }
-                        has(name) {
-                            name = String(name);
-                            for (const [k] of this._params) {
-                                if (k === name) return true;
-                            }
-                            return false;
-                        }
-                        set(name, value) {
-                            name = String(name);
-                            value = String(value);
-                            let found = false;
-                            this._params = this._params.filter(([k, v]) => {
-                                if (k === name) {
-                                    if (!found) {
-                                        found = true;
-                                        return true;
-                                    }
-                                    return false;
-                                }
-                                return true;
-                            });
-                            if (found) {
-                                for (let i = 0; i < this._params.length; i++) {
-                                    if (this._params[i][0] === name) {
-                                        this._params[i][1] = value;
-                                        break;
-                                    }
-                                }
-                            } else {
-                                this._params.push([name, value]);
-                            }
-                        }
-                        sort() {
-                            this._params.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
-                        }
-                        toString() {
-                            return this._params
-                                .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
-                                .join("&");
-                        }
-                        forEach(callback, thisArg) {
-                            for (const [k, v] of this._params) {
-                                callback.call(thisArg, v, k, this);
-                            }
-                        }
-                        // Iterator methods (ES6)
-                        entries() {
-                            return this._params[Symbol.iterator]();
-                        }
-                        keys() {
-                            return this._params.map(([k]) => k)[Symbol.iterator]();
-                        }
-                        values() {
-                            return this._params.map(([, v]) => v)[Symbol.iterator]();
-                        }
-                        [Symbol.iterator]() {
-                            return this._params[Symbol.iterator]();
-                        }
-                        get size() {
-                            return this._params.length;
-                        }
-                    }
-                    globalThis.URLSearchParams = SimpleURLSearchParams;
-                }
-
-                // Minimal URL polyfill (HTTP/HTTPS only, enough for plugin parsing)
-                if (typeof URL === "undefined") {
-                    class SimpleURL {
-                        constructor(input, base) {
-                            let url = String(input);
-                            if (base) {
-                                // Very small base support: if input is relative, prepend base
-                                if (!/^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(url)) {
-                                    const b = String(base);
-                                    if (b.endsWith("/") && !url.startsWith("/")) {
-                                        url = b + url;
-                                    } else {
-                                        url = b.replace(/\/+$/, "") + "/" + url.replace(/^\/+/, "");
-                                    }
-                                }
-                            }
-                            this._originalHref = url;
-                            const m = url.match(/^(https?:)(\/\/([^\/?#]*))?([^?#]*)(\?[^#]*)?(#.*)?$/i);
-                            this.protocol = m && m[1] ? m[1].toLowerCase() : "";
-                            this.host = m && m[3] ? m[3] : "";
-                            const hostParts = this.host.split(":");
-                            this.hostname = hostParts[0] || "";
-                            this.port = hostParts[1] || "";
-                            this.pathname = m && m[4] ? (m[4] || "/") : "/";
-                            this.hash = m && m[6] ? m[6] : "";
-                            this.origin = this.protocol && this.host ? this.protocol + "//" + this.host : "";
-                            const searchWithoutQ = (m && m[5]) ? (m[5].startsWith("?") ? m[5].substring(1) : m[5]) : "";
-                            this.searchParams = new globalThis.URLSearchParams(searchWithoutQ);
-                        }
-                        get search() {
-                            const s = this.searchParams.toString();
-                            return s ? "?" + s : "";
-                        }
-                        get href() {
-                            return this.origin + this.pathname + this.search + this.hash;
-                        }
-                        toString() {
-                            return this.href;
-                        }
-                    }
-                    globalThis.URL = SimpleURL;
-                }
-
-                // setTimeout/clearTimeout polyfill
-                if (typeof setTimeout === "undefined") {
-                    const _timers = new Map();
-                    let _timerId = 0;
-                    globalThis.setTimeout = function(callback, delay = 0, ...args) {
-                        const id = ++_timerId;
-                        const startTime = Date.now();
-                        _timers.set(id, { callback, delay, args, startTime, cleared: false });
-                        // Use queueMicrotask for async execution simulation
-                        (async () => {
-                            const timer = _timers.get(id);
-                            if (timer && !timer.cleared) {
-                                // Simple delay simulation - not accurate but functional
-                                const elapsed = Date.now() - timer.startTime;
-                                if (elapsed < timer.delay) {
-                                    await new Promise(r => queueMicrotask(r));
-                                }
-                                if (!timer.cleared) {
-                                    timer.callback(...timer.args);
-                                }
-                                _timers.delete(id);
-                            }
-                        })();
-                        return id;
-                    };
-                    globalThis.clearTimeout = function(id) {
-                        const timer = _timers.get(id);
-                        if (timer) {
-                            timer.cleared = true;
-                            _timers.delete(id);
-                        }
-                    };
-                    globalThis.setInterval = function(callback, delay = 0, ...args) {
-                        // Simplified: just run once like setTimeout
-                        return globalThis.setTimeout(callback, delay, ...args);
-                    };
-                    globalThis.clearInterval = globalThis.clearTimeout;
-                }
-
-                // AbortController polyfill
-                if (typeof AbortController === "undefined") {
-                    class SimpleAbortSignal {
-                        constructor() {
-                            this.aborted = false;
-                            this.reason = undefined;
-                            this._listeners = [];
-                        }
-                        addEventListener(type, listener) {
-                            if (type === 'abort') this._listeners.push(listener);
-                        }
-                        removeEventListener(type, listener) {
-                            if (type === 'abort') {
-                                this._listeners = this._listeners.filter(l => l !== listener);
-                            }
-                        }
-                        throwIfAborted() {
-                            if (this.aborted) throw this.reason;
-                        }
-                    }
-                    class SimpleAbortController {
-                        constructor() {
-                            this.signal = new SimpleAbortSignal();
-                        }
-                        abort(reason) {
-                            if (this.signal.aborted) return;
-                            this.signal.aborted = true;
-                            this.signal.reason = reason || new Error('AbortError');
-                            for (const listener of this.signal._listeners) {
-                                try { listener({ type: 'abort', target: this.signal }); } catch (_) {}
-                            }
-                        }
-                    }
-                    globalThis.AbortController = SimpleAbortController;
-                    globalThis.AbortSignal = SimpleAbortSignal;
-                }
-
-                // Fetch API polyfill using Deno.core.ops.op_fetch
-                if (typeof fetch === "undefined") {
-                    class SimpleHeaders {
-                        constructor(map) {
-                            this._map = map || {};
-                        }
-                        get(name) {
-                            const target = String(name).toLowerCase();
-                            for (const [k, v] of Object.entries(this._map)) {
-                                if (String(k).toLowerCase() === target) return String(v);
-                            }
-                            return undefined;
-                        }
-                        forEach(callback, thisArg) {
-                            for (const [k, v] of Object.entries(this._map)) {
-                                callback.call(thisArg, String(v), k, this);
-                            }
-                        }
-                        entries() { return Object.entries(this._map)[Symbol.iterator](); }
-                        keys() { return Object.keys(this._map)[Symbol.iterator](); }
-                        values() { return Object.values(this._map)[Symbol.iterator](); }
-                        [Symbol.iterator]() { return Object.entries(this._map)[Symbol.iterator](); }
-                    }
-
-                    globalThis.fetch = async function(url, options = {}) {
-                        let headersObj = {};
-                        const h = options.headers;
-                        if (h && typeof h.forEach === "function") {
-                            h.forEach((value, key) => { headersObj[String(key)] = String(value); });
-                        } else if (h && typeof h === "object") {
-                            headersObj = h;
-                        }
-
-                        const fetchOptions = {
-                            method: options.method || "GET",
-                            headers: headersObj,
-                            body: options.body || null,
-                            timeout: options.timeout || 30000,
-                        };
-
-                        const response = await Deno.core.ops.op_fetch(url, fetchOptions);
-
-                        if (!response.success || response.error) {
-                            throw new Error(`Fetch failed: ${response.error || 'Unknown error'}`);
-                        }
-
-                        return {
-                            ok: response.ok,
-                            status: response.status,
-                            headers: new SimpleHeaders(response.headers || {}),
-                            text: async () => response.body,
-                            json: async () => JSON.parse(response.body),
-                            body: response.body,
-                        };
-                    };
-                }
-            })();
+                
+                return {
+                    ok: result.ok,
+                    status: result.status,
+                    statusText: result.ok ? 'OK' : 'Error',
+                    headers: new Headers(Object.entries(result.headers)),
+                    text: async () => result.body,
+                    json: async () => JSON.parse(result.body),
+                    arrayBuffer: async () => new TextEncoder().encode(result.body).buffer,
+                };
+            };
         "#
         .to_string();
 
