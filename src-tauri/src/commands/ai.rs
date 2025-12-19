@@ -2605,6 +2605,12 @@ pub struct AgentExecuteConfig {
     pub attachments: Option<serde_json::Value>,
     #[serde(default)]
     pub tool_config: Option<crate::agents::ToolConfig>,
+    /// Traffic context to prepend to the task (not shown in user message display)
+    #[serde(default)]
+    pub traffic_context: Option<String>,
+    /// Display content for user message (if different from full task)
+    #[serde(default)]
+    pub display_content: Option<String>,
     // 以下字段用于兼容前端，但在此函数中不使用
     #[serde(default)]
     pub max_iterations: Option<usize>,
@@ -2644,6 +2650,8 @@ pub async fn agent_execute(
         enable_web_search: Some(false),
         attachments: None,
         tool_config: None,
+        traffic_context: None,
+        display_content: None,
         max_iterations: None,
         timeout_secs: None,
         force_todos: None,
@@ -2716,6 +2724,7 @@ pub async fn agent_execute(
     let conv_id = conversation_id.clone();
     let msg_id = message_id.clone();
     let task_clone = task.clone();
+    let display_content_clone = config.display_content.clone();
     // 从数据库直接读取系统提示词，不依赖前端传递
     let mut base_system_prompt: Option<String> = None;
 
@@ -2770,17 +2779,19 @@ pub async fn agent_execute(
             }
 
             // 保存用户消息
+            // Use display_content for UI display, but save full task to database
             use sentinel_core::models::database as core_db;
             let user_msg_id = Uuid::new_v4().to_string();
+            let display_text = display_content_clone.as_ref().unwrap_or(&task_clone);
             let user_msg = core_db::AiMessage {
                 id: user_msg_id.clone(),
                 conversation_id: conv_id.clone(),
                 role: "user".to_string(),
-                content: task_clone.clone(),
+                content: display_text.clone(),
                 metadata: attachments
                     .as_ref()
                     .and_then(|v| serde_json::to_string(v).ok()),
-                token_count: Some(task_clone.len() as i32),
+                token_count: Some(display_text.len() as i32),
                 cost: None,
                 tool_calls: None,
                 attachments: attachments
@@ -2794,13 +2805,13 @@ pub async fn agent_execute(
             if let Err(e) = db.create_ai_message(&user_msg).await {
                 tracing::warn!("Failed to save user message: {}", e);
             } else {
-                // 发送用户消息到前端
+                // 发送用户消息到前端 (use display_text for UI)
                 let _ = app_handle.emit(
                     "agent:user_message",
                     &serde_json::json!({
                         "execution_id": conv_id,
                         "message_id": user_msg_id,
-                        "content": task_clone,
+                        "content": display_text,
                         "timestamp": user_msg.timestamp.timestamp_millis(),
                     }),
                 );

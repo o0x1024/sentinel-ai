@@ -483,7 +483,7 @@ async fn execute_agent_with_tools(
                     );
                 }
                 StreamContent::ToolResult { id, result } => {
-                    tracing::info!("Tool result via rig-core: id={}", id);
+                    tracing::info!("Tool result via rig-core: id={}, result_preview={}", id, &result.chars().take(500).collect::<String>());
                     
                     // 将工具调用完整信息添加到收集器
                     if let Ok(mut pending_map) = pending.lock() {

@@ -135,19 +135,17 @@ pub fn run() {
                         button_state,
                         ..
                     } => {
+                        // Left click: show main window
                         if button == tauri::tray::MouseButton::Left
                             && button_state == tauri::tray::MouseButtonState::Up
                         {
                             let app = tray.app_handle();
                             if let Some(window) = app.get_webview_window("main") {
-                                if window.is_visible().unwrap_or(false) {
-                                    let _ = window.hide();
-                                } else {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                }
+                                let _ = window.show();
+                                let _ = window.set_focus();
                             }
                         }
+                        // Right click menu is handled automatically by .menu()
                     }
                     _ => {}
                 })
@@ -667,6 +665,7 @@ pub fn run() {
             passive_scan_commands::get_intercept_filter_rules,
             passive_scan_commands::remove_intercept_filter_rule,
             passive_scan_commands::update_intercept_filter_rule,
+            passive_scan_commands::update_runtime_filter_rules,
             // Proxifier commands
             proxifier_commands::get_proxifier_config,
             proxifier_commands::start_proxifier,
@@ -748,11 +747,16 @@ pub fn run() {
             tool_commands::vision_explorer_receive_credentials,
             tool_commands::vision_explorer_send_user_message,
             tool_commands::vision_explorer_skip_login,
+            tool_commands::vision_explorer_manual_login_complete,
             // Shell Tool commands
             tool_commands::init_shell_permission_handler,
             tool_commands::get_shell_tool_config,
             tool_commands::set_shell_tool_config,
             tool_commands::respond_shell_permission,
+            tool_commands::get_pending_shell_permissions,
+            // Agent config commands
+            tool_commands::get_agent_config,
+            tool_commands::save_agent_config,
             // MCP commands
             commands::mcp_commands::mcp_get_connections,
             commands::mcp_commands::mcp_get_connection_status,

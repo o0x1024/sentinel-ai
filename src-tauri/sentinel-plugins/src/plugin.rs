@@ -424,6 +424,11 @@ impl PluginManager {
                 query_params: HashMap::new(),
                 is_https: false,
                 timestamp: chrono::Utc::now(),
+                was_edited: false,
+                edited_method: None,
+                edited_url: None,
+                edited_headers: None,
+                edited_body: None,
             };
 
             (metadata, code, req_ctx)

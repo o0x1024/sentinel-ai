@@ -23,7 +23,7 @@
 3. **Global State (全局状态/黑板)**
 * **作用**：去重和汇总。所有 Agent 共享一个 Redis 或内存数据库，记录 `visited_urls`（已访问链接）和 `extracted_data`（提取的数据）。
 
-
+ 
 
 ---
 

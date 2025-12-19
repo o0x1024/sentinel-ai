@@ -14,6 +14,7 @@ export { default as ChatInput } from './ChatInput.vue'
 // 工具和进度组件
 export { default as ToolCallBlock } from './ToolCallBlock.vue'
 export { default as ProgressBlock } from './ProgressBlock.vue'
+export { default as ShellToolResult } from './ShellToolResult.vue'
 
 // Todos 组件
 export { default as TodoPanel } from './TodoPanel.vue'

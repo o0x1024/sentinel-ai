@@ -5,11 +5,13 @@
 
 use super::types::*;
 use crate::commands::passive_scan_commands::PassiveScanState;
+use crate::engines::vision_explorer::multi_agent::AuthSnapshot;
 use crate::services::mcp::McpService;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -158,6 +160,13 @@ pub struct ActiveOverlayInfo {
     pub dismiss_action: Option<String>,
 }
 
+/// Hover detection result for tracking revealed elements
+#[derive(Debug, Clone, Default)]
+pub struct HoverDetectionResult {
+    /// Number of newly revealed elements after hover
+    pub new_count: i64,
+}
+
 /// Truncate string to max chars
 fn truncate(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
@@ -177,7 +186,10 @@ pub struct BrowserTools {
 }
 
 impl BrowserTools {
-    pub fn new(mcp_service: Arc<McpService>, config: VisionExplorerConfig) -> Self {
+    pub fn new(mcp_service: Arc<McpService>, mut config: VisionExplorerConfig) -> Self {
+        // 确保 viewport 有效（如果为 0 则获取屏幕尺寸）
+        config.ensure_viewport();
+
         Self {
             mcp_service,
             config,
@@ -531,6 +543,17 @@ impl BrowserTools {
 
     /// 导航
     async fn navigate(&self, url: &str) -> Result<ActionResult> {
+        let url = url.trim();
+        let effective_url = if url.is_empty() {
+            warn!(
+                "Navigate called with empty url, falling back to target_url: {}",
+                self.config.target_url
+            );
+            self.config.target_url.as_str()
+        } else {
+            url
+        };
+
         // 动态获取代理配置：优先从运行中的被动扫描服务获取，否则使用配置中的静态值
         let effective_proxy = if let Some(ref state) = self.passive_scan_state {
             // 尝试从运行中的代理服务获取当前地址
@@ -548,7 +571,7 @@ impl BrowserTools {
 
         info!(
             "Navigating to {} with viewport {}x{}, headless: {}, proxy: {:?}",
-            url,
+            effective_url,
             self.config.viewport_width,
             self.config.viewport_height,
             self.config.headless,
@@ -556,7 +579,7 @@ impl BrowserTools {
         );
 
         let mut params = json!({
-            "url": url,
+            "url": effective_url,
             "width": self.config.viewport_width,
             "height": self.config.viewport_height,
             "headless": self.config.headless
@@ -766,10 +789,61 @@ impl BrowserTools {
     }
 
     /// 通过索引悬停元素（用于发现悬停菜单）
+    /// 增强版：优先使用 Playwright 原生 hover API 来激活 CSS :hover 伪类
+    /// 这对于依赖 CSS hover 状态的下拉菜单非常重要
     pub async fn hover_by_index(&self, index: u32) -> Result<ActionResult> {
-        info!("Hovering element by index: {}", index);
+        info!("Hovering element by index: {} (enhanced)", index);
 
-        // 使用 JavaScript 触发悬停事件
+        // 首先获取元素的坐标，用于 Playwright hover
+        let coords = self.get_element_coordinates(index).await?;
+
+        // 方法1：使用 Playwright 原生 hover（可以激活 CSS :hover 伪类）
+        if let Some(ref coord) = coords {
+            info!(
+                "Attempting Playwright native hover at ({}, {})",
+                coord.x, coord.y
+            );
+            match self
+                .call_playwright_tool(
+                    "playwright_hover",
+                    json!({
+                        "coordinate": [coord.x, coord.y]
+                    }),
+                )
+                .await
+            {
+                Ok(_) => {
+                    info!("Playwright native hover succeeded");
+                    // 等待动画和 DOM 更新
+                    sleep(Duration::from_millis(400)).await;
+
+                    // 检测是否触发了新元素
+                    let detection_result = self.detect_hover_revealed_elements(index).await?;
+                    if detection_result.new_count > 0 {
+                        info!(
+                            "Playwright hover revealed {} new elements",
+                            detection_result.new_count
+                        );
+                    }
+
+                    return Ok(ActionResult {
+                        success: true,
+                        error: None,
+                        screenshot: None,
+                        duration_ms: 0,
+                    });
+                }
+                Err(e) => {
+                    warn!(
+                        "Playwright native hover failed: {}, falling back to JS events",
+                        e
+                    );
+                }
+            }
+        }
+
+        // 方法2：回退到增强的 JavaScript 事件分发
+        info!("Using enhanced JS event dispatch for hover");
         let hover_script = format!(
             r#"(async function() {{
                 // 获取标注元素
@@ -780,61 +854,105 @@ impl BrowserTools {
                     return {{ success: false, error: 'Element not found at index {}' }};
                 }}
                 
-                // 记录悬停前的可见元素计数
-                const beforeCount = document.querySelectorAll(
-                    '[role="menu"], [role="listbox"], .dropdown-menu, .submenu, .tooltip, [aria-expanded="true"]'
-                ).length;
+                // 记录悬停前的可见元素选择器（更全面的检测）
+                const menuSelectors = [
+                    '[role="menu"]', '[role="listbox"]', '[role="menubar"]',
+                    '.dropdown-menu', '.submenu', '.tooltip', '.popover',
+                    '[aria-expanded="true"]', '.ant-dropdown', '.el-dropdown-menu',
+                    '.arco-dropdown', '.semi-dropdown', '.chakra-menu__menu-list',
+                    '.menu-content', '.nav-dropdown', '.sidebar-submenu',
+                    '[class*="dropdown"]', '[class*="popup"]', '[class*="popover"]',
+                    '[class*="submenu"]', '[class*="flyout"]'
+                ].join(', ');
+                
+                const beforeCount = document.querySelectorAll(menuSelectors).length;
                 
                 // 获取元素中心坐标
                 const rect = element.getBoundingClientRect();
                 const centerX = rect.left + rect.width / 2;
                 const centerY = rect.top + rect.height / 2;
                 
-                // 发送 mouseover 和 mouseenter 事件
-                const mouseoverEvent = new MouseEvent('mouseover', {{
+                // 模拟完整的鼠标悬停序列
+                const eventOptions = {{
                     bubbles: true,
                     cancelable: true,
                     view: window,
                     clientX: centerX,
-                    clientY: centerY
-                }});
+                    clientY: centerY,
+                    screenX: centerX,
+                    screenY: centerY
+                }};
                 
-                const mouseenterEvent = new MouseEvent('mouseenter', {{
-                    bubbles: false,
-                    cancelable: true,
-                    view: window,
-                    clientX: centerX,
-                    clientY: centerY
-                }});
+                // 1. pointerenter (for pointer events API)
+                try {{
+                    element.dispatchEvent(new PointerEvent('pointerenter', {{
+                        ...eventOptions,
+                        bubbles: false,
+                        pointerType: 'mouse'
+                    }}));
+                }} catch(e) {{}}
                 
-                element.dispatchEvent(mouseenterEvent);
-                element.dispatchEvent(mouseoverEvent);
+                // 2. pointerover
+                try {{
+                    element.dispatchEvent(new PointerEvent('pointerover', {{
+                        ...eventOptions,
+                        pointerType: 'mouse'
+                    }}));
+                }} catch(e) {{}}
                 
-                // 也触发 focus 事件（某些元素需要）
-                if (element.focus) {{
-                    element.focus();
+                // 3. mouseenter (不冒泡)
+                element.dispatchEvent(new MouseEvent('mouseenter', {{
+                    ...eventOptions,
+                    bubbles: false
+                }}));
+                
+                // 4. mouseover (冒泡)
+                element.dispatchEvent(new MouseEvent('mouseover', eventOptions));
+                
+                // 5. mousemove (某些框架需要)
+                element.dispatchEvent(new MouseEvent('mousemove', eventOptions));
+                
+                // 6. 尝试触发 focus（对于某些可聚焦元素）
+                if (element.focus && typeof element.focus === 'function') {{
+                    try {{ element.focus(); }} catch(e) {{}}
+                }}
+                
+                // 7. 对于某些框架，尝试点击然后悬停（用于汉堡菜单等）
+                const isToggleButton = element.matches('[class*="toggle"], [class*="hamburger"], [class*="menu-btn"], [class*="nav-trigger"], [aria-haspopup]');
+                if (isToggleButton) {{
+                    // 对于切换按钮，先尝试点击
+                    element.click();
+                    await new Promise(resolve => setTimeout(resolve, 200));
                 }}
                 
                 // 等待动画和 DOM 更新
-                await new Promise(resolve => setTimeout(resolve, 350));
+                await new Promise(resolve => setTimeout(resolve, 400));
                 
                 // 检测新出现的元素
-                const afterElements = document.querySelectorAll(
-                    '[role="menu"], [role="listbox"], .dropdown-menu, .submenu, .tooltip, [aria-expanded="true"]'
-                );
-                
-                const newCount = afterElements.length - beforeCount;
+                const afterCount = document.querySelectorAll(menuSelectors).length;
+                const newCount = afterCount - beforeCount;
                 
                 // 检测 aria-expanded 状态变化
                 const expanded = element.getAttribute('aria-expanded');
                 
+                // 检测是否有新的可见元素出现（通过 visibility/display 变化）
+                let visibilityChanges = 0;
+                document.querySelectorAll(menuSelectors).forEach(el => {{
+                    const style = window.getComputedStyle(el);
+                    if (style.visibility === 'visible' && style.display !== 'none' && style.opacity !== '0') {{
+                        visibilityChanges++;
+                    }}
+                }});
+                
                 return {{
                     success: true,
                     before_count: beforeCount,
-                    after_count: afterElements.length,
+                    after_count: afterCount,
                     new_elements_count: newCount,
+                    visibility_visible_count: visibilityChanges,
                     aria_expanded: expanded,
-                    element_text: (element.textContent || '').substring(0, 50)
+                    element_text: (element.textContent || '').substring(0, 50),
+                    is_toggle_button: isToggleButton
                 }};
             }})()"#,
             index, index
@@ -860,8 +978,16 @@ impl BrowserTools {
             .get("new_elements_count")
             .and_then(|n| n.as_i64())
             .unwrap_or(0);
+        let is_toggle = result
+            .get("is_toggle_button")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
+
         if new_count > 0 {
-            info!("Hover revealed {} new elements", new_count);
+            info!("JS hover revealed {} new elements", new_count);
+        }
+        if is_toggle {
+            info!("Element was detected as toggle button, click was triggered");
         }
 
         Ok(ActionResult {
@@ -870,6 +996,36 @@ impl BrowserTools {
             screenshot: None,
             duration_ms: 0,
         })
+    }
+
+    /// Helper: 检测悬停后是否显示了新元素
+    async fn detect_hover_revealed_elements(&self, _index: u32) -> Result<HoverDetectionResult> {
+        let script = r#"(function() {
+            const menuSelectors = [
+                '[role="menu"]', '[role="listbox"]', '[role="menubar"]',
+                '.dropdown-menu', '.submenu', '.tooltip', '.popover',
+                '[aria-expanded="true"]', '.ant-dropdown', '.el-dropdown-menu',
+                '.arco-dropdown', '.semi-dropdown', '.chakra-menu__menu-list',
+                '[class*="dropdown"]', '[class*="popup"]', '[class*="submenu"]'
+            ].join(', ');
+            
+            let count = 0;
+            document.querySelectorAll(menuSelectors).forEach(el => {
+                const style = window.getComputedStyle(el);
+                if (style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0') {
+                    count++;
+                }
+            });
+            return { visible_count: count };
+        })()"#;
+
+        let result = self.evaluate_js(script).await?;
+        let count = result
+            .get("visible_count")
+            .and_then(|n| n.as_i64())
+            .unwrap_or(0);
+
+        Ok(HoverDetectionResult { new_count: count })
     }
 
     /// 设置自动标注开关
@@ -1191,6 +1347,182 @@ impl BrowserTools {
         Ok(elements)
     }
 
+    /// Capture authentication state (Cookies, LocalStorage, SessionStorage)
+    pub async fn capture_auth_state(&self) -> Result<AuthSnapshot> {
+        let mut snapshot = AuthSnapshot::default();
+        snapshot.timestamp = Utc::now().timestamp();
+
+        // 1. Storage (Local & Session)
+        let storage_script = r#"(function() {
+            return {
+                local: { ...window.localStorage },
+                session: { ...window.sessionStorage }
+            };
+        })()"#;
+
+        match self.evaluate_js(storage_script).await {
+            Ok(result) => {
+                if let Some(local) = result.get("local").and_then(|v| v.as_object()) {
+                    for (k, v) in local {
+                        if let Some(s) = v.as_str() {
+                            snapshot.local_storage.insert(k.clone(), s.to_string());
+                        }
+                    }
+                }
+                if let Some(session) = result.get("session").and_then(|v| v.as_object()) {
+                    for (k, v) in session {
+                        if let Some(s) = v.as_str() {
+                            snapshot.session_storage.insert(k.clone(), s.to_string());
+                        }
+                    }
+                }
+            }
+            Err(e) => warn!("Failed to capture storage: {}", e),
+        }
+
+        // 2. Cookies (Try MCP first, fallback to document.cookie)
+        let cookies_result = self
+            .call_playwright_tool("playwright_get_cookies", json!({}))
+            .await;
+
+        match cookies_result {
+            Ok(result) => {
+                if let Some(cookies) = result.get("cookies").and_then(|c| c.as_array()) {
+                    snapshot.cookies = cookies.clone();
+                } else if let Some(content_arr) = result.get("content").and_then(|c| c.as_array()) {
+                    // Standard MCP response: content is array of items
+                    for item in content_arr {
+                        if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                            if let Ok(cookies) = serde_json::from_str::<Vec<Value>>(text) {
+                                if !cookies.is_empty() {
+                                    snapshot.cookies = cookies;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(content_str) = result.get("content").and_then(|c| c.as_str()) {
+                    // Non-standard simple string content
+                    if let Ok(cookies) = serde_json::from_str::<Vec<Value>>(content_str) {
+                        snapshot.cookies = cookies;
+                    }
+                } else if let Some(output) = result.get("output").and_then(|s| s.as_str()) {
+                    if let Ok(cookies) = serde_json::from_str::<Vec<Value>>(output) {
+                        snapshot.cookies = cookies;
+                    }
+                }
+            }
+            Err(_) => {
+                // Fallback
+                debug!("playwright_get_cookies failed or not available, falling back to document.cookie");
+                let cookie_script = "document.cookie";
+                if let Ok(cookie_val) = self.evaluate_js(cookie_script).await {
+                    if let Some(cookie_str) = cookie_val.as_str() {
+                        for part in cookie_str.split(';') {
+                            let part = part.trim();
+                            if let Some((name, value)) = part.split_once('=') {
+                                snapshot.cookies.push(json!({
+                                    "name": name,
+                                    "value": value,
+                                    "domain": "",
+                                    "path": "/",
+                                    "secure": false,
+                                    "httpOnly": false
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        info!(
+            "Captured auth state: {} cookies, {} local items",
+            snapshot.cookies.len(),
+            snapshot.local_storage.len()
+        );
+        Ok(snapshot)
+    }
+
+    /// Apply authentication state
+    pub async fn apply_auth_state(&self, snapshot: &AuthSnapshot) -> Result<()> {
+        info!(
+            "Applying auth state (ts: {}, cookies: {}, local: {})",
+            snapshot.timestamp,
+            snapshot.cookies.len(),
+            snapshot.local_storage.len()
+        );
+
+        // 1. Restore Storage
+        if !snapshot.local_storage.is_empty() {
+            info!(
+                "Restoring {} localStorage items: {:?}",
+                snapshot.local_storage.len(),
+                snapshot.local_storage.keys().collect::<Vec<_>>()
+            );
+        }
+
+        if !snapshot.local_storage.is_empty() || !snapshot.session_storage.is_empty() {
+            let local_json = serde_json::to_string(&snapshot.local_storage).unwrap_or("{}".into());
+            let session_json =
+                serde_json::to_string(&snapshot.session_storage).unwrap_or("{}".into());
+
+            let script = format!(
+                r#"(function() {{
+                    try {{
+                        const local = {};
+                        const session = {};
+                        for (const [k, v] of Object.entries(local)) {{ window.localStorage.setItem(k, v); }}
+                        for (const [k, v] of Object.entries(session)) {{ window.sessionStorage.setItem(k, v); }}
+                        console.log("Restored storage via Sentinel");
+                    }} catch (e) {{ console.error("Restore storage failed", e); }}
+                }})()"#,
+                local_json, session_json
+            );
+            if let Err(e) = self.evaluate_js(&script).await {
+                warn!("Failed to restore storage: {}", e);
+            }
+        }
+
+        // 2. Restore Cookies
+        if !snapshot.cookies.is_empty() {
+            let domains: Vec<String> = snapshot
+                .cookies
+                .iter()
+                .filter_map(|c| {
+                    c.get("domain")
+                        .and_then(|d| d.as_str())
+                        .map(|s| s.to_string())
+                })
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            info!(
+                "Restoring {} cookies for domains: {:?}",
+                snapshot.cookies.len(),
+                domains
+            );
+
+            let result = self
+                .call_playwright_tool(
+                    "playwright_set_cookies",
+                    json!({
+                        "cookies": snapshot.cookies
+                    }),
+                )
+                .await;
+
+            if let Err(e) = result {
+                error!("Failed to set cookies via Playwright: {}", e);
+            }
+        } else {
+            warn!("No cookies to restore in apply_auth_state!");
+        }
+
+        Ok(())
+    }
+
     /// 获取页面表单
     pub async fn get_forms(&self) -> Result<Vec<FormInfo>> {
         let js = r#"
@@ -1439,11 +1771,56 @@ impl BrowserTools {
         Ok(result.as_str().unwrap_or("").to_string())
     }
 
+    /// 获取当前浏览器视口大小
+    pub async fn get_viewport_size(&self) -> Result<ViewportSize> {
+        let script = r#"
+            (function() {
+                return {
+                    width: window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth,
+                    height: window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight
+                };
+            })()
+        "#;
+
+        // 使用 evaluate_js_with_timeout 避免长时间阻塞
+        let result = self
+            .call_playwright_tool(
+                "playwright_evaluate",
+                json!({
+                    "script": script
+                }),
+            )
+            .await?;
+
+        // Playwright evaluate 通常返回 result 字段包含脚本执行结果
+        // 这里需要适配 evaluate 工具的返回值结构
+        let output = if let Some(out) = result.get("result") {
+            out
+        } else {
+            // Fallback: 如果没有 result 字段，可能就是直接返回的（取决于工具实现）
+            &result
+        };
+
+        let width = output
+            .get("width")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(self.config.viewport_width as u64) as u32;
+        let height = output
+            .get("height")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(self.config.viewport_height as u64) as u32;
+
+        Ok(ViewportSize { width, height })
+    }
+
     /// 采集当前页面状态 (多模态模式 - 包含截图和标注元素)
     /// 多模态模型依赖截图理解页面，同时保留 annotated_elements 以支持 fill_by_index / click_by_index 操作
     pub async fn capture_page_state(&self) -> Result<PageState> {
         // 先标注元素，确保 window.__playwrightAnnotatedElements 可用
         let annotated_elements = self.annotate_elements().await?;
+
+        // 尝试获取视口大小
+        let viewport = self.get_viewport_size().await.ok();
 
         // 创建元素快照 - 解决 index 漂移问题
         // 快照会锁定当前元素的 DOM 引用和指纹，后续操作可以验证是否操作正确的元素
@@ -1474,6 +1851,7 @@ impl BrowserTools {
             links,
             visible_text_summary: None,
             captured_at: Utc::now(),
+            viewport,
             snapshot_id: Some(snapshot_id),
         })
     }
@@ -1484,6 +1862,9 @@ impl BrowserTools {
         // 先标注元素，annotate_elements() 会返回标注后的元素列表
         // 同时也会将元素存储到 window.__playwrightAnnotatedElements 供后续操作使用
         let mut annotated_elements = self.annotate_elements().await?;
+
+        // 尝试获取视口大小
+        let viewport = self.get_viewport_size().await.ok();
 
         // 创建元素快照 - 解决 index 漂移问题
         let snapshot_id = self.create_element_snapshot().await?;
@@ -1543,6 +1924,7 @@ impl BrowserTools {
             links,
             visible_text_summary,
             captured_at: Utc::now(),
+            viewport,
             snapshot_id: Some(snapshot_id),
         })
     }

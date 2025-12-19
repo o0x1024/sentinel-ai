@@ -22,6 +22,7 @@ export interface MessageMetadata {
   tool_name?: string
   tool_args?: Record<string, any>
   tool_result?: string  // 工具执行结果（合并显示）
+  error?: string
   duration_ms?: number
   step_index?: number
   total_steps?: number

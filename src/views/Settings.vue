@@ -1,8 +1,9 @@
 <template>
   <div class="settings-page page-content-padded safe-top">
+    <!-- 顶部标题栏 -->
     <div class="flex justify-between items-center mb-6">
       <h2 class="text-2xl font-bold">{{ t('settings.title', '系统设置') }}</h2>
-      <div class="flex gap-2">
+      <!-- <div class="flex gap-2">
         <button 
           class="btn btn-primary" 
           @click="saveAllSettings"
@@ -18,111 +19,123 @@
           <i class="fas fa-undo mr-2"></i>
           {{ t('common.resetDefaults') }}
         </button>
+      </div> -->
+    </div>
+
+    <!-- 左右布局容器 -->
+    <div class="settings-layout flex ">
+      <!-- 左侧导航栏 -->
+      <div class="settings-sidebar flex-shrink-0">
+        <div class="menu bg-base-200 rounded-box p-2">
+          <li 
+            v-for="category in categories" 
+            :key="category.id"
+            class="mb-1"
+          >
+            <a 
+              class="menu-item"
+              :class="{ 'active': activeCategory === category.id }"
+              @click="activeCategory = category.id"
+            >
+              <i :class="category.icon"></i>
+              <span>{{ t(`settings.categories.${category.id}`) }}</span>
+            </a>
+          </li>
+        </div>
+      </div>
+
+      <!-- 右侧内容区域 -->
+      <div class="settings-content flex-1 min-w-0">
+        <!-- AI服务配置 -->
+        <AISettings v-if="activeCategory === 'ai'" 
+                    :ai-service-status="aiServiceStatus"
+                    :ai-config="aiConfig"
+                    v-model:selected-ai-provider="selectedAiProvider"
+                    :settings="settings"
+                    :custom-provider="customProvider"
+                    :ai-usage-stats="aiUsageStats"
+                    :saving="saving"
+                    :testing-custom-provider="testingCustomProvider"
+                    :adding-custom-provider="addingCustomProvider"
+                    @test-connection="testConnection"
+                    @save-ai-config="saveAiConfig"
+                    @test-custom-provider="testCustomProvider"
+                    @add-custom-provider="addCustomProvider"
+                    @refresh-models="refreshModels"
+                    @apply-manual-config="applyManualConfig"
+                    @set-default-provider="setDefaultProvider"
+                    @set-default-chat-model="setDefaultChatModel"
+                    @set-enable-multimodal="setEnableMultimodal" />
+
+        <!-- 知识库配置 -->
+        <RAGSettings v-if="activeCategory === 'rag'"
+                     v-model:rag-config="ragConfig"
+                     :available-providers="availableProviders"
+                     :available-models="availableModels"
+                     :saving="saving"
+                     @save-rag-config="saveRagConfig"
+                     @test-embedding-connection="testEmbeddingConnection"
+                     @reset-rag-config="resetRagConfig" />
+
+        <!-- 模型配置设置 -->
+        <ModelSettings v-if="activeCategory === 'scheduler'" 
+                           v-model:scheduler-config="settings.scheduler"
+                           :available-models="availableModels"
+                           :saving="saving"
+                           @save-scheduler-config="saveSchedulerConfig"
+                           @apply-high-performance-preset="applyHighPerformanceConfig"
+                           @apply-balanced-preset="applyBalancedConfig"
+                           @apply-economic-preset="applyEconomicConfig" />
+
+        <!-- Agent设置 -->
+        <AgentSettings v-if="activeCategory === 'agent'" />
+
+        <!-- 数据库设置 -->
+        <DatabaseSettings v-if="activeCategory === 'database'" 
+                          v-model:settings="settings"
+                          :database-status="databaseStatus"
+                          :saving="saving"
+                          @selectDatabasePath="selectDatabasePath"
+                          @selectBackupPath="selectBackupPath"
+                          @testDatabaseConnection="testDatabaseConnection"
+                          @createBackup="createBackup"
+                          @selectBackupFile="selectBackupFile"
+                          @exportData="exportData"
+                          @importData="importData"
+                          @cleanupNow="cleanupNow"
+                          @optimizeDatabase="optimizeDatabase"
+                          @rebuildIndexes="rebuildIndexes"
+                          @resetDatabase="resetDatabase"
+                          @saveDatabaseConfig="saveDatabaseConfig" />
+
+        <!-- 通用设置 -->
+        <GeneralSettings v-if="activeCategory === 'system'" 
+                         :app-info="{}"
+                         v-model:settings="settings"
+                         :saving="saving"
+                         @save-general-config="saveGeneralConfig"
+                         @apply-font-size="applyFontSize"
+                         @apply-ui-scale="applyUIScale" />
+
+        <!-- 网络(代理)设置 -->
+        <NetworkSettings v-if="activeCategory === 'network'" 
+                         :saving="saving" />
+
+        <!-- 安全设置 -->
+        <SecuritySettings v-if="activeCategory === 'security'" 
+                          v-model:settings="settings"
+                          :security-status="securityStatus"
+                          :saving="saving"
+                          @change-password="changePassword"
+                          @run-security-audit="runSecurityAudit"
+                          @check-vulnerabilities="checkVulnerabilities"
+                          @generate-security-report="generateSecurityReport"
+                          @lock-application="lockApplication"
+                          @emergency-shutdown="emergencyShutdown"
+                          @wipe-security-data="wipeSecurityData"
+                          @save-security-config="saveSecurityConfig" />
       </div>
     </div>
-
-    <!-- 设置分类标签 -->
-    <div class="tabs tabs-boxed mb-6">
-      <a 
-        v-for="category in categories" 
-        :key="category.id"
-        class="tab"
-        :class="{ 'tab-active': activeCategory === category.id }"
-        @click="activeCategory = category.id"
-      >
-        <i :class="category.icon + ' mr-2'"></i>
-        {{ t(`settings.categories.${category.id}`) }}
-      </a>
-    </div>
-
-    <!-- AI服务配置 -->
-    <AISettings v-if="activeCategory === 'ai'" 
-                :ai-service-status="aiServiceStatus"
-                :ai-config="aiConfig"
-                v-model:selected-ai-provider="selectedAiProvider"
-                :settings="settings"
-                :custom-provider="customProvider"
-                :ai-usage-stats="aiUsageStats"
-                :saving="saving"
-                :testing-custom-provider="testingCustomProvider"
-                :adding-custom-provider="addingCustomProvider"
-                @test-connection="testConnection"
-                @save-ai-config="saveAiConfig"
-                @test-custom-provider="testCustomProvider"
-                @add-custom-provider="addCustomProvider"
-                @refresh-models="refreshModels"
-                @apply-manual-config="applyManualConfig"
-                @set-default-provider="setDefaultProvider"
-                @set-default-chat-model="setDefaultChatModel"
-                @set-enable-multimodal="setEnableMultimodal" />
-
-    <!-- 知识库配置 -->
-    <RAGSettings v-if="activeCategory === 'rag'"
-                 v-model:rag-config="ragConfig"
-                 :available-providers="availableProviders"
-                 :available-models="availableModels"
-                 :saving="saving"
-                 @save-rag-config="saveRagConfig"
-                 @test-embedding-connection="testEmbeddingConnection"
-                 @reset-rag-config="resetRagConfig" />
-
-    <!-- 模型配置设置 -->
-    <ModelSettings v-if="activeCategory === 'scheduler'" 
-                       v-model:scheduler-config="settings.scheduler"
-                       :available-models="availableModels"
-                       :saving="saving"
-                       @save-scheduler-config="saveSchedulerConfig"
-                       @apply-high-performance-preset="applyHighPerformanceConfig"
-                       @apply-balanced-preset="applyBalancedConfig"
-                       @apply-economic-preset="applyEconomicConfig" />
-
-    <!-- 数据库设置 -->
-    <DatabaseSettings v-if="activeCategory === 'database'" 
-                      v-model:settings="settings"
-                      :database-status="databaseStatus"
-                      :saving="saving"
-                      @selectDatabasePath="selectDatabasePath"
-                      @selectBackupPath="selectBackupPath"
-                      @testDatabaseConnection="testDatabaseConnection"
-                      @createBackup="createBackup"
-                      @selectBackupFile="selectBackupFile"
-                      @exportData="exportData"
-                      @importData="importData"
-                      @cleanupNow="cleanupNow"
-                      @optimizeDatabase="optimizeDatabase"
-                      @rebuildIndexes="rebuildIndexes"
-                      @resetDatabase="resetDatabase"
-                      @saveDatabaseConfig="saveDatabaseConfig" />
-
-
-    <!-- 通用设置 -->
-    <GeneralSettings v-if="activeCategory === 'system'" 
-                     :app-info="{}"
-                     v-model:settings="settings"
-                     :saving="saving"
-                     @save-general-config="saveGeneralConfig"
-                     @apply-font-size="applyFontSize"
-                     @apply-ui-scale="applyUIScale" />
-
-
-    <!-- 网络(代理)设置 -->
-    <NetworkSettings v-if="activeCategory === 'network'" 
-                     :saving="saving" />
-    
-
-    <!-- 安全设置 -->
-    <SecuritySettings v-if="activeCategory === 'security'" 
-                      v-model:settings="settings"
-                      :security-status="securityStatus"
-                      :saving="saving"
-                      @change-password="changePassword"
-                      @run-security-audit="runSecurityAudit"
-                      @check-vulnerabilities="checkVulnerabilities"
-                      @generate-security-report="generateSecurityReport"
-                      @lock-application="lockApplication"
-                      @emergency-shutdown="emergencyShutdown"
-                      @wipe-security-data="wipeSecurityData"
-                      @save-security-config="saveSecurityConfig" />
 
   </div>
 </template>
@@ -139,6 +152,7 @@ import DatabaseSettings from '@/components/Settings/DatabaseSettings.vue'
 import GeneralSettings from '@/components/Settings/GeneralSettings.vue'
 import SecuritySettings from '@/components/Settings/SecuritySettings.vue'
 import NetworkSettings from '@/components/Settings/NetworkSettings.vue'
+import AgentSettings from '@/components/Settings/AgentSettings.vue'
 
 const { t, locale } = useI18n()
 
@@ -156,6 +170,7 @@ const categories = [
   { id: 'ai', icon: 'fas fa-robot' },
   { id: 'rag', icon: 'fas fa-database' },
   { id: 'scheduler', icon: 'fas fa-cogs' },
+  { id: 'agent', icon: 'fas fa-user-cog' },
   { id: 'database', icon: 'fas fa-server' },
   { id: 'system', icon: 'fas fa-cog' },
   { id: 'security', icon: 'fas fa-shield-alt' },
@@ -1486,10 +1501,69 @@ watch(() => settings.value.general, (newGeneral, oldGeneral) => {
 
 <style scoped>
 .settings-page {
-  @apply max-w-6xl mx-auto;
+  @apply max-w-full mx-auto;
 }
 
-.tab {
-  @apply min-w-0 flex-shrink-0;
+/* 左右布局容器 */
+.settings-layout {
+  @apply flex gap-6;
+  min-height: calc(100vh - 200px);
+}
+
+/* 左侧导航栏 */
+.settings-sidebar {
+  @apply flex-shrink-0;
+  width: 200px;
+}
+
+.settings-sidebar .menu {
+  @apply sticky top-6;
+}
+
+.settings-sidebar .menu-item {
+  @apply flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-all;
+  @apply hover:bg-base-300;
+}
+
+.settings-sidebar .menu-item i {
+  @apply w-5 text-center;
+}
+
+.settings-sidebar .menu-item.active {
+  @apply bg-primary text-primary-content font-medium;
+}
+
+.settings-sidebar .menu-item.active:hover {
+  @apply bg-primary;
+}
+
+/* 右侧内容区域 */
+.settings-content {
+  @apply flex-1 min-w-0;
+}
+
+/* 响应式设计 */
+@media (max-width: 1024px) {
+  .settings-layout {
+    @apply flex-col;
+  }
+  
+  .settings-sidebar {
+    @apply w-full;
+  }
+  
+  .settings-sidebar .menu {
+    @apply static;
+    @apply flex flex-row overflow-x-auto;
+  }
+  
+  .settings-sidebar .menu li {
+    @apply mb-0 flex-shrink-0;
+  }
+  
+  .settings-sidebar .menu-item {
+    @apply whitespace-nowrap;
+  }
 }
 </style>
+

@@ -90,23 +90,7 @@ function onLicenseActivated() {
   isLicensed.value = true
 }
 
-// Shell Permission Handling
-const showPermissionModal = ref(false)
-const permissionRequest = ref<{ id: string, command: string } | null>(null)
-
-async function respondPermission(allowed: boolean) {
-  if (!permissionRequest.value) return
-  try {
-    await invoke('respond_shell_permission', { 
-      id: permissionRequest.value.id, 
-      allowed 
-    })
-  } catch (e) {
-    console.error('Failed to respond permission:', e)
-  }
-  showPermissionModal.value = false
-  permissionRequest.value = null
-}
+// Shell Permission Handling is now done inline in ShellToolResult component
 
 // 在组件挂载时导航到Dashboard (如果当前在根路径)
 onMounted(async () => {
@@ -121,12 +105,13 @@ onMounted(async () => {
   // 设置AI助手快捷键
   setupAIChatShortcut()
 
-  // Listen for shell permission requests
-  listen('shell-permission-request', (event: any) => {
-    console.log('Received shell permission request:', event.payload)
-    permissionRequest.value = event.payload
-    showPermissionModal.value = true
-  })
+  // Initialize shell permission handler so backend can send permission requests
+  try {
+    await invoke('init_shell_permission_handler')
+    console.log('Shell permission handler initialized')
+  } catch (e) {
+    console.error('Failed to init shell permission handler:', e)
+  }
 })
 
 // 组件卸载时清理事件监听器
@@ -253,29 +238,6 @@ window.updateUIScale = (newScale: number) => {
   <div id="app" class="h-screen bg-base-100 overflow-hidden">
     <!-- License Activation Dialog -->
     <LicenseActivation v-if="!isLicensed" @activated="onLicenseActivated" />
-
-    <!-- Shell Permission Modal -->
-    <dialog :class="['modal', { 'modal-open': showPermissionModal }]">
-      <div v-if="showPermissionModal" class="modal-box">
-        <h3 class="font-bold text-lg text-warning">
-          <i class="fas fa-exclamation-triangle mr-2"></i>
-          Shell 命令执行请求
-        </h3>
-        <p class="py-4">
-          AI 助手请求执行以下 Shell 命令：
-        </p>
-        <div class="bg-base-200 p-4 rounded-lg font-mono text-sm break-all">
-          {{ permissionRequest?.command }}
-        </div>
-        <p class="py-4 text-sm text-base-content/70">
-          请确认是否允许执行此命令。此操作具有潜在风险。
-        </p>
-        <div class="modal-action">
-          <button @click="respondPermission(false)" class="btn btn-error">拒绝</button>
-          <button @click="respondPermission(true)" class="btn btn-success">允许</button>
-        </div>
-      </div>
-    </dialog>
 
     <!-- 主应用窗口 -->
     <!-- 顶部导航栏 -->

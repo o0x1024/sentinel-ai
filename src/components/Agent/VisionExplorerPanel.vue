@@ -75,27 +75,90 @@
 
             <button
               class="btn btn-sm btn-ghost flex-1"
-              :disabled="isSubmittingCredentials || isSkippingLogin"
+              :disabled="isSubmittingCredentials || isSkippingLogin || isManualLoginCompleting"
               @click="skipLogin"
             >
               <span v-if="isSkippingLogin" class="loading loading-spinner loading-xs"></span>
               <span v-else>{{ t('agent.skipLogin') }}</span>
             </button>
+
+            <button
+               class="btn btn-sm btn-ghost flex-1 text-success"
+               :disabled="isSubmittingCredentials || isSkippingLogin || isManualLoginCompleting"
+               @click="manualLoginComplete"
+               title="Click if you have manually logged in via the browser window"
+            >
+               <span v-if="isManualLoginCompleting" class="loading loading-spinner loading-xs"></span>
+               <span v-else>{{ t('agent.alreadyLoggedIn') || 'Logged In' }}</span>
+            </button>
           </div>
         </div>
     </div>
 
-    <!-- Plan & Progress Section -->
-    <div class="p-3 bg-base-100/50 text-xs border-b border-base-300 flex flex-col gap-3" v-if="currentPlan || currentProgress">
-      <!-- Current Plan -->
-      <div v-if="currentPlan" class="plan-section">
-        <div class="flex items-center gap-2 mb-2">
-          <span class="text-primary font-bold">📋</span>
-          <span class="font-bold text-primary">{{ currentPlan.phase_name || currentPlan.phase }}</span>
+    <!-- Multi-Agent Mode Section (Collapsible) -->
+    <div v-if="isMultiAgentMode && multiAgent" class="border-b border-base-300">
+      <!-- Header Row -->
+      <div class="p-2 bg-gradient-to-r from-primary/10 to-secondary/10 flex items-center justify-between cursor-pointer" @click="toggleMultiAgentExpanded">
+        <div class="flex items-center gap-2">
+          <span class="text-sm">🤖</span>
+          <span class="font-bold text-xs text-primary">{{ t('agent.multiAgentMode') }}</span>
+          <span class="badge badge-xs badge-primary">{{ multiAgent.mode?.mode }}</span>
         </div>
-        <div class="pl-3 space-y-1">
-          <ul class="space-y-1.5">
-            <li v-for="(step, idx) in currentPlan.steps" :key="idx" class="flex items-center gap-2 text-xs">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] opacity-70">
+            {{ multiAgent.mode?.completed_workers || 0 }}/{{ multiAgent.mode?.total_workers || 0 }} {{ t('agent.workersCompleted') }}
+          </span>
+          <span class="text-xs opacity-50">{{ multiAgentExpanded ? '▲' : '▼' }}</span>
+        </div>
+      </div>
+      
+      <!-- Expandable Workers Grid -->
+      <div v-if="multiAgentExpanded" class="p-2 bg-base-100/50">
+        <div class="grid gap-1.5" :class="{ 'grid-cols-3': (multiAgent.tasks?.length || 0) <= 6, 'grid-cols-4': (multiAgent.tasks?.length || 0) > 6 }">
+          <div
+            v-for="task in multiAgent.tasks"
+            :key="task.task_id"
+            class="bg-base-100 rounded p-1.5 border border-base-300 text-[10px]"
+            :class="{
+              'border-primary/50': getWorkerStatus(task.task_id) === 'running',
+              'border-success/50': getWorkerStatus(task.task_id) === 'completed',
+              'opacity-60': getWorkerStatus(task.task_id) === 'pending'
+            }"
+          >
+            <div class="flex items-center gap-1 mb-0.5">
+              <span v-if="getWorkerStatus(task.task_id) === 'completed'" class="text-success text-[8px]">✓</span>
+              <span v-else-if="getWorkerStatus(task.task_id) === 'running'" class="loading loading-spinner loading-xs text-primary" style="width: 8px; height: 8px;"></span>
+              <span v-else class="opacity-30 text-[8px]">○</span>
+              <span class="font-medium truncate flex-1">{{ task.scope_name }}</span>
+            </div>
+            <div class="flex items-center gap-1 text-[9px] opacity-70">
+              <span>{{ getWorkerProgress(task.task_id)?.pages_visited || 0 }}p</span>
+              <span>•</span>
+              <span>{{ getWorkerProgress(task.task_id)?.apis_discovered || 0 }}a</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Global Stats -->
+        <div v-if="multiAgent.globalStats" class="flex gap-4 mt-1.5 text-[9px] opacity-70">
+          <span>{{ t('agent.totalUrls') }}: {{ multiAgent.globalStats.total_urls_visited }}</span>
+          <span>{{ t('agent.totalApis') }}: {{ multiAgent.globalStats.total_apis_discovered }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Plan & Progress Section (Compact) -->
+    <div class="p-2 bg-base-100/50 text-xs border-b border-base-300 flex flex-col gap-2" v-if="currentPlan || currentProgress">
+      <!-- Current Plan (Collapsed by default, just show phase name) -->
+      <div v-if="currentPlan" class="plan-section">
+        <div class="flex items-center gap-2 cursor-pointer" @click="togglePlanExpanded">
+          <span class="text-primary font-bold text-sm">📋</span>
+          <span class="font-bold text-primary text-xs">{{ currentPlan.phase_name || currentPlan.phase }}</span>
+          <span class="text-[10px] opacity-50 ml-auto">{{ planExpanded ? '▲' : '▼' }}</span>
+        </div>
+        <div v-if="planExpanded" class="pl-4 space-y-1 mt-1">
+          <ul class="space-y-1">
+            <li v-for="(step, idx) in currentPlan.steps" :key="idx" class="flex items-center gap-1.5 text-[10px]">
               <span v-if="parseStepStatus(step) === 'done'" class="text-success">✓</span>
               <span v-else-if="parseStepStatus(step) === 'skip'" class="text-base-content/40">✗</span>
               <span v-else-if="parseStepStatus(step) === 'loading'" class="loading loading-spinner loading-xs text-primary"></span>
@@ -113,25 +176,15 @@
         </div>
       </div>
 
-      <!-- Current Progress -->
+      <!-- Current Progress (Compact horizontal bar) -->
       <div v-if="currentProgress" class="progress-section">
-        <div class="flex items-center gap-2 mb-2">
-          <span class="text-secondary font-bold">📊</span>
-          <span class="font-bold text-secondary">{{ t('agent.visionProgress') }}</span>
-          <span class="ml-auto badge badge-sm badge-secondary">{{ currentProgress.iteration }}/{{ currentProgress.max_iterations }}</span>
-        </div>
-        <div class="grid grid-cols-3 gap-2 text-center">
-          <div class="bg-base-200 rounded p-2">
-            <div class="text-lg font-bold text-primary">{{ currentProgress.pages_visited }}</div>
-            <div class="text-[10px] opacity-60">{{ t('agent.visionPages') }}</div>
-          </div>
-          <div class="bg-base-200 rounded p-2">
-            <div class="text-lg font-bold text-accent">{{ currentProgress.apis_discovered }}</div>
-            <div class="text-[10px] opacity-60">APIs</div>
-          </div>
-          <div class="bg-base-200 rounded p-2">
-            <div class="text-lg font-bold text-info">{{ currentProgress.elements_interacted }}</div>
-            <div class="text-[10px] opacity-60">{{ t('agent.visionElements') }}</div>
+        <div class="flex items-center gap-3 text-[10px]">
+          <span class="font-bold text-secondary">📊</span>
+          <span class="badge badge-xs badge-secondary">{{ currentProgress.iteration }}/{{ currentProgress.max_iterations }}</span>
+          <div class="flex gap-3 ml-auto">
+            <span class="text-primary font-bold">{{ currentProgress.pages_visited }} <span class="font-normal opacity-60">{{ t('agent.visionPages') }}</span></span>
+            <span class="text-accent font-bold">{{ currentProgress.apis_discovered }} <span class="font-normal opacity-60">APIs</span></span>
+            <span class="text-info font-bold">{{ currentProgress.elements_interacted }} <span class="font-normal opacity-60">{{ t('agent.visionElements') }}</span></span>
           </div>
         </div>
       </div>
@@ -161,8 +214,25 @@
 
     <!-- Timeline Steps -->
     <div class="steps-container flex-1 overflow-y-auto p-3 flex flex-col gap-3 scroll-smooth" ref="stepsContainer">
-       <div v-if="steps.length === 0" class="text-center text-xs opacity-50 py-4">
-         Waiting for events...
+       <!-- Activity feed (meta-only / multi-agent runs may not emit vision_step timeline) -->
+       <div v-if="activity && activity.length" class="mb-3">
+         <div class="flex items-center gap-2 text-[10px] opacity-70 mb-2">
+           <span class="font-bold">{{ t('agent.visionActivity') }}</span>
+           <span class="ml-auto">{{ activity.length }}</span>
+         </div>
+         <div class="bg-base-100 rounded border border-base-300 overflow-hidden">
+           <div
+             v-for="(evt, i) in recentActivity"
+             :key="i"
+             class="px-2 py-1 text-[10px] border-b border-base-200 last:border-b-0"
+           >
+             {{ formatActivity(evt) }}
+           </div>
+         </div>
+       </div>
+
+       <div v-if="steps.length === 0 && (!activity || activity.length === 0)" class="text-center text-xs opacity-50 py-4">
+         {{ t('agent.visionWaitingForEvents') }}
        </div>
 
        <div v-for="(step, idx) in steps" :key="idx" class="vision-step flex gap-3 text-xs">
@@ -272,7 +342,7 @@
 import { ref, watch, nextTick, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
-import type { VisionStep, VisionCoverage, VisionPlan, VisionProgress } from '@/composables/useVisionEvents'
+import type { VisionStep, VisionCoverage, VisionPlan, VisionProgress, MultiAgentState, WorkerProgress, VisionActivityEvent } from '@/composables/useVisionEvents'
 
 const { t } = useI18n()
 
@@ -290,6 +360,11 @@ const props = defineProps<{
   takeoverMessage?: string
   takeoverFields?: any[]
   executionId?: string | null
+  // Multi-Agent props
+  multiAgent?: MultiAgentState | null
+  isMultiAgentMode?: boolean
+  // Activity feed props
+  activity?: VisionActivityEvent[]
 }>()
 
 defineEmits<{
@@ -320,6 +395,18 @@ const parseStepText = (step: string): string => {
 }
 
 const stepsContainer = ref<HTMLElement | null>(null)
+
+// Collapse state for UI sections
+const multiAgentExpanded = ref(false)
+const planExpanded = ref(false)
+
+const toggleMultiAgentExpanded = () => {
+  multiAgentExpanded.value = !multiAgentExpanded.value
+}
+
+const togglePlanExpanded = () => {
+  planExpanded.value = !planExpanded.value
+}
 
 // Takeover form state
 const isSubmittingCredentials = ref(false)
@@ -368,6 +455,98 @@ const canSubmit = computed(() => {
 const canSendMessage = computed(() => {
   return !!(props.executionId && userMessage.value.trim().length > 0)
 })
+
+// Multi-Agent helpers
+const getWorkerStatus = (taskId: string): string => {
+  if (!props.multiAgent?.workers) return 'pending'
+  const worker = props.multiAgent.workers.get(taskId)
+  return worker?.status || 'pending'
+}
+
+const getWorkerProgress = (taskId: string): WorkerProgress | undefined => {
+  if (!props.multiAgent?.workers) return undefined
+  return props.multiAgent.workers.get(taskId)
+}
+
+const recentActivity = computed(() => {
+  const list = props.activity || []
+  return list.slice(-30).reverse()
+})
+
+const formatStatus = (status?: string) => {
+  switch (status) {
+    case 'running':
+      return t('agent.statusRunning')
+    case 'completed':
+      return t('agent.statusCompleted')
+    case 'failed':
+      return t('agent.statusFailed')
+    case 'pending':
+    default:
+      return t('agent.statusPending')
+  }
+}
+
+const formatActivity = (evt: VisionActivityEvent) => {
+  switch (evt.type) {
+    case 'multi_agent_start':
+      return t('agent.visionActivityMultiAgentStart', { mode: evt.mode, count: evt.total_workers })
+    case 'worker_tasks':
+      return t('agent.visionActivityWorkerTasks', { count: evt.count })
+    case 'worker_progress':
+      return t('agent.visionActivityWorkerProgress', {
+        scope: evt.scope_name,
+        status: formatStatus(evt.status),
+        pages: evt.pages,
+        apis: evt.apis,
+        pagesLabel: t('agent.visionPages')
+      })
+    case 'worker_complete':
+      return t('agent.visionActivityWorkerComplete', {
+        scope: evt.scope_name,
+        pages: evt.pages,
+        apis: evt.apis,
+        pagesLabel: t('agent.visionPages')
+      })
+    case 'worker_decision': {
+      const idx = evt.element_index !== undefined && evt.element_index !== null ? ` [${evt.element_index}]` : ''
+      const val = evt.value ? ` = ${String(evt.value).slice(0, 80)}` : ''
+      const progress = Number.isFinite(evt.progress) ? Math.round(evt.progress) : 0
+      return t('agent.visionActivityWorkerDecision', {
+        scope: evt.scope_name,
+        iteration: evt.iteration,
+        action: `${evt.action_type}${idx}${val}`,
+        progress
+      })
+    }
+    case 'worker_action': {
+      const idx = evt.element_index !== undefined && evt.element_index !== null ? ` [${evt.element_index}]` : ''
+      const val = evt.value ? ` = ${String(evt.value).slice(0, 80)}` : ''
+      const duration = evt.duration_ms ? `${evt.duration_ms}ms` : ''
+      const result = evt.success ? t('agent.statusCompleted') : t('agent.statusFailed')
+      return t('agent.visionActivityWorkerAction', {
+        scope: evt.scope_name,
+        iteration: evt.iteration,
+        action: `${evt.action_type}${idx}${val}`,
+        result,
+        duration
+      })
+    }
+    case 'vision_plan':
+      return t('agent.visionActivityPlan', { phase: evt.phase_name || evt.phase })
+    case 'vision_progress':
+      return t('agent.visionActivityProgress', { phase: evt.phase, iteration: evt.iteration, max: evt.max_iterations })
+    case 'api_discovered':
+      return t('agent.visionActivityApi', { method: evt.method, url: evt.url })
+    case 'takeover_request':
+      return t('agent.loginPageDetected')
+    case 'complete':
+      return t('agent.visionActivityComplete', { status: evt.status })
+    default:
+      // exhaustive guard
+      return ''
+  }
+}
 
 const onUserMessageKeydown = async (e: KeyboardEvent) => {
   if (e.key !== 'Enter') return
@@ -434,6 +613,28 @@ const skipLogin = async () => {
     console.error('[VisionPanel] Failed to skip login:', error)
   } finally {
     isSkippingLogin.value = false
+  }
+}
+
+const isManualLoginCompleting = ref(false)
+
+// Signal manual login completion
+const manualLoginComplete = async () => {
+  const eid = props.executionId || (window as any).__visionExecutionId
+  if (!eid) {
+    console.warn('[VisionPanel] Missing executionId for manual login complete')
+    return
+  }
+
+  isManualLoginCompleting.value = true
+  try {
+    await invoke('vision_explorer_manual_login_complete', { executionId: eid })
+    credentialsSubmitted.value = true
+    console.log('[VisionPanel] Manual login complete signaled')
+  } catch (error) {
+    console.error('[VisionPanel] Failed to signal manual login complete:', error)
+  } finally {
+    isManualLoginCompleting.value = false
   }
 }
 

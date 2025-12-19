@@ -875,6 +875,9 @@ pub const ENHANCED_ELEMENT_ATTRIBUTES_SCRIPT: &str = r#"
         // --- 3. 隐式语义挖掘 ---
         const inferredLabel = inferLabel(el);
 
+        // --- 4. 模态框检测 ---
+        const isInModal = isElementInModal(el);
+
         results.push({
             index: index, // Assuming the array order matches the annotated index
             
@@ -899,11 +902,47 @@ pub const ENHANCED_ELEMENT_ATTRIBUTES_SCRIPT: &str = r#"
             isOccluded: isOccluded,
             
             // 推断文本
-            inferredLabel: inferredLabel
+            inferredLabel: inferredLabel,
+
+            // 是否在模态框内
+            isInModal: isInModal
         });
     });
     
     return results;
+
+    // 辅助函数：检测元素是否在模态框/弹窗内部
+    function isElementInModal(el) {
+        let parent = el;
+        while (parent && parent !== document.body) {
+            // 检查常见模态框标识
+            if (parent.getAttribute('role') === 'dialog' || 
+                parent.getAttribute('role') === 'alertdialog' ||
+                parent.getAttribute('aria-modal') === 'true') {
+                return true;
+            }
+            
+            // 检查常见类名
+            const className = (parent.className || '').toLowerCase();
+            if (className.includes('modal') && !className.includes('modal-backdrop') ||
+                className.includes('dialog') ||
+                className.includes('drawer') ||
+                className.includes('popover') ||
+                className.includes('popup')) {
+                return true;
+            }
+            
+            // 检查 z-index (模态框通常有很高的 z-index)
+            const style = window.getComputedStyle(parent);
+            const zIndex = parseInt(style.zIndex);
+            if (!isNaN(zIndex) && zIndex >= 1000 && style.position === 'fixed') {
+                return true;
+            }
+            
+            parent = parent.parentElement;
+        }
+        return false;
+    }
 })()
 "#;
 

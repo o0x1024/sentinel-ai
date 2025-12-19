@@ -109,6 +109,99 @@ pub struct VisionCoverageUpdate {
     pub stable_rounds: u32,
 }
 
+// ============================================================================
+// Multi-Agent Event Types
+// ============================================================================
+
+/// Worker task info for frontend display
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkerTaskInfo {
+    /// Task ID
+    pub task_id: String,
+    /// Scope name
+    pub scope_name: String,
+    /// Entry URL
+    pub entry_url: String,
+    /// URL patterns
+    pub url_patterns: Vec<String>,
+    /// Max iterations for this worker
+    pub max_iterations: u32,
+    /// Priority
+    pub priority: u32,
+}
+
+/// Worker progress update
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkerProgressInfo {
+    /// Task ID
+    pub task_id: String,
+    /// Scope name
+    pub scope_name: String,
+    /// Current status: pending, running, completed, failed
+    pub status: String,
+    /// Pages visited
+    pub pages_visited: usize,
+    /// APIs discovered
+    pub apis_discovered: usize,
+    /// Elements interacted
+    pub elements_interacted: usize,
+    /// Iterations used
+    pub iterations_used: u32,
+    /// Progress percentage (0-100)
+    pub progress: f32,
+    /// Completion reason (if completed)
+    pub completion_reason: Option<String>,
+}
+
+/// Worker decision (LLM analysis -> next action) for frontend activity feed
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkerDecisionInfo {
+    pub task_id: String,
+    pub scope_name: String,
+    pub iteration: u32,
+    pub page_analysis: String,
+    pub action_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    pub reason: String,
+    /// Progress percentage (0-100)
+    pub progress: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_apis: Option<Vec<String>>,
+}
+
+/// Worker action execution result for frontend activity feed
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkerActionInfo {
+    pub task_id: String,
+    pub scope_name: String,
+    pub iteration: u32,
+    pub action_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    pub reason: String,
+}
+
+/// Multi-agent mode info
+#[derive(Debug, Clone, Serialize)]
+pub struct MultiAgentModeInfo {
+    /// Is multi-agent mode active
+    pub is_multi_agent: bool,
+    /// Exploration mode: Sequential, Parallel, Adaptive
+    pub mode: String,
+    /// Total scopes/workers
+    pub total_workers: usize,
+    /// Completed workers
+    pub completed_workers: usize,
+}
+
 impl VisionExplorerMessageEmitter {
     pub fn new(
         app_handle: Arc<AppHandle>,
@@ -544,5 +637,132 @@ impl VisionExplorerMessageEmitter {
         }
 
         self.emit_meta("credentials_received", payload);
+    }
+
+    // ========================================================================
+    // Multi-Agent Events
+    // ========================================================================
+
+    /// Emit multi-agent mode activation
+    pub fn emit_multi_agent_start(&self, mode: &str, total_workers: usize) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "type": "multi_agent_start",
+            "execution_id": self.execution_id,
+            "mode": mode,
+            "total_workers": total_workers,
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:multi_agent", &payload) {
+            debug!("Failed to emit multi_agent_start: {}", e);
+        }
+        
+        self.emit_meta("multi_agent_start", payload);
+    }
+
+    /// Emit worker tasks assignment from Manager
+    pub fn emit_worker_tasks(&self, tasks: &[WorkerTaskInfo]) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "type": "worker_tasks",
+            "execution_id": self.execution_id,
+            "tasks": tasks,
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:multi_agent", &payload) {
+            debug!("Failed to emit worker_tasks: {}", e);
+        }
+        
+        self.emit_meta("worker_tasks", payload);
+    }
+
+    /// Emit worker progress update
+    pub fn emit_worker_progress(&self, progress: &WorkerProgressInfo) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "type": "worker_progress",
+            "execution_id": self.execution_id,
+            "worker": progress,
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:multi_agent", &payload) {
+            debug!("Failed to emit worker_progress: {}", e);
+        }
+        
+        self.emit_meta("worker_progress", payload);
+    }
+
+    /// Emit worker completion
+    pub fn emit_worker_complete(&self, task_id: &str, scope_name: &str, stats: &serde_json::Value) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "type": "worker_complete",
+            "execution_id": self.execution_id,
+            "task_id": task_id,
+            "scope_name": scope_name,
+            "stats": stats,
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:multi_agent", &payload) {
+            debug!("Failed to emit worker_complete: {}", e);
+        }
+        
+        self.emit_meta("worker_complete", payload);
+    }
+
+    /// Emit multi-agent overall stats update
+    pub fn emit_multi_agent_stats(&self, mode_info: &MultiAgentModeInfo, global_stats: &serde_json::Value) {
+        use tauri::Emitter;
+        
+        let payload = serde_json::json!({
+            "type": "multi_agent_stats",
+            "execution_id": self.execution_id,
+            "mode_info": mode_info,
+            "global_stats": global_stats,
+        });
+        
+        if let Err(e) = self.app_handle.emit("vision:multi_agent", &payload) {
+            debug!("Failed to emit multi_agent_stats: {}", e);
+        }
+        
+        self.emit_meta("multi_agent_stats", payload);
+    }
+
+    /// Emit worker decision (analysis -> next action) as multi-agent activity
+    pub fn emit_worker_decision(&self, decision: &WorkerDecisionInfo) {
+        use tauri::Emitter;
+
+        let payload = serde_json::json!({
+            "type": "worker_decision",
+            "execution_id": self.execution_id,
+            "decision": decision,
+        });
+
+        if let Err(e) = self.app_handle.emit("vision:multi_agent", &payload) {
+            debug!("Failed to emit worker_decision: {}", e);
+        }
+
+        self.emit_meta("worker_decision", payload);
+    }
+
+    /// Emit worker action result as multi-agent activity
+    pub fn emit_worker_action(&self, action: &WorkerActionInfo) {
+        use tauri::Emitter;
+
+        let payload = serde_json::json!({
+            "type": "worker_action",
+            "execution_id": self.execution_id,
+            "action": action,
+        });
+
+        if let Err(e) = self.app_handle.emit("vision:multi_agent", &payload) {
+            debug!("Failed to emit worker_action: {}", e);
+        }
+
+        self.emit_meta("worker_action", payload);
     }
 }

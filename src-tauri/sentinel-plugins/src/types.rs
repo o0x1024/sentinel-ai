@@ -87,6 +87,21 @@ pub struct RequestContext {
     pub query_params: HashMap<String, String>,
     pub is_https: bool,
     pub timestamp: DateTime<Utc>,
+    /// 是否经过拦截修改
+    #[serde(default)]
+    pub was_edited: bool,
+    /// 修改后的方法（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_method: Option<String>,
+    /// 修改后的 URL（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_url: Option<String>,
+    /// 修改后的请求头（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_headers: Option<HashMap<String, String>>,
+    /// 修改后的请求体（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_body: Option<Vec<u8>>,
 }
 
 /// 响应上下文
@@ -98,6 +113,18 @@ pub struct ResponseContext {
     pub body: Vec<u8>,
     pub content_type: Option<String>,
     pub timestamp: DateTime<Utc>,
+    /// 是否经过拦截修改
+    #[serde(default)]
+    pub was_edited: bool,
+    /// 修改后的状态码（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_status: Option<u16>,
+    /// 修改后的响应头（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_headers: Option<HashMap<String, String>>,
+    /// 修改后的响应体（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_body: Option<Vec<u8>>,
 }
 
 /// 漏洞发现

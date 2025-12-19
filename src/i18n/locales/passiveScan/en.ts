@@ -37,6 +37,8 @@ export default {
     buttons: {
       turnOn: 'Turn on',
       turnOff: 'Turn off',
+      toggleHttp: 'Toggle HTTP intercept',
+      toggleWs: 'Toggle WebSocket intercept',
       forward: 'Forward',
       drop: 'Drop',
       forwardAll: 'Forward All',
@@ -270,7 +272,11 @@ export default {
       request: 'Request',
       response: 'Response',
       decompressed: 'Decompressed',
-      close: 'close'
+      close: 'close',
+      originalRequest: 'Original request',
+      editedRequest: 'Edited request',
+      originalResponse: 'Original response',
+      editedResponse: 'Edited response'
     },
     // ProxifierProxies Component
     proxifierProxies: {

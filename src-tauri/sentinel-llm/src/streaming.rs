@@ -643,9 +643,10 @@ impl StreamingLlmClient {
                     let rig::streaming::StreamedUserContent::ToolResult(tool_result) = user_content;
                     let result_str = serde_json::to_string(&tool_result.content).unwrap_or_default();
                     info!(
-                        "Tool result received: id={}, result_len={}",
+                        "Tool result received: id={}, result_len={}, content_preview={}",
                         tool_result.id,
-                        result_str.len()
+                        result_str.len(),
+                        &result_str.chars().take(300).collect::<String>()
                     );
                     on_content(StreamContent::ToolResult {
                         id: tool_result.id,

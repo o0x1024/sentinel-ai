@@ -381,6 +381,14 @@ export default {
     execution: '工具执行',
     executionSuccess: '执行成功',
     executionFailed: '执行失败',
+    shell: {
+      runCommand: '运行命令？',
+      accept: '接受',
+      reject: '拒绝',
+      executing: '执行中...',
+      success: '成功',
+      failed: '失败'
+    },
   },
   positions: {
     'top-left': '左上',

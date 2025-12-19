@@ -50,48 +50,119 @@ pub enum ShellError {
     PermissionDenied(String),
 }
 
-/// Shell permission action
+/// Shell default policy
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub enum ShellPermissionAction {
-    Allow,
-    Deny,
-    Ask,
+pub enum ShellDefaultPolicy {
+    /// Always proceed without asking (except denied commands)
+    AlwaysProceed,
+    /// Always ask for confirmation (except allowed commands)
+    RequestReview,
 }
 
-/// Shell permission rule
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ShellRule {
-    pub pattern: String,
-    pub action: ShellPermissionAction,
+impl Default for ShellDefaultPolicy {
+    fn default() -> Self {
+        Self::RequestReview
+    }
 }
 
-/// Shell configuration
+/// Shell configuration (Cursor-style)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ShellConfig {
-    pub rules: Vec<ShellRule>,
-    pub default_action: ShellPermissionAction,
+    /// Default policy for commands not in allow/deny lists
+    #[serde(default)]
+    pub default_policy: ShellDefaultPolicy,
+    /// Commands that are auto-allowed (prefix match)
+    #[serde(default)]
+    pub allowed_commands: Vec<String>,
+    /// Commands that are always denied (prefix match, takes precedence)
+    #[serde(default)]
+    pub denied_commands: Vec<String>,
 }
 
 impl Default for ShellConfig {
     fn default() -> Self {
         Self {
-            rules: vec![
-                ShellRule {
-                    pattern: "rm -rf /".to_string(),
-                    action: ShellPermissionAction::Deny,
-                },
-                ShellRule {
-                    pattern: "mkfs".to_string(),
-                    action: ShellPermissionAction::Deny,
-                },
-                ShellRule {
-                    pattern: "dd if=/dev/zero".to_string(),
-                    action: ShellPermissionAction::Deny,
-                },
+            default_policy: ShellDefaultPolicy::RequestReview,
+            allowed_commands: vec![],
+            denied_commands: vec![
+                "rm".to_string(),
+                "rm -rf".to_string(),
+                "mkfs".to_string(),
+                "dd".to_string(),
             ],
-            default_action: ShellPermissionAction::Ask, // Default to Ask for safety
         }
     }
+}
+
+impl ShellConfig {
+    /// Check if a command should be auto-allowed
+    pub fn is_allowed(&self, command: &str) -> bool {
+        // Denied list takes precedence
+        if self.is_denied(command) {
+            return false;
+        }
+        
+        // Check allowed list
+        for allowed in &self.allowed_commands {
+            if command_matches_pattern(command, allowed) {
+                return true;
+            }
+        }
+        
+        // If AlwaysProceed, allow by default
+        self.default_policy == ShellDefaultPolicy::AlwaysProceed
+    }
+    
+    /// Check if a command should be denied
+    pub fn is_denied(&self, command: &str) -> bool {
+        for denied in &self.denied_commands {
+            if command_matches_pattern(command, denied) {
+                return true;
+            }
+        }
+        false
+    }
+    
+    /// Check if a command needs user confirmation
+    pub fn needs_confirmation(&self, command: &str) -> bool {
+        // Denied commands always need confirmation (or rejection)
+        if self.is_denied(command) {
+            return true;
+        }
+        
+        // Allowed commands don't need confirmation
+        for allowed in &self.allowed_commands {
+            if command_matches_pattern(command, allowed) {
+                return false;
+            }
+        }
+        
+        // Default policy determines
+        self.default_policy == ShellDefaultPolicy::RequestReview
+    }
+}
+
+/// Check if command matches pattern (prefix match by tokens)
+fn command_matches_pattern(command: &str, pattern: &str) -> bool {
+    let cmd_tokens: Vec<&str> = command.split_whitespace().collect();
+    let pattern_tokens: Vec<&str> = pattern.split_whitespace().collect();
+    
+    if pattern_tokens.is_empty() {
+        return false;
+    }
+    
+    // Check if pattern tokens form a prefix of command tokens
+    if cmd_tokens.len() < pattern_tokens.len() {
+        return false;
+    }
+    
+    for (i, pt) in pattern_tokens.iter().enumerate() {
+        if cmd_tokens[i] != *pt {
+            return false;
+        }
+    }
+    
+    true
 }
 
 /// Trait for handling permission requests (implemented by app layer)
@@ -142,23 +213,22 @@ impl ShellTool {
     async fn check_permission(&self, cmd: &str) -> Result<(), ShellError> {
         let config = SHELL_CONFIG.read().await;
         
-        // Check rules
-        for rule in &config.rules {
-            if cmd.contains(&rule.pattern) {
-                match rule.action {
-                    ShellPermissionAction::Allow => return Ok(()),
-                    ShellPermissionAction::Deny => return Err(ShellError::PermissionDenied(format!("Command denied by rule: {}", rule.pattern))),
-                    ShellPermissionAction::Ask => return self.ask_permission(cmd).await,
-                }
-            }
+        // Check if command is in deny list (always deny these)
+        if config.is_denied(cmd) {
+            return Err(ShellError::PermissionDenied(format!("Command denied by policy: {}", cmd)));
         }
-
-        // Check default action
-        match config.default_action {
-            ShellPermissionAction::Allow => Ok(()),
-            ShellPermissionAction::Deny => Err(ShellError::PermissionDenied("Command denied by default policy".to_string())),
-            ShellPermissionAction::Ask => self.ask_permission(cmd).await,
+        
+        // Check if command is auto-allowed
+        if config.is_allowed(cmd) {
+            return Ok(());
         }
+        
+        // Check if needs confirmation based on policy
+        if config.needs_confirmation(cmd) {
+            return self.ask_permission(cmd).await;
+        }
+        
+        Ok(())
     }
 
     async fn ask_permission(&self, cmd: &str) -> Result<(), ShellError> {

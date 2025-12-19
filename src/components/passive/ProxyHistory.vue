@@ -171,155 +171,265 @@
 
     <!-- 筛选器配置弹窗 -->
     <dialog ref="filterDialog" class="modal">
-      <div class="modal-box max-w-4xl">
-        <h3 class="font-bold text-lg mb-4">{{ $t('passiveScan.history.filterDialog.title') }}</h3>
+      <div class="modal-box max-w-6xl max-h-[90vh]">
+        <h3 class="font-bold text-lg mb-4">Configure HTTP Proxy filter</h3>
         
-        <div class="grid grid-cols-4 gap-4">
-          <!-- Filter by request type -->
-          <div class="border border-base-300 rounded-lg p-3">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.search') }}</h4>
-            <div class="space-y-1">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.requestType.showOnlyWithParams" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.showOnlyWithParams') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.requestType.hideWithoutResponse" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.hideWithoutResponse') }}</span>
-              </label>
-            </div>
-          </div>
+        <!-- Mode Tabs -->
+        <div class="tabs tabs-boxed mb-4 bg-base-200">
+          <a 
+            class="tab"
+            :class="{ 'tab-active': filterMode === 'settings' }"
+            @click="filterMode = 'settings'"
+          >
+            Settings mode
+          </a>
+          <a 
+            class="tab"
+            :class="{ 'tab-active': filterMode === 'bambda' }"
+            @click="filterMode = 'bambda'"
+          >
+            Bambda mode
+          </a>
+        </div>
 
-          <!-- Filter by MIME type -->
-          <div class="border border-base-300 rounded-lg p-3">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.method') }}</h4>
-            <div class="grid grid-cols-2 gap-x-2 gap-y-1">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.mimeType.html" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.html') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.mimeType.otherText" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.otherText') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.mimeType.script" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.script') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.mimeType.images" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.images') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.mimeType.xml" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.xml') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.mimeType.flash" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.flash') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.mimeType.css" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.css') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.mimeType.otherBinary" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.otherBinary') }}</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Filter by status code -->
-          <div class="border border-base-300 rounded-lg p-3">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.statusCode') }}</h4>
-            <div class="space-y-1">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.statusCode.s2xx" class="checkbox checkbox-xs" />
-                <span class="text-xs">2xx [success]</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.statusCode.s3xx" class="checkbox checkbox-xs" />
-                <span class="text-xs">3xx [redirection]</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.statusCode.s4xx" class="checkbox checkbox-xs" />
-                <span class="text-xs">4xx [request error]</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.statusCode.s5xx" class="checkbox checkbox-xs" />
-                <span class="text-xs">5xx [server error]</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Filter by listener -->
-          <div class="border border-base-300 rounded-lg p-3">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.host') }}</h4>
-            <div class="form-control">
-              <label class="label py-0">
-                <span class="label-text text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.port') }}</span>
-              </label>
-              <input type="text" v-model="filterConfig.listener.port" :placeholder="$t('passiveScan.history.filterDialog.checkboxes.placeholders.port')" class="input input-bordered input-xs w-full" />
-            </div>
-          </div>
-
-          <!-- Filter by search term -->
-          <div class="border border-base-300 rounded-lg p-3 col-span-2">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.contains') }}</h4>
-            <input type="text" v-model="filterConfig.search.term" :placeholder="$t('passiveScan.history.filterDialog.checkboxes.placeholders.search')" class="input input-bordered input-xs w-full mb-2" />
-            <div class="flex gap-4">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.search.regex" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.regex') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.search.caseSensitive" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.caseSensitive') }}</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="filterConfig.search.negative" class="checkbox checkbox-xs" />
-                <span class="text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.negativeSearch') }}</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Filter by file extension -->
-          <div class="border border-base-300 rounded-lg p-3 col-span-2">
-            <h4 class="text-sm font-semibold mb-2 text-base-content/70">{{ $t('passiveScan.history.filterDialog.contentType') }}</h4>
-            <div class="grid grid-cols-2 gap-2">
-              <div class="form-control">
+        <!-- Settings Mode Content -->
+        <div v-if="filterMode === 'settings'" class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+          <div class="grid grid-cols-3 gap-4">
+            <!-- Filter by request type -->
+            <div class="border border-base-300 rounded-lg p-3">
+              <h4 class="text-sm font-semibold mb-3 text-base-content">Filter by request type</h4>
+              <div class="space-y-2">
                 <label class="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" v-model="filterConfig.extension.showOnlyEnabled" class="checkbox checkbox-xs" />
-                  <span class="label-text text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.labels.showOnly') }}</span>
+                  <input type="checkbox" v-model="filterConfig.requestType.showOnlyInScope" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Show only in-scope items</span>
                 </label>
-                <input type="text" v-model="filterConfig.extension.showOnly" :placeholder="$t('passiveScan.history.filterDialog.checkboxes.placeholders.showExtensions')" class="input input-bordered input-xs w-full mt-1" />
-              </div>
-              <div class="form-control">
                 <label class="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" v-model="filterConfig.extension.hideEnabled" class="checkbox checkbox-xs" />
-                  <span class="label-text text-xs">{{ $t('passiveScan.history.filterDialog.checkboxes.labels.hide') }}</span>
+                  <input type="checkbox" v-model="filterConfig.requestType.hideWithoutResponse" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Hide items without responses</span>
                 </label>
-                <input type="text" v-model="filterConfig.extension.hide" :placeholder="$t('passiveScan.history.filterDialog.checkboxes.placeholders.hideExtensions')" class="input input-bordered input-xs w-full mt-1" />
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.requestType.showOnlyWithParams" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Show only parameterized requests</span>
+                </label>
               </div>
             </div>
+
+            <!-- Filter by MIME type -->
+            <div class="border border-base-300 rounded-lg p-3">
+              <h4 class="text-sm font-semibold mb-3 text-base-content">Filter by MIME type</h4>
+              <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.mimeType.html" class="checkbox checkbox-sm" />
+                  <span class="text-sm">HTML</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.mimeType.otherText" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Other text</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.mimeType.script" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Script</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.mimeType.images" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Images</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.mimeType.xml" class="checkbox checkbox-sm" />
+                  <span class="text-sm">XML</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.mimeType.flash" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Flash</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.mimeType.css" class="checkbox checkbox-sm" />
+                  <span class="text-sm">CSS</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.mimeType.otherBinary" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Other binary</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Filter by status code -->
+            <div class="border border-base-300 rounded-lg p-3">
+              <h4 class="text-sm font-semibold mb-3 text-base-content">Filter by status code</h4>
+              <div class="space-y-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.statusCode.s2xx" class="checkbox checkbox-sm" />
+                  <span class="text-sm">2xx [success]</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.statusCode.s3xx" class="checkbox checkbox-sm" />
+                  <span class="text-sm">3xx [redirection]</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.statusCode.s4xx" class="checkbox checkbox-sm" />
+                  <span class="text-sm">4xx [request error]</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.statusCode.s5xx" class="checkbox checkbox-sm" />
+                  <span class="text-sm">5xx [server error]</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Second Row -->
+          <div class="grid grid-cols-3 gap-4">
+            <!-- Filter by search term -->
+            <div class="border border-base-300 rounded-lg p-3">
+              <h4 class="text-sm font-semibold mb-3 text-base-content">Filter by search term</h4>
+              <input 
+                type="text" 
+                v-model="filterConfig.search.term" 
+                placeholder="Search..." 
+                class="input input-bordered input-sm w-full mb-3" 
+              />
+              <div class="space-y-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.search.regex" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Regex</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.search.caseSensitive" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Case sensitive</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="filterConfig.search.negative" class="checkbox checkbox-sm" />
+                  <span class="text-sm">Negative search</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Filter by file extension -->
+            <div class="border border-base-300 rounded-lg p-3">
+              <h4 class="text-sm font-semibold mb-3 text-base-content">Filter by file extension</h4>
+              <div class="space-y-3">
+                <div class="form-control">
+                  <label class="flex items-center gap-2 cursor-pointer mb-1">
+                    <input type="checkbox" v-model="filterConfig.extension.showOnlyEnabled" class="checkbox checkbox-sm" />
+                    <span class="text-sm">Show only:</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    v-model="filterConfig.extension.showOnly" 
+                    placeholder="asp,aspx,jsp,php" 
+                    class="input input-bordered input-sm w-full"
+                    :disabled="!filterConfig.extension.showOnlyEnabled"
+                  />
+                </div>
+                <div class="form-control">
+                  <label class="flex items-center gap-2 cursor-pointer mb-1">
+                    <input type="checkbox" v-model="filterConfig.extension.hideEnabled" class="checkbox checkbox-sm" />
+                    <span class="text-sm">Hide:</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    v-model="filterConfig.extension.hide" 
+                    placeholder="js,gif,jpg,png,css,ico,woff,woff2" 
+                    class="input input-bordered input-sm w-full"
+                    :disabled="!filterConfig.extension.hideEnabled"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Filter by annotation and listener -->
+            <div class="space-y-4">
+              <!-- Filter by annotation -->
+              <div class="border border-base-300 rounded-lg p-3">
+                <h4 class="text-sm font-semibold mb-3 text-base-content">Filter by annotation</h4>
+                <div class="space-y-2">
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" v-model="filterConfig.annotation.showOnlyWithNotes" class="checkbox checkbox-sm" />
+                    <span class="text-sm">Show only items with notes</span>
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" v-model="filterConfig.annotation.showOnlyHighlighted" class="checkbox checkbox-sm" />
+                    <span class="text-sm">Show only highlighted items</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Filter by listener -->
+              <div class="border border-base-300 rounded-lg p-3">
+                <h4 class="text-sm font-semibold mb-3 text-base-content">Filter by listener</h4>
+                <div class="form-control">
+                  <label class="label py-0 pb-1">
+                    <span class="label-text text-sm">Port</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    v-model="filterConfig.listener.port" 
+                    placeholder="e.g. 8080" 
+                    class="input input-bordered input-sm w-full" 
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bambda Mode Content -->
+        <div v-else class="space-y-4">
+          <div class="alert alert-info">
+            <i class="fas fa-info-circle"></i>
+            <span class="text-sm">Bambda mode allows you to write custom filter logic using JavaScript-like expressions.</span>
+          </div>
+          <textarea 
+            class="textarea textarea-bordered w-full h-64 font-mono text-sm"
+            placeholder="// Write your Bambda filter expression here&#10;// Example: request.url().contains('api') && response.statusCode() == 200"
+            v-model="filterConfig.bambdaExpression"
+          ></textarea>
+          <div class="text-xs text-base-content/70">
+            <p class="mb-1">Available variables:</p>
+            <ul class="list-disc list-inside ml-2 space-y-0.5">
+              <li><code class="bg-base-200 px-1 rounded">request</code> - Access request properties (url, method, headers, body)</li>
+              <li><code class="bg-base-200 px-1 rounded">response</code> - Access response properties (statusCode, headers, body)</li>
+              <li><code class="bg-base-200 px-1 rounded">annotations</code> - Access item annotations (notes, highlights)</li>
+            </ul>
           </div>
         </div>
 
         <!-- 底部按钮 -->
-        <div class="modal-action justify-between">
+        <div class="modal-action justify-between mt-6 pt-4 border-t border-base-300">
           <div class="flex gap-2">
-            <button class="btn btn-sm" @click="showAllFilters">{{ $t('passiveScan.history.filterDialog.startTime') }}</button>
-            <button class="btn btn-sm" @click="hideAllFilters">{{ $t('passiveScan.history.filterDialog.endTime') }}</button>
-            <button class="btn btn-sm" @click="revertFilterChanges">{{ $t('passiveScan.history.filterDialog.reset') }}</button>
+            <button class="btn btn-sm btn-ghost" @click="showAllFilters">
+              <i class="fas fa-eye mr-1"></i>
+              Show all
+            </button>
+            <button class="btn btn-sm btn-ghost" @click="hideAllFilters">
+              <i class="fas fa-eye-slash mr-1"></i>
+              Hide all
+            </button>
+            <button class="btn btn-sm btn-ghost" @click="revertFilterChanges">
+              <i class="fas fa-undo mr-1"></i>
+              Revert changes
+            </button>
           </div>
-          <div class="flex gap-2">
-            <button class="btn btn-sm" @click="closeFilterDialog">{{ $t('passiveScan.history.filterDialog.url') }}</button>
-            <button class="btn btn-sm btn-primary" @click="applyFilterConfig">{{ $t('passiveScan.history.filterDialog.apply') }}</button>
+          <div class="flex gap-2 items-center">
+            <button 
+              v-if="filterMode === 'bambda'"
+              class="btn btn-sm btn-ghost"
+              @click="convertToBambda"
+              title="Convert current settings to Bambda expression"
+            >
+              <i class="fas fa-exchange-alt mr-1"></i>
+              Convert to Bambda
+            </button>
+            <button class="btn btn-sm" @click="closeFilterDialog">Cancel</button>
+            <button class="btn btn-sm btn-primary" @click="applyFilterConfig">
+              <i class="fas fa-check mr-1"></i>
+              Apply
+            </button>
           </div>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.history.detailsPanel.close') }}</button>
+        <button>close</button>
       </form>
     </dialog>
 
@@ -719,7 +829,36 @@
           <!-- 左侧：Request -->
           <div class="flex flex-col overflow-hidden" :style="{ width: leftPanelWidth + 'px' }">
             <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
-              <h4 class="font-semibold text-sm">{{ $t('passiveScan.history.detailsPanel.request') }}</h4>
+              <div class="flex items-center gap-2">
+                <h4 class="font-semibold text-sm">{{ $t('passiveScan.history.detailsPanel.request') }}</h4>
+                <!-- Original/Edited 切换下拉 -->
+                <div v-if="selectedRequest?.was_edited" class="dropdown dropdown-bottom">
+                  <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
+                    <span :class="requestViewMode === 'edited' ? 'text-warning' : ''">
+                      {{ requestViewMode === 'original' ? $t('passiveScan.history.detailsPanel.originalRequest') : $t('passiveScan.history.detailsPanel.editedRequest') }}
+                    </span>
+                    <i class="fas fa-chevron-down text-xs"></i>
+                  </label>
+                  <ul tabindex="0" class="dropdown-content z-[1] menu p-1 shadow-lg bg-base-100 rounded-box w-40 border border-base-300">
+                    <li>
+                      <a 
+                        :class="{ 'active': requestViewMode === 'original' }"
+                        @click="requestViewMode = 'original'"
+                      >
+                        {{ $t('passiveScan.history.detailsPanel.originalRequest') }}
+                      </a>
+                    </li>
+                    <li>
+                      <a 
+                        :class="{ 'active': requestViewMode === 'edited' }"
+                        @click="requestViewMode = 'edited'"
+                      >
+                        <span class="text-warning">{{ $t('passiveScan.history.detailsPanel.editedRequest') }}</span>
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+              </div>
               <div class="btn-group btn-group-xs">
                 <button 
                   :class="['btn btn-xs', requestTab === 'pretty' ? 'btn-active' : '']"
@@ -744,14 +883,14 @@
             <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event)">
               <template v-if="requestTab !== 'hex'">
                 <HttpCodeEditor
-                  :modelValue="formatRequest(selectedRequest, requestTab)"
+                  :modelValue="formatRequest(selectedRequest, requestTab, requestViewMode)"
                   :readonly="true"
                   height="100%"
                 />
               </template>
               <template v-else>
                 <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
-                  <pre>{{ stringToHex(formatRequestRaw(selectedRequest)) }}</pre>
+                  <pre>{{ stringToHex(formatRequestRaw(selectedRequest, requestViewMode)) }}</pre>
                 </div>
               </template>
             </div>
@@ -772,6 +911,33 @@
                 <span v-if="isResponseCompressed(selectedRequest)" class="badge badge-xs badge-info" title="响应已自动解压">
                   <i class="fas fa-file-archive mr-1"></i>{{ $t('passiveScan.history.detailsPanel.decompressed') }}
                 </span>
+                <!-- Original/Edited 切换下拉 -->
+                <div v-if="selectedRequest?.was_edited && hasEditedResponse(selectedRequest)" class="dropdown dropdown-bottom">
+                  <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
+                    <span :class="responseViewMode === 'edited' ? 'text-warning' : ''">
+                      {{ responseViewMode === 'original' ? $t('passiveScan.history.detailsPanel.originalResponse') : $t('passiveScan.history.detailsPanel.editedResponse') }}
+                    </span>
+                    <i class="fas fa-chevron-down text-xs"></i>
+                  </label>
+                  <ul tabindex="0" class="dropdown-content z-[1] menu p-1 shadow-lg bg-base-100 rounded-box w-40 border border-base-300">
+                    <li>
+                      <a 
+                        :class="{ 'active': responseViewMode === 'original' }"
+                        @click="responseViewMode = 'original'"
+                      >
+                        {{ $t('passiveScan.history.detailsPanel.originalResponse') }}
+                      </a>
+                    </li>
+                    <li>
+                      <a 
+                        :class="{ 'active': responseViewMode === 'edited' }"
+                        @click="responseViewMode = 'edited'"
+                      >
+                        <span class="text-warning">{{ $t('passiveScan.history.detailsPanel.editedResponse') }}</span>
+                      </a>
+                    </li>
+                  </ul>
+                </div>
               </div>
               <div class="btn-group btn-group-xs">
                 <button 
@@ -797,14 +963,14 @@
             <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent>
               <template v-if="responseTab !== 'hex'">
                 <HttpCodeEditor
-                  :modelValue="formatResponse(selectedRequest, responseTab)"
+                  :modelValue="formatResponse(selectedRequest, responseTab, responseViewMode)"
                   :readonly="true"
                   height="100%"
                 />
               </template>
               <template v-else>
                 <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
-                  <pre>{{ stringToHex(formatResponseRaw(selectedRequest)) }}</pre>
+                  <pre>{{ stringToHex(formatResponseRaw(selectedRequest, responseViewMode)) }}</pre>
                 </div>
               </template>
             </div>
@@ -881,6 +1047,15 @@ interface ProxyRequest {
   extension?: string;
   title?: string;
   mime_type?: string;
+  // Edited 字段（经过拦截修改后的数据）
+  was_edited?: boolean;
+  edited_request_headers?: string;
+  edited_request_body?: string;
+  edited_method?: string;
+  edited_url?: string;
+  edited_response_headers?: string;
+  edited_response_body?: string;
+  edited_status_code?: number;
 }
 
 interface VirtualItem {
@@ -980,6 +1155,10 @@ const isLoadingMore = ref(false); // 是否正在加载更多
 const requestTab = ref<'pretty' | 'raw' | 'hex'>('pretty');
 const responseTab = ref<'pretty' | 'raw' | 'hex'>('pretty');
 
+// Original/Edited 切换（类似 Burp Suite）
+const requestViewMode = ref<'original' | 'edited'>('edited');
+const responseViewMode = ref<'original' | 'edited'>('edited');
+
 const stats = ref({
   total: 0,
   http: 0,
@@ -994,9 +1173,13 @@ const filterDialog = ref<HTMLDialogElement | null>(null);
 const certErrorDialog = ref<HTMLDialogElement | null>(null);
 const certErrorInfo = ref<{host: string; url: string; error?: string} | null>(null);
 
+// Filter mode
+const filterMode = ref<'settings' | 'bambda'>('settings');
+
 // 默认筛选器配置
 const defaultFilterConfig = () => ({
   requestType: {
+    showOnlyInScope: false,
     showOnlyWithParams: false,
     hideWithoutResponse: false,
   },
@@ -1028,9 +1211,14 @@ const defaultFilterConfig = () => ({
     hideEnabled: true,
     hide: 'js,gif,jpg,png,css,ico,woff,woff2,ttf,svg',
   },
+  annotation: {
+    showOnlyWithNotes: false,
+    showOnlyHighlighted: false,
+  },
   listener: {
     port: '',
   },
+  bambdaExpression: '',
 });
 
 // 筛选器配置（可编辑）
@@ -1949,8 +2137,11 @@ function showAllFilters() {
   };
   filterConfig.value.extension.showOnlyEnabled = false;
   filterConfig.value.extension.hideEnabled = false;
+  filterConfig.value.requestType.showOnlyInScope = false;
   filterConfig.value.requestType.showOnlyWithParams = false;
   filterConfig.value.requestType.hideWithoutResponse = false;
+  filterConfig.value.annotation.showOnlyWithNotes = false;
+  filterConfig.value.annotation.showOnlyHighlighted = false;
 }
 
 function hideAllFilters() {
@@ -1964,6 +2155,67 @@ function hideAllFilters() {
     flash: false,
     otherBinary: false,
   };
+}
+
+// Convert current settings to Bambda expression
+function convertToBambda() {
+  const conditions: string[] = [];
+  
+  // MIME type filters
+  const enabledMimes = Object.entries(filterConfig.value.mimeType)
+    .filter(([_, enabled]) => enabled)
+    .map(([type]) => type);
+  
+  if (enabledMimes.length > 0 && enabledMimes.length < 8) {
+    const mimeConditions = enabledMimes.map(type => {
+      const mimeMap: Record<string, string> = {
+        html: 'text/html',
+        script: 'javascript',
+        xml: 'xml',
+        css: 'text/css',
+        otherText: 'text/',
+        images: 'image/',
+        flash: 'flash',
+        otherBinary: 'application/octet-stream'
+      };
+      return `response.mimeType().contains('${mimeMap[type]}')`;
+    }).join(' || ');
+    conditions.push(`(${mimeConditions})`);
+  }
+  
+  // Status code filters
+  const statusCodes: string[] = [];
+  if (filterConfig.value.statusCode.s2xx) statusCodes.push('response.statusCode() >= 200 && response.statusCode() < 300');
+  if (filterConfig.value.statusCode.s3xx) statusCodes.push('response.statusCode() >= 300 && response.statusCode() < 400');
+  if (filterConfig.value.statusCode.s4xx) statusCodes.push('response.statusCode() >= 400 && response.statusCode() < 500');
+  if (filterConfig.value.statusCode.s5xx) statusCodes.push('response.statusCode() >= 500 && response.statusCode() < 600');
+  
+  if (statusCodes.length > 0 && statusCodes.length < 4) {
+    conditions.push(`(${statusCodes.join(' || ')})`);
+  }
+  
+  // Search term
+  if (filterConfig.value.search.term) {
+    const term = filterConfig.value.search.term;
+    const method = filterConfig.value.search.regex ? 'matches' : 'contains';
+    const target = filterConfig.value.search.caseSensitive ? 'request.url()' : 'request.url().toLowerCase()';
+    const searchTerm = filterConfig.value.search.caseSensitive ? term : term.toLowerCase();
+    const condition = `${target}.${method}('${searchTerm}')`;
+    conditions.push(filterConfig.value.search.negative ? `!${condition}` : condition);
+  }
+  
+  // File extension
+  if (filterConfig.value.extension.hideEnabled && filterConfig.value.extension.hide) {
+    const exts = filterConfig.value.extension.hide.split(',').map(e => e.trim());
+    const extConditions = exts.map(ext => `!request.url().endsWith('.${ext}')`).join(' && ');
+    conditions.push(`(${extConditions})`);
+  }
+  
+  filterConfig.value.bambdaExpression = conditions.length > 0 
+    ? conditions.join(' && ') 
+    : '// No filters configured';
+    
+  dialog.toast.success('Converted to Bambda expression');
 }
 
 // 加载保存的筛选器配置
@@ -2108,7 +2360,7 @@ function detailCopyRequest() {
   hideDetailContextMenu();
   if (!selectedRequest.value) return;
   
-  const requestText = formatRequest(selectedRequest.value, requestTab.value);
+  const requestText = formatRequest(selectedRequest.value, requestTab.value, requestViewMode.value);
   navigator.clipboard.writeText(requestText)
     .then(() => dialog.toast.success('请求已复制'))
     .catch(() => dialog.toast.error('复制失败'));
@@ -2306,42 +2558,56 @@ function detailSendResponseToAssistant() {
   sendSingleToAssistant(selectedRequest.value, 'response');
 }
 
-function formatRequest(request: ProxyRequest, tab: string): string {
+function formatRequest(request: ProxyRequest, tab: string, viewMode: 'original' | 'edited' = 'edited'): string {
   if (tab === 'hex') {
-    return stringToHex(formatRequestRaw(request));
+    return stringToHex(formatRequestRaw(request, viewMode));
   }
   
   if (tab === 'raw') {
-    return formatRequestRaw(request);
+    return formatRequestRaw(request, viewMode);
   }
   
-  // Pretty format - 从完整URL提取路径
-  const requestPath = getRequestPath(request.url);
-  let result = `${request.method} ${requestPath} HTTP/1.1\n`;
-  const hostValue = request.host || getHostFromUrl(request.url);
-  if (hostValue) result += `Host: ${hostValue}\n`;
-  result += formatHeaderBlock(request.request_headers, { skipHost: !!hostValue });
+  // 根据 viewMode 选择使用原始或修改后的数据
+  const useEdited = viewMode === 'edited' && request.was_edited;
+  const method = useEdited && request.edited_method ? request.edited_method : request.method;
+  const url = useEdited && request.edited_url ? request.edited_url : request.url;
+  const headers = useEdited && request.edited_request_headers ? request.edited_request_headers : request.request_headers;
+  const body = useEdited && request.edited_request_body ? request.edited_request_body : request.request_body;
   
-  if (request.request_body) {
+  // Pretty format - 从完整URL提取路径
+  const requestPath = getRequestPath(url);
+  let result = `${method} ${requestPath} HTTP/1.1\n`;
+  const hostValue = request.host || getHostFromUrl(url);
+  if (hostValue) result += `Host: ${hostValue}\n`;
+  result += formatHeaderBlock(headers, { skipHost: !!hostValue });
+  
+  if (body) {
     result += '\n';
     // JSON body 格式化显示
-    result += formatJsonBody(request.request_body);
+    result += formatJsonBody(body);
   }
   
   return result;
 }
 
-function formatRequestRaw(request: ProxyRequest): string {
+function formatRequestRaw(request: ProxyRequest, viewMode: 'original' | 'edited' = 'edited'): string {
+  // 根据 viewMode 选择使用原始或修改后的数据
+  const useEdited = viewMode === 'edited' && request.was_edited;
+  const method = useEdited && request.edited_method ? request.edited_method : request.method;
+  const url = useEdited && request.edited_url ? request.edited_url : request.url;
+  const headers = useEdited && request.edited_request_headers ? request.edited_request_headers : request.request_headers;
+  const body = useEdited && request.edited_request_body ? request.edited_request_body : request.request_body;
+  
   // 从完整URL提取路径
-  const requestPath = getRequestPath(request.url);
-  let result = `${request.method} ${requestPath} HTTP/1.1\n`;
-  const hostValue = request.host || getHostFromUrl(request.url);
+  const requestPath = getRequestPath(url);
+  let result = `${method} ${requestPath} HTTP/1.1\n`;
+  const hostValue = request.host || getHostFromUrl(url);
   if (hostValue) result += `Host: ${hostValue}\n`;
   // Raw tab should still be an HTTP-like text block; if stored headers are JSON, render as header lines.
-  result += formatHeaderBlock(request.request_headers, { skipHost: !!hostValue });
+  result += formatHeaderBlock(headers, { skipHost: !!hostValue });
   
-  if (request.request_body) {
-    result += '\n' + request.request_body;
+  if (body) {
+    result += '\n' + body;
   }
   
   return result;
@@ -2424,56 +2690,65 @@ function formatJsonBody(body: string): string {
   }
 }
 
-function formatResponse(request: ProxyRequest, tab: string): string {
+function formatResponse(request: ProxyRequest, tab: string, viewMode: 'original' | 'edited' = 'edited'): string {
   if (tab === 'hex') {
-    return stringToHex(formatResponseRaw(request));
+    return stringToHex(formatResponseRaw(request, viewMode));
   }
   
   if (tab === 'raw') {
-    return formatResponseRaw(request);
+    return formatResponseRaw(request, viewMode);
   }
   
-  // Pretty format
-  let result = `HTTP/1.2 ${request.status_code} OK\n`;
-  result += formatHeaderBlock(request.response_headers);
+  // 根据 viewMode 选择使用原始或修改后的数据
+  const useEdited = viewMode === 'edited' && request.was_edited;
+  const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code;
+  const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers;
+  const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body;
   
-  if (request.response_body) {
+  // Pretty format
+  let result = `HTTP/1.2 ${statusCode} OK\n`;
+  result += formatHeaderBlock(headers);
+  
+  if (body) {
     result += '\n';
     
     // 检测内容类型
-    const contentType = getResponseContentType(request);
+    const contentType = getResponseContentType(request, viewMode);
     
     // 尝试根据 Content-Type 格式化
     if (contentType.includes('json') || contentType.includes('application/json')) {
       try {
-        const json = JSON.parse(request.response_body);
+        const json = JSON.parse(body);
         result += JSON.stringify(json, null, 2);
       } catch {
-        result += request.response_body;
+        result += body;
       }
     } else if (contentType.includes('html') || contentType.includes('xml')) {
       // HTML/XML 直接显示
-      result += request.response_body;
+      result += body;
     } else if (contentType.includes('text/')) {
       // 其他文本类型
-      result += request.response_body;
+      result += body;
     } else {
       // 二进制或未知类型
-      const bodySize = new Blob([request.response_body]).size;
+      const bodySize = new Blob([body]).size;
       result += `[Binary data - ${formatBytes(bodySize)}]\n`;
       result += `Content-Type: ${contentType}\n`;
-      result += `\nFirst 200 characters:\n${request.response_body.substring(0, 200)}...`;
+      result += `\nFirst 200 characters:\n${body.substring(0, 200)}...`;
     }
   }
   
   return result;
 }
 
-function getResponseContentType(request: ProxyRequest): string {
-  if (request.response_headers) {
+function getResponseContentType(request: ProxyRequest, viewMode: 'original' | 'edited' = 'edited'): string {
+  const useEdited = viewMode === 'edited' && request.was_edited;
+  const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers;
+  
+  if (headers) {
     try {
-      const headers = JSON.parse(request.response_headers);
-      return headers['content-type'] || headers['Content-Type'] || '';
+      const parsed = JSON.parse(headers);
+      return parsed['content-type'] || parsed['Content-Type'] || '';
     } catch {
       return '';
     }
@@ -2494,15 +2769,26 @@ function isResponseCompressed(request: ProxyRequest): boolean {
   return false;
 }
 
-function formatResponseRaw(request: ProxyRequest): string {
-  let result = `HTTP/1.2 ${request.status_code} OK\n`;
-  result += formatHeaderBlock(request.response_headers);
+function formatResponseRaw(request: ProxyRequest, viewMode: 'original' | 'edited' = 'edited'): string {
+  // 根据 viewMode 选择使用原始或修改后的数据
+  const useEdited = viewMode === 'edited' && request.was_edited;
+  const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code;
+  const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers;
+  const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body;
   
-  if (request.response_body) {
-    result += '\n' + request.response_body;
+  let result = `HTTP/1.2 ${statusCode} OK\n`;
+  result += formatHeaderBlock(headers);
+  
+  if (body) {
+    result += '\n' + body;
   }
   
   return result;
+}
+
+// 检查响应是否有 edited 数据
+function hasEditedResponse(request: ProxyRequest): boolean {
+  return !!(request.edited_response_headers || request.edited_response_body || request.edited_status_code);
 }
 
 function stringToHex(str: string): string {

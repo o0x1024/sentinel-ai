@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
 use sentinel_tools::buildin_tools::shell::{
-    ShellConfig, ShellPermissionAction, ShellRule, ShellPermissionHandler, 
+    ShellConfig, ShellPermissionHandler, 
     get_shell_config, set_shell_config, set_permission_handler
 };
 use sentinel_tools::{get_tool_server, ToolServer};
@@ -1016,13 +1016,62 @@ pub async fn vision_explorer_skip_login(
 ) -> Result<(), String> {
     tracing::info!("Skip login requested for VisionExplorer execution_id: {}", execution_id);
 
-    crate::engines::vision_explorer::skip_login(&execution_id).await?;
+    // Try to signal skip login. If explorer not found, it may have already
+    // detected login success automatically - this is not an error.
+    match crate::engines::vision_explorer::skip_login(&execution_id).await {
+        Ok(_) => {
+            tracing::info!("Skip login acknowledged for execution_id: {}", execution_id);
+        }
+        Err(e) => {
+            // Log but don't fail - login may have been detected automatically
+            tracing::warn!(
+                "Skip login signal ignored (explorer may have completed): {}",
+                e
+            );
+        }
+    }
 
-    // Emit credentials_received event to close takeover UI on the frontend.
+    // Always emit credentials_received event to close takeover UI on the frontend.
     use tauri::Emitter;
     let payload = serde_json::json!({
         "type": "credentials_received",
         "execution_id": execution_id,
+        "skipped": true,
+    });
+    let _ = app.emit("vision:credentials_received", payload);
+
+    Ok(())
+}
+
+/// Mark manual login as complete for a running VisionExplorer
+#[tauri::command]
+pub async fn vision_explorer_manual_login_complete(
+    app: tauri::AppHandle,
+    execution_id: String,
+) -> Result<(), String> {
+    tracing::info!("Manual login complete signaled for VisionExplorer execution_id: {}", execution_id);
+
+    // Try to signal manual login complete. If explorer not found, it may have already
+    // detected login success automatically - this is not an error.
+    match crate::engines::vision_explorer::manual_login_complete(&execution_id).await {
+        Ok(_) => {
+            tracing::info!("Manual login complete acknowledged for execution_id: {}", execution_id);
+        }
+        Err(e) => {
+            // Log but don't fail - login may have been detected automatically
+            tracing::warn!(
+                "Manual login complete signal ignored (explorer may have completed): {}",
+                e
+            );
+        }
+    }
+
+    // Always emit credentials_received event to close takeover UI on the frontend.
+    use tauri::Emitter;
+    let payload = serde_json::json!({
+        "type": "credentials_received",
+        "execution_id": execution_id,
+        "manual_login": true,
     });
     let _ = app.emit("vision:credentials_received", payload);
 
@@ -1035,6 +1084,16 @@ pub async fn vision_explorer_skip_login(
 
 // Global storage for permission response channels
 static SHELL_PERMISSION_SENDERS: Lazy<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+
+// Global storage for pending permission requests (for frontend polling)
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingPermissionRequest {
+    pub id: String,
+    pub command: String,
+    pub timestamp: u64,
+}
+
+static PENDING_PERMISSION_REQUESTS: Lazy<RwLock<Vec<PendingPermissionRequest>>> = Lazy::new(|| RwLock::new(Vec::new()));
 
 struct ShellPermissionImpl {
     app: tauri::AppHandle,
@@ -1051,6 +1110,19 @@ impl ShellPermissionHandler for ShellPermissionImpl {
             senders.insert(id.clone(), tx);
         }
         
+        // Store pending request
+        {
+            let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
+            pending.push(PendingPermissionRequest {
+                id: id.clone(),
+                command: command.to_string(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            });
+        }
+        
         // Emit event to frontend
         use tauri::Emitter;
         tracing::info!("Requesting permission for command: {} (id: {})", command, id);
@@ -1059,11 +1131,14 @@ impl ShellPermissionHandler for ShellPermissionImpl {
             "command": command
         })) {
             tracing::error!("Failed to emit permission request: {}", e);
+            // Clean up pending request
+            let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
+            pending.retain(|r| r.id != id);
             return false;
         }
         
         // Wait for response with timeout (e.g. 5 minutes)
-        match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
             Ok(Ok(allowed)) => {
                 tracing::info!("Permission response for {}: {}", id, allowed);
                 allowed
@@ -1076,7 +1151,15 @@ impl ShellPermissionHandler for ShellPermissionImpl {
                 tracing::warn!("Permission request timed out for {}", id);
                 false
             },
+        };
+        
+        // Clean up pending request
+        {
+            let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
+            pending.retain(|r| r.id != id);
         }
+        
+        result
     }
 }
 
@@ -1093,7 +1176,7 @@ pub async fn get_shell_tool_config() -> Result<ShellConfig, String> {
     Ok(get_shell_config().await)
 }
 
-/// Set shell tool configuration
+/// Set shell tool configuration (deprecated, use save_agent_config instead)
 #[tauri::command]
 pub async fn set_shell_tool_config(config: ShellConfig) -> Result<(), String> {
     set_shell_config(config).await;
@@ -1103,11 +1186,133 @@ pub async fn set_shell_tool_config(config: ShellConfig) -> Result<(), String> {
 /// Respond to a shell permission request
 #[tauri::command]
 pub async fn respond_shell_permission(id: String, allowed: bool) -> Result<(), String> {
+    tracing::info!("Responding to shell permission: id={}, allowed={}", id, allowed);
+    
+    // Remove from pending requests
+    {
+        let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
+        let before_len = pending.len();
+        pending.retain(|r| r.id != id);
+        tracing::info!("Removed from pending: before={}, after={}", before_len, pending.len());
+    }
+    
     let mut senders = SHELL_PERMISSION_SENDERS.write().await;
+    tracing::info!("Available senders: {:?}", senders.keys().collect::<Vec<_>>());
+    
     if let Some(tx) = senders.remove(&id) {
-        let _ = tx.send(allowed);
+        let send_result = tx.send(allowed);
+        tracing::info!("Sent permission response: {:?}", send_result);
         Ok(())
     } else {
+        tracing::warn!("Request ID {} not found in senders map", id);
         Err(format!("Request ID {} not found or already handled", id))
     }
+}
+
+/// Get all pending shell permission requests (for frontend polling)
+#[tauri::command]
+pub async fn get_pending_shell_permissions() -> Result<Vec<PendingPermissionRequest>, String> {
+    let pending = PENDING_PERMISSION_REQUESTS.read().await;
+    Ok(pending.clone())
+}
+
+// ============================================================================
+// Agent Configuration Commands
+// ============================================================================
+
+/// Agent configuration structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfig {
+    /// Shell/terminal configuration
+    pub shell: ShellConfig,
+    // Future: Add more agent settings here
+    // pub memory: MemoryConfig,
+    // pub tools: ToolsConfig,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            shell: ShellConfig::default(),
+        }
+    }
+}
+
+/// Get agent configuration
+#[tauri::command]
+pub async fn get_agent_config(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<AgentConfig, String> {
+    // Load shell config from database
+    let shell_config = load_shell_config_from_db(db_service.inner()).await;
+    
+    Ok(AgentConfig {
+        shell: shell_config,
+    })
+}
+
+/// Save agent configuration
+#[tauri::command]
+pub async fn save_agent_config(
+    config: AgentConfig,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<(), String> {
+    // Save shell config to database
+    save_shell_config_to_db(&config.shell, db_service.inner()).await?;
+    
+    // Update in-memory config
+    set_shell_config(config.shell).await;
+    
+    tracing::info!("Agent config saved successfully");
+    Ok(())
+}
+
+/// Load shell config from database
+async fn load_shell_config_from_db(db: &sentinel_db::DatabaseService) -> ShellConfig {
+    let mut config = ShellConfig::default();
+    
+    // Load default_policy
+    if let Ok(Some(value)) = db.get_config("agent", "shell_default_policy").await {
+        config.default_policy = match value.as_str() {
+            "AlwaysProceed" => sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed,
+            _ => sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::RequestReview,
+        };
+    }
+    
+    // Load allowed_commands
+    if let Ok(Some(value)) = db.get_config("agent", "shell_allowed_commands").await {
+        if let Ok(commands) = serde_json::from_str::<Vec<String>>(&value) {
+            config.allowed_commands = commands;
+        }
+    }
+    
+    // Load denied_commands
+    if let Ok(Some(value)) = db.get_config("agent", "shell_denied_commands").await {
+        if let Ok(commands) = serde_json::from_str::<Vec<String>>(&value) {
+            config.denied_commands = commands;
+        }
+    }
+    
+    config
+}
+
+/// Save shell config to database
+async fn save_shell_config_to_db(config: &ShellConfig, db: &sentinel_db::DatabaseService) -> Result<(), String> {
+    let policy_str = match config.default_policy {
+        sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed => "AlwaysProceed",
+        sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::RequestReview => "RequestReview",
+    };
+    
+    db.set_config("agent", "shell_default_policy", policy_str, Some("Shell command execution policy"))
+        .await.map_err(|e| e.to_string())?;
+    
+    let allowed_json = serde_json::to_string(&config.allowed_commands).unwrap_or_default();
+    db.set_config("agent", "shell_allowed_commands", &allowed_json, Some("Shell commands allowed to execute without confirmation"))
+        .await.map_err(|e| e.to_string())?;
+    
+    let denied_json = serde_json::to_string(&config.denied_commands).unwrap_or_default();
+    db.set_config("agent", "shell_denied_commands", &denied_json, Some("Shell commands that require confirmation"))
+        .await.map_err(|e| e.to_string())?;
+    
+    Ok(())
 }

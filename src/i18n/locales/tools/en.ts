@@ -110,6 +110,55 @@ export default {
     noReviewPlugins: 'No plugins require review'
   },
 
+  // Shell terminal
+  shell: {
+    title: 'Shell Terminal',
+    clear: 'Clear',
+    settings: 'Settings',
+    executing: 'Executing...',
+    enterCommand: 'Enter command...',
+    welcome: 'Sentinel AI Shell Terminal',
+    welcomeHint: 'Type commands and press Enter to execute. Type help for available commands.',
+    historyHint: 'Use ↑/↓ to navigate command history.',
+    completedIn: 'Completed in {time}ms (exit code: {code})',
+    helpText: `Available commands:
+  clear, cls    - Clear the terminal
+  help          - Show this help message
+  cd <path>     - Change directory
+  pwd           - Print working directory
+  exit          - Close the terminal
+  
+Any other command will be executed in the system shell.`,
+    openTerminal: 'Open Terminal',
+    securityConfig: 'Security Config',
+    defaultPolicy: 'Default Policy',
+    defaultPolicyHint: 'Action for commands not matching any rule',
+    actionAllow: 'Allow',
+    actionAsk: 'Ask User',
+    actionDeny: 'Deny',
+    securityRules: 'Security Rules',
+    addRule: 'Add Rule',
+    ruleOrder: 'Order',
+    rulePattern: 'Command Pattern (contains match)',
+    ruleAction: 'Action',
+    ruleOperations: 'Operations',
+    noRules: 'No rules. Default policy will be used.',
+    ruleHint: 'Rules are matched in order. Once matched, the corresponding action is applied. Put specific rules before general ones.',
+    saveConfig: 'Save Config',
+    configSaved: 'Configuration saved',
+    configLoadFailed: 'Failed to load configuration',
+    configSaveFailed: 'Failed to save configuration',
+    patternRequired: 'Rule pattern cannot be empty',
+    // Inline confirmation
+    runCommand: 'Run command?',
+    accept: 'Accept',
+    reject: 'Reject',
+    alwaysAccept: 'Always Accept',
+    alwaysAcceptHint: 'Add this command to allow list and execute',
+    success: 'Success',
+    failed: 'Failed'
+  },
+
   // Legacy fields
   title: 'MCP Tools',
   description: 'Manage and use MCP tools and services',

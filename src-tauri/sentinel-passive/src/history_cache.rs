@@ -33,6 +33,30 @@ pub struct HttpRequestRecord {
     pub response_size: i64,
     pub response_time: i64,
     pub timestamp: DateTime<Utc>,
+    /// 是否经过拦截修改
+    #[serde(default)]
+    pub was_edited: bool,
+    /// 修改后的请求头（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_request_headers: Option<String>,
+    /// 修改后的请求体（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_request_body: Option<String>,
+    /// 修改后的请求方法（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_method: Option<String>,
+    /// 修改后的请求 URL（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_url: Option<String>,
+    /// 修改后的响应头（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_response_headers: Option<String>,
+    /// 修改后的响应体（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_response_body: Option<String>,
+    /// 修改后的状态码（如果经过拦截修改）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_status_code: Option<i32>,
 }
 
 /// WebSocket 连接记录

@@ -414,10 +414,29 @@ export default {
     ai: 'AI Services',
     rag: 'Knowledge Base',
     scheduler: 'Scheduler Strategy',
+    agent: 'Agent',
     database: 'Database',
     system: 'System Settings',
     security: 'Security Settings',
     network: 'Network Settings',
     proxy_test: 'Proxy Testing'
+  },
+  agent: {
+    title: 'Agent Settings',
+    autoSaveFailed: 'Auto save failed',
+    terminal: {
+      title: 'Terminal Settings',
+      autoExecution: 'Terminal Command Auto Execution',
+      autoExecutionDesc: 'Control whether Agent requires user confirmation before executing terminal commands',
+      alwaysProceed: 'Always Proceed',
+      requestReview: 'Request Review',
+      allowList: 'Allow List',
+      allowListDesc: 'Agent auto-executes commands matched by an allow list entry',
+      denyList: 'Deny List',
+      denyListDesc: 'Agent asks for permission before executing commands matched by a deny list entry',
+      enterCommand: 'Enter command...',
+      noAllowedCommands: 'Allow list is empty',
+      noDeniedCommands: 'Deny list is empty'
+    }
   }
 }

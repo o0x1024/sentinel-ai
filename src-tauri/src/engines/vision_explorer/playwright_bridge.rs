@@ -216,6 +216,11 @@ pub fn parse_tool_call_to_action(tool_name: &str, params: &Value) -> Result<Brow
             Ok(BrowserAction::GetAnnotatedElements)
         }
 
+        "playwright_hover_by_index" | "hover_by_index" => {
+            let index = params.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as u32;
+            Ok(BrowserAction::HoverByIndex { index })
+        }
+
         _ => Err(anyhow!("Unknown tool: {}", tool_name)),
     }
 }

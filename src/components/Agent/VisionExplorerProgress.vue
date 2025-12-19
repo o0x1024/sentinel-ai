@@ -29,6 +29,34 @@
 
     <!-- Expanded Content -->
     <div v-show="isExpanded" class="border-t border-base-300 transition-all duration-300 ease-in-out">
+      <!-- Multi-Agent Workers Dashboard -->
+      <div v-if="isMultiAgentMode && workers.size > 0" class="p-2 bg-gradient-to-r from-primary/5 to-secondary/5 border-b border-base-300">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="font-bold text-primary">🤖 Multi-Agent</span>
+            <span class="badge badge-xs badge-primary">{{ multiAgentMode }}</span>
+          </div>
+          <span class="text-[10px] opacity-70">{{ completedWorkers }}/{{ totalWorkers }} workers</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5">
+          <div
+            v-for="[taskId, worker] in workers"
+            :key="taskId"
+            class="flex items-center gap-2 bg-base-100 rounded px-2 py-1 text-[10px]"
+            :class="{
+              'ring-1 ring-primary/50': worker.status === 'running',
+              'opacity-60': worker.status === 'pending'
+            }"
+          >
+            <span v-if="worker.status === 'completed'" class="text-success text-[8px]">✓</span>
+            <span v-else-if="worker.status === 'running'" class="loading loading-spinner loading-xs text-primary"></span>
+            <span v-else class="opacity-30 text-[8px]">○</span>
+            <span class="truncate flex-1 font-medium">{{ worker.scope_name }}</span>
+            <span class="opacity-60">{{ worker.pages_visited }}p/{{ worker.apis_discovered }}a</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Coverage Dashboard -->
       <div v-if="showCoverage" class="grid grid-cols-4 gap-2 p-2 bg-base-200/30 border-b border-base-300">
         <div class="flex flex-col items-center">
@@ -197,6 +225,21 @@ const showTakeoverForm = ref(false)
 const takeoverMessage = ref('')
 const isSubmittingCredentials = ref(false)
 
+// Multi-Agent state
+interface WorkerInfo {
+  task_id: string
+  scope_name: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  pages_visited: number
+  apis_discovered: number
+  progress: number
+}
+const isMultiAgentMode = ref(false)
+const multiAgentMode = ref<string>('Sequential')
+const workers = ref<Map<string, WorkerInfo>>(new Map())
+const totalWorkers = ref(0)
+const completedWorkers = ref(0)
+
 // 登录字段定义接口
 interface LoginField {
   id: string
@@ -335,6 +378,84 @@ const skipLogin = async () => {
 
 onMounted(async () => {
   // Listen for Vision Explorer events sent by VisionExplorerMessageEmitter
+
+  // Multi-Agent events
+  unlisteners.push(await listen<any>('vision:multi_agent', (e) => {
+    const payload = e.payload
+    if (payload.execution_id !== props.executionId) return
+
+    switch (payload.type) {
+      case 'multi_agent_start':
+        isMultiAgentMode.value = true
+        multiAgentMode.value = payload.mode || 'Sequential'
+        totalWorkers.value = payload.total_workers || 0
+        completedWorkers.value = 0
+        workers.value.clear()
+        pushLog(`Multi-Agent mode: ${payload.mode} with ${payload.total_workers} workers`, 'info')
+        break
+
+      case 'worker_tasks':
+        if (payload.tasks) {
+          for (const task of payload.tasks) {
+            const taskId = task.task_id || task.id
+            workers.value.set(taskId, {
+              task_id: taskId,
+              scope_name: task.scope_name || task.scope?.name || '',
+              status: 'pending',
+              pages_visited: 0,
+              apis_discovered: 0,
+              progress: 0
+            })
+          }
+          pushLog(`Manager assigned ${payload.tasks.length} scopes to explore`, 'info')
+        }
+        break
+
+      case 'worker_progress':
+        if (payload.worker) {
+          const w = payload.worker
+          workers.value.set(w.task_id, {
+            task_id: w.task_id,
+            scope_name: w.scope_name,
+            status: w.status || 'running',
+            pages_visited: w.pages_visited || 0,
+            apis_discovered: w.apis_discovered || 0,
+            progress: w.progress || 0
+          })
+          currentStep.value = `${w.scope_name}: ${w.status}`
+        }
+        break
+
+      case 'worker_complete':
+        if (payload.task_id) {
+          const existing = workers.value.get(payload.task_id)
+          if (existing) {
+            existing.status = 'completed'
+            existing.progress = 100
+            if (payload.stats) {
+              existing.pages_visited = payload.stats.pages_visited || existing.pages_visited
+              existing.apis_discovered = payload.stats.apis_discovered || existing.apis_discovered
+            }
+          }
+          completedWorkers.value += 1
+          pushLog(`Worker completed: ${payload.scope_name} (${payload.stats?.pages_visited || 0} pages, ${payload.stats?.apis_discovered || 0} APIs)`, 'success')
+        }
+        break
+
+      case 'multi_agent_stats':
+        if (payload.global_stats) {
+          stats.value = {
+            pages: payload.global_stats.total_urls_visited || 0,
+            apis: payload.global_stats.total_apis_discovered || 0,
+            elements: payload.global_stats.total_elements_interacted || 0
+          }
+        }
+        if (payload.mode_info) {
+          completedWorkers.value = payload.mode_info.completed_workers || 0
+        }
+        break
+    }
+  }))
   
   unlisteners.push(await listen<any>('vision:start', (e) => {
     if (e.payload.execution_id !== props.executionId) return

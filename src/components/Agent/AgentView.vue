@@ -107,6 +107,9 @@
                :current-url="visionEvents.currentUrl.value"
                :current-plan="visionEvents.currentPlan.value"
                :current-progress="visionEvents.currentProgress.value"
+               :multi-agent="visionEvents.multiAgent.value"
+               :is-multi-agent-mode="visionEvents.isMultiAgentMode.value"
+               :activity="visionEvents.activity.value"
                :show-takeover-form="visionEvents.showTakeoverForm.value"
                :takeover-message="visionEvents.takeoverMessage.value"
                :takeover-fields="visionEvents.takeoverFields.value"
@@ -238,7 +241,9 @@ const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvent
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 
 // Vision Events
-const visionEvents = useVisionEvents(computed(() => agentEvents.currentExecutionId.value || ''))
+// Important: pass through the nullable execution id ref so Vision Explorer can
+// receive early events (start/plan/progress) and then bind itself to the session.
+const visionEvents = useVisionEvents(agentEvents.currentExecutionId)
 const isVisionActive = computed(() => visionEvents.isVisionActive.value)
 
 // Todos
@@ -642,9 +647,12 @@ const handleSubmit = async () => {
 
   // Build full task with traffic context
   let fullTask = task
+  let displayContent: string | undefined = undefined
   if (referencedTraffic.value.length > 0) {
     const trafficContext = buildTrafficContext(referencedTraffic.value)
     fullTask = `${trafficContext}\n\nUser task: ${task}`
+    // Display content is just the user's original input
+    displayContent = task
   }
   
   // Clear input and references
@@ -688,6 +696,7 @@ const handleSubmit = async () => {
         message_id: null,
         attachments: usedAttachments.length > 0 ? usedAttachments : undefined,
         tool_config: toolConfig.value,
+        display_content: displayContent,
       }
     })
     

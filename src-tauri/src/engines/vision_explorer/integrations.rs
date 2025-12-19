@@ -610,6 +610,23 @@ impl TakeoverManager {
         info!("Login skipped by user; continuing exploration without credentials");
     }
 
+    /// 用户完成手动登录
+    pub fn mark_login_manual_success(&mut self) {
+        self.session.login_detected = false; // Reset flag as we are now logged in
+        self.session.login_retry_count = 0;
+        self.session.login_requested_at = None;
+        
+        self.push_user_message(
+            "User has completed manual login successfully. Continue exploration as an authenticated user."
+                .to_string(),
+        );
+        
+        // Return control to agent
+        self.return_control();
+        
+        info!("Manual login marked as success by user");
+    }
+
     /// 检查用户是否选择跳过登录
     pub fn is_login_skipped(&self) -> bool {
         self.session.login_skipped

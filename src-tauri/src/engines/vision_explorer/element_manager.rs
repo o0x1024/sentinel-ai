@@ -68,7 +68,7 @@ impl ElementManager {
 
     /// Generate element fingerprint using stable identifiers
     /// Priority: id > data-testid > name+type > selector+text
-    fn generate_fingerprint(element: &AnnotatedElement, page_url: &str) -> String {
+    pub fn generate_fingerprint(element: &AnnotatedElement, page_url: &str) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -223,6 +223,7 @@ impl ElementManager {
     }
 
     /// Check if element is a hover candidate (dropdown, menu, etc.)
+    /// Enhanced: detects hamburger menus, navigation triggers, sidebar toggles, etc.
     fn is_hover_candidate(element: &AnnotatedElement) -> bool {
         // Check aria attributes
         if element.attributes.get("aria-haspopup").is_some() {
@@ -234,11 +235,16 @@ impl ElementManager {
                 return true;
             }
         }
+        // aria-controls often indicates a trigger for another element
+        if element.attributes.get("aria-controls").is_some() {
+            return true;
+        }
 
-        // Check class names
+        // Check class names (enhanced with more patterns)
         if let Some(class) = element.attributes.get("class") {
             let class_lower = class.to_lowercase();
             let hover_classes = [
+                // Original patterns
                 "dropdown",
                 "menu",
                 "nav",
@@ -254,8 +260,83 @@ impl ElementManager {
                 "select",
                 "combobox",
                 "autocomplete",
+                // Hamburger menu patterns
+                "hamburger",
+                "burger",
+                "navicon",
+                "nav-icon",
+                "menu-btn",
+                "menu-button",
+                "menu-toggle",
+                "menu-trigger",
+                "nav-toggle",
+                "nav-trigger",
+                "sidebar-toggle",
+                "sidebar-trigger",
+                "mobile-menu",
+                "mobile-nav",
+                "offcanvas",
+                "off-canvas",
+                // Common UI framework patterns
+                "ant-menu",
+                "el-menu",
+                "el-submenu",
+                "arco-menu",
+                "semi-nav",
+                "chakra-menu",
+                "mantine-menu",
+                "headlessui-menu",
+                // Header/navigation patterns
+                "header-menu",
+                "navbar-toggle",
+                "navbar-toggler",
+                // Drawer/panel triggers
+                "drawer-trigger",
+                "panel-trigger",
+                "sheet-trigger",
+                // Icon buttons that may trigger menus
+                "icon-menu",
+                "btn-menu",
             ];
             if hover_classes.iter().any(|c| class_lower.contains(c)) {
+                return true;
+            }
+        }
+
+        // Check id attribute for menu-related patterns
+        if let Some(id) = element.attributes.get("id") {
+            let id_lower = id.to_lowercase();
+            let hover_ids = [
+                "menu",
+                "nav",
+                "dropdown",
+                "toggle",
+                "hamburger",
+                "sidebar",
+                "drawer",
+                "panel",
+                "flyout",
+                "popover",
+            ];
+            if hover_ids.iter().any(|i| id_lower.contains(i)) {
+                return true;
+            }
+        }
+
+        // Check data attributes that suggest interactive behavior
+        let data_attrs = [
+            "data-toggle",
+            "data-dropdown",
+            "data-menu",
+            "data-trigger",
+            "data-bs-toggle",
+            "data-popover",
+            "data-tooltip",
+            "data-drawer",
+            "data-sidebar",
+        ];
+        for attr in data_attrs {
+            if element.attributes.get(attr).is_some() {
                 return true;
             }
         }
@@ -264,18 +345,58 @@ impl ElementManager {
         if let Some(role) = element.attributes.get("role") {
             let role_lower = role.to_lowercase();
             let hover_roles = [
-                "menuitem", "menu", "listbox", "combobox", "tab", "tablist", "tree", "treeitem",
-                "option", "menubar",
+                "menuitem",
+                "menu",
+                "listbox",
+                "combobox",
+                "tab",
+                "tablist",
+                "tree",
+                "treeitem",
+                "option",
+                "menubar",
+                "navigation",
+                "button",
             ];
-            if hover_roles.iter().any(|r| role_lower == *r) {
+            // For 'button' role, also check if it has menu-like indicators
+            if role_lower == "button" {
+                // Only consider buttons with menu-related classes or aria-haspopup
+                if element.attributes.get("aria-haspopup").is_some() {
+                    return true;
+                }
+            } else if hover_roles.iter().any(|r| role_lower == *r) {
                 return true;
+            }
+        }
+
+        // Check element type - buttons within nav/header are likely triggers
+        if element.element_type == "button" {
+            if let Some(class) = element.attributes.get("class") {
+                let class_lower = class.to_lowercase();
+                if class_lower.contains("nav")
+                    || class_lower.contains("header")
+                    || class_lower.contains("sidebar")
+                {
+                    return true;
+                }
             }
         }
 
         // Check for arrow/expand indicators in text
         let text_lower = element.text.to_lowercase();
-        let expand_indicators = ["▼", "▾", "↓", "▶", "›", "»", "more", "expand"];
+        let expand_indicators = [
+            "▼", "▾", "↓", "▶", "›", "»", "more", "expand", "☰", "≡", "⋮",
+            "⋯",    // Hamburger and kebab menu icons
+            "menu", // Text containing "menu"
+        ];
         if expand_indicators.iter().any(|i| text_lower.contains(i)) {
+            return true;
+        }
+
+        // Check tag_name for specific elements that are commonly used as menu triggers
+        let tag_lower = element.tag_name.to_lowercase();
+        if tag_lower == "summary" {
+            // <summary> inside <details> is always expandable
             return true;
         }
 
@@ -555,6 +676,8 @@ impl Default for ElementStats {
 
 #[cfg(test)]
 mod tests {
+    use crate::engines::vision_explorer::types::EnhancedElementAttributes;
+
     use super::super::types::BoundingBox;
     use super::*;
     use std::collections::HashMap;
@@ -578,7 +701,25 @@ mod tests {
                 height: 50.0,
             },
             attributes,
-            enhanced_attributes: HashMap::new(),
+            enhanced_attributes: Some(EnhancedElementAttributes {
+                index,
+                rect: BoundingBox {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 50.0,
+                },
+                computed_styles: super::super::types::ComputedStyles {
+                    color_semantic: None,
+                    cursor: None,
+                    opacity: 1.0,
+                    is_bold: false,
+                },
+                derived_state: vec![],
+                is_occluded: false,
+                inferred_label: None,
+                is_in_modal: false,
+            }),
         }
     }
 

@@ -406,10 +406,29 @@ export default {
     ai: 'AI服务',
     rag: '知识库配置',
     scheduler: '模型配置',
+    agent: 'Agent',
     database: '数据库',
     system: '系统设置',
     security: '安全设置',
     network: '网络设置',
     proxy_test: '代理测试'
+  },
+  agent: {
+    title: 'Agent设置',
+    autoSaveFailed: '自动保存失败',
+    terminal: {
+      title: '终端设置',
+      autoExecution: '终端命令自动执行',
+      autoExecutionDesc: '控制 Agent 执行终端命令前是否需要用户确认',
+      alwaysProceed: '始终执行',
+      requestReview: '请求审核',
+      allowList: '允许列表',
+      allowListDesc: 'Agent 会自动执行匹配允许列表条目的命令',
+      denyList: '拒绝列表',
+      denyListDesc: 'Agent 执行匹配拒绝列表条目的命令前会请求权限',
+      enterCommand: '输入命令...',
+      noAllowedCommands: '允许列表为空',
+      noDeniedCommands: '拒绝列表为空'
+    }
   }
 }

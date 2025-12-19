@@ -129,6 +129,13 @@ pub struct BoundingBox {
     pub height: f64,
 }
 
+/// Viewport dimensions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewportSize {
+    pub width: u32,
+    pub height: u32,
+}
+
 /// 计算样式 (文本模式增强)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComputedStyles {
@@ -153,6 +160,9 @@ pub struct EnhancedElementAttributes {
     pub is_occluded: bool,
     #[serde(rename = "inferredLabel")]
     pub inferred_label: Option<String>,
+    /// 元素是否位于弹窗/模态框内部
+    #[serde(default, rename = "isInModal")]
+    pub is_in_modal: bool,
 }
 
 /// 标注的元素信息 (来自 playwright_annotate)
@@ -230,6 +240,8 @@ pub struct PageState {
     pub visible_text_summary: Option<String>,
     /// 采集时间
     pub captured_at: DateTime<Utc>,
+    /// 实际视口大小 (从浏览器动态获取)
+    pub viewport: Option<ViewportSize>,
     /// 元素快照 ID - 用于解决 index 漂移问题
     /// 每次 capture_page_state 时生成，后续 click_by_index/fill_by_index 操作需验证此 ID
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -446,6 +458,15 @@ pub struct VisionExplorerConfig {
     pub headers: Option<HashMap<String, String>>,
     /// 自定义 Local Storage 数据 (用于 Playwright 导航)
     pub local_storage: Option<HashMap<String, String>>,
+    // ========== Multi-Agent Mode ==========
+    /// 是否启用多 Agent 模式
+    pub enable_multi_agent: bool,
+    /// 多 Agent 探索模式: "sequential", "parallel", "adaptive"
+    pub multi_agent_mode: String,
+    /// 最大并发 Worker 数 (并行模式)
+    pub max_concurrent_workers: u32,
+    /// 每个 Worker 默认最大深度
+    pub worker_max_depth: u32,
 }
 
 /// 登录凭据
@@ -492,8 +513,10 @@ impl Default for VisionExplorerConfig {
             passive_proxy_port: Some(4201),
             headless: false,
             browser_proxy: Some("http://127.0.0.1:8080".to_string()),
-            viewport_width: 1920,
-            viewport_height: 1080,
+            // viewport 默认为 0，表示需要运行时动态获取屏幕尺寸
+            // 使用 with_screen_viewport() 方法或在创建时手动设置
+            viewport_width: 0,
+            viewport_height: 0,
             vlm_provider: "anthropic".to_string(),
             vlm_model: "claude-sonnet-4-20250514".to_string(),
             credentials: None,
@@ -506,6 +529,58 @@ impl Default for VisionExplorerConfig {
             finalize_on_complete: true,
             headers: None,
             local_storage: None,
+            // Multi-Agent defaults
+            enable_multi_agent: true, // 默认使用多 Agent 模式
+            multi_agent_mode: "sequential".to_string(),
+            max_concurrent_workers: 3,
+            worker_max_depth: 5,
+        }
+    }
+}
+
+impl VisionExplorerConfig {
+    /// 获取推荐的屏幕视口大小
+    /// 返回 (width, height)
+    /// 默认返回 1920x1080，如果有窗口句柄则使用实际屏幕尺寸
+    pub fn get_screen_viewport() -> (u32, u32) {
+        // 尝试通过环境变量获取屏幕尺寸（可由启动脚本设置）
+        if let (Ok(w), Ok(h)) = (
+            std::env::var("SENTINEL_VIEWPORT_WIDTH"),
+            std::env::var("SENTINEL_VIEWPORT_HEIGHT"),
+        ) {
+            if let (Ok(width), Ok(height)) = (w.parse::<u32>(), h.parse::<u32>()) {
+                if width > 0 && height > 0 {
+                    return (width, height);
+                }
+            }
+        }
+        // 使用常见的 1920x1080 作为默认值
+        (1850, 910)
+    }
+
+    /// 使用屏幕视口大小创建配置
+    /// 如果 viewport_width/height 为 0，则自动获取屏幕尺寸
+    pub fn with_screen_viewport(mut self) -> Self {
+        if self.viewport_width == 0 || self.viewport_height == 0 {
+            let (w, h) = Self::get_screen_viewport();
+            self.viewport_width = w;
+            self.viewport_height = h;
+        }
+        self
+    }
+
+    /// 设置视口大小
+    pub fn set_viewport(&mut self, width: u32, height: u32) {
+        self.viewport_width = width;
+        self.viewport_height = height;
+    }
+
+    /// 确保视口大小有效（如果为0则获取屏幕尺寸）
+    pub fn ensure_viewport(&mut self) {
+        if self.viewport_width == 0 || self.viewport_height == 0 {
+            let (w, h) = Self::get_screen_viewport();
+            self.viewport_width = w;
+            self.viewport_height = h;
         }
     }
 }
@@ -526,6 +601,22 @@ pub enum TakeoverStatus {
     WaitingForUser,
     /// 用户已归还控制权
     Returned,
+}
+
+/// Takeover事件
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum TakeoverEvent {
+    /// 请求用户接管
+    RequestTakeover { reason: String },
+    /// 用户已接管
+    UserTakeover,
+    /// 用户操作
+    UserAction {
+        action_type: String,
+        details: serde_json::Value,
+    },
+    /// 用户归还控制
+    ReturnControl,
 }
 
 /// 用户操作记录 (Takeover模式)

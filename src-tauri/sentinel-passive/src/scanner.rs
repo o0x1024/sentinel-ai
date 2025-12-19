@@ -356,6 +356,50 @@ impl ScanPipeline {
 
             let response_size = resp_ctx.body.len() as i64;
 
+            // 处理 edited 请求字段
+            let (was_edited, edited_method, edited_url, edited_request_headers, edited_request_body) = 
+                if req_ctx.was_edited {
+                    let edited_headers_str = req_ctx.edited_headers.as_ref().map(|h| {
+                        h.iter()
+                            .map(|(k, v)| format!("{}: {}", k, v))
+                            .collect::<Vec<_>>()
+                            .join("\r\n")
+                    });
+                    let edited_body_str = req_ctx.edited_body.as_ref().and_then(|b| {
+                        String::from_utf8(b.clone()).ok()
+                    });
+                    (
+                        true,
+                        req_ctx.edited_method.clone(),
+                        req_ctx.edited_url.clone(),
+                        edited_headers_str,
+                        edited_body_str,
+                    )
+                } else {
+                    (false, None, None, None, None)
+                };
+
+            // 处理 edited 响应字段
+            let (edited_response_headers, edited_response_body, edited_status_code) = 
+                if resp_ctx.was_edited {
+                    let edited_headers_str = resp_ctx.edited_headers.as_ref().map(|h| {
+                        h.iter()
+                            .map(|(k, v)| format!("{}: {}", k, v))
+                            .collect::<Vec<_>>()
+                            .join("\r\n")
+                    });
+                    let edited_body_str = resp_ctx.edited_body.as_ref().and_then(|b| {
+                        String::from_utf8(b.clone()).ok()
+                    });
+                    (
+                        edited_headers_str,
+                        edited_body_str,
+                        resp_ctx.edited_status.map(|s| s as i32),
+                    )
+                } else {
+                    (None, None, None)
+                };
+
             let record = HttpRequestRecord {
                 id: 0, // 将由缓存分配
                 url: req_ctx.url.clone(),
@@ -370,6 +414,14 @@ impl ScanPipeline {
                 response_size,
                 response_time,
                 timestamp: req_ctx.timestamp,
+                was_edited,
+                edited_request_headers,
+                edited_request_body,
+                edited_method,
+                edited_url,
+                edited_response_headers,
+                edited_response_body,
+                edited_status_code,
             };
 
             let inserted_id = cache.add_http_request(record.clone()).await;

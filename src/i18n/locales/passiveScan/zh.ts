@@ -34,10 +34,6 @@ export default {
       on: '拦截已开启',
       off: '拦截已关闭'
     },
-    buttons: {
-      turnOn: '开启',
-      turnOff: '关闭'
-    },
     stats: {
       proxyStatus: '代理状态',
       running: '运行中',
@@ -229,6 +225,10 @@ export default {
       response: '响应',
       decompressed: '已解压',
       close: '关闭',
+      originalRequest: '原始请求',
+      editedRequest: '修改后的请求',
+      originalResponse: '原始响应',
+      editedResponse: '修改后的响应',
     },
     table: {
       id: 'ID',

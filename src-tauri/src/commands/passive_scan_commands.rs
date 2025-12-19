@@ -16,10 +16,11 @@ use tokio::sync::{mpsc::UnboundedSender, RwLock};
 
 use sentinel_passive::{
     CertificateService, EvidenceRecord, Finding, FindingDeduplicator,
-    InterceptAction as PassiveInterceptAction, InterceptState, PassiveDatabaseService,
-    PendingInterceptRequest, PendingInterceptResponse, PendingInterceptWebSocketMessage,
-    PluginManager, PluginMetadata, PluginRecord, PluginStatus, ProxyConfig, ProxyService,
-    ProxyStats, ProxyStatus, ScanPipeline, ScanTask, VulnerabilityFilters, VulnerabilityRecord,
+    InterceptAction as PassiveInterceptAction, InterceptFilterRule as PassiveInterceptFilterRule,
+    InterceptState, PassiveDatabaseService, PendingInterceptRequest, PendingInterceptResponse,
+    PendingInterceptWebSocketMessage, PluginManager, PluginMetadata, PluginRecord, PluginStatus,
+    ProxyConfig, ProxyService, ProxyStats, ProxyStatus, ScanPipeline, ScanTask,
+    VulnerabilityFilters, VulnerabilityRecord,
 };
 
 use crate::events::{
@@ -107,6 +108,10 @@ pub struct PassiveScanState {
         Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptWebSocketMessage>>>>,
     /// 历史记录缓存
     pub history_cache: Arc<sentinel_passive::ProxyHistoryCache>,
+    /// 请求拦截过滤规则
+    pub request_filter_rules: Arc<RwLock<Vec<PassiveInterceptFilterRule>>>,
+    /// 响应拦截过滤规则
+    pub response_filter_rules: Arc<RwLock<Vec<PassiveInterceptFilterRule>>>,
 }
 
 /// 内部使用的拦截 WebSocket 消息结构（包含响应通道）
@@ -141,6 +146,8 @@ impl Clone for PassiveScanState {
             intercepted_websocket_messages: self.intercepted_websocket_messages.clone(),
             intercept_websocket_pending_tx: self.intercept_websocket_pending_tx.clone(),
             history_cache: self.history_cache.clone(),
+            request_filter_rules: self.request_filter_rules.clone(),
+            response_filter_rules: self.response_filter_rules.clone(),
         }
     }
 }
@@ -191,6 +198,8 @@ impl PassiveScanState {
             intercepted_websocket_messages: Arc::new(RwLock::new(std::collections::HashMap::new())),
             intercept_websocket_pending_tx: Arc::new(RwLock::new(None)),
             history_cache: Arc::new(sentinel_passive::ProxyHistoryCache::with_defaults()),
+            request_filter_rules: Arc::new(RwLock::new(Vec::new())),
+            response_filter_rules: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -486,6 +495,8 @@ pub async fn start_passive_scan_internal(
         pending_tx: Some(intercept_pending_tx),
         pending_response_tx: Some(intercept_response_pending_tx),
         pending_websocket_tx: Some(intercept_websocket_pending_tx),
+        request_filter_rules: state.request_filter_rules.clone(),
+        response_filter_rules: state.response_filter_rules.clone(),
     };
 
     // 创建代理服务（支持拦截）
@@ -2497,6 +2508,11 @@ pub async fn test_plugin(
             query_params: std::collections::HashMap::new(),
             is_https: true,
             timestamp: chrono::Utc::now(),
+            was_edited: false,
+            edited_method: None,
+            edited_url: None,
+            edited_headers: None,
+            edited_body: None,
         };
 
         // 调用插件进行一次扫描，捕获真实 findings。
@@ -2673,6 +2689,11 @@ pub async fn test_plugin_advanced(
                     query_params: std::collections::HashMap::new(),
                     is_https: req_url.starts_with("https://"),
                     timestamp: chrono::Utc::now(),
+                    was_edited: false,
+                    edited_method: None,
+                    edited_url: None,
+                    edited_headers: None,
+                    edited_body: None,
                 };
                 match plugin_manager.scan_request(&plugin_id, &ctx).await {
                     Ok(foundings) => {
@@ -4106,5 +4127,58 @@ pub async fn update_intercept_filter_rule(
         .map_err(|e| format!("Failed to save rules: {}", e))?;
 
     tracing::info!("Intercept filter rule updated");
+    Ok(CommandResponse::ok(()))
+}
+
+/// 用于前端传递的运行时过滤规则
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeInterceptRule {
+    pub enabled: bool,
+    pub operator: String,
+    pub match_type: String,
+    pub relationship: String,
+    pub condition: String,
+}
+
+/// 更新运行时拦截过滤规则（直接应用到代理）
+#[tauri::command]
+pub async fn update_runtime_filter_rules(
+    state: State<'_, PassiveScanState>,
+    rule_type: String,
+    rules: Vec<RuntimeInterceptRule>,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!(
+        "Updating runtime {} filter rules: {} rules",
+        rule_type,
+        rules.len()
+    );
+
+    // Convert to PassiveInterceptFilterRule
+    let passive_rules: Vec<PassiveInterceptFilterRule> = rules
+        .into_iter()
+        .map(|r| PassiveInterceptFilterRule {
+            enabled: r.enabled,
+            operator: r.operator,
+            match_type: r.match_type,
+            relationship: r.relationship,
+            condition: r.condition,
+        })
+        .collect();
+
+    if rule_type == "request" {
+        let mut guard = state.request_filter_rules.write().await;
+        *guard = passive_rules;
+        tracing::info!("Request filter rules updated: {} rules", guard.len());
+    } else if rule_type == "response" {
+        let mut guard = state.response_filter_rules.write().await;
+        *guard = passive_rules;
+        tracing::info!("Response filter rules updated: {} rules", guard.len());
+    } else {
+        return Ok(CommandResponse::err(format!(
+            "Unknown rule type: {}",
+            rule_type
+        )));
+    }
+
     Ok(CommandResponse::ok(()))
 }

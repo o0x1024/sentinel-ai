@@ -43,7 +43,7 @@ pub use packet_capture::{
     ProtocolLayer,
 };
 pub use proxy::{
-    FailedConnection, InterceptAction, InterceptState, PendingInterceptRequest,
+    FailedConnection, InterceptAction, InterceptFilterRule, InterceptState, PendingInterceptRequest,
     PendingInterceptResponse, PendingInterceptWebSocketMessage, ProxyConfig, ProxyService,
     ScanSender, ScanTask, UpstreamProxyConfig, WebSocketConnectionContext,
     WebSocketDirection as ProxyWebSocketDirection, WebSocketMessageContext,

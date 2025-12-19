@@ -150,5 +150,54 @@ export default {
   plugins: {
     allStatus: '全部状态',
     noReviewPlugins: '没有需要审核的插件'
+  },
+
+  // Shell终端
+  shell: {
+    title: 'Shell 终端',
+    clear: '清空',
+    settings: '设置',
+    executing: '执行中...',
+    enterCommand: '输入命令...',
+    welcome: 'Sentinel AI Shell 终端',
+    welcomeHint: '输入命令并按 Enter 执行。输入 help 查看可用命令。',
+    historyHint: '使用 ↑/↓ 浏览命令历史。',
+    completedIn: '完成于 {time}ms (退出码: {code})',
+    helpText: `可用命令:
+  clear, cls    - 清空终端
+  help          - 显示帮助信息
+  cd <path>     - 切换目录
+  pwd           - 显示当前目录
+  exit          - 关闭终端
+  
+其他命令将在系统 Shell 中执行。`,
+    openTerminal: '打开终端',
+    securityConfig: '安全配置',
+    defaultPolicy: '默认策略',
+    defaultPolicyHint: '当命令不匹配任何规则时的处理方式',
+    actionAllow: '允许执行',
+    actionAsk: '询问用户',
+    actionDeny: '拒绝执行',
+    securityRules: '安全规则',
+    addRule: '添加规则',
+    ruleOrder: '顺序',
+    rulePattern: '命令匹配模式 (包含匹配)',
+    ruleAction: '动作',
+    ruleOperations: '操作',
+    noRules: '暂无规则，将使用默认策略',
+    ruleHint: '规则按顺序匹配，一旦匹配成功即应用对应动作。建议将具体规则放在前面，通用规则放在后面。',
+    saveConfig: '保存配置',
+    configSaved: '配置已保存',
+    configLoadFailed: '加载配置失败',
+    configSaveFailed: '保存配置失败',
+    patternRequired: '规则匹配模式不能为空',
+    // Inline confirmation
+    runCommand: '运行命令？',
+    accept: '接受',
+    reject: '拒绝',
+    alwaysAccept: '始终接受',
+    alwaysAcceptHint: '将此命令添加到允许列表并执行',
+    success: '成功',
+    failed: '失败'
   }
 }

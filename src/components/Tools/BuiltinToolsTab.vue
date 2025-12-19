@@ -58,6 +58,15 @@
             <div class="flex gap-2">
               <button 
                 v-if="tool.name === 'shell'"
+                @click="showShellTerminal = true"
+                class="btn btn-primary btn-sm"
+                title="打开终端"
+              >
+                <i class="fas fa-terminal mr-1"></i>
+                终端
+              </button>
+              <button 
+                v-if="tool.name === 'shell'"
                 @click="showShellConfigModal = true"
                 class="btn btn-warning btn-sm"
                 title="安全配置"
@@ -65,6 +74,7 @@
                 <i class="fas fa-shield-alt"></i>
               </button>
               <button 
+                v-if="tool.name !== 'shell'"
                 @click="quickTest(tool)"
                 class="btn btn-success btn-sm"
                 :disabled="tool.is_testing"
@@ -124,6 +134,14 @@
               <div class="flex gap-1">
                 <button 
                   v-if="tool.name === 'shell'"
+                  @click="showShellTerminal = true"
+                  class="btn btn-primary btn-xs"
+                  title="打开终端"
+                >
+                  <i class="fas fa-terminal"></i>
+                </button>
+                <button 
+                  v-if="tool.name === 'shell'"
                   @click="showShellConfigModal = true"
                   class="btn btn-warning btn-xs"
                   title="安全配置"
@@ -131,6 +149,7 @@
                   <i class="fas fa-shield-alt"></i>
                 </button>
                 <button 
+                  v-if="tool.name !== 'shell'"
                   @click="quickTest(tool)"
                   class="btn btn-success btn-xs"
                   :disabled="tool.is_testing"
@@ -264,6 +283,9 @@
 
     <!-- Shell 配置模态框 -->
     <ShellConfigModal v-model="showShellConfigModal" />
+
+    <!-- Shell 终端模态框 -->
+    <ShellTerminal v-model="showShellTerminal" />
   </div>
 </template>
 
@@ -272,6 +294,7 @@ import { ref, onMounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import ShellConfigModal from './ShellConfigModal.vue'
+import ShellTerminal from './ShellTerminal.vue'
 
 // 状态
 const tools = ref<any[]>([])
@@ -279,6 +302,7 @@ const isLoading = ref(false)
 const viewMode = ref('list')
 const showTestModal = ref(false)
 const showShellConfigModal = ref(false)
+const showShellTerminal = ref(false)
 const testingTool = ref<any>(null)
 const testParamsJson = ref('')
 const testResult = ref('')

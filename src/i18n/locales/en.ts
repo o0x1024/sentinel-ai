@@ -338,6 +338,14 @@ export default {
     execution: 'Tool Execution',
     executionSuccess: 'Execution Successful',
     executionFailed: 'Execution Failed',
+    shell: {
+      runCommand: 'Run command?',
+      accept: 'Accept',
+      reject: 'Reject',
+      executing: 'Executing...',
+      success: 'Success',
+      failed: 'Failed'
+    },
   },
   positions: {
     'top-left': 'Top Left',

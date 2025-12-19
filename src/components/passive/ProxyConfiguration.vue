@@ -2655,6 +2655,41 @@ const autoStartProxy = async () => {
   }
 }
 
+// Handle filter rule from ProxyIntercept component
+interface FilterRulePayload {
+  ruleType: 'request' | 'response'
+  rule: InterceptionRule
+}
+
+function handleAddFilterRule(payload: FilterRulePayload) {
+  console.log('[ProxyConfiguration] Received filter rule:', payload)
+  
+  const rules = payload.ruleType === 'request' ? requestRules.value : responseRules.value
+  
+  // Check if a similar rule already exists
+  const existingIndex = rules.findIndex(r => 
+    r.matchType === payload.rule.matchType && 
+    r.condition === payload.rule.condition
+  )
+  
+  if (existingIndex !== -1) {
+    // Update existing rule
+    rules[existingIndex] = { ...payload.rule }
+    console.log('[ProxyConfiguration] Updated existing rule at index:', existingIndex)
+  } else {
+    // Add new rule
+    rules.push({ ...payload.rule })
+    console.log('[ProxyConfiguration] Added new rule')
+  }
+  
+  // Trigger save
+  debouncedSave()
+}
+
+// Store unlisten functions
+let unlistenProxyStatus: (() => void) | null = null
+let unlistenFilterRule: (() => void) | null = null
+
 // 加载保存的配置
 onMounted(async () => {
   await loadConfig()
@@ -2669,7 +2704,7 @@ onMounted(async () => {
   }, 500)
   
   // 监听代理状态变化事件
-  const unlisten = await listen('proxy:status', (event: any) => {
+  unlistenProxyStatus = await listen('proxy:status', (event: any) => {
     const payload = event.payload
     console.log('Received proxy status event:', payload)
     
@@ -2692,14 +2727,19 @@ onMounted(async () => {
     }
   })
   
-  // 保存取消监听函数，用于组件卸载时清理
-  onUnmounted(() => {
-    unlisten()
-    // 清理定时器
-    if (saveTimeout.value) {
-      clearTimeout(saveTimeout.value)
-    }
+  // Listen for filter rules from ProxyIntercept
+  unlistenFilterRule = await listen<FilterRulePayload>('intercept:add-filter-rule', (event) => {
+    handleAddFilterRule(event.payload)
   })
+})
+
+// Cleanup on unmount
+onUnmounted(() => {
+  if (unlistenProxyStatus) unlistenProxyStatus()
+  if (unlistenFilterRule) unlistenFilterRule()
+  if (saveTimeout.value) {
+    clearTimeout(saveTimeout.value)
+  }
 })
 
 // 监听父组件的刷新触发器
@@ -2731,6 +2771,58 @@ watch(interceptResponses, async (newValue) => {
     console.error('[ProxyConfiguration] Failed to set response intercept:', error)
   }
 })
+
+// Sync filter rules to backend
+async function syncFilterRulesToBackend() {
+  if (isInitialLoad.value) return
+  
+  try {
+    // Sync request rules
+    const reqRules = requestRules.value.map(r => ({
+      enabled: r.enabled,
+      operator: r.operator || '',
+      match_type: r.matchType,
+      relationship: r.relationship,
+      condition: r.condition || ''
+    }))
+    await invoke('update_runtime_filter_rules', { 
+      ruleType: 'request',
+      rules: reqRules 
+    })
+    console.log('[ProxyConfiguration] Request filter rules synced to backend:', reqRules.length)
+    
+    // Sync response rules
+    const respRules = responseRules.value.map(r => ({
+      enabled: r.enabled,
+      operator: r.operator || '',
+      match_type: r.matchType,
+      relationship: r.relationship,
+      condition: r.condition || ''
+    }))
+    await invoke('update_runtime_filter_rules', { 
+      ruleType: 'response',
+      rules: respRules 
+    })
+    console.log('[ProxyConfiguration] Response filter rules synced to backend:', respRules.length)
+  } catch (error) {
+    console.error('[ProxyConfiguration] Failed to sync filter rules:', error)
+  }
+}
+
+// Watch for rule changes and sync to backend
+watch(requestRules, () => {
+  if (!isInitialLoad.value) {
+    console.log('[ProxyConfiguration] Request rules changed, syncing to backend')
+    syncFilterRulesToBackend()
+  }
+}, { deep: true })
+
+watch(responseRules, () => {
+  if (!isInitialLoad.value) {
+    console.log('[ProxyConfiguration] Response rules changed, syncing to backend')
+    syncFilterRulesToBackend()
+  }
+}, { deep: true })
 </script>
 
 <style scoped>

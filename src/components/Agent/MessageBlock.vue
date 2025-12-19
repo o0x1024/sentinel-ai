@@ -36,8 +36,17 @@
         <MarkdownRenderer v-else :content="formattedContent" />
       </div>
       
-      <!-- Tool details (collapsible) -->
-      <div v-if="message.type === 'tool_call' && (hasToolArgs || hasToolResult)" class="tool-details mt-2 pt-2 border-t border-base-300">
+      <!-- Shell Tool - Special Terminal Display -->
+      <ShellToolResult
+        v-if="isShellTool && message.type === 'tool_call'"
+        :args="message.metadata?.tool_args"
+        :result="message.metadata?.tool_result"
+        :error="message.metadata?.error"
+        :status="message.metadata?.status"
+      />
+      
+      <!-- Tool details (collapsible) - Non-shell tools -->
+      <div v-else-if="message.type === 'tool_call' && !isShellTool && (hasToolArgs || hasToolResult)" class="tool-details mt-2 pt-2 border-t border-base-300">
         <button @click="toggleDetails" class="toggle-btn text-xs text-base-content/60 bg-transparent border-none cursor-pointer p-0 underline hover:text-base-content">
           {{ isExpanded ? t('agent.collapseDetails') : t('agent.expandDetails') }}
         </button>
@@ -123,7 +132,7 @@ import { useI18n } from 'vue-i18n'
 import type { AgentMessage } from '@/types/agent'
 import { getMessageTypeName } from '@/types/agent'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import VisionExplorerProgress from './VisionExplorerProgress.vue'
+import ShellToolResult from './ShellToolResult.vue'
 
 const { t } = useI18n()
 
@@ -169,6 +178,12 @@ const ragInfo = computed(() => props.message.metadata?.rag_info)
 
 // Tool name from metadata
 const toolName = computed(() => props.message.metadata?.tool_name)
+
+// Check if this is a shell tool
+const isShellTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return name === 'shell' || name === 'bash' || name === 'cmd' || name === 'powershell'
+})
 
 // Status icon
 const statusIcon = computed(() => {

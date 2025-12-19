@@ -4,6 +4,7 @@
 //!
 //! ## 核心架构
 //!
+//! ### 单 Agent 模式 (VisionExplorer)
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │                    VisionExplorer                           │
@@ -11,19 +12,42 @@
 //! │  │BrowserTools │  │StateManager │  │  LlmClient  │         │
 //! │  │(Playwright) │  │ (状态追踪)  │  │ (VLM调用)   │         │
 //! │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘         │
-//! │         │                │                │                 │
 //! │         └────────────────┼────────────────┘                 │
-//! │                          │                                  │
 //! │                  ┌───────▼───────┐                         │
 //! │                  │ 探索循环      │                         │
-//! │                  │ 截图→分析→   │                         │
-//! │                  │ 操作→验证    │                         │
 //! │                  └───────────────┘                         │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ### 多 Agent 模式 (MultiAgentExplorer)
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                  MultiAgentExplorer                         │
+//! │  ┌─────────────────────────────────────────────────────┐   │
+//! │  │              ManagerAgent                            │   │
+//! │  │  - Analyze homepage navigation                       │   │
+//! │  │  - Divide into exploration scopes                    │   │
+//! │  │  - Assign tasks to workers                           │   │
+//! │  └──────────────────────┬──────────────────────────────┘   │
+//! │                         │                                   │
+//! │         ┌───────────────┼───────────────┐                  │
+//! │         ▼               ▼               ▼                  │
+//! │  ┌────────────┐  ┌────────────┐  ┌────────────┐           │
+//! │  │WorkerAgent │  │WorkerAgent │  │WorkerAgent │           │
+//! │  │ Scope: /a  │  │ Scope: /b  │  │ Scope: /c  │           │
+//! │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘           │
+//! │        └───────────────┼───────────────┘                   │
+//! │                        ▼                                    │
+//! │            ┌───────────────────────┐                       │
+//! │            │   GlobalExplorerState │                       │
+//! │            │  (Shared dedup/APIs)  │                       │
+//! │            └───────────────────────┘                       │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! ## 使用示例
 //!
+//! ### 单 Agent 模式
 //! ```rust,ignore
 //! use sentinel_ai::engines::vision_explorer::{VisionExplorer, VisionExplorerConfig};
 //!
@@ -34,105 +58,147 @@
 //! };
 //!
 //! let explorer = VisionExplorer::with_ai_config(
-//!     config,
-//!     mcp_service,
-//!     "anthropic".to_string(),
-//!     "claude-sonnet-4-20250514".to_string(),
+//!     config, mcp_service, "anthropic".to_string(), "claude-sonnet-4-20250514".to_string(),
 //! );
-//!
 //! let summary = explorer.start().await?;
-//! println!("Discovered {} APIs", summary.apis_discovered);
+//! ```
+//!
+//! ### 多 Agent 模式
+//! ```rust,ignore
+//! use sentinel_ai::engines::vision_explorer::multi_agent::{
+//!     MultiAgentExplorer, MultiAgentConfig, ExplorationMode,
+//! };
+//!
+//! let multi_config = MultiAgentConfig {
+//!     mode: ExplorationMode::Sequential,
+//!     max_concurrent_workers: 3,
+//!     ..Default::default()
+//! };
+//!
+//! let explorer = MultiAgentExplorer::new(config, multi_config, mcp_service, llm_config);
+//! let summary = explorer.start().await?;
 //! ```
 
-pub mod types;
-pub mod tools;
-pub mod explorer;
-pub mod state;
+pub mod browser_scripts;
+pub mod coverage_engine;
+pub mod element_manager;
+
 pub mod integrations;
-pub mod tool;
 pub mod message_emitter;
 pub mod route_tracker;
-pub mod element_manager;
-pub mod coverage_engine;
-pub mod browser_scripts;
+pub mod state;
+pub mod tool;
+pub mod tools;
+pub mod types;
 
 // Refactored modules (split from explorer.rs)
+pub mod action_builder;
+pub mod element_formatter;
 pub mod login_detector;
 pub mod vlm_parser;
-pub mod element_formatter;
-pub mod action_builder;
 
 // Refactored modules (split from tools.rs)
-pub mod text_mode_types;
 pub mod playwright_bridge;
+pub mod text_mode_types;
+
+// Multi-Agent exploration architecture
+pub mod multi_agent;
 
 // 导出核心类型
 pub use types::{
-    VisionExplorerConfig, ExplorationState, ExplorationStatus,
-    PageState, PageElement, ActionRecord, ApiEndpoint,
-    BrowserAction, ActionResult, VlmAnalysisResult,
     get_browser_tool_definitions,
-    // 新增类型
-    TakeoverStatus, TakeoverSession, UserAction, LoginCredentials,
-    ContextSummary, ConversationMessage,
+    ActionRecord,
+    ActionResult,
+    ApiEndpoint,
+    BrowserAction,
+    ContextSummary,
+    ConversationMessage,
+    ExplorationState,
+    ExplorationStatus,
+    FormField,
     // 表单相关
-    FormInfo as VisionFormInfo, FormField,
+    FormInfo as VisionFormInfo,
+    LoginCredentials,
+    PageElement,
+    PageState,
+    // Moved from explorer.rs
+    TakeoverEvent,
+    TakeoverSession,
+    // 新增类型
+    TakeoverStatus,
+    UserAction,
+    VisionExplorerConfig,
+    VlmAnalysisResult,
 };
-
-// 导出探索引擎
-pub use explorer::{VisionExplorer, TakeoverEvent};
 
 // 导出工具
 pub use tools::BrowserTools;
 
 // 导出状态管理
-pub use state::{StateManager, ExplorationSummary};
+pub use state::{ExplorationSummary, StateManager};
 
 // 导出覆盖率引擎
-pub use route_tracker::{RouteTracker, RouteStats};
-pub use element_manager::{ElementManager, ElementStats, ElementFingerprint, DynamicComponent};
-pub use coverage_engine::{CoverageEngine, CoverageReport, CompletionCheck, COVERAGE_TARGET, STABILITY_THRESHOLD};
+pub use coverage_engine::{
+    CompletionCheck, CoverageEngine, CoverageReport, COVERAGE_TARGET, STABILITY_THRESHOLD,
+};
+pub use element_manager::{DynamicComponent, ElementFingerprint, ElementManager, ElementStats};
+pub use route_tracker::{RouteStats, RouteTracker};
 
 // 导出集成模块
 pub use integrations::{
-    ContextSummaryManager, PassiveProxyIntegration, TakeoverManager,
-    ProxyRequestInfo, ApiDiscoveryStats,
+    ApiDiscoveryStats, ContextSummaryManager, PassiveProxyIntegration, ProxyRequestInfo,
+    TakeoverManager,
 };
 
 // 导出消息发送器
 pub use message_emitter::{
-    VisionExplorerMessageEmitter, VisionStep, VisionAnalysis,
-    VisionAction, VisionExplorationStats, VisionCoverageUpdate,
+    VisionAction, VisionAnalysis, VisionCoverageUpdate, VisionExplorationStats,
+    VisionExplorerMessageEmitter, VisionStep,
 };
 
 pub use tool::VisionExplorerTool;
+
+// Multi-Agent exports
+pub use multi_agent::{
+    ExplorationMode, ExplorationScope, GlobalExplorerState, ManagerAgent, MultiAgentConfig,
+    MultiAgentExplorer, NavigationAnalysis, WorkerAgent, WorkerResult, WorkerTask,
+};
 
 // ============================================================================
 // Global Registry for Active Takeover Managers
 // ============================================================================
 
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use once_cell::sync::Lazy;
 
 /// Global registry for active TakeoverManagers (keyed by execution_id)
 /// Allows credential submission to running explorers
-pub static ACTIVE_TAKEOVER_MANAGERS: Lazy<RwLock<HashMap<String, Arc<RwLock<TakeoverManager>>>>> = 
+pub static ACTIVE_TAKEOVER_MANAGERS: Lazy<RwLock<HashMap<String, Arc<RwLock<TakeoverManager>>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Register a TakeoverManager in the global registry
-pub async fn register_takeover_manager(execution_id: String, manager: Arc<RwLock<TakeoverManager>>) {
+pub async fn register_takeover_manager(
+    execution_id: String,
+    manager: Arc<RwLock<TakeoverManager>>,
+) {
     let mut registry = ACTIVE_TAKEOVER_MANAGERS.write().await;
     registry.insert(execution_id.clone(), manager);
-    tracing::info!("Registered TakeoverManager with execution_id: {}", execution_id);
+    tracing::info!(
+        "Registered TakeoverManager with execution_id: {}",
+        execution_id
+    );
 }
 
 /// Unregister a TakeoverManager from the global registry
 pub async fn unregister_takeover_manager(execution_id: &str) {
     let mut registry = ACTIVE_TAKEOVER_MANAGERS.write().await;
     if registry.remove(execution_id).is_some() {
-        tracing::info!("Unregistered TakeoverManager with execution_id: {}", execution_id);
+        tracing::info!(
+            "Unregistered TakeoverManager with execution_id: {}",
+            execution_id
+        );
     }
 }
 
@@ -150,28 +216,36 @@ pub async fn submit_credentials(
     verification_code: Option<String>,
     extra_fields: Option<std::collections::HashMap<String, String>>,
 ) -> Result<(), String> {
-    let manager = get_takeover_manager(execution_id).await
-        .ok_or_else(|| format!("No active explorer found with execution_id: {}", execution_id))?;
-    
+    let manager = get_takeover_manager(execution_id).await.ok_or_else(|| {
+        format!(
+            "No active explorer found with execution_id: {}",
+            execution_id
+        )
+    })?;
+
     let mut manager_guard = manager.write().await;
     manager_guard.set_user_credentials(username, password, verification_code, extra_fields);
-    
+
     // 关键修复：归还控制权，让探索循环继续执行
     // 将 TakeoverStatus 从 WaitingForUser 更新为 Returned
     manager_guard.return_control();
-    tracing::info!("Credentials submitted and control returned for execution_id: {}", execution_id);
-    
+    tracing::info!(
+        "Credentials submitted and control returned for execution_id: {}",
+        execution_id
+    );
+
     Ok(())
 }
 
 /// Submit a user message to a running VisionExplorer via its TakeoverManager.
 /// The message will be injected into the next VLM prompt.
-pub async fn submit_user_message(
-    execution_id: &str,
-    message: String,
-) -> Result<(), String> {
-    let manager = get_takeover_manager(execution_id).await
-        .ok_or_else(|| format!("No active explorer found with execution_id: {}", execution_id))?;
+pub async fn submit_user_message(execution_id: &str, message: String) -> Result<(), String> {
+    let manager = get_takeover_manager(execution_id).await.ok_or_else(|| {
+        format!(
+            "No active explorer found with execution_id: {}",
+            execution_id
+        )
+    })?;
 
     let mut manager_guard = manager.write().await;
     manager_guard.push_user_message(message);
@@ -181,13 +255,39 @@ pub async fn submit_user_message(
 /// Skip login for a running VisionExplorer.
 /// The explorer will continue without credentials and explore public pages.
 pub async fn skip_login(execution_id: &str) -> Result<(), String> {
-    let manager = get_takeover_manager(execution_id).await
-        .ok_or_else(|| format!("No active explorer found with execution_id: {}", execution_id))?;
+    let manager = get_takeover_manager(execution_id).await.ok_or_else(|| {
+        format!(
+            "No active explorer found with execution_id: {}",
+            execution_id
+        )
+    })?;
 
     let mut manager_guard = manager.write().await;
     manager_guard.mark_login_skipped();
     manager_guard.return_control();
 
-    tracing::info!("Skip login set and control returned for execution_id: {}", execution_id);
+    tracing::info!(
+        "Skip login set and control returned for execution_id: {}",
+        execution_id
+    );
+    Ok(())
+}
+
+/// Mark manual login as complete for a running VisionExplorer.
+pub async fn manual_login_complete(execution_id: &str) -> Result<(), String> {
+    let manager = get_takeover_manager(execution_id).await.ok_or_else(|| {
+        format!(
+            "No active explorer found with execution_id: {}",
+            execution_id
+        )
+    })?;
+
+    let mut manager_guard = manager.write().await;
+    manager_guard.mark_login_manual_success();
+
+    tracing::info!(
+        "Manual login complete marked for execution_id: {}",
+        execution_id
+    );
     Ok(())
 }

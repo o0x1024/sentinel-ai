@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex flex-col h-full" @contextmenu.prevent>
     <!-- Intercept Controls Header -->
     <div class="bg-base-200 border-b border-base-300 p-3 flex-shrink-0">
       <div class="flex items-center justify-between">
@@ -320,6 +320,15 @@
             </button>
             
             <button 
+              @click="forwardAll"
+              class="btn btn-success btn-sm btn-outline"
+              :disabled="isProcessing || interceptedItems.length === 0"
+            >
+              <i class="fas fa-forward mr-1"></i>
+              {{ $t('passiveScan.intercept.buttons.forwardAll') }}
+            </button>
+            
+            <button 
               @click="dropCurrentItem"
               class="btn btn-error btn-sm"
               :disabled="isProcessing || !currentItem"
@@ -358,16 +367,16 @@
           <!-- Content Tabs -->
           <div class="tabs tabs-boxed bg-base-200 border-b border-base-300 px-3 py-1 flex-shrink-0">
             <a 
-              :class="['tab tab-sm', activeTab === 'raw' ? 'tab-active' : '']"
-              @click="activeTab = 'raw'"
-            >
-              {{ $t('passiveScan.intercept.tabs.raw') }}
-            </a>
-            <a 
               :class="['tab tab-sm', activeTab === 'pretty' ? 'tab-active' : '']"
               @click="activeTab = 'pretty'"
             >
               {{ $t('passiveScan.intercept.tabs.pretty') }}
+            </a>
+            <a 
+              :class="['tab tab-sm', activeTab === 'raw' ? 'tab-active' : '']"
+              @click="activeTab = 'raw'"
+            >
+              {{ $t('passiveScan.intercept.tabs.raw') }}
             </a>
             <a 
               :class="['tab tab-sm', activeTab === 'hex' ? 'tab-active' : '']"
@@ -381,97 +390,21 @@
           <div class="flex-1 overflow-hidden bg-base-100 min-h-0 flex flex-col">
             <template v-if="currentItem">
               <!-- Raw View -->
-              <div v-if="activeTab === 'raw'" class="flex-1 p-2 min-h-0 flex flex-col">
-                <textarea 
+              <div v-if="activeTab === 'raw'" class="flex-1 min-h-0 flex flex-col">
+                <HttpCodeEditor
                   v-model="requestContent"
                   :readonly="!isEditable"
-                  class="w-full h-full font-mono text-sm leading-relaxed border border-base-300 rounded-lg p-3 focus:outline-none focus:border-primary resize-none"
-                  :class="isEditable ? 'bg-base-100' : 'bg-base-200'"
-                  spellcheck="false"
-                  style="flex: 1; min-height: 0;"
-                ></textarea>
+                  height="100%"
+                />
               </div>
 
               <!-- Pretty View -->
-              <div v-else-if="activeTab === 'pretty'" class="flex-1 overflow-auto p-4 space-y-4">
-                <!-- HTTP Request -->
-                <template v-if="currentItem.type === 'request'">
-                  <div class="card bg-base-200">
-                    <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.requestLine') }}</h3>
-                      <div class="font-mono text-sm">
-                        {{ (currentItem.data as any).method }} {{ (currentItem.data as any).path }} {{ (currentItem.data as any).protocol }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="card bg-base-200">
-                    <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.headers') }}</h3>
-                      <div class="space-y-1">
-                        <div v-for="(value, key) in (currentItem.data as any).headers" :key="key" class="flex text-sm font-mono">
-                          <span class="font-semibold text-primary w-48 flex-shrink-0">{{ key }}:</span>
-                          <span class="flex-1 break-all">{{ value }}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div v-if="(currentItem.data as any).body" class="card bg-base-200">
-                    <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.body') }}</h3>
-                      <pre class="font-mono text-sm whitespace-pre-wrap break-all">{{ (currentItem.data as any).body }}</pre>
-                    </div>
-                  </div>
-                </template>
-                
-                <!-- HTTP Response -->
-                <template v-else-if="currentItem.type === 'response'">
-                  <div class="card bg-base-200">
-                    <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.statusLine') }}</h3>
-                      <div class="font-mono text-sm">
-                        HTTP/1.1 <span :class="getStatusClass((currentItem.data as any).status)">{{ (currentItem.data as any).status }}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="card bg-base-200">
-                    <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.headers') }}</h3>
-                      <div class="space-y-1">
-                        <div v-for="(value, key) in (currentItem.data as any).headers" :key="key" class="flex text-sm font-mono">
-                          <span class="font-semibold text-primary w-48 flex-shrink-0">{{ key }}:</span>
-                          <span class="flex-1 break-all">{{ value }}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div v-if="(currentItem.data as any).body" class="card bg-base-200">
-                    <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.intercept.body') }}</h3>
-                      <pre class="font-mono text-sm whitespace-pre-wrap break-all">{{ (currentItem.data as any).body }}</pre>
-                    </div>
-                  </div>
-                </template>
-
-                <!-- WebSocket -->
-                <template v-else-if="currentItem.type === 'websocket'">
-                  <div class="card bg-base-200">
-                    <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">WebSocket Message Info</h3>
-                      <div class="grid grid-cols-2 gap-2 text-sm">
-                        <div><span class="font-semibold">Type:</span> {{ (currentItem.data as any).message_type }}</div>
-                        <div><span class="font-semibold">Direction:</span> {{ (currentItem.data as any).direction }}</div>
-                        <div><span class="font-semibold">Connection ID:</span> <span class="font-mono text-xs">{{ (currentItem.data as any).connection_id }}</span></div>
-                        <div><span class="font-semibold">Time:</span> {{ formatTimestamp((currentItem.data as any).timestamp) }}</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="card bg-base-200">
-                    <div class="card-body p-4">
-                      <h3 class="font-semibold mb-2 text-sm">Content</h3>
-                      <pre class="font-mono text-sm whitespace-pre-wrap break-all">{{ (currentItem.data as any).content || '[Empty]' }}</pre>
-                    </div>
-                  </div>
-                </template>
+              <div v-else-if="activeTab === 'pretty'" class="flex-1 min-h-0 flex flex-col">
+                <HttpCodeEditor
+                  v-model="prettyContent"
+                  :readonly="!isEditable"
+                  height="100%"
+                />
               </div>
 
               <!-- Hex View -->
@@ -595,6 +528,7 @@ import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
 import { dialog } from '@/composables/useDialog';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
+import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -699,7 +633,7 @@ const interceptedWebsockets = ref<InterceptedWebSocketMessage[]>([]);
 
 const currentItemIndex = ref(0);
 const currentItemType = ref<'request' | 'response' | 'websocket'>('request');
-const activeTab = ref<'raw' | 'pretty' | 'hex'>('raw');
+const activeTab = ref<'raw' | 'pretty' | 'hex'>('pretty');
 const isEditable = ref(true); // 默认可编辑
 const isProcessing = ref(false);
 const requestContent = ref('');
@@ -774,6 +708,98 @@ const queuePanelHeight = ref(180);
 let isResizing = false;
 let startY = 0;
 let startHeight = 0;
+
+// Format content for Pretty view (JSON, XML, etc.)
+function formatBody(body: string): string {
+  if (!body) return body;
+  
+  const trimmed = body.trim();
+  
+  // Try JSON
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      // Not valid JSON
+    }
+  }
+  
+  // Try XML/HTML
+  if (trimmed.startsWith('<')) {
+    try {
+      return formatXml(trimmed);
+    } catch {
+      // Not valid XML
+    }
+  }
+  
+  return body;
+}
+
+// Simple XML formatter
+function formatXml(xml: string): string {
+  let formatted = '';
+  let indent = 0;
+  const lines = xml.replace(/></g, '>\n<').split('\n');
+  
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
+    
+    // Closing tag
+    if (trimmedLine.startsWith('</')) {
+      indent = Math.max(0, indent - 1);
+    }
+    
+    formatted += '  '.repeat(indent) + trimmedLine + '\n';
+    
+    // Opening tag (not self-closing, not closing)
+    if (trimmedLine.startsWith('<') && !trimmedLine.startsWith('</') && 
+        !trimmedLine.startsWith('<?') && !trimmedLine.startsWith('<!') &&
+        !trimmedLine.endsWith('/>') && !trimmedLine.includes('</')) {
+      indent++;
+    }
+  }
+  
+  return formatted.trim();
+}
+
+// Pretty content (formatted) - writable computed
+const prettyContent = computed({
+  get: () => {
+    if (!requestContent.value) return '';
+    
+    const lines = requestContent.value.split('\n');
+    const result: string[] = [];
+    let inBody = false;
+    let bodyLines: string[] = [];
+    
+    for (const line of lines) {
+      if (!inBody) {
+        result.push(line);
+        // Empty line marks body start
+        if (line.trim() === '') {
+          inBody = true;
+        }
+      } else {
+        bodyLines.push(line);
+      }
+    }
+    
+    // Format body if present
+    if (bodyLines.length > 0) {
+      const body = bodyLines.join('\n');
+      const formattedBody = formatBody(body);
+      result.push(formattedBody);
+    }
+    
+    return result.join('\n');
+  },
+  set: (value: string) => {
+    requestContent.value = value;
+  }
+});
 
 const hexView = computed(() => {
   if (!requestContent.value) return '';
@@ -891,6 +917,14 @@ async function contextMenuSendToAI() {
   // Determine send type based on item type
   const sendType = item.type === 'response' ? 'response' : 'request';
   
+  closeContextMenu();
+  
+  // Navigate to AI assistant page first
+  await router.push('/ai-assistant');
+  
+  // Wait for the page to mount and set up event listener
+  await new Promise(resolve => setTimeout(resolve, 100));
+  
   // Send event to AI assistant
   await tauriEmit('traffic:send-to-assistant', { 
     requests: [proxyRequest], 
@@ -900,11 +934,6 @@ async function contextMenuSendToAI() {
   
   const typeText = sendType === 'request' ? t('passiveScan.intercept.request') : t('passiveScan.intercept.response');
   dialog.toast.success(t('passiveScan.intercept.sentToAssistant', { type: typeText }));
-  
-  closeContextMenu();
-  
-  // Navigate to AI assistant page
-  router.push('/ai-assistant');
 }
 
 // Convert intercepted item to ProxyRequest format for AI assistant
@@ -1033,14 +1062,18 @@ function closeFilterDialog() {
 async function addFilterByDomain() {
   const domain = getItemDomain();
   if (domain) {
-    filterRule.value = {
-      type: 'request',
-      matchType: 'domain',
-      relationship: 'matches',
-      condition: domain,
-      action: 'exclude'
-    };
-    await saveFilterRule();
+    // Emit event to ProxyConfiguration to add the rule
+    await tauriEmit('intercept:add-filter-rule', {
+      ruleType: 'request',
+      rule: {
+        enabled: true,
+        operator: 'And',
+        matchType: 'domain_name',
+        relationship: 'does_not_match',
+        condition: domain
+      }
+    });
+    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
   }
   closeContextMenu();
 }
@@ -1048,29 +1081,36 @@ async function addFilterByDomain() {
 async function addFilterByUrl() {
   const item = contextMenu.value.item;
   if (item?.type === 'request') {
-    filterRule.value = {
-      type: 'request',
-      matchType: 'url',
-      relationship: 'contains',
-      condition: (item.data as InterceptedRequest).path,
-      action: 'exclude'
-    };
-    closeContextMenu();
-    filterDialogRef.value?.showModal();
+    const url = (item.data as InterceptedRequest).url;
+    await tauriEmit('intercept:add-filter-rule', {
+      ruleType: 'request',
+      rule: {
+        enabled: true,
+        operator: 'And',
+        matchType: 'url',
+        relationship: 'does_not_match',
+        condition: url
+      }
+    });
+    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
   }
+  closeContextMenu();
 }
 
 async function addFilterByMethod() {
   const method = getItemMethod();
   if (method) {
-    filterRule.value = {
-      type: 'request',
-      matchType: 'method',
-      relationship: 'matches',
-      condition: method,
-      action: 'exclude'
-    };
-    await saveFilterRule();
+    await tauriEmit('intercept:add-filter-rule', {
+      ruleType: 'request',
+      rule: {
+        enabled: true,
+        operator: 'And',
+        matchType: 'http_method',
+        relationship: 'does_not_match',
+        condition: method.toLowerCase()
+      }
+    });
+    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
   }
   closeContextMenu();
 }
@@ -1081,29 +1121,37 @@ async function addFilterByFileExt() {
     const path = (item.data as InterceptedRequest).path;
     const match = path.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
     const ext = match ? match[1] : '';
-    filterRule.value = {
-      type: 'request',
-      matchType: 'fileExt',
-      relationship: 'matches',
-      condition: ext,
-      action: 'exclude'
-    };
-    closeContextMenu();
-    filterDialogRef.value?.showModal();
+    if (ext) {
+      await tauriEmit('intercept:add-filter-rule', {
+        ruleType: 'request',
+        rule: {
+          enabled: true,
+          operator: 'And',
+          matchType: 'file_extension',
+          relationship: 'does_not_match',
+          condition: `^${ext}$`
+        }
+      });
+      dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+    }
   }
+  closeContextMenu();
 }
 
 async function addFilterByStatus() {
   const status = getItemStatus();
   if (status) {
-    filterRule.value = {
-      type: 'response',
-      matchType: 'status',
-      relationship: 'matches',
-      condition: status.toString(),
-      action: 'exclude'
-    };
-    await saveFilterRule();
+    await tauriEmit('intercept:add-filter-rule', {
+      ruleType: 'response',
+      rule: {
+        enabled: true,
+        operator: 'And',
+        matchType: 'status_code',
+        relationship: 'does_not_match',
+        condition: `^${status}$`
+      }
+    });
+    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
   }
   closeContextMenu();
 }
@@ -1113,16 +1161,22 @@ async function addFilterByContentType() {
   if (item?.type === 'response') {
     const headers = (item.data as InterceptedResponse).headers;
     const contentType = headers['content-type'] || headers['Content-Type'] || '';
-    filterRule.value = {
-      type: 'response',
-      matchType: 'contentType',
-      relationship: 'contains',
-      condition: contentType.split(';')[0],
-      action: 'exclude'
-    };
-    closeContextMenu();
-    filterDialogRef.value?.showModal();
+    const mainType = contentType.split(';')[0].trim();
+    if (mainType) {
+      await tauriEmit('intercept:add-filter-rule', {
+        ruleType: 'response',
+        rule: {
+          enabled: true,
+          operator: 'And',
+          matchType: 'content_type_header',
+          relationship: 'does_not_match',
+          condition: mainType
+        }
+      });
+      dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+    }
   }
+  closeContextMenu();
 }
 
 async function addFilterByWsDirection() {
@@ -1137,24 +1191,43 @@ async function addFilterByWsDirection() {
 
 async function saveFilterRule() {
   try {
-    const response = await invoke<any>('add_intercept_filter_rule', {
+    // Map matchType from dialog to ProxyConfiguration format
+    const matchTypeMap: Record<string, string> = {
+      'domain': 'domain_name',
+      'url': 'url',
+      'method': 'http_method',
+      'fileExt': 'file_extension',
+      'header': 'any_header',
+      'status': 'status_code',
+      'contentType': 'content_type_header'
+    };
+    
+    // Map relationship from dialog to ProxyConfiguration format
+    const relationshipMap: Record<string, string> = {
+      'matches': 'matches',
+      'notMatches': 'does_not_match',
+      'contains': 'matches',
+      'notContains': 'does_not_match'
+    };
+    
+    const mappedMatchType = matchTypeMap[filterRule.value.matchType] || filterRule.value.matchType;
+    const mappedRelationship = filterRule.value.action === 'exclude' 
+      ? 'does_not_match' 
+      : relationshipMap[filterRule.value.relationship] || filterRule.value.relationship;
+    
+    await tauriEmit('intercept:add-filter-rule', {
+      ruleType: filterRule.value.type,
       rule: {
-        id: '', // Will be generated by backend
-        rule_type: filterRule.value.type,
-        match_type: filterRule.value.matchType,
-        relationship: filterRule.value.relationship,
-        condition: filterRule.value.condition,
-        action: filterRule.value.action,
-        enabled: true
+        enabled: true,
+        operator: 'And',
+        matchType: mappedMatchType,
+        relationship: mappedRelationship,
+        condition: filterRule.value.condition
       }
     });
     
-    if (response.success) {
-      dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
-      closeFilterDialog();
-    } else {
-      dialog.toast.error(response.error || t('passiveScan.intercept.filterDialog.addFailed'));
-    }
+    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+    closeFilterDialog();
   } catch (error: any) {
     console.error('Failed to save filter rule:', error);
     dialog.toast.error(`${error}`);

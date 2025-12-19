@@ -29,6 +29,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
+
 /// 忽略证书验证的 ServerCertVerifier
 /// 用于抓取证书异常的站点（如自签名、过期、版本不支持等）
 #[derive(Debug)]
@@ -396,6 +397,21 @@ pub struct PendingInterceptWebSocketMessage {
     pub response_tx: tokio::sync::oneshot::Sender<InterceptAction>,
 }
 
+/// 拦截过滤规则
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterceptFilterRule {
+    /// 是否启用
+    pub enabled: bool,
+    /// 操作符: And, Or
+    pub operator: String,
+    /// 匹配类型: domain_name, url, http_method, file_extension, etc.
+    pub match_type: String,
+    /// 匹配关系: matches, does_not_match
+    pub relationship: String,
+    /// 匹配条件（正则表达式）
+    pub condition: String,
+}
+
 /// 拦截状态（共享）
 #[derive(Clone)]
 pub struct InterceptState {
@@ -412,6 +428,10 @@ pub struct InterceptState {
     /// 待处理的拦截 WebSocket 消息发送端
     pub pending_websocket_tx:
         Option<tokio::sync::mpsc::UnboundedSender<PendingInterceptWebSocketMessage>>,
+    /// 请求拦截过滤规则
+    pub request_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
+    /// 响应拦截过滤规则
+    pub response_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
 }
 
 /// Upstream proxy 配置
@@ -508,7 +528,11 @@ pub enum ScanTask {
 }
 
 /// 代理处理器（实现 Hudsucker HttpHandler）
-#[derive(Clone)]
+/// 
+/// Note: hudsucker calls `self.clone().proxy(req)` for each request-response pair,
+/// so each pair gets its own handler clone. We must ensure `current_request_id` is **NOT shared**
+/// across clones, otherwise concurrent requests will overwrite each other and cause request/response
+/// mismatch in history.
 pub struct PassiveProxyHandler {
     config: ProxyConfig,
     stats: Arc<RwLock<ProxyStats>>,
@@ -516,8 +540,6 @@ pub struct PassiveProxyHandler {
     /// 请求ID映射（用于关联请求和响应）
     /// 使用请求ID作为键来关联请求和响应
     request_map: Arc<RwLock<std::collections::HashMap<String, RequestContext>>>,
-    /// 连接键到请求ID的映射（用于响应匹配）
-    conn_to_request: Arc<RwLock<std::collections::HashMap<String, String>>>,
     /// 需要绕过 MITM 的域名集合（目前未使用，因为已配置忽略证书错误）
     #[allow(dead_code)]
     bypass_hosts: Arc<RwLock<HashSet<String>>>,
@@ -532,6 +554,28 @@ pub struct PassiveProxyHandler {
     ws_message_counters: Arc<RwLock<HashMap<String, usize>>>,
     /// 拦截状态
     intercept_state: Option<InterceptState>,
+    /// 当前请求 ID（用于匹配 handle_request/handle_response）
+    /// 注意：必须是“每个 clone 独立”的状态，不能用 Arc 共享。
+    current_request_id: std::sync::Mutex<Option<String>>,
+}
+
+impl Clone for PassiveProxyHandler {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            stats: self.stats.clone(),
+            scan_tx: self.scan_tx.clone(),
+            request_map: self.request_map.clone(),
+            bypass_hosts: self.bypass_hosts.clone(),
+            fail_counts: self.fail_counts.clone(),
+            conn_to_host: self.conn_to_host.clone(),
+            conn_to_ws_id: self.conn_to_ws_id.clone(),
+            ws_message_counters: self.ws_message_counters.clone(),
+            intercept_state: self.intercept_state.clone(),
+            // 每个 clone 新建一份独立的 request_id 槽位，避免并发覆盖
+            current_request_id: std::sync::Mutex::new(None),
+        }
+    }
 }
 
 impl PassiveProxyHandler {
@@ -541,13 +585,13 @@ impl PassiveProxyHandler {
             stats: Arc::new(RwLock::new(ProxyStats::default())),
             scan_tx,
             request_map: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            conn_to_request: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bypass_hosts: Arc::new(RwLock::new(HashSet::new())),
             fail_counts: Arc::new(RwLock::new(HashMap::new())),
             conn_to_host: Arc::new(RwLock::new(HashMap::new())),
             conn_to_ws_id: Arc::new(RwLock::new(HashMap::new())),
             ws_message_counters: Arc::new(RwLock::new(HashMap::new())),
             intercept_state: None,
+            current_request_id: std::sync::Mutex::new(None),
         }
     }
 
@@ -562,13 +606,13 @@ impl PassiveProxyHandler {
             stats: Arc::new(RwLock::new(ProxyStats::default())),
             scan_tx,
             request_map: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            conn_to_request: Arc::new(RwLock::new(std::collections::HashMap::new())),
             bypass_hosts: Arc::new(RwLock::new(HashSet::new())),
             fail_counts: Arc::new(RwLock::new(HashMap::new())),
             conn_to_host: Arc::new(RwLock::new(HashMap::new())),
             conn_to_ws_id: Arc::new(RwLock::new(HashMap::new())),
             ws_message_counters: Arc::new(RwLock::new(HashMap::new())),
             intercept_state: Some(intercept_state),
+            current_request_id: std::sync::Mutex::new(None),
         }
     }
 
@@ -613,6 +657,18 @@ impl PassiveProxyHandler {
         debug_str
     }
 
+    /// 设置当前请求 ID（用于响应匹配）
+    fn set_current_request_id(&self, request_id: String) {
+        if let Ok(mut guard) = self.current_request_id.lock() {
+            *guard = Some(request_id)
+        }
+    }
+
+    /// 获取并清除当前请求 ID
+    fn take_current_request_id(&self) -> Option<String> {
+        self.current_request_id.lock().ok().and_then(|mut g| g.take())
+    }
+
     /// 从 CONNECT 请求中提取 host（去掉端口）
     fn parse_connect_host(req: &Request<Body>) -> Option<String> {
         // CONNECT 请求的 URI 通常为 authority 形式，如 host:443
@@ -627,6 +683,79 @@ impl PassiveProxyHandler {
                     .map(|s| s.to_string())
             });
         authority.map(|auth| auth.split(':').next().unwrap_or(&auth).to_string())
+    }
+
+    /// Check if a request should be intercepted based on filter rules
+    /// Returns true if the request should be intercepted, false if it should be skipped
+    async fn should_intercept_request(
+        intercept_state: &InterceptState,
+        url: &str,
+        method: &str,
+        _headers: &HashMap<String, String>,
+    ) -> bool {
+        let rules = intercept_state.request_filter_rules.read().await;
+        if rules.is_empty() {
+            return true; // No rules, intercept all
+        }
+
+        // Extract domain from URL
+        let domain = url
+            .split("://")
+            .nth(1)
+            .and_then(|s| s.split('/').next())
+            .and_then(|s| s.split(':').next())
+            .unwrap_or("");
+
+        // Extract file extension from URL
+        let path = url.split('?').next().unwrap_or(url);
+        let file_ext = path.rsplit('.').next().unwrap_or("");
+
+        // Evaluate rules (AND logic by default, rules with "does_not_match" exclude requests)
+        for rule in rules.iter() {
+            if !rule.enabled {
+                continue;
+            }
+
+            let value_to_match = match rule.match_type.as_str() {
+                "domain_name" => domain,
+                "url" => url,
+                "http_method" => method,
+                "file_extension" => file_ext,
+                _ => continue,
+            };
+
+            let matches = if rule.condition.is_empty() {
+                false
+            } else {
+                match regex::Regex::new(&rule.condition) {
+                    Ok(re) => re.is_match(value_to_match),
+                    Err(_) => {
+                        // Fallback to simple contains check
+                        value_to_match.to_lowercase().contains(&rule.condition.to_lowercase())
+                    }
+                }
+            };
+
+            // "does_not_match" means: if condition matches, skip interception
+            if rule.relationship == "does_not_match" && matches {
+                debug!(
+                    "Request {} skipped by filter rule: {} does_not_match {}",
+                    url, rule.match_type, rule.condition
+                );
+                return false;
+            }
+
+            // "matches" means: if condition doesn't match, skip interception
+            if rule.relationship == "matches" && !matches {
+                debug!(
+                    "Request {} skipped by filter rule: {} matches {}",
+                    url, rule.match_type, rule.condition
+                );
+                return false;
+            }
+        }
+
+        true
     }
 
     /// 解析修改后的请求内容并重建 HTTP 请求
@@ -957,6 +1086,11 @@ impl PassiveProxyHandler {
             query_params,
             is_https: scheme == "https",
             timestamp: chrono::Utc::now(),
+            was_edited: false,
+            edited_method: None,
+            edited_url: None,
+            edited_headers: None,
+            edited_body: None,
         };
 
         Ok((req_ctx, new_req))
@@ -1061,6 +1195,10 @@ impl PassiveProxyHandler {
             body: body_vec, // 保存解压后的数据
             content_type,
             timestamp: chrono::Utc::now(),
+            was_edited: false,
+            edited_status: None,
+            edited_headers: None,
+            edited_body: None,
         };
 
         Ok((resp_ctx, new_res))
@@ -1169,10 +1307,6 @@ impl HttpHandler for PassiveProxyHandler {
                         let mut request_map = self.request_map.write().await;
                         request_map.insert(request_id.clone(), req_ctx.clone());
 
-                        // 同时保存连接键到请求ID的映射
-                        let mut conn_map = self.conn_to_request.write().await;
-                        conn_map.insert(conn_key.clone(), request_id.clone());
-
                         // 限制缓存大小
                         if request_map.len() > 1000 {
                             // 移除最早的一半条目
@@ -1182,15 +1316,6 @@ impl HttpHandler for PassiveProxyHandler {
                                 request_map.remove(key);
                             }
                             debug!("Request map cleaned, current size: {}", request_map.len());
-                        }
-
-                        // 清理连接映射
-                        if conn_map.len() > 1000 {
-                            let keys_to_remove: Vec<_> =
-                                conn_map.keys().take(500).cloned().collect();
-                            for key in keys_to_remove {
-                                conn_map.remove(&key);
-                            }
                         }
                     }
 
@@ -1249,6 +1374,20 @@ impl HttpHandler for PassiveProxyHandler {
                         if let Some(intercept_state) = &self.intercept_state {
                             let intercept_enabled = *intercept_state.enabled.read().await;
                             if intercept_enabled {
+                                // Check filter rules before intercepting
+                                let should_intercept = Self::should_intercept_request(
+                                    intercept_state,
+                                    &req_ctx.url,
+                                    &req_ctx.method,
+                                    &req_ctx.headers,
+                                ).await;
+
+                                if !should_intercept {
+                                    debug!("Request {} skipped by filter rules", req_ctx.url);
+                                    self.set_current_request_id(request_id.clone());
+                                    return RequestOrResponse::Request(new_req);
+                                }
+
                                 if let Some(pending_tx) = &intercept_state.pending_tx {
                                     // 创建 oneshot channel 等待用户操作
                                     let (response_tx, response_rx) =
@@ -1283,6 +1422,7 @@ impl HttpHandler for PassiveProxyHandler {
                                     // 发送到待处理队列
                                     if let Err(e) = pending_tx.send(pending_request) {
                                         warn!("Failed to send intercept request: {}", e);
+                                        self.set_current_request_id(request_id.clone());
                                         return RequestOrResponse::Request(new_req);
                                     }
 
@@ -1305,11 +1445,54 @@ impl HttpHandler for PassiveProxyHandler {
                                                         "Request {} forwarded by user",
                                                         request_id
                                                     );
+                                                    self.set_current_request_id(request_id.clone());
                                                     if let Some(content) = modified_content {
                                                         // 解析修改后的内容并重建请求
                                                         match Self::parse_and_rebuild_request(&content, &uri) {
                                                             Ok(modified_req) => {
                                                                 info!("Request {} modified and forwarded", request_id);
+                                                                
+                                                                // 更新 req_ctx 保存修改后的数据
+                                                                let mut updated_req_ctx = req_ctx.clone();
+                                                                updated_req_ctx.was_edited = true;
+                                                                updated_req_ctx.edited_method = Some(modified_req.method().to_string());
+                                                                
+                                                                // 构建修改后的 URL
+                                                                let edited_uri = modified_req.uri();
+                                                                let edited_scheme = edited_uri.scheme_str().unwrap_or(if req_ctx.is_https { "https" } else { "http" });
+                                                                let edited_authority = modified_req.headers().get("host")
+                                                                    .and_then(|h| h.to_str().ok())
+                                                                    .or_else(|| edited_uri.authority().map(|a| a.as_str()))
+                                                                    .unwrap_or("unknown");
+                                                                let edited_path = edited_uri.path();
+                                                                let edited_query = edited_uri.query().unwrap_or("");
+                                                                let edited_url = if edited_query.is_empty() {
+                                                                    format!("{}://{}{}", edited_scheme, edited_authority, edited_path)
+                                                                } else {
+                                                                    format!("{}://{}{}?{}", edited_scheme, edited_authority, edited_path, edited_query)
+                                                                };
+                                                                updated_req_ctx.edited_url = Some(edited_url);
+                                                                
+                                                                // 保存修改后的 headers
+                                                                let mut edited_headers = std::collections::HashMap::new();
+                                                                for (name, value) in modified_req.headers().iter() {
+                                                                    if let Ok(v) = value.to_str() {
+                                                                        edited_headers.insert(name.to_string(), v.to_string());
+                                                                    }
+                                                                }
+                                                                updated_req_ctx.edited_headers = Some(edited_headers);
+                                                                
+                                                                // 更新 request_map
+                                                                {
+                                                                    let mut request_map = self.request_map.write().await;
+                                                                    request_map.insert(request_id.clone(), updated_req_ctx.clone());
+                                                                }
+                                                                
+                                                                // 发送更新后的 RequestContext 到 scanner
+                                                                if let Err(e) = tx.send(ScanTask::Request(updated_req_ctx)) {
+                                                                    warn!("Failed to send updated request to scanner: {}", e);
+                                                                }
+                                                                
                                                                 return RequestOrResponse::Request(modified_req);
                                                             }
                                                             Err(e) => {
@@ -1336,6 +1519,7 @@ impl HttpHandler for PassiveProxyHandler {
                                         }
                                         Ok(Err(_)) => {
                                             warn!("Intercept channel closed for request {}, forwarding", request_id);
+                                            self.set_current_request_id(request_id.clone());
                                             return RequestOrResponse::Request(new_req);
                                         }
                                         Err(_) => {
@@ -1343,6 +1527,7 @@ impl HttpHandler for PassiveProxyHandler {
                                                 "Intercept timeout for request {}, forwarding",
                                                 request_id
                                             );
+                                            self.set_current_request_id(request_id.clone());
                                             return RequestOrResponse::Request(new_req);
                                         }
                                     }
@@ -1350,6 +1535,9 @@ impl HttpHandler for PassiveProxyHandler {
                             }
                         }
                     }
+
+                    // 设置当前请求 ID，供 handle_response 使用
+                    self.set_current_request_id(request_id);
 
                     // 返回修改后的请求
                     RequestOrResponse::Request(new_req)
@@ -1381,11 +1569,9 @@ impl HttpHandler for PassiveProxyHandler {
 
         // 构建上下文并发送到扫描器
         if let Some(tx) = &self.scan_tx {
-            // 从连接映射中获取请求ID
-            let request_id_opt = {
-                let conn_map = self.conn_to_request.read().await;
-                conn_map.get(&conn_key).cloned()
-            };
+            // 从当前 handler 实例获取请求 ID（由 handle_request 设置）
+            // 这比使用 FIFO 队列更可靠，因为每个请求-响应对使用独立的 handler 克隆
+            let request_id_opt = self.take_current_request_id();
 
             if let Some(request_id) = request_id_opt {
                 // 获取请求上下文
@@ -1396,7 +1582,7 @@ impl HttpHandler for PassiveProxyHandler {
 
                 if let Some(_req_ctx) = req_ctx_opt {
                     match self.build_response_context(request_id.clone(), res).await {
-                        Ok((resp_ctx, new_res)) => {
+                        Ok((mut resp_ctx, new_res)) => {
                             debug!(
                                 "Response captured: request_id={}, status={}, body_size={}, conn_key={}",
                                 request_id,
@@ -1452,6 +1638,27 @@ impl HttpHandler for PassiveProxyHandler {
                                                         match Self::parse_and_rebuild_response(&content) {
                                                             Ok(modified_resp) => {
                                                                 info!("Response {} modified and forwarded", response_id);
+                                                                
+                                                                // 更新 resp_ctx 保存修改后的数据
+                                                                resp_ctx.was_edited = true;
+                                                                resp_ctx.edited_status = Some(modified_resp.status().as_u16());
+                                                                
+                                                                // 保存修改后的 headers
+                                                                let mut edited_headers = std::collections::HashMap::new();
+                                                                for (name, value) in modified_resp.headers().iter() {
+                                                                    if let Ok(v) = value.to_str() {
+                                                                        edited_headers.insert(name.to_string(), v.to_string());
+                                                                    }
+                                                                }
+                                                                resp_ctx.edited_headers = Some(edited_headers);
+                                                                
+                                                                // 注意：修改后的 body 需要从 content 中解析
+                                                                // 因为 modified_resp 的 body 已经被消费了，我们从原始 content 中提取
+                                                                if let Some(body_start) = content.find("\r\n\r\n") {
+                                                                    let body_content = &content[body_start + 4..];
+                                                                    resp_ctx.edited_body = Some(body_content.as_bytes().to_vec());
+                                                                }
+                                                                
                                                                 final_response = modified_resp;
                                                             }
                                                             Err(e) => {
@@ -1490,13 +1697,10 @@ impl HttpHandler for PassiveProxyHandler {
                                 warn!("Failed to send response to scanner: {}", e);
                             }
 
-                            // 清理映射
+                            // 清理请求映射（队列中的请求ID已在上面pop_front时移除）
                             {
                                 let mut request_map = self.request_map.write().await;
                                 request_map.remove(&request_id);
-
-                                let mut conn_map = self.conn_to_request.write().await;
-                                conn_map.remove(&conn_key);
                             }
 
                             // 返回响应
@@ -1632,7 +1836,7 @@ impl HttpHandler for PassiveProxyHandler {
                 || error_lower.contains("refused")
                 || error_lower.contains("closed")
             {
-                warn!(
+                debug!(
                     "Forward request failed (network): host={:?} conn_key={} error={}",
                     host_opt, conn_key, error_chain
                 );
