@@ -615,7 +615,7 @@ impl ScanPipeline {
             )));
         }
 
-        let executor = PluginExecutor::new(metadata, code).map_err(|e| {
+        let executor = PluginExecutor::new(metadata, code, 1000).map_err(|e| {
             PassiveError::Plugin(format!("Failed to create plugin executor: {}", e))
         })?;
 
@@ -714,7 +714,7 @@ impl ScanPipeline {
             };
 
             // 创建 PluginExecutor
-            match PluginExecutor::new(metadata, plugin_code) {
+            match PluginExecutor::new(metadata, plugin_code, 1000) {
                 Ok(executor) => {
                     executors.insert(id.clone(), Arc::new(executor));
                     loaded_count += 1;
@@ -853,7 +853,7 @@ impl ScanPipeline {
         // 替换旧实例
         let mut executors = self.plugin_executors.write().await;
 
-        let executor = PluginExecutor::new(metadata, plugin_code).map_err(|e| {
+        let executor = PluginExecutor::new(metadata, plugin_code, 1000).map_err(|e| {
             PassiveError::Plugin(format!(
                 "Failed to create executor for {}: {}",
                 plugin_id, e

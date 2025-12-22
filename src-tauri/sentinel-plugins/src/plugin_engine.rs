@@ -19,7 +19,10 @@ use deno_core::{
     ModuleLoader, ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, ResolutionKind,
     RuntimeOptions,
 };
+use deno_features::FeatureChecker;
+use deno_permissions::{PermissionsContainer, RuntimePermissionDescriptorParser};
 use deno_error::JsErrorBox;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -34,12 +37,24 @@ use tracing::{debug, info};
 struct PluginModuleLoader {
     /// 插件代码缓存 (specifier -> source code)
     modules: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    /// HTTP 客户端（用于远程模块加载）
+    http_client: reqwest::Client,
+    /// 远程模块缓存目录
+    cache_dir: PathBuf,
 }
 
 impl PluginModuleLoader {
     fn new() -> Self {
+        let cache_dir = dirs::cache_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("sentinel-ai")
+            .join("plugin-modules");
+        let _ = std::fs::create_dir_all(&cache_dir);
+
         Self {
             modules: std::cell::RefCell::new(std::collections::HashMap::new()),
+            http_client: reqwest::Client::new(),
+            cache_dir,
         }
     }
 
@@ -52,48 +67,52 @@ impl PluginModuleLoader {
 
     /// 转译 TypeScript/JSX 为 JavaScript
     fn transpile(&self, specifier: &str, source: &str) -> std::result::Result<String, String> {
-        // 根据文件扩展名确定 MediaType
-        let media_type = if specifier.ends_with(".ts") {
-            MediaType::TypeScript
-        } else if specifier.ends_with(".tsx") {
-            MediaType::Tsx
-        } else if specifier.ends_with(".jsx") {
-            MediaType::Jsx
-        } else if specifier.ends_with(".mjs") {
-            MediaType::Mjs
-        } else {
-            MediaType::JavaScript
-        };
-
-        // 如果是纯 JS，直接返回
-        if media_type == MediaType::JavaScript || media_type == MediaType::Mjs {
-            return Ok(source.to_string());
-        }
-
-        // 解析并转译
-        let parsed = deno_ast::parse_module(ParseParams {
-            specifier: ModuleSpecifier::parse(specifier).unwrap(),
-            text: source.into(),
-            media_type,
-            capture_tokens: false,
-            scope_analysis: false,
-            maybe_syntax: None,
-        })
-        .map_err(|e| format!("Failed to parse {}: {}", specifier, e))?;
-
-        let transpiled = parsed
-            .transpile(
-                &TranspileOptions::default(),
-                &TranspileModuleOptions::default(),
-                &EmitOptions {
-                    source_map: SourceMapOption::None,
-                    ..Default::default()
-                },
-            )
-            .map_err(|e| format!("Failed to transpile {}: {}", specifier, e))?;
-
-        Ok(transpiled.into_source().text)
+        transpile_module(specifier, source)
     }
+}
+
+fn transpile_module(specifier: &str, source: &str) -> std::result::Result<String, String> {
+    // 根据文件扩展名确定 MediaType
+    let media_type = if specifier.ends_with(".ts") {
+        MediaType::TypeScript
+    } else if specifier.ends_with(".tsx") {
+        MediaType::Tsx
+    } else if specifier.ends_with(".jsx") {
+        MediaType::Jsx
+    } else if specifier.ends_with(".mjs") {
+        MediaType::Mjs
+    } else {
+        MediaType::JavaScript
+    };
+
+    // 如果是纯 JS，直接返回
+    if media_type == MediaType::JavaScript || media_type == MediaType::Mjs {
+        return Ok(source.to_string());
+    }
+
+    // 解析并转译
+    let parsed = deno_ast::parse_module(ParseParams {
+        specifier: ModuleSpecifier::parse(specifier).unwrap(),
+        text: source.into(),
+        media_type,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    })
+    .map_err(|e| format!("Failed to parse {}: {}", specifier, e))?;
+
+    let transpiled = parsed
+        .transpile(
+            &TranspileOptions::default(),
+            &TranspileModuleOptions::default(),
+            &EmitOptions {
+                source_map: SourceMapOption::None,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| format!("Failed to transpile {}: {}", specifier, e))?;
+
+    Ok(transpiled.into_source().text)
 }
 
 impl ModuleLoader for PluginModuleLoader {
@@ -109,7 +128,13 @@ impl ModuleLoader for PluginModuleLoader {
                 .map_err(|e| JsErrorBox::generic(format!("Failed to parse referrer: {}", e)))?;
             base.join(specifier)
                 .map_err(|e| JsErrorBox::generic(format!("Failed to join specifier: {}", e)))
-        } else if specifier.starts_with("file://") || specifier.starts_with("sentinel://") || specifier.starts_with("ext:") || specifier.starts_with("internal:") {
+        } else if specifier.starts_with("file://")
+            || specifier.starts_with("sentinel://")
+            || specifier.starts_with("ext:")
+            || specifier.starts_with("internal:")
+            || specifier.starts_with("http://")
+            || specifier.starts_with("https://")
+        {
             Url::parse(specifier)
                 .map_err(|e| JsErrorBox::generic(format!("Failed to parse URL: {}", e)))
         } else {
@@ -126,6 +151,74 @@ impl ModuleLoader for PluginModuleLoader {
         _load_options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
         let specifier = module_specifier.as_str();
+
+        if specifier.starts_with("http://") || specifier.starts_with("https://") {
+            let url = specifier.to_string();
+            let client = self.http_client.clone();
+            let cache_dir = self.cache_dir.clone();
+            let module_specifier = module_specifier.clone();
+
+            return ModuleLoadResponse::Async(Box::pin(async move {
+                let mut hasher = Sha256::new();
+                hasher.update(url.as_bytes());
+                let hash = format!("{:x}", hasher.finalize());
+
+                let ext = ModuleSpecifier::parse(&url)
+                    .ok()
+                    .and_then(|u| {
+                        u.path_segments()
+                            .and_then(|mut segs| segs.next_back())
+                            .and_then(|s| s.rsplit_once('.').map(|(_, e)| format!(".{}", e)))
+                    })
+                    .unwrap_or_else(|| ".ts".to_string());
+
+                let cache_path = cache_dir.join(format!("{}{}", hash, ext));
+
+                let source = if cache_path.exists() {
+                    tokio::fs::read_to_string(&cache_path)
+                        .await
+                        .map_err(|e| {
+                            JsErrorBox::generic(format!("Failed to read cache {}: {}", url, e))
+                        })?
+                } else {
+                    let response = client
+                        .get(&url)
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            JsErrorBox::generic(format!("Failed to fetch {}: {}", url, e))
+                        })?;
+
+                    if !response.status().is_success() {
+                        return Err(JsErrorBox::generic(format!(
+                            "Failed to fetch {}: {}",
+                            url,
+                            response.status()
+                        )));
+                    }
+
+                    let text = response.text().await.map_err(|e| {
+                        JsErrorBox::generic(format!("Failed to read response {}: {}", url, e))
+                    })?;
+
+                    let _ = tokio::fs::create_dir_all(&cache_dir).await;
+                    let _ = tokio::fs::write(&cache_path, &text).await;
+
+                    text
+                };
+
+                let transpiled = transpile_module(&url, &source).map_err(|e| {
+                    JsErrorBox::generic(format!("Transpile error for {}: {}", url, e))
+                })?;
+
+                Ok(ModuleSource::new(
+                    ModuleType::JavaScript,
+                    ModuleSourceCode::String(ModuleCodeString::from(transpiled)),
+                    &module_specifier,
+                    None,
+                ))
+            }));
+        }
 
         // 从缓存中获取模块代码
         let modules = self.modules.borrow();
@@ -183,7 +276,7 @@ impl PluginEngine {
         let loader = Rc::new(PluginModuleLoader::new());
 
         // Create extensions for native Web API support
-        // Order matters: deno_webidl -> deno_web -> sentinel_plugin_ext
+        // Order matters: deno_webidl -> deno_web -> deno_crypto -> deno_net -> sentinel_plugin_ext
         let extensions = vec![
             // deno_webidl: WebIDL bindings (required by deno_web)
             deno_webidl::deno_webidl::init(),
@@ -193,6 +286,10 @@ impl PluginEngine {
                 None, // maybe_location
                 deno_web::InMemoryBroadcastChannel::default(),
             ),
+            // deno_crypto: Web Cryptography API (crypto.getRandomValues, subtle, etc.)
+            deno_crypto::deno_crypto::init(None),
+            // deno_net: TCP/UDP/TLS networking APIs (2 args: root_cert_store_provider, unsafely_ignore_certificate_errors)
+            deno_net::deno_net::init(None, None),
             // sentinel_plugin_ext: custom ops for plugin system (emitFinding, log, fetch)
             sentinel_plugin_ext::init(),
         ];
@@ -211,11 +308,41 @@ impl PluginEngine {
         }
 
         // Create Deno Runtime with extensions and module loader
-        let runtime = JsRuntime::new(RuntimeOptions {
+        let mut runtime = JsRuntime::new(RuntimeOptions {
             module_loader: Some(loader.clone()),
             extensions,
             ..Default::default()
         });
+
+        {
+            let op_state = runtime.op_state();
+            let mut state = op_state.borrow_mut();
+            let parser = Arc::new(RuntimePermissionDescriptorParser::new(
+                sys_traits::impls::RealSys,
+            ));
+            state.put(PermissionsContainer::allow_all(parser));
+            let mut features = FeatureChecker::default();
+            features.enable_feature(deno_net::UNSTABLE_FEATURE_NAME);
+            state.put(Arc::new(features));
+        }
+
+        // Patch Deno.build with actual runtime platform info (required by deno_mongo, etc.)
+        // This must run after extensions are initialized (bootstrap has set up Deno.build stub)
+        let platform_patch = format!(
+            r#"
+            if (globalThis.Deno && globalThis.Deno.build) {{
+                globalThis.Deno.build.os = "{}";
+                globalThis.Deno.build.arch = "{}";
+            }}
+            "#,
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        runtime
+            .execute_script("<platform_patch>", platform_patch)
+            .map_err(|e| {
+                PluginError::Load(format!("Failed to patch Deno.build: {}", e))
+            })?;
 
         Ok(Self {
             runtime,
@@ -386,104 +513,6 @@ if (typeof execute === 'function') {
         result.await.map_err(|e| {
             PluginError::Load(format!("Module evaluation error {}: {:?}", plugin_id, e))
         })?;
-
-        // Inject Sentinel plugin API and fetch polyfill
-        // Note: We need to make sure deno_web/deno_webidl modules are evaluated
-        let init_script = r#"
-            // Internal bootstrap to ensure extension modules are evaluated
-            // These are side-effect imports that set up globals like TextEncoder, URL, etc.
-            import "ext:deno_webidl/00_webidl.js";
-            import "ext:deno_web/00_infra.js";
-            import "ext:deno_web/01_dom_exception.js";
-            import "ext:deno_web/01_mimesniff.js";
-            import "ext:deno_web/02_event.js";
-            import "ext:deno_web/02_structured_clone.js";
-            import "ext:deno_web/02_timers.js";
-            import "ext:deno_web/03_abort_signal.js";
-            import "ext:deno_web/04_global_interfaces.js";
-            import "ext:deno_web/05_base64.js";
-            import "ext:deno_web/06_streams.js";
-            import "ext:deno_web/08_text_encoding.js";
-            import "ext:deno_web/09_file.js";
-            import "ext:deno_web/10_filereader.js";
-            import "ext:deno_web/12_location.js";
-            import "ext:deno_web/13_message_port.js";
-            import "ext:deno_web/14_compression.js";
-            import "ext:deno_web/15_performance.js";
-            import "ext:deno_web/16_image_data.js";
-            import "ext:deno_web/01_urlpattern.js";
-            import "ext:deno_web/01_broadcast_channel.js";
-            import "ext:deno_web/01_console.js";
-            import "ext:deno_web/00_url.js";
-
-            // Sentinel plugin API for vulnerability reporting
-            globalThis.Sentinel = {
-                emitFinding: function(finding) {
-                    Deno.core.ops.op_emit_finding(finding);
-                },
-                log: function(level, message) {
-                    Deno.core.ops.op_plugin_log(level, message);
-                }
-            };
-
-            // Fetch API polyfill using custom op
-            globalThis.fetch = async function(input, init = {}) {
-                const url = typeof input === 'string' ? input : input.url;
-                const method = init.method || (input.method || 'GET');
-                const headers = {};
-                
-                if (init.headers) {
-                    if (init.headers instanceof Headers) {
-                        init.headers.forEach((v, k) => headers[k] = v);
-                    } else if (Array.isArray(init.headers)) {
-                        init.headers.forEach(([k, v]) => headers[k] = v);
-                    } else {
-                        Object.assign(headers, init.headers);
-                    }
-                }
-                
-                const body = init.body || null;
-                const timeout = init.timeout || 30000; // default 30s
-                const result = await Deno.core.ops.op_fetch(url, { method, headers, body, timeout });
-                
-                if (!result.success) {
-                    throw new Error(result.error || 'Fetch failed');
-                }
-                
-                return {
-                    ok: result.ok,
-                    status: result.status,
-                    statusText: result.ok ? 'OK' : 'Error',
-                    headers: new Headers(Object.entries(result.headers)),
-                    text: async () => result.body,
-                    json: async () => JSON.parse(result.body),
-                    arrayBuffer: async () => new TextEncoder().encode(result.body).buffer,
-                };
-            };
-        "#
-        .to_string();
-
-        // Use a module instead of a script to support top-level imports
-        let bootstrap_specifier = deno_core::ModuleSpecifier::parse("internal:bootstrap").unwrap();
-        self.loader.register_module("internal:bootstrap", init_script);
-        
-        let mod_id = self.runtime.load_side_es_module(&bootstrap_specifier).await
-            .map_err(|e| {
-                PluginError::Load(format!(
-                    "Failed to load Sentinel bootstrap for {}: {}",
-                    plugin_id, e
-                ))
-            })?;
-            
-        let _ = self.runtime.mod_evaluate(mod_id);
-        
-        self.runtime.run_event_loop(Default::default()).await
-            .map_err(|e| {
-                PluginError::Load(format!(
-                    "Failed to initialize Sentinel API for {}: {}",
-                    plugin_id, e
-                ))
-            })?;
 
         debug!(
             "Loaded ESM/TS plugin: {} v{}",

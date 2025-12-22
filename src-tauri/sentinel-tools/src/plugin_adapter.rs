@@ -105,11 +105,7 @@ async fn execute_plugin_async(
         plugin_name, plugin_id
     );
     
-    // Create a new PluginEngine instance
-    let mut engine = sentinel_plugins::PluginEngine::new()
-        .map_err(|e| format!("Failed to create plugin engine: {}", e))?;
-    
-    // Create plugin metadata for loading
+    // Create plugin metadata
     let metadata = sentinel_plugins::PluginMetadata {
         id: plugin_id.clone(),
         name: plugin_name.clone(),
@@ -122,10 +118,9 @@ async fn execute_plugin_async(
         description: Some(format!("Agent tool plugin: {}", plugin_name)),
     };
     
-    // Load the plugin code with metadata
-    engine.load_plugin_with_metadata(&plugin_code, metadata)
-        .await
-        .map_err(|e| format!("Failed to load plugin code: {}", e))?;
+    // Create a PluginExecutor with restart capability (1000 executions before restart warning)
+    let executor = sentinel_plugins::PluginExecutor::new(metadata, plugin_code, 1000)
+        .map_err(|e| format!("Failed to create plugin executor: {}", e))?;
     
     tracing::debug!(
         "Plugin loaded successfully, executing agent function with args: {:?}",
@@ -133,7 +128,7 @@ async fn execute_plugin_async(
     );
     
     // Execute the plugin's agent function (analyze/run/execute)
-    let (findings, last_result) = engine.execute_agent(&args)
+    let (findings, last_result) = executor.execute_agent(&args)
         .await
         .map_err(|e| format!("Plugin execution failed: {}", e))?;
     

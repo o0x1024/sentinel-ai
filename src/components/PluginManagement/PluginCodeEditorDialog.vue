@@ -105,6 +105,9 @@
             <button class="btn btn-xs btn-outline" @click="$emit('formatCode')">
               <i class="fas fa-indent mr-1"></i>{{ $t('plugins.format', '格式化') }}
             </button>
+            <button class="btn btn-xs btn-outline" @click="$emit('copyPlugin')">
+              <i class="fas fa-copy mr-1"></i>{{ $t('plugins.copyPlugin', '复制插件') }}
+            </button>
             <button class="btn btn-xs btn-outline" @click="$emit('toggleFullscreen')">
               <i :class="isFullscreenEditor ? 'fas fa-compress mr-1' : 'fas fa-expand mr-1'"></i>
               {{ isFullscreenEditor ? '退出全屏' : '全屏' }}
@@ -317,6 +320,9 @@
             <button class="btn btn-sm btn-ghost" @click="$emit('formatCode')" :title="$t('plugins.format', '格式化')">
               <i class="fas fa-indent"></i> {{ $t('plugins.format', '格式化') }}
             </button>
+            <button class="btn btn-sm btn-ghost" @click="$emit('copyPlugin')" :title="$t('plugins.copyPlugin', '复制插件')">
+              <i class="fas fa-copy"></i>
+            </button>
             
             <template v-if="editingPlugin">
               <button v-if="!isEditing" class="btn btn-sm btn-primary" @click="$emit('enableEditing')">
@@ -395,6 +401,7 @@ const emit = defineEmits<{
   'update:newPluginMetadata': [value: NewPluginMetadata]
   'insertTemplate': []
   'formatCode': []
+  'copyPlugin': []
   'toggleFullscreen': []
   'enableEditing': []
   'cancelEditing': []

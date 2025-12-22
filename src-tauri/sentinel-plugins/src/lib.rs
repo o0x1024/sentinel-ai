@@ -29,7 +29,7 @@ pub mod plugin_ops;
 pub mod types;
 
 pub use error::{PluginError, Result};
-pub use executor::PluginExecutor;
+pub use executor::{ExecutorStats, PluginExecutor};
 pub use plugin::{PluginManager, PluginRecord, PluginStatus};
 pub use plugin_engine::PluginEngine;
 pub use plugin_ops::{sentinel_plugin_ext, PluginContext};

@@ -184,6 +184,7 @@
       @update:new-plugin-metadata="newPluginMetadata = $event"
       @insert-template="insertTemplate"
       @format-code="formatCode"
+      @copy-plugin="copyPlugin"
       @toggle-fullscreen="toggleFullscreenEditor"
       @enable-editing="enableEditing"
       @cancel-editing="cancelEditing"
@@ -393,7 +394,7 @@ const filteredPlugins = computed(() => {
     filtered = plugins.value.filter(p => p.metadata.category === selectedCategory.value)
   }
 
-  if (selectedCategory.value === 'passive' && pluginViewMode.value === 'favorited') {
+  if (['all', 'passive', 'agents'].includes(selectedCategory.value) && pluginViewMode.value === 'favorited') {
     filtered = filtered.filter(p => isPluginFavorited(p))
   }
 
@@ -1517,6 +1518,31 @@ const formatCode = () => {
     showToast('代码已格式化', 'success')
   } catch (error) {
     showToast('格式化失败', 'error')
+  }
+}
+
+const copyPlugin = async () => {
+  try {
+    const tags = newPluginMetadata.value.tagsString.split(',').map(t => t.trim()).filter(t => t.length > 0)
+    const backendCategory = newPluginMetadata.value.category
+    const metadataComment = `/**
+ * @plugin ${newPluginMetadata.value.id}
+ * @name ${newPluginMetadata.value.name}
+ * @version ${newPluginMetadata.value.version}
+ * @author ${newPluginMetadata.value.author || 'Unknown'}
+ * @category ${backendCategory}
+ * @default_severity ${newPluginMetadata.value.default_severity}
+ * @tags ${tags.join(', ')}
+ * @description ${newPluginMetadata.value.description || ''}
+ */
+`
+    const codeWithoutMetadata = pluginCode.value.replace(/\/\*\*\s*[\s\S]*?\*\/\s*/, '')
+    const fullCode = metadataComment + '\n' + codeWithoutMetadata
+    await navigator.clipboard.writeText(fullCode)
+    showToast(t('plugins.copySuccess', '已复制'), 'success')
+  } catch (error) {
+    console.error('Failed to copy plugin:', error)
+    showToast(t('plugins.copyFailed', '复制失败'), 'error')
   }
 }
 

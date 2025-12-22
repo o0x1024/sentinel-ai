@@ -2917,9 +2917,6 @@ pub async fn test_agent_plugin(
 
         let local = tokio::task::LocalSet::new();
         local.block_on(&rt, async {
-            let mut engine = sentinel_plugins::PluginEngine::new()
-                .map_err(|e| format!("Failed to create plugin engine: {}", e))?;
-
             let metadata = sentinel_plugins::PluginMetadata {
                 id: plugin_id.clone(),
                 name: name.clone(),
@@ -2932,12 +2929,10 @@ pub async fn test_agent_plugin(
                 description: Some(format!("Agent tool plugin: {}", name)),
             };
 
-            engine
-                .load_plugin_with_metadata(&code, metadata)
-                .await
-                .map_err(|e| format!("Failed to load plugin: {}", e))?;
+            let executor = sentinel_plugins::PluginExecutor::new(metadata, code, 1000)
+                .map_err(|e| format!("Failed to create plugin executor: {}", e))?;
 
-            let (findings, result) = engine
+            let (findings, result) = executor
                 .execute_agent(&inputs)
                 .await
                 .map_err(|e| format!("Plugin execution failed: {}", e))?;

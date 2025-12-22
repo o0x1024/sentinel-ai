@@ -215,7 +215,9 @@ fn parse_confidence(s: &str) -> Confidence {
 
 extension!(
     sentinel_plugin_ext,
-    ops = [op_emit_finding, op_plugin_log, op_plugin_return, op_fetch],
+    ops = [op_emit_finding, op_plugin_log, op_plugin_return, op_fetch, op_tls_peer_certificate],
+    esm_entry_point = "ext:sentinel_plugin_ext/plugin_bootstrap.js",
+    esm = [ dir "src", "plugin_bootstrap.js" ],
     state = |state| {
         state.put(PluginContext::new());
     }
@@ -290,17 +292,17 @@ async fn op_fetch(
     #[serde] options: Option<FetchOptions>,
 ) -> FetchResponse {
     debug!("[Plugin] Fetching URL: {}", url);
-    
+
     let opts = options.unwrap_or_else(|| FetchOptions {
         method: "GET".to_string(),
         headers: std::collections::HashMap::new(),
         body: None,
         timeout: Some(30000), // 30s default
     });
-    
+
     let method = opts.method.to_uppercase();
     let timeout_ms = opts.timeout.unwrap_or(30000);
-    
+
     // Build reqwest client
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(timeout_ms))
@@ -318,7 +320,7 @@ async fn op_fetch(
             };
         }
     };
-    
+
     // Build request
     let mut req_builder = match method.as_str() {
         "GET" => client.get(&url),
@@ -329,17 +331,17 @@ async fn op_fetch(
         "HEAD" => client.head(&url),
         _ => client.get(&url),
     };
-    
+
     // Add headers
     for (key, value) in opts.headers {
         req_builder = req_builder.header(&key, &value);
     }
-    
+
     // Add body if present
     if let Some(body) = opts.body {
         req_builder = req_builder.body(body);
     }
-    
+
     // Execute request
     let response = match req_builder.send().await {
         Ok(r) => r,
@@ -354,10 +356,10 @@ async fn op_fetch(
             };
         }
     };
-    
+
     let status = response.status().as_u16();
     let ok = response.status().is_success();
-    
+
     // Extract headers
     let mut headers = std::collections::HashMap::new();
     for (key, value) in response.headers() {
@@ -365,7 +367,7 @@ async fn op_fetch(
             headers.insert(key.to_string(), v.to_string());
         }
     }
-    
+
     // Read body
     let body = match response.text().await {
         Ok(b) => b,
@@ -380,9 +382,9 @@ async fn op_fetch(
             };
         }
     };
-    
+
     debug!("[Plugin] Fetch completed: {} (status: {})", url, status);
-    
+
     FetchResponse {
         success: true,
         status,
@@ -391,6 +393,18 @@ async fn op_fetch(
         ok,
         error: None,
     }
+}
+
+/// Stub op for TLS peer certificate (required by deno_net 02_tls.js)
+/// Returns null as we don't support peer certificate retrieval
+#[op2]
+#[serde]
+fn op_tls_peer_certificate(
+    #[smi] _rid: u32,
+    _detailed: bool,
+) -> Option<serde_json::Value> {
+    // Stub: return null for peer certificate
+    None
 }
 
 // ============================================================

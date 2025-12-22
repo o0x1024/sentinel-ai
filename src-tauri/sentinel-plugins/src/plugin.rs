@@ -89,6 +89,7 @@ where
 }
 
 /// 插件管理器
+#[derive(Clone)]
 pub struct PluginManager {
     /// 内存插件注册表（仅用于运行时调试/临时加载）。
     /// 数据来源现在将是数据库，而非文件系统目录扫描。

@@ -227,6 +227,7 @@
       :sub-categories="subCategories"
       @update:new-plugin-metadata="val => editPluginMetadata = val"
       @format-code="formatCode"
+      @copy-plugin="copyPlugin"
       @toggle-fullscreen="toggleFullscreenEditor"
       @enable-editing="enableEditing"
       @cancel-editing="cancelEditing"
@@ -240,6 +241,7 @@
 import { ref, onMounted, nextTick, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
+import { useI18n } from 'vue-i18n'
 import UnifiedToolTest from './UnifiedToolTest.vue'
 import PluginCodeEditorDialog from '@/components/PluginManagement/PluginCodeEditorDialog.vue'
 import { mainCategories, type SubCategory, type NewPluginMetadata } from '@/components/PluginManagement/types'
@@ -248,6 +250,8 @@ import { EditorState, Compartment } from '@codemirror/state'
 import { basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
+
+const { t } = useI18n()
 
 // 类型定义
 interface PluginMetadata {
@@ -549,6 +553,40 @@ function formatCode() {
     codeEditorView.dispatch({
        changes: { from: 0, to: codeEditorView.state.doc.length, insert: formatted }
     })
+  }
+}
+
+async function copyPlugin() {
+  try {
+    const metadata = {
+      id: editPluginMetadata.value.id,
+      name: editPluginMetadata.value.name,
+      version: editPluginMetadata.value.version,
+      author: editPluginMetadata.value.author || 'Unknown',
+      category: editPluginMetadata.value.category,
+      default_severity: editPluginMetadata.value.default_severity,
+      description: editPluginMetadata.value.description || '',
+      tags: editPluginMetadata.value.tagsString.split(',').map(s => s.trim()).filter(Boolean)
+    }
+
+    const metadataComment = `/**
+ * @plugin ${metadata.id}
+ * @name ${metadata.name}
+ * @version ${metadata.version}
+ * @author ${metadata.author}
+ * @category ${metadata.category}
+ * @default_severity ${metadata.default_severity}
+ * @tags ${metadata.tags.join(', ')}
+ * @description ${metadata.description}
+ */
+`
+    const codeWithoutMetadata = pluginCode.value.replace(/\/\*\*\s*[\s\S]*?\*\/\s*/, '')
+    const fullCode = metadataComment + '\n' + codeWithoutMetadata
+    await navigator.clipboard.writeText(fullCode)
+    dialog.toast.success(t('plugins.copySuccess', '已复制'))
+  } catch (error) {
+    console.error('Failed to copy plugin:', error)
+    dialog.toast.error(t('plugins.copyFailed', '复制失败'))
   }
 }
 

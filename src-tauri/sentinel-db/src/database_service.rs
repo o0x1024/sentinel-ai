@@ -1837,11 +1837,74 @@ impl DatabaseService {
     }
 
     pub async fn toggle_plugin_favorite(&self, _plugin_id: &str, _user_id: Option<&str>) -> Result<bool> {
-        Ok(false)
+        let pool = self.get_pool()?;
+        let user_id = _user_id.unwrap_or("default");
+        let plugin_id = _plugin_id;
+
+        // Ensure table exists (older DBs might not have it)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS plugin_favorites (
+              plugin_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              created_at TEXT DEFAULT (datetime('now')),
+              PRIMARY KEY (plugin_id, user_id)
+            )
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        let exists: Option<i64> = sqlx::query_scalar(
+            r#"SELECT 1 FROM plugin_favorites WHERE plugin_id = ? AND user_id = ? LIMIT 1"#,
+        )
+        .bind(plugin_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if exists.is_some() {
+            sqlx::query(r#"DELETE FROM plugin_favorites WHERE plugin_id = ? AND user_id = ?"#)
+                .bind(plugin_id)
+                .bind(user_id)
+                .execute(pool)
+                .await?;
+            Ok(false)
+        } else {
+            sqlx::query(r#"INSERT OR IGNORE INTO plugin_favorites (plugin_id, user_id) VALUES (?, ?)"#)
+                .bind(plugin_id)
+                .bind(user_id)
+                .execute(pool)
+                .await?;
+            Ok(true)
+        }
     }
 
     pub async fn get_favorited_plugins(&self, _user_id: Option<&str>) -> Result<Vec<String>> {
-        Ok(Vec::new())
+        let pool = self.get_pool()?;
+        let user_id = _user_id.unwrap_or("default");
+
+        // Ensure table exists
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS plugin_favorites (
+              plugin_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              created_at TEXT DEFAULT (datetime('now')),
+              PRIMARY KEY (plugin_id, user_id)
+            )
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        let ids: Vec<String> = sqlx::query_scalar(
+            r#"SELECT plugin_id FROM plugin_favorites WHERE user_id = ? ORDER BY created_at DESC"#,
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(ids)
     }
 
     pub async fn get_plugin_review_stats(&self) -> Result<serde_json::Value> {
@@ -4264,11 +4327,72 @@ impl Database for DatabaseService {
     }
 
     async fn toggle_plugin_favorite(&self, _plugin_id: &str, _user_id: Option<&str>) -> Result<bool> {
-        Ok(false)
+        let pool = self.get_pool()?;
+        let user_id = _user_id.unwrap_or("default");
+        let plugin_id = _plugin_id;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS plugin_favorites (
+              plugin_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              created_at TEXT DEFAULT (datetime('now')),
+              PRIMARY KEY (plugin_id, user_id)
+            )
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        let exists: Option<i64> = sqlx::query_scalar(
+            r#"SELECT 1 FROM plugin_favorites WHERE plugin_id = ? AND user_id = ? LIMIT 1"#,
+        )
+        .bind(plugin_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if exists.is_some() {
+            sqlx::query(r#"DELETE FROM plugin_favorites WHERE plugin_id = ? AND user_id = ?"#)
+                .bind(plugin_id)
+                .bind(user_id)
+                .execute(pool)
+                .await?;
+            Ok(false)
+        } else {
+            sqlx::query(r#"INSERT OR IGNORE INTO plugin_favorites (plugin_id, user_id) VALUES (?, ?)"#)
+                .bind(plugin_id)
+                .bind(user_id)
+                .execute(pool)
+                .await?;
+            Ok(true)
+        }
     }
 
     async fn get_favorited_plugins(&self, _user_id: Option<&str>) -> Result<Vec<String>> {
-        Ok(Vec::new())
+        let pool = self.get_pool()?;
+        let user_id = _user_id.unwrap_or("default");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS plugin_favorites (
+              plugin_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              created_at TEXT DEFAULT (datetime('now')),
+              PRIMARY KEY (plugin_id, user_id)
+            )
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        let ids: Vec<String> = sqlx::query_scalar(
+            r#"SELECT plugin_id FROM plugin_favorites WHERE user_id = ? ORDER BY created_at DESC"#,
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(ids)
     }
 
     async fn get_plugin_review_stats(&self) -> Result<serde_json::Value> {

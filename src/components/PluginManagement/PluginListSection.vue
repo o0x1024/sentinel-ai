@@ -1,7 +1,7 @@
 <template>
   <div>
-    <!-- View Mode Toggle for Passive Scan Plugins -->
-    <div v-if="selectedCategory === 'passive'" class="flex gap-2 mb-4">
+    <!-- View Mode Toggle -->
+    <div v-if="['all', 'passive', 'agents'].includes(selectedCategory)" class="flex gap-2 mb-4">
       <button class="btn btn-sm" :class="pluginViewMode === 'favorited' ? 'btn-primary' : 'btn-ghost'"
         @click="$emit('update:pluginViewMode', 'favorited')">
         <i class="fas fa-star mr-1"></i>
@@ -152,8 +152,8 @@
             <td>
               <div class="flex gap-1 flex-wrap">
                 <!-- Favorite Button -->
-                <div v-if="ispassivePluginType(plugin)" class="tooltip"
-                  :data-tip="isPluginFavorited(plugin) ? '取消收藏' : '收藏插件'">
+                <div v-if="ispassivePluginType(plugin) || isAgentPluginType(plugin)" class="tooltip"
+                  :data-tip="isPluginFavorited(plugin) ? $t('plugins.unfavorite', '取消收藏') : $t('plugins.favorite', '收藏插件')">
                   <button class="btn btn-sm btn-ghost" @click="$emit('toggleFavorite', plugin)">
                     <i :class="isPluginFavorited(plugin) ? 'fas fa-star text-yellow-500' : 'far fa-star'"></i>
                   </button>
