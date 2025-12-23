@@ -1,0 +1,10 @@
+    let timeout_ms = opts.timeout.unwrap_or(30000);
+
+    // Build reqwest client
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return FetchResponse {

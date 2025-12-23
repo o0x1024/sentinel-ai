@@ -6,6 +6,9 @@ description = "Built-in security scanning plugins for Sentinel AI passive scanne
 authors = ["Sentinel AI Team"]
 
 [dependencies]
+# Sentinel core for proxy support
+sentinel-core = { path = "../sentinel-core" }
+
 # Deno Core and extensions for plugin execution
 # deno_core 0.373.0 is required for compatibility with deno_web/deno_fetch
 deno_core = "0.373.0"

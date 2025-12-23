@@ -52,9 +52,12 @@ impl PluginModuleLoader {
             .join("plugin-modules");
         let _ = std::fs::create_dir_all(&cache_dir);
 
+        // Create default HTTP client (proxy will be applied when actually used)
+        let http_client = reqwest::Client::new();
+        
         Self {
             modules: std::cell::RefCell::new(std::collections::HashMap::new()),
-            http_client: reqwest::Client::new(),
+            http_client,
             cache_dir,
         }
     }
@@ -182,7 +185,12 @@ impl ModuleLoader for PluginModuleLoader {
                             JsErrorBox::generic(format!("Failed to read cache {}: {}", url, e))
                         })?
                 } else {
-                    let response = client
+                    // Create a new client with proxy support for this request
+                    let builder = reqwest::Client::builder();
+                    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+                    let client_with_proxy = builder.build().unwrap_or_else(|_| client.clone());
+                    
+                    let response = client_with_proxy
                         .get(&url)
                         .send()
                         .await

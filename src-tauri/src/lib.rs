@@ -36,7 +36,7 @@ use commands::{
 // Workflow engine and scheduler
 use sentinel_workflow::{WorkflowEngine, WorkflowScheduler};
 
-use utils::global_proxy::{set_global_proxy as set_proxy_async, GlobalProxyConfig};
+use sentinel_core::global_proxy::{set_global_proxy as set_proxy_async, GlobalProxyConfig};
 
 struct TrayProxyMenuItem(MenuItem<tauri::Wry>);
 
@@ -813,6 +813,12 @@ pub fn run() {
             commands::license_commands::get_machine_id,
             commands::license_commands::get_machine_id_full,
             commands::license_commands::deactivate_license,
+            // Cache commands (暂时禁用：缺少 AppState 定义)
+            // commands::cache_commands::get_cache,
+            // commands::cache_commands::set_cache,
+            // commands::cache_commands::delete_cache,
+            // commands::cache_commands::cleanup_expired_cache,
+            // commands::cache_commands::get_all_cache_keys,
             // Workflow commands
             sentinel_workflow::commands::start_workflow_run,
             sentinel_workflow::commands::stop_workflow_run,
@@ -905,7 +911,7 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
                     };
                     sentinel_tools::set_global_proxy(tools_proxy_config).await;
                 } else {
-                    utils::global_proxy::clear_global_proxy().await;
+                    sentinel_core::global_proxy::clear_global_proxy().await;
                     sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default())
                         .await;
                 }
@@ -913,12 +919,12 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
             Err(e) => tracing::warn!("Failed to parse proxy configuration JSON: {}", e),
         },
         Ok(None) => {
-            utils::global_proxy::clear_global_proxy().await;
+            sentinel_core::global_proxy::clear_global_proxy().await;
             sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
         }
         Err(e) => {
             tracing::warn!("Failed to load proxy configuration from database: {}", e);
-            utils::global_proxy::clear_global_proxy().await;
+            sentinel_core::global_proxy::clear_global_proxy().await;
             sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
         }
     }

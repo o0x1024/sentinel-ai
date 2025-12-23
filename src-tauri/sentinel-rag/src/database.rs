@@ -7,7 +7,7 @@ use tracing::{info, warn, error};
 use crate::config::EmbeddingConfig;
 use crate::models::{DocumentChunk, QueryResult};
 
-use rig::embeddings::EmbeddingModel;
+use rig::embeddings::embedding::EmbeddingModel;
 use rig::client::ProviderClient;
 use rig::client::EmbeddingsClient;
 use rig::vector_store::VectorStoreIndex;
@@ -225,7 +225,10 @@ impl LanceDbManager {
     
     async fn call_lmstudio_embedding(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let base_url = self.embedding_config.base_url.as_deref().unwrap_or("http://localhost:1234");
-        let client = reqwest::Client::new();
+        // Apply global proxy configuration
+        let builder = reqwest::Client::builder();
+        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+        let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("Content-Type", "application/json".parse().unwrap());
         if let Some(api_key) = &self.embedding_config.api_key {
@@ -554,7 +557,10 @@ impl LanceDbManager {
         Ok(results)
     }
     
-    async fn search_similar_impl<M: EmbeddingModel>(&self, collection_name: &str, query: &str, top_k: usize, embedding_model: M) -> Result<Vec<QueryResult>> {
+    async fn search_similar_impl<M>(&self, collection_name: &str, query: &str, top_k: usize, embedding_model: M) -> Result<Vec<QueryResult>>
+    where
+        M: EmbeddingModel + Sync + Send,
+    {
         let conn = { let guard = self.conn.read().await; guard.as_ref().cloned().ok_or_else(|| anyhow!("LanceDB not initialized"))? };
         let table = match conn.open_table(collection_name).execute().await { Ok(t) => t, Err(_) => return Ok(Vec::new()) };
         
@@ -572,18 +578,18 @@ impl LanceDbManager {
             .query(query)
             .samples(top_k as u64)
             .build()?;
-        let top_docs = index.top_n::<serde_json::Value>(search_request).await?;
+        let top_docs: Vec<(f64, String, serde_json::Value)> = <LanceDbVectorIndex<M> as VectorStoreIndex>::top_n::<serde_json::Value>(&index, search_request).await?;
         
         let mut results = Vec::new();
         for (rank, (score, _id, value)) in top_docs.into_iter().enumerate() {
-            let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let source_id = value.get("source_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let content = value.get("definition").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let file_name = value.get("file_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let file_path = value.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let chunk_index = value.get("chunk_index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-            let start_char = value.get("start_char").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-            let end_char = value.get("end_char").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+            let id = value.get("id").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string();
+            let source_id = value.get("source_id").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string();
+            let content = value.get("definition").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string();
+            let file_name = value.get("file_name").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string();
+            let file_path = value.get("file_path").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string();
+            let chunk_index = value.get("chunk_index").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0) as usize;
+            let start_char = value.get("start_char").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0) as usize;
+            let end_char = value.get("end_char").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0) as usize;
             let chunk = DocumentChunk { id, source_id, content: content.clone(), content_hash: format!("{:x}", md5::compute(content.as_bytes())), chunk_index, metadata: crate::models::ChunkMetadata { file_path, file_name, file_type: "unknown".to_string(), file_size: 0, chunk_start_char: start_char, chunk_end_char: end_char, page_number: None, section_title: None, custom_fields: HashMap::new(), }, embedding: None, created_at: chrono::Utc::now(), };
             results.push(QueryResult { chunk, score: score as f32, rank });
         }

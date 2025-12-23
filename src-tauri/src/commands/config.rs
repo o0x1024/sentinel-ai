@@ -1,6 +1,6 @@
 
 use crate::services::database::DatabaseService;
-use crate::utils::global_proxy::GlobalProxyConfig;
+use sentinel_core::global_proxy::GlobalProxyConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -63,7 +63,7 @@ pub async fn set_global_proxy_config(
     // 应用到全局代理配置（包括主 crate 和 sentinel-tools）
     if cfg.enabled {
         // 设置主 crate 的全局代理
-        crate::utils::global_proxy::set_global_proxy(cfg.clone()).await;
+        sentinel_core::global_proxy::set_global_proxy(cfg.clone()).await;
         
         // 同步设置 sentinel-tools 的全局代理
         let tools_proxy_config = sentinel_tools::GlobalProxyConfig {
@@ -80,7 +80,7 @@ pub async fn set_global_proxy_config(
         tracing::info!("Global proxy configuration applied to runtime");
     } else {
         // 清除全局代理
-        crate::utils::global_proxy::clear_global_proxy().await;
+        sentinel_core::global_proxy::clear_global_proxy().await;
         sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
         tracing::info!("Global proxy configuration disabled");
     }

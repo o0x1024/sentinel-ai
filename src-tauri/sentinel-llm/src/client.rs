@@ -150,8 +150,10 @@ impl LlmClient {
             reqwest::header::HeaderValue::from_static("application/json"),
         );
         
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
+        // Apply global proxy configuration
+        let builder = reqwest::Client::builder().default_headers(headers);
+        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+        let http_client = builder
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         
@@ -228,8 +230,10 @@ impl LlmClient {
             reqwest::header::HeaderValue::from_static("application/json"),
         );
         
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
+        // Apply global proxy configuration
+        let builder = reqwest::Client::builder().default_headers(headers);
+        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+        let http_client = builder
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         
@@ -305,8 +309,10 @@ impl LlmClient {
             reqwest::header::HeaderValue::from_static("application/json"),
         );
         
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
+        // Apply global proxy configuration
+        let builder = reqwest::Client::builder().default_headers(headers);
+        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+        let http_client = builder
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         

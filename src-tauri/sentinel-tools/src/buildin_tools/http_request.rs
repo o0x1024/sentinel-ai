@@ -63,12 +63,16 @@ pub struct HttpRequestTool {
 
 impl Default for HttpRequestTool {
     fn default() -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .danger_accept_invalid_certs(true)
-                .build()
-                .unwrap_or_default(),
-        }
+        // Create client with proxy support
+        let client = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let builder = reqwest::Client::builder().danger_accept_invalid_certs(true);
+                let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+                builder.build().unwrap_or_default()
+            })
+        });
+        
+        Self { client }
     }
 }
 

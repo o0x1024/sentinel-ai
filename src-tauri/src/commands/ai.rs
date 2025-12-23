@@ -5,7 +5,7 @@ use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCa
 use crate::services::database::{Database, DatabaseService};
 use crate::services::prompt_db::PromptRepository;
 use crate::services::SchedulerStage;
-use crate::utils::global_proxy::create_client_with_proxy;
+use sentinel_core::global_proxy::create_client_with_proxy;
 use crate::utils::ordered_message::ChunkType;
 use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
 use anyhow::Result;
@@ -3259,7 +3259,7 @@ async fn perform_web_search(app_handle: &AppHandle, query: &str) -> Result<Strin
 
     let client = {
         let builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
-        let builder = crate::utils::global_proxy::apply_proxy_to_client(builder).await;
+        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
         builder
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {}", e))?

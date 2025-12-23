@@ -3,3 +3,4 @@ pub mod prelude {
 }
 
 pub mod models;
+pub mod global_proxy;

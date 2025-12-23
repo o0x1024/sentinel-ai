@@ -3,6 +3,7 @@
 
 pub mod ai;
 pub mod asset;
+// pub mod cache_commands; // 暂时禁用：缺少 AppState 定义
 pub mod config;
 pub mod config_commands;
 pub mod database;
@@ -30,6 +31,7 @@ pub mod window;
 #[allow(ambiguous_glob_reexports)]
 pub use ai::*;
 pub use asset::*;
+// pub use cache_commands::*; // 暂时禁用：缺少 AppState 定义
 pub use config::*;
 pub use config_commands::*;
 pub use database::*;

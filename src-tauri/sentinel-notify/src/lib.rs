@@ -37,7 +37,10 @@ async fn send_webhook(config: Value, message: &NotificationMessage) -> Result<()
         .or_else(|| read_str(&config, "url"))
         .ok_or_else(|| anyhow!("Missing webhook url"))?;
     let method = read_str(&config, "method").unwrap_or_else(|| "POST".to_string());
-    let client = reqwest::Client::new();
+    // Apply global proxy configuration
+    let builder = reqwest::Client::builder();
+    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
 
     let body_template = read_str(&config, "body_template");
     let payload = if let Some(tpl) = body_template {
@@ -92,7 +95,10 @@ async fn send_dingtalk(config: Value, message: &NotificationMessage) -> Result<(
         let sep = if url.contains('?') { '&' } else { '?' };
         url = format!("{}{}timestamp={}&sign={}", url, sep, ts, urlencoding::encode(&sign));
     }
-    let client = reqwest::Client::new();
+    // Apply global proxy configuration
+    let builder = reqwest::Client::builder();
+    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
     let msg_type = read_str(&config, "message_type").unwrap_or_else(|| "text".to_string());
     let payload = if msg_type == "markdown" {
         let text = read_str(&config, "markdown_text").unwrap_or_else(|| format!("{}\n{}", message.title, message.content));
@@ -124,7 +130,10 @@ async fn send_dingtalk(config: Value, message: &NotificationMessage) -> Result<(
 
 async fn send_feishu(config: Value, message: &NotificationMessage) -> Result<()> {
     let url = read_str(&config, "webhook_url").ok_or_else(|| anyhow!("Missing webhook_url"))?;
-    let client = reqwest::Client::new();
+    // Apply global proxy configuration
+    let builder = reqwest::Client::builder();
+    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
     let msg_type = read_str(&config, "message_type").unwrap_or_else(|| "text".to_string());
     let payload = if msg_type == "markdown" {
         let text = read_str(&config, "markdown_text").unwrap_or_else(|| format!("{}\n{}", message.title, message.content));
@@ -163,7 +172,10 @@ async fn send_feishu(config: Value, message: &NotificationMessage) -> Result<()>
 
 async fn send_wecom(config: Value, message: &NotificationMessage) -> Result<()> {
     let url = read_str(&config, "webhook_url").ok_or_else(|| anyhow!("Missing webhook_url"))?;
-    let client = reqwest::Client::new();
+    // Apply global proxy configuration
+    let builder = reqwest::Client::builder();
+    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
     let msg_type = read_str(&config, "message_type").unwrap_or_else(|| "text".to_string());
     let payload = if msg_type == "markdown" {
         let text = read_str(&config, "markdown_text").unwrap_or_else(|| format!("{}\n{}", message.title, message.content));

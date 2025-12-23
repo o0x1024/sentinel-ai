@@ -10,5 +10,6 @@ alwaysApply: true
 3.本项目是tauri+vue的技术栈，请注意前后端接口参数命名
 4.本项目的数据库路径： /Users/a1024/Library/Application Support/sentinel-ai/database.db
 5.任何时候都不要执行 cargo clean 命令
+6.在用户没有明确要求时，不要生成和创建任何文档
 
 

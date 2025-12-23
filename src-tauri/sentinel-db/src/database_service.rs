@@ -862,7 +862,30 @@ impl DatabaseService {
         .execute(&mut *tx)
         .await?;
 
+        // 创建缓存表
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS cache_storage (
+                cache_key TEXT PRIMARY KEY,
+                cache_value TEXT NOT NULL,
+                cache_type TEXT NOT NULL,
+                version TEXT DEFAULT '1.0.0',
+                expires_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut *tx)
+        .await?;
+
         // 创建索引
+
+        // 缓存表索引
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_cache_storage_type ON cache_storage(cache_type)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_cache_storage_expires_at ON cache_storage(expires_at)")
+            .execute(&mut *tx)
+            .await?;
 
         // Agent任务索引
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_agent_tasks_user_id ON agent_tasks(user_id)")

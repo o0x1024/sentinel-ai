@@ -155,7 +155,10 @@ impl EmbeddingProvider for LmStudioEmbeddingProvider {
             self.model_name,
             texts.len()
         );
-        let client = reqwest::Client::new();
+        // Apply global proxy configuration
+        let builder = reqwest::Client::builder();
+        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+        let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("Content-Type", "application/json".parse().unwrap());
         if let Some(api_key) = &self.api_key {
@@ -245,7 +248,10 @@ impl OllamaEmbeddingProvider {
 impl EmbeddingProvider for OllamaEmbeddingProvider {
     async fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         info!("使用Ollama生成嵌入向量，模型: {}", self.model_name);
-        let client = reqwest::Client::new();
+        // Apply global proxy configuration
+        let builder = reqwest::Client::builder();
+        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+        let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
         let mut embeddings = Vec::new();
         for text in texts {
             let payload = serde_json::json!({ "model": self.model_name, "prompt": text });
@@ -314,7 +320,10 @@ impl RerankingProvider for LmStudioRerankingProvider {
             self.model_name,
             documents.len()
         );
-        let client = reqwest::Client::new();
+        // Apply global proxy configuration
+        let builder = reqwest::Client::builder();
+        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+        let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("Content-Type", "application/json".parse().unwrap());
         if let Some(api_key) = &self.api_key {

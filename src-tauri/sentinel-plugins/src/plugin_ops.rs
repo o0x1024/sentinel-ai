@@ -303,11 +303,10 @@ async fn op_fetch(
     let method = opts.method.to_uppercase();
     let timeout_ms = opts.timeout.unwrap_or(30000);
 
-    // Build reqwest client
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms))
-        .build()
-    {
+    // Build reqwest client with proxy support
+    let builder = reqwest::Client::builder().timeout(std::time::Duration::from_millis(timeout_ms));
+    let builder: reqwest::ClientBuilder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = match builder.build() {
         Ok(c) => c,
         Err(e) => {
             return FetchResponse {

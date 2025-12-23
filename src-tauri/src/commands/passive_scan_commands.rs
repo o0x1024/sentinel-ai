@@ -4352,8 +4352,10 @@ pub async fn fetch_store_plugins(
     
     tracing::info!("Fetching plugin manifest from: {}", api_url);
     
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+    // Apply global proxy configuration
+    let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
+    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = builder
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     
@@ -4428,8 +4430,10 @@ pub async fn fetch_plugin_code(
 ) -> Result<serde_json::Value, String> {
     tracing::info!("Fetching plugin code from: {}", download_url);
     
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+    // Apply global proxy configuration
+    let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
+    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = builder
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     
@@ -4468,8 +4472,10 @@ pub async fn install_store_plugin(
     tracing::info!("Installing store plugin: {} ({})", plugin.name, plugin.id);
     
     // Fetch plugin code
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+    // Apply global proxy configuration
+    let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
+    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = builder
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     

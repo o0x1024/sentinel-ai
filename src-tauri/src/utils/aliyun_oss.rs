@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::Duration;
 use tracing::{debug, info};
 
-use super::global_proxy::apply_proxy_to_client;
+use sentinel_core::global_proxy::apply_proxy_to_client;
 
 const DASHSCOPE_UPLOADS_URL: &str = "https://dashscope.aliyuncs.com/api/v1/uploads";
 const DEFAULT_TIMEOUT_SECS: u64 = 120;

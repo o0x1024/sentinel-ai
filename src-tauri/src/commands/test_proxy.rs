@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use serde::{Serialize, Deserialize};
 use crate::services::database::DatabaseService;
-use crate::utils::global_proxy::{get_global_proxy, GlobalProxyConfig};
+use sentinel_core::global_proxy::{get_global_proxy, GlobalProxyConfig};
 use tracing::{info, warn};
 
 #[derive(Debug, Serialize, Deserialize)]

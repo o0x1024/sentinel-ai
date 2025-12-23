@@ -279,7 +279,7 @@ import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import type { PluginRecord, CommandResponse } from './types'
-import { PluginStoreCache, ViewModeStorage } from '@/services/storage'
+import { PluginStoreCache, ViewModeStorage } from '@/services/cache'
 
 // Store plugin interface
 interface StorePlugin {

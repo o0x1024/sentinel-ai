@@ -217,8 +217,10 @@ impl StreamingLlmClient {
             reqwest::header::HeaderValue::from_static("application/json"),
         );
         
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
+        // Apply global proxy configuration
+        let builder_req = reqwest::Client::builder().default_headers(headers);
+        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
+        let http_client = builder_req
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         
@@ -320,8 +322,10 @@ impl StreamingLlmClient {
             reqwest::header::HeaderValue::from_static("application/json"),
         );
         
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
+        // Apply global proxy configuration
+        let builder_req = reqwest::Client::builder().default_headers(headers);
+        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
+        let http_client = builder_req
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         
@@ -403,8 +407,10 @@ impl StreamingLlmClient {
             reqwest::header::HeaderValue::from_static("application/json"),
         );
         
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
+        // Apply global proxy configuration
+        let builder_req = reqwest::Client::builder().default_headers(headers);
+        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
+        let http_client = builder_req
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         
