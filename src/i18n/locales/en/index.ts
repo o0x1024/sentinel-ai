@@ -567,7 +567,12 @@ export default {
       installError: 'Installation failed',
       fetchError: 'Failed to fetch plugin list',
       downloading: 'Downloading...',
-      viewDetails: 'View Details'
+      viewDetails: 'View Details',
+      justNow: 'Just updated',
+      minutesAgo: '{minutes} minutes ago',
+      hoursAgo: '{hours} hours ago',
+      listView: 'List View',
+      cardView: 'Card View'
     }
   },
 

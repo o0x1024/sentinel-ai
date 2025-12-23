@@ -264,6 +264,8 @@ import { EditorState, Compartment } from '@codemirror/state'
 import { basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 import PluginListSection from '@/components/PluginManagement/PluginListSection.vue'
 import PluginReviewSection from '@/components/PluginManagement/PluginReviewSection.vue'
@@ -277,6 +279,10 @@ import type {
 import { passiveCategories, agentsCategories, mainCategories } from '@/components/PluginManagement/types'
 
 const { t } = useI18n()
+
+defineOptions({
+  name: 'Plugin'
+});
 
 // Component refs
 const pluginDialogsRef = ref<InstanceType<typeof PluginDialogs>>()
@@ -1604,41 +1610,33 @@ you are goal is to modify the TypeScript code directly and efficiently according
   }
 }
 
-// Enhanced markdown rendering with better code block handling
+// Enhanced markdown rendering with marked library
 const renderMarkdown = (content: string): { html: string; codeBlocks: string[] } => {
-  let html = content
   const codeBlocks: string[] = []
   
-  // Extract all code blocks
-  html = html.replace(/```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/g, (match, code) => {
-    const trimmedCode = code.trim()
-    codeBlocks.push(trimmedCode)
-    return `___CODE_BLOCK_${codeBlocks.length - 1}___`
-  })
-  
-  // Handle inline code
-  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
-  
-  // Handle line breaks
-  html = html.replace(/\n/g, '<br>')
-  
-  // Handle bold
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  
-  // Handle lists
-  html = html.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>')
-  const listMatches = html.match(/<li>[\s\S]*?<\/li>/g)
-  if (listMatches) {
-    html = html.replace(/(?:<li>[\s\S]*?<\/li>\s*)+/g, (m) => `<ul>${m}</ul>`)
+  // Extract all code blocks before rendering (for Apply functionality)
+  const codeBlockRegex = /```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/g
+  let match
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    codeBlocks.push(match[1].trim())
   }
   
-  // Restore code blocks
-  codeBlocks.forEach((code, index) => {
-    html = html.replace(`___CODE_BLOCK_${index}___`, 
-      `<pre><code>${escapeHtml(code)}</code></pre>`)
+  // Configure marked for better rendering
+  marked.setOptions({
+    breaks: true,
+    gfm: true,
   })
   
-  return { html, codeBlocks }
+  // Use marked to render markdown
+  const rawHtml = marked.parse(content) as string
+  
+  // Sanitize HTML to prevent XSS
+  const cleanHtml = DOMPurify.sanitize(rawHtml, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'a'],
+    ALLOWED_ATTR: ['href', 'class']
+  })
+  
+  return { html: cleanHtml, codeBlocks }
 }
 
 // Escape HTML for safe rendering
@@ -1739,24 +1737,45 @@ const smartMergeCode = (snippet: string, currentCode: string): string => {
   return currentCode + '\n\n' + snippet
 }
 
-const applyAiCode = (code: string) => {
+const applyAiCode = (code: string, context?: CodeReference | null) => {
   if (!code) return
   
   const currentCode = getCurrentEditorCode()
   const codeToApply = isPreviewMode.value ? previewCode.value : code
+  
+  // 1. Detect application mode
   const mode = detectCodeApplicationMode(codeToApply, currentCode)
   
-  let finalCode = codeToApply
-  let message = '代码已应用'
+  let finalCode = currentCode
+  let message = ''
   
-  if (mode === 'partial') {
-    finalCode = smartMergeCode(codeToApply, currentCode)
-    message = '代码片段已智能合并'
-  } else if (mode === 'append') {
-    finalCode = currentCode + '\n\n' + codeToApply
-    message = '代码已追加到末尾'
-  } else {
+  if (mode === 'full') {
+    finalCode = codeToApply
     message = '代码已全量替换'
+  } else {
+    // Partial or Append mode
+    let replaced = false
+    
+    // 2. Try context-based replacement if available
+    // Only if context code is not the whole file
+    if (context && context.code && !context.isFullCode) {
+      if (currentCode.includes(context.code)) {
+        finalCode = currentCode.replace(context.code, codeToApply)
+        replaced = true
+        message = '选中代码已替换'
+      }
+    }
+    
+    // 3. Fallback to smart merge if context replacement failed or no context
+    if (!replaced) {
+      if (mode === 'partial') {
+        finalCode = smartMergeCode(codeToApply, currentCode)
+        message = '代码已智能合并'
+      } else {
+        finalCode = currentCode + '\n\n' + codeToApply
+        message = '代码已追加到末尾'
+      }
+    }
   }
   
   pluginCode.value = finalCode
@@ -1812,6 +1831,9 @@ const exitPreviewMode = () => {
 const initDiffEditor = () => {
   const container = codeEditorDialogRef.value?.fullscreenDiffEditorContainerRef
   if (!container) return
+  
+  // Clear container first to avoid multiple wrappers
+  container.innerHTML = ''
   
   // Clear existing diff editors
   if (diffEditorViewA) {

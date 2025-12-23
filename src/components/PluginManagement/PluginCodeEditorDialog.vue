@@ -150,7 +150,7 @@
 
   <!-- Fullscreen Editor Overlay -->
   <Teleport to="body">
-    <div v-if="isFullscreenEditor" class="fullscreen-editor-overlay">
+    <div v-if="isFullscreenEditor" ref="fullscreenOverlayRef" class="fullscreen-editor-overlay">
       <!-- Main content with AI panel -->
       <div class="fullscreen-editor-layout">
         <!-- Code Editor Area -->
@@ -250,7 +250,7 @@
                         <div class="suggestion-info">
                           <span class="text-[10px] font-mono opacity-70">#{{ bIdx + 1 }}</span>
                           <div class="flex gap-1 ml-auto">
-                            <button class="btn btn-mini h-6 min-h-0 btn-primary px-2" @click="$emit('applyAiCode', block)">
+                            <button class="btn btn-mini h-6 min-h-0 btn-primary px-2" @click="handleApplyCode(block, idx)">
                               {{ $t('plugins.apply', '应用') }}
                             </button>
                             <button class="btn btn-mini h-6 min-h-0 btn-ghost px-2" @click="$emit('previewAiCode', block)">
@@ -262,7 +262,7 @@
                       </div>
                     </div>
                     
-                    <button v-if="msg.codeBlocks.length > 1" class="btn btn-xs btn-block btn-outline mt-2" @click="$emit('applyAiCode', msg.codeBlocks.join('\n\n'))">
+                    <button v-if="msg.codeBlocks.length > 1" class="btn btn-xs btn-block btn-outline mt-2" @click="handleApplyAllCode(msg.codeBlocks.join('\n\n'), idx)">
                       <i class="fas fa-check-double mr-1"></i>{{ $t('plugins.applyAll', '全部应用') }}
                     </button>
                   </div>
@@ -276,7 +276,7 @@
                 </div>
                 <div class="message-content">
                   <div class="message-text streaming-text">
-                    <span v-if="aiStreamingContent" class="whitespace-pre-wrap">{{ aiStreamingContent }}</span>
+                    <div v-if="aiStreamingContent" v-html="aiStreamingContentRendered"></div>
                     <span class="typing-indicator">
                       <span></span><span></span><span></span>
                     </span>
@@ -353,25 +353,53 @@
       </div>
 
       <!-- Floating Toolbar - centered in editor area -->
-      <div class="fullscreen-floating-toolbar shadow-lg" :class="{ 'with-ai-panel': showAiPanel }">
+      <div 
+        class="fullscreen-floating-toolbar shadow-lg" 
+        :class="{ 
+          'with-ai-panel': showAiPanel && toolbarPosition.x === null && toolbarPosition.y === null,
+          'compact': isCompactToolbar,
+          'dragging': isDraggingToolbar
+        }"
+        :style="{
+          left: toolbarPosition.x !== null ? `${toolbarPosition.x}px` : showAiPanel ? 'calc((100% - 400px) / 2)' : '50%',
+          top: toolbarPosition.y !== null ? `${toolbarPosition.y}px` : '1rem',
+          transform: toolbarPosition.x !== null || toolbarPosition.y !== null ? 'none' : 'translateX(-50%)'
+        }"
+      >
+        <!-- Drag Handle -->
+        <div class="toolbar-drag-handle" @mousedown="startToolbarDrag" title="拖动工具栏">
+          <i class="fas fa-grip-vertical"></i>
+        </div>
+        
         <div class="flex items-center gap-3">
-          <!-- Info Section -->
-          <div class="flex flex-col">
+          <!-- Info Section (hidden in compact mode) -->
+          <div v-if="!isCompactToolbar" class="flex flex-col">
             <span class="font-bold text-sm">
               {{ editingPlugin ? editingPlugin.metadata.name : $t('plugins.newPlugin', '新增插件') }}
             </span>
             <span v-if="editingPlugin" class="text-xs font-mono">{{ editingPlugin.metadata.id }}</span>
           </div>
 
-          <div class="toolbar-divider"></div>
+          <div v-if="!isCompactToolbar" class="toolbar-divider"></div>
 
           <!-- Actions -->
           <div class="flex items-center gap-2">
+            <!-- Compact Toggle -->
+            <button 
+              class="btn btn-xs btn-ghost" 
+              @click="toggleCompactToolbar" 
+              :title="isCompactToolbar ? '展开工具栏' : '收起工具栏'"
+            >
+              <i :class="isCompactToolbar ? 'fas fa-expand-alt' : 'fas fa-compress-alt'"></i>
+            </button>
+            
+            <div class="toolbar-divider"></div>
+            
             <!-- AI Toggle Button -->
             <button class="btn btn-sm" :class="showAiPanel ? 'btn-primary' : 'btn-ghost'" 
                     @click="$emit('toggleAiPanel')" :title="$t('plugins.aiAssistant', 'AI 助手')">
               <i class="fas fa-robot"></i>
-              <span class="ml-1">AI</span>
+              <span v-if="!isCompactToolbar" class="ml-1">AI</span>
             </button>
 
             <div class="toolbar-divider"></div>
@@ -380,7 +408,8 @@
               <i class="fas fa-file-code"></i>
             </button>
             <button class="btn btn-sm btn-ghost" @click="$emit('formatCode')" :title="$t('plugins.format', '格式化')">
-              <i class="fas fa-indent"></i> {{ $t('plugins.format', '格式化') }}
+              <i class="fas fa-indent"></i>
+              <span v-if="!isCompactToolbar" class="ml-1">{{ $t('plugins.format', '格式化') }}</span>
             </button>
             <button class="btn btn-sm btn-ghost" @click="$emit('copyPlugin')" :title="$t('plugins.copyPlugin', '复制插件')">
               <i class="fas fa-copy"></i>
@@ -396,31 +425,35 @@
                     :title="$t('plugins.testPlugin', '测试插件')">
               <span v-if="pluginTesting" class="loading loading-spinner loading-xs"></span>
               <i v-else class="fas fa-play"></i>
-              <span class="ml-1">{{ $t('plugins.test', '测试') }}</span>
+              <span v-if="!isCompactToolbar" class="ml-1">{{ $t('plugins.test', '测试') }}</span>
             </button>
             
             <template v-if="editingPlugin">
               <button v-if="!isEditing" class="btn btn-sm btn-primary" @click="$emit('enableEditing')">
-                <i class="fas fa-edit mr-1"></i>{{ $t('common.edit', '编辑') }}
+                <i class="fas fa-edit" :class="{ 'mr-1': !isCompactToolbar }"></i>
+                <span v-if="!isCompactToolbar">{{ $t('common.edit', '编辑') }}</span>
               </button>
               <button v-if="isEditing" class="btn btn-sm btn-warning" @click="$emit('cancelEditing')">
-                <i class="fas fa-eye mr-1"></i>{{ $t('common.readonly', '只读') }}
+                <i class="fas fa-eye" :class="{ 'mr-1': !isCompactToolbar }"></i>
+                <span v-if="!isCompactToolbar">{{ $t('common.readonly', '只读') }}</span>
               </button>
             </template>
 
             <button v-if="isEditing || !editingPlugin" class="btn btn-sm btn-success" :disabled="saving" @click="$emit('savePlugin')">
               <span v-if="saving" class="loading loading-spinner loading-xs"></span>
               <template v-else>
-                <i class="fas fa-save mr-1"></i>{{ $t('common.save', '保存') }}
+                <i class="fas fa-save" :class="{ 'mr-1': !isCompactToolbar }"></i>
+                <span v-if="!isCompactToolbar">{{ $t('common.save', '保存') }}</span>
               </template>
             </button>
 
             <div class="toolbar-divider"></div>
 
             <button class="btn btn-sm btn-ghost" @click="$emit('toggleFullscreen')">
-              <i class="fas fa-compress mr-1"></i>{{ $t('plugins.exitFullscreen', '退出全屏') }}
+              <i class="fas fa-compress" :class="{ 'mr-1': !isCompactToolbar }"></i>
+              <span v-if="!isCompactToolbar">{{ $t('plugins.exitFullscreen', '退出全屏') }}</span>
             </button>
-            <kbd class="kbd kbd-sm">ESC</kbd>
+            <kbd v-if="!isCompactToolbar" class="kbd kbd-sm">ESC</kbd>
           </div>
         </div>
       </div>
@@ -436,6 +469,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import type { PluginRecord, NewPluginMetadata, SubCategory, CodeReference, TestResultReference, AiChatMessage } from './types'
 import { mainCategories } from './types'
 
@@ -475,7 +510,7 @@ const emit = defineEmits<{
   'toggleAiPanel': []
   'sendAiMessage': [message: string]
   'aiQuickAction': [action: string]
-  'applyAiCode': [code: string]
+  'applyAiCode': [code: string, context?: CodeReference | null]
   'previewAiCode': [code: string]
   'exitPreviewMode': []
   'addSelectedCode': []
@@ -491,6 +526,7 @@ const codeEditorDialogRef = ref<HTMLDialogElement>()
 const codeEditorContainerRef = ref<HTMLDivElement>()
 const fullscreenCodeEditorContainerRef = ref<HTMLDivElement>()
 const fullscreenDiffEditorContainerRef = ref<HTMLDivElement>()
+const fullscreenOverlayRef = ref<HTMLDivElement>()
 const aiChatMessagesRef = ref<HTMLDivElement>()
 
 // AI chat state
@@ -498,6 +534,52 @@ const aiInputText = ref('')
 const includeCodeContext = ref(true)
 const aiPanelWidth = ref(400)
 const isResizing = ref(false)
+
+// Toolbar state
+const isCompactToolbar = ref(false)
+const toolbarPosition = ref<{ x: number | null, y: number | null }>({ x: null, y: null })
+const isDraggingToolbar = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
+
+// Configure marked for streaming content
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+})
+
+// Render streaming content as Markdown
+const aiStreamingContentRendered = computed(() => {
+  if (!props.aiStreamingContent) return ''
+  const rawHtml = marked.parse(props.aiStreamingContent) as string
+  return DOMPurify.sanitize(rawHtml, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'a'],
+    ALLOWED_ATTR: ['href', 'class']
+  })
+})
+
+const handleApplyCode = (code: string, messageIndex: number) => {
+  // Find the preceding user message to get code context
+  let codeRef: CodeReference | null = null
+  for (let i = messageIndex - 1; i >= 0; i--) {
+    if (props.aiMessages[i].role === 'user') {
+      codeRef = props.aiMessages[i].codeRef || null
+      break
+    }
+  }
+  emit('applyAiCode', code, codeRef)
+}
+
+const handleApplyAllCode = (code: string, messageIndex: number) => {
+  // Find the preceding user message to get code context
+  let codeRef: CodeReference | null = null
+  for (let i = messageIndex - 1; i >= 0; i--) {
+    if (props.aiMessages[i].role === 'user') {
+      codeRef = props.aiMessages[i].codeRef || null
+      break
+    }
+  }
+  emit('applyAiCode', code, codeRef)
+}
 
 const startResize = (e: MouseEvent) => {
   isResizing.value = true
@@ -521,6 +603,66 @@ const stopResize = () => {
   document.removeEventListener('mousemove', handleResize)
   document.removeEventListener('mouseup', stopResize)
   document.body.style.userSelect = ''
+}
+
+// Toolbar drag functionality
+const startToolbarDrag = (e: MouseEvent) => {
+  e.preventDefault() // Prevent text selection
+  e.stopPropagation()
+  
+  const toolbar = (e.currentTarget as HTMLElement).parentElement as HTMLElement
+  const overlayRect = fullscreenOverlayRef.value?.getBoundingClientRect()
+  if (!overlayRect) return
+  const rect = toolbar.getBoundingClientRect()
+  
+  // If toolbar is in default position (centered), calculate actual position first
+  if (toolbarPosition.value.x === null && toolbarPosition.value.y === null) {
+    toolbarPosition.value = {
+      x: rect.left - overlayRect.left,
+      y: rect.top - overlayRect.top
+    }
+  }
+  
+  // Calculate drag offset from current toolbar position
+  dragOffset.value = {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top
+  }
+  
+  isDraggingToolbar.value = true
+  document.addEventListener('mousemove', handleToolbarDrag)
+  document.addEventListener('mouseup', stopToolbarDrag)
+  document.body.classList.add('toolbar-dragging')
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'grabbing'
+}
+
+const handleToolbarDrag = (e: MouseEvent) => {
+  if (!isDraggingToolbar.value) return
+  e.preventDefault() // Prevent text selection during drag
+  const overlayRect = fullscreenOverlayRef.value?.getBoundingClientRect()
+  if (!overlayRect) return
+  toolbarPosition.value = {
+    x: e.clientX - overlayRect.left - dragOffset.value.x,
+    y: e.clientY - overlayRect.top - dragOffset.value.y
+  }
+}
+
+const stopToolbarDrag = () => {
+  isDraggingToolbar.value = false
+  document.removeEventListener('mousemove', handleToolbarDrag)
+  document.removeEventListener('mouseup', stopToolbarDrag)
+  document.body.classList.remove('toolbar-dragging')
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+}
+
+const toggleCompactToolbar = () => {
+  isCompactToolbar.value = !isCompactToolbar.value
+}
+
+const resetToolbarPosition = () => {
+  toolbarPosition.value = { x: null, y: null }
 }
 
 const isNewPluginValid = computed(() => {
@@ -612,6 +754,7 @@ defineExpose({
   left: 50%;
   transform: translateX(-50%);
   padding: 0.75rem 1.25rem;
+  padding-left: 0.5rem; /* Less padding on left for drag handle */
   background: oklch(var(--b2));
   border: 1px solid oklch(var(--bc) / 0.2);
   border-radius: 1rem;
@@ -619,6 +762,71 @@ defineExpose({
   box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.2), 0 8px 10px -6px rgb(0 0 0 / 0.15);
   transition: left 0.3s ease, transform 0.3s ease;
   color: oklch(var(--bc));
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Dragging state */
+.fullscreen-floating-toolbar.dragging {
+  cursor: grabbing;
+  transition: none;
+  box-shadow: 0 20px 40px -10px rgb(0 0 0 / 0.4), 0 16px 20px -12px rgb(0 0 0 / 0.3);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Disable text selection globally when dragging */
+:global(body.toolbar-dragging) {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  cursor: grabbing !important;
+}
+
+/* Compact mode */
+.fullscreen-floating-toolbar.compact {
+  padding: 0.5rem;
+  padding-left: 0.5rem;
+}
+
+/* Drag Handle */
+.toolbar-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 2rem;
+  cursor: grab;
+  color: oklch(var(--bc) / 0.4);
+  border-right: 1px solid oklch(var(--bc) / 0.1);
+  margin-right: 0.5rem;
+  transition: color 0.2s, background 0.2s;
+  border-radius: 0.5rem 0 0 0.5rem;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.toolbar-drag-handle:hover {
+  color: oklch(var(--bc) / 0.7);
+  background: oklch(var(--bc) / 0.05);
+}
+
+.toolbar-drag-handle:active {
+  cursor: grabbing;
+  color: oklch(var(--p));
+}
+
+/* Prevent text selection during drag */
+.fullscreen-floating-toolbar.dragging,
+.fullscreen-floating-toolbar.dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
 }
 
 /* When AI panel is open, center toolbar in editor area only */
@@ -919,8 +1127,44 @@ defineExpose({
 }
 
 .ai-chat-message .message-text.streaming-text {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  white-space: pre-wrap;
+  font-family: inherit;
+}
+
+/* Markdown elements in message text */
+.ai-chat-message .message-text :deep(p) {
+  margin-bottom: 0.75rem;
+}
+
+.ai-chat-message .message-text :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.ai-chat-message .message-text :deep(h1),
+.ai-chat-message .message-text :deep(h2),
+.ai-chat-message .message-text :deep(h3) {
+  font-weight: bold;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.ai-chat-message .message-text :deep(h1) { font-size: 1.25rem; }
+.ai-chat-message .message-text :deep(h2) { font-size: 1.1rem; }
+.ai-chat-message .message-text :deep(h3) { font-size: 1rem; }
+
+.ai-chat-message .message-text :deep(blockquote) {
+  border-left: 3px solid oklch(var(--p) / 0.3);
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  color: oklch(var(--bc) / 0.8);
+}
+
+.ai-chat-message .message-text :deep(a) {
+  color: oklch(var(--p));
+  text-decoration: underline;
+}
+
+.ai-chat-message .message-text :deep(a:hover) {
+  color: oklch(var(--p) / 0.8);
 }
 
 .ai-chat-message.user .message-text {

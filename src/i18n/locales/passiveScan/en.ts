@@ -588,6 +588,8 @@ export default {
   proxyConfiguration: {
     proxyListenersTitle: 'Proxy Listeners',
     proxyListenersDescription: 'Configure proxy listeners to receive HTTP requests from browsers. You need to configure your browser to use one of these listeners as a proxy server.',
+    autoStartProxy: 'Auto-start proxy on application launch',
+    autoStartProxyDesc: 'When enabled, the proxy listener will start automatically when the application launches, without requiring manual intervention',
     running: 'Running',
     interface: 'Interface',
     invisible: 'Invisible',

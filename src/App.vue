@@ -259,7 +259,7 @@ window.updateUIScale = (newScale: number) => {
       }">
         <!-- 使用 keep-alive 保持组件活跃，确保事件监听器不会丢失 -->
         <router-view v-slot="{ Component }">
-          <keep-alive :include="['Passive', 'AIAssistant', 'Vulnerabilities','settings']">
+          <keep-alive :include="['Passive', 'AIAssistant', 'Vulnerabilities','settings','Plugin']">
             <component :is="Component" class="min-h-full" />
           </keep-alive>
         </router-view>

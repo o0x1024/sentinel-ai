@@ -5,12 +5,34 @@
       <div class="flex items-center gap-2">
         <i class="fas fa-store text-primary text-xl"></i>
         <span class="text-lg font-semibold">{{ $t('plugins.store.title', '插件商店') }}</span>
+        <span v-if="lastCacheTime > 0" class="text-xs text-base-content/60">
+          ({{ formatCacheTime(lastCacheTime) }})
+        </span>
       </div>
-      <button class="btn btn-sm btn-primary" :disabled="loading" @click="refreshStore">
-        <span v-if="loading" class="loading loading-spinner loading-xs"></span>
-        <i v-else class="fas fa-sync-alt"></i>
-        <span class="ml-1">{{ $t('common.refresh', '刷新') }}</span>
-      </button>
+      <div class="flex items-center gap-2">
+        <!-- View Mode Toggle -->
+        <div class="btn-group">
+          <button 
+            class="btn btn-sm"
+            :class="{ 'btn-active': viewMode === 'list' }"
+            @click="handleViewModeChange('list')"
+            :title="$t('plugins.store.listView', '列表视图')">
+            <i class="fas fa-list"></i>
+          </button>
+          <button 
+            class="btn btn-sm"
+            :class="{ 'btn-active': viewMode === 'card' }"
+            @click="handleViewModeChange('card')"
+            :title="$t('plugins.store.cardView', '卡片视图')">
+            <i class="fas fa-th"></i>
+          </button>
+        </div>
+        <button class="btn btn-sm btn-primary" :disabled="loading" @click="refreshStore(true)">
+          <span v-if="loading" class="loading loading-spinner loading-xs"></span>
+          <i v-else class="fas fa-sync-alt"></i>
+          <span class="ml-1">{{ $t('common.refresh', '刷新') }}</span>
+        </button>
+      </div>
     </div>
 
     <!-- Error Alert -->
@@ -42,7 +64,7 @@
       </select>
     </div>
 
-    <!-- Plugin Grid -->
+    <!-- Plugin Display -->
     <div v-if="!hasFetched && !loading" class="alert alert-info">
       <i class="fas fa-info-circle"></i>
       <span>{{ $t('plugins.store.refreshToLoad') }}</span>
@@ -53,7 +75,8 @@
       <span>{{ $t('plugins.store.noPlugins') }}</span>
     </div>
 
-    <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <!-- Card View -->
+    <div v-else-if="viewMode === 'card'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <div v-for="plugin in filteredPlugins" :key="plugin.id"
         class="card bg-base-200 shadow-md hover:shadow-lg transition-shadow">
         <div class="card-body p-4">
@@ -110,6 +133,65 @@
             <button v-else class="btn btn-sm btn-outline" disabled>
               <i class="fas fa-check mr-1"></i>
               {{ $t('plugins.store.installed') }}
+            </button>
+            <button class="btn btn-sm btn-ghost" @click="viewPluginDetail(plugin)">
+              <i class="fas fa-eye"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- List View -->
+    <div v-else class="space-y-2">
+      <div v-for="plugin in filteredPlugins" :key="plugin.id"
+        class="bg-base-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+        <div class="flex items-center gap-4">
+          <!-- Plugin Info -->
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <h3 class="font-semibold text-base truncate">{{ plugin.name }}</h3>
+              <span v-if="isInstalled(plugin.id)" class="badge badge-success badge-sm">
+                {{ $t('plugins.store.installed') }}
+              </span>
+              <div class="badge badge-sm" :class="getCategoryBadgeClass(plugin.main_category)">
+                {{ getCategoryLabel(plugin.main_category) }}
+              </div>
+            </div>
+            <p class="text-xs text-base-content/60 mb-2">{{ plugin.id }}</p>
+            <p class="text-sm text-base-content/80 line-clamp-1 mb-2">
+              {{ plugin.description || $t('plugins.store.noDescription') }}
+            </p>
+            <div class="flex flex-wrap gap-2 items-center">
+              <span class="badge badge-outline badge-sm">v{{ plugin.version }}</span>
+              <span v-if="plugin.author" class="badge badge-ghost badge-sm">
+                <i class="fas fa-user mr-1"></i>{{ plugin.author }}
+              </span>
+              <span v-if="plugin.default_severity" class="badge badge-sm" :class="getSeverityClass(plugin.default_severity)">
+                {{ plugin.default_severity }}
+              </span>
+              <div v-if="plugin.tags && plugin.tags.length > 0" class="flex flex-wrap gap-1">
+                <span v-for="tag in plugin.tags.slice(0, 3)" :key="tag" class="badge badge-xs badge-outline">
+                  {{ tag }}
+                </span>
+                <span v-if="plugin.tags.length > 3" class="badge badge-xs badge-outline">
+                  +{{ plugin.tags.length - 3 }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <button v-if="!isInstalled(plugin.id)" class="btn btn-sm btn-primary"
+              :disabled="installing === plugin.id" @click="installPlugin(plugin)">
+              <span v-if="installing === plugin.id" class="loading loading-spinner loading-xs"></span>
+              <i v-else class="fas fa-download"></i>
+              <span class="hidden sm:inline ml-1">{{ $t('plugins.store.install') }}</span>
+            </button>
+            <button v-else class="btn btn-sm btn-outline" disabled>
+              <i class="fas fa-check"></i>
+              <span class="hidden sm:inline ml-1">{{ $t('plugins.store.installed') }}</span>
             </button>
             <button class="btn btn-sm btn-ghost" @click="viewPluginDetail(plugin)">
               <i class="fas fa-eye"></i>
@@ -193,10 +275,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import type { PluginRecord, CommandResponse } from './types'
+import { PluginStoreCache, ViewModeStorage } from '@/services/storage'
 
 // Store plugin interface
 interface StorePlugin {
@@ -219,6 +302,11 @@ interface StorePluginListResponse {
   error?: string
 }
 
+interface CacheData {
+  plugins: StorePlugin[]
+  timestamp: number
+}
+
 const { t } = useI18n()
 
 const props = defineProps<{
@@ -228,6 +316,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   pluginInstalled: [pluginId: string]
 }>()
+
+// Constants (保留用于向后兼容，但实际使用 storage service)
+const CACHE_KEY = 'plugin_store_cache'
+const VIEW_MODE_KEY = 'plugin_store_view_mode'
+const CACHE_DURATION = 5 * 60 * 1000 // 5分钟缓存
 
 // State
 const loading = ref(false)
@@ -240,6 +333,8 @@ const selectedPlugin = ref<StorePlugin | null>(null)
 const selectedPluginCode = ref('')
 const detailDialogRef = ref<HTMLDialogElement | null>(null)
 const hasFetched = ref(false)
+const lastCacheTime = ref<number>(0)
+const viewMode = ref<'list' | 'card'>('list')
 
 // Computed
 const filteredPlugins = computed(() => {
@@ -300,18 +395,59 @@ const showToast = (message: string, type: 'success' | 'error' | 'info' = 'succes
   setTimeout(() => toast.remove(), 3000)
 }
 
-const refreshStore = async () => {
+const loadFromCache = async (): Promise<boolean> => {
+  try {
+    const cache = await PluginStoreCache.load()
+    
+    if (!cache) {
+      return false
+    }
+    
+    storePlugins.value = cache.plugins
+    lastCacheTime.value = cache.timestamp
+    hasFetched.value = true
+    console.log('Loaded plugins from cache:', cache.plugins.length, 'plugins')
+    return true
+  } catch (e) {
+    console.error('Failed to load cache:', e)
+    return false
+  }
+}
+
+const saveToCache = async (plugins: StorePlugin[]) => {
+  try {
+    await PluginStoreCache.save(plugins)
+    lastCacheTime.value = Date.now()
+    console.log('Saved plugins to cache:', plugins.length, 'plugins')
+  } catch (e) {
+    console.error('Failed to save cache:', e)
+  }
+}
+
+const refreshStore = async (forceRefresh = false) => {
+  // 如果不是强制刷新，先尝试从缓存加载
+  if (!forceRefresh) {
+    const loaded = await loadFromCache()
+    if (loaded) {
+      console.log('Using cached plugin data')
+      return
+    }
+  }
+  
   loading.value = true
   error.value = ''
   hasFetched.value = true
   
   try {
+    console.log('Fetching plugins from store...')
     const response = await invoke<StorePluginListResponse>('fetch_store_plugins', {
       repoUrl: 'https://github.com/o0x1024/sentinel-plugin'
     })
     
     if (response.success) {
       storePlugins.value = response.plugins
+      await saveToCache(response.plugins)
+      console.log('Successfully fetched and cached plugins:', response.plugins.length)
     } else {
       error.value = response.error || t('plugins.store.fetchError')
     }
@@ -389,6 +525,55 @@ const copyCode = async () => {
     showToast(t('plugins.copySuccess'), 'success')
   }
 }
+
+const formatCacheTime = (timestamp: number): string => {
+  const now = Date.now()
+  const diff = now - timestamp
+  const minutes = Math.floor(diff / 60000)
+  
+  if (minutes < 1) {
+    return t('plugins.store.justNow', '刚刚更新') as string
+  } else if (minutes < 60) {
+    return t('plugins.store.minutesAgo', { minutes }, { default: '{minutes}分钟前' }) as string
+  } else {
+    const hours = Math.floor(minutes / 60)
+    return t('plugins.store.hoursAgo', { hours }, { default: '{hours}小时前' }) as string
+  }
+}
+
+// 加载视图模式
+const loadViewMode = async () => {
+  try {
+    const mode = await ViewModeStorage.load()
+    viewMode.value = mode
+    console.log('Loaded view mode:', mode)
+  } catch (e) {
+    console.error('Failed to load view mode:', e)
+  }
+}
+
+// 保存视图模式
+const saveViewMode = async (mode: 'list' | 'card') => {
+  try {
+    await ViewModeStorage.save(mode)
+    console.log('Saved view mode:', mode)
+  } catch (e) {
+    console.error('Failed to save view mode:', e)
+  }
+}
+
+// 监听视图模式变化并保存
+const handleViewModeChange = async (mode: 'list' | 'card') => {
+  viewMode.value = mode
+  await saveViewMode(mode)
+}
+
+// 组件挂载时自动从缓存加载
+onMounted(async () => {
+  console.log('PluginStoreSection mounted, loading cache and settings...')
+  await loadFromCache()
+  await loadViewMode()
+})
 
 // Expose methods
 defineExpose({

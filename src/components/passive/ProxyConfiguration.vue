@@ -11,6 +11,22 @@
           {{ $t('passiveScan.proxyConfiguration.proxyListenersDescription') }}
         </p>
 
+        <!-- Auto-start proxy on app launch -->
+        <div class="form-control mb-4">
+          <label class="label cursor-pointer justify-start gap-3 py-2">
+            <input 
+              type="checkbox" 
+              class="checkbox checkbox-primary"
+              v-model="proxyAutoStart"
+              @change="saveProxyAutoStart"
+            />
+            <div>
+              <span class="label-text font-medium">{{ $t('passiveScan.proxyConfiguration.autoStartProxy') }}</span>
+              <p class="text-xs text-base-content/60 mt-1">{{ $t('passiveScan.proxyConfiguration.autoStartProxyDesc') }}</p>
+            </div>
+          </label>
+        </div>
+
         <div class="flex gap-4">
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
@@ -1474,6 +1490,9 @@ const proxyConfig = ref({
 const requestBodySizeMB = ref(2)
 const responseBodySizeMB = ref(2)
 
+// 代理自动启动开关
+const proxyAutoStart = ref(false)
+
 // Proxy listeners
 const proxyListeners = ref([
   {
@@ -2564,6 +2583,28 @@ async function openCertDir() {
   }
 }
 
+// 保存代理自动启动配置
+const saveProxyAutoStart = async () => {
+  try {
+    console.log('[ProxyConfiguration] Saving proxy auto-start:', proxyAutoStart.value)
+    const response = await invoke<any>('set_proxy_auto_start', { 
+      enabled: proxyAutoStart.value 
+    })
+    
+    if (response.success) {
+      console.log('[ProxyConfiguration] Proxy auto-start saved successfully')
+      dialog.toast.success(proxyAutoStart.value ? '已启用代理自动启动' : '已禁用代理自动启动')
+    } else {
+      throw new Error(response.error || '保存失败')
+    }
+  } catch (error: any) {
+    console.error('[ProxyConfiguration] Failed to save proxy auto-start:', error)
+    dialog.toast.error(`保存配置失败: ${error}`)
+    // 回滚状态
+    proxyAutoStart.value = !proxyAutoStart.value
+  }
+}
+
 // 加载配置的通用函数
 const loadConfig = async () => {
   try {
@@ -2583,6 +2624,13 @@ const loadConfig = async () => {
       } else {
         upstreamProxy.value = null
       }
+    }
+    
+    // 加载代理自动启动配置
+    const autoStartResponse = await invoke<any>('get_proxy_auto_start')
+    if (autoStartResponse.success) {
+      proxyAutoStart.value = autoStartResponse.data || false
+      console.log('[ProxyConfiguration] Loaded proxy auto-start:', proxyAutoStart.value)
     }
     
     // 检查代理实际运行状态
@@ -2629,11 +2677,12 @@ const loadConfig = async () => {
   }
 }
 
-// 自动启动代理监听器
+// 自动启动代理监听器（已迁移到后端应用启动时自动执行）
+// 前端保留此方法作为手动启动的备用选项
 const autoStartProxy = async () => {
   // 检查第一个监听器是否已经在运行
   if (proxyListeners.value.length > 0 && !proxyListeners.value[0].running) {
-    console.log('[ProxyConfiguration] Auto-starting proxy listener...')
+    console.log('[ProxyConfiguration] Manually starting proxy listener...')
     const listener = proxyListeners.value[0]
     try {
       const [host, port] = listener.interface.split(':')
@@ -2645,12 +2694,12 @@ const autoStartProxy = async () => {
       
       if (response.success) {
         listener.running = true
-        console.log(`[ProxyConfiguration] Proxy listener ${listener.interface} auto-started`)
+        console.log(`[ProxyConfiguration] Proxy listener ${listener.interface} manually started`)
       } else {
-        console.warn(`[ProxyConfiguration] Failed to auto-start proxy: ${response.error || 'port may be in use'}`)
+        console.warn(`[ProxyConfiguration] Failed to start proxy: ${response.error || 'port may be in use'}`)
       }
     } catch (error: any) {
-      console.warn('[ProxyConfiguration] Failed to auto-start proxy:', error)
+      console.warn('[ProxyConfiguration] Failed to start proxy:', error)
     }
   }
 }
@@ -2694,8 +2743,9 @@ let unlistenFilterRule: (() => void) | null = null
 onMounted(async () => {
   await loadConfig()
   
-  // 自动启动代理监听器
-  await autoStartProxy()
+  // 不再在前端自动启动代理，已迁移到后端应用初始化时执行
+  // 前端仅加载配置和状态
+  console.log('[ProxyConfiguration] Configuration loaded, proxy auto-start is now handled by backend')
   
   // 初始加载完成后，延迟启用自动保存
   setTimeout(() => {

@@ -525,6 +525,8 @@ export default {
   proxyConfiguration: {
     proxyListenersTitle: '代理监听器',
     proxyListenersDescription: '配置代理监听器以接收来自浏览器的 HTTP 请求。需要配置浏览器使用其中一个监听器作为代理服务器。',
+    autoStartProxy: '应用启动时自动开启代理',
+    autoStartProxyDesc: '启用后，应用启动时将自动开启代理监听器，无需手动操作',
     running: '运行中',
     interface: '接口',
     invisible: '不可见',

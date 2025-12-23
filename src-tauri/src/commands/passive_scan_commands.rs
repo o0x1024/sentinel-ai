@@ -3360,6 +3360,48 @@ pub async fn get_proxy_config(
     Ok(CommandResponse::ok(config))
 }
 
+/// 设置代理自动启动状态
+#[tauri::command]
+pub async fn set_proxy_auto_start(
+    state: State<'_, PassiveScanState>,
+    enabled: bool,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Setting proxy auto-start to: {}", enabled);
+
+    let db = state.get_db_service().await.map_err(|e| {
+        tracing::error!("Failed to get database service: {}", e);
+        format!("Failed to get database service: {}", e)
+    })?;
+
+    db.save_config("proxy_auto_start_enabled", &enabled.to_string())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to save proxy auto-start config: {}", e);
+            format!("Failed to save config: {}", e)
+        })?;
+
+    tracing::info!("Proxy auto-start configuration saved successfully");
+    Ok(CommandResponse::ok(()))
+}
+
+/// 获取代理自动启动状态
+#[tauri::command]
+pub async fn get_proxy_auto_start(
+    state: State<'_, PassiveScanState>,
+) -> Result<CommandResponse<bool>, String> {
+    let db = state.get_db_service().await.map_err(|e| {
+        tracing::error!("Failed to get database service: {}", e);
+        format!("Failed to get database service: {}", e)
+    })?;
+
+    let enabled = match db.load_config("proxy_auto_start_enabled").await {
+        Ok(Some(value)) => value.parse::<bool>().unwrap_or(false),
+        _ => false,
+    };
+
+    Ok(CommandResponse::ok(enabled))
+}
+
 // ============================================================
 // 请求拦截相关命令
 // ============================================================

@@ -78,14 +78,14 @@ pub fn log_request_with_image(
 ) {
     // 记录 system prompt（如果存在）
     if let Some(_sp) = system_prompt {
-        // write_llm_log(
-        //     session_id,
-        //     conversation_id,
-        //     provider,
-        //     model,
-        //     "SYSTEM REQUEST",
-        //     &format!("\n{}\n", _sp),
-        // );
+        write_llm_log(
+            session_id,
+            conversation_id,
+            provider,
+            model,
+            "SYSTEM REQUEST",
+            &format!("\n{}\n", _sp),
+        );
     }
     // 记录 user prompt（含图片标记）
     let image_tag = if has_image { " [WITH IMAGE]" } else { "" };

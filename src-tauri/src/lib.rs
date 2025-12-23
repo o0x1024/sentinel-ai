@@ -264,6 +264,18 @@ pub fn run() {
 
                 tracing::info!("Workflow engine and scheduler initialized");
 
+                // Auto-start proxy listener if enabled in config
+                let handle_for_proxy = handle.clone();
+                let passive_state_for_proxy = passive_state.clone();
+                tokio::spawn(async move {
+                    // Wait a bit for app to be fully ready
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    
+                    if let Err(e) = auto_start_proxy_if_enabled(&handle_for_proxy, &passive_state_for_proxy).await {
+                        tracing::warn!("Failed to auto-start proxy listener: {}", e);
+                    }
+                });
+
                 // Delay MCP server auto-connect to avoid blocking main process startup
                 let handle_for_mcp = handle.clone();
                 tokio::spawn(async move {
@@ -648,6 +660,8 @@ pub fn run() {
             passive_scan_commands::stop_proxy_listener,
             passive_scan_commands::save_proxy_config,
             passive_scan_commands::get_proxy_config,
+            passive_scan_commands::set_proxy_auto_start,
+            passive_scan_commands::get_proxy_auto_start,
             passive_scan_commands::set_intercept_enabled,
             passive_scan_commands::get_intercept_enabled,
             passive_scan_commands::get_intercepted_requests,
@@ -909,4 +923,72 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
         }
     }
     Ok(())
+}
+
+/// Auto-start proxy listener if enabled in configuration
+async fn auto_start_proxy_if_enabled(
+    app: &tauri::AppHandle,
+    passive_state: &PassiveScanState,
+) -> anyhow::Result<()> {
+    tracing::info!("Checking if proxy auto-start is enabled...");
+
+    // Get database service
+    let db_service = passive_state.get_db_service().await
+        .map_err(|e| anyhow::anyhow!("Failed to get database service: {}", e))?;
+
+    // Load proxy auto-start configuration
+    let auto_start_enabled = match db_service.load_config("proxy_auto_start_enabled").await {
+        Ok(Some(value)) => value.parse::<bool>().unwrap_or(false),
+        _ => false,
+    };
+
+    if !auto_start_enabled {
+        tracing::info!("Proxy auto-start is disabled in configuration");
+        return Ok(());
+    }
+
+    // Check if proxy is already running using public method
+    let is_running_arc = passive_state.get_is_running();
+    let is_running = *is_running_arc.read().await;
+    if is_running {
+        tracing::info!("Proxy is already running, skipping auto-start");
+        return Ok(());
+    }
+
+    // Load proxy configuration from database
+    let config = match db_service.load_config("proxy_config").await {
+        Ok(Some(config_json)) => {
+            match serde_json::from_str::<sentinel_passive::ProxyConfig>(&config_json) {
+                Ok(config) => {
+                    tracing::info!("Loaded proxy configuration for auto-start: port {}", config.start_port);
+                    Some(config)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize proxy config, using default: {}", e);
+                    None
+                }
+            }
+        }
+        Ok(None) => {
+            tracing::info!("No saved proxy configuration found, using default");
+            None
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load proxy config from database: {}", e);
+            None
+        }
+    };
+
+    // Start the proxy listener
+    match passive_scan_commands::start_passive_scan_internal(app, passive_state, config).await {
+        Ok(port) => {
+            tracing::info!("✅ Proxy listener auto-started successfully on port {}", port);
+            update_proxy_menu_text(app, true);
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("Failed to auto-start proxy listener: {}", e);
+            Err(anyhow::anyhow!("Failed to start proxy: {}", e))
+        }
+    }
 }

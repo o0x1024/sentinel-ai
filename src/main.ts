@@ -4,6 +4,7 @@ import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
 import App from "./App.vue";
 import "./style.css";
 import { performanceService } from './services/performance';
+import { initializeStorage } from './services/storage';
 import i18n from './i18n'; // 导入i18n配置
 import DialogPlugin from './composables/useDialog'; // 导入对话框插件
 import ToastPlugin from './composables/useToast'; // 导入Toast插件
@@ -273,6 +274,11 @@ document.addEventListener(
 
 // 在应用挂载前应用本地持久化的通用设置
 applyStartupSettings();
+
+// 初始化存储系统
+initializeStorage().catch(err => {
+  console.error('Storage initialization failed:', err);
+});
 
 // 在应用挂载后初始化核心组件
 app.mount("#app");

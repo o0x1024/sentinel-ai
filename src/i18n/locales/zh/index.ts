@@ -560,7 +560,12 @@ export default {
       installError: '安装失败',
       fetchError: '获取插件列表失败',
       downloading: '下载中...',
-      viewDetails: '查看详情'
+      viewDetails: '查看详情',
+      justNow: '刚刚更新',
+      minutesAgo: '{minutes}分钟前',
+      hoursAgo: '{hours}小时前',
+      listView: '列表视图',
+      cardView: '卡片视图'
     }
   },
 
