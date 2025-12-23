@@ -30,7 +30,7 @@ pub mod types;
 
 pub use error::{PluginError, Result};
 pub use executor::{ExecutorStats, PluginExecutor};
-pub use plugin::{PluginManager, PluginRecord, PluginStatus};
+pub use plugin::{get_input_schema_from_code, PluginManager, PluginRecord, PluginStatus};
 pub use plugin_engine::PluginEngine;
 pub use plugin_ops::{sentinel_plugin_ext, PluginContext};
 pub use types::*;

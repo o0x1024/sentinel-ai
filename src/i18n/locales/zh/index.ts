@@ -527,6 +527,7 @@ export default {
     cancelEdit: '取消编辑',
     exitFullscreen: '退出全屏',
     copy: '复制',
+    copySuccess: '已复制',
     toggleSuccess: '插件已{action}: {name}',
     toggleFailed: '{action}失败: {error}',
     toggleError: '操作失败',
@@ -547,7 +548,22 @@ export default {
     generatePlugin: '生成插件',
     warnings: '警告',
     errors: '错误',
-    error: '错误'
+    error: '错误',
+    store: {
+      title: '插件商店',
+      searchPlaceholder: '搜索插件...',
+      allCategories: '全部分类',
+      refreshToLoad: '点击刷新获取插件列表',
+      noPlugins: '暂无可用插件',
+      noDescription: '暂无描述',
+      installed: '已安装',
+      install: '安装',
+      installSuccess: '插件安装成功',
+      installError: '安装失败',
+      fetchError: '获取插件列表失败',
+      downloading: '下载中...',
+      viewDetails: '查看详情'
+    }
   },
 
   // License section

@@ -873,6 +873,11 @@ export default {
     }
   },
   workflowStudio: {
+    status: {
+      saved: '已保存',
+      saving: '保存中...',
+      unsaved: '有未保存的更改'
+    },
     title: '工作流工作室',
     header: {
       namePlaceholder: '工作流名称',
@@ -1035,16 +1040,43 @@ export default {
       clearTooltip: '清空历史',
       emptyTitle: '暂无执行记录',
       emptyDescription: '运行工作流后会在此显示历史',
+      searchPlaceholder: '搜索工作流名称...',
       status: {
-        completed: '✓ 完成',
-        failed: '✗ 失败',
-        running: '● 运行中',
-        pending: '○ 等待'
+        completed: '完成',
+        failed: '失败',
+        running: '运行中',
+        pending: '等待',
+        cancelled: '已取消'
       },
       deleteRecordTooltip: '删除此记录',
       durationMs: '耗时: {ms}ms',
       detailsTitle: '执行详情',
-      copyResultsTooltip: '复制结果'
+      copyResultsTooltip: '复制结果',
+      table: {
+        name: '执行名称',
+        startTime: '执行时间',
+        duration: '耗时',
+        status: '状态',
+        actions: '操作',
+        viewDetail: '查看详情',
+        delete: '删除'
+      },
+      pagination: {
+        total: '共 {total} 条'
+      },
+      detailDialog: {
+        title: '执行详情',
+        workflowName: '工作流',
+        status: '状态',
+        startTime: '开始时间',
+        duration: '总耗时',
+        error: '错误信息',
+        steps: '执行步骤',
+        noSteps: '暂无步骤记录',
+        noResult: '暂无结果',
+        copy: '复制',
+        close: '关闭'
+      }
     },
     resultPanel: {
       title: '步骤执行结果',

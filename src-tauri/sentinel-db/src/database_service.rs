@@ -90,8 +90,11 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn update_workflow_run_status(&self, id: &str, status: &str, completed_at: Option<chrono::DateTime<chrono::Utc>>, error_message: Option<&str>) -> Result<()>;
     async fn update_workflow_run_progress(&self, id: &str, progress: u32, completed_steps: u32, total_steps: u32) -> Result<()>;
     async fn save_workflow_run_step(&self, run_id: &str, step_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
-    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>) -> Result<()>;
+    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>, result_json: Option<String>, error_message: Option<&str>) -> Result<()>;
     async fn list_workflow_runs(&self) -> Result<Vec<serde_json::Value>>;
+    async fn list_workflow_runs_paginated(&self, page: i64, page_size: i64, search: Option<&str>, workflow_id: Option<&str>) -> Result<(Vec<serde_json::Value>, i64)>;
+    async fn get_workflow_run_detail(&self, run_id: &str) -> Result<Option<serde_json::Value>>;
+    async fn delete_workflow_run(&self, run_id: &str) -> Result<()>;
 
     async fn get_plugins_from_registry(&self) -> Result<Vec<serde_json::Value>>;
     async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()>;
@@ -1482,7 +1485,7 @@ impl DatabaseService {
         "#)
         .bind("Plugin Generation Template")
         .bind("Task overview and guiding principles for plugin generation")
-        .bind(include_str!("../../src/generators/templates/plugin_generation.txt"))
+        .bind("")
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1505,7 +1508,7 @@ impl DatabaseService {
         "#)
         .bind("Plugin Fix Template")
         .bind("Template for fixing broken plugin code")
-        .bind(include_str!("../../src/generators/templates/plugin_fix.txt"))
+        .bind("")
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1528,7 +1531,7 @@ impl DatabaseService {
         "#)
         .bind("Agent Plugin Generation Template")
         .bind("Task overview and guiding principles for Agent tool plugin generation")
-        .bind(include_str!("../../src/generators/templates/agent_plugin_generation.txt"))
+        .bind("")
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -1551,7 +1554,7 @@ impl DatabaseService {
         "#)
         .bind("Agent Plugin Fix Template")
         .bind("Template for fixing broken Agent tool plugin code")
-        .bind(include_str!("../../src/generators/templates/agent_plugin_fix.txt"))
+        .bind("")
         .bind(1)
         .bind(1)
         .bind("Application")
@@ -4472,13 +4475,15 @@ impl Database for DatabaseService {
         Ok(())
     }
 
-    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>, result_json: Option<String>, error_message: Option<&str>) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            r#"UPDATE workflow_run_steps SET status = ?, completed_at = ? WHERE id = ?"#
+            r#"UPDATE workflow_run_steps SET status = ?, completed_at = ?, result_json = ?, error_message = ? WHERE id = ?"#
         )
         .bind(status)
         .bind(completed_at)
+        .bind(result_json)
+        .bind(error_message)
         .bind(format!("{}:{}", run_id, step_id))
         .execute(pool)
         .await?;
@@ -4506,6 +4511,167 @@ impl Database for DatabaseService {
             result.push(item);
         }
         Ok(result)
+    }
+
+    async fn list_workflow_runs_paginated(&self, page: i64, page_size: i64, search: Option<&str>, workflow_id: Option<&str>) -> Result<(Vec<serde_json::Value>, i64)> {
+        let pool = self.get_pool()?;
+        let offset = (page - 1) * page_size;
+        
+        // Count total
+        let count_row = if let Some(wf_id) = workflow_id {
+            if let Some(s) = search {
+                let pattern = format!("%{}%", s);
+                sqlx::query("SELECT COUNT(*) as cnt FROM workflow_runs WHERE workflow_id = ? AND workflow_name LIKE ?")
+                    .bind(wf_id)
+                    .bind(&pattern)
+                    .fetch_one(pool)
+                    .await?
+            } else {
+                sqlx::query("SELECT COUNT(*) as cnt FROM workflow_runs WHERE workflow_id = ?")
+                    .bind(wf_id)
+                    .fetch_one(pool)
+                    .await?
+            }
+        } else if let Some(s) = search {
+            let pattern = format!("%{}%", s);
+            sqlx::query("SELECT COUNT(*) as cnt FROM workflow_runs WHERE workflow_name LIKE ?")
+                .bind(&pattern)
+                .fetch_one(pool)
+                .await?
+        } else {
+            sqlx::query("SELECT COUNT(*) as cnt FROM workflow_runs")
+                .fetch_one(pool)
+                .await?
+        };
+        let total: i64 = count_row.get("cnt");
+
+        // Query data
+        let rows = if let Some(wf_id) = workflow_id {
+            if let Some(s) = search {
+                let pattern = format!("%{}%", s);
+                sqlx::query(r#"SELECT id, workflow_id, workflow_name, version, status, started_at, completed_at, progress, total_steps, completed_steps, error_message FROM workflow_runs WHERE workflow_id = ? AND workflow_name LIKE ? ORDER BY started_at DESC LIMIT ? OFFSET ?"#)
+                    .bind(wf_id)
+                    .bind(&pattern)
+                    .bind(page_size)
+                    .bind(offset)
+                    .fetch_all(pool)
+                    .await?
+            } else {
+                sqlx::query(r#"SELECT id, workflow_id, workflow_name, version, status, started_at, completed_at, progress, total_steps, completed_steps, error_message FROM workflow_runs WHERE workflow_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?"#)
+                    .bind(wf_id)
+                    .bind(page_size)
+                    .bind(offset)
+                    .fetch_all(pool)
+                    .await?
+            }
+        } else if let Some(s) = search {
+            let pattern = format!("%{}%", s);
+            sqlx::query(r#"SELECT id, workflow_id, workflow_name, version, status, started_at, completed_at, progress, total_steps, completed_steps, error_message FROM workflow_runs WHERE workflow_name LIKE ? ORDER BY started_at DESC LIMIT ? OFFSET ?"#)
+                .bind(&pattern)
+                .bind(page_size)
+                .bind(offset)
+                .fetch_all(pool)
+                .await?
+        } else {
+            sqlx::query(r#"SELECT id, workflow_id, workflow_name, version, status, started_at, completed_at, progress, total_steps, completed_steps, error_message FROM workflow_runs ORDER BY started_at DESC LIMIT ? OFFSET ?"#)
+                .bind(page_size)
+                .bind(offset)
+                .fetch_all(pool)
+                .await?
+        };
+
+        let mut result = Vec::new();
+        for row in rows {
+            let started_at: chrono::DateTime<chrono::Utc> = row.get("started_at");
+            let completed_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("completed_at").ok();
+            let duration_ms = completed_at.map(|c| (c - started_at).num_milliseconds());
+            let item = serde_json::json!({
+                "execution_id": row.get::<String, _>("id"),
+                "workflow_id": row.get::<String, _>("workflow_id"),
+                "workflow_name": row.get::<String, _>("workflow_name"),
+                "version": row.get::<String, _>("version"),
+                "status": row.get::<String, _>("status"),
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "duration_ms": duration_ms,
+                "progress": row.get::<i64, _>("progress"),
+                "total_steps": row.get::<i64, _>("total_steps"),
+                "completed_steps": row.get::<i64, _>("completed_steps"),
+                "error_message": row.try_get::<String, _>("error_message").ok(),
+            });
+            result.push(item);
+        }
+        Ok((result, total))
+    }
+
+    async fn get_workflow_run_detail(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        
+        // Get run info
+        let run_row = sqlx::query(r#"SELECT id, workflow_id, workflow_name, version, status, started_at, completed_at, progress, total_steps, completed_steps, error_message FROM workflow_runs WHERE id = ?"#)
+            .bind(run_id)
+            .fetch_optional(pool)
+            .await?;
+        
+        let Some(row) = run_row else {
+            return Ok(None);
+        };
+        
+        let started_at: chrono::DateTime<chrono::Utc> = row.get("started_at");
+        let completed_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("completed_at").ok();
+        let duration_ms = completed_at.map(|c| (c - started_at).num_milliseconds());
+        
+        // Get steps
+        let step_rows = sqlx::query(r#"SELECT step_id, step_name, step_order, status, started_at, completed_at, duration_ms, result_json, error_message FROM workflow_run_steps WHERE run_id = ? ORDER BY step_order ASC, started_at ASC"#)
+            .bind(run_id)
+            .fetch_all(pool)
+            .await?;
+        
+        let mut steps = Vec::new();
+        for step in step_rows {
+            let step_started: Option<chrono::DateTime<chrono::Utc>> = step.try_get("started_at").ok();
+            let step_completed: Option<chrono::DateTime<chrono::Utc>> = step.try_get("completed_at").ok();
+            let step_item = serde_json::json!({
+                "step_id": step.get::<String, _>("step_id"),
+                "step_name": step.try_get::<String, _>("step_name").ok(),
+                "step_order": step.try_get::<i64, _>("step_order").ok(),
+                "status": step.get::<String, _>("status"),
+                "started_at": step_started,
+                "completed_at": step_completed,
+                "duration_ms": step.try_get::<i64, _>("duration_ms").ok(),
+                "result": step.try_get::<String, _>("result_json").ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
+                "error_message": step.try_get::<String, _>("error_message").ok(),
+            });
+            steps.push(step_item);
+        }
+        
+        let detail = serde_json::json!({
+            "execution_id": row.get::<String, _>("id"),
+            "workflow_id": row.get::<String, _>("workflow_id"),
+            "workflow_name": row.get::<String, _>("workflow_name"),
+            "version": row.get::<String, _>("version"),
+            "status": row.get::<String, _>("status"),
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_ms": duration_ms,
+            "progress": row.get::<i64, _>("progress"),
+            "total_steps": row.get::<i64, _>("total_steps"),
+            "completed_steps": row.get::<i64, _>("completed_steps"),
+            "error_message": row.try_get::<String, _>("error_message").ok(),
+            "steps": steps,
+        });
+        
+        Ok(Some(detail))
+    }
+
+    async fn delete_workflow_run(&self, run_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        // Steps will be cascade deleted due to foreign key
+        sqlx::query("DELETE FROM workflow_runs WHERE id = ?")
+            .bind(run_id)
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 
     async fn create_notification_rule(&self, rule: &NotificationRule) -> Result<()> {

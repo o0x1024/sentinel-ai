@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, info, warn};
+use deno_core::v8;
 
 /// Commands sent to the plugin executor thread
 enum PluginCommand {
@@ -43,6 +44,8 @@ pub struct PluginExecutor {
     worker_thread: Arc<RwLock<Option<JoinHandle<()>>>>,
     /// Channel to send commands to worker
     sender: Arc<RwLock<mpsc::Sender<PluginCommand>>>,
+    /// Thread-safe isolate handle (for TerminateExecution)
+    isolate_handle: Arc<RwLock<v8::IsolateHandle>>,
     /// Plugin ID
     plugin_id: String,
     /// Plugin metadata
@@ -83,7 +86,7 @@ impl PluginExecutor {
         let last_restart_time = Arc::new(RwLock::new(Some(std::time::Instant::now())));
         let should_shutdown = Arc::new(AtomicBool::new(false));
 
-        let (tx, worker_thread) = Self::spawn_worker(
+        let (tx, worker_thread, isolate_handle) = Self::spawn_worker(
             &metadata,
             &code,
             max_executions_before_restart,
@@ -97,6 +100,7 @@ impl PluginExecutor {
         Ok(Self {
             worker_thread: Arc::new(RwLock::new(Some(worker_thread))),
             sender: Arc::new(RwLock::new(tx)),
+            isolate_handle: Arc::new(RwLock::new(isolate_handle)),
             plugin_id,
             metadata,
             code,
@@ -125,12 +129,13 @@ impl PluginExecutor {
         restart_count: Arc<AtomicUsize>,
         last_restart_time: Arc<RwLock<Option<std::time::Instant>>>,
         should_shutdown: Arc<AtomicBool>,
-    ) -> Result<(mpsc::Sender<PluginCommand>, JoinHandle<()>)> {
+    ) -> Result<(mpsc::Sender<PluginCommand>, JoinHandle<()>, v8::IsolateHandle)> {
         let (tx, mut rx) = mpsc::channel::<PluginCommand>(100);
         
         let metadata_clone = metadata.clone();
         let code_clone = code.to_string();
         let plugin_id_clone = metadata.id.clone();
+        let (iso_tx, iso_rx) = std::sync::mpsc::channel::<v8::IsolateHandle>();
 
         let handle = std::thread::Builder::new()
             .name(format!("plugin-executor-{}", metadata.id))
@@ -169,6 +174,10 @@ impl PluginExecutor {
                             return;
                         }
                     };
+
+                    // Publish a thread-safe isolate handle for TerminateExecution.
+                    // If receiver is gone, continue without termination capability.
+                    let _ = iso_tx.send(engine.isolate_handle());
 
                     info!("Plugin executor started for {}", plugin_id_clone);
 
@@ -257,7 +266,11 @@ impl PluginExecutor {
             })
             .map_err(|e| PluginError::Execution(format!("Failed to spawn thread: {}", e)))?;
 
-        Ok((tx, handle))
+        let isolate_handle = iso_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| PluginError::Execution(format!("Failed to get isolate handle: {}", e)))?;
+
+        Ok((tx, handle, isolate_handle))
     }
 
     /// Create engine instance
@@ -307,6 +320,15 @@ impl PluginExecutor {
             .map_err(|e| PluginError::Execution(format!("Failed to receive reply: {}", e)))?
     }
 
+    /// Request V8 to terminate the currently running JavaScript (best-effort).
+    ///
+    /// This is designed for stopping synchronous infinite loops (no await points),
+    /// where `tokio::time::timeout` cannot preempt the running isolate.
+    pub async fn terminate_execution(&self) {
+        let handle = self.isolate_handle.read().await;
+        handle.terminate_execution();
+    }
+
     /// Manually trigger restart
     ///
     /// This will:
@@ -349,7 +371,7 @@ impl PluginExecutor {
         self.current_instance_executions.store(0, Ordering::Relaxed);
 
         // Spawn new worker thread
-        let (new_tx, new_handle) = Self::spawn_worker(
+        let (new_tx, new_handle, new_isolate_handle) = Self::spawn_worker(
             &self.metadata,
             &self.code,
             self.max_executions_before_restart,
@@ -368,6 +390,10 @@ impl PluginExecutor {
         {
             let mut worker_thread = self.worker_thread.write().await;
             *worker_thread = Some(new_handle);
+        }
+        {
+            let mut iso = self.isolate_handle.write().await;
+            *iso = new_isolate_handle;
         }
 
         // Update stats

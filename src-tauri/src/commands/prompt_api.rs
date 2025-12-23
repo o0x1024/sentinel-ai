@@ -208,7 +208,7 @@ Passive scan plugins should:
 1. Be written in TypeScript.
 2. Analyze HTTP traffic (requests and responses) without modifying it.
 3. Detect specific vulnerabilities or collect information.
-4. Export required metadata and scanning functions.
+4. Export required scanning functions.
 5. Use `Sentinel.emitFinding()` to report findings.
 
 ## Key Principles
@@ -234,24 +234,7 @@ Passive scan plugins should:
 
 The Passive Scan plugin you generate **MUST** include the following structure:
 
-### 1. Metadata Export
-
-```typescript
-export function get_metadata() {
-    return {
-        id: "unique-plugin-id", // Lowercase with hyphens, e.g., "detect-basic-auth"
-        name: "Human Readable Name",
-        version: "1.0.0",
-        author: "Sentinel AI",
-        category: "Security", // or "Information", "Privacy"
-        description: "Brief description of what this plugin detects",
-        default_severity: "medium", // "critical", "high", "medium", "low", "info"
-        tags: ["tag1", "passive"]
-    };
-}
-```
-
-### 2. Main Scan Function
+### 1. Main Scan Function
 
 You **MUST** export `scan_transaction` to analyze traffic.
 
@@ -306,19 +289,6 @@ Sentinel.emitFinding({
 Return ONLY the TypeScript plugin code wrapped in a markdown code block:
 
 ```typescript
-export function get_metadata() {
-  return {
-    id: "detect-example-vuln",
-    name: "Detect Example Vulnerability",
-    version: "1.0.0",
-    author: "Sentinel AI",
-    category: "Security",
-    description: "Detects example vulnerability in response headers",
-    default_severity: "medium",
-    tags: ["example", "passive"]
-  };
-}
-
 export async function scan_transaction(transaction) {
   const resp = transaction.response;
   if (!resp) return;
@@ -341,12 +311,11 @@ globalThis.scan_transaction = scan_transaction;
 ```
 
 **Requirements**:
-1. **MUST export `get_metadata`**.
-2. **MUST export `scan_transaction`**.
-3. **Handle `transaction.response` being potentially null**.
-4. **Use `Sentinel.emitFinding`** for reporting.
-5. **No network calls** (fetch, etc.) are allowed in passive plugins.
-6. **MUST include the `globalThis` export at the end** - Without this, the plugin will fail with "Function not found" error.
+1. **MUST export `scan_transaction`**.
+2. **Handle `transaction.response` being potentially null**.
+3. **Use `Sentinel.emitFinding`** for reporting.
+4. **No network calls** (fetch, etc.) are allowed in passive plugins.
+5. **MUST include the `globalThis` export at the end** - Without this, the plugin will fail with "Function not found" error.
 
 Now generate the Passive Scan Plugin.
 "#;
@@ -363,7 +332,7 @@ Agent tool plugins should:
 3. Follow the Agent tool plugin interface.
 4. Include appropriate error handling and validation.
 5. Use the `ToolOutput` interface to return structured results.
-6. **Include a `@sentinel_schema` block at the top of the file declaring the input parameters' JSON Schema.**
+6. **MUST export a `get_input_schema()` function to declare the input parameters' JSON Schema.**
 
 ## Key Principles
 
@@ -394,38 +363,45 @@ Agent tool plugins should:
 
 The Agent tool plugin you generate **MUST** include the following structure:
 
-### 1. Header Schema Block (Required)
+### 1. get_input_schema() Function (Required)
 
-Add a `@sentinel_schema` block at the very beginning of the plugin code to declare the JSON Schema for input parameters. This ensures that the AI and workflow system can correctly understand the tool's parameters:
+Export a `get_input_schema()` function that returns a JSON Schema object describing the input parameters. The engine will call this function after loading the plugin:
 
 ```typescript
-/* @sentinel_schema
-{
-    "type": "object",
-    "required": ["target"],
-    "properties": {
-        "target": {
-            "type": "string",
-            "description": "Target URL or host address"
-        },
-        "timeout": {
-            "type": "integer",
-            "default": 5000,
-            "description": "Timeout in milliseconds"
-        },
-        "options": {
-            "type": "object",
-            "description": "Additional options"
+/**
+ * Export parameter schema function (Required)
+ * The engine calls this function after loading to get parameter descriptions
+ */
+export function get_input_schema() {
+    return {
+        type: "object",
+        required: ["target"],
+        properties: {
+            target: {
+                type: "string",
+                description: "Target URL or host address"
+            },
+            timeout: {
+                type: "integer",
+                default: 5000,
+                description: "Timeout in milliseconds"
+            },
+            options: {
+                type: "object",
+                description: "Additional options"
+            }
         }
-    }
+    };
 }
-*/
+
+// Must bind to globalThis
+globalThis.get_input_schema = get_input_schema;
 ```
 
 ### 2. TypeScript Interface and Implementation
 
 ```typescript
-// Tool input interface - consistent with the schema above
+// Tool input interface - consistent with get_input_schema() return value
 interface ToolInput {
     target: string;
     timeout?: number;
@@ -480,28 +456,17 @@ globalThis.analyze = analyze;
 ### Complete Example: Port Scanner Tool
 
 ```typescript
-/* @sentinel_schema
-{
-    "type": "object",
-    "required": ["target"],
-    "properties": {
-        "target": {
-            "type": "string",
-            "description": "Target host address (IP or domain)"
-        },
-        "ports": {
-            "type": "string",
-            "default": "80,443,22,21",
-            "description": "List of ports to scan, comma-separated"
-        },
-        "timeout": {
-            "type": "integer",
-            "default": 3000,
-            "description": "Timeout per port in milliseconds"
-        }
-    }
-}
-*/
+/**
+ * Port Scanner Tool
+ * @plugin port_scanner
+ * @name Port Scanner
+ * @version 1.0.0
+ * @author Sentinel AI
+ * @category scanner
+ * @default_severity medium
+ * @tags network, port, scanner
+ * @description Scan target host for open ports
+ */
 
 interface ToolInput {
     target: string;
@@ -519,10 +484,38 @@ interface ToolOutput {
     error?: string;
 }
 
+/**
+ * Export parameter schema function (Required)
+ */
+export function get_input_schema() {
+    return {
+        type: "object",
+        required: ["target"],
+        properties: {
+            target: {
+                type: "string",
+                description: "Target host address (IP or domain)"
+            },
+            ports: {
+                type: "string",
+                default: "80,443,22,21",
+                description: "List of ports to scan, comma-separated"
+            },
+            timeout: {
+                type: "integer",
+                default: 3000,
+                description: "Timeout per port in milliseconds"
+            }
+        }
+    };
+}
+
 export async function analyze(input: ToolInput): Promise<ToolOutput> {
     // Tool implementation...
 }
 
+// Must bind to globalThis
+globalThis.get_input_schema = get_input_schema;
 globalThis.analyze = analyze;
 ```
 
@@ -570,23 +563,17 @@ Deno.core.ops.op_plugin_log('error', 'Error occurred');
 Return ONLY the TypeScript plugin code wrapped in a markdown code block:
 
 ```typescript
-/* @sentinel_schema
-{
-    "type": "object",
-    "required": ["target"],
-    "properties": {
-        "target": {
-            "type": "string",
-            "description": "Target address"
-        },
-        "option1": {
-            "type": "string",
-            "default": "default_value",
-            "description": "Description of option 1"
-        }
-    }
-}
-*/
+/**
+ * Tool Plugin
+ * @plugin tool_id
+ * @name Tool Name
+ * @version 1.0.0
+ * @author Sentinel AI
+ * @category category
+ * @default_severity medium
+ * @tags tag1, tag2
+ * @description Tool description
+ */
 
 interface ToolInput {
     target: string;
@@ -597,6 +584,27 @@ interface ToolOutput {
     success: boolean;
     data?: any;
     error?: string;
+}
+
+/**
+ * Export parameter schema function (Required)
+ */
+export function get_input_schema() {
+    return {
+        type: "object",
+        required: ["target"],
+        properties: {
+            target: {
+                type: "string",
+                description: "Target address"
+            },
+            option1: {
+                type: "string",
+                default: "default_value",
+                description: "Description of option 1"
+            }
+        }
+    };
 }
 
 export async function analyze(input: ToolInput): Promise<ToolOutput> {
@@ -621,19 +629,20 @@ export async function analyze(input: ToolInput): Promise<ToolOutput> {
     }
 }
 
-// **CRITICAL**: Must export the function to globalThis
+// **CRITICAL**: Must export functions to globalThis
+globalThis.get_input_schema = get_input_schema;
 globalThis.analyze = analyze;
 ```
 
 **Requirements**:
-1. **MUST include a `@sentinel_schema` block at the beginning of the file** - This is key for the AI and workflow system to understand tool parameters.
-2. The `properties` in the Schema block must include a `description` field for each parameter.
+1. **MUST export a `get_input_schema()` function** - This is key for the AI and workflow system to understand tool parameters.
+2. The `properties` in the returned schema must include a `description` field for each parameter.
 3. Include detailed comments explaining the tool logic.
 4. Use correct TypeScript types.
 5. Handle edge cases and errors gracefully.
 6. Return a structured `ToolOutput` with success/error status.
 7. Include input parameter validation.
-8. **MUST include the `globalThis` export at the end** - Without this, the plugin will fail with "Function not found" error.
+8. **MUST bind both `get_input_schema` and `analyze` to globalThis** - Without this, the plugin will fail with "Function not found" error.
 
 Now generate the Agent Tool Plugin.
 "#;

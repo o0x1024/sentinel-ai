@@ -227,7 +227,11 @@ pub async fn execute_workflow_steps(
                 }
             }
             if gated_by_branch && !branch_allowed {
-                engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, serde_json::json!({"skipped": true})).await;
+                let result = serde_json::json!({"skipped": true});
+                engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result.clone()).await;
+                if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), Some(result.to_string()), None).await {
+                    tracing::warn!("failed to update step status: {}", e);
+                }
                 wrote_result = true;
             }
 
@@ -248,13 +252,19 @@ pub async fn execute_workflow_steps(
                                 .mark_step_completed_with_result(
                                     &execution_id_for_spawn,
                                     &node_id,
-                                    result_value,
+                                    result_value.clone(),
                                 )
                                 .await;
+                            if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), Some(result_value.to_string()), None).await {
+                                tracing::warn!("failed to update step status: {}", e);
+                            }
                             wrote_result = true;
                         }
                         Err(err) => {
                             tracing::warn!("tool execute failed for {}: {}", tool_name, err);
+                            if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), None, Some(&err.to_string())).await {
+                                tracing::warn!("failed to update step status: {}", e);
+                            }
                         }
                     }
                 } else if action.starts_with("plugin::") {
@@ -318,9 +328,12 @@ pub async fn execute_workflow_steps(
                                     .mark_step_completed_with_result(
                                         &execution_id_for_spawn,
                                         &node_id,
-                                        result_value,
+                                        result_value.clone(),
                                     )
                                     .await;
+                                if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), Some(result_value.to_string()), None).await {
+                                    tracing::warn!("failed to update step status: {}", e);
+                                }
                                 wrote_result = true;
                                 tracing::info!("Agent plugin '{}' executed successfully, {} findings", plugin_id, findings.len());
                             }
@@ -335,9 +348,12 @@ pub async fn execute_workflow_steps(
                                     .mark_step_completed_with_result(
                                         &execution_id_for_spawn,
                                         &node_id,
-                                        error_result,
+                                        error_result.clone(),
                                     )
                                     .await;
+                                if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_result.to_string()), Some(&err.to_string())).await {
+                                    tracing::warn!("failed to update step status: {}", e);
+                                }
                                 wrote_result = true;
                             }
                         }
@@ -352,9 +368,12 @@ pub async fn execute_workflow_steps(
                             .mark_step_completed_with_result(
                                 &execution_id_for_spawn,
                                 &node_id,
-                                error_result,
+                                error_result.clone(),
                             )
                             .await;
+                        if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_result.to_string()), Some("PluginManager not available")).await {
+                            tracing::warn!("failed to update step status: {}", e);
+                        }
                         wrote_result = true;
                     }
                 } else if action == "branch" {
@@ -388,14 +407,24 @@ pub async fn execute_workflow_steps(
                             match toolset_clone.call(tool_name, params_json).await {
                                 Ok(result) => {
                                     let result_value = serde_json::from_str(&result).unwrap_or(serde_json::json!({"result": result}));
-                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result_value).await;
+                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result_value.clone()).await;
+                                    if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), Some(result_value.to_string()), None).await {
+                                        tracing::warn!("failed to update step status: {}", e);
+                                    }
                                     wrote_result = true;
                                     break;
                                 }
                                 Err(e) => { last_err = Some(e.to_string()); tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await; }
                             }
                         }
-                        if !wrote_result { engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, serde_json::json!({"error": last_err.unwrap_or("unknown".to_string())})).await; wrote_result = true; }
+                        if !wrote_result {
+                            let error_val = serde_json::json!({"error": last_err.clone().unwrap_or("unknown".to_string())});
+                            engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, error_val.clone()).await;
+                            if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_val.to_string()), last_err.as_deref()).await {
+                                tracing::warn!("failed to update step status: {}", e);
+                            }
+                            wrote_result = true;
+                        }
                     }
                 } else if action == "rag::ingest" {
                     let file_path = step_def.inputs.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -411,13 +440,32 @@ pub async fn execute_workflow_steps(
                             match service.ingest_source(req).await {
                                 Ok(resp) => {
                                     let result_json = serde_json::to_value(resp).unwrap_or(serde_json::json!({"status":"ok"}));
-                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result_json).await;
+                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result_json.clone()).await;
+                                    if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), Some(result_json.to_string()), None).await {
+                                        tracing::warn!("failed to update step status: {}", e);
+                                    }
                                     wrote_result = true;
                                 }
-                                Err(e) => { tracing::warn!("rag ingest failed: {}", e); }
+                                Err(e) => {
+                                    tracing::warn!("rag ingest failed: {}", e);
+                                    let error_val = serde_json::json!({"error": e.to_string()});
+                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, error_val.clone()).await;
+                                    if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_val.to_string()), Some(&e.to_string())).await {
+                                        tracing::warn!("failed to update step status: {}", e);
+                                    }
+                                    wrote_result = true;
+                                }
                             }
                         }
-                        Err(e) => { tracing::warn!("init rag service failed: {}", e); }
+                        Err(e) => {
+                            tracing::warn!("init rag service failed: {}", e);
+                            let error_val = serde_json::json!({"error": e.to_string()});
+                            engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, error_val.clone()).await;
+                            if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_val.to_string()), Some(&e.to_string())).await {
+                                tracing::warn!("failed to update step status: {}", e);
+                            }
+                            wrote_result = true;
+                        }
                     }
                 } else if action == "rag::query" {
                     let query = step_def.inputs.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -436,13 +484,32 @@ pub async fn execute_workflow_steps(
                             match service.query(req).await {
                                 Ok(resp) => {
                                     let result_json = serde_json::to_value(resp).unwrap_or(serde_json::json!({"status":"ok"}));
-                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result_json).await;
+                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result_json.clone()).await;
+                                    if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), Some(result_json.to_string()), None).await {
+                                        tracing::warn!("failed to update step status: {}", e);
+                                    }
                                     wrote_result = true;
                                 }
-                                Err(e) => { tracing::warn!("rag query failed: {}", e); }
+                                Err(e) => {
+                                    tracing::warn!("rag query failed: {}", e);
+                                    let error_val = serde_json::json!({"error": e.to_string()});
+                                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, error_val.clone()).await;
+                                    if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_val.to_string()), Some(&e.to_string())).await {
+                                        tracing::warn!("failed to update step status: {}", e);
+                                    }
+                                    wrote_result = true;
+                                }
                             }
                         }
-                        Err(e) => { tracing::warn!("init rag service failed: {}", e); }
+                        Err(e) => {
+                            tracing::warn!("init rag service failed: {}", e);
+                            let error_val = serde_json::json!({"error": e.to_string()});
+                            engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, error_val.clone()).await;
+                            if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_val.to_string()), Some(&e.to_string())).await {
+                                tracing::warn!("failed to update step status: {}", e);
+                            }
+                            wrote_result = true;
+                        }
                     }
                 } else if action == "prompt::build" {
                     let build_type = step_def.inputs.get("build_type").and_then(|v| v.as_str()).unwrap_or("Planner");
@@ -514,46 +581,58 @@ pub async fn execute_workflow_steps(
                         ).await {
                             Ok(_) => {
                                 tracing::info!("Notification sent successfully for node: {}", node_id);
+                                let result_json = serde_json::json!({
+                                    "status": "sent",
+                                    "title": title,
+                                    "content": content,
+                                    "channel": channel,
+                                    "notification_rule_id": notification_rule_id
+                                });
                                 engine_clone.mark_step_completed_with_result(
                                     &execution_id_for_spawn,
                                     &node_id,
-                                    serde_json::json!({
-                                        "status": "sent",
-                                        "title": title,
-                                        "content": content,
-                                        "channel": channel,
-                                        "notification_rule_id": notification_rule_id
-                                    })
+                                    result_json.clone()
                                 ).await;
+                                if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), Some(result_json.to_string()), None).await {
+                                    tracing::warn!("failed to update step status: {}", e);
+                                }
                                 wrote_result = true;
                             }
                             Err(e) => {
                                 tracing::warn!("Failed to send notification for node {}: {}", node_id, e);
+                                let error_json = serde_json::json!({
+                                    "status": "failed",
+                                    "error": e.to_string(),
+                                    "title": title,
+                                    "content": content,
+                                    "channel": channel,
+                                    "notification_rule_id": notification_rule_id
+                                });
                                 engine_clone.mark_step_completed_with_result(
                                     &execution_id_for_spawn,
                                     &node_id,
-                                    serde_json::json!({
-                                        "status": "failed",
-                                        "error": e.to_string(),
-                                        "title": title,
-                                        "content": content,
-                                        "channel": channel,
-                                        "notification_rule_id": notification_rule_id
-                                    })
+                                    error_json.clone()
                                 ).await;
+                                if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_json.to_string()), Some(&e.to_string())).await {
+                                    tracing::warn!("failed to update step status: {}", e);
+                                }
                                 wrote_result = true;
                             }
                         }
                     } else {
                         tracing::warn!("No notification_rule_id provided for notify node: {}", node_id);
+                        let result_json = serde_json::json!({
+                            "status": "skipped",
+                            "reason": "no_rule_id"
+                        });
                         engine_clone.mark_step_completed_with_result(
                             &execution_id_for_spawn,
                             &node_id,
-                            serde_json::json!({
-                                "status": "skipped",
-                                "reason": "no_rule_id"
-                            })
+                            result_json.clone()
                         ).await;
+                        if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), Some(result_json.to_string()), Some("no_rule_id")).await {
+                            tracing::warn!("failed to update step status: {}", e);
+                        }
                         wrote_result = true;
                     }
                 } else if action == "ai_chat" || action == "ai_agent" {
@@ -637,7 +716,19 @@ pub async fn execute_workflow_steps(
                         }
                     };
                     
-                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result).await;
+                    engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, result.clone()).await;
+                    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let error_msg = result.get("error").and_then(|v| v.as_str());
+                    if let Err(e) = db_clone.update_workflow_run_step_status(
+                        &execution_id_for_spawn, 
+                        &node_id, 
+                        if success { "completed" } else { "failed" }, 
+                        Utc::now(), 
+                        Some(result.to_string()),
+                        error_msg
+                    ).await {
+                        tracing::warn!("failed to update step status: {}", e);
+                    }
                     wrote_result = true;
                     tracing::info!("AI node '{}' completed", node_id);
                 } else {
@@ -651,6 +742,9 @@ pub async fn execute_workflow_steps(
 
             if !wrote_result {
                 engine_clone.mark_step_completed(&execution_id_for_spawn, &node_id).await;
+                if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now(), None, None).await {
+                    tracing::warn!("failed to update step status: {}", e);
+                }
             }
             
             // 获取步骤结果并发送事件
@@ -660,7 +754,6 @@ pub async fn execute_workflow_steps(
                 "step_id": node_id,
                 "result": step_result
             }));
-            if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "completed", Utc::now()).await { tracing::warn!("update step: {}", e); }
 
             completed += 1;
             let progress = ((completed as f32 / total as f32) * 100.0) as u32;
@@ -769,6 +862,41 @@ pub async fn list_workflow_runs(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<serde_json::Value>, String> {
     db.list_workflow_runs().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_workflow_runs_paginated(
+    page: i64,
+    page_size: i64,
+    search: Option<String>,
+    workflow_id: Option<String>,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<serde_json::Value, String> {
+    let (runs, total) = db.list_workflow_runs_paginated(page, page_size, search.as_deref(), workflow_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "data": runs,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }))
+}
+
+#[tauri::command]
+pub async fn get_workflow_run_detail(
+    run_id: String,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<Option<serde_json::Value>, String> {
+    db.get_workflow_run_detail(&run_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_workflow_run(
+    run_id: String,
+    db: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    db.delete_workflow_run(&run_id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1123,3 +1251,5 @@ pub async fn get_workflow_schedule(
 ) -> Result<Option<ScheduleInfo>, String> {
     Ok(scheduler.get_schedule(&workflow_id).await)
 }
+
+

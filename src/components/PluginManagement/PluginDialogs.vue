@@ -232,37 +232,50 @@
         <span>{{ $t('plugins.testing', '正在测试插件...') }}</span>
       </div>
       <div v-else-if="testResult" class="space-y-4">
+        <!-- Status Alert -->
         <div class="alert" :class="{ 'alert-success': testResult.success, 'alert-error': !testResult.success }">
           <i :class="testResult.success ? 'fas fa-check-circle' : 'fas fa-times-circle'"></i>
           <span>{{ testResult.success ? $t('plugins.testPassed', '测试通过') : $t('plugins.testFailed', '测试失败') }}</span>
         </div>
-        <div v-if="testResult.message" class="card bg-base-200">
+        
+        <!-- Failed: Show error message only -->
+        <div v-if="!testResult.success" class="card bg-base-200">
           <div class="card-body">
-            <h4 class="font-semibold mb-2">{{ $t('plugins.testMessage', '测试消息') }}</h4>
-            <pre class="text-sm whitespace-pre-wrap">{{ testResult.message }}</pre>
+            <h4 class="font-semibold mb-2 text-error">{{ $t('plugins.errorInfo', '错误信息') }}</h4>
+            <pre class="text-sm whitespace-pre-wrap break-all text-error/80">{{ testResult.error || testResult.message || $t('plugins.unknownError', '未知错误') }}</pre>
           </div>
         </div>
-        <div v-if="testResult.findings && testResult.findings.length > 0" class="card bg-base-200">
-          <div class="card-body">
-            <h4 class="font-semibold mb-2">{{ $t('plugins.findings', '发现的问题') }} ({{ testResult.findings.length }})</h4>
-            <div class="space-y-2">
-              <div v-for="(finding, idx) in testResult.findings" :key="idx" class="card bg-base-100">
-                <div class="card-body p-3">
-                  <div class="flex justify-between items-start">
-                    <span class="font-medium">{{ finding.title }}</span>
-                    <span class="badge" :class="getSeverityBadgeClass(finding.severity)">{{ finding.severity }}</span>
+        
+        <!-- Success: Show message and findings -->
+        <template v-else>
+          <div v-if="testResult.message" class="card bg-base-200">
+            <div class="card-body">
+              <h4 class="font-semibold mb-2">{{ $t('plugins.testMessage', '测试消息') }}</h4>
+              <pre class="text-sm whitespace-pre-wrap">{{ testResult.message }}</pre>
+            </div>
+          </div>
+          <div v-if="testResult.findings && testResult.findings.length > 0" class="card bg-base-200">
+            <div class="card-body">
+              <h4 class="font-semibold mb-2">{{ $t('plugins.findings', '发现') }} ({{ testResult.findings.length }})</h4>
+              <div class="space-y-2">
+                <div v-for="(finding, idx) in testResult.findings" :key="idx" class="card bg-base-100">
+                  <div class="card-body p-3">
+                    <div class="flex justify-between items-start">
+                      <span class="font-medium">{{ finding.title }}</span>
+                      <span class="badge" :class="getSeverityBadgeClass(finding.severity)">{{ finding.severity }}</span>
+                    </div>
+                    <p class="text-sm text-base-content/70 mt-1 whitespace-pre-wrap break-all">{{ finding.description }}</p>
                   </div>
-                  <p class="text-sm text-base-content/70 mt-1">{{ finding.description }}</p>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-        <div v-if="testResult.error" class="alert alert-error">
-          <i class="fas fa-exclamation-circle"></i><span>{{ testResult.error }}</span>
-        </div>
+        </template>
       </div>
       <div class="modal-action">
+        <button v-if="isFullscreenEditorMode" class="btn btn-primary" @click="handleReferToAi">
+          <i class="fas fa-robot mr-2"></i>{{ $t('plugins.referToAi', '引用到AI助手') }}
+        </button>
         <button class="btn" @click="closeTestResultDialog">{{ $t('common.close', '关闭') }}</button>
       </div>
     </div>
@@ -406,6 +419,7 @@ const props = defineProps<{
   // Test dialog
   testing: boolean
   testResult: TestResult | null
+  isFullscreenEditorMode: boolean  // Whether in fullscreen code editor mode
   // Advanced test dialog
   advancedPlugin: PluginRecord | null
   advancedTesting: boolean
@@ -437,6 +451,7 @@ const emit = defineEmits<{
   'closeAiGenerateDialog': []
   'closeTestResultDialog': []
   'closeAdvancedDialog': []
+  'referTestResultToAi': []
 }>()
 
 // Dialog refs
@@ -504,6 +519,10 @@ const showAIGenerateDialog = () => aiGenerateDialogRef.value?.showModal()
 const closeAIGenerateDialog = () => { aiGenerateDialogRef.value?.close(); emit('closeAiGenerateDialog') }
 const showTestResultDialog = () => testResultDialogRef.value?.showModal()
 const closeTestResultDialog = () => { testResultDialogRef.value?.close(); emit('closeTestResultDialog') }
+const handleReferToAi = () => {
+  emit('referTestResultToAi')
+  closeTestResultDialog()
+}
 const showAdvancedDialog = () => advancedDialogRef.value?.showModal()
 const closeAdvancedDialog = () => { advancedDialogRef.value?.close(); emit('closeAdvancedDialog') }
 

@@ -19,11 +19,12 @@ use deno_core::{
     ModuleLoader, ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, ResolutionKind,
     RuntimeOptions,
 };
+use deno_core::v8;
 use deno_features::FeatureChecker;
 use deno_permissions::{PermissionsContainer, RuntimePermissionDescriptorParser};
 use deno_error::JsErrorBox;
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -353,84 +354,6 @@ impl PluginEngine {
         })
     }
 
-    /// 加载插件代码（从文件路径 - 已弃用）
-    ///
-    /// **注意**: 此方法已弃用，仅用于向后兼容。
-    /// 在DB-only模式下，请使用 `load_plugin_from_code()` 方法。
-    #[deprecated(note = "Use load_plugin_from_code() for DB-only mode")]
-    pub async fn load_plugin(&mut self, plugin_path: &Path) -> Result<PluginMetadata> {
-        let code = tokio::fs::read_to_string(plugin_path)
-            .await
-            .map_err(|e| PluginError::Load(format!("Failed to read plugin: {}", e)))?;
-
-        self.load_plugin_from_code(&code, &plugin_path.to_string_lossy())
-            .await
-    }
-
-    /// 从代码字符串加载插件（DB-only 模式推荐方法）
-    ///
-    /// # 参数
-    /// - `code`: 插件 JavaScript/TypeScript 代码
-    /// - `plugin_id`: 插件唯一标识符（用于日志和错误消息）
-    ///
-    /// # 返回
-    /// 返回插件元数据。如果插件代码中没有 `get_metadata()` 函数，
-    /// 将使用传入的 `metadata` 或返回默认元数据。
-    pub async fn load_plugin_from_code(
-        &mut self,
-        code: &str,
-        plugin_id: &str,
-    ) -> Result<PluginMetadata> {
-        // 执行插件代码（初始化）
-        self.runtime
-            .execute_script(
-                format!("plugin_{}.js", plugin_id),
-                deno_core::FastString::from(code.to_string()),
-            )
-            .map_err(|e| {
-                PluginError::Load(format!("Failed to execute plugin {}: {}", plugin_id, e))
-            })?;
-
-        // 调用 get_metadata() 获取插件元数据
-        // 使用简化版本：直接执行 JavaScript 代码获取元数据
-        let metadata_script = r#"
-            (function() {
-                if (typeof get_metadata === 'function') {
-                    return JSON.stringify(get_metadata());
-                } else {
-                    throw new Error('get_metadata function not found');
-                }
-            })();
-        "#
-        .to_string();
-
-        let _metadata_value = self
-            .runtime
-            .execute_script("get_metadata", deno_core::FastString::from(metadata_script))
-            .map_err(|e| {
-                PluginError::Load(format!(
-                    "Failed to call get_metadata for {}: {}",
-                    plugin_id, e
-                ))
-            })?;
-
-        // 解析元数据（通过 JavaScript 的 JSON.stringify）
-        // TODO: 实现从 v8::Global 到 String 的正确转换
-        // 临时使用直接解析的方式
-        let metadata: PluginMetadata = serde_json::from_str(
-            r#"{"id":"unknown","name":"Unknown","version":"1.0.0","category":"unknown","default_severity":"medium","tags":[]}"#
-        ).unwrap();
-
-        info!(
-            "Loaded plugin from code: {} v{} (metadata parsing pending)",
-            metadata.id, metadata.version
-        );
-        self.metadata = Some(metadata.clone());
-        self.plugin_path = Some(PathBuf::from(format!("db://{}", plugin_id)));
-
-        Ok(metadata)
-    }
-
     /// 从代码和元数据加载插件（DB-only 模式推荐方法）
     ///
     /// # 参数
@@ -469,9 +392,6 @@ impl PluginEngine {
 // Auto-generated: Bind ESM exports to globalThis for plugin engine compatibility
 if (typeof scan_transaction === 'function') {
     globalThis.scan_transaction = scan_transaction;
-}
-if (typeof get_metadata === 'function') {
-    globalThis.get_metadata = get_metadata;
 }
 if (typeof analyze === 'function') {
     globalThis.analyze = analyze;
@@ -584,6 +504,74 @@ if (typeof execute === 'function') {
         Ok((findings, last_result))
     }
 
+    /// 获取插件的输入参数 Schema（方案2：运行时调用插件的 get_input_schema 函数）
+    ///
+    /// 插件需要导出一个 `get_input_schema()` 函数，返回 JSON Schema 对象。
+    /// 如果插件没有该函数，返回默认的空 schema。
+    ///
+    /// # 示例插件代码
+    /// ```typescript
+    /// export function get_input_schema() {
+    ///   return {
+    ///     type: 'object',
+    ///     properties: {
+    ///       text: { type: 'string', description: '要处理的文字' },
+    ///       mode: { type: 'string', enum: ['encode', 'decode'] }
+    ///     },
+    ///     required: ['text', 'mode']
+    ///   };
+    /// }
+    /// ```
+    pub async fn get_input_schema(&mut self) -> Result<serde_json::Value> {
+        // 构造调用脚本：通过 op_plugin_return 存储结果
+        let call_script = r#"
+            (function() {
+                let schema = null;
+                
+                // 优先尝试 get_input_schema
+                if (typeof globalThis.get_input_schema === 'function') {
+                    schema = globalThis.get_input_schema();
+                }
+                // 兼容 getInputSchema (camelCase)
+                else if (typeof globalThis.getInputSchema === 'function') {
+                    schema = globalThis.getInputSchema();
+                }
+                
+                // 通过 op_plugin_return 存储结果
+                if (schema !== null) {
+                    try { Deno.core.ops.op_plugin_return(schema); } catch (_e) {}
+                }
+                
+                return schema !== null;
+            })();
+        "#;
+
+        self.runtime
+            .execute_script("get_input_schema", FastString::from(call_script.to_string()))
+            .map_err(|e| PluginError::Execution(format!("Failed to call get_input_schema: {}", e)))?;
+
+        // 从 PluginContext 获取结果
+        let result = {
+            let op_state = self.runtime.op_state();
+            let op_state_borrow = op_state.borrow();
+            let plugin_ctx = op_state_borrow.borrow::<PluginContext>();
+            plugin_ctx.take_last_result()
+        };
+
+        // 如果插件返回了 schema，使用它
+        if let Some(schema) = result {
+            return Ok(schema);
+        }
+
+        // 插件未定义 schema，返回默认值
+        Ok(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "input": {"type": "string", "description": "Tool input parameter"}
+            }
+        }))
+    }
+
     /// 调用插件函数（通用）
     ///
     /// 插件通过 Sentinel.emitFinding() 发送漏洞，而不是返回值
@@ -630,32 +618,55 @@ if (typeof execute === 'function') {
             fn_name,
         );
 
-        let result = self
+        let exec_result: Result<()> = (|| async {
+            let result = self
             .runtime
             .execute_script("call_plugin", FastString::from(call_script))
             .map_err(|e| PluginError::Execution(format!("Failed to call {}: {}", fn_name, e)))?;
 
-        // 如果函数返回 Promise，需要等待其完成
-        let promise = self.runtime.resolve(result);
-        self.runtime
-            .run_event_loop(deno_core::PollEventLoopOptions::default())
-            .await
-            .map_err(|e| {
-                PluginError::Execution(format!("Event loop error during {}: {}", fn_name, e))
+            // 如果函数返回 Promise，需要等待其完成
+            let promise = self.runtime.resolve(result);
+            self.runtime
+                .run_event_loop(deno_core::PollEventLoopOptions::default())
+                .await
+                .map_err(|e| {
+                    PluginError::Execution(format!("Event loop error during {}: {}", fn_name, e))
+                })?;
+
+            promise.await.map_err(|e| {
+                PluginError::Execution(format!("Promise rejection in {}: {:?}", fn_name, e))
             })?;
 
-        promise.await.map_err(|e| {
-            PluginError::Execution(format!("Promise rejection in {}: {:?}", fn_name, e))
-        })?;
+            debug!("Plugin function {} executed successfully", fn_name);
 
-        debug!("Plugin function {} executed successfully", fn_name);
+            Ok(())
+        })().await;
 
-        Ok(())
+        // If termination was requested, ensure we clear it before next run.
+        self.cancel_terminate_execution();
+
+        exec_result
     }
 
     /// 获取插件元数据
     pub fn get_metadata(&self) -> Option<&PluginMetadata> {
         self.metadata.as_ref()
+    }
+
+    /// Get a thread-safe handle for this isolate.
+    ///
+    /// This handle can be used from other OS threads to request termination of
+    /// the currently running JavaScript (best-effort).
+    pub fn isolate_handle(&mut self) -> v8::IsolateHandle {
+        self.runtime.v8_isolate().thread_safe_handle()
+    }
+
+    /// Cancel a previously requested TerminateExecution state (if any).
+    ///
+    /// This should be called after handling a termination, otherwise the next
+    /// JS entry may immediately fail.
+    pub fn cancel_terminate_execution(&mut self) {
+        self.runtime.v8_isolate().cancel_terminate_execution();
     }
 }
 

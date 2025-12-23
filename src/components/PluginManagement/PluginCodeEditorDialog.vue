@@ -206,6 +206,17 @@
                     </div>
                     <pre class="code-ref-content"><code>{{ msg.codeRef.preview }}</code></pre>
                   </div>
+                  <!-- Test result reference in user message -->
+                  <div v-if="msg.role === 'user' && msg.testResultRef" class="message-test-ref">
+                    <div class="test-ref-label">
+                      <i :class="msg.testResultRef.success ? 'fas fa-check-circle text-success' : 'fas fa-times-circle text-error'" class="text-xs mr-1"></i>
+                      {{ $t('plugins.testResultRef', '测试结果') }}
+                      <span :class="msg.testResultRef.success ? 'text-success' : 'text-error'">
+                        ({{ msg.testResultRef.success ? $t('common.success', '成功') : $t('common.failed', '失败') }})
+                      </span>
+                    </div>
+                    <pre class="test-ref-content"><code>{{ msg.testResultRef.preview }}</code></pre>
+                  </div>
                   <div class="message-text" v-html="msg.content"></div>
                   <div v-if="msg.role === 'assistant' && msg.codeBlock" class="message-code-action">
                     <button class="btn btn-xs btn-primary" @click="$emit('applyAiCode', msg.codeBlock)">
@@ -255,6 +266,25 @@
                 <pre><code>{{ selectedCodeRef.preview }}</code></pre>
               </div>
             </div>
+
+            <!-- Test Result Reference Badge -->
+            <div v-if="selectedTestResultRef" class="test-result-reference-badge">
+              <div class="test-ref-header">
+                <i :class="selectedTestResultRef.success ? 'fas fa-check-circle text-success' : 'fas fa-times-circle text-error'" class="text-xs"></i>
+                <span class="text-xs font-medium">
+                  {{ $t('plugins.testResultRef', '测试结果') }}
+                  <span :class="selectedTestResultRef.success ? 'text-success' : 'text-error'">
+                    ({{ selectedTestResultRef.success ? $t('common.success', '成功') : $t('common.failed', '失败') }})
+                  </span>
+                </span>
+                <button class="btn btn-xs btn-ghost btn-circle ml-auto" @click="$emit('clearTestResultRef')">
+                  <i class="fas fa-times text-xs"></i>
+                </button>
+              </div>
+              <div class="test-ref-preview">
+                <pre><code>{{ selectedTestResultRef.preview }}</code></pre>
+              </div>
+            </div>
             
             <textarea 
               v-model="aiInputText"
@@ -275,6 +305,11 @@
                         :title="$t('plugins.addFullCode', '添加完整代码')">
                   <i class="fas fa-file-code mr-1"></i>
                   {{ $t('plugins.addAll', '添加全部') }}
+                </button>
+                <button v-if="editingPlugin" class="btn btn-xs btn-ghost" @click="$emit('addTestResultToContext')"
+                        :title="$t('plugins.addTestResult', '添加测试结果')">
+                  <i class="fas fa-vial mr-1"></i>
+                  {{ $t('plugins.addTestResult', '添加测试结果') }}
                 </button>
               </div>
               <button 
@@ -323,6 +358,19 @@
             <button class="btn btn-sm btn-ghost" @click="$emit('copyPlugin')" :title="$t('plugins.copyPlugin', '复制插件')">
               <i class="fas fa-copy"></i>
             </button>
+
+            <div class="toolbar-divider"></div>
+
+            <!-- Test Button -->
+            <button v-if="editingPlugin" 
+                    class="btn btn-sm btn-info" 
+                    :disabled="pluginTesting"
+                    @click="$emit('testCurrentPlugin')" 
+                    :title="$t('plugins.testPlugin', '测试插件')">
+              <span v-if="pluginTesting" class="loading loading-spinner loading-xs"></span>
+              <i v-else class="fas fa-play"></i>
+              <span class="ml-1">{{ $t('plugins.test', '测试') }}</span>
+            </button>
             
             <template v-if="editingPlugin">
               <button v-if="!isEditing" class="btn btn-sm btn-primary" @click="$emit('enableEditing')">
@@ -361,25 +409,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import type { PluginRecord, NewPluginMetadata, SubCategory } from './types'
+import type { PluginRecord, NewPluginMetadata, SubCategory, CodeReference, TestResultReference, AiChatMessage } from './types'
 import { mainCategories } from './types'
-
-// AI Message type
-interface AiMessage {
-  role: 'user' | 'assistant'
-  content: string
-  codeBlock?: string
-  codeRef?: CodeReference
-}
-
-// Code reference type
-interface CodeReference {
-  code: string
-  preview: string
-  startLine: number
-  endLine: number
-  isFullCode: boolean
-}
 
 const props = defineProps<{
   editingPlugin: PluginRecord | null
@@ -391,10 +422,13 @@ const props = defineProps<{
   subCategories: SubCategory[]
   // AI related props
   showAiPanel: boolean
-  aiMessages: AiMessage[]
+  aiMessages: AiChatMessage[]
   aiStreaming: boolean
   aiStreamingContent: string
   selectedCodeRef: CodeReference | null
+  selectedTestResultRef: TestResultReference | null
+  // Test related props
+  pluginTesting: boolean
 }>()
 
 const emit = defineEmits<{
@@ -417,6 +451,10 @@ const emit = defineEmits<{
   'addSelectedCode': []
   'addFullCode': []
   'clearCodeRef': []
+  'clearTestResultRef': []
+  'addTestResultToContext': []
+  // Test related emits
+  'testCurrentPlugin': []
 }>()
 
 const codeEditorDialogRef = ref<HTMLDialogElement>()
@@ -890,6 +928,72 @@ defineExpose({
 }
 
 .ai-chat-input .code-reference-badge .code-ref-preview code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Test result reference badge in input area */
+.ai-chat-input .test-result-reference-badge {
+  background: oklch(var(--b1));
+  border: 1px solid oklch(var(--bc) / 0.15);
+  border-radius: 0.5rem;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+
+.ai-chat-input .test-result-reference-badge .test-ref-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: oklch(var(--b2));
+  color: oklch(var(--bc));
+}
+
+.ai-chat-input .test-result-reference-badge .test-ref-preview {
+  max-height: 100px;
+  overflow: auto;
+  background: oklch(var(--b1));
+}
+
+.ai-chat-input .test-result-reference-badge .test-ref-preview pre {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: oklch(var(--bc));
+}
+
+.ai-chat-input .test-result-reference-badge .test-ref-preview code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Test result reference in messages */
+.ai-chat-message .message-test-ref {
+  background: oklch(var(--b1));
+  border: 1px solid oklch(var(--bc) / 0.15);
+  border-radius: 0.5rem;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+}
+
+.ai-chat-message .message-test-ref .test-ref-label {
+  padding: 0.375rem 0.75rem;
+  background: oklch(var(--b3));
+  color: oklch(var(--bc) / 0.7);
+  font-size: 0.75rem;
+  border-bottom: 1px solid oklch(var(--bc) / 0.15);
+}
+
+.ai-chat-message .message-test-ref .test-ref-content {
+  padding: 0.5rem 0.75rem;
+  margin: 0;
+  font-size: 0.75rem;
+  color: oklch(var(--bc));
+  max-height: 100px;
+  overflow: auto;
+  background: oklch(var(--b1));
+}
+
+.ai-chat-message .message-test-ref .test-ref-content code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 

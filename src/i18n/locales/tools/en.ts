@@ -8,7 +8,7 @@ export default {
   workflowTools: 'Workflow Tools',
   pluginTools: 'Plugin Tools',
   mcpServers: 'MCP Servers',
-  marketplace: 'Marketplace',
+  marketplace: 'MCP Marketplace',
 
   // Management dropdown
   management: 'Management',

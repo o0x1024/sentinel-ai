@@ -773,7 +773,7 @@ const prettyContent = computed({
     const lines = requestContent.value.split('\n');
     const result: string[] = [];
     let inBody = false;
-    let bodyLines: string[] = [];
+    const bodyLines: string[] = [];
     
     for (const line of lines) {
       if (!inBody) {

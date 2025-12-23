@@ -404,9 +404,51 @@ pub struct PortDef {
     pub required: bool,
 }
 
-/// Parse plugin code to extract input_schema (delegates to unified parser)
-fn parse_tool_input_schema(code: &str) -> serde_json::Value {
-    sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(code)
+/// 从插件代码获取 input_schema（仅通过运行时调用 get_input_schema）
+/// 
+/// 调用插件导出的 get_input_schema() 函数获取 schema。
+/// 如果插件未导出该函数，返回默认空 schema。
+async fn get_plugin_input_schema_async(
+    plugin_id: &str,
+    plugin_name: &str,
+    code: &str,
+) -> serde_json::Value {
+    // 构建临时元数据
+    let metadata = sentinel_plugins::PluginMetadata {
+        id: plugin_id.to_string(),
+        name: plugin_name.to_string(),
+        version: "1.0.0".to_string(),
+        author: None,
+        main_category: "agent".to_string(),
+        category: "tool".to_string(),
+        default_severity: sentinel_plugins::Severity::Medium,
+        tags: vec![],
+        description: Some(format!("Agent tool plugin: {}", plugin_name)),
+    };
+
+    // 运行时获取 schema
+    match sentinel_plugins::get_input_schema_from_code(code, metadata).await {
+        Ok(schema) => {
+            tracing::info!(
+                "Got input schema from plugin runtime: {} ({})",
+                plugin_name,
+                plugin_id
+            );
+            schema
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to get schema from runtime for {}: {}, plugin must export get_input_schema()",
+                plugin_id,
+                e
+            );
+            // 返回默认空 schema
+            serde_json::json!({
+                "type": "object",
+                "properties": {}
+            })
+        }
+    }
 }
 
 /// List all available node types for workflow studio
@@ -762,10 +804,16 @@ pub async fn build_node_catalog(
             if plugin.status == sentinel_passive::PluginStatus::Enabled
                 && plugin.metadata.main_category == "agent"
             {
-                // 尝试获取插件代码并解析 ToolInput 接口
+                // 获取插件代码并通过运行时获取 schema（优先），静态解析作为 fallback
                 let params_schema = if let Some(ref db) = db_service {
                     if let Ok(Some(code)) = db.get_plugin_code(&plugin.metadata.id).await {
-                        parse_tool_input_schema(&code)
+                        // 使用运行时方法获取 schema
+                        get_plugin_input_schema_async(
+                            &plugin.metadata.id,
+                            &plugin.metadata.name,
+                            &code,
+                        )
+                        .await
                     } else {
                         serde_json::json!({
                             "type": "object",

@@ -557,6 +557,7 @@ const onNodeClick = (node: FlowchartNode, event?: MouseEvent) => {
 
 // 右键菜单事件处理
 const onNodeContextMenu = (event: MouseEvent, node: FlowchartNode) => {
+    event.stopPropagation() // 阻止冒泡到容器
     console.log('onNodeContextMenu triggered for node:', node.id)
     showNodeContextMenu(node, event)
 }
@@ -837,6 +838,15 @@ const toggleDeleteConnectionMode = () => {
 const drag_ctx = reactive({ rect_left: 0, rect_top: 0, scale: 1 })
 
 const on_node_pointer_down = (event: PointerEvent, node: FlowchartNode) => {
+    // 只允许左键拖拽
+    if (event.button !== 0) {
+        // 如果是右键，阻止冒泡以防止容器捕获指针
+        if (event.button === 2) {
+            event.stopPropagation()
+        }
+        return
+    }
+
     event.stopPropagation() // 阻止事件冒泡到画布
     // 注意：不调用 preventDefault()，否则会阻止 click 事件
     dragMoved.value = false
@@ -864,6 +874,9 @@ const on_node_pointer_down = (event: PointerEvent, node: FlowchartNode) => {
 }
 
 const on_pointer_down = (event: PointerEvent) => {
+    // 右键点击不处理，让其触发 contextmenu
+    if (event.button === 2) return
+
     if (event.target === flowchartContainer.value || (event.target as HTMLElement).closest('.flowchart-content')) {
         // 空白区域：开始画布拖拽（按住空格键或中键）
         if (event.button === 1 || (event.button === 0 && event.shiftKey)) {
@@ -879,15 +892,34 @@ const on_pointer_down = (event: PointerEvent) => {
     }
 }
 
-const on_pointer_move = (event: PointerEvent) => {
+    const on_pointer_move = (event: PointerEvent) => {
     // 拖拽连接线
     if (isDraggingConnection.value) {
         event.preventDefault()
         const rect = flowchartContainer.value?.getBoundingClientRect()
         if (rect) {
             const scale = zoomLevel.value * viewportScale.value
-            dragConnectionEnd.x = (event.clientX - rect.left) / scale
-            dragConnectionEnd.y = (event.clientY - rect.top) / scale
+            
+            // 检查是否有吸附目标
+            if (hover_port.value && hover_port.value.type === 'input') {
+                const node = nodes.value.find(n => n.id === hover_port.value!.nodeId)
+                if (node) {
+                    // 吸附到节点输入端口中心
+                    // 注意：这里需要与 calculateConnectionPath 中的高度假设保持一致
+                    const NODE_HEIGHT = 80
+                    dragConnectionEnd.x = node.x
+                    dragConnectionEnd.y = node.y + NODE_HEIGHT / 2
+                } else {
+                    // 节点未找到（异常情况），回退到鼠标位置
+                    dragConnectionEnd.x = (event.clientX - rect.left) / scale
+                    dragConnectionEnd.y = (event.clientY - rect.top) / scale
+                }
+            } else {
+                // 无吸附目标，跟随鼠标
+                dragConnectionEnd.x = (event.clientX - rect.left) / scale
+                dragConnectionEnd.y = (event.clientY - rect.top) / scale
+            }
+            
             updateTempConnectionPath()
         }
         return

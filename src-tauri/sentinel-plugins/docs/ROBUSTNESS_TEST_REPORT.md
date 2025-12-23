@@ -344,8 +344,101 @@ let rate_limiter = RateLimiter::new(100); // 100 req/s
 ### 短期 (1-2 周)
 
 1. **增加属性测试 (Property-based Testing)**:
-   - 使用 `proptest` 自动生成随机输入
-   - 验证不变性：任何输入都不应导致 panic
+   - **目的**：与“手写固定用例”不同，属性测试不关心某个具体输入是否通过，而是定义一组**永远成立的不变性（Property / Invariant）**，然后让框架（如 `proptest`）自动生成大量随机/极端输入去尝试“打破不变性”，从而更容易发现边界崩溃、解析漏洞、资源爆炸等问题。
+   - **为什么适合插件系统**：
+     - 插件执行入口的输入（URL、headers、body、JSON）组合空间巨大，手写用例很难覆盖到“奇怪但真实”的输入。
+     - 目标不是验证某个插件业务逻辑，而是验证**宿主框架的健壮性**：不 panic、可控失败、不会无限增长、不会卡死。
+   - **建议的不变性（示例）**：
+     - **不崩溃**：任意输入下，Rust 端不应 panic（尤其是 `unwrap()`/越界/UTF-8 假设）。
+     - **可控返回**：返回值要么 `Ok(findings)` 要么 `Err(PluginError)`，不能出现进程级崩溃（例如 V8 fatal）。
+     - **资源上限**：单次执行在给定预算内完成（例如 1s/3s），或至少能被 `terminate_execution()`/`restart()` 恢复（避免永久卡死）。
+     - **输出合法**：findings 序列化/字段满足 schema（severity/confidence 等枚举合法）。
+   - **实现方式（以 `proptest` 为例）**：
+     - 在 `dev-dependencies` 增加 `proptest`（可选：`proptest-derive`）。
+     - 用 Strategy 生成输入：URL（包含非法/超长/特殊字符）、headers（随机数量与值）、body（随机字节）等。
+     - 将生成的输入喂给 `PluginExecutor::scan_transaction()`，断言不变性成立。
+
+   **例子 A：任意 URL/headers/body 下不 panic（扫描入口）**
+
+```rust
+use proptest::prelude::*;
+use std::collections::HashMap;
+
+// 生成一个相对“恶意”的 URL：允许任意字符、长度上限 8KB
+fn url_strategy() -> impl Strategy<Value = String> {
+    // 注意：这里用 \\PC(非控制字符) + 长度上限，实际可按需更激进
+    "\\PC{0,8192}".prop_map(|s| s)
+}
+
+fn headers_strategy() -> impl Strategy<Value = HashMap<String, String>> {
+    prop::collection::hash_map(
+        "\\PC{0,64}",     // key
+        "\\PC{0,512}",    // value
+        0..200,           // header count
+    )
+}
+
+fn body_strategy() -> impl Strategy<Value = Vec<u8>> {
+    prop::collection::vec(any::<u8>(), 0..(128 * 1024)) // 0..128KB
+}
+
+proptest! {
+    // proptest 本身是 sync 测试，异步可以用一个 current-thread runtime 包一层
+    #[test]
+    fn prop_scan_transaction_never_panics(url in url_strategy(), headers in headers_strategy(), body in body_strategy()) {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async move {
+            let exec = build_executor_for_tests().await; // 伪代码：构造 PluginExecutor
+            let txn = build_tx(url, headers, body);      // 伪代码：构造 HttpTransaction
+
+            // 不变性：无 panic（proptest 会捕获 panic 并 shrink 输入）
+            let _ = exec.scan_transaction(txn).await;
+        });
+    }
+}
+```
+
+   - **解释**：
+     - `proptest` 会在失败时自动“缩小”输入（shrink），比如把 8KB 的 URL 缩到最小仍能复现崩溃的那一小段，极大提升定位效率。
+
+   **例子 B：对 JSON 输入执行 agent，不允许出现结构性崩溃（agent 入口）**
+
+```rust
+use proptest::prelude::*;
+use serde_json::Value;
+
+fn json_strategy() -> impl Strategy<Value = Value> {
+    // 生成“任意 JSON”：包含深层嵌套、数组、对象等
+    // 实际工程可限制最大深度/大小，避免测试自身 OOM
+    prop::collection::vec(any::<u8>(), 0..4096)
+        .prop_map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+}
+
+proptest! {
+    #[test]
+    fn prop_execute_agent_never_panics(input in json_strategy()) {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async move {
+            let exec = build_agent_executor_for_tests().await; // 伪代码
+            let _ = exec.execute_agent(&input).await;
+        });
+    }
+}
+```
+
+   **例子 C：对“可能卡死的同步逻辑”，验证可被终止（TerminateExecution）**
+
+```rust
+// 思路：构造一个包含 busy-loop 的插件，然后 proptest 生成不同输入触发路径，
+// 并在超时后调用 exec.terminate_execution()，断言最终能返回 Err 且系统可继续执行下一次。
+//
+// 重点不在“超时返回”，而在“终止后 executor 仍可继续工作”。
+```
+
+   - **落地建议**：
+     - 先从 **小规模策略**开始（URL<=8KB、body<=128KB、headers<=200），稳定后再逐步加大。
+     - 对可能导致 V8 fatal OOM 的输入，一律加上生成约束（避免把测试机打崩）。
+     - 把 property tests 标记 `#[ignore]`，在 nightly/CI 的单独 job 中跑（或每日定时跑）。
 
 2. **增加 Fuzz 测试**:
    - 集成 `cargo-fuzz` 对 `scan_transaction` 输入进行持续 fuzzing
@@ -358,8 +451,12 @@ let rate_limiter = RateLimiter::new(100); // 100 req/s
 ### 中期 (1-2 月)
 
 4. **V8 Isolate 强制中断**:
-   - 暴露 `v8::Isolate::TerminateExecution()` 接口
-   - 实现真正的"杀死卡住的 JS"功能
+   - 通过 `deno_core::v8::IsolateHandle` 暴露跨线程终止能力：
+     - 在创建 `JsRuntime` 后，从 `isolate.thread_safe_handle()` 获取 `IsolateHandle`
+     - 将该 handle 保存到 `PluginExecutor`（重启时同步更新）
+     - 外部调用 `handle.terminate_execution()` 触发 V8 抛出不可捕获异常，从而打断同步死循环
+     - 在本次调用返回后，调用 `cancel_terminate_execution()` 清理状态，避免影响下一次执行
+   - 这样才能实现真正的“杀死卡住的 JS”（`tokio::time::timeout` 只能中断等待，无法抢占正在运行的 JS）
 
 5. **内存限制测试**:
    - 增加 V8 堆大小限制测试（如 128MB、256MB）

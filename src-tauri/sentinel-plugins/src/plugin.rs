@@ -425,4 +425,73 @@ impl PluginManager {
 
         Ok(result_pair)
     }
+
+    /// 获取插件的输入参数 Schema（运行时调用插件的 get_input_schema 函数）
+    ///
+    /// 这是方案2的核心实现：加载插件后调用其导出的 `get_input_schema()` 函数。
+    /// 不再需要正则表达式解析代码。
+    ///
+    /// # 返回
+    /// - 成功：返回插件定义的 JSON Schema
+    /// - 失败/未定义：返回默认的空 schema
+    pub async fn get_plugin_input_schema(&self, plugin_id: &str) -> Result<serde_json::Value> {
+        // 获取插件代码和元数据
+        let (metadata, code) = {
+            let registry = self.registry.read().await;
+            let record = registry
+                .get(plugin_id)
+                .ok_or_else(|| PluginError::NotFound(format!("Plugin not found: {}", plugin_id)))?;
+
+            let metadata = record.metadata.clone();
+            drop(registry);
+
+            let code = self.get_plugin_code(plugin_id).await?;
+            (metadata, code)
+        };
+
+        // 在独立线程中运行（因为 JsRuntime 不是 Send）
+        let schema = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
+
+            rt.block_on(async move {
+                let mut engine = PluginEngine::new()?;
+                engine.load_plugin_with_metadata(&code, metadata).await?;
+                engine.get_input_schema().await
+            })
+        })
+        .await
+        .map_err(|e| PluginError::Execution(format!("Task join error: {}", e)))??;
+
+        Ok(schema)
+    }
+}
+
+/// 从插件代码直接获取 input schema（无需先注册到 PluginManager）
+///
+/// 用于插件安装/编辑时预览 schema，此时插件可能还未注册到管理器中。
+pub async fn get_input_schema_from_code(
+    code: &str,
+    metadata: PluginMetadata,
+) -> Result<serde_json::Value> {
+    let code = code.to_string();
+
+    let schema = tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
+
+        rt.block_on(async move {
+            let mut engine = PluginEngine::new()?;
+            engine.load_plugin_with_metadata(&code, metadata).await?;
+            engine.get_input_schema().await
+        })
+    })
+    .await
+    .map_err(|e| PluginError::Execution(format!("Task join error: {}", e)))??;
+
+    Ok(schema)
 }

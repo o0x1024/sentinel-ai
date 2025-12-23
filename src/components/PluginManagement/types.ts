@@ -151,3 +151,32 @@ export const passiveCategories = [
 export const agentsCategories = [
   'scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility', 'custom'
 ]
+
+// Code reference type for AI assistant
+export interface CodeReference {
+  code: string
+  preview: string
+  startLine: number
+  endLine: number
+  isFullCode: boolean
+}
+
+// Test result reference type for AI assistant
+export interface TestResultReference {
+  success: boolean
+  message: string
+  preview: string
+  findings?: Array<{ title: string; description: string; severity: string }>
+  error?: string
+  executionTime?: number
+  timestamp: number
+}
+
+// AI chat message type
+export interface AiChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  codeBlock?: string
+  codeRef?: CodeReference
+  testResultRef?: TestResultReference
+}

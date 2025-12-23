@@ -1923,7 +1923,19 @@ export default {
     addSelectedCode: '添加选中代码到上下文',
     addFullCode: '添加完整代码到上下文',
     noCodeSelected: '请先在编辑器中选择代码',
-    noCode: '没有代码'
+    noCode: '没有代码',
+    // Test result reference
+    testPlugin: '测试插件',
+    testResultRef: '测试结果',
+    addTestResult: '添加测试结果',
+    noTestResult: '请先运行插件测试',
+    testSuccess: '测试成功',
+    testFailed: '测试失败',
+    testPassed: '测试通过',
+    errorInfo: '错误信息',
+    unknownError: '未知错误',
+    referToAi: '引用到AI助手',
+    testResultAdded: '已添加测试结果到AI助手'
   },
   license: {
     title: '软件激活',

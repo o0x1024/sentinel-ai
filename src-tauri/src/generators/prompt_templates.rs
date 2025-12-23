@@ -48,15 +48,15 @@ impl PromptTemplateBuilder {
         match template_type {
             TemplateType::PluginGeneration => {
                 // 被动扫描插件生成 - 使用合并后的完整模板
-                Ok(include_str!("templates/plugin_generation.txt").to_string())
+                Ok("".to_string())
             }
             TemplateType::AgentPluginGeneration => {
                 // Agent 工具插件生成 - 使用合并后的完整模板
-                Ok(include_str!("templates/agent_plugin_generation.txt").to_string())
+                Ok("".to_string())
             }
-            TemplateType::PluginFix => Ok(include_str!("templates/plugin_fix.txt").to_string()),
+            TemplateType::PluginFix => Ok("".to_string()),
             TemplateType::AgentPluginFix => {
-                Ok(include_str!("templates/agent_plugin_fix.txt").to_string())
+                Ok("".to_string())
             }
             _ => Err(anyhow::anyhow!(
                 "Unsupported template type: {:?}",
@@ -185,7 +185,6 @@ impl PromptTemplateBuilder {
         prompt.push_str("Please fix the code to resolve the error. The fixed plugin must:\n\n");
         prompt.push_str("1. **Fix the specific error** mentioned above\n");
         prompt.push_str("2. **Maintain the plugin interface**:\n");
-        prompt.push_str("   - `function get_metadata()` - returns plugin metadata with id, name, version, etc.\n");
         prompt.push_str("   - `function scan_transaction(transaction)` - scans HTTP transaction for vulnerabilities\n");
         prompt.push_str(&format!(
             "3. **Detect {} vulnerabilities** correctly\n",
@@ -203,7 +202,6 @@ impl PromptTemplateBuilder {
         prompt.push_str(
             "- Incorrect API usage (Sentinel.emitFinding vs Deno.core.ops.op_emit_finding)\n",
         );
-        prompt.push_str("- Missing metadata fields (id, name, version, category, etc.)\n");
         prompt.push_str("- Syntax errors (missing brackets, semicolons, etc.)\n");
         prompt.push_str("- Type errors in TypeScript\n");
         prompt.push_str("- Accessing undefined properties on context objects\n\n");
@@ -799,21 +797,6 @@ try {
 Your generated plugin MUST implement the following TypeScript interface:
 
 ```typescript
-// Plugin metadata
-function get_metadata(): PluginMetadata {
-    return {
-        id: "unique_plugin_id",
-        name: "Plugin Name",
-        version: "1.0.0",
-        author: "AI Generated",
-        main_category: "passive",
-        category: "vuln_type", // e.g., "sqli", "xss", "file_upload", "command_injection", "path_traversal", "xxe", "ssrf", "idor", "auth_bypass", "info_leak", "csrf"
-        description: "Detailed description",
-        default_severity: "critical" | "high" | "medium" | "low",
-        tags: ["tag1", "tag2"],
-    };
-}
-
 // Analyze HTTP transaction (required)
 export function scan_transaction(ctx: HttpTransaction): void {
     // Analyze request + response together
@@ -824,7 +807,6 @@ export function scan_transaction(ctx: HttpTransaction): void {
 // **CRITICAL**: Export functions to globalThis for plugin engine to call
 // Without these exports, the plugin will fail with "Function not found" error
 // Use direct assignment without type casting to ensure proper execution
-globalThis.get_metadata = get_metadata;
 globalThis.scan_transaction = scan_transaction;
 
 // Emit finding when vulnerability is detected
@@ -916,10 +898,6 @@ Return ONLY the TypeScript plugin code wrapped in a markdown code block:
 
 ```typescript
 // Your complete plugin code here
-function get_metadata(): PluginMetadata {
-    // ...
-}
-
 export function scan_transaction(ctx: HttpTransaction): void {
     // ...
 }
@@ -927,7 +905,6 @@ export function scan_transaction(ctx: HttpTransaction): void {
 // **CRITICAL**: MUST export all functions to globalThis
 // The plugin engine calls functions from globalThis, not from module exports
 // Use direct assignment without type casting to ensure proper execution
-globalThis.get_metadata = get_metadata;
 globalThis.scan_transaction = scan_transaction;
 ```
 

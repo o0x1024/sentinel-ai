@@ -341,15 +341,27 @@ pub fn run() {
                                         .and_then(|v| v.as_str())
                                         .map(|s| s.to_string());
                                     
-                                    // Parse input schema from code if available
+                                    // 使用运行时调用获取 input_schema
                                     let input_schema = if let Some(code_str) = &code {
-                                        sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(code_str)
+                                        let metadata = sentinel_plugins::PluginMetadata {
+                                            id: id.clone(),
+                                            name: name.clone(),
+                                            version: "1.0.0".to_string(),
+                                            author: None,
+                                            main_category: "agent".to_string(),
+                                            category: "tool".to_string(),
+                                            default_severity: sentinel_plugins::Severity::Medium,
+                                            tags: vec![],
+                                            description: Some(description.clone()),
+                                        };
+                                        sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+                                            code_str,
+                                            metadata,
+                                        ).await
                                     } else {
                                         serde_json::json!({
                                             "type": "object",
-                                            "properties": {
-                                                "input": {"type": "string"}
-                                            }
+                                            "properties": {}
                                         })
                                     };
                                     
@@ -670,6 +682,10 @@ pub fn run() {
             passive_scan_commands::remove_intercept_filter_rule,
             passive_scan_commands::update_intercept_filter_rule,
             passive_scan_commands::update_runtime_filter_rules,
+            // Plugin store commands
+            passive_scan_commands::fetch_store_plugins,
+            passive_scan_commands::fetch_plugin_code,
+            passive_scan_commands::install_store_plugin,
             // Proxifier commands
             proxifier_commands::get_proxifier_config,
             proxifier_commands::start_proxifier,
@@ -796,6 +812,9 @@ pub fn run() {
             sentinel_workflow::commands::stop_workflow_run,
             sentinel_workflow::commands::get_workflow_run_status,
             sentinel_workflow::commands::list_workflow_runs,
+            sentinel_workflow::commands::list_workflow_runs_paginated,
+            sentinel_workflow::commands::get_workflow_run_detail,
+            sentinel_workflow::commands::delete_workflow_run,
             sentinel_workflow::commands::save_workflow_definition,
             sentinel_workflow::commands::get_workflow_definition,
             sentinel_workflow::commands::list_workflow_definitions,

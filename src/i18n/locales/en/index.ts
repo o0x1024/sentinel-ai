@@ -487,6 +487,7 @@ export default {
     uploading: 'Uploading...',
     readonly: 'Read-only',
     copy: 'Copy',
+    copySuccess: 'Copied',
     cancelEdit: 'Cancel Edit',
     exitFullscreen: 'Exit Fullscreen',
     approveSuccess: 'Plugin approved: {name}',
@@ -553,6 +554,22 @@ export default {
       reporter: 'Report Generator',
       custom: 'Custom',
       other: 'Other'
+    },
+
+    store: {
+      title: 'Plugin Store',
+      searchPlaceholder: 'Search plugins...',
+      allCategories: 'All Categories',
+      refreshToLoad: 'Click refresh to load plugins',
+      noPlugins: 'No plugins available',
+      noDescription: 'No description',
+      installed: 'Installed',
+      install: 'Install',
+      installSuccess: 'Plugin installed successfully',
+      installError: 'Installation failed',
+      fetchError: 'Failed to fetch plugin list',
+      downloading: 'Downloading...',
+      viewDetails: 'View Details'
     }
   },
 

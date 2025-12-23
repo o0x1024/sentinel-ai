@@ -102,36 +102,29 @@ impl PluginValidator {
         let mut warnings = Vec::new();
         let mut all_present = true;
 
-        // Required functions
-        let required = [
-            ("get_metadata", "function get_metadata"),
-            ("scan_response", "function scan_response"),
+        // DB-only 模式：插件元数据来自数据库 (plugin_registry)，不再要求插件代码提供 get_metadata()
+        //
+        // Passive 插件必须提供 scan_transaction 作为唯一入口（function/export function 均可）
+        let scan_patterns = [
+            "function scan_transaction",
+            "export function scan_transaction",
+            "export async function scan_transaction",
         ];
-
-        for (name, pattern) in &required {
-            if !code.contains(pattern) {
-                errors.push(format!("Missing required function: {}", name));
-                all_present = false;
-            }
+        if !scan_patterns.iter().any(|p| code.contains(p)) {
+            errors.push("Missing required function: scan_transaction".to_string());
+            all_present = false;
         }
 
         // Recommended functions
         let recommended = [
-            ("scan_transaction", "function scan_transaction"),
             ("op_emit_finding", "op_emit_finding"),
+            ("get_metadata", "function get_metadata"),
         ];
 
         for (name, pattern) in &recommended {
             if !code.contains(pattern) {
                 warnings.push(format!("Recommended function/API not found: {}", name));
             }
-        }
-
-        // Check metadata structure
-        if !code.contains("id:") || !code.contains("name:") {
-            errors
-                .push("get_metadata() must return object with 'id' and 'name' fields".to_string());
-            all_present = false;
         }
 
         (all_present, if all_present { warnings } else { errors })
@@ -286,11 +279,7 @@ mod tests {
         let validator = PluginValidator::new();
 
         let valid_code = r#"
-function get_metadata() {
-    return { id: "test", name: "Test" };
-}
-
-function scan_response(ctx) {
+export async function scan_transaction(transaction) {
     Deno.core.ops.op_emit_finding({});
 }
         "#;
@@ -299,13 +288,11 @@ function scan_response(ctx) {
         assert!(result.0, "Should have required functions");
 
         let invalid_code = r#"
-function get_metadata() {
-    return { id: "test" };
-}
+// missing scan_transaction
         "#;
 
         let result2 = validator.check_required_functions(invalid_code);
-        assert!(!result2.0, "Should be missing scan_response");
+        assert!(!result2.0, "Should be missing scan_transaction");
     }
 
     #[test]

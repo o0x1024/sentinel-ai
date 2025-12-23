@@ -9,7 +9,7 @@
 //! - disable_plugin: 禁用插件
 //! - list_plugins: 列出所有插件
 
-use sentinel_plugins::HttpTransaction;
+use sentinel_plugins::{HttpTransaction, Severity};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -2304,11 +2304,22 @@ pub async fn update_plugin(
         // 先注销旧的工具
         tool_server.unregister_tool(&tool_name).await;
 
-        // 解析新的 input_schema
-        let input_schema =
-            sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(
-                &plugin_code,
-            );
+        // 使用运行时调用获取 input_schema
+        let metadata = sentinel_plugins::PluginMetadata {
+            id: plugin_id.clone(),
+            name: plugin_name.clone(),
+            version: "1.0.0".to_string(),
+            author: None,
+            main_category: "agent".to_string(),
+            category: "tool".to_string(),
+            default_severity: sentinel_plugins::Severity::Medium,
+            tags: vec![],
+            description: Some(plugin_description.clone()),
+        };
+        let input_schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+            &plugin_code,
+            metadata,
+        ).await;
 
         // 创建执行器
         let executor = sentinel_tools::dynamic_tool::create_executor({
@@ -3019,8 +3030,31 @@ pub async fn get_plugin_input_schema(
         }
     };
 
-    // 解析 ToolInput interface
-    let schema = sentinel_tools::plugin_adapter::PluginToolAdapter::parse_tool_input_schema(&code);
+    // 获取插件名称
+    let plugin_name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin name: {}", e))?
+            .flatten();
+
+    // 使用运行时调用获取 input_schema
+    let metadata = sentinel_plugins::PluginMetadata {
+        id: plugin_id.clone(),
+        name: plugin_name.unwrap_or_else(|| plugin_id.clone()),
+        version: "1.0.0".to_string(),
+        author: None,
+        main_category: "agent".to_string(),
+        category: "tool".to_string(),
+        default_severity: sentinel_plugins::Severity::Medium,
+        tags: vec![],
+        description: None,
+    };
+    let schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+        &code,
+        metadata,
+    ).await;
 
     Ok(CommandResponse::ok(schema))
 }
@@ -4210,4 +4244,241 @@ pub async fn update_runtime_filter_rules(
     }
 
     Ok(CommandResponse::ok(()))
+}
+
+// ============================================================
+// 插件商店命令
+// ============================================================
+
+/// 远程插件信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorePluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub main_category: String,
+    pub category: String,
+    pub description: String,
+    pub default_severity: String,
+    pub tags: Vec<String>,
+    pub download_url: String,
+}
+
+/// 插件商店响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorePluginListResponse {
+    pub success: bool,
+    pub plugins: Vec<StorePluginInfo>,
+    pub error: Option<String>,
+}
+
+/// 从 GitHub 仓库获取插件列表
+#[tauri::command]
+pub async fn fetch_store_plugins(
+    repo_url: String,
+) -> Result<StorePluginListResponse, String> {
+    tracing::info!("Fetching store plugins from: {}", repo_url);
+
+    // Parse repo URL to get API endpoint
+    // Expected format: https://github.com/owner/repo
+    let parts: Vec<&str> = repo_url
+        .trim_end_matches('/')
+        .split('/')
+        .collect();
+    
+    if parts.len() < 2 {
+        return Ok(StorePluginListResponse {
+            success: false,
+            plugins: vec![],
+            error: Some("Invalid repository URL".to_string()),
+        });
+    }
+    
+    let owner = parts[parts.len() - 2];
+    let repo = parts[parts.len() - 1];
+    
+    // Fetch plugins.json from the repo
+    let api_url = format!(
+        "https://raw.githubusercontent.com/{}/{}/main/plugins.json",
+        owner, repo
+    );
+    
+    tracing::info!("Fetching plugin manifest from: {}", api_url);
+    
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let response = client.get(&api_url).send().await;
+    
+    match response {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                let text = resp.text().await.map_err(|e| e.to_string())?;
+                
+                // Parse the manifest
+                match serde_json::from_str::<serde_json::Value>(&text) {
+                    Ok(manifest) => {
+                        let mut plugins = Vec::new();
+                        
+                        if let Some(plugin_list) = manifest.get("plugins").and_then(|v| v.as_array()) {
+                            for plugin_value in plugin_list {
+                                if let Ok(mut plugin) = serde_json::from_value::<StorePluginInfo>(plugin_value.clone()) {
+                                    // Build download URL if not provided
+                                    if plugin.download_url.is_empty() {
+                                        plugin.download_url = format!(
+                                            "https://raw.githubusercontent.com/{}/{}/main/plugins/{}.ts",
+                                            owner, repo, plugin.id
+                                        );
+                                    }
+                                    plugins.push(plugin);
+                                }
+                            }
+                        }
+                        
+                        tracing::info!("Fetched {} plugins from store", plugins.len());
+                        
+                        Ok(StorePluginListResponse {
+                            success: true,
+                            plugins,
+                            error: None,
+                        })
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse plugin manifest: {}", e);
+                        Ok(StorePluginListResponse {
+                            success: false,
+                            plugins: vec![],
+                            error: Some(format!("Failed to parse manifest: {}", e)),
+                        })
+                    }
+                }
+            } else {
+                tracing::error!("Failed to fetch manifest: HTTP {}", resp.status());
+                Ok(StorePluginListResponse {
+                    success: false,
+                    plugins: vec![],
+                    error: Some(format!("HTTP error: {}", resp.status())),
+                })
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch manifest: {}", e);
+            Ok(StorePluginListResponse {
+                success: false,
+                plugins: vec![],
+                error: Some(format!("Network error: {}", e)),
+            })
+        }
+    }
+}
+
+/// 获取插件代码
+#[tauri::command]
+pub async fn fetch_plugin_code(
+    download_url: String,
+) -> Result<serde_json::Value, String> {
+    tracing::info!("Fetching plugin code from: {}", download_url);
+    
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let response = client.get(&download_url).send().await;
+    
+    match response {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                let code = resp.text().await.map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "code": code
+                }))
+            } else {
+                Ok(serde_json::json!({
+                    "success": false,
+                    "error": format!("HTTP error: {}", resp.status())
+                }))
+            }
+        }
+        Err(e) => {
+            Ok(serde_json::json!({
+                "success": false,
+                "error": format!("Network error: {}", e)
+            }))
+        }
+    }
+}
+
+/// 从商店安装插件
+#[tauri::command]
+pub async fn install_store_plugin(
+    state: State<'_, PassiveScanState>,
+    plugin: StorePluginInfo,
+) -> Result<CommandResponse<String>, String> {
+    tracing::info!("Installing store plugin: {} ({})", plugin.name, plugin.id);
+    
+    // Fetch plugin code
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let response = client.get(&plugin.download_url).send().await;
+    
+    let plugin_code = match response {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                resp.text().await.map_err(|e| format!("Failed to read response: {}", e))?
+            } else {
+                return Ok(CommandResponse::err(format!("Failed to download plugin: HTTP {}", resp.status())));
+            }
+        }
+        Err(e) => {
+            return Ok(CommandResponse::err(format!("Failed to download plugin: {}", e)));
+        }
+    };
+    
+    // Parse severity from string
+    let severity = match plugin.default_severity.to_lowercase().as_str() {
+        "critical" => Severity::Critical,
+        "high" => Severity::High,
+        "medium" => Severity::Medium,
+        "low" => Severity::Low,
+        "info" => Severity::Info,
+        _ => Severity::Medium,
+    };
+    
+    // Create plugin metadata
+    let metadata = PluginMetadata {
+        id: plugin.id.clone(),
+        name: plugin.name.clone(),
+        version: plugin.version,
+        author: Some(plugin.author),
+        category: plugin.category,
+        main_category: plugin.main_category,
+        description: Some(plugin.description),
+        default_severity: severity,
+        tags: plugin.tags,
+    };
+    
+    // Register plugin to database
+    let db = state.get_db_service().await?;
+    
+    db.register_plugin_with_code(&metadata, &plugin_code)
+        .await
+        .map_err(|e| format!("Failed to install plugin: {}", e))?;
+    
+    tracing::info!("Plugin installed: {}", plugin.id);
+    
+    // Update plugin manager cache
+    let plugin_manager = state.get_plugin_manager();
+    if let Err(e) = plugin_manager.set_plugin_code(plugin.id.clone(), plugin_code).await {
+        tracing::warn!("Failed to update plugin cache: {}", e);
+    }
+    
+    Ok(CommandResponse::ok(plugin.id))
 }

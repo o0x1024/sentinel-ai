@@ -9,6 +9,19 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
             </svg>
           </button>
+          
+          <div class="text-xs text-base-content/60 ml-2" v-if="workflow_name.trim()">
+            <span v-if="is_auto_saving" class="flex items-center gap-1">
+              <span class="loading loading-spinner loading-xs"></span>
+              {{ t('passiveScan.workflowStudio.status.saving') }}
+            </span>
+            <span v-else-if="has_unsaved_changes" class="text-warning">
+              {{ t('passiveScan.workflowStudio.status.unsaved') }}
+            </span>
+            <span v-else class="text-success">
+              {{ t('passiveScan.workflowStudio.status.saved') }}
+            </span>
+          </div>
         </div>
         <div class="flex gap-2">
           <button class="btn btn-sm btn-outline" @click="show_load_dialog = true" :title="t('passiveScan.workflowStudio.toolbar.loadTooltip')">
@@ -622,93 +635,198 @@
     </div>
 
     <!-- 执行历史面板 -->
-    <div v-if="show_execution_history" ref="execution_history_ref" class="fixed inset-y-0 right-0 w-[450px] bg-base-100 shadow-xl border-l border-base-300 z-50 flex flex-col">
+    <div v-if="show_execution_history" ref="execution_history_ref" class="fixed inset-y-0 right-0 w-[700px] bg-base-100 shadow-xl border-l border-base-300 z-50 flex flex-col">
       <div class="p-3 flex items-center justify-between border-b border-base-300">
         <h2 class="text-base font-semibold">{{ t('passiveScan.workflowStudio.executionHistory.title') }}</h2>
+        <button class="btn btn-xs btn-ghost" @click="show_execution_history = false">✕</button>
+      </div>
+      
+      <!-- 搜索栏 -->
+      <div class="p-3 border-b border-base-300">
         <div class="flex gap-2">
-          <button class="btn btn-xs btn-outline btn-error" @click="clear_execution_history" :title="t('passiveScan.workflowStudio.executionHistory.clearTooltip')" :disabled="!execution_history.length">
-            {{ t('passiveScan.workflowStudio.executionHistory.clear') }}
+          <input 
+            v-model="history_search_query" 
+            class="input input-bordered input-sm flex-1" 
+            :placeholder="t('passiveScan.workflowStudio.executionHistory.searchPlaceholder')"
+            @keyup.enter="load_history_from_backend"
+          />
+          <button class="btn btn-sm btn-primary" @click="load_history_from_backend">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
           </button>
-          <button class="btn btn-xs btn-ghost" @click="show_execution_history = false">✕</button>
         </div>
       </div>
       
-      <div v-if="!execution_history.length" class="flex-1 flex items-center justify-center text-base-content/50">
-        <div class="text-center">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p class="text-sm">{{ t('passiveScan.workflowStudio.executionHistory.emptyTitle') }}</p>
-          <p class="text-xs mt-1">{{ t('passiveScan.workflowStudio.executionHistory.emptyDescription') }}</p>
-        </div>
-      </div>
-      
-      <div v-else class="flex-1 overflow-y-auto">
-        <div 
-          v-for="(exec, idx) in execution_history" 
-          :key="exec.id" 
-          class="border-b border-base-200 hover:bg-base-200/50 cursor-pointer group"
-          :class="{ 'bg-primary/5': selected_execution?.id === exec.id }"
-          @click="select_execution(exec)"
-        >
-          <div class="p-3">
-            <div class="flex items-center justify-between">
-              <span class="font-medium text-sm">#{{ execution_history.length - idx }}</span>
-              <div class="flex items-center gap-2">
-                <span class="text-xs" :class="{
-                  'text-success': exec.status === 'completed',
-                  'text-error': exec.status === 'failed',
-                  'text-warning': exec.status === 'running',
-                  'text-base-content/50': exec.status === 'pending'
-                }">
-                  {{
-                    exec.status === 'completed'
-                      ? t('passiveScan.workflowStudio.executionHistory.status.completed')
-                      : exec.status === 'failed'
-                        ? t('passiveScan.workflowStudio.executionHistory.status.failed')
-                        : exec.status === 'running'
-                          ? t('passiveScan.workflowStudio.executionHistory.status.running')
-                          : t('passiveScan.workflowStudio.executionHistory.status.pending')
-                  }}
+      <!-- 表格 -->
+      <div class="flex-1 overflow-auto p-3">
+        <table class="table table-sm table-zebra w-full">
+          <thead class="sticky top-0 bg-base-100 z-10">
+            <tr>
+              <th class="w-48">{{ t('passiveScan.workflowStudio.executionHistory.table.name') }}</th>
+              <th class="w-40">{{ t('passiveScan.workflowStudio.executionHistory.table.startTime') }}</th>
+              <th class="w-24 text-right">{{ t('passiveScan.workflowStudio.executionHistory.table.duration') }}</th>
+              <th class="w-24 text-center">{{ t('passiveScan.workflowStudio.executionHistory.table.status') }}</th>
+              <th class="w-28 text-center">{{ t('passiveScan.workflowStudio.executionHistory.table.actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="history_loading">
+              <td colspan="5" class="text-center py-8">
+                <span class="loading loading-spinner loading-md"></span>
+              </td>
+            </tr>
+            <tr v-else-if="history_data.length === 0">
+              <td colspan="5" class="text-center py-8 text-base-content/50">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p class="text-sm">{{ t('passiveScan.workflowStudio.executionHistory.emptyTitle') }}</p>
+              </td>
+            </tr>
+            <tr v-for="(exec, idx) in history_data" :key="exec.execution_id" class="hover">
+              <td 
+                class="truncate max-w-[180px] cursor-pointer hover:text-primary font-medium" 
+                :title="exec.workflow_name"
+                @click="view_execution_detail(exec.execution_id)"
+              >
+                {{ exec.workflow_name }} #{{ history_total - (history_page - 1) * history_page_size - idx }}
+              </td>
+              <td class="text-xs text-base-content/70">{{ format_datetime(exec.started_at) }}</td>
+              <td class="text-right text-xs">{{ format_duration(exec.duration_ms) }}</td>
+              <td class="text-center">
+                <span :class="get_status_badge_class(exec.status)" class="badge badge-sm">
+                  {{ get_status_text(exec.status) }}
                 </span>
-                <button 
-                  class="btn btn-xs btn-ghost btn-circle opacity-0 group-hover:opacity-100 transition-opacity"
-                  @click.stop="delete_single_execution(exec.id)"
-                  :title="t('passiveScan.workflowStudio.executionHistory.deleteRecordTooltip')"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div class="text-xs text-base-content/60 mt-1">{{ exec.start_time }}</div>
-            <div v-if="exec.duration" class="text-xs text-base-content/50">{{ t('passiveScan.workflowStudio.executionHistory.durationMs', { ms: exec.duration }) }}</div>
-          </div>
-        </div>
+              </td>
+              <td class="text-center">
+                <div class="flex justify-center gap-1">
+                  <button 
+                    class="btn btn-xs btn-ghost" 
+                    @click="view_execution_detail(exec.execution_id)"
+                    :title="t('passiveScan.workflowStudio.executionHistory.table.viewDetail')"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  </button>
+                  <button 
+                    class="btn btn-xs btn-ghost text-error" 
+                    @click="delete_history_record(exec.execution_id)"
+                    :title="t('passiveScan.workflowStudio.executionHistory.table.delete')"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
       
-      <!-- 选中的执行详情 -->
-      <div v-if="selected_execution" class="border-t border-base-300 max-h-[50%] overflow-y-auto">
-        <div class="p-3 bg-base-200/30">
-          <div class="flex items-center justify-between mb-2">
-            <span class="font-medium text-sm">{{ t('passiveScan.workflowStudio.executionHistory.detailsTitle') }}</span>
-            <button class="btn btn-xs btn-ghost" @click="copy_execution_result" :title="t('passiveScan.workflowStudio.executionHistory.copyResultsTooltip')">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
-            </button>
-          </div>
-          
-          <div class="space-y-2">
-            <div v-for="(result, stepId) in selected_execution.step_results" :key="stepId" class="bg-base-100 rounded p-2">
-              <div class="text-xs font-medium text-primary mb-1">{{ get_node_name(stepId) || stepId }}</div>
-              <pre class="text-xs bg-base-300/30 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">{{ format_result(result) }}</pre>
-            </div>
-          </div>
+      <!-- 分页 -->
+      <div class="p-3 border-t border-base-300 flex items-center justify-between">
+        <span class="text-sm text-base-content/60">
+          {{ t('passiveScan.workflowStudio.executionHistory.pagination.total', { total: history_total }) }}
+        </span>
+        <div class="join">
+          <button 
+            class="join-item btn btn-sm" 
+            :disabled="history_page <= 1"
+            @click="history_page--; load_history_from_backend()"
+          >«</button>
+          <button class="join-item btn btn-sm">{{ history_page }} / {{ Math.max(1, Math.ceil(history_total / history_page_size)) }}</button>
+          <button 
+            class="join-item btn btn-sm" 
+            :disabled="history_page >= Math.ceil(history_total / history_page_size)"
+            @click="history_page++; load_history_from_backend()"
+          >»</button>
         </div>
+        <select class="select select-bordered select-sm w-24" v-model="history_page_size" @change="history_page = 1; load_history_from_backend()">
+          <option :value="10">10</option>
+          <option :value="20">20</option>
+          <option :value="50">50</option>
+        </select>
       </div>
     </div>
+    
+    <!-- 执行详情对话框 -->
+    <dialog :open="show_detail_dialog" class="modal" @click.self="show_detail_dialog = false">
+      <div class="modal-box max-w-3xl max-h-[80vh]">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold text-lg">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.title') }}</h3>
+          <button class="btn btn-sm btn-ghost" @click="show_detail_dialog = false">✕</button>
+        </div>
+        
+        <div v-if="detail_loading" class="flex justify-center py-8">
+          <span class="loading loading-spinner loading-lg"></span>
+        </div>
+        
+        <div v-else-if="detail_data" class="space-y-4">
+          <!-- 基本信息 -->
+          <div class="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.workflowName') }}:</span>
+              <span class="font-medium ml-2">{{ detail_data.workflow_name }}</span>
+            </div>
+            <div>
+              <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.status') }}:</span>
+              <span :class="get_status_badge_class(detail_data.status)" class="badge badge-sm ml-2">{{ get_status_text(detail_data.status) }}</span>
+            </div>
+            <div>
+              <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.startTime') }}:</span>
+              <span class="ml-2">{{ format_datetime(detail_data.started_at) }}</span>
+            </div>
+            <div>
+              <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.duration') }}:</span>
+              <span class="ml-2">{{ format_duration(detail_data.duration_ms) }}</span>
+            </div>
+            <div v-if="detail_data.error_message" class="col-span-2">
+              <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.error') }}:</span>
+              <span class="text-error ml-2">{{ detail_data.error_message }}</span>
+            </div>
+          </div>
+          
+          <!-- 步骤列表 -->
+          <div class="divider">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.steps') }}</div>
+          <div class="space-y-2 max-h-[40vh] overflow-y-auto">
+            <div v-if="!detail_data.steps || detail_data.steps.length === 0" class="text-center text-base-content/50 py-4">
+              {{ t('passiveScan.workflowStudio.executionHistory.detailDialog.noSteps') }}
+            </div>
+            <div 
+              v-for="(step, idx) in detail_data.steps" 
+              :key="step.step_id" 
+              class="collapse collapse-arrow bg-base-200"
+            >
+              <input type="checkbox" :checked="idx === 0" />
+              <div class="collapse-title text-sm font-medium flex items-center gap-2">
+                <span class="badge badge-xs" :class="get_status_badge_class(step.status)">{{ idx + 1 }}</span>
+                <span>{{ step.step_name || step.step_id }}</span>
+                <span class="text-xs text-base-content/50 ml-auto mr-4">{{ format_duration(step.duration_ms) }}</span>
+              </div>
+              <div class="collapse-content">
+                <div v-if="step.error_message" class="text-error text-xs mb-2">{{ step.error_message }}</div>
+                <pre v-if="step.result !== undefined && step.result !== null" class="text-xs bg-base-300 p-2 rounded overflow-x-auto max-h-48">{{ format_result(step.result) }}</pre>
+                <div v-else class="text-xs text-base-content/50">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.noResult') }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="modal-action">
+          <button class="btn btn-sm btn-ghost" @click="copy_detail_result" :title="t('passiveScan.workflowStudio.executionHistory.copyResultsTooltip')">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            {{ t('passiveScan.workflowStudio.executionHistory.detailDialog.copy') }}
+          </button>
+          <button class="btn btn-sm" @click="show_detail_dialog = false">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.close') }}</button>
+        </div>
+      </div>
+    </dialog>
 
     <!-- 步骤结果查看面板（保留用于点击节点时查看当前执行结果） -->
     <div v-if="show_result_panel" ref="result_panel_ref" class="fixed inset-y-0 right-0 w-[500px] bg-base-100 shadow-xl border-l border-base-300 z-50">
@@ -796,7 +914,8 @@ const show_result_panel = ref(false)
 const selected_step_result = ref<{ step_id: string, result: any } | null>(null)
 const auto_save_timer = ref<ReturnType<typeof setTimeout> | null>(null)
 const is_auto_saving = ref(false)
-const AUTO_SAVE_DELAY = 2000 // 2秒防抖延迟
+const has_unsaved_changes = ref(false)
+const AUTO_SAVE_DELAY = 1000 // 1秒防抖延迟
 
 defineOptions({
   name: 'WorkflowStudio'
@@ -816,6 +935,56 @@ const show_execution_history = ref(false)
 const execution_history = ref<ExecutionRecord[]>([])
 const selected_execution = ref<ExecutionRecord | null>(null)
 const current_execution_id = ref<string | null>(null)
+
+// 执行历史表格相关
+interface HistoryItem {
+  execution_id: string
+  workflow_id: string
+  workflow_name: string
+  version: string
+  status: string
+  started_at: string
+  completed_at?: string
+  duration_ms?: number
+  progress: number
+  total_steps: number
+  completed_steps: number
+  error_message?: string
+}
+interface DetailData {
+  execution_id: string
+  workflow_id: string
+  workflow_name: string
+  version: string
+  status: string
+  started_at: string
+  completed_at?: string
+  duration_ms?: number
+  progress: number
+  total_steps: number
+  completed_steps: number
+  error_message?: string
+  steps: Array<{
+    step_id: string
+    step_name?: string
+    step_order?: number
+    status: string
+    started_at?: string
+    completed_at?: string
+    duration_ms?: number
+    result?: any
+    error_message?: string
+  }>
+}
+const history_search_query = ref('')
+const history_page = ref(1)
+const history_page_size = ref(10)
+const history_total = ref(0)
+const history_data = ref<HistoryItem[]>([])
+const history_loading = ref(false)
+const show_detail_dialog = ref(false)
+const detail_loading = ref(false)
+const detail_data = ref<DetailData | null>(null)
 
 interface ExecutionLog {
   timestamp: Date
@@ -1066,7 +1235,7 @@ const toggle_log_details = (idx: number) => {
 }
 
 const format_result = (result: any) => {
-  if (!result) return t('passiveScan.workflowStudio.resultPanel.noResult')
+  if (result === undefined || result === null) return t('passiveScan.workflowStudio.resultPanel.noResult')
   if (typeof result === 'object') {
     return JSON.stringify(result, null, 2)
   }
@@ -1111,8 +1280,120 @@ const view_node_result = () => {
 const toggle_execution_history = () => {
   if (!show_execution_history.value) {
     ignore_execution_history_close_once.value = true
+    // 打开时加载数据
+    load_history_from_backend()
   }
   show_execution_history.value = !show_execution_history.value
+}
+
+// 从后端加载执行历史
+const load_history_from_backend = async () => {
+  history_loading.value = true
+  try {
+    const result = await invoke<{ data: HistoryItem[], total: number }>('list_workflow_runs_paginated', {
+      page: history_page.value,
+      pageSize: history_page_size.value,
+      search: history_search_query.value || null,
+      workflowId: null // 显示所有工作流的历史
+    })
+    history_data.value = result.data
+    history_total.value = result.total
+  } catch (e: any) {
+    console.error('Failed to load execution history:', e)
+    const toast = useToast()
+    toast.error(t('passiveScan.workflowStudio.toasts.loadFailed', { error: String(e) }))
+  } finally {
+    history_loading.value = false
+  }
+}
+
+// 查看执行详情
+const view_execution_detail = async (runId: string) => {
+  show_detail_dialog.value = true
+  detail_loading.value = true
+  detail_data.value = null
+  try {
+    const result = await invoke<DetailData | null>('get_workflow_run_detail', { runId })
+    detail_data.value = result
+  } catch (e: any) {
+    console.error('Failed to load execution detail:', e)
+    const toast = useToast()
+    toast.error(t('passiveScan.workflowStudio.toasts.loadFailed', { error: String(e) }))
+    show_detail_dialog.value = false
+  } finally {
+    detail_loading.value = false
+  }
+}
+
+// 删除执行记录（不需要确认）
+const delete_history_record = async (runId: string) => {
+  try {
+    await invoke('delete_workflow_run', { runId })
+    // 重新加载当前页
+    await load_history_from_backend()
+  } catch (e: any) {
+    console.error('Failed to delete execution record:', e)
+    const toast = useToast()
+    toast.error(t('passiveScan.workflowStudio.toasts.deleteFailed', { error: String(e) }))
+  }
+}
+
+// 复制详情结果
+const copy_detail_result = async () => {
+  const toast = useToast()
+  if (!detail_data.value) return
+  try {
+    const text = JSON.stringify(detail_data.value, null, 2)
+    await navigator.clipboard.writeText(text)
+    toast.success(t('passiveScan.workflowStudio.toasts.copiedToClipboard'))
+  } catch (e: any) {
+    toast.error(t('passiveScan.workflowStudio.toasts.copyFailed', { message: e.message }))
+  }
+}
+
+// 格式化日期时间
+const format_datetime = (dateStr?: string) => {
+  if (!dateStr) return '-'
+  return new Date(dateStr).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+// 格式化耗时
+const format_duration = (ms?: number) => {
+  if (ms === undefined || ms === null) return '-'
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`
+}
+
+// 获取状态徽章样式
+const get_status_badge_class = (status: string) => {
+  switch (status) {
+    case 'completed': return 'badge-success'
+    case 'failed': return 'badge-error'
+    case 'running': return 'badge-warning'
+    case 'pending': return 'badge-ghost'
+    case 'cancelled': return 'badge-neutral'
+    default: return 'badge-ghost'
+  }
+}
+
+// 获取状态文本
+const get_status_text = (status: string) => {
+  switch (status) {
+    case 'completed': return t('passiveScan.workflowStudio.executionHistory.status.completed')
+    case 'failed': return t('passiveScan.workflowStudio.executionHistory.status.failed')
+    case 'running': return t('passiveScan.workflowStudio.executionHistory.status.running')
+    case 'pending': return t('passiveScan.workflowStudio.executionHistory.status.pending')
+    case 'cancelled': return t('passiveScan.workflowStudio.executionHistory.status.cancelled')
+    default: return status
+  }
 }
 
 const select_execution = (exec: ExecutionRecord) => {
@@ -1421,6 +1702,7 @@ const save_workflow = async (silent = false) => {
       isTemplate: false,
       isTool: workflow_is_tool.value
     })
+    has_unsaved_changes.value = false
     if (!silent) {
       add_log(
         'SUCCESS',
@@ -1450,6 +1732,8 @@ const trigger_auto_save = () => {
   // 如果工作流正在运行，不自动保存
   if (workflow_running.value) return
   
+  has_unsaved_changes.value = true
+  
   // 清除之前的定时器
   if (auto_save_timer.value) {
     clearTimeout(auto_save_timer.value)
@@ -1460,6 +1744,7 @@ const trigger_auto_save = () => {
     is_auto_saving.value = true
     await save_workflow(true) // 静默保存
     is_auto_saving.value = false
+    has_unsaved_changes.value = false
   }, AUTO_SAVE_DELAY)
 }
 
@@ -2034,6 +2319,9 @@ const search_in_canvas = () => {
 }
 
 const handle_global_click = (e: MouseEvent) => {
+  // 如果详情对话框打开了，不处理其他面板的关闭
+  if (show_detail_dialog.value) return
+
   // 处理参数编辑抽屉的关闭
   if (drawer_open.value) {
     if (ignore_close_once.value) { 

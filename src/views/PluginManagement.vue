@@ -44,14 +44,28 @@
           {{ reviewStats.pending }}
         </span>
       </button>
+
+      <!-- Plugin Store Tab -->
+      <button class="tab" :class="{ 'tab-active': selectedCategory === 'store' }" @click="selectedCategory = 'store'">
+        <i class="fas fa-store mr-2"></i>
+        {{ $t('plugins.store.title', '插件商店') }}
+      </button>
     </div>
 
     <!-- Plugin Manager Content -->
     <div class="card bg-base-100 shadow-xl">
       <div class="card-body">
+        <!-- Plugin Store Section -->
+        <PluginStoreSection
+          v-if="selectedCategory === 'store'"
+          ref="pluginStoreSectionRef"
+          :installed-plugin-ids="installedPluginIds"
+          @plugin-installed="onPluginInstalled"
+        />
+
         <!-- Plugin Review Section -->
         <PluginReviewSection
-          v-if="selectedCategory === 'review'"
+          v-else-if="selectedCategory === 'review'"
           :review-stats="reviewStats"
           :status-filter="reviewStatusFilter"
           :search-text="reviewSearchText"
@@ -137,6 +151,7 @@
       :ai-generate-error="aiGenerateError"
       :testing="testing"
       :test-result="testResult"
+      :is-fullscreen-editor-mode="isFullscreenEditor"
       :advanced-plugin="advancedPlugin"
       :advanced-testing="advancedTesting"
       :advanced-error="advancedError"
@@ -164,6 +179,7 @@
       @close-ai-generate-dialog="closeAIGenerateDialog"
       @close-test-result-dialog="closeTestResultDialog"
       @close-advanced-dialog="closeAdvancedDialog"
+      @refer-test-result-to-ai="referTestResultToAi"
     />
 
     <!-- Code Editor Dialog -->
@@ -181,6 +197,8 @@
       :ai-streaming="aiChatStreaming"
       :ai-streaming-content="aiChatStreamingContent"
       :selected-code-ref="selectedCodeRef"
+      :selected-test-result-ref="selectedTestResultRef"
+      :plugin-testing="pluginTesting"
       @update:new-plugin-metadata="newPluginMetadata = $event"
       @insert-template="insertTemplate"
       @format-code="formatCode"
@@ -199,6 +217,9 @@
       @add-selected-code="addSelectedCodeToContext"
       @add-full-code="addFullCodeToContext"
       @clear-code-ref="clearCodeRef"
+      @clear-test-result-ref="clearTestResultRef"
+      @add-test-result-to-context="addTestResultToContext"
+      @test-current-plugin="testCurrentPlugin"
     />
   </div>
 </template>
@@ -216,6 +237,7 @@ import { oneDark } from '@codemirror/theme-one-dark'
 
 import PluginListSection from '@/components/PluginManagement/PluginListSection.vue'
 import PluginReviewSection from '@/components/PluginManagement/PluginReviewSection.vue'
+import PluginStoreSection from '@/components/PluginManagement/PluginStoreSection.vue'
 import PluginDialogs from '@/components/PluginManagement/PluginDialogs.vue'
 import PluginCodeEditorDialog from '@/components/PluginManagement/PluginCodeEditorDialog.vue'
 import type {
@@ -229,6 +251,7 @@ const { t } = useI18n()
 // Component refs
 const pluginDialogsRef = ref<InstanceType<typeof PluginDialogs>>()
 const codeEditorDialogRef = ref<InstanceType<typeof PluginCodeEditorDialog>>()
+const pluginStoreSectionRef = ref<InstanceType<typeof PluginStoreSection>>()
 
 // Component State
 const selectedCategory = ref('all')
@@ -306,18 +329,33 @@ interface CodeReference {
   isFullCode: boolean
 }
 
+// Test result reference type
+interface TestResultReference {
+  success: boolean
+  message: string
+  preview: string
+  findings?: Array<{ title: string; description: string; severity: string }>
+  error?: string
+  executionTime?: number
+  timestamp: number
+}
+
 // AI Chat State (for code editor)
 interface AiChatMessage {
   role: 'user' | 'assistant'
   content: string
   codeBlock?: string
   codeRef?: CodeReference
+  testResultRef?: TestResultReference
 }
 const showAiPanel = ref(false)
 const aiChatMessages = ref<AiChatMessage[]>([])
 const aiChatStreaming = ref(false)
 const aiChatStreamingContent = ref('')
 const selectedCodeRef = ref<CodeReference | null>(null)
+const selectedTestResultRef = ref<TestResultReference | null>(null)
+const lastTestResult = ref<TestResultReference | null>(null)  // Store last test result for reference
+const pluginTesting = ref(false)  // Testing state for current editing plugin
 
 // Test State
 const testing = ref(false)
@@ -454,6 +492,9 @@ const sortedRuns = computed(() => {
 
 const isAdvancedAgent = computed(() => advancedPlugin.value?.metadata?.main_category === 'agent')
 
+// Installed plugin IDs for store section
+const installedPluginIds = computed(() => plugins.value.map(p => p.metadata.id))
+
 // Helper Functions
 const isPluginFavorited = (plugin: PluginRecord): boolean => plugin.is_favorited || false
 
@@ -553,6 +594,11 @@ const togglePluginFavorite = async (plugin: PluginRecord) => {
   } catch (error) {
     showToast('操作失败', 'error')
   }
+}
+
+// Plugin store callback
+const onPluginInstalled = async () => {
+  await refreshPlugins()
 }
 
 // Batch operations
@@ -1146,17 +1192,142 @@ const clearCodeRef = () => {
   selectedCodeRef.value = null
 }
 
+// Clear test result reference
+const clearTestResultRef = () => {
+  selectedTestResultRef.value = null
+}
+
+// Format test result for preview
+const formatTestResultPreview = (result: TestResult): string => {
+  const lines: string[] = []
+  lines.push(`Status: ${result.success ? 'SUCCESS' : 'FAILED'}`)
+  if (result.message) lines.push(`Message: ${result.message}`)
+  if (result.error) lines.push(`Error: ${result.error}`)
+  if (result.findings && result.findings.length > 0) {
+    lines.push(`Findings (${result.findings.length}):`)
+    result.findings.slice(0, 3).forEach((f, i) => {
+      lines.push(`  ${i + 1}. [${f.severity}] ${f.title}`)
+    })
+    if (result.findings.length > 3) {
+      lines.push(`  ... and ${result.findings.length - 3} more`)
+    }
+  }
+  return lines.join('\n')
+}
+
+// Add test result to AI context
+const addTestResultToContext = () => {
+  if (!lastTestResult.value) {
+    showToast(t('plugins.noTestResult', '请先运行插件测试'), 'warning')
+    return
+  }
+  selectedTestResultRef.value = lastTestResult.value
+}
+
+// Test current editing plugin
+const testCurrentPlugin = async () => {
+  if (!editingPlugin.value) return
+  
+  pluginTesting.value = true
+  
+  try {
+    const isAgentPlugin = editingPlugin.value.metadata.main_category === 'agent'
+    let result: TestResult
+    
+    if (isAgentPlugin) {
+      const resp = await invoke<CommandResponse<any>>('test_agent_plugin', { 
+        pluginId: editingPlugin.value.metadata.id,
+        inputs: {}
+      })
+      
+      if (resp.success && resp.data) {
+        const data = resp.data
+        result = {
+          success: data.success,
+          message: data.message || (data.success ? `Plugin executed (${data.execution_time_ms}ms)` : 'Test failed'),
+          findings: [{ 
+            title: 'Agent Tool Result', 
+            description: JSON.stringify(data.output ?? { error: data.error }, null, 2), 
+            severity: data.success ? 'info' : 'error' 
+          }],
+          error: data.error
+        }
+      } else {
+        result = {
+          success: false,
+          message: resp.error || 'Test failed',
+          error: resp.error
+        }
+      }
+    } else {
+      const resp = await invoke<CommandResponse<TestResult>>('test_plugin', { pluginId: editingPlugin.value.metadata.id })
+      if (resp.success && resp.data) {
+        result = resp.data
+      } else {
+        result = { success: false, message: resp.error || 'Test failed', error: resp.error }
+      }
+    }
+    
+    // Store the test result for display and potential AI reference
+    testResult.value = result
+    lastTestResult.value = {
+      success: result.success,
+      message: result.message || '',
+      preview: formatTestResultPreview(result),
+      findings: result.findings,
+      error: result.error,
+      timestamp: Date.now()
+    }
+    
+    // Show the test result dialog (same as normal test)
+    pluginDialogsRef.value?.showTestResultDialog()
+  } catch (e) {
+    const errorMsg = e instanceof Error ? e.message : 'Test failed'
+    testResult.value = { success: false, message: errorMsg, error: errorMsg }
+    lastTestResult.value = {
+      success: false,
+      message: errorMsg,
+      preview: `Status: FAILED\nError: ${errorMsg}`,
+      error: errorMsg,
+      timestamp: Date.now()
+    }
+    pluginDialogsRef.value?.showTestResultDialog()
+  } finally {
+    pluginTesting.value = false
+  }
+}
+
+// Reference test result to AI assistant
+const referTestResultToAi = () => {
+  if (!lastTestResult.value) {
+    showToast(t('plugins.noTestResult', '请先运行插件测试'), 'warning')
+    return
+  }
+  
+  // Add test result to AI context
+  selectedTestResultRef.value = lastTestResult.value
+  
+  // Ensure AI panel is open
+  if (!showAiPanel.value) {
+    showAiPanel.value = true
+  }
+  
+  showToast(t('plugins.testResultAdded', '已添加测试结果到AI助手'), 'success')
+}
+
 const sendAiChatMessage = async (message: string) => {
   if (!message.trim() || aiChatStreaming.value) return
   
-  // Get current code reference
+  // Get current references
   const codeRef = selectedCodeRef.value
+  const testResultRef = selectedTestResultRef.value
   
-  // Add user message with code reference
+  // Add user message with references
   aiChatMessages.value.push({ 
     role: 'user', 
     content: message,
-    codeRef: codeRef || undefined
+    codeRef: codeRef || undefined,
+    testResultRef: testResultRef || undefined
   })
   aiChatStreaming.value = true
   aiChatStreamingContent.value = ''
@@ -1174,20 +1345,42 @@ const sendAiChatMessage = async (message: string) => {
     
     // Build user prompt with context
     let userPrompt = message
+    const contextParts: string[] = []
+    
+    // Add code context
     if (codeRef) {
-      // Use specific code reference
       if (codeRef.isFullCode) {
-        userPrompt = `完整插件代码：\n\`\`\`typescript\n${codeRef.code}\n\`\`\`\n\n用户需求：${message}\n\n请根据需求修改代码，直接返回完整的修改后代码。`
+        contextParts.push(`完整插件代码：\n\`\`\`typescript\n${codeRef.code}\n\`\`\``)
       } else {
-        userPrompt = `选中的代码片段 (第${codeRef.startLine}-${codeRef.endLine}行)：\n\`\`\`typescript\n${codeRef.code}\n\`\`\`\n\n完整代码上下文：\n\`\`\`typescript\n${pluginCode.value}\n\`\`\`\n\n用户需求：${message}\n\n请根据需求修改选中的代码片段，返回修改后的完整代码。`
+        contextParts.push(`选中的代码片段 (第${codeRef.startLine}-${codeRef.endLine}行)：\n\`\`\`typescript\n${codeRef.code}\n\`\`\``)
+        contextParts.push(`完整代码上下文：\n\`\`\`typescript\n${pluginCode.value}\n\`\`\``)
       }
     } else if (pluginCode.value) {
-      // Fallback to full code if no reference
-      userPrompt = `当前插件代码：\n\`\`\`typescript\n${pluginCode.value}\n\`\`\`\n\n用户需求：${message}\n\n请根据需求修改代码，直接返回完整的修改后代码。`
+      contextParts.push(`当前插件代码：\n\`\`\`typescript\n${pluginCode.value}\n\`\`\``)
     }
     
-    // Clear code reference after sending
+    // Add test result context
+    if (testResultRef) {
+      const testInfo = [`插件测试结果：`, `- 状态: ${testResultRef.success ? '成功' : '失败'}`]
+      if (testResultRef.message) testInfo.push(`- 消息: ${testResultRef.message}`)
+      if (testResultRef.error) testInfo.push(`- 错误: ${testResultRef.error}`)
+      if (testResultRef.findings && testResultRef.findings.length > 0) {
+        testInfo.push(`- 发现 (${testResultRef.findings.length}个):`)
+        testResultRef.findings.forEach((f, i) => {
+          testInfo.push(`  ${i + 1}. [${f.severity}] ${f.title}: ${f.description}`)
+        })
+      }
+      contextParts.push(testInfo.join('\n'))
+    }
+    
+    // Combine context with user message
+    if (contextParts.length > 0) {
+      userPrompt = `${contextParts.join('\n\n')}\n\n用户需求：${message}\n\n请根据需求修改代码，直接返回完整的修改后代码。`
+    }
+    
+    // Clear references after sending
     selectedCodeRef.value = null
+    selectedTestResultRef.value = null
     
     let generatedContent = ''
     

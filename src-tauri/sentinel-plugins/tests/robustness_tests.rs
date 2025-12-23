@@ -485,6 +485,77 @@ export function scan_transaction(_transaction) {
   assert!(!findings.is_empty());
 }
 
+/// 11) V8 terminate execution: stop a synchronous infinite loop and keep executor usable
+///
+/// This validates the `PluginExecutor::terminate_execution()` path which uses
+/// `deno_core::v8::IsolateHandle::terminate_execution()` to preempt JS that has
+/// no await points.
+#[tokio::test]
+#[ignore]
+async fn test_terminate_execution_stops_infinite_loop() {
+  let code = r#"
+export function scan_transaction(transaction) {
+  const url = String(transaction.request.url || "");
+  if (url.includes("loop")) {
+    // synchronous infinite loop (no await)
+    while (true) {}
+  }
+  Sentinel.emitFinding({
+    vuln_type: "robust_terminate",
+    title: "TerminateExecution",
+    description: "ok",
+    evidence: "ok",
+    location: "terminate",
+    severity: "info",
+    confidence: "high"
+  });
+}
+"#;
+
+  let exec = Arc::new(
+    PluginExecutor::new(
+      metadata("rb-terminate-exec", "TerminateExecution"),
+      code.to_string(),
+      1000,
+    )
+    .expect("executor"),
+  );
+
+  // Trigger the infinite-loop path
+  let mut headers = HashMap::new();
+  headers.insert("x-mode".to_string(), "loop".to_string());
+  let loop_txn = tx(
+    "https://example.com/loop".to_string(),
+    "GET".to_string(),
+    headers,
+    vec![],
+  );
+
+  let exec_for_task = exec.clone();
+  let task = tokio::spawn(async move { exec_for_task.scan_transaction(loop_txn).await });
+
+  // Give JS a moment to enter the loop, then terminate
+  tokio::time::sleep(Duration::from_millis(100)).await;
+  assert!(!task.is_finished(), "loop task finished unexpectedly before terminate");
+  exec.terminate_execution().await;
+
+  // Must return quickly; scan_transaction currently swallows JS errors and returns Ok(findings)
+  let terminated = tokio::time::timeout(Duration::from_secs(3), task).await;
+  assert!(terminated.is_ok(), "terminate did not unblock within 3s");
+  let res = terminated.unwrap().expect("join ok").expect("scan ok");
+  assert!(
+    res.is_empty(),
+    "expected no findings from terminated infinite loop path"
+  );
+
+  // Ensure executor is still usable (non-loop path)
+  let ok_txn = simple_tx();
+  let ok_res = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(ok_txn)).await;
+  assert!(ok_res.is_ok(), "normal call timed out after termination");
+  let findings = ok_res.unwrap().expect("normal call should succeed");
+  assert!(!findings.is_empty(), "expected findings on normal path");
+}
+
 /// 10) Slow execution timeout (client-side)
 #[tokio::test]
 #[ignore]

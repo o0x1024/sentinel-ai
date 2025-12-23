@@ -8,7 +8,7 @@ export default {
   workflowTools: '工作流工具',
   pluginTools: '插件工具',
   mcpServers: 'MCP服务器',
-  marketplace: '市场',
+  marketplace: 'MCP市场',
 
   // 管理下拉菜单
   management: '管理',

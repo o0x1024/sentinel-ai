@@ -922,6 +922,11 @@ export default {
     }
   },
   workflowStudio: {
+    status: {
+      saved: 'Saved',
+      saving: 'Saving...',
+      unsaved: 'Unsaved changes'
+    },
     title: 'Workflow Studio',
     header: {
       namePlaceholder: 'Workflow name',
@@ -1084,16 +1089,43 @@ export default {
       clearTooltip: 'Clear history',
       emptyTitle: 'No execution records',
       emptyDescription: 'Run the workflow to see history here',
+      searchPlaceholder: 'Search workflow name...',
       status: {
-        completed: '✓ Completed',
-        failed: '✗ Failed',
-        running: '● Running',
-        pending: '○ Pending'
+        completed: 'Completed',
+        failed: 'Failed',
+        running: 'Running',
+        pending: 'Pending',
+        cancelled: 'Cancelled'
       },
       deleteRecordTooltip: 'Delete this record',
       durationMs: 'Duration: {ms}ms',
       detailsTitle: 'Execution Details',
-      copyResultsTooltip: 'Copy results'
+      copyResultsTooltip: 'Copy results',
+      table: {
+        name: 'Execution Name',
+        startTime: 'Start Time',
+        duration: 'Duration',
+        status: 'Status',
+        actions: 'Actions',
+        viewDetail: 'View Details',
+        delete: 'Delete'
+      },
+      pagination: {
+        total: 'Total {total}'
+      },
+      detailDialog: {
+        title: 'Execution Details',
+        workflowName: 'Workflow',
+        status: 'Status',
+        startTime: 'Start Time',
+        duration: 'Duration',
+        error: 'Error',
+        steps: 'Steps',
+        noSteps: 'No step records',
+        noResult: 'No result',
+        copy: 'Copy',
+        close: 'Close'
+      }
     },
     resultPanel: {
       title: 'Step Execution Result',

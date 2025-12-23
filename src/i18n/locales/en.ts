@@ -1808,7 +1808,19 @@ export default {
     addSelectedCode: 'Add selected code to context',
     addFullCode: 'Add full code to context',
     noCodeSelected: 'Please select code in the editor first',
-    noCode: 'No code available'
+    noCode: 'No code available',
+    // Test result reference
+    testPlugin: 'Test Plugin',
+    testResultRef: 'Test Result',
+    addTestResult: 'Add Test Result',
+    noTestResult: 'Please run plugin test first',
+    testSuccess: 'Test successful',
+    testFailed: 'Test failed',
+    testPassed: 'Test passed',
+    errorInfo: 'Error Info',
+    unknownError: 'Unknown error',
+    referToAi: 'Reference to AI',
+    testResultAdded: 'Test result added to AI assistant'
   },
   license: {
     title: 'Software Activation',
