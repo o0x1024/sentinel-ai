@@ -83,7 +83,7 @@ pub async fn reset_performance_stats() -> Result<(), String> {
 #[tauri::command]
 pub async fn record_operation_timing(operation: String, duration_ms: u64) -> Result<(), String> {
     let optimizer = get_or_init_optimizer();
-    let duration = std::time::Duration::from_millis(duration_ms as u64);
+    let duration = std::time::Duration::from_millis(duration_ms);
     optimizer.monitor().record_timing(&operation, duration);
     Ok(())
 }
@@ -137,7 +137,7 @@ impl PerformanceMiddleware {
 #[macro_export]
 macro_rules! monitor_command_performance {
     ($operation:expr, $code:block) => {{
-        use crate::commands::performance::PerformanceMiddleware;
+        use $crate::commands::performance::PerformanceMiddleware;
         PerformanceMiddleware::wrap_operation($operation, async move $code).await
     }};
 }

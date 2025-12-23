@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 #[derive(Deserialize)]
 pub struct VisionExplorerV2Args {
@@ -21,8 +21,10 @@ pub struct VisionExplorerV2Args {
     /// Maximum exploration depth
     max_depth: Option<u32>,
     /// Maximum steps
+    #[allow(dead_code)]
     max_steps: Option<u32>,
     /// Custom HTTP headers
+    #[allow(dead_code)]
     headers: Option<HashMap<String, String>>,
     /// Allow destructive actions (delete, logout, etc.)
     allow_destructive: Option<bool>,
@@ -31,6 +33,7 @@ pub struct VisionExplorerV2Args {
 /// V2 Vision Explorer Tool for Agent integration
 #[derive(Clone)]
 pub struct VisionExplorerV2Tool {
+    #[allow(dead_code)]
     mcp_service: Arc<McpService>,
     llm_config: LlmConfig,
     app_handle: Option<AppHandle>,

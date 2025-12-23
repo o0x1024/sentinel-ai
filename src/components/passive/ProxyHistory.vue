@@ -2620,7 +2620,7 @@ function getRequestPath(url: string): string {
     return urlObj.pathname + urlObj.search || '/';
   } catch {
     // 如果URL解析失败，尝试提取路径部分
-    const match = url.match(/^https?:\/\/[^\/]+(\/.*)?$/);
+    const match = url.match(/^https?:\/\/[^/]+(\/.*)?$/);
     if (match) {
       return match[1] || '/';
     }

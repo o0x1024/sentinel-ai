@@ -1,7 +1,10 @@
 //! Anti-debugging detection
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+#[allow(unused_imports)]
+use std::sync::atomic::Ordering;
 
+#[allow(dead_code)]
 static DEBUG_DETECTED: AtomicBool = AtomicBool::new(false);
 
 /// Check if a debugger is attached
@@ -28,6 +31,7 @@ pub fn is_debugger_present() -> bool {
 }
 
 /// Perform timing-based anti-debug check
+#[allow(dead_code)]
 pub fn timing_check() -> bool {
     #[cfg(debug_assertions)]
     return false;
@@ -53,11 +57,12 @@ pub fn timing_check() -> bool {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 fn platform_check_debugger() -> bool {
     use std::process::Command;
     
     // Method 1: Check sysctl for P_TRACED flag
-    let output = Command::new("sysctl")
+    let _output = Command::new("sysctl")
         .args(["hw.optional.arm64"])
         .output();
     
@@ -122,6 +127,7 @@ fn platform_check_debugger() -> bool {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+#[allow(dead_code)]
 fn check_ptrace() -> bool {
     // PT_DENY_ATTACH on macOS, PTRACE_TRACEME on Linux
     #[cfg(target_os = "macos")]
@@ -130,6 +136,7 @@ fn check_ptrace() -> bool {
         
         const PT_DENY_ATTACH: c_int = 31;
         
+        #[allow(dead_code)]
         extern "C" {
             fn ptrace(request: c_int, pid: c_int, addr: *mut u8, data: c_int) -> c_int;
         }

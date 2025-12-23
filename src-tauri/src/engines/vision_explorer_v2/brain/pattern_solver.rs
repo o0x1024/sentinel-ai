@@ -1,5 +1,5 @@
-use crate::engines::vision_explorer_v2::core::{Agent, Event, PerceptionResult, SuggestedAction};
-use anyhow::{Context, Result};
+use crate::engines::vision_explorer_v2::core::{Agent, Event, SuggestedAction};
+use anyhow::Result;
 use async_trait::async_trait;
 
 /// Specialized agent for solving complex navigation patterns.

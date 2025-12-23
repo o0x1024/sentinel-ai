@@ -23,7 +23,7 @@ impl SecurityTestManager {
         primary_target: String,
         summary: String,
     ) -> Result<TestSession> {
-        let mut session = TestSession::new(task_kind, primary_target, summary);
+        let session = TestSession::new(task_kind, primary_target, summary);
         let session_id = session.id.clone();
         
         let mut sessions = self.sessions.write().await;

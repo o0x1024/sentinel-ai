@@ -5,7 +5,9 @@ use chrono::{DateTime, Utc};
 /// Security task type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SecurityTaskKind {
+    #[default]
     WebPentest,
     APIPentest,
     Forensics,
@@ -14,11 +16,6 @@ pub enum SecurityTaskKind {
     OtherSecurity,
 }
 
-impl Default for SecurityTaskKind {
-    fn default() -> Self {
-        Self::WebPentest
-    }
-}
 
 /// Test session stage
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -113,7 +110,9 @@ pub enum SubAgentKind {
 /// Risk impact level
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RiskImpact {
+    #[default]
     None,
     Info,
     Low,
@@ -122,27 +121,19 @@ pub enum RiskImpact {
     Critical,
 }
 
-impl Default for RiskImpact {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 /// Step status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum StepStatus {
+    #[default]
     Pending,
     Running,
     Completed,
     Failed,
 }
 
-impl Default for StepStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
-}
 
 /// Authentication context
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

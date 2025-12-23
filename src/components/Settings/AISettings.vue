@@ -843,7 +843,16 @@ const rigProviderLocal = computed({
   set: (value: string) => {
     const providerKey = selectedAiProvider.value
     if (providerKey && props.aiConfig.providers && props.aiConfig.providers[providerKey]) {
-      props.aiConfig.providers[providerKey].rig_provider = value
+      emit('update:aiConfig', {
+        ...props.aiConfig,
+        providers: {
+          ...props.aiConfig.providers,
+          [providerKey]: {
+            ...props.aiConfig.providers[providerKey],
+            rig_provider: value
+          }
+        }
+      })
     }
   }
 })

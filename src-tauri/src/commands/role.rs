@@ -66,7 +66,7 @@ pub async fn update_ai_role(
         title: payload.title,
         description: payload.description,
         prompt: payload.prompt,
-        is_system: is_system, // 保留原有的 is_system 值
+        is_system, // 保留原有的 is_system 值
         created_at: existing_role.map(|r| r.created_at).unwrap_or_else(Utc::now),
         updated_at: Utc::now(),
     };

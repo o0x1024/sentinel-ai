@@ -1451,7 +1451,7 @@ impl DatabaseService {
             ("planexecute", "replan", "P&E Replan", "你是一个重新规划师。请评估执行结果并在必要时调整计划。\n执行计划：{plan}\n执行结果：{results}\n目标达成情况：{goal_achievement}"),
         ];
 
-        for (arch, stage, name, content) in defaults {
+        for (_arch, stage, name, content) in defaults {
             sqlx::query(r#"INSERT INTO prompt_templates (name, description, content, is_default, is_active, category, template_type) VALUES (?, ?, ?, 1, 1, ?, ?)"#)
                 .bind(*name)
                 .bind(Option::<&str>::None)
@@ -1782,7 +1782,7 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_plugins_paginated(&self, page: i64, page_size: i64, status_filter: Option<&str>, search_text: Option<&str>, user_id: Option<&str>) -> Result<serde_json::Value> {
+    pub async fn get_plugins_paginated(&self, page: i64, page_size: i64, status_filter: Option<&str>, search_text: Option<&str>, _user_id: Option<&str>) -> Result<serde_json::Value> {
         let pool = self.get_pool()?;
         let offset = (page.max(1) - 1) * page_size.max(1);
         let mut base = String::from(
@@ -4272,7 +4272,7 @@ impl Database for DatabaseService {
         Ok(())
     }
 
-    async fn get_plugins_paginated(&self, page: i64, page_size: i64, status_filter: Option<&str>, search_text: Option<&str>, user_id: Option<&str>) -> Result<serde_json::Value> {
+    async fn get_plugins_paginated(&self, page: i64, page_size: i64, status_filter: Option<&str>, search_text: Option<&str>, _user_id: Option<&str>) -> Result<serde_json::Value> {
         let pool = self.get_pool()?;
         let offset = (page.max(1) - 1) * page_size.max(1);
         let mut base = String::from(
@@ -5666,6 +5666,7 @@ impl DatabaseService {
         }
     }
 
+    #[allow(dead_code)]
     async fn get_current_ai_role(&self) -> Result<Option<AiRole>> {
         // 获取当前选中的角色ID
         let role_id = match self.get_config("ai", "current_role_id").await? {

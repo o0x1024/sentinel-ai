@@ -2,8 +2,6 @@ use crate::engines::vision_explorer_v2::core::SuggestedAction;
 use petgraph::graph::{DiGraph, NodeIndex};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// The Global Exploration Graph
 /// Maps the application structure as a directed graph of States (Nodes) and Actions (Edges).
@@ -13,6 +11,12 @@ pub struct ExplorationGraph {
     graph: DiGraph<PageStateNode, ActionEdge>,
     /// Map of state fingerprint to node index for quick lookups
     node_map: HashMap<String, NodeIndex>,
+}
+
+impl Default for ExplorationGraph {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ExplorationGraph {

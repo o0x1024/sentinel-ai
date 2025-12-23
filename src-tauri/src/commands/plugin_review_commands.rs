@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use chrono::Utc;
 
-use crate::generators::{GeneratedPlugin, PluginStatus};
 use crate::services::database::DatabaseService;
 
 /// Response for plugin review operations
@@ -59,7 +58,7 @@ pub async fn list_generated_plugins(
 #[tauri::command]
 pub async fn get_plugin_detail(
     plugin_id: String,
-    db: State<'_, Arc<DatabaseService>>,
+    _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting plugin detail: {}", plugin_id);
     
@@ -266,7 +265,7 @@ pub async fn batch_reject_plugins(
 /// Get plugin statistics
 #[tauri::command]
 pub async fn get_plugin_statistics(
-    db: State<'_, Arc<DatabaseService>>,
+    _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting plugin statistics");
     
@@ -290,8 +289,8 @@ pub async fn get_plugin_statistics(
 #[tauri::command]
 pub async fn search_plugins(
     query: String,
-    filters: Option<serde_json::Value>,
-    db: State<'_, Arc<DatabaseService>>,
+    _filters: Option<serde_json::Value>,
+    _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Searching plugins: {}", query);
     

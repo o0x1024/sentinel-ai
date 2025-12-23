@@ -417,7 +417,7 @@ The plugin should:
                         .query_params
                         .iter()
                         .take(5)
-                        .map(|p| format!("{}", p.name))
+                        .map(|p| p.name.to_string())
                         .collect();
                     context.push_str(&format!("   Query params: {}\n", params.join(", ")));
                 }
@@ -427,7 +427,7 @@ The plugin should:
                         .body_params
                         .iter()
                         .take(5)
-                        .map(|p| format!("{}", p.name))
+                        .map(|p| p.name.to_string())
                         .collect();
                     context.push_str(&format!("   Body params: {}\n", params.join(", ")));
                 }

@@ -79,15 +79,6 @@
                      @test-embedding-connection="testEmbeddingConnection"
                      @reset-rag-config="resetRagConfig" />
 
-        <!-- 模型配置设置 -->
-        <ModelSettings v-if="activeCategory === 'scheduler'" 
-                           v-model:scheduler-config="settings.scheduler"
-                           :available-models="availableModels"
-                           :saving="saving"
-                           @save-scheduler-config="saveSchedulerConfig"
-                           @apply-high-performance-preset="applyHighPerformanceConfig"
-                           @apply-balanced-preset="applyBalancedConfig"
-                           @apply-economic-preset="applyEconomicConfig" />
 
         <!-- Agent设置 -->
         <AgentSettings v-if="activeCategory === 'agent'" />
@@ -149,7 +140,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import AISettings from '@/components/Settings/AISettings.vue'
 import RAGSettings from '@/components/Settings/RAGSettings.vue'
-import ModelSettings from '@/components/Settings/ModelSettings.vue'
 import DatabaseSettings from '@/components/Settings/DatabaseSettings.vue'
 import GeneralSettings from '@/components/Settings/GeneralSettings.vue'
 import SecuritySettings from '@/components/Settings/SecuritySettings.vue'
@@ -171,7 +161,6 @@ defineOptions({
 const categories = [
   { id: 'ai', icon: 'fas fa-robot' },
   { id: 'rag', icon: 'fas fa-database' },
-  { id: 'scheduler', icon: 'fas fa-cogs' },
   { id: 'agent', icon: 'fas fa-user-cog' },
   { id: 'database', icon: 'fas fa-server' },
   { id: 'system', icon: 'fas fa-cog' },
@@ -184,25 +173,6 @@ const settings = ref({
   ai: {
     temperature: 0.7,
     maxTokens: 2000
-  },
-  scheduler: {
-    enabled: true,
-    models: {
-      intent_analysis: '',
-      intent_analysis_provider: '',
-      planner: '',
-      planner_provider: '',
-      replanner: '',
-      replanner_provider: '',
-      executor: '',
-      executor_provider: '',
-      evaluator: '',
-      evaluator_provider: ''
-    },
-    default_strategy: 'adaptive',
-    max_retries: 3,
-    timeout_seconds: 120,
-    scenarios: {}
   },
   database: {
     type: 'sqlite',
@@ -466,38 +436,6 @@ const loadSettings = async () => {
     // 等待一个 tick 确保 aiConfig 更新完成
     await nextTick()
     
-    // 再加载调度器配置
-    const schedulerConfig = await invoke('get_scheduler_config') as any
-    console.log('Loaded scheduler config from backend:', schedulerConfig)
-    let backendSchedulerApplied = false
-    
-    if (schedulerConfig) {
-      // 转换后端返回的扁平结构为前端期望的嵌套结构
-      const transformedConfig = {
-        enabled: schedulerConfig.enabled ?? true,
-        models: {
-          intent_analysis: schedulerConfig.intent_analysis_model || '',
-          intent_analysis_provider: schedulerConfig.intent_analysis_provider || '',
-          planner: schedulerConfig.planner_model || '',
-          planner_provider: schedulerConfig.planner_provider || '',
-          replanner: schedulerConfig.replanner_model || '',
-          replanner_provider: schedulerConfig.replanner_provider || '',
-          executor: schedulerConfig.executor_model || '',
-          executor_provider: schedulerConfig.executor_provider || '',
-          evaluator: schedulerConfig.evaluator_model || '',
-          evaluator_provider: schedulerConfig.evaluator_provider || ''
-        },
-        default_strategy: schedulerConfig.default_strategy || 'adaptive',
-        max_retries: schedulerConfig.max_retries || 3,
-        timeout_seconds: schedulerConfig.timeout_seconds || 120,
-        scenarios: schedulerConfig.scenarios || {}
-      }
-      
-      console.log('Transformed scheduler config:', transformedConfig)
-      Object.assign(settings.value.scheduler, transformedConfig)
-      backendSchedulerApplied = true
-    }
-    
     // 从 localStorage 加载通用设置
     const savedSettings = localStorage.getItem('sentinel-settings')
     if (savedSettings) {
@@ -515,10 +453,6 @@ const loadSettings = async () => {
         }
         if (parsed.ai) {
           Object.assign(settings.value.ai, parsed.ai)
-        }
-        // 若后端已返回调度器配置，则不使用本地缓存覆盖
-        if (!backendSchedulerApplied && parsed.scheduler) {
-          Object.assign(settings.value.scheduler, parsed.scheduler)
         }
         if (parsed.database) {
           Object.assign(settings.value.database, parsed.database)
@@ -558,7 +492,6 @@ const saveAllSettings = async () => {
   try {
     await Promise.all([
       saveAiConfig(),
-      saveSchedulerConfig(),
       saveDatabaseConfig(),
       saveGeneralConfig(),
       saveSecurityConfig(),
@@ -990,35 +923,7 @@ const applyManualConfig = async (config: any) => {
   }
 }
 
-// 调度器相关方法
-const saveSchedulerConfig = async () => {
-  try {
-    // 转换前端嵌套结构为后端期望的扁平结构
-    const flatConfig = {
-      enabled: settings.value.scheduler.enabled,
-      intent_analysis_model: settings.value.scheduler.models.intent_analysis,
-      intent_analysis_provider: settings.value.scheduler.models.intent_analysis_provider,
-      planner_model: settings.value.scheduler.models.planner,
-      planner_provider: settings.value.scheduler.models.planner_provider,
-      replanner_model: settings.value.scheduler.models.replanner,
-      replanner_provider: settings.value.scheduler.models.replanner_provider,
-      executor_model: settings.value.scheduler.models.executor,
-      executor_provider: settings.value.scheduler.models.executor_provider,
-      evaluator_model: settings.value.scheduler.models.evaluator,
-      evaluator_provider: settings.value.scheduler.models.evaluator_provider,
-      default_strategy: settings.value.scheduler.default_strategy,
-      max_retries: settings.value.scheduler.max_retries,
-      timeout_seconds: settings.value.scheduler.timeout_seconds,
-      scenarios: settings.value.scheduler.scenarios
-    }
-    
-    await invoke('save_scheduler_config', { config: flatConfig })
-    dialog.toast.success('模型配置配置已保存')
-  } catch (error) {
-    console.error('Failed to save scheduler config:', error)
-    dialog.toast.error('保存模型配置配置失败')
-  }
-}
+// 调度器相关方法已移除 - 模型配置现在使用 AISettings 中的默认 LLM 模型
 
 // 数据库相关方法
 const loadDatabaseStatus = async () => {
@@ -1445,25 +1350,9 @@ const wipeSecurityData = async () => {
 
 const saveSecurityConfig = async () => {
    dialog.toast.success('安全配置已保存')
- }
+}
 
-
-
-
- // 调度器预设配置方法
- const applyHighPerformanceConfig = () => {
-   dialog.toast.success('已应用高性能配置')
- }
-
- const applyBalancedConfig = () => {
-   dialog.toast.success('已应用平衡配置')
- }
-
- const applyEconomicConfig = () => {
-   dialog.toast.success('已应用经济配置')
- }
-
-// RAG配置相关方法
+// 数据库相关方法
 const saveRagConfig = async () => {
   try {
     await invoke('save_rag_config', { config: ragConfig.value })
@@ -1534,8 +1423,6 @@ onMounted(async () => {
   // 最后加载数据库状态，这样可以覆盖 localStorage 中可能过时的数据库路径
   await loadDatabaseStatus()
 })
-
-
 
 // 自动持久化通用设置与即时应用
 watch(() => settings.value.general, (newGeneral, oldGeneral) => {

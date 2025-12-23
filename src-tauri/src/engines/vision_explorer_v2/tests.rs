@@ -1,6 +1,6 @@
 //! Tests for Vision Explorer V2 components
 
-use crate::engines::vision_explorer_v2::blackboard::{Blackboard, ExplorationConfig};
+use crate::engines::vision_explorer_v2::blackboard::Blackboard;
 use crate::engines::vision_explorer_v2::brain::AuthAgent;
 use crate::engines::vision_explorer_v2::core::{PageContext, SuggestedAction};
 use crate::engines::vision_explorer_v2::graph::{

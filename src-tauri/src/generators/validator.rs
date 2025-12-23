@@ -1,7 +1,6 @@
 //! Plugin code validator
 
-use anyhow::{Context, Result};
-use deno_ast::{MediaType, ParseParams, SourceTextInfo};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Validation result
@@ -259,6 +258,7 @@ impl Default for PluginValidator {
 }
 
 /// Extract concise error message from detailed error string
+#[allow(dead_code)]
 fn extract_error_message(error: &str) -> String {
     // Try to extract the most relevant error message
     if let Some(line) = error.lines().find(|l| l.contains("Error:")) {

@@ -177,6 +177,7 @@ export interface AiChatMessage {
   role: 'user' | 'assistant'
   content: string
   codeBlock?: string
+  codeBlocks?: string[]
   codeRef?: CodeReference
   testResultRef?: TestResultReference
 }

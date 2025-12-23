@@ -635,7 +635,7 @@
     </div>
 
     <!-- 执行历史面板 -->
-    <div v-if="show_execution_history" ref="execution_history_ref" class="fixed inset-y-0 right-0 w-[700px] bg-base-100 shadow-xl border-l border-base-300 z-50 flex flex-col">
+    <div v-if="show_execution_history" ref="execution_history_ref" class="fixed inset-y-0 right-0 w-[700px] bg-base-100 shadow-xl border-l border-base-300 z-50 flex flex-col" @click.stop>
       <div class="p-3 flex items-center justify-between border-b border-base-300">
         <h2 class="text-base font-semibold">{{ t('passiveScan.workflowStudio.executionHistory.title') }}</h2>
         <button class="btn btn-xs btn-ghost" @click="show_execution_history = false">✕</button>
@@ -679,16 +679,16 @@
             <tr v-else-if="history_data.length === 0">
               <td colspan="5" class="text-center py-8 text-base-content/50">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p class="text-sm">{{ t('passiveScan.workflowStudio.executionHistory.emptyTitle') }}</p>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p class="text-sm">{{ t('passiveScan.workflowStudio.executionHistory.emptyTitle') }}</p>
               </td>
             </tr>
             <tr v-for="(exec, idx) in history_data" :key="exec.execution_id" class="hover">
               <td 
                 class="truncate max-w-[180px] cursor-pointer hover:text-primary font-medium" 
                 :title="exec.workflow_name"
-                @click="view_execution_detail(exec.execution_id)"
+                @click.stop="view_execution_detail(exec.execution_id)"
               >
                 {{ exec.workflow_name }} #{{ history_total - (history_page - 1) * history_page_size - idx }}
               </td>
@@ -701,9 +701,9 @@
               </td>
               <td class="text-center">
                 <div class="flex justify-center gap-1">
-                  <button 
+                <button 
                     class="btn btn-xs btn-ghost" 
-                    @click="view_execution_detail(exec.execution_id)"
+                    @click.stop="view_execution_detail(exec.execution_id)"
                     :title="t('passiveScan.workflowStudio.executionHistory.table.viewDetail')"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -713,19 +713,19 @@
                   </button>
                   <button 
                     class="btn btn-xs btn-ghost text-error" 
-                    @click="delete_history_record(exec.execution_id)"
+                    @click.stop="delete_history_record(exec.execution_id)"
                     :title="t('passiveScan.workflowStudio.executionHistory.table.delete')"
-                  >
+                >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
+                  </svg>
+                </button>
+              </div>
               </td>
             </tr>
           </tbody>
         </table>
-      </div>
+            </div>
       
       <!-- 分页 -->
       <div class="p-3 border-t border-base-300 flex items-center justify-between">
@@ -744,23 +744,40 @@
             :disabled="history_page >= Math.ceil(history_total / history_page_size)"
             @click="history_page++; load_history_from_backend()"
           >»</button>
-        </div>
+          </div>
         <select class="select select-bordered select-sm w-24" v-model="history_page_size" @change="history_page = 1; load_history_from_backend()">
           <option :value="10">10</option>
           <option :value="20">20</option>
           <option :value="50">50</option>
         </select>
+        </div>
       </div>
-    </div>
-    
+      
     <!-- 执行详情对话框 -->
-    <dialog :open="show_detail_dialog" class="modal" @click.self="show_detail_dialog = false">
-      <div class="modal-box max-w-3xl max-h-[80vh]">
+    <dialog ref="detail_dialog_ref" :open="show_detail_dialog" class="modal" @click.self="show_detail_dialog = false">
+      <div :class="[
+        'modal-box',
+        detail_dialog_fullscreen ? 'max-w-[95vw] w-[95vw] max-h-[95vh] h-[95vh]' : 'max-w-3xl max-h-[80vh]'
+      ]">
         <div class="flex items-center justify-between mb-4">
           <h3 class="font-bold text-lg">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.title') }}</h3>
-          <button class="btn btn-sm btn-ghost" @click="show_detail_dialog = false">✕</button>
+          <div class="flex gap-2">
+            <button 
+              class="btn btn-sm btn-ghost" 
+              @click="detail_dialog_fullscreen = !detail_dialog_fullscreen"
+              :title="detail_dialog_fullscreen ? t('passiveScan.workflowStudio.executionHistory.detailDialog.exitFullscreen') : t('passiveScan.workflowStudio.executionHistory.detailDialog.fullscreen')"
+            >
+              <svg v-if="!detail_dialog_fullscreen" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+              <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <button class="btn btn-sm btn-ghost" @click="show_detail_dialog = false">✕</button>
+          </div>
         </div>
-        
+          
         <div v-if="detail_loading" class="flex justify-center py-8">
           <span class="loading loading-spinner loading-lg"></span>
         </div>
@@ -771,11 +788,11 @@
             <div>
               <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.workflowName') }}:</span>
               <span class="font-medium ml-2">{{ detail_data.workflow_name }}</span>
-            </div>
+          </div>
             <div>
               <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.status') }}:</span>
               <span :class="get_status_badge_class(detail_data.status)" class="badge badge-sm ml-2">{{ get_status_text(detail_data.status) }}</span>
-            </div>
+        </div>
             <div>
               <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.startTime') }}:</span>
               <span class="ml-2">{{ format_datetime(detail_data.started_at) }}</span>
@@ -787,12 +804,15 @@
             <div v-if="detail_data.error_message" class="col-span-2">
               <span class="text-base-content/60">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.error') }}:</span>
               <span class="text-error ml-2">{{ detail_data.error_message }}</span>
-            </div>
-          </div>
+      </div>
+    </div>
           
           <!-- 步骤列表 -->
           <div class="divider">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.steps') }}</div>
-          <div class="space-y-2 max-h-[40vh] overflow-y-auto">
+          <div :class="[
+            'space-y-2 overflow-y-auto',
+            detail_dialog_fullscreen ? 'max-h-[calc(95vh-280px)]' : 'max-h-[40vh]'
+          ]">
             <div v-if="!detail_data.steps || detail_data.steps.length === 0" class="text-center text-base-content/50 py-4">
               {{ t('passiveScan.workflowStudio.executionHistory.detailDialog.noSteps') }}
             </div>
@@ -809,7 +829,10 @@
               </div>
               <div class="collapse-content">
                 <div v-if="step.error_message" class="text-error text-xs mb-2">{{ step.error_message }}</div>
-                <pre v-if="step.result !== undefined && step.result !== null" class="text-xs bg-base-300 p-2 rounded overflow-x-auto max-h-48">{{ format_result(step.result) }}</pre>
+                <pre v-if="step.result !== undefined && step.result !== null" :class="[
+                  'text-xs bg-base-300 p-2 rounded overflow-x-auto',
+                  detail_dialog_fullscreen ? 'max-h-[60vh]' : 'max-h-48'
+                ]">{{ format_result(step.result) }}</pre>
                 <div v-else class="text-xs text-base-content/50">{{ t('passiveScan.workflowStudio.executionHistory.detailDialog.noResult') }}</div>
               </div>
             </div>
@@ -883,6 +906,7 @@ const drawer_ref = ref<HTMLElement | null>(null)
 const result_panel_ref = ref<HTMLElement | null>(null)
 const ignore_result_panel_close_once = ref(false)
 const execution_history_ref = ref<HTMLElement | null>(null)
+const detail_dialog_ref = ref<HTMLElement | null>(null)
 const ignore_execution_history_close_once = ref(false)
 const sidebar_collapsed = ref(false)
 const show_logs = ref(true) // 默认显示日志
@@ -983,6 +1007,7 @@ const history_total = ref(0)
 const history_data = ref<HistoryItem[]>([])
 const history_loading = ref(false)
 const show_detail_dialog = ref(false)
+const detail_dialog_fullscreen = ref(false)
 const detail_loading = ref(false)
 const detail_data = ref<DetailData | null>(null)
 
@@ -1310,6 +1335,7 @@ const load_history_from_backend = async () => {
 // 查看执行详情
 const view_execution_detail = async (runId: string) => {
   show_detail_dialog.value = true
+  detail_dialog_fullscreen.value = false
   detail_loading.value = true
   detail_data.value = null
   try {
@@ -2038,17 +2064,19 @@ const setup_event_listeners = async () => {
       }
     }
   })
-  await wf_events.on_run_complete(() => {
+  await wf_events.on_run_complete(async (p: any) => {
     add_log('SUCCESS', t('passiveScan.workflowStudio.logs.workflowCompleted'))
     complete_execution(true)
+    
+    // 保存执行ID用于查看详情
+    const exec_id = current_exec_id.value
+    
     workflow_running.value = false
     current_exec_id.value = null
     
-    // 自动打开执行历史面板并选中当前执行记录
-    show_execution_history.value = true
-    const currentExec = execution_history.value.find(e => e.id === current_execution_id.value)
-    if (currentExec) {
-      selected_execution.value = currentExec
+    // 直接弹出执行详情对话框
+    if (exec_id) {
+      await view_execution_detail(exec_id)
     }
     
     // 延迟清除节点执行状态
@@ -2318,9 +2346,34 @@ const search_in_canvas = () => {
   }
 }
 
+// 处理键盘事件
+const handle_keydown = (e: KeyboardEvent) => {
+  // ESC 键关闭对话框（栈式关闭）
+  if (e.key === 'Escape') {
+    if (show_detail_dialog.value) {
+      show_detail_dialog.value = false
+      detail_dialog_fullscreen.value = false
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  }
+}
+
 const handle_global_click = (e: MouseEvent) => {
-  // 如果详情对话框打开了，不处理其他面板的关闭
-  if (show_detail_dialog.value) return
+  // 栈式关闭逻辑：先开后关
+  // 如果详情对话框打开了，优先处理对话框的关闭
+  if (show_detail_dialog.value) {
+    const dialogEl = detail_dialog_ref.value
+    // 检查点击是否在对话框的 modal-box 内部
+    const modalBox = dialogEl?.querySelector('.modal-box')
+    if (modalBox && !modalBox.contains(e.target as Node)) {
+      // 点击在对话框外部，只关闭对话框
+      show_detail_dialog.value = false
+      detail_dialog_fullscreen.value = false
+    }
+    // 无论如何都不处理其他面板的关闭
+    return
+  }
 
   // 处理参数编辑抽屉的关闭
   if (drawer_open.value) {
@@ -2390,6 +2443,7 @@ onMounted(async () => {
   }
   
   window.addEventListener('click', handle_global_click)
+  window.addEventListener('keydown', handle_keydown)
 })
 
 onUnmounted(() => {
@@ -2399,6 +2453,7 @@ onUnmounted(() => {
     clearTimeout(auto_save_timer.value)
   }
   window.removeEventListener('click', handle_global_click)
+  window.removeEventListener('keydown', handle_keydown)
 })
 </script>
 

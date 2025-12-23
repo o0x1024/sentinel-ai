@@ -6,6 +6,7 @@ use sysinfo::System;
 /// Machine identifier based on hardware characteristics
 #[derive(Debug, Clone)]
 pub struct MachineId {
+    #[allow(dead_code)]
     components: Vec<String>,
     hash: [u8; 32],
 }
@@ -74,7 +75,7 @@ impl MachineId {
     
     /// Get full hash as hex string
     pub fn to_full_hex(&self) -> String {
-        hex::encode(&self.hash)
+        hex::encode(self.hash)
     }
 }
 

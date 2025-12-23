@@ -199,6 +199,7 @@
       :selected-code-ref="selectedCodeRef"
       :selected-test-result-ref="selectedTestResultRef"
       :plugin-testing="pluginTesting"
+      :is-preview-mode="isPreviewMode"
       @update:new-plugin-metadata="newPluginMetadata = $event"
       @insert-template="insertTemplate"
       @format-code="formatCode"
@@ -214,6 +215,7 @@
       @ai-quick-action="handleAiQuickAction"
       @apply-ai-code="applyAiCode"
       @preview-ai-code="previewAiCode"
+      @exit-preview-mode="exitPreviewMode"
       @add-selected-code="addSelectedCodeToContext"
       @add-full-code="addFullCodeToContext"
       @clear-code-ref="clearCodeRef"
@@ -221,6 +223,34 @@
       @add-test-result-to-context="addTestResultToContext"
       @test-current-plugin="testCurrentPlugin"
     />
+
+    <!-- Editor Context Menu -->
+    <Teleport to="body">
+      <div 
+        v-if="showContextMenu" 
+        class="editor-context-menu"
+        :style="{ left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"
+      >
+        <div class="context-menu-header">
+          <i class="fas fa-robot text-primary text-xs mr-1"></i>
+          <span class="text-xs font-semibold">{{ $t('plugins.aiAssistant', 'AI 助手') }}</span>
+        </div>
+        <button 
+          v-if="contextMenuHasSelection"
+          class="context-menu-item" 
+          @click="handleContextMenuAddSelection"
+        >
+          <i class="fas fa-highlighter text-warning"></i>
+          <span>{{ $t('plugins.addSelection', '添加选中代码') }}</span>
+          <kbd class="kbd kbd-xs ml-auto">Ctrl+Shift+A</kbd>
+        </button>
+        <button class="context-menu-item" @click="handleContextMenuAddAll">
+          <i class="fas fa-file-code text-info"></i>
+          <span>{{ $t('plugins.addAll', '添加完整代码') }}</span>
+          <kbd class="kbd kbd-xs ml-auto">Ctrl+Shift+F</kbd>
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -261,8 +291,19 @@ const plugins = ref<PluginRecord[]>([])
 let codeEditorView: EditorView | null = null
 let reviewCodeEditorView: EditorView | null = null
 let fullscreenCodeEditorView: EditorView | null = null
+let diffEditorViewA: EditorView | null = null  // Original code in diff view
+let diffEditorViewB: EditorView | null = null  // Modified code in diff view
 const codeEditorReadOnly = new Compartment()
 const reviewCodeEditorReadOnly = new Compartment()
+
+// Diff preview state
+const isPreviewMode = ref(false)
+const previewCode = ref('')
+
+// Context menu state
+const showContextMenu = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const contextMenuHasSelection = ref(false)
 
 // Review State
 const reviewPlugins = ref<ReviewPlugin[]>([])
@@ -345,6 +386,7 @@ interface AiChatMessage {
   role: 'user' | 'assistant'
   content: string
   codeBlock?: string
+  codeBlocks?: string[] // Multiple code blocks from AI
   codeRef?: CodeReference
   testResultRef?: TestResultReference
 }
@@ -356,6 +398,15 @@ const selectedCodeRef = ref<CodeReference | null>(null)
 const selectedTestResultRef = ref<TestResultReference | null>(null)
 const lastTestResult = ref<TestResultReference | null>(null)  // Store last test result for reference
 const pluginTesting = ref(false)  // Testing state for current editing plugin
+
+// Editor state preservation
+interface EditorViewState {
+  cursorPos: number
+  scrollTop: number
+  scrollLeft: number
+  selectionRanges: Array<{ from: number; to: number }>
+}
+let savedEditorState: EditorViewState | null = null
 
 // Test State
 const testing = ref(false)
@@ -1099,7 +1150,17 @@ const closeCodeEditorDialog = () => {
     fullscreenCodeEditorView.destroy()
     fullscreenCodeEditorView = null
   }
+  if (diffEditorViewA) {
+    diffEditorViewA.destroy()
+    diffEditorViewA = null
+  }
+  if (diffEditorViewB) {
+    diffEditorViewB.destroy()
+    diffEditorViewB = null
+  }
   isFullscreenEditor.value = false
+  isPreviewMode.value = false
+  previewCode.value = ''
   if (codeEditorView) {
     codeEditorView.destroy()
     codeEditorView = null
@@ -1109,6 +1170,7 @@ const closeCodeEditorDialog = () => {
   originalCode.value = ''
   isEditing.value = false
   codeError.value = ''
+  savedEditorState = null
   // Reset AI chat state
   showAiPanel.value = false
   aiChatMessages.value = []
@@ -1152,12 +1214,50 @@ const createCodePreview = (code: string, maxLines: number = 5): string => {
   return lines.slice(0, maxLines).join('\n') + '\n... (' + (lines.length - maxLines) + ' more lines)'
 }
 
-// Add selected code to context
+// Get current code from active editor (to ensure real-time accuracy)
+const getCurrentEditorCode = (): string => {
+  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
+  if (!editorView) return pluginCode.value
+  return editorView.state.doc.toString()
+}
+
+// Context menu handlers
+const handleContextMenuAddSelection = () => {
+  showContextMenu.value = false
+  addSelectedCodeToContext()
+  // Auto open AI panel if not open
+  if (!showAiPanel.value) {
+    showAiPanel.value = true
+  }
+}
+
+const handleContextMenuAddAll = () => {
+  showContextMenu.value = false
+  addFullCodeToContext()
+  // Auto open AI panel if not open
+  if (!showAiPanel.value) {
+    showAiPanel.value = true
+  }
+}
+
+// Add selected code to context (with real-time update)
 const addSelectedCodeToContext = () => {
+  // Get fresh code from editor
+  const currentCode = getCurrentEditorCode()
+  
   const selected = getSelectedCode()
   if (!selected || !selected.code.trim()) {
     showToast(t('plugins.noCodeSelected', '请先选择代码'), 'warning')
     return
+  }
+  
+  // Re-verify selection in current code (in case code changed)
+  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
+  if (editorView) {
+    const freshSelection = editorView.state.sliceDoc(selected.from, selected.to)
+    if (freshSelection) {
+      selected.code = freshSelection
+    }
   }
   
   const { startLine, endLine } = getLineNumbers(selected.from, selected.to)
@@ -1168,23 +1268,33 @@ const addSelectedCodeToContext = () => {
     endLine,
     isFullCode: false
   }
+  
+  showToast(t('plugins.codeRefAdded', '已添加选中代码到上下文'), 'success')
 }
 
-// Add full code to context
+// Add full code to context (with real-time update)
 const addFullCodeToContext = () => {
-  if (!pluginCode.value.trim()) {
+  // Always get fresh code from editor
+  const currentCode = getCurrentEditorCode()
+  
+  if (!currentCode.trim()) {
     showToast(t('plugins.noCode', '没有代码'), 'warning')
     return
   }
   
-  const lines = pluginCode.value.split('\n')
+  // Update pluginCode ref to match editor state
+  pluginCode.value = currentCode
+  
+  const lines = currentCode.split('\n')
   selectedCodeRef.value = {
-    code: pluginCode.value,
-    preview: createCodePreview(pluginCode.value),
+    code: currentCode,
+    preview: createCodePreview(currentCode),
     startLine: 1,
     endLine: lines.length,
     isFullCode: true
   }
+  
+  showToast(t('plugins.fullCodeRefAdded', '已添加完整代码到上下文'), 'success')
 }
 
 // Clear code reference
@@ -1322,6 +1432,25 @@ const sendAiChatMessage = async (message: string) => {
   const codeRef = selectedCodeRef.value
   const testResultRef = selectedTestResultRef.value
   
+  // Refresh code reference if it exists (ensure real-time accuracy)
+  if (codeRef) {
+    const currentCode = getCurrentEditorCode()
+    if (codeRef.isFullCode) {
+      // Update full code reference
+      codeRef.code = currentCode
+      codeRef.preview = createCodePreview(currentCode)
+      codeRef.endLine = currentCode.split('\n').length
+    } else {
+      // For partial selection, try to maintain line range
+      const lines = currentCode.split('\n')
+      const startIdx = Math.max(0, codeRef.startLine - 1)
+      const endIdx = Math.min(lines.length, codeRef.endLine)
+      const refreshedCode = lines.slice(startIdx, endIdx).join('\n')
+      codeRef.code = refreshedCode
+      codeRef.preview = createCodePreview(refreshedCode)
+    }
+  }
+  
   // Add user message with references
   aiChatMessages.value.push({ 
     role: 'user', 
@@ -1335,37 +1464,59 @@ const sendAiChatMessage = async (message: string) => {
   const streamId = `plugin_edit_${Date.now()}`
   
   try {
-    // Build system prompt for code editing
+    // Build system prompt for code editing (Vibe Coding Agent Mode)
     const isAgentPlugin = newPluginMetadata.value.mainCategory === 'agent'
-    const systemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
+    const baseSystemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
       pluginType: isAgentPlugin ? 'agent' : 'passive',
       vulnType: 'custom',
       severity: newPluginMetadata.value.default_severity
     })
     
-    // Build user prompt with context
+    const agentInstructions = `
+you are a senior code editor Agent, writing a plugin for the "Sentinel AI" security testing platform.
+you are goal is to modify the TypeScript code directly and efficiently according to the user's needs.
+
+[Behavior Guidelines]:
+1. **Direct Modification**: If the user requires modifying the code, please provide the modified code block directly.
+2. **Partial vs Full**:
+   - If the user only wants to modify a specific function or add a small logic, you can only return the relevant code block (wrapped in \`\`\`typescript).
+   - If the user requires global structure adjustments or explicitly requests, please return the complete code.
+3. **Keep the Context**: When modifying, please refer to the user's [full code context] to ensure that the new code is compatible with the existing logic and type definitions.
+4. **Security First**: As a security plugin, the code must be robust and avoid injection risks and performance bottlenecks.
+5. **Simple Communication**: No need to add too many开场白, directly state what you have modified and then provide the code.
+
+[Special Instructions]:
+- User can send specific code snippets to you through the "right-click menu", please handle this part of content first.
+- If the user does not provide any code context, please answer as a general programming assistant.
+`
+    const systemPrompt = `${baseSystemPrompt}\n\n${agentInstructions}`
+    
+    // Get latest code from editor
+    const latestCode = getCurrentEditorCode()
+    
+    // Build user prompt with context - ONLY if user explicitly added code reference
     let userPrompt = message
     const contextParts: string[] = []
     
-    // Add code context
-    if (codeRef) {
+    // Check if user has explicitly provided context
+    const hasExplicitCodeRef = codeRef !== null
+    
+    if (hasExplicitCodeRef && codeRef) {
       if (codeRef.isFullCode) {
-        contextParts.push(`完整插件代码：\n\`\`\`typescript\n${codeRef.code}\n\`\`\``)
+        contextParts.push(`[Current Full Plugin Code]:\n\`\`\`typescript\n${codeRef.code}\n\`\`\``)
       } else {
-        contextParts.push(`选中的代码片段 (第${codeRef.startLine}-${codeRef.endLine}行)：\n\`\`\`typescript\n${codeRef.code}\n\`\`\``)
-        contextParts.push(`完整代码上下文：\n\`\`\`typescript\n${pluginCode.value}\n\`\`\``)
+        contextParts.push(`[Current Focused Code Block] (Lines ${codeRef.startLine}-${codeRef.endLine}):\n\`\`\`typescript\n${codeRef.code}\n\`\`\``)
+        contextParts.push(`[Full Code Context] (仅供参考，请重点修改关注的片段):\n\`\`\`typescript\n${latestCode}\n\`\`\``)
       }
-    } else if (pluginCode.value) {
-      contextParts.push(`当前插件代码：\n\`\`\`typescript\n${pluginCode.value}\n\`\`\``)
     }
     
     // Add test result context
     if (testResultRef) {
-      const testInfo = [`插件测试结果：`, `- 状态: ${testResultRef.success ? '成功' : '失败'}`]
-      if (testResultRef.message) testInfo.push(`- 消息: ${testResultRef.message}`)
-      if (testResultRef.error) testInfo.push(`- 错误: ${testResultRef.error}`)
+      const testInfo = [`[Latest Plugin Test Result]:`, `- Status: ${testResultRef.success ? 'Success' : 'Failed'}`]
+      if (testResultRef.message) testInfo.push(`- Message: ${testResultRef.message}`)
+      if (testResultRef.error) testInfo.push(`- Error: ${testResultRef.error}`)
       if (testResultRef.findings && testResultRef.findings.length > 0) {
-        testInfo.push(`- 发现 (${testResultRef.findings.length}个):`)
+        testInfo.push(`- Findings (${testResultRef.findings.length}):`)
         testResultRef.findings.forEach((f, i) => {
           testInfo.push(`  ${i + 1}. [${f.severity}] ${f.title}: ${f.description}`)
         })
@@ -1373,9 +1524,19 @@ const sendAiChatMessage = async (message: string) => {
       contextParts.push(testInfo.join('\n'))
     }
     
+    // Determine instruction based on context
+    let instruction = ""
+    if (hasExplicitCodeRef) {
+      instruction = "\n\nPlease modify the code according to the above code context and my needs. If the modification is small, you can only return the relevant code block; if the modification is large or involves structural adjustments, please return the complete code. Please return the code directly, without any unnecessary words."
+    } else {
+      instruction = "\n\nNote: I currently do not provide you with specific code context, please directly answer my questions or provide generic coding suggestions."
+    }
+    
     // Combine context with user message
     if (contextParts.length > 0) {
-      userPrompt = `${contextParts.join('\n\n')}\n\n用户需求：${message}\n\n请根据需求修改代码，直接返回完整的修改后代码。`
+      userPrompt = `${contextParts.join('\n\n')}\n\n[User Requirement]: ${message}${instruction}`
+    } else {
+      userPrompt = `${message}${instruction}`
     }
     
     // Clear references after sending
@@ -1401,11 +1562,20 @@ const sendAiChatMessage = async (message: string) => {
     
     const unlistenError = await listen('plugin_gen_error', (event: any) => {
       if (event.payload.stream_id === streamId) {
-        const errorMsg = event.payload.error || 'AI 处理失败'
+        const errorMsg = event.payload.error || 'AI processing failed'
         aiChatMessages.value.push({ role: 'assistant', content: `❌ ${errorMsg}` })
         aiChatStreaming.value = false
         aiChatStreamingContent.value = ''
       }
+    })
+    
+    // Log request for debugging
+    console.log('[AI Chat] Sending message:', {
+      streamId,
+      messageLength: userPrompt.length,
+      hasCodeContext: !!codeRef,
+      hasTestContext: !!testResultRef,
+      serviceName: 'default'
     })
     
     await invoke('generate_plugin_stream', {
@@ -1434,25 +1604,67 @@ const sendAiChatMessage = async (message: string) => {
   }
 }
 
+// Enhanced markdown rendering with better code block handling
+const renderMarkdown = (content: string): { html: string; codeBlocks: string[] } => {
+  let html = content
+  const codeBlocks: string[] = []
+  
+  // Extract all code blocks
+  html = html.replace(/```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/g, (match, code) => {
+    const trimmedCode = code.trim()
+    codeBlocks.push(trimmedCode)
+    return `___CODE_BLOCK_${codeBlocks.length - 1}___`
+  })
+  
+  // Handle inline code
+  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
+  
+  // Handle line breaks
+  html = html.replace(/\n/g, '<br>')
+  
+  // Handle bold
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  
+  // Handle lists
+  html = html.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>')
+  const listMatches = html.match(/<li>[\s\S]*?<\/li>/g)
+  if (listMatches) {
+    html = html.replace(/(?:<li>[\s\S]*?<\/li>\s*)+/g, (m) => `<ul>${m}</ul>`)
+  }
+  
+  // Restore code blocks
+  codeBlocks.forEach((code, index) => {
+    html = html.replace(`___CODE_BLOCK_${index}___`, 
+      `<pre><code>${escapeHtml(code)}</code></pre>`)
+  })
+  
+  return { html, codeBlocks }
+}
+
+// Escape HTML for safe rendering
+const escapeHtml = (text: string): string => {
+  const map: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  }
+  return text.replace(/[&<>"']/g, m => map[m])
+}
+
 const finishAiChat = (content: string) => {
   aiChatStreaming.value = false
   aiChatStreamingContent.value = ''
   
-  // Extract code block if present
-  const codeMatch = content.match(/```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/)
-  const codeBlock = codeMatch ? codeMatch[1].trim() : undefined
-  
-  // Format content for display
-  let displayContent = content
-  if (codeBlock) {
-    displayContent = content.replace(/```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/, 
-      '<pre><code>$1</code></pre>')
-  }
+  // Use enhanced markdown rendering
+  const { html, codeBlocks } = renderMarkdown(content)
   
   aiChatMessages.value.push({ 
     role: 'assistant', 
-    content: displayContent,
-    codeBlock 
+    content: html,
+    codeBlock: codeBlocks[0],
+    codeBlocks: codeBlocks
   })
 }
 
@@ -1466,21 +1678,197 @@ const handleAiQuickAction = async (action: string) => {
   await sendAiChatMessage(message)
 }
 
+// Smart code application: detect if it's a partial or full replacement
+const detectCodeApplicationMode = (aiCode: string, currentCode: string): 'full' | 'partial' | 'append' => {
+  // If AI code contains typical plugin structure markers AND is long, treat as full replacement
+  const fullReplacementMarkers = [
+    'export interface ToolInput',
+    'export async function analyze',
+    'globalThis.analyze',
+    '@plugin'
+  ]
+  
+  const hasMarkers = fullReplacementMarkers.every(marker => aiCode.includes(marker))
+  const aiLines = aiCode.split('\n').length
+  const currentLines = currentCode.split('\n').length
+  
+  if (hasMarkers && aiLines > currentLines * 0.7) {
+    return 'full'
+  }
+  
+  // If it's a single function or small block
+  if (aiCode.includes('function ') || aiCode.includes('const ') || aiCode.includes('interface ')) {
+    return 'partial'
+  }
+  
+  return 'append'
+}
+
+// Attempt to smart merge partial code into current document
+const smartMergeCode = (snippet: string, currentCode: string): string => {
+  // 1. Try to find if the snippet starts with a function/const that already exists
+  const funcMatch = snippet.match(/(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_]+)/)
+  if (funcMatch) {
+    const funcName = funcMatch[1]
+    const escapedName = funcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // Regex to match the existing function body (simple version)
+    const existingFuncRegex = new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${escapedName}\\s*\\([\\s\\S]*?\\)\\s*\\{[\\s\\S]*?\\}`, 'g')
+    
+    if (currentCode.match(existingFuncRegex)) {
+      console.log(`[Smart Merge] Found existing function: ${funcName}, replacing it.`)
+      return currentCode.replace(existingFuncRegex, snippet)
+    }
+  }
+  
+  // 2. Try to find if it's a ToolInput/ToolOutput interface
+  const interfaceMatch = snippet.match(/interface\s+(ToolInput|ToolOutput|HttpRequest|HttpResponse|PluginContext)/)
+  if (interfaceMatch) {
+    const interfaceName = interfaceMatch[1]
+    const existingInterfaceRegex = new RegExp(`interface\\s+${interfaceName}\\s*\\{[\\s\\S]*?\\}`, 'g')
+    if (currentCode.match(existingInterfaceRegex)) {
+      console.log(`[Smart Merge] Found existing interface: ${interfaceName}, replacing it.`)
+      return currentCode.replace(existingInterfaceRegex, snippet)
+    }
+  }
+  
+  // 3. Fallback: Append or Full Replace based on size
+  if (snippet.length > currentCode.length * 0.8) {
+    return snippet
+  }
+  
+  return currentCode + '\n\n' + snippet
+}
+
 const applyAiCode = (code: string) => {
   if (!code) return
-  pluginCode.value = code
-  updateCodeEditorContent(code)
-  updateFullscreenCodeEditorContent(code)
+  
+  const currentCode = getCurrentEditorCode()
+  const codeToApply = isPreviewMode.value ? previewCode.value : code
+  const mode = detectCodeApplicationMode(codeToApply, currentCode)
+  
+  let finalCode = codeToApply
+  let message = '代码已应用'
+  
+  if (mode === 'partial') {
+    finalCode = smartMergeCode(codeToApply, currentCode)
+    message = '代码片段已智能合并'
+  } else if (mode === 'append') {
+    finalCode = currentCode + '\n\n' + codeToApply
+    message = '代码已追加到末尾'
+  } else {
+    message = '代码已全量替换'
+  }
+  
+  pluginCode.value = finalCode
+  updateCodeEditorContent(finalCode)
+  updateFullscreenCodeEditorContent(finalCode)
+  
+  if (isPreviewMode.value) {
+    exitPreviewMode()
+  }
+  
   if (!isEditing.value && editingPlugin.value) {
     enableEditing()
   }
-  showToast('代码已应用', 'success')
+  showToast(message, 'success')
 }
 
 const previewAiCode = (code: string) => {
-  // For now, just show in a simple way - could be enhanced with diff view
-  console.log('Preview code:', code)
-  showToast('预览功能开发中', 'info')
+  if (!code || !isFullscreenEditor.value) {
+    showToast('请在全屏模式下使用预览功能', 'warning')
+    return
+  }
+  
+  previewCode.value = code
+  isPreviewMode.value = true
+  
+  nextTick(() => {
+    initDiffEditor()
+  })
+}
+
+const exitPreviewMode = () => {
+  // Cleanup diff editors
+  if (diffEditorViewA) {
+    diffEditorViewA.destroy()
+    diffEditorViewA = null
+  }
+  if (diffEditorViewB) {
+    diffEditorViewB.destroy()
+    diffEditorViewB = null
+  }
+  
+  isPreviewMode.value = false
+  previewCode.value = ''
+  
+  // Re-init fullscreen editor
+  nextTick(() => {
+    if (!fullscreenCodeEditorView && isFullscreenEditor.value) {
+      initFullscreenCodeEditor()
+    }
+  })
+}
+
+const initDiffEditor = () => {
+  const container = codeEditorDialogRef.value?.fullscreenDiffEditorContainerRef
+  if (!container) return
+  
+  // Clear existing diff editors
+  if (diffEditorViewA) {
+    diffEditorViewA.destroy()
+    diffEditorViewA = null
+  }
+  if (diffEditorViewB) {
+    diffEditorViewB.destroy()
+    diffEditorViewB = null
+  }
+  
+  // Create a wrapper for side-by-side layout
+  const wrapper = document.createElement('div')
+  wrapper.className = 'diff-editor-wrapper'
+  wrapper.style.cssText = 'display: flex; height: calc(100% - 3rem); width: 100%;'
+  
+  const leftContainer = document.createElement('div')
+  leftContainer.className = 'diff-left'
+  leftContainer.style.cssText = 'flex: 1; border-right: 2px solid oklch(var(--bc) / 0.2);'
+  
+  const rightContainer = document.createElement('div')
+  rightContainer.className = 'diff-right'
+  rightContainer.style.cssText = 'flex: 1;'
+  
+  wrapper.appendChild(leftContainer)
+  wrapper.appendChild(rightContainer)
+  container.appendChild(wrapper)
+  
+  // Create original code editor (read-only)
+  diffEditorViewA = new EditorView({
+    doc: pluginCode.value,
+    extensions: [
+      basicSetup,
+      javascript(),
+      oneDark,
+      EditorView.lineWrapping,
+      EditorView.editable.of(false),
+    ],
+    parent: leftContainer
+  })
+  
+  // Create modified code editor (editable)
+  diffEditorViewB = new EditorView({
+    doc: previewCode.value,
+    extensions: [
+      basicSetup,
+      javascript(),
+      oneDark,
+      EditorView.lineWrapping,
+      EditorView.updateListener.of((update: ViewUpdate) => {
+        if (update.docChanged) {
+          previewCode.value = update.state.doc.toString()
+        }
+      })
+    ],
+    parent: rightContainer
+  })
 }
 
 const enableEditing = () => {
@@ -1513,13 +1901,57 @@ const cancelEditing = () => {
   }
 }
 
+// Save editor state (cursor, scroll, selection)
+const saveEditorState = (editorView: EditorView | null): EditorViewState | null => {
+  if (!editorView) return null
+  
+  const selection = editorView.state.selection.main
+  const allSelections = editorView.state.selection.ranges.map(r => ({ from: r.from, to: r.to }))
+  
+  return {
+    cursorPos: selection.head,
+    scrollTop: editorView.scrollDOM.scrollTop,
+    scrollLeft: editorView.scrollDOM.scrollLeft,
+    selectionRanges: allSelections
+  }
+}
+
+// Restore editor state
+const restoreEditorState = (editorView: EditorView | null, state: EditorViewState | null) => {
+  if (!editorView || !state) return
+  
+  nextTick(() => {
+    // Restore selection and cursor
+    editorView.dispatch({
+      selection: {
+        anchor: state.selectionRanges[0]?.from || state.cursorPos,
+        head: state.selectionRanges[0]?.to || state.cursorPos
+      },
+      scrollIntoView: true
+    })
+    
+    // Restore scroll position
+    setTimeout(() => {
+      editorView.scrollDOM.scrollTop = state.scrollTop
+      editorView.scrollDOM.scrollLeft = state.scrollLeft
+    }, 10)
+  })
+}
+
 const toggleFullscreenEditor = () => {
   if (!isFullscreenEditor.value) {
+    // Save current editor state before switching
+    savedEditorState = saveEditorState(codeEditorView)
+    
     // 进入全屏模式时，临时关闭 dialog 的 modal 状态，让其离开 top layer
     // 这样全屏编辑器覆盖层才能正确接收事件
     codeEditorDialogRef.value?.hideModalTemporary()
     isFullscreenEditor.value = true
-    nextTick(() => initFullscreenCodeEditor())
+    nextTick(() => {
+      initFullscreenCodeEditor()
+      // Restore state to fullscreen editor
+      restoreEditorState(fullscreenCodeEditorView, savedEditorState)
+    })
   } else {
     exitFullscreenEditor()
   }
@@ -1947,6 +2379,60 @@ const runAdvancedTest = async () => {
   }
 }
 
+// Setup context menu for editor
+const setupEditorContextMenu = (editorView: EditorView) => {
+  const editorDom = editorView.dom
+  
+  const handleContextMenu = (e: MouseEvent) => {
+    // Only show context menu if AI panel is open
+    if (!showAiPanel.value) return
+    
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // Check if there's a selection
+    const selection = editorView.state.selection.main
+    contextMenuHasSelection.value = !selection.empty
+    
+    // Position context menu
+    contextMenuPosition.value = { x: e.clientX, y: e.clientY }
+    showContextMenu.value = true
+    
+    // Close menu on any click outside
+    const closeMenu = () => {
+      showContextMenu.value = false
+      document.removeEventListener('click', closeMenu)
+      document.removeEventListener('contextmenu', closeMenu)
+    }
+    
+    setTimeout(() => {
+      document.addEventListener('click', closeMenu)
+      document.addEventListener('contextmenu', closeMenu)
+    }, 0)
+  }
+  
+  // Keyboard shortcuts
+  const handleKeydown = (e: KeyboardEvent) => {
+    // Ctrl+Shift+A: Add selection to AI context
+    if (e.ctrlKey && e.shiftKey && e.key === 'A') {
+      e.preventDefault()
+      const selection = editorView.state.selection.main
+      if (!selection.empty) {
+        handleContextMenuAddSelection()
+      }
+    }
+    
+    // Ctrl+Shift+F: Add full code to AI context
+    if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+      e.preventDefault()
+      handleContextMenuAddAll()
+    }
+  }
+  
+  editorDom.addEventListener('contextmenu', handleContextMenu)
+  editorDom.addEventListener('keydown', handleKeydown)
+}
+
 // CodeMirror initialization
 const initCodeEditor = () => {
   const container = codeEditorDialogRef.value?.codeEditorContainerRef
@@ -1973,6 +2459,9 @@ const initCodeEditor = () => {
     ],
     parent: container
   })
+  
+  // Setup context menu
+  setupEditorContextMenu(codeEditorView)
 }
 
 const initReviewCodeEditor = () => {
@@ -2025,21 +2514,38 @@ const initFullscreenCodeEditor = () => {
     ],
     parent: container
   })
+  
+  // Setup context menu
+  setupEditorContextMenu(fullscreenCodeEditorView)
 }
 
 const exitFullscreenEditor = () => {
   if (fullscreenCodeEditorView) {
+    // Save state before exiting fullscreen
+    savedEditorState = saveEditorState(fullscreenCodeEditorView)
+    
     const content = fullscreenCodeEditorView.state.doc.toString()
     pluginCode.value = content
-    if (codeEditorView) {
-      codeEditorView.dispatch({ changes: { from: 0, to: codeEditorView.state.doc.length, insert: content } })
-    }
+    
     fullscreenCodeEditorView.destroy()
     fullscreenCodeEditorView = null
   }
+  
   isFullscreenEditor.value = false
   // 恢复 dialog 的 modal 状态
   codeEditorDialogRef.value?.restoreModal()
+  
+  // Restore state to normal editor
+  nextTick(() => {
+    if (codeEditorView && savedEditorState) {
+      // Update content first
+      codeEditorView.dispatch({ 
+        changes: { from: 0, to: codeEditorView.state.doc.length, insert: pluginCode.value } 
+      })
+      // Then restore state
+      restoreEditorState(codeEditorView, savedEditorState)
+    }
+  })
 }
 
 const updateCodeEditorContent = (content: string) => {
@@ -2112,6 +2618,8 @@ onUnmounted(() => {
   if (codeEditorView) { codeEditorView.destroy(); codeEditorView = null }
   if (reviewCodeEditorView) { reviewCodeEditorView.destroy(); reviewCodeEditorView = null }
   if (fullscreenCodeEditorView) { fullscreenCodeEditorView.destroy(); fullscreenCodeEditorView = null }
+  if (diffEditorViewA) { diffEditorViewA.destroy(); diffEditorViewA = null }
+  if (diffEditorViewB) { diffEditorViewB.destroy(); diffEditorViewB = null }
   window.removeEventListener('keydown', onFullscreenKeydown, true)
   document.body.style.overflow = ''
 })
@@ -2144,5 +2652,70 @@ onUnmounted(() => {
   background-color: #282c34;
   color: #5c6370;
   border: none;
+}
+
+/* Editor Context Menu */
+.editor-context-menu {
+  position: fixed;
+  min-width: 240px;
+  background: oklch(var(--b1));
+  border: 1px solid oklch(var(--bc) / 0.2);
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.3), 0 8px 10px -6px rgb(0 0 0 / 0.2);
+  z-index: 999999;
+  padding: 0.25rem;
+  animation: contextMenuFadeIn 0.15s ease-out;
+}
+
+@keyframes contextMenuFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.context-menu-header {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid oklch(var(--bc) / 0.1);
+  margin-bottom: 0.25rem;
+  color: oklch(var(--bc) / 0.7);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  color: oklch(var(--bc));
+  font-size: 0.875rem;
+  transition: all 0.15s;
+}
+
+.context-menu-item:hover {
+  background: oklch(var(--b3));
+}
+
+.context-menu-item i {
+  width: 1rem;
+  font-size: 0.875rem;
+}
+
+.context-menu-item .kbd {
+  background: oklch(var(--b3));
+  border-color: oklch(var(--bc) / 0.2);
+  font-size: 0.7rem;
+  padding: 0.125rem 0.375rem;
 }
 </style>

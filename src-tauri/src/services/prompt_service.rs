@@ -633,7 +633,7 @@ impl PromptService {
     /// 判断是否应该自动应用优化
     fn should_auto_apply(&self, result: &OptimizationResult) -> bool {
         // 检查性能改进是否达到阈值
-        for (_, improvement) in &result.performance_improvement {
+        for improvement in result.performance_improvement.values() {
             if improvement.abs() < 0.05 { // 5%的改进阈值
                 return false;
             }
@@ -664,7 +664,7 @@ impl PromptService {
                 if record.executed_at.date_naive() == today {
                     total_requests += 1;
                     if record.success {
-                        total_response_time += record.duration_ms as f64;
+                        total_response_time += record.duration_ms;
                         response_count += 1;
                     }
                 }

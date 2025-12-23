@@ -306,7 +306,7 @@ impl AiConversation {
 
 /// 获取默认模型列表
 pub fn get_default_models() -> HashMap<AiProvider, Vec<AiModel>> {
-    let mut models = HashMap::new();
+    
 
-    models
+    HashMap::new()
 }

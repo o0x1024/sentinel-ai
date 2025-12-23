@@ -10,7 +10,6 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::RwLock;
 
-use sentinel_core::models::database::McpServerConfig;
 use sentinel_db::DatabaseService;
 
 use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
@@ -55,6 +54,7 @@ struct ActiveMcpConnection {
     pub command: String,
     pub args: Vec<String>,
     pub tools: Vec<McpToolInfo>,
+    #[allow(dead_code)]
     pub process_id: Option<u32>,
 }
 
@@ -339,7 +339,7 @@ pub async fn mcp_disconnect_server(
                 
                 // Try to clean up gracefully if we can acquire the lock
                 // We use try_lock to avoid deadlocks in shutdown scenarios
-                if let Ok(client) = client_arc.try_lock() {
+                if let Ok(_client) = client_arc.try_lock() {
                      // Note: RunningService doesn't implement Cancel in version 0.9.1 the way we expect
                      // Drop will handle cleanup via Drop trait in rmcp/tokio transport
                      // Just letting it drop is sufficient

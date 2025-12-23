@@ -7,7 +7,7 @@
 
 use crate::history_cache::{HttpRequestRecord, ProxyHistoryCache};
 use crate::{
-    Finding, PassiveDatabaseService, PassiveError, PluginEngine, RequestContext, ResponseContext,
+    Finding, PassiveDatabaseService, PassiveError, RequestContext, ResponseContext,
     Result,
 };
 use sentinel_plugins::{types::HttpTransaction, PluginExecutor};
@@ -237,36 +237,6 @@ impl ScanPipeline {
             }
         };
 
-        // ... (历史记录代码保持不变，暂时跳过) ...
-        // 我无法在这里使用 `...` 跳过，所以我必须精确匹配。
-        // 上下文中有大量历史记录代码。
-        // 我将只替换开头和结尾的 plugin logic。
-
-        // 这一块很难替换，因为中间夹杂着历史记录逻辑。
-        // 我应该分两块替换。
-        // Step 1: Replace start (plugins fetch)
-        // Step 2: Replace end (loop)
-
-        // 让我先取消这个 ReplacementChunk，只做 process_request 和 add_plugin 的替换。
-        // 然后再单独做 process_response 的两段式替换。
-
-        // 从缓存中获取请求上下文
-        let req_ctx = {
-            let cache = self.request_cache.read().await;
-            cache.get(&resp_ctx.request_id).cloned()
-        };
-
-        let req_ctx = match req_ctx {
-            Some(ctx) => ctx,
-            None => {
-                debug!(
-                    "Request context not found for response: {}",
-                    resp_ctx.request_id
-                );
-                return;
-            }
-        };
-
         // 记录请求到内存缓存
         if let Some(cache) = &self.history_cache {
             use url::Url;
@@ -448,9 +418,6 @@ impl ScanPipeline {
             response: Some(resp_ctx.clone()),
         };
 
-        // 保存 ID 用于清理缓存
-        let request_id = resp_ctx.request_id.clone();
-
         // 克隆 finding_tx 用于 task
         let finding_tx = self.finding_tx.clone();
 
@@ -462,7 +429,7 @@ impl ScanPipeline {
 
                 tokio::spawn(async move {
                     match executor.scan_transaction(tx_clone).await {
-                        Ok(mut findings) => {
+                        Ok(findings) => {
                             if !findings.is_empty() {
                                 debug!(
                                     "Plugin {} found {} issues in response",

@@ -96,38 +96,35 @@ impl ParamExtractor {
     fn extract_from_json_value(&self, value: &serde_json::Value, location: &str) -> Vec<Parameter> {
         let mut params = Vec::new();
 
-        match value {
-            serde_json::Value::Object(obj) => {
-                for (key, val) in obj {
-                    let param_type = match val {
-                        serde_json::Value::String(_) => ParameterType::String,
-                        serde_json::Value::Number(_) => ParameterType::Number,
-                        serde_json::Value::Bool(_) => ParameterType::Boolean,
-                        serde_json::Value::Array(_) => ParameterType::Array,
-                        serde_json::Value::Object(_) => ParameterType::Object,
-                        serde_json::Value::Null => ParameterType::Unknown,
-                    };
+        if let serde_json::Value::Object(obj) = value {
+            for (key, val) in obj {
+                let param_type = match val {
+                    serde_json::Value::String(_) => ParameterType::String,
+                    serde_json::Value::Number(_) => ParameterType::Number,
+                    serde_json::Value::Bool(_) => ParameterType::Boolean,
+                    serde_json::Value::Array(_) => ParameterType::Array,
+                    serde_json::Value::Object(_) => ParameterType::Object,
+                    serde_json::Value::Null => ParameterType::Unknown,
+                };
 
-                    params.push(Parameter {
-                        name: key.clone(),
-                        param_type,
-                        location: location.to_string(),
-                        example_values: vec![self.value_to_string(val)],
-                    });
+                params.push(Parameter {
+                    name: key.clone(),
+                    param_type,
+                    location: location.to_string(),
+                    example_values: vec![self.value_to_string(val)],
+                });
 
-                    // Recursively extract nested objects
-                    if let serde_json::Value::Object(_) = val {
-                        let nested = self.extract_from_json_value(val, location);
-                        for nested_param in nested {
-                            params.push(Parameter {
-                                name: format!("{}.{}", key, nested_param.name),
-                                ..nested_param
-                            });
-                        }
+                // Recursively extract nested objects
+                if let serde_json::Value::Object(_) = val {
+                    let nested = self.extract_from_json_value(val, location);
+                    for nested_param in nested {
+                        params.push(Parameter {
+                            name: format!("{}.{}", key, nested_param.name),
+                            ..nested_param
+                        });
                     }
                 }
             }
-            _ => {}
         }
 
         params

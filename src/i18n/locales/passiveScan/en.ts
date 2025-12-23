@@ -1124,7 +1124,9 @@ export default {
         noSteps: 'No step records',
         noResult: 'No result',
         copy: 'Copy',
-        close: 'Close'
+        close: 'Close',
+        fullscreen: 'Fullscreen',
+        exitFullscreen: 'Exit Fullscreen'
       }
     },
     resultPanel: {

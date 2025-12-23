@@ -10,7 +10,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::tool_router::{record_tool_usage, ToolConfig, ToolRouter};
+use super::tool_router::{ToolConfig, ToolRouter};
 
 /// Agent 执行配置
 #[derive(Debug, Clone)]
@@ -272,7 +272,7 @@ async fn save_assistant_message(
     content: &str,
     tool_calls: Option<&[ToolCallRecord]>,
 ) {
-    if content.trim().is_empty() && tool_calls.map_or(true, |tc| tc.is_empty()) {
+    if content.trim().is_empty() && tool_calls.is_none_or(|tc| tc.is_empty()) {
         return;
     }
 
@@ -565,12 +565,14 @@ async fn execute_agent_with_tools(
 
 /// 工具调用结构
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ToolCall {
     tool: String,
     arguments: serde_json::Value,
 }
 
 /// 从响应中提取工具调用
+#[allow(dead_code)]
 fn extract_tool_call(response: &str) -> Option<ToolCall> {
     // 查找 JSON 代码块
     let json_pattern = regex::Regex::new(r"```json\s*(\{[^`]+\})\s*```").ok()?;
@@ -595,6 +597,7 @@ fn extract_tool_call(response: &str) -> Option<ToolCall> {
 }
 
 /// 从工具定义构建工具描述
+#[allow(dead_code)]
 fn build_tools_description_from_definitions(
     definitions: &[rig::completion::ToolDefinition],
 ) -> String {

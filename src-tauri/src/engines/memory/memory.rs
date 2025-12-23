@@ -451,8 +451,7 @@ impl IntelligentMemory {
         };
 
         // 计算性能指标
-        let total_time: u64 = session.step_results.iter()
-            .map(|(_, r)| r.metrics.execution_time_ms)
+        let total_time: u64 = session.step_results.values().map(|r| r.metrics.execution_time_ms)
             .sum();
         
         let success_rate = successful_steps.len() as f64 / session.step_results.len() as f64;
@@ -1052,7 +1051,7 @@ impl IntelligentMemory {
         let template = PlanTemplate {
             id: Uuid::new_v4().to_string(),
             name: format!("ReWOO Plan: {}", task_description),
-            description: Some(format!("Successful ReWOO plan blueprint")),
+            description: Some("Successful ReWOO plan blueprint".to_string()),
             domain: "rewoo".to_string(),
             task_type: task_description,
             template_steps: plan_steps,

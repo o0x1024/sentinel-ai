@@ -141,7 +141,7 @@ fn map_stage_to_canonical(stage: &str) -> Option<CanonicalStage> {
 #[tauri::command]
 pub async fn preview_resolved_prompt_api(
     db: State<'_, Arc<DatabaseService>>,
-    engine: String,
+    _engine: String,
     stage: String,
     agent_config: JsonValue,
 ) -> Result<String, String> {

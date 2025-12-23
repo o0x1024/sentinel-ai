@@ -116,7 +116,7 @@ pub struct PassiveScanState {
 }
 
 /// 内部使用的拦截 WebSocket 消息结构（包含响应通道）
-struct InterceptedWebSocketMessageInternal {
+pub struct InterceptedWebSocketMessageInternal {
     pub id: String,
     pub connection_id: String,
     pub direction: sentinel_passive::ProxyWebSocketDirection,
@@ -159,6 +159,12 @@ impl std::fmt::Debug for PassiveScanState {
             .field("database_url", &self.database_url)
             .field("is_running", &"RwLock<bool>")
             .finish()
+    }
+}
+
+impl Default for PassiveScanState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -387,6 +393,7 @@ impl PassiveScanState {
 
             records.push(PluginRecord {
                 metadata,
+                #[allow(deprecated)]
                 path: None, // 插件存储在数据库中，不再使用文件路径
                 status,
                 last_error: None,
@@ -976,7 +983,7 @@ pub async fn enable_plugin(
     let db = state.get_db_service().await?;
 
     // 获取插件的main_category
-    let main_category: Option<String> =
+    let _main_category: Option<String> =
         sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
             .bind(&plugin_id)
             .fetch_optional(db.pool())
@@ -1039,7 +1046,7 @@ pub async fn disable_plugin(
     let db = state.get_db_service().await?;
 
     // 获取插件的main_category
-    let main_category: Option<String> =
+    let _main_category: Option<String> =
         sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
             .bind(&plugin_id)
             .fetch_optional(db.pool())
@@ -1131,7 +1138,7 @@ pub async fn batch_enable_plugins(
     let mut failed_ids: Vec<String> = Vec::new();
 
     for plugin_id in plugin_ids.iter() {
-        let main_category: Option<String> =
+        let _main_category: Option<String> =
             sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
                 .bind(plugin_id)
                 .fetch_optional(db.pool())
@@ -1195,7 +1202,7 @@ pub async fn batch_disable_plugins(
     let mut failed_ids: Vec<String> = Vec::new();
 
     for plugin_id in plugin_ids.iter() {
-        let main_category: Option<String> =
+        let _main_category: Option<String> =
             sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
                 .bind(plugin_id)
                 .fetch_optional(db.pool())
@@ -1335,7 +1342,6 @@ pub async fn regenerate_ca_cert(
 ) -> Result<CommandResponse<String>, String> {
     // 检查代理是否正在运行
     let was_running = *state.is_running.read().await;
-    let mut saved_port = None;
 
     // 如果代理正在运行，先停止它
     if was_running {
@@ -1343,7 +1349,7 @@ pub async fn regenerate_ca_cert(
 
         // 获取当前端口（用于日志）
         if let Some(proxy) = state.proxy_service.read().await.as_ref() {
-            saved_port = proxy.get_port().await;
+            let _port = proxy.get_port().await;
         }
 
         // 停止代理
@@ -1813,7 +1819,7 @@ pub async fn export_findings_html(
     let db_service = state.get_db_service().await?;
 
     // 查询漏洞数据
-    let filters = filters.unwrap_or_else(|| VulnerabilityFilters {
+    let filters = filters.unwrap_or(VulnerabilityFilters {
         vuln_type: None,
         severity: None,
         status: None,
@@ -2198,7 +2204,6 @@ pub async fn create_plugin_in_db(
         serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
 
     let plugin_id = plugin.id.clone();
-    let main_category = plugin.main_category.clone();
 
     // 注册插件到数据库
     db.register_plugin_with_code(&plugin, &plugin_code)
@@ -2279,8 +2284,8 @@ pub async fn update_plugin(
     }
 
     // **热更新支持**：如果是被动扫描插件且代理正在运行，触发 ScanPipeline 热更新
-    if main_category == "passive" {
-        if *state.is_running.read().await {
+    if main_category == "passive"
+        && *state.is_running.read().await {
             if let Some(scan_tx) = state.scan_tx.read().await.as_ref() {
                 if let Err(e) =
                     scan_tx.send(sentinel_passive::ScanTask::ReloadPlugin(plugin_id.clone()))
@@ -2291,7 +2296,6 @@ pub async fn update_plugin(
                 }
             }
         }
-    }
 
     // **关键修复**：如果是 Agent 工具类插件，重新注册到 ToolServer
     if main_category == "agent" {
@@ -2429,13 +2433,13 @@ pub async fn test_plugin(
     .map_err(|e| format!("Failed to query plugin: {}", e))?;
 
     if let Some((
-        id,
+        _id,
         name,
         version,
-        author,
+        _author,
         main_category,
-        category,
-        description,
+        _category,
+        _description,
         _sev,
         _tags,
         enabled,
@@ -2694,7 +2698,7 @@ pub async fn test_plugin_advanced(
     let body_bytes = body.map(|b| b.into_bytes()).unwrap_or_default();
 
     // 准备任务列表
-    let mut indices: Vec<u32> = (0..runs).collect();
+    let indices: Vec<u32> = (0..runs).collect();
     let start_all = std::time::Instant::now();
     let mut run_stats: Vec<AdvancedRunStat> = Vec::with_capacity(runs as usize);
     let mut all_findings: Vec<TestFinding> = Vec::new();
@@ -2841,7 +2845,7 @@ pub async fn test_agent_plugin(
             .await
             .map_err(|e| format!("Failed to query plugin: {}", e))?;
 
-    let (id, main_category, enabled) = match row {
+    let (_id, main_category, enabled) = match row {
         Some(r) => r,
         None => {
             return Ok(CommandResponse::ok(AgentTestResult {
@@ -3879,7 +3883,7 @@ pub async fn replay_raw_request(
     raw_request: String,
     timeout_secs: Option<u64>,
 ) -> Result<CommandResponse<RawReplayResult>, String> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
 
     tracing::info!(

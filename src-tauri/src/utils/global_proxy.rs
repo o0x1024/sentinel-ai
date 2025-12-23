@@ -15,6 +15,7 @@ use tracing::{debug, info, warn};
 
 /// 全局代理配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct GlobalProxyConfig {
     /// 是否启用代理
     pub enabled: bool,
@@ -36,19 +37,6 @@ pub struct GlobalProxyConfig {
     pub no_proxy: Option<String>,
 }
 
-impl Default for GlobalProxyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            scheme: None,
-            host: None,
-            port: None,
-            username: None,
-            password: None,
-            no_proxy: None,
-        }
-    }
-}
 
 impl GlobalProxyConfig {
     /// 构建代理 URL

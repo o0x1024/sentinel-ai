@@ -3,7 +3,7 @@
 //! 提供执行经验存储、检索和学习功能
 
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde_json;
 use uuid::Uuid;
 use chrono::Utc;
@@ -54,7 +54,14 @@ pub struct IntelligentMemory {
     relationships: HashMap<String, KnowledgeRelationship>,
     feedback_history: Vec<LearningFeedback>,
     embeddings: HashMap<String, VectorEmbedding>,
+    #[allow(dead_code)]
     query_history: Vec<MemoryQueryHistory>,
+}
+
+impl Default for IntelligentMemory {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IntelligentMemory {
@@ -96,7 +103,7 @@ impl IntelligentMemory {
         let mut embedding = vec![0.0; self.config.vector_dimensions];
         let words: Vec<&str> = text.split_whitespace().collect();
         
-        for (i, word) in words.iter().enumerate() {
+        for (_i, word) in words.iter().enumerate() {
             let hash = word.chars().map(|c| c as u32).sum::<u32>() as usize;
             let index = hash % self.config.vector_dimensions;
             embedding[index] += 1.0 / (words.len() as f32);
@@ -235,8 +242,8 @@ impl Memory for IntelligentMemory {
     fn retrieve_applicable_templates(
         &self,
         task_type: &str,
-        environment: &str,
-        target_properties: &serde_json::Value,
+        _environment: &str,
+        _target_properties: &serde_json::Value,
     ) -> Result<Vec<SimilaritySearchResult<PlanTemplate>>> {
         let mut results = Vec::new();
         
@@ -351,8 +358,8 @@ impl Memory for IntelligentMemory {
     fn get_tool_effectiveness(
         &self,
         tool_name: &str,
-        target_type: Option<&str>,
-        environment: Option<&str>,
+        _target_type: Option<&str>,
+        _environment: Option<&str>,
     ) -> Result<f64> {
         let mut total_uses = 0;
         let mut successful_uses = 0;
@@ -385,14 +392,11 @@ impl Memory for IntelligentMemory {
         // 基于历史经验生成建议
         for experience in self.experiences.values() {
             if self.calculate_text_similarity(&experience.environment_context, environment) > 0.7
-                && self.calculate_text_similarity(&experience.task_type, task_type) > 0.7 {
+                && self.calculate_text_similarity(&experience.task_type, task_type) > 0.7
                 
-                if experience.confidence_score > 0.8 {
-                    recommendations.push(format!(
-                        "Based on successful execution: Use tools from successful steps"
-                    ));
+                && experience.confidence_score > 0.8 {
+                    recommendations.push("Based on successful execution: Use tools from successful steps".to_string());
                 }
-            }
         }
         
         if recommendations.is_empty() {
@@ -405,8 +409,8 @@ impl Memory for IntelligentMemory {
     // 架构特定的记忆增强接口实现（委托给memory.rs中的实现）
     fn retrieve_failure_trajectories(
         &self,
-        task_description: &str,
-        error_pattern: &str,
+        _task_description: &str,
+        _error_pattern: &str,
     ) -> Result<Vec<crate::engines::memory::memory::SimilaritySearchResult<crate::engines::memory::memory::ExecutionExperience>>> {
         // 简化实现：返回空结果
         Ok(Vec::new())

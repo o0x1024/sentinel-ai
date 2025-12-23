@@ -3,11 +3,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 
-use sentinel_passive::{CapturedPacket, ExtractedFile, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps};
+use sentinel_passive::{CapturedPacket, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps};
 
 /// Packet capture state
 pub struct PacketCaptureState {

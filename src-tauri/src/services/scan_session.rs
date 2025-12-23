@@ -33,7 +33,7 @@ impl ScanSessionService {
         "#;
 
         sqlx::query(query)
-            .bind(&session.id)
+            .bind(session.id)
             .bind(&session.name)
             .bind(&session.description)
             .bind(&session.target)
@@ -263,15 +263,15 @@ impl ScanSessionService {
         "#;
 
         sqlx::query(query)
-            .bind(&stage.id)
-            .bind(&stage.session_id)
+            .bind(stage.id)
+            .bind(stage.session_id)
             .bind(&stage.stage_name)
             .bind(stage.stage_order)
             .bind(serde_json::to_string(&stage.status)?)
             .bind(&stage.tool_name)
             .bind(serde_json::to_string(&stage.config)?)
-            .bind(&stage.started_at)
-            .bind(&stage.completed_at)
+            .bind(stage.started_at)
+            .bind(stage.completed_at)
             .bind(stage.duration_ms)
             .execute(self.db.get_pool()?)
             .await?;
@@ -294,14 +294,14 @@ impl ScanSessionService {
                 stage
                     .results
                     .as_ref()
-                    .map(|r| serde_json::to_string(r))
+                    .map(serde_json::to_string)
                     .transpose()?,
             )
             .bind(&stage.error_message)
-            .bind(&stage.started_at)
-            .bind(&stage.completed_at)
+            .bind(stage.started_at)
+            .bind(stage.completed_at)
             .bind(stage.duration_ms)
-            .bind(&stage.id)
+            .bind(stage.id)
             .execute(self.db.get_pool()?)
             .await?;
 

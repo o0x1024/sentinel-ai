@@ -25,7 +25,9 @@ pub struct ScanSession {
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "scan_session_status", rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ScanSessionStatus {
+    #[default]
     Created,
     Running,
     Paused,
@@ -75,7 +77,9 @@ pub struct ScanStage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "scan_stage_status", rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ScanStageStatus {
+    #[default]
     Pending,
     Running,
     Completed,
@@ -103,17 +107,7 @@ pub struct ScanStageProgress {
     pub estimated_completion: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-impl Default for ScanSessionStatus {
-    fn default() -> Self {
-        ScanSessionStatus::Created
-    }
-}
 
-impl Default for ScanStageStatus {
-    fn default() -> Self {
-        ScanStageStatus::Pending
-    }
-}
 
 impl ScanSession {
     pub fn new(

@@ -271,31 +271,27 @@ impl TechStackDetector {
                 let value_lower = value.to_lowercase();
 
                 // CDN detection
-                if key_lower.contains("cf-ray") || value_lower.contains("cloudflare") {
-                    if !others.contains(&"Cloudflare CDN".to_string()) {
+                if (key_lower.contains("cf-ray") || value_lower.contains("cloudflare"))
+                    && !others.contains(&"Cloudflare CDN".to_string()) {
                         others.push("Cloudflare CDN".to_string());
                     }
-                }
 
-                if key_lower.contains("x-amz") || value_lower.contains("amazons3") {
-                    if !others.contains(&"AWS".to_string()) {
+                if (key_lower.contains("x-amz") || value_lower.contains("amazons3"))
+                    && !others.contains(&"AWS".to_string()) {
                         others.push("AWS".to_string());
                     }
-                }
 
                 // WordPress
-                if value_lower.contains("wordpress") {
-                    if !others.contains(&"WordPress".to_string()) {
+                if value_lower.contains("wordpress")
+                    && !others.contains(&"WordPress".to_string()) {
                         others.push("WordPress".to_string());
                     }
-                }
 
                 // Load balancer
-                if key_lower.contains("x-lb") || value_lower.contains("load-balancer") {
-                    if !others.contains(&"Load Balancer".to_string()) {
+                if (key_lower.contains("x-lb") || value_lower.contains("load-balancer"))
+                    && !others.contains(&"Load Balancer".to_string()) {
                         others.push("Load Balancer".to_string());
                     }
-                }
             }
         }
 
@@ -303,35 +299,30 @@ impl TechStackDetector {
         for body in bodies {
             let body_lower = body.to_lowercase();
 
-            if body_lower.contains("wp-content") || body_lower.contains("wp-includes") {
-                if !others.contains(&"WordPress".to_string()) {
+            if (body_lower.contains("wp-content") || body_lower.contains("wp-includes"))
+                && !others.contains(&"WordPress".to_string()) {
                     others.push("WordPress".to_string());
                 }
-            }
 
-            if body_lower.contains("jquery") {
-                if !others.contains(&"jQuery".to_string()) {
+            if body_lower.contains("jquery")
+                && !others.contains(&"jQuery".to_string()) {
                     others.push("jQuery".to_string());
                 }
-            }
 
-            if body_lower.contains("react") || body_lower.contains("reactjs") {
-                if !others.contains(&"React".to_string()) {
+            if (body_lower.contains("react") || body_lower.contains("reactjs"))
+                && !others.contains(&"React".to_string()) {
                     others.push("React".to_string());
                 }
-            }
 
-            if body_lower.contains("vue") || body_lower.contains("vuejs") {
-                if !others.contains(&"Vue.js".to_string()) {
+            if (body_lower.contains("vue") || body_lower.contains("vuejs"))
+                && !others.contains(&"Vue.js".to_string()) {
                     others.push("Vue.js".to_string());
                 }
-            }
 
-            if body_lower.contains("angular") {
-                if !others.contains(&"Angular".to_string()) {
+            if body_lower.contains("angular")
+                && !others.contains(&"Angular".to_string()) {
                     others.push("Angular".to_string());
                 }
-            }
         }
 
         others
@@ -354,7 +345,7 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("server".to_string(), "nginx/1.18.0".to_string());
         
-        let result = detector.detect_server(&vec![headers]);
+        let result = detector.detect_server(&[headers]);
         assert_eq!(result, Some("nginx".to_string()));
     }
 
@@ -364,7 +355,7 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("X-Powered-By".to_string(), "Express".to_string());
         
-        let result = detector.detect_framework(&vec![headers], &vec![]);
+        let result = detector.detect_framework(&[headers], &[]);
         assert_eq!(result, Some("Express.js".to_string()));
     }
 
@@ -373,7 +364,7 @@ mod tests {
         let detector = TechStackDetector::new();
         let body = "Error: MySQL syntax error at line 1".to_string();
         
-        let result = detector.detect_database(&vec![body]);
+        let result = detector.detect_database(&[body]);
         assert_eq!(result, Some("MySQL".to_string()));
     }
 }

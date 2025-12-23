@@ -351,12 +351,10 @@ impl AiServiceManager {
                         let default_model = provider_config.default_model.clone();
                         let api_base = provider_config
                             .api_base
-                            .filter(|s| !s.is_empty())
-                            .map(String::from);
+                            .filter(|s| !s.is_empty());
                         let organization = provider_config
                             .organization
-                            .filter(|s| !s.is_empty())
-                            .map(String::from);
+                            .filter(|s| !s.is_empty());
 
                         let rig_provider = provider_config
                             .rig_provider
@@ -430,10 +428,8 @@ impl AiServiceManager {
                 if let Err(e) = self.create_minimal_default_service().await {
                     error!("Failed to create minimal default service: {}", e);
                 }
-            } else {
-                if let Err(e) = self.create_default_alias().await {
-                    error!("Failed to create default alias: {}", e);
-                }
+            } else if let Err(e) = self.create_default_alias().await {
+                error!("Failed to create default alias: {}", e);
             }
         }
 

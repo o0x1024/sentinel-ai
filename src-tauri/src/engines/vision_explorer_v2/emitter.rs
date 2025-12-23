@@ -3,7 +3,7 @@
 //! This module provides event emission for the V2 Engine to communicate with
 //! the frontend. It uses the same event format as V1 for compatibility.
 
-use crate::engines::vision_explorer_v2::core::{Event, PageContext, SuggestedAction, TaskResult};
+use crate::engines::vision_explorer_v2::core::SuggestedAction;
 use crate::engines::vision_explorer_v2::persistence::ExplorationStats;
 use serde::Serialize;
 use std::sync::Arc;

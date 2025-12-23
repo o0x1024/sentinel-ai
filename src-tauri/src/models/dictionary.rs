@@ -382,17 +382,14 @@ pub struct DictionaryImportOptions {
 
 /// 合并模式
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum MergeMode {
     /// 替换现有字典
     Replace,
     /// 合并到现有字典
+    #[default]
     Merge,
     /// 创建新字典
     CreateNew,
 }
 
-impl Default for MergeMode {
-    fn default() -> Self {
-        MergeMode::Merge
-    }
-}

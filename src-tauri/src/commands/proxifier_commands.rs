@@ -253,7 +253,7 @@ pub async fn get_transparent_proxy_status(
         use sentinel_passive::system_proxy::pf_firewall::is_pf_enabled;
         let mut result = status.clone();
         result.pf_enabled = is_pf_enabled();
-        return Ok(CommandResponse::ok(result));
+        Ok(CommandResponse::ok(result))
     }
     
     #[cfg(not(target_os = "macos"))]

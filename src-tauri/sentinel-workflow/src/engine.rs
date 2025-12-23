@@ -164,6 +164,7 @@ impl WorkflowEngine {
         Ok(execution_id)
     }
 
+    #[allow(dead_code)]
     async fn execute_workflow_steps(&self, workflow: &WorkflowDefinition, execution_id: &str, _context: Option<HashMap<String, serde_json::Value>>) -> Result<()> {
         info!("Executing workflow steps for: {}", execution_id);
         for (index, step) in workflow.steps.iter().enumerate() {

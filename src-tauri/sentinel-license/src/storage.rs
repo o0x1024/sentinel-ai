@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 use crate::crypto::LicenseKey;
 
 /// License file name (obfuscated)
@@ -116,7 +117,7 @@ impl LicenseStorage {
         
         let machine_id = crate::MachineId::generate();
         let mut hasher = Sha256::new();
-        hasher.update(&machine_id.to_hash());
+        hasher.update(machine_id.to_hash());
         hasher.update(b"storage_key_salt_v1");
         
         hasher.finalize().to_vec()

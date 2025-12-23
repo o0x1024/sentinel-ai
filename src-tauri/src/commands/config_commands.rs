@@ -4,9 +4,8 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tauri::State;
 
-use crate::generators::{PluginAutoApprovalConfig, ApprovalStats};
+use crate::generators::PluginAutoApprovalConfig;
 
 /// 获取当前自动批准配置
 #[tauri::command]

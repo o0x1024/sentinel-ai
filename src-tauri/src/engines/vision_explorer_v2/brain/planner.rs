@@ -1,12 +1,12 @@
 use crate::engines::vision_explorer_v2::brain::pattern_solver::NavigationPatternSolver;
 use crate::engines::vision_explorer_v2::core::{
-    Agent, Event, PageContext, PerceptionResult, SuggestedAction,
+    Agent, Event, PageContext, PerceptionResult,
 };
 use crate::engines::vision_explorer_v2::graph::{
     ExplorationGraph, ExplorationStatus, PageStateNode,
 };
 use crate::engines::vision_explorer_v2::VisionExplorerV2Config;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -16,8 +16,10 @@ use tokio::sync::{mpsc, RwLock};
 pub struct PlannerAgent {
     id: String,
     graph: Arc<RwLock<ExplorationGraph>>,
+    #[allow(dead_code)]
     config: VisionExplorerV2Config,
     frontier: Arc<RwLock<VecDeque<String>>>,
+    #[allow(dead_code)]
     event_tx: mpsc::Sender<Event>,
     current_node_id: Arc<RwLock<Option<String>>>,
     current_context: Arc<RwLock<Option<PageContext>>>,
@@ -44,6 +46,7 @@ impl PlannerAgent {
     }
 
     /// Add a new discovered node to the details
+    #[allow(dead_code)]
     async fn add_to_frontier(&self, node_fingerprint: String) {
         let mut frontier = self.frontier.write().await;
         if !frontier.contains(&node_fingerprint) {

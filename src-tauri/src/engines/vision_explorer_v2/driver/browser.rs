@@ -15,6 +15,12 @@ pub struct BrowserDriver {
     mcp_service: Arc<McpService>,
 }
 
+impl Default for BrowserDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BrowserDriver {
     pub fn new() -> Self {
         Self {
@@ -256,11 +262,7 @@ impl crate::engines::vision_explorer_v2::driver::BrowserActions for BrowserDrive
                 let html_val = self.evaluate_script("document.body.outerHTML").await.ok();
                 html_val
                     .and_then(|v| {
-                        if let Some(s) = v.as_str() {
-                            Some(s.to_string())
-                        } else {
-                            None
-                        }
+                        v.as_str().map(|s| s.to_string())
                     })
                     .unwrap_or_default()
             } else {

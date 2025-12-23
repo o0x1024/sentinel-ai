@@ -49,13 +49,11 @@ pub async fn test_proxy_dynamic_update(
                     https_proxy.as_ref().map(|s| mask_password(s))));
             }
         }
+    } else if http_proxy.is_none() && https_proxy.is_none() {
+        messages.push("✓ 代理已禁用，环境变量已清除".to_string());
     } else {
-        if http_proxy.is_none() && https_proxy.is_none() {
-            messages.push("✓ 代理已禁用，环境变量已清除".to_string());
-        } else {
-            messages.push(format!("✗ 代理已禁用但环境变量仍然存在: HTTP_PROXY={:?}, HTTPS_PROXY={:?}", 
-                http_proxy, https_proxy));
-        }
+        messages.push(format!("✗ 代理已禁用但环境变量仍然存在: HTTP_PROXY={:?}, HTTPS_PROXY={:?}", 
+            http_proxy, https_proxy));
     }
     
     // 3. 验证数据库配置是否一致

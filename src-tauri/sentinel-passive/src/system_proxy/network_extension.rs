@@ -10,7 +10,7 @@
 //! 当前提供 stub 实现，允许项目编译通过
 
 use serde::Serialize;
-use tracing::{info, warn};
+use tracing::warn;
 
 /// Extension 状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

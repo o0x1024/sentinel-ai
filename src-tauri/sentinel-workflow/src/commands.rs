@@ -541,7 +541,7 @@ pub async fn execute_workflow_steps(
                     let use_input_as_content = step_def.inputs.get("use_input_as_content").and_then(|v| v.as_bool()).unwrap_or(false);
                     
                     // 获取通知内容
-                    let mut title = step_def.inputs.get("title").and_then(|v| v.as_str()).unwrap_or("Workflow Notification").to_string();
+                    let title = step_def.inputs.get("title").and_then(|v| v.as_str()).unwrap_or("Workflow Notification").to_string();
                     let mut content = step_def.inputs.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     
                     // 如果启用了使用输入作为内容，从上游节点获取数据

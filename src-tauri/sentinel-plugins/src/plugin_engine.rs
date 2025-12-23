@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// 插件模块加载器
 ///
@@ -298,12 +298,7 @@ impl PluginEngine {
         // Register extension ESM modules in our loader so they can be imported
         for ext in &extensions {
             for file in ext.esm_files.iter() {
-                let code = match &file.code {
-                    deno_core::ExtensionFileSourceCode::IncludedInBinary(s) => s.as_str().to_string(),
-                    deno_core::ExtensionFileSourceCode::LoadedFromMemoryDuringSnapshot(s) => s.as_str().to_string(),
-                    deno_core::ExtensionFileSourceCode::Computed(s) => s.to_string(),
-                    _ => continue,
-                };
+                let code = file.load().unwrap().as_str().to_string();
                 loader.register_module(file.specifier, code);
             }
         }
@@ -401,6 +396,15 @@ if (typeof run === 'function') {
 }
 if (typeof execute === 'function') {
     globalThis.execute = execute;
+}
+if (typeof get_input_schema === 'function') {
+    globalThis.get_input_schema = get_input_schema;
+}
+if (typeof getInputSchema === 'function') {
+    globalThis.getInputSchema = getInputSchema;
+}
+if (typeof get_metadata === 'function') {
+    globalThis.get_metadata = get_metadata;
 }
 "#;
         let augmented_code = format!("{}\n{}", code, binding_code);

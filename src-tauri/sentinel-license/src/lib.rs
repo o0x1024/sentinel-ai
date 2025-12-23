@@ -35,7 +35,7 @@ pub fn initialize() -> ValidationResult {
     {
         LICENSE_VALID.store(true, Ordering::SeqCst);
         VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
-        return ValidationResult::Valid;
+        ValidationResult::Valid
     }
 
     #[cfg(not(debug_assertions))]

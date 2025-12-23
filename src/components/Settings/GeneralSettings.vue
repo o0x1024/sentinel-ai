@@ -643,12 +643,24 @@ watch(() => props.settings?.general?.darkMode, (val) => {
   if (val) {
     // 如果开启深色模式且当前是浅色主题，自动切换到深色
     if (props.settings.general.theme === 'light' || props.settings.general.theme === 'corporate' || props.settings.general.theme === 'cupcake') {
-      props.settings.general.theme = 'dark'
+      emit('update:settings', {
+        ...props.settings,
+        general: {
+          ...props.settings.general,
+          theme: 'dark'
+        }
+      })
     }
   } else {
     // 如果关闭深色模式且当前是深色主题，自动切换到浅色
     if (props.settings.general.theme === 'dark' || props.settings.general.theme === 'business' || props.settings.general.theme === 'dracula') {
-      props.settings.general.theme = 'light'
+      emit('update:settings', {
+        ...props.settings,
+        general: {
+          ...props.settings.general,
+          theme: 'light'
+        }
+      })
     }
   }
 })

@@ -6,6 +6,12 @@ use crate::commands::mcp_commands::McpConnection;
 #[derive(Clone)]
 pub struct McpService;
 
+impl Default for McpService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpService {
     pub fn new() -> Self {
         Self

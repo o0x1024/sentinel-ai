@@ -146,9 +146,6 @@ async fn stream_chat_with_llm(
     let llm_config = service.service.to_llm_config();
     let streaming_client = StreamingLlmClient::new(llm_config);
 
-    let provider = service.get_config().provider.to_lowercase();
-    let model = service.get_config().model.clone();
-
     // 流式调用
     let execution_id = message_id.to_string();
     let msg_id = message_id.to_string();
@@ -1822,7 +1819,7 @@ async fn test_moonshot_connection(
 pub async fn save_ai_config(
     config: SaveAiConfigRequest,
     db: State<'_, Arc<DatabaseService>>,
-    ai_manager_state: State<'_, Arc<AiServiceManager>>,
+    _ai_manager_state: State<'_, Arc<AiServiceManager>>,
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!("Starting to save AI configuration...");
@@ -1845,7 +1842,7 @@ pub async fn save_ai_config(
         .map_err(|e| format!("Failed to save providers config to DB: {}", e))?;
 
     // 分别保存每个提供商的API密钥
-    for (_id, provider) in &config.providers {
+    for provider in config.providers.values() {
         if provider.enabled {
             if let Some(api_key) = &provider.api_key {
                 if !api_key.is_empty() {
@@ -2848,7 +2845,7 @@ pub async fn agent_execute(
     let attachments = config.attachments.clone();
 
     // 获取工具配置：优先使用前端传递的配置，否则从数据库加载
-    let mut effective_tool_config = if config.tool_config.is_some() {
+    let effective_tool_config = if config.tool_config.is_some() {
         tracing::info!("Using tool config from frontend request");
         config.tool_config.clone()
     } else {

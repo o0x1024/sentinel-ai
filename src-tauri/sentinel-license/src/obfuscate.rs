@@ -52,6 +52,7 @@ pub fn decrypt_str(key: &str) -> String {
 /// Obfuscated boolean check - returns value that must be used
 /// Makes simple patching ineffective
 #[inline(never)]
+#[allow(dead_code)]
 pub fn obfuscated_check(condition: bool, salt: u64) -> u64 {
     if condition {
         // Return a value derived from the salt
@@ -64,12 +65,14 @@ pub fn obfuscated_check(condition: bool, salt: u64) -> u64 {
 
 /// Verify the obfuscated result
 #[inline(never)]
+#[allow(dead_code)]
 pub fn verify_obfuscated(result: u64, expected_salt: u64) -> bool {
     let expected = expected_salt.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(0xBB67AE8584CAA73B);
     result == expected
 }
 
 /// Derive a key from license state (for mixing with business logic)
+#[allow(dead_code)]
 pub fn derive_feature_key(licensed: bool, feature_id: u32) -> u64 {
     let base = if licensed {
         0xDEADBEEFCAFEBABE_u64
@@ -82,6 +85,7 @@ pub fn derive_feature_key(licensed: bool, feature_id: u32) -> u64 {
 
 /// Check if derived key is valid
 #[inline(never)]
+#[allow(dead_code)]
 pub fn check_feature_key(key: u64, feature_id: u32) -> bool {
     let expected = 0xDEADBEEFCAFEBABE_u64 ^ (feature_id as u64).wrapping_mul(0x517CC1B727220A95);
     key == expected
@@ -89,6 +93,7 @@ pub fn check_feature_key(key: u64, feature_id: u32) -> bool {
 
 /// Timing-safe comparison
 #[inline(never)]
+#[allow(dead_code)]
 pub fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;

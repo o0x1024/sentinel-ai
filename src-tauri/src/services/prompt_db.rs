@@ -15,7 +15,7 @@ impl PromptRepository {
     pub fn pool(&self) -> &SqlitePool { self.db.pool() }
 
     pub async fn list_templates(&self) -> Result<Vec<PromptTemplate>> {
-        Ok(self.db.list_templates().await?)
+        self.db.list_templates().await
     }
 
     pub async fn get_template(&self, id: i64) -> Result<Option<PromptTemplate>> {
@@ -106,6 +106,7 @@ impl PromptRepository {
         result
     }
 
+    #[allow(dead_code)]
     fn row_to_template(row: sqlx::sqlite::SqliteRow) -> PromptTemplate {
         let id_opt: Option<i64> = row.try_get("id").ok();
         let name: String = row.get("name");
@@ -147,6 +148,7 @@ impl PromptRepository {
         }
     }
     
+    #[allow(dead_code)]
     fn category_str(c: &PromptCategory) -> &'static str {
         match c {
             PromptCategory::System => "System",
@@ -155,6 +157,7 @@ impl PromptRepository {
         }
     }
     
+    #[allow(dead_code)]
     fn parse_category(s: &str) -> Option<PromptCategory> {
         match s {
             "System" => Some(PromptCategory::System),
@@ -165,6 +168,7 @@ impl PromptRepository {
             _ => None,
         }
     }
+    #[allow(dead_code)]
     fn template_type_str(t: &TemplateType) -> &'static str {
         match t {
             TemplateType::SystemPrompt => "SystemPrompt",
@@ -181,6 +185,7 @@ impl PromptRepository {
         }
     }
     
+    #[allow(dead_code)]
     fn parse_template_type(s: &str) -> Option<TemplateType> {
         match s {
             "SystemPrompt" => Some(TemplateType::SystemPrompt),

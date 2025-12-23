@@ -21,7 +21,6 @@ use crate::engines::vision_explorer_v2::persistence::{
 };
 use crate::engines::vision_explorer_v2::safety::{SafetyLayer, SafetyPolicy};
 use crate::engines::vision_explorer_v2::types::VisionExplorerV2Config;
-use crate::engines::LlmConfig;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -298,7 +297,7 @@ impl V2Engine {
                         .await?;
                 }
 
-                Event::LoginTakeoverRequest { url, fields } => {
+                Event::LoginTakeoverRequest { url, .. } => {
                     log::info!("V2Engine: Login takeover requested for {}", url);
                     // Start login wait
                     self.blackboard.set_login_url(url.clone()).await;
@@ -472,7 +471,7 @@ impl V2Engine {
                     step_count += 1;
 
                     // Auto-save periodically
-                    if step_count % 10 == 0 {
+                    if step_count.is_multiple_of(10) {
                         let _ = self.save_snapshot().await;
                     }
 
@@ -528,7 +527,7 @@ impl V2Engine {
                     } else {
                         // Still waiting, emit remaining time update
                         let remaining = self.config.login_timeout_seconds - elapsed_seconds;
-                        if elapsed_seconds % 10 == 0 {
+                        if elapsed_seconds.is_multiple_of(10) {
                             // Update every 10 seconds
                             if let Some(ref emitter) = self.emitter {
                                 emitter.emit_login_wait_status(
@@ -629,7 +628,7 @@ impl V2Engine {
     /// Save current state to snapshot
     async fn save_snapshot(&self) -> Result<()> {
         if let Some(ref persistence) = self.persistence {
-            let graph = self.graph.read().await;
+            let _graph = self.graph.read().await;
             let stats = self.stats.read().await;
 
             let mut snapshot =

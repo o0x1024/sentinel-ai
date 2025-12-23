@@ -38,7 +38,7 @@ impl FewShotRepository {
     pub fn add_example(&mut self, example: FewShotExample) {
         self.examples
             .entry(example.vuln_type.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(example);
     }
 

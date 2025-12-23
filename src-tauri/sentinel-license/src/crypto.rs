@@ -39,9 +39,10 @@ pub struct LicenseKey {
     pub metadata: Option<String>,
 }
 
-impl LicenseKey {
-    /// Create from encoded string
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
+impl std::str::FromStr for LicenseKey {
+    type Err = CryptoError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         // License format: BASE64(JSON)
         let decoded = BASE64.decode(s.trim())?;
         let json_str = String::from_utf8(decoded)
@@ -50,12 +51,16 @@ impl LicenseKey {
         serde_json::from_str(&json_str)
             .map_err(|_| CryptoError::InvalidKeyFormat)
     }
-    
-    /// Encode to string
-    pub fn to_string(&self) -> String {
+}
+
+impl std::fmt::Display for LicenseKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let json = serde_json::to_string(self).unwrap_or_default();
-        BASE64.encode(json.as_bytes())
+        write!(f, "{}", BASE64.encode(json.as_bytes()))
     }
+}
+
+impl LicenseKey {
     
     /// Get signature bytes
     pub fn signature_bytes(&self) -> Result<[u8; 64], CryptoError> {
@@ -144,16 +149,19 @@ fn get_embedded_public_key() -> Result<VerifyingKey, CryptoError> {
 }
 
 /// Export signing key to base64
+#[allow(dead_code)]
 pub fn export_signing_key(key: &SigningKey) -> String {
     BASE64.encode(key.to_bytes())
 }
 
 /// Export verifying key to base64
+#[allow(dead_code)]
 pub fn export_verifying_key(key: &VerifyingKey) -> String {
     BASE64.encode(key.to_bytes())
 }
 
 /// Import signing key from base64
+#[allow(dead_code)]
 pub fn import_signing_key(s: &str) -> Result<SigningKey, CryptoError> {
     let bytes = BASE64.decode(s)?;
     let key_array: [u8; 32] = bytes.try_into()

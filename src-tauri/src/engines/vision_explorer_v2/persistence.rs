@@ -243,7 +243,7 @@ pub mod graph_serialization {
 
     /// Extract nodes and edges from a graph for serialization
     pub fn graph_to_snapshot_data(
-        graph: &ExplorationGraph,
+        _graph: &ExplorationGraph,
     ) -> (Vec<PageStateNode>, Vec<(String, String, ActionEdge)>) {
         // Note: This requires access to the internal graph structure
         // For now, we'll just return empty collections

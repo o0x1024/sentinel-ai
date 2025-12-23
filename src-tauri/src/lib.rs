@@ -21,8 +21,6 @@ use tauri::{
     Manager, WindowEvent,
 };
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-use tracing_appender;
-use tracing_subscriber;
 
 use services::{ai::AiServiceManager, database::DatabaseService, scan_session::ScanSessionService};
 
@@ -86,14 +84,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
-        .on_window_event(|window, event| match event {
-            WindowEvent::CloseRequested { api, .. } => {
-                let app_handle = window.app_handle();
-                let _ = app_handle.save_window_state(StateFlags::all());
-                window.hide().unwrap();
-                api.prevent_close();
-            }
-            _ => {}
+        .on_window_event(|window, event| if let WindowEvent::CloseRequested { api, .. } = event {
+            let app_handle = window.app_handle();
+            let _ = app_handle.save_window_state(StateFlags::all());
+            window.hide().unwrap();
+            api.prevent_close();
         })
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -129,25 +124,22 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| match event {
-                    TrayIconEvent::Click {
+                .on_tray_icon_event(|tray, event| if let TrayIconEvent::Click {
                         button,
                         button_state,
                         ..
-                    } => {
-                        // Left click: show main window
-                        if button == tauri::tray::MouseButton::Left
-                            && button_state == tauri::tray::MouseButtonState::Up
-                        {
-                            let app = tray.app_handle();
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                    } = event {
+                    // Left click: show main window
+                    if button == tauri::tray::MouseButton::Left
+                        && button_state == tauri::tray::MouseButtonState::Up
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
                         }
-                        // Right click menu is handled automatically by .menu()
                     }
-                    _ => {}
+                    // Right click menu is handled automatically by .menu()
                 })
                 .icon(app.default_window_icon().unwrap().clone())
                 .build(app)?;
@@ -204,7 +196,7 @@ pub fn run() {
                 let mcp_service = Arc::new(crate::services::mcp::McpService::new());
                 handle.manage(mcp_service.clone());
 
-                let mut ai_manager = AiServiceManager::new(db_service.clone());
+                let ai_manager = AiServiceManager::new(db_service.clone());
                 ai_manager.set_app_handle(handle.clone());
 
                 if let Err(e) = ai_manager.init_default_services().await {

@@ -322,14 +322,12 @@ async function runTest() {
   const startTime = Date.now()
 
   try {
-    let result: any
-
     // 统一工具执行
     const toolNameToExecute = props.executionInfo?.type === 'workflow' 
       ? `workflow::${props.executionInfo.id}` 
       : props.toolName
 
-    result = await invoke<any>('unified_execute_tool', {
+    const result = await invoke<any>('unified_execute_tool', {
       toolName: toolNameToExecute,
       inputs,
       context: null,

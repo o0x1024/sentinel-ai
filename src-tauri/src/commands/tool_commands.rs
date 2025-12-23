@@ -12,7 +12,7 @@ use sentinel_tools::buildin_tools::shell::{
     get_shell_config, set_permission_handler, set_shell_config, ShellConfig, ShellPermissionHandler,
 };
 use sentinel_tools::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
-use sentinel_tools::{get_tool_server, ToolServer};
+use sentinel_tools::get_tool_server;
 
 /// Builtin tool info for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +275,7 @@ pub async fn unified_execute_tool(
     })
 }
 
+#[allow(dead_code)]
 async fn execute_port_scan(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::port_scan::PortScanArgs;
 
@@ -290,6 +291,7 @@ async fn execute_port_scan(inputs: serde_json::Value) -> Result<serde_json::Valu
     serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
+#[allow(dead_code)]
 async fn execute_http_request(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::http_request::HttpRequestArgs;
 
@@ -305,6 +307,7 @@ async fn execute_http_request(inputs: serde_json::Value) -> Result<serde_json::V
     serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
+#[allow(dead_code)]
 async fn execute_local_time(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::local_time::LocalTimeArgs;
 
@@ -320,6 +323,7 @@ async fn execute_local_time(inputs: serde_json::Value) -> Result<serde_json::Val
     serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
+#[allow(dead_code)]
 async fn execute_shell(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::shell::ShellArgs;
 
@@ -335,9 +339,10 @@ async fn execute_shell(inputs: serde_json::Value) -> Result<serde_json::Value, S
     serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
+#[allow(dead_code)]
 async fn execute_workflow_tool(
     tool_name: &str,
-    inputs: serde_json::Value,
+    _inputs: serde_json::Value,
     _timeout: Option<u64>,
 ) -> Result<ToolExecutionResult, String> {
     let start = std::time::Instant::now();
@@ -367,7 +372,7 @@ async fn execute_workflow_tool(
 pub async fn list_unified_tools() -> Result<Vec<serde_json::Value>, String> {
     let builtin_tools = get_builtin_tools_with_status().await?;
 
-    let mut tools: Vec<serde_json::Value> = builtin_tools
+    let tools: Vec<serde_json::Value> = builtin_tools
         .into_iter()
         .map(|t| {
             serde_json::json!({
@@ -1049,7 +1054,7 @@ pub async fn register_mcp_tools_from_server(
     tools: Vec<serde_json::Value>,
 ) -> Result<usize, String> {
     use sentinel_tools::mcp_adapter::{
-        load_mcp_tools_to_server, register_mcp_connection, McpConnectionInfo, McpToolMeta,
+        load_mcp_tools_to_server, McpToolMeta,
     };
 
     let server = get_tool_server();
@@ -1099,7 +1104,7 @@ pub async fn register_mcp_tools_from_server(
 pub async fn register_workflow_tools(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<usize, String> {
-    use sentinel_tools::workflow_adapter::{load_workflows_from_db, WorkflowToolMeta};
+    
 
     let server = get_tool_server();
     let db = db_service.inner().clone();
@@ -1200,9 +1205,9 @@ pub async fn vision_explorer_receive_credentials(
     app: tauri::AppHandle,
     execution_id: String,
     username: String,
-    password: String,
-    verification_code: Option<String>,
-    extra_fields: Option<HashMap<String, String>>,
+    _password: String,
+    _verification_code: Option<String>,
+    _extra_fields: Option<HashMap<String, String>>,
 ) -> Result<(), String> {
     tracing::info!(
         "V2: Received credentials for VisionExplorer execution_id: {}",
@@ -1483,6 +1488,7 @@ pub async fn get_pending_shell_permissions() -> Result<Vec<PendingPermissionRequ
 
 /// Agent configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AgentConfig {
     /// Shell/terminal configuration
     pub shell: ShellConfig,
@@ -1491,13 +1497,6 @@ pub struct AgentConfig {
     // pub tools: ToolsConfig,
 }
 
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            shell: ShellConfig::default(),
-        }
-    }
-}
 
 /// Get agent configuration
 #[tauri::command]

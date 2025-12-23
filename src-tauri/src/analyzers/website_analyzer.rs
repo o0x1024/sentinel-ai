@@ -222,9 +222,7 @@ impl WebsiteAnalyzer {
         }
 
         // Convert builders to endpoints
-        let mut endpoints: Vec<ApiEndpoint> = endpoint_map
-            .into_iter()
-            .map(|(_, builder)| builder.build())
+        let mut endpoints: Vec<ApiEndpoint> = endpoint_map.into_values().map(|builder| builder.build())
             .collect();
 
         // Sort by hit count (descending)
@@ -388,7 +386,7 @@ impl EndpointBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     // #[test]
     // fn test_normalize_path() {

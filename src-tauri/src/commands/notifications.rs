@@ -40,7 +40,7 @@ pub async fn test_notification_rule_connection(
     db_service: State<'_, Arc<DatabaseService>>, 
     request: TestNotificationRuleRequest
 ) -> Result<bool, String> {
-    let mut channel = String::new();
+    let channel;
     let mut config = serde_json::json!({});
     let mut title = String::from("Sentinel AI 通知测试");
     let mut content = String::from("这是一条测试消息，用于验证连接状态");

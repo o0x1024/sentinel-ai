@@ -6,10 +6,9 @@ use log::{info, warn};
 use sentinel_llm::LlmClient;
 use sentinel_rag::config::RagConfig as RagConfigRag;
 use sentinel_core::models::rag_config::RagConfig as RagConfigCore;
-use sentinel_rag::db::RagDatabase;
 use sentinel_rag::models::{
-    AssistantRagRequest, AssistantRagResponse, CollectionInfo, DocumentChunk, DocumentSource,
-    IngestRequest, IngestResponse, QueryResult, RagQueryRequest, RagQueryResponse, RagStatus,
+    AssistantRagRequest, AssistantRagResponse, DocumentChunk, DocumentSource,
+    IngestRequest, IngestResponse, RagQueryRequest, RagQueryResponse, RagStatus,
 };
 use sentinel_rag::service::RagService;
 use serde::{Deserialize, Serialize};
@@ -17,7 +16,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 // ============================================================================
 // 全局RAG服务管理器
@@ -848,6 +846,7 @@ pub async fn ensure_default_rag_collection() -> Result<String, String> {
 
     let rag_service = get_global_rag_service().await?;
 
+    #[allow(dead_code)]
     const DEFAULT_COLLECTION_NAME: &str = "default";
 
     match rag_service.ensure_default_collection_public().await {

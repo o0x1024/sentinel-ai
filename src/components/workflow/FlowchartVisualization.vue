@@ -1425,7 +1425,7 @@ defineExpose({
 
 <style scoped>
 .flowchart-visualization {
-    @apply w-full;
+    width: 100%;
 }
 
 .flowchart-container {
@@ -1433,7 +1433,9 @@ defineExpose({
 }
 
 .fullscreen {
-    @apply fixed inset-0 z-50;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
     min-height: 100vh;
 }
 
@@ -1450,6 +1452,7 @@ defineExpose({
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    line-clamp: 2;
 }
 .flowchart-container {
     user-select: none;

@@ -11,6 +11,7 @@ static INTEGRITY_OK: AtomicBool = AtomicBool::new(false);
 
 /// Known hash of critical code sections (set at build time)
 /// In production, this would be computed during build and embedded
+#[allow(dead_code)]
 static EXPECTED_HASH: Lazy<Option<[u8; 32]>> = Lazy::new(|| {
     // This would be set by build script
     // For now, skip integrity check if not configured
@@ -22,7 +23,7 @@ pub fn verify_integrity() -> bool {
     #[cfg(debug_assertions)]
     {
         INTEGRITY_OK.store(true, Ordering::SeqCst);
-        return true;
+        true
     }
 
     #[cfg(not(debug_assertions))]
@@ -58,6 +59,7 @@ pub fn is_integrity_ok() -> bool {
 }
 
 /// Compute hash of current binary
+#[allow(dead_code)]
 fn compute_binary_hash() -> Option<[u8; 32]> {
     let exe_path = std::env::current_exe().ok()?;
     let binary_data = std::fs::read(&exe_path).ok()?;
@@ -69,12 +71,14 @@ fn compute_binary_hash() -> Option<[u8; 32]> {
 }
 
 /// Get current binary hash (for build-time recording)
+#[allow(dead_code)]
 pub fn get_binary_hash() -> Option<String> {
     compute_binary_hash().map(hex::encode)
 }
 
 /// Constant-time comparison to prevent timing attacks
 #[inline(never)]
+#[allow(dead_code)]
 fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;

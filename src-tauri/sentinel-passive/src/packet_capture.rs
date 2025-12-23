@@ -1236,8 +1236,6 @@ impl FileExtractor {
             if pkt.protocol != "DNS" { continue; }
             
             // Look for suspicious DNS queries (long subdomains, TXT records)
-            let text = String::from_utf8_lossy(&pkt.raw);
-            
             // Extract hex/base64 from subdomain labels
             for layer in &pkt.layers {
                 if layer.name == "DNS" {
@@ -1510,6 +1508,7 @@ impl FileExtractor {
         })
     }
 
+    #[allow(dead_code)]
     fn generate_filename_from_type(content_type: &str) -> String {
         let ext = match content_type.split(';').next().unwrap_or("").trim() {
             "image/jpeg" => "jpg",
@@ -1787,7 +1786,7 @@ fn parse_http_content(payload: &[u8]) -> Option<(String, String, ProtocolLayer)>
 }
 
 /// Parse DNS content from UDP payload
-fn parse_dns_content(payload: &[u8], is_response: bool) -> Option<(String, ProtocolLayer)> {
+fn parse_dns_content(payload: &[u8], _is_response: bool) -> Option<(String, ProtocolLayer)> {
     if payload.len() < 12 { return None; }
     
     let id = u16::from_be_bytes([payload[0], payload[1]]);

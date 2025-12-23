@@ -133,7 +133,7 @@ impl QualityModel {
     }
     
     /// Calculate feature weight based on correlation with quality
-    fn calculate_feature_weight(&self, feature_name: &str, mean_quality: f32) -> f32 {
+    fn calculate_feature_weight(&self, feature_name: &str, _mean_quality: f32) -> f32 {
         let mut sum_xy = 0.0;
         let mut sum_x = 0.0;
         let mut sum_y = 0.0;
@@ -379,7 +379,7 @@ mod tests {
     
     #[test]
     fn test_model_prediction() {
-        let mut model = QualityModel::new();
+        let model = QualityModel::new();
         
         let features = CodeFeatures {
             loc: 100,
@@ -393,7 +393,7 @@ mod tests {
         };
         
         let score = model.predict(&features).unwrap();
-        assert!(score >= 0.0 && score <= 100.0);
+        assert!((0.0..=100.0).contains(&score));
     }
 }
 

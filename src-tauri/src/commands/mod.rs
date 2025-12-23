@@ -1,4 +1,5 @@
 //! Commands module - Tauri commands
+#![allow(ambiguous_glob_reexports)]
 
 pub mod ai;
 pub mod asset;
@@ -26,12 +27,14 @@ pub mod vision_explorer_v2;
 pub mod window;
 
 // Re-export commands
+#[allow(ambiguous_glob_reexports)]
 pub use ai::*;
 pub use asset::*;
 pub use config::*;
 pub use config_commands::*;
 pub use database::*;
 pub use dictionary::*;
+pub use license_commands::*;
 pub use mcp_commands::*;
 pub use notifications::*;
 pub use packet_capture_commands::*;
@@ -40,6 +43,7 @@ pub use performance::*;
 pub use plugin_review_commands::*;
 pub use prompt_api::*;
 pub use prompt_commands::*;
+#[allow(ambiguous_glob_reexports)]
 pub use proxifier_commands::*;
 pub use rag_commands::*;
 pub use role::*;

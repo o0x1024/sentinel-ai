@@ -1,3 +1,4 @@
+/* global Deno, sleep */
 // Sentinel Deno runtime bootstrap (evaluated during JsRuntime::new via esm_entry_point)
 //
 // IMPORTANT:
@@ -562,7 +563,7 @@ globalThis.SecurityUtils = {
   
   // Extract URLs from text
   extractUrls: (text) => {
-    const urlRegex = /(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/gi
+    const urlRegex = /(https?:\/\/[^\s<>"{}|\\^`[\]]+)/gi
     return (text.match(urlRegex) || [])
   },
   

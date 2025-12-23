@@ -1075,7 +1075,9 @@ export default {
         noSteps: '暂无步骤记录',
         noResult: '暂无结果',
         copy: '复制',
-        close: '关闭'
+        close: '关闭',
+        fullscreen: '全屏查看',
+        exitFullscreen: '退出全屏'
       }
     },
     resultPanel: {

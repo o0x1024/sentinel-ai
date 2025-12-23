@@ -36,7 +36,7 @@ impl Agent for PerceptionAgent {
             Event::TaskAssigned {
                 agent_id,
                 task_id,
-                target_node_id,
+                target_node_id: _,
                 payload, // Payload should contain PageContext? Or we fetch it?
             } if agent_id == &self.id => {
                 // In V2, we assume we want to analyze the "Current" context?

@@ -44,10 +44,12 @@ pub enum ToolCost {
 
 /// 工具选择策略
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ToolSelectionStrategy {
     /// 全部工具（不推荐，仅用于测试）
     All,
     /// 关键词匹配（快速，免费）
+    #[default]
     Keyword,
     /// LLM 智能分析（准确，有成本）
     LLM,
@@ -59,11 +61,6 @@ pub enum ToolSelectionStrategy {
     None,
 }
 
-impl Default for ToolSelectionStrategy {
-    fn default() -> Self {
-        Self::Keyword
-    }
-}
 
 /// 工具配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -406,24 +403,20 @@ impl ToolRouter {
             if task_lower.contains("scan") && tool.category == ToolCategory::Network {
                 score += 15;
             }
-            if task_lower.contains("http") || task_lower.contains("api") {
-                if tool.id == "http_request" {
+            if (task_lower.contains("http") || task_lower.contains("api"))
+                && tool.id == "http_request" {
                     score += 15;
                 }
-            }
-            if task_lower.contains("time") || task_lower.contains("date") {
-                if tool.id == "local_time" {
+            if (task_lower.contains("time") || task_lower.contains("date"))
+                && tool.id == "local_time" {
                     score += 15;
                 }
-            }
-            if task_lower.contains("command")
+            if (task_lower.contains("command")
                 || task_lower.contains("shell")
-                || task_lower.contains("execute")
-            {
-                if tool.id == "shell" {
+                || task_lower.contains("execute"))
+                && tool.id == "shell" {
                     score += 15;
                 }
-            }
 
             // 工作流工具匹配
             if tool.category == ToolCategory::Workflow {

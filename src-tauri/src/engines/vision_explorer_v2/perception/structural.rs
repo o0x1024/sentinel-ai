@@ -274,8 +274,8 @@ impl PerceptionEngine for StructuralAnalyst {
 
     async fn extract_data(
         &self,
-        context: &PageContext,
-        schema: &serde_json::Value,
+        _context: &PageContext,
+        _schema: &serde_json::Value,
     ) -> Result<serde_json::Value> {
         // Implementation for data extraction
         Ok(serde_json::json!({}))

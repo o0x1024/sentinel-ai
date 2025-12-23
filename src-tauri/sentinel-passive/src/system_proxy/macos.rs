@@ -5,7 +5,7 @@
 //! - 获取系统网络服务列表
 
 use std::process::Command;
-use tracing::{info, warn, debug};
+use tracing::{info, warn};
 use super::{SystemProxyConfig, ProxyType, SystemProxyStatus};
 
 /// 获取所有网络服务名称

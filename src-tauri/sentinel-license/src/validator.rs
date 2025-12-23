@@ -3,6 +3,7 @@
 use crate::machine_id::MachineId;
 use crate::crypto::{LicenseKey, verify_license};
 use crate::obfuscate;
+use std::str::FromStr;
 
 #[cfg(not(debug_assertions))]
 use crate::anti_debug;
@@ -29,6 +30,7 @@ pub enum LicenseStatus {
 /// License validator with multiple verification points
 pub struct LicenseValidator {
     machine_id: MachineId,
+    #[allow(dead_code)]
     check_count: u32,
 }
 
@@ -68,7 +70,7 @@ impl LicenseValidator {
         
         // Check 2: Machine ID match
         let machine_hash = self.machine_id.to_hash();
-        let expected_id = hex::encode(&machine_hash);
+        let expected_id = hex::encode(machine_hash);
         
         // Support both full hash and partial hash (display format + zeros)
         let id_match = if license.machine_id == expected_id {
@@ -134,7 +136,7 @@ impl LicenseValidator {
     pub fn quick_check(&self, license: &LicenseKey) -> bool {
         // Simple machine ID check without full signature verification
         let machine_hash = self.machine_id.to_hash();
-        let expected_id = hex::encode(&machine_hash);
+        let expected_id = hex::encode(machine_hash);
         
         license.machine_id == expected_id
     }
@@ -148,12 +150,14 @@ impl Default for LicenseValidator {
 
 /// Quick check function for multi-point validation (uses global state)
 #[inline]
+#[allow(dead_code)]
 pub fn quick_license_check() -> bool {
     crate::is_licensed()
 }
 
 /// Get feature key for obfuscated validation
 #[inline]
+#[allow(dead_code)]
 pub fn get_feature_key(feature_id: u32) -> u64 {
     let licensed = crate::is_licensed();
     obfuscate::derive_feature_key(licensed, feature_id)
@@ -161,6 +165,7 @@ pub fn get_feature_key(feature_id: u32) -> u64 {
 
 /// Verify feature key
 #[inline]
+#[allow(dead_code)]
 pub fn verify_feature_key(key: u64, feature_id: u32) -> bool {
     obfuscate::check_feature_key(key, feature_id)
 }

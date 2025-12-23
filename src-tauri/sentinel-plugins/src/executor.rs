@@ -6,7 +6,6 @@
 /// Key implementation: Each restart creates a NEW THREAD with a new V8 Isolate,
 /// rather than reusing the same thread. This is required because V8 does not
 /// support creating multiple Isolates sequentially on the same thread.
-
 use crate::error::{PluginError, Result};
 use crate::plugin_engine::PluginEngine;
 use crate::types::{Finding, HttpTransaction, PluginMetadata};

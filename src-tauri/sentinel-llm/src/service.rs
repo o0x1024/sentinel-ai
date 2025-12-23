@@ -8,7 +8,7 @@ use rig::agent::MultiTurnStreamItem;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{message::Image, Message};
 use rig::message::{
-    AssistantContent, DocumentSourceKind, ImageDetail, ImageMediaType, UserContent,
+    AssistantContent, DocumentSourceKind, ImageDetail, UserContent,
 };
 use rig::one_or_many::OneOrMany;
 use rig::providers::gemini::completion::gemini_api_types::{

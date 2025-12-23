@@ -6,7 +6,6 @@
 //! - 低质量插件：自动拒绝
 
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
 
 /// 插件自动批准配置
 #[derive(Debug, Clone, Serialize, Deserialize)]

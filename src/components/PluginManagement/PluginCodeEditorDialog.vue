@@ -154,12 +154,30 @@
       <!-- Main content with AI panel -->
       <div class="fullscreen-editor-layout">
         <!-- Code Editor Area -->
-        <div class="fullscreen-editor-content" :class="{ 'with-ai-panel': showAiPanel }">
-          <div ref="fullscreenCodeEditorContainerRef" class="h-full w-full"></div>
+        <div class="fullscreen-editor-content" :class="{ 'with-ai-panel': showAiPanel }" :style="showAiPanel ? { width: `calc(100% - ${aiPanelWidth}px)` } : {}">
+          <div v-show="!isPreviewMode" ref="fullscreenCodeEditorContainerRef" class="h-full w-full"></div>
+          <div v-show="isPreviewMode" ref="fullscreenDiffEditorContainerRef" class="h-full w-full">
+            <!-- Diff View Header -->
+            <div v-if="isPreviewMode" class="diff-header">
+              <div class="diff-header-content">
+                <i class="fas fa-code-compare mr-2"></i>
+                <span class="font-semibold">{{ $t('plugins.codeComparison', '代码对比') }}</span>
+                <span class="text-sm opacity-70 ml-2">{{ $t('plugins.leftOriginal', '左侧：当前代码') }} | {{ $t('plugins.rightModified', '右侧：AI修改') }}</span>
+              </div>
+              <div class="diff-header-actions">
+                <button class="btn btn-sm btn-ghost" @click="$emit('exitPreviewMode')">
+                  <i class="fas fa-times mr-1"></i>{{ $t('plugins.exitPreview', '退出预览') }}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- AI Chat Panel -->
-        <div v-if="showAiPanel" class="ai-chat-panel">
+        <div v-if="showAiPanel" class="ai-chat-panel" :style="{ width: aiPanelWidth + 'px' }">
+          <!-- Resize Handle -->
+          <div class="resize-handle" @mousedown="startResize"></div>
+
           <div class="ai-chat-header">
             <div class="flex items-center gap-2">
               <i class="fas fa-robot text-primary"></i>
@@ -218,12 +236,34 @@
                     <pre class="test-ref-content"><code>{{ msg.testResultRef.preview }}</code></pre>
                   </div>
                   <div class="message-text" v-html="msg.content"></div>
-                  <div v-if="msg.role === 'assistant' && msg.codeBlock" class="message-code-action">
-                    <button class="btn btn-xs btn-primary" @click="$emit('applyAiCode', msg.codeBlock)">
-                      <i class="fas fa-check mr-1"></i>{{ $t('plugins.applyChanges', '应用修改') }}
-                    </button>
-                    <button class="btn btn-xs btn-ghost" @click="$emit('previewAiCode', msg.codeBlock)">
-                      <i class="fas fa-eye mr-1"></i>{{ $t('plugins.previewChanges', '预览') }}
+                  
+                  <!-- AI Suggested Changes -->
+                  <div v-if="msg.role === 'assistant' && msg.codeBlocks && msg.codeBlocks.length > 0" class="message-ai-suggestions">
+                    <div class="suggestions-header">
+                      <i class="fas fa-magic text-xs text-primary mr-1"></i>
+                      <span class="text-xs font-bold uppercase tracking-wider">{{ $t('plugins.aiSuggestions', 'AI 修改建议') }}</span>
+                      <span class="ml-auto text-[10px] opacity-50">{{ msg.codeBlocks.length }} {{ $t('plugins.blocks', '个代码块') }}</span>
+                    </div>
+                    
+                    <div class="suggestions-list">
+                      <div v-for="(block, bIdx) in msg.codeBlocks" :key="bIdx" class="suggestion-item">
+                        <div class="suggestion-info">
+                          <span class="text-[10px] font-mono opacity-70">#{{ bIdx + 1 }}</span>
+                          <div class="flex gap-1 ml-auto">
+                            <button class="btn btn-mini h-6 min-h-0 btn-primary px-2" @click="$emit('applyAiCode', block)">
+                              {{ $t('plugins.apply', '应用') }}
+                            </button>
+                            <button class="btn btn-mini h-6 min-h-0 btn-ghost px-2" @click="$emit('previewAiCode', block)">
+                              {{ $t('plugins.preview', '预览') }}
+                            </button>
+                          </div>
+                        </div>
+                        <pre class="suggestion-preview"><code>{{ block.length > 100 ? block.substring(0, 100) + '...' : block }}</code></pre>
+                      </div>
+                    </div>
+                    
+                    <button v-if="msg.codeBlocks.length > 1" class="btn btn-xs btn-block btn-outline mt-2" @click="$emit('applyAiCode', msg.codeBlocks.join('\n\n'))">
+                      <i class="fas fa-check-double mr-1"></i>{{ $t('plugins.applyAll', '全部应用') }}
                     </button>
                   </div>
                 </div>
@@ -235,8 +275,8 @@
                   <i class="fas fa-robot"></i>
                 </div>
                 <div class="message-content">
-                  <div class="message-text">
-                    <span v-if="aiStreamingContent">{{ aiStreamingContent }}</span>
+                  <div class="message-text streaming-text">
+                    <span v-if="aiStreamingContent" class="whitespace-pre-wrap">{{ aiStreamingContent }}</span>
                     <span class="typing-indicator">
                       <span></span><span></span><span></span>
                     </span>
@@ -295,22 +335,9 @@
               @keydown.enter.exact.prevent="$emit('sendAiMessage', aiInputText)"
             ></textarea>
             <div class="ai-chat-input-actions">
-              <div class="flex items-center gap-3">
-                <button class="btn btn-xs btn-ghost" @click="$emit('addSelectedCode')" 
-                        :title="$t('plugins.addSelectedCode', '添加选中代码')">
-                  <i class="fas fa-plus-circle mr-1"></i>
-                  {{ $t('plugins.addSelection', '添加选中') }}
-                </button>
-                <button class="btn btn-xs btn-ghost" @click="$emit('addFullCode')"
-                        :title="$t('plugins.addFullCode', '添加完整代码')">
-                  <i class="fas fa-file-code mr-1"></i>
-                  {{ $t('plugins.addAll', '添加全部') }}
-                </button>
-                <button v-if="editingPlugin" class="btn btn-xs btn-ghost" @click="$emit('addTestResultToContext')"
-                        :title="$t('plugins.addTestResult', '添加测试结果')">
-                  <i class="fas fa-vial mr-1"></i>
-                  {{ $t('plugins.addTestResult', '添加测试结果') }}
-                </button>
+              <div class="flex items-center gap-2 text-xs opacity-60">
+                <i class="fas fa-info-circle"></i>
+                <span>{{ $t('plugins.contextMenuHint', '右键编辑器添加代码到上下文') }}</span>
               </div>
               <button 
                 class="btn btn-sm btn-primary" 
@@ -429,6 +456,8 @@ const props = defineProps<{
   selectedTestResultRef: TestResultReference | null
   // Test related props
   pluginTesting: boolean
+  // Preview related props
+  isPreviewMode?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -448,6 +477,7 @@ const emit = defineEmits<{
   'aiQuickAction': [action: string]
   'applyAiCode': [code: string]
   'previewAiCode': [code: string]
+  'exitPreviewMode': []
   'addSelectedCode': []
   'addFullCode': []
   'clearCodeRef': []
@@ -460,11 +490,38 @@ const emit = defineEmits<{
 const codeEditorDialogRef = ref<HTMLDialogElement>()
 const codeEditorContainerRef = ref<HTMLDivElement>()
 const fullscreenCodeEditorContainerRef = ref<HTMLDivElement>()
+const fullscreenDiffEditorContainerRef = ref<HTMLDivElement>()
 const aiChatMessagesRef = ref<HTMLDivElement>()
 
 // AI chat state
 const aiInputText = ref('')
 const includeCodeContext = ref(true)
+const aiPanelWidth = ref(400)
+const isResizing = ref(false)
+
+const startResize = (e: MouseEvent) => {
+  isResizing.value = true
+  document.addEventListener('mousemove', handleResize)
+  document.addEventListener('mouseup', stopResize)
+  document.body.style.userSelect = 'none'
+}
+
+const handleResize = (e: MouseEvent) => {
+  if (!isResizing.value) return
+  // Calculate new width: window width - mouse X
+  const newWidth = window.innerWidth - e.clientX
+  // Constrain width
+  if (newWidth >= 300 && newWidth <= 800) {
+    aiPanelWidth.value = newWidth
+  }
+}
+
+const stopResize = () => {
+  isResizing.value = false
+  document.removeEventListener('mousemove', handleResize)
+  document.removeEventListener('mouseup', stopResize)
+  document.body.style.userSelect = ''
+}
 
 const isNewPluginValid = computed(() => {
   return props.newPluginMetadata.id.trim() !== '' && props.newPluginMetadata.name.trim() !== ''
@@ -503,9 +560,10 @@ watch(() => props.aiMessages.length, () => {
   })
 })
 
-// Clear input after sending
-watch(() => props.aiStreaming, (streaming, wasStreaming) => {
-  if (wasStreaming && !streaming) {
+// Clear input immediately when streaming starts
+watch(() => props.aiStreaming, (streaming) => {
+  if (streaming) {
+    // Clear input immediately when message is sent
     aiInputText.value = ''
   }
 })
@@ -513,7 +571,7 @@ watch(() => props.aiStreaming, (streaming, wasStreaming) => {
 defineExpose({
   showDialog, closeDialog,
   hideModalTemporary, restoreModal,
-  codeEditorContainerRef, fullscreenCodeEditorContainerRef,
+  codeEditorContainerRef, fullscreenCodeEditorContainerRef, fullscreenDiffEditorContainerRef,
   aiInputText, includeCodeContext
 })
 </script>
@@ -690,6 +748,35 @@ defineExpose({
   box-shadow: -4px 0 20px oklch(var(--bc) / 0.1);
 }
 
+/* Resize Handle */
+.resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s;
+  z-index: 20;
+}
+
+.resize-handle:hover {
+  background: oklch(var(--p) / 0.3);
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 40px;
+  background: oklch(var(--bc) / 0.2);
+  border-radius: 1px;
+}
+
 .ai-chat-header {
   display: flex;
   justify-content: space-between;
@@ -829,6 +916,11 @@ defineExpose({
   font-size: 0.875rem;
   line-height: 1.5;
   word-break: break-word;
+}
+
+.ai-chat-message .message-text.streaming-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
 }
 
 .ai-chat-message.user .message-text {
@@ -1056,10 +1148,128 @@ defineExpose({
   overflow-x: auto;
   margin: 0.5rem 0;
   font-size: 0.75rem;
+  border: 1px solid oklch(var(--bc) / 0.1);
 }
 
 .ai-chat-message .message-text :deep(code) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.ai-chat-message .message-text :deep(code.inline-code) {
+  background: oklch(var(--b3));
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.8em;
+}
+
+.ai-chat-message .message-text :deep(strong) {
+  font-weight: 600;
+}
+
+.ai-chat-message .message-text :deep(ul) {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+.ai-chat-message .message-text :deep(li) {
+  margin: 0.25rem 0;
+}
+
+/* AI Suggestions in Message */
+.message-ai-suggestions {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: oklch(var(--b1));
+  border: 1px solid oklch(var(--p) / 0.2);
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 12px oklch(0 0 0 / 0.05);
+}
+
+.suggestions-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid oklch(var(--bc) / 0.05);
+}
+
+.suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.suggestion-item {
+  background: oklch(var(--b2));
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid oklch(var(--bc) / 0.05);
+}
+
+.suggestion-info {
+  display: flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  background: oklch(var(--b3));
+  border-bottom: 1px solid oklch(var(--bc) / 0.05);
+}
+
+.suggestion-preview {
+  margin: 0;
+  padding: 0.5rem;
+  font-size: 10px;
+  max-height: 60px;
+  overflow: hidden;
+  color: oklch(var(--bc) / 0.6);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.suggestion-preview code {
+  white-space: pre-wrap;
+}
+
+.btn-mini {
+  font-size: 10px;
+}
+
+/* Diff View Header */
+.diff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: oklch(var(--b3));
+  border-bottom: 1px solid oklch(var(--bc) / 0.15);
+  color: oklch(var(--bc));
+}
+
+.diff-header-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.diff-header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Diff Editor Container */
+.fullscreen-editor-content :deep(.cm-merge-view) {
+  height: 100%;
+  display: flex;
+}
+
+.fullscreen-editor-content :deep(.cm-merge-a),
+.fullscreen-editor-content :deep(.cm-merge-b) {
+  flex: 1;
+  height: 100%;
+}
+
+.fullscreen-editor-content :deep(.cm-merge-spacer) {
+  width: 2px;
+  background: oklch(var(--bc) / 0.2);
 }
 
 /* Responsive */

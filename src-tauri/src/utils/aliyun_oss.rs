@@ -176,7 +176,7 @@ mod tests {
     #[ignore] // Need API key
     async fn test_get_upload_policy() {
         let api_key = "sk-8303958eff134cefbdb56460b5fa97c3";
-        let res = upload_file_and_get_url(&api_key, "qwen-vl-plus", Path::new("test.jpg")).await;
+        let res = upload_file_and_get_url(api_key, "qwen-vl-plus", Path::new("test.jpg")).await;
         println!("res: {:?}", res);
     }
 }

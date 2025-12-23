@@ -5,7 +5,6 @@ import settings from '../settings/en'
 import ai from '../settings/ai/en'
 import rag from '../settings/rag/en'
 import database from '../settings/database/en'
-import scheduler from '../settings/scheduler/en'
 import scanTasks from '../scanTasks/en'
 import vulnerabilities from '../vulnerabilities/en'
 import tools from '../tools/en'
@@ -39,7 +38,6 @@ export default {
     ai,
     rag,
     database,
-    scheduler
   },
   scanTasks,
   vulnerabilities,
