@@ -27,7 +27,7 @@
     <Transition name="slide-drawer-right">
       <div 
         v-if="showToolConfig"
-        class="tool-config-drawer absolute right-0 top-0 bottom-0 w-96 bg-base-100 shadow-2xl z-50 overflow-hidden"
+        class="tool-config-drawer absolute right-0 top-0 bottom-0 w-[420px] bg-base-100 shadow-2xl z-50 overflow-hidden"
       >
         <ToolConfigPanel 
           :config="toolConfig"

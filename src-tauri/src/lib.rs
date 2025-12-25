@@ -381,6 +381,7 @@ pub fn run() {
             ai::test_ai_connection,
             ai::get_provider_models,
             ai::save_ai_config,
+            ai::add_custom_provider,
             ai::get_ai_config,
             ai::print_ai_conversations,
             ai::set_default_llm_model,
@@ -782,7 +783,7 @@ pub fn run() {
             commands::license_commands::get_machine_id,
             commands::license_commands::get_machine_id_full,
             commands::license_commands::deactivate_license,
-            // Cache commands (暂时禁用：缺少 AppState 定义)
+            // Cache commands (temporarily disabled)
             // commands::cache_commands::get_cache,
             // commands::cache_commands::set_cache,
             // commands::cache_commands::delete_cache,

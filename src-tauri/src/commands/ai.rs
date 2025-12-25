@@ -498,6 +498,19 @@ pub struct SetDefaultProviderRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct AddCustomProviderRequest {
+    pub name: String,
+    pub display_name: String,
+    pub api_key: Option<String>,
+    pub api_base: String,
+    pub model_id: String,
+    pub compat_mode: String,
+    pub extra_headers: Option<HashMap<String, String>>,
+    pub timeout: Option<u64>,
+    pub max_retries: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AiServiceStatusResponse {
     pub provider: String,
     pub is_available: bool,
@@ -2010,6 +2023,104 @@ pub async fn save_ai_config(
     Ok(())
 }
 
+/// 添加自定义提供商
+#[tauri::command]
+pub async fn add_custom_provider(
+    request: AddCustomProviderRequest,
+    db: State<'_, Arc<DatabaseService>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    tracing::info!("Adding custom provider: {}", request.name);
+
+    // 从数据库加载现有配置
+    let mut providers: HashMap<String, AiProviderConfig> = match db.get_config("ai", "providers_config").await {
+        Ok(Some(config_str)) => {
+            serde_json::from_str(&config_str)
+                .unwrap_or_else(|_| HashMap::new())
+        }
+        _ => HashMap::new(),
+    };
+
+    // 生成唯一的provider ID
+    let provider_id = request.name.clone();
+
+    // 检查是否已存在
+    if providers.contains_key(&provider_id) {
+        return Err(format!("Provider '{}' already exists", request.display_name));
+    }
+
+    // 构建模型配置
+    let model_config = serde_json::json!({
+        "id": request.model_id,
+        "name": request.model_id,
+        "context_window": 128000,
+        "max_output_tokens": 4096,
+        "input_cost_per_token": 0.0,
+        "output_cost_per_token": 0.0,
+        "supports_vision": false,
+        "supports_function_calling": true,
+    });
+
+    // 创建新的提供商配置
+    let new_provider = AiProviderConfig {
+        id: provider_id.clone(),
+        provider: provider_id.clone(),
+        name: request.display_name.clone(),
+        api_key: request.api_key.clone(),
+        api_base: Some(request.api_base.clone()),
+        organization: None,
+        enabled: true,
+        default_model: request.model_id.clone(),
+        models: vec![model_config],
+        rig_provider: Some(request.compat_mode.clone()),
+    };
+
+    // 添加到配置中
+    providers.insert(provider_id.clone(), new_provider);
+
+    // 保存到数据库
+    let config_str = serde_json::to_string(&providers)
+        .map_err(|e| format!("Failed to serialize providers config: {}", e))?;
+
+    db.set_config(
+        "ai",
+        "providers_config",
+        &config_str,
+        Some("AI providers configuration"),
+    )
+    .await
+    .map_err(|e| format!("Failed to save providers config to DB: {}", e))?;
+
+    // 如果有API密钥，单独保存
+    if let Some(api_key) = &request.api_key {
+        if !api_key.is_empty() {
+            let key_name = format!("api_key_{}", provider_id);
+            let description = format!("{} API Key", request.display_name);
+            db.set_config("ai", &key_name, api_key, Some(&description))
+                .await
+                .map_err(|e| format!("Failed to save API key: {}", e))?;
+        }
+    }
+
+    tracing::info!("Custom provider '{}' added successfully", request.display_name);
+
+    // 重新加载AI服务
+    if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
+        if let Err(e) = ai_manager.reload_services().await {
+            tracing::error!("Failed to reload AI services after adding custom provider: {}", e);
+        } else {
+            tracing::info!("AI services reloaded after adding custom provider");
+        }
+    }
+
+    // 发送配置更新事件
+    if let Err(e) = app.emit("ai_config_updated", ()) {
+        tracing::warn!("Failed to emit ai_config_updated event: {}", e);
+    }
+
+    Ok(())
+}
+
 /// 设置全局默认 LLM Provider（保存到DB并更新运行态别名与全局适配器默认）
 #[tauri::command]
 pub async fn set_default_llm_provider(
@@ -2524,6 +2635,21 @@ fn default_providers_config() -> serde_json::Value {
                 "enabled": false,
                 "api_key": null,
                 "api_base": "https://api-inference.modelscope.cn/v1",
+                "organization": null,
+                "default_model": "",
+                "models": []
+            }),
+        ),
+        (
+            "LM Studio",
+            json!({
+                "id": "lm studio",
+                "provider": "lm studio",
+                "rig_provider": "openai",
+                "name": "LM Studio",
+                "enabled": false,
+                "api_key": null,
+                "api_base": "http://localhost:1234/v1",
                 "organization": null,
                 "default_model": "",
                 "models": []

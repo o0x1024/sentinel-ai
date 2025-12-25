@@ -1,4 +1,4 @@
-use crate::AppState;
+use crate::services::database::DatabaseService;
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -41,13 +41,12 @@ pub struct SetCacheResponse {
 /// 获取缓存
 #[tauri::command]
 pub async fn get_cache(
-    state: State<'_, Arc<AppState>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     key: String,
 ) -> Result<GetCacheResponse, String> {
-    let db_service = state.db_service.lock().await;
     let pool = db_service
         .get_pool()
-        .ok_or_else(|| "Database not initialized".to_string())?;
+        .map_err(|e| e.to_string())?;
 
     match get_cache_internal(pool, &key).await {
         Ok(Some(value)) => Ok(GetCacheResponse {
@@ -71,13 +70,12 @@ pub async fn get_cache(
 /// 设置缓存
 #[tauri::command]
 pub async fn set_cache(
-    state: State<'_, Arc<AppState>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     request: SetCacheRequest,
 ) -> Result<SetCacheResponse, String> {
-    let db_service = state.db_service.lock().await;
     let pool = db_service
         .get_pool()
-        .ok_or_else(|| "Database not initialized".to_string())?;
+        .map_err(|e| e.to_string())?;
 
     match set_cache_internal(pool, request).await {
         Ok(_) => Ok(SetCacheResponse {
@@ -94,13 +92,12 @@ pub async fn set_cache(
 /// 删除缓存
 #[tauri::command]
 pub async fn delete_cache(
-    state: State<'_, Arc<AppState>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     key: String,
 ) -> Result<SetCacheResponse, String> {
-    let db_service = state.db_service.lock().await;
     let pool = db_service
         .get_pool()
-        .ok_or_else(|| "Database not initialized".to_string())?;
+        .map_err(|e| e.to_string())?;
 
     match delete_cache_internal(pool, &key).await {
         Ok(_) => Ok(SetCacheResponse {
@@ -117,12 +114,11 @@ pub async fn delete_cache(
 /// 清理过期缓存
 #[tauri::command]
 pub async fn cleanup_expired_cache(
-    state: State<'_, Arc<AppState>>,
+    db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<SetCacheResponse, String> {
-    let db_service = state.db_service.lock().await;
     let pool = db_service
         .get_pool()
-        .ok_or_else(|| "Database not initialized".to_string())?;
+        .map_err(|e| e.to_string())?;
 
     match cleanup_expired_cache_internal(pool).await {
         Ok(count) => {
@@ -209,13 +205,12 @@ async fn cleanup_expired_cache_internal(pool: &sqlx::SqlitePool) -> Result<u64> 
 /// 获取所有缓存键（用于调试）
 #[tauri::command]
 pub async fn get_all_cache_keys(
-    state: State<'_, Arc<AppState>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     cache_type: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let db_service = state.db_service.lock().await;
     let pool = db_service
         .get_pool()
-        .ok_or_else(|| "Database not initialized".to_string())?;
+        .map_err(|e| e.to_string())?;
 
     let query = if let Some(t) = cache_type {
         sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = ?")

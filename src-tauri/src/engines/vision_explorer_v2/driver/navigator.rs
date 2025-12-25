@@ -45,84 +45,103 @@ impl Agent for NavigatorAgent {
                 target_node_id,
                 payload,
             } if agent_id == &self.id => {
-                let driver = self.driver.lock().await;
-
-                // Track what we did for the message
                 let mut action_desc = "Navigation".to_string();
+                
+                // Execute action and capture result
+                let execution_result = async {
+                    let driver = self.driver.lock().await;
 
-                // Check payload for specific action
-                if let Some(payload_val) = payload {
-                    if let Ok(action) = serde_json::from_value::<
-                        crate::engines::vision_explorer_v2::core::SuggestedAction,
-                    >(payload_val.clone())
-                    {
-                        log::info!(
-                            "Executing action: {} on {}",
-                            action.action_type,
-                            action.selector
-                        );
-                        action_desc = format!("{} on {}", action.action_type, action.selector);
+                    // Check payload for specific action
+                    if let Some(payload_val) = payload {
+                        if let Ok(action) = serde_json::from_value::<
+                            crate::engines::vision_explorer_v2::core::SuggestedAction,
+                        >(payload_val.clone())
+                        {
+                            log::info!(
+                                "Executing action: {} on {}",
+                                action.action_type,
+                                action.selector
+                            );
+                            action_desc = format!("{} on {}", action.action_type, action.selector);
 
-                        match action.action_type.as_str() {
-                            "click" => {
-                                driver.click(&action.selector).await?;
-                            }
-                            "type" => {
-                                if let Some(val) = &action.value {
-                                    driver.type_text(&action.selector, val).await?;
+                            match action.action_type.as_str() {
+                                "click" => {
+                                    driver.click(&action.selector).await?;
                                 }
-                            }
-                            "navigate" => {
-                                driver.goto(&action.selector).await?; // Treat selector as URL for navigate action
-                            }
-                            "fill_form" => {
-                                if let Some(val) = &action.value {
-                                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(val) {
-                                        if let Some(map) = data.as_object() {
-                                            let creds = self.blackboard.get_credentials().await;
-                                            for (sel, field_val) in map {
-                                                if let Some(text) = field_val.as_str() {
-                                                    let resolved_text = if text == "[USERNAME]" {
-                                                        creds.as_ref().map(|c| c.username.as_str()).unwrap_or("")
-                                                    } else if text == "[PASSWORD]" {
-                                                        creds.as_ref().map(|c| c.password.as_str()).unwrap_or("")
-                                                    } else {
-                                                        text
-                                                    };
-                                                    if !resolved_text.is_empty() {
-                                                        driver.type_text(sel, resolved_text).await?;
+                                "type" => {
+                                    if let Some(val) = &action.value {
+                                        driver.type_text(&action.selector, val).await?;
+                                    }
+                                }
+                                "navigate" => {
+                                    driver.goto(&action.selector).await?;
+                                }
+                                "fill_form" => {
+                                    if let Some(val) = &action.value {
+                                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(val) {
+                                            if let Some(map) = data.as_object() {
+                                                let creds = self.blackboard.get_credentials().await;
+                                                for (sel, field_val) in map {
+                                                    if let Some(text) = field_val.as_str() {
+                                                        let resolved_text = if text == "[USERNAME]" {
+                                                            creds.as_ref().map(|c| c.username.as_str()).unwrap_or("")
+                                                        } else if text == "[PASSWORD]" {
+                                                            creds.as_ref().map(|c| c.password.as_str()).unwrap_or("")
+                                                        } else {
+                                                            text
+                                                        };
+                                                        if !resolved_text.is_empty() {
+                                                            driver.type_text(sel, resolved_text).await?;
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            _ => {
-                                log::warn!("Unknown action type: {}", action.action_type);
+                                _ => {
+                                    log::warn!("Unknown action type: {}", action.action_type);
+                                }
                             }
                         }
+                    } else if target_node_id.starts_with("http") {
+                        action_desc = format!("Navigate to {}", target_node_id);
+                        driver.goto(target_node_id).await?;
                     }
-                } else if target_node_id.starts_with("http") {
-                    action_desc = format!("Navigate to {}", target_node_id);
-                    driver.goto(target_node_id).await?;
-                }
 
-                // Capture Context AFTER action
-                let context = driver.capture_context().await?;
-                drop(driver); // Release lock
+                    // Capture Context AFTER action
+                    let context = driver.capture_context().await?;
+                    Ok::<_, anyhow::Error>(context)
+                }.await;
 
-                //Emit TaskCompleted
-                self.event_tx
-                    .send(Event::TaskCompleted {
-                        agent_id: self.id.clone(),
-                        task_id: task_id.clone(),
-                        result: TaskResult {
+                // Always send TaskCompleted, even on error
+                let result = match execution_result {
+                    Ok(context) => {
+                        log::info!("NavigatorAgent: Task completed successfully: {}", action_desc);
+                        TaskResult {
                             success: true,
                             message: format!("Completed: {}", action_desc),
                             new_nodes: vec![],
                             data: Some(serde_json::to_value(context)?),
-                        },
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("NavigatorAgent: Task failed: {} - Error: {}", action_desc, e);
+                        TaskResult {
+                            success: false,
+                            message: format!("Failed: {} - {}", action_desc, e),
+                            new_nodes: vec![],
+                            data: None,
+                        }
+                    }
+                };
+
+                // Send completion event
+                self.event_tx
+                    .send(Event::TaskCompleted {
+                        agent_id: self.id.clone(),
+                        task_id: task_id.clone(),
+                        result,
                     })
                     .await?;
 

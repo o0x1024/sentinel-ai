@@ -414,9 +414,14 @@ impl V2Engine {
                     // Update statistics
                     {
                         let mut stats = self.stats.write().await;
-                        stats.actions_performed += 1;
-                        if agent_id.contains("navigator") {
-                            stats.pages_visited += 1;
+                        if result.success {
+                            stats.actions_performed += 1;
+                            if agent_id.contains("navigator") {
+                                stats.pages_visited += 1;
+                            }
+                        } else {
+                            // Track failures
+                            log::warn!("Task failed for agent {}: {}", agent_id, result.message);
                         }
                     }
 
@@ -467,8 +472,12 @@ impl V2Engine {
                         }
                     }
 
-                    // Let planner process the completion
-                    let _ = planner.handle_event(&event).await;
+                    // Let planner process the completion (even if failed)
+                    // Planner should decide whether to retry or continue with other tasks
+                    if let Err(e) = planner.handle_event(&event).await {
+                        log::error!("Planner error while processing TaskCompleted: {}", e);
+                        // Continue anyway - don't let planner errors stop the engine
+                    }
 
                     step_count += 1;
 
@@ -549,39 +558,56 @@ impl V2Engine {
             }
 
             // Ask planner for next task
-            if let Ok(Some(next_task)) = planner.decide_next_step().await {
-                // Apply safety filter before dispatching
-                if self.is_task_safe(&next_task).await {
-                    // If it's an action (TaskAssigned to navigator/operator with payload), emit it
-                    if let Some(ref emitter) = self.emitter {
-                        if let Event::TaskAssigned {
-                            agent_id, payload, ..
-                        } = &next_task
-                        {
-                            if (agent_id.contains("navigator") || agent_id.contains("operator"))
-                                && payload.is_some()
+            match planner.decide_next_step().await {
+                Ok(Some(next_task)) => {
+                    // Apply safety filter before dispatching
+                    if self.is_task_safe(&next_task).await {
+                        // If it's an action (TaskAssigned to navigator/operator with payload), emit it
+                        if let Some(ref emitter) = self.emitter {
+                            if let Event::TaskAssigned {
+                                agent_id, payload, ..
+                            } = &next_task
                             {
-                                if let Ok(action) = serde_json::from_value::<
-                                    crate::engines::vision_explorer_v2::core::SuggestedAction,
-                                >(
-                                    payload.as_ref().unwrap().clone()
-                                ) {
-                                    emitter.emit_action(step_count, &action, true, None);
+                                if (agent_id.contains("navigator") || agent_id.contains("operator"))
+                                    && payload.is_some()
+                                {
+                                    if let Ok(action) = serde_json::from_value::<
+                                        crate::engines::vision_explorer_v2::core::SuggestedAction,
+                                    >(
+                                        payload.as_ref().unwrap().clone()
+                                    ) {
+                                        emitter.emit_action(step_count, &action, true, None);
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    self.event_tx.send(next_task).await?;
-                } else {
-                    log::warn!("Safety layer blocked a task");
-                    if let Some(ref emitter) = self.emitter {
-                        emitter.emit_log("warn", "Safety layer blocked a restricted action");
+                        if let Err(e) = self.event_tx.send(next_task).await {
+                            log::error!("Failed to send next task to event bus: {}", e);
+                            // Don't break the loop, just log and continue
+                        }
+                    } else {
+                        log::warn!("Safety layer blocked a task");
+                        if let Some(ref emitter) = self.emitter {
+                            emitter.emit_log("warn", "Safety layer blocked a restricted action");
+                        }
                     }
+                }
+                Ok(None) => {
+                    // Planner has no next task - this is normal, might be waiting for more events
+                    log::debug!("Planner has no next task at this time");
+                }
+                Err(e) => {
+                    log::error!("Planner error while deciding next step: {}", e);
+                    if let Some(ref emitter) = self.emitter {
+                        emitter.emit_error(step_count, &format!("Planner error: {}", e));
+                    }
+                    // Continue the loop - don't let planner errors stop exploration
                 }
             }
         }
 
+        log::info!("V2 Engine Loop ended");
         Ok(())
     }
 

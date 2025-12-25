@@ -537,6 +537,102 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
+        // Dictionary tables
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS dictionaries (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                dict_type TEXT NOT NULL,
+                service_type TEXT,
+                category TEXT,
+                is_builtin BOOLEAN DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1,
+                word_count INTEGER DEFAULT 0,
+                file_size INTEGER DEFAULT 0,
+                checksum TEXT,
+                version TEXT DEFAULT '1.0.0',
+                author TEXT,
+                source_url TEXT,
+                tags TEXT,
+                metadata TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS dictionary_words (
+                id TEXT PRIMARY KEY,
+                dictionary_id TEXT NOT NULL,
+                word TEXT NOT NULL,
+                weight REAL DEFAULT 1.0,
+                category TEXT,
+                metadata TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_dictionary_words_dict_id 
+               ON dictionary_words(dictionary_id)"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_dictionary_words_word 
+               ON dictionary_words(word)"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS dictionary_sets (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                service_type TEXT,
+                scenario TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS dictionary_set_relations (
+                id TEXT PRIMARY KEY,
+                set_id TEXT NOT NULL,
+                dictionary_id TEXT NOT NULL,
+                priority INTEGER DEFAULT 0,
+                is_enabled BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(set_id) REFERENCES dictionary_sets(id) ON DELETE CASCADE,
+                FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
+            )"#
+        ).execute(pool).await?;
+
+        // Cache storage table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS cache_storage (
+                cache_key TEXT PRIMARY KEY,
+                cache_value TEXT NOT NULL,
+                cache_type TEXT NOT NULL,
+                version TEXT DEFAULT '1.0',
+                expires_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_cache_storage_type 
+               ON cache_storage(cache_type)"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_cache_storage_expires 
+               ON cache_storage(expires_at)"#
+        ).execute(pool).await?;
+
         // RAG 相关表
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS rag_collections (

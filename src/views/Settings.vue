@@ -603,7 +603,10 @@ const refreshModels = async (provider: string) => {
       (aiConfig.value.providers as any)[provider].models = models
     }
     
-    dialog.toast.success(`${provider} 模型列表已刷新，找到 ${models.length} 个模型`)
+    // 立即保存到数据库以持久化模型列表
+    await saveAiConfig()
+    
+    dialog.toast.success(`${provider} 模型列表已刷新并保存，找到 ${models.length} 个模型`)
     
   } catch (error) {
     console.error('Failed to refresh models:', error)

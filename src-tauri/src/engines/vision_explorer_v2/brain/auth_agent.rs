@@ -205,10 +205,14 @@ impl Agent for AuthAgent {
                 target_node_id,
                 payload,
             } if agent_id == &self.id => {
+                let mut success = true;
+                let mut message = "No context provided".to_string();
+                let mut is_login = false;
+                
                 // Parse context from payload
                 if let Some(val) = payload {
                     if let Ok(context) = serde_json::from_value::<PageContext>(val.clone()) {
-                        let is_login = Self::is_login_page(&context);
+                        is_login = Self::is_login_page(&context);
 
                         if is_login {
                             log::info!("AuthAgent detected login page at {}", context.url);
@@ -233,14 +237,19 @@ impl Agent for AuthAgent {
                                         }
                                     });
 
-                                    self.event_tx
+                                    if let Err(e) = self.event_tx
                                         .send(Event::TaskAssigned {
                                             agent_id: "operator_1".to_string(),
                                             task_id: uuid::Uuid::new_v4().to_string(),
                                             target_node_id: target_node_id.clone(),
                                             payload: Some(fill_payload),
                                         })
-                                        .await?;
+                                        .await
+                                    {
+                                        log::error!("AuthAgent: Failed to send fill_form task: {}", e);
+                                        success = false;
+                                        message = format!("Failed to send fill_form task: {}", e);
+                                    }
 
                                     // Then click submit
                                     let click_payload = serde_json::json!({
@@ -249,52 +258,67 @@ impl Agent for AuthAgent {
                                         "description": "Submit login form"
                                     });
 
-                                    self.event_tx
+                                    if let Err(e) = self.event_tx
                                         .send(Event::TaskAssigned {
                                             agent_id: "navigator_1".to_string(),
                                             task_id: uuid::Uuid::new_v4().to_string(),
                                             target_node_id: target_node_id.clone(),
                                             payload: Some(click_payload),
                                         })
-                                        .await?;
+                                        .await
+                                    {
+                                        log::error!("AuthAgent: Failed to send click task: {}", e);
+                                        success = false;
+                                        message = format!("Failed to send click task: {}", e);
+                                    }
+                                } else {
+                                    log::warn!("AuthAgent: Could not extract login form selectors");
+                                    message = "Login page detected but could not extract form selectors".to_string();
                                 }
                             } else {
                                 log::info!(
                                     "AuthAgent: No credentials available, waiting for takeover"
                                 );
                                 // Emit event to notify UI that login is required
-                                self.event_tx
+                                let _ = self.event_tx
                                     .send(Event::Log {
                                         level: "info".to_string(),
                                         message: "Login required. Please provide credentials."
                                             .to_string(),
                                     })
-                                    .await?;
+                                    .await;
+                                message = "Login page detected, waiting for credentials".to_string();
                             }
+                        } else {
+                            message = "Not a login page".to_string();
                         }
-
-                        // Report back
-                        self.event_tx
-                            .send(Event::TaskCompleted {
-                                agent_id: self.id.clone(),
-                                task_id: task_id.clone(),
-                                result: TaskResult {
-                                    success: true,
-                                    message: if is_login {
-                                        "Login page detected".to_string()
-                                    } else {
-                                        "Not a login page".to_string()
-                                    },
-                                    new_nodes: vec![],
-                                    data: Some(serde_json::json!({
-                                        "is_login_page": is_login,
-                                        "is_authenticated": self.blackboard.is_authenticated().await,
-                                    })),
-                                },
-                            })
-                            .await?;
+                    } else {
+                        log::error!("AuthAgent: Invalid PageContext payload");
+                        success = false;
+                        message = "Invalid PageContext payload".to_string();
                     }
+                } else {
+                    log::error!("AuthAgent: No payload provided");
+                    success = false;
+                    message = "No payload provided".to_string();
                 }
+
+                // Always send TaskCompleted
+                self.event_tx
+                    .send(Event::TaskCompleted {
+                        agent_id: self.id.clone(),
+                        task_id: task_id.clone(),
+                        result: TaskResult {
+                            success,
+                            message,
+                            new_nodes: vec![],
+                            data: Some(serde_json::json!({
+                                "is_login_page": is_login,
+                                "is_authenticated": self.blackboard.is_authenticated().await,
+                            })),
+                        },
+                    })
+                    .await?;
 
                 Ok(())
             }
