@@ -1,9 +1,10 @@
+use crate::services::database::DatabaseService;
+use sentinel_core::models::database::NotificationRule;
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use tauri::State;
-use sentinel_core::models::database::NotificationRule;
-use crate::services::database::DatabaseService;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NotificationMessage {
@@ -49,8 +50,8 @@ pub async fn test_notification_rule_connection(
         let rule_opt = db_service.get_notification_rule(id).await.map_err(|e| e.to_string())?;
         if let Some(rule) = rule_opt {
             channel = rule.channel.clone();
-            if let Some(cfg_str) = rule.config.clone() {
-                config = serde_json::from_str(&cfg_str).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(cfg_str) = &rule.config {
+                config = serde_json::from_str(cfg_str).unwrap_or_else(|_| serde_json::json!({}));
             }
             title = format!("通知规则测试: {}", rule.name);
             content = format!("通道: {}", rule.channel);

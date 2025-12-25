@@ -36,6 +36,11 @@ pub enum StreamContent {
     },
     /// 工具执行结果（tool_call_id, result）
     ToolResult { id: String, result: String },
+    /// 用量统计
+    Usage {
+        input_tokens: u32,
+        output_tokens: u32,
+    },
     /// 流完成
     Done,
 }
@@ -670,6 +675,13 @@ impl StreamingLlmClient {
                     if !final_text.is_empty() && !content.ends_with(final_text) {
                         content.push_str(final_text);
                     }
+                    
+                    let usage = final_resp.token_usage();
+                    on_content(StreamContent::Usage {
+                        input_tokens: usage.input_tokens as u32,
+                        output_tokens: usage.output_tokens as u32,
+                    });
+                    
                     on_content(StreamContent::Done);
                     break;
                 }

@@ -4,7 +4,7 @@ pub mod prompt_resolver;
 pub mod aliyun_oss;
 pub mod streaming_optimizer;
 
-// macOS 系统代理模块已移至 sentinel_passive::system_proxy
+// macOS 系统代理模块已移至 sentinel_traffic::system_proxy
 // 全局代理配置已移至 sentinel_core::global_proxy
 
 use std::sync::{Arc, Mutex};

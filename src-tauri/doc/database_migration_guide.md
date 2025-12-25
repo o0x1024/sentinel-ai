@@ -61,7 +61,7 @@ error returned from database: (code: 1) no such table: plugin_registry
        name TEXT NOT NULL,
        version TEXT NOT NULL,
        author TEXT,
-       main_category TEXT NOT NULL DEFAULT 'passive',
+       main_category TEXT NOT NULL DEFAULT 'traffic',
        category TEXT NOT NULL,
        ...
    );
@@ -90,8 +90,8 @@ rm <数据库路径>
 
 ## 相关迁移文件
 
-- `20251105_passive_scan_schema.sql` - 创建被动扫描相关表（包括旧的passive_plugin_registry）
-- `20251106_add_plugin_code.sql` - 为passive_plugin_registry添加plugin_code字段
+- `20251105_traffic_scan_schema.sql` - 创建流量分析相关表（包括旧的traffic_plugin_registry）
+- `20251106_add_plugin_code.sql` - 为traffic_plugin_registry添加plugin_code字段
 - `20251111_independent_plugin_registry.sql` - **创建独立的plugin_registry表并迁移数据**
 
 ## 检查迁移状态
@@ -101,7 +101,7 @@ rm <数据库路径>
 sqlite3 <数据库路径> "SELECT * FROM _migrations ORDER BY executed_at;"
 
 # 应该看到包含：
-# 20251105_passive_scan_schema.sql
+# 20251105_traffic_scan_schema.sql
 # 20251106_add_plugin_code.sql
 # 20251111_independent_plugin_registry.sql
 ```

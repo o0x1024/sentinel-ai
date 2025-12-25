@@ -1,5 +1,6 @@
 
 use crate::services::database::DatabaseService;
+use sentinel_db::Database;
 use sentinel_core::global_proxy::GlobalProxyConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -43,7 +44,7 @@ pub async fn save_config(
         request.description.as_deref(),
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e: anyhow::Error| e.to_string())?;
 
     Ok(())
 }
@@ -92,10 +93,13 @@ pub async fn set_global_proxy_config(
 pub async fn get_global_proxy_config(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<GlobalProxyConfig, String> {
-    if let Ok(Some(json)) = db.get_config("network", "global_proxy").await {
-        if let Ok(cfg) = serde_json::from_str::<GlobalProxyConfig>(&json) {
-            return Ok(cfg);
+    match db.get_config("network", "global_proxy").await {
+        Ok(Some(json)) => {
+            if let Ok(cfg) = serde_json::from_str::<GlobalProxyConfig>(&json) {
+                return Ok(cfg);
+            }
         }
+        _ => {}
     }
     Ok(GlobalProxyConfig { enabled: false, scheme: None, host: None, port: None, username: None, password: None, no_proxy: None })
 }
@@ -111,7 +115,7 @@ pub async fn get_config(
         let value = db
             .get_config(&request.category, &key)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e: anyhow::Error| e.to_string())?;
 
         if let Some(value) = value {
             Ok(vec![ConfigItem {
@@ -130,7 +134,7 @@ pub async fn get_config(
         let configs = db
             .get_configs_by_category(&request.category)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e: anyhow::Error| e.to_string())?;
 
         let config_items: Vec<ConfigItem> = configs
             .into_iter()
@@ -165,7 +169,7 @@ pub async fn delete_config(
         category, key
     ))
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e: anyhow::Error| e.to_string())?;
 
     Ok(())
 }
@@ -178,7 +182,7 @@ pub async fn get_config_categories(
     let results = db
         .execute_query("SELECT DISTINCT category FROM configurations ORDER BY category")
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
 
     let categories: Vec<String> = results
         .into_iter()
@@ -210,7 +214,7 @@ pub async fn save_config_batch(
             config.description.as_deref(),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     }
 
     Ok(())
@@ -233,7 +237,7 @@ pub async fn get_theme(db: State<'_, Arc<DatabaseService>>) -> Result<String, St
     let theme = db
         .get_config("ui", "theme")
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     Ok(theme.unwrap_or_else(|| "light".to_string()))
 }
 
@@ -249,7 +253,7 @@ pub async fn get_language(db: State<'_, Arc<DatabaseService>>) -> Result<String,
     let lang = db
         .get_config("ui", "language")
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     Ok(lang.unwrap_or_else(|| "en".to_string()))
 }
 

@@ -478,7 +478,7 @@ mod tests {
             name: "Test Executor Plugin".to_string(),
             version: "1.0.0".to_string(),
             author: None,
-            main_category: "passive".to_string(),
+            main_category: "traffic".to_string(),
             category: "test".to_string(),
             default_severity: Severity::Info,
             tags: vec![],

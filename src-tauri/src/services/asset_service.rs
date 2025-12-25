@@ -1,16 +1,16 @@
-use sentinel_db::database::AssetDao;
+use sentinel_db::{Database, DatabaseService};
 use crate::models::asset::*;
-use sqlx::SqlitePool;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct AssetService {
-    dao: AssetDao,
+    db: Arc<DatabaseService>,
 }
 
 impl AssetService {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(db: Arc<DatabaseService>) -> Self {
         Self {
-            dao: AssetDao::new(pool),
+            db,
         }
     }
 
@@ -20,15 +20,15 @@ impl AssetService {
         request: CreateAssetRequest,
         created_by: String,
     ) -> Result<Asset, String> {
-        self.dao.create_asset(request, created_by).await
-            .map_err(|e| format!("Database error: {}", e))
+        self.db.create_asset(request, created_by).await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))
     }
 
     /// 获取资产详情（包含关系信息）
     pub async fn get_asset_detail(&self, id: &str) -> Result<Option<AssetDetail>, String> {
-        if let Some(asset) = self.dao.get_asset_by_id(id).await.map_err(|e| format!("Database error: {}", e))? {
-            let (incoming, outgoing) = self.dao.get_asset_relationships(id).await
-                .map_err(|e| format!("Database error: {}", e))?;
+        if let Some(asset) = self.db.get_asset_by_id(id).await.map_err(|e: anyhow::Error| format!("Database error: {}", e))? {
+            let (incoming, outgoing) = self.db.get_asset_relationships(id).await
+                .map_err(|e: anyhow::Error| format!("Database error: {}", e))?;
             
             // TODO: 获取历史记录
             let history = Vec::new();
@@ -46,14 +46,14 @@ impl AssetService {
 
     /// 更新资产
     pub async fn update_asset(&self, id: &str, request: UpdateAssetRequest) -> Result<bool, String> {
-        self.dao.update_asset(id, request).await
-            .map_err(|e| format!("Database error: {}", e))
+        self.db.update_asset(id, request).await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))
     }
 
     /// 删除资产
     pub async fn delete_asset(&self, id: &str) -> Result<bool, String> {
-        self.dao.delete_asset(id).await
-            .map_err(|e| format!("Database error: {}", e))
+        self.db.delete_asset(id).await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))
     }
 
     /// 查询资产列表
@@ -63,14 +63,14 @@ impl AssetService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<Asset>, String> {
-        self.dao.list_assets(filter, limit, offset).await
-            .map_err(|e| format!("Database error: {}", e))
+        self.db.list_assets(filter, limit, offset).await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))
     }
 
     /// 获取资产统计信息
     pub async fn get_asset_stats(&self) -> Result<AssetStats, String> {
-        self.dao.get_asset_stats().await
-            .map_err(|e| format!("Database error: {}", e))
+        self.db.get_asset_stats().await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))
     }
 
     /// 创建资产关系
@@ -81,8 +81,8 @@ impl AssetService {
         relationship_type: RelationshipType,
         created_by: String,
     ) -> Result<AssetRelationship, String> {
-        self.dao.create_relationship(source_asset_id, target_asset_id, relationship_type, created_by).await
-            .map_err(|e| format!("Database error: {}", e))
+        self.db.create_relationship(source_asset_id, target_asset_id, relationship_type, created_by).await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))
     }
 
     /// 批量导入资产
@@ -91,8 +91,8 @@ impl AssetService {
         request: ImportAssetsRequest,
         created_by: String,
     ) -> Result<ImportResult, String> {
-        self.dao.import_assets(request, created_by).await
-            .map_err(|e| format!("Database error: {}", e))
+        self.db.import_assets(request, created_by).await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))
     }
 
     /// 从扫描结果中提取并创建资产
@@ -132,9 +132,9 @@ impl AssetService {
                         };
 
                         // 检查IP是否已存在
-                        if self.dao.find_asset_by_type_and_value(&AssetType::Ip, ip).await.map_err(|e| format!("Database error: {}", e))?.is_none() {
-                            let ip_asset = self.dao.create_asset(ip_request, created_by.clone()).await
-                                .map_err(|e| format!("Database error: {}", e))?;
+                        if self.db.find_asset_by_type_and_value(&AssetType::Ip, ip).await.map_err(|e: anyhow::Error| format!("Database error: {}", e))?.is_none() {
+                            let ip_asset = self.db.create_asset(ip_request, created_by.clone()).await
+                                .map_err(|e: anyhow::Error| format!("Database error: {}", e))?;
                             assets.push(ip_asset.clone());
 
                             // 创建端口资产
@@ -157,22 +157,22 @@ impl AssetService {
                                     }
                                     meta
                                 }),
-                                tags: Some(vec!["open_port".to_string(), "discovered".to_string()]),
+                                tags: Some(vec!["discovered".to_string(), "port_scan".to_string()]),
                                 risk_level: Some(self.assess_port_risk(port)),
                             };
 
-                            if self.dao.find_asset_by_type_and_value(&AssetType::Port, &port_value).await.map_err(|e| format!("Database error: {}", e))?.is_none() {
-                                let port_asset = self.dao.create_asset(port_request, created_by.clone()).await
-                                    .map_err(|e| format!("Database error: {}", e))?;
+                            if self.db.find_asset_by_type_and_value(&AssetType::Port, &port_value).await.map_err(|e: anyhow::Error| format!("Database error: {}", e))?.is_none() {
+                                let port_asset = self.db.create_asset(port_request, created_by.clone()).await
+                                    .map_err(|e: anyhow::Error| format!("Database error: {}", e))?;
                                 assets.push(port_asset.clone());
 
                                 // 创建IP和端口之间的关系
-                                self.dao.create_relationship(
+                                self.db.create_relationship(
                                     ip_asset.id.clone(),
                                     port_asset.id,
                                     RelationshipType::Exposes,
                                     created_by.clone(),
-                                ).await.map_err(|e| format!("Database error: {}", e))?;
+                                ).await.map_err(|e: anyhow::Error| format!("Database error: {}", e))?;
                             }
                         }
                     }
@@ -210,9 +210,9 @@ impl AssetService {
                             risk_level: Some(RiskLevel::Unknown),
                         };
 
-                        if self.dao.find_asset_by_type_and_value(&domain_request.asset_type, domain).await.map_err(|e| format!("Database error: {}", e))?.is_none() {
-                            let domain_asset = self.dao.create_asset(domain_request, created_by.clone()).await
-                                .map_err(|e| format!("Database error: {}", e))?;
+                        if self.db.find_asset_by_type_and_value(&domain_request.asset_type, domain).await.map_err(|e: anyhow::Error| format!("Database error: {}", e))?.is_none() {
+                            let domain_asset = self.db.create_asset(domain_request, created_by.clone()).await
+                                .map_err(|e: anyhow::Error| format!("Database error: {}", e))?;
                             assets.push(domain_asset);
                         }
                     }
@@ -249,9 +249,9 @@ impl AssetService {
                             risk_level: Some(RiskLevel::Unknown),
                         };
 
-                        if self.dao.find_asset_by_type_and_value(&AssetType::Website, url).await.map_err(|e| format!("Database error: {}", e))?.is_none() {
-                            let website_asset = self.dao.create_asset(website_request, created_by.clone()).await
-                                .map_err(|e| format!("Database error: {}", e))?;
+                        if self.db.find_asset_by_type_and_value(&AssetType::Website, url).await.map_err(|e: anyhow::Error| format!("Database error: {}", e))?.is_none() {
+                            let website_asset = self.db.create_asset(website_request, created_by.clone()).await
+                                .map_err(|e: anyhow::Error| format!("Database error: {}", e))?;
                             assets.push(website_asset);
                         }
                     }
@@ -301,8 +301,8 @@ impl AssetService {
 
     /// 获取资产的相关资产（通过关系）
     pub async fn get_related_assets(&self, asset_id: &str) -> Result<Vec<Asset>, String> {
-        let (incoming, outgoing) = self.dao.get_asset_relationships(asset_id).await
-            .map_err(|e| format!("Database error: {}", e))?;
+        let (incoming, outgoing) = self.db.get_asset_relationships(asset_id).await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))?;
 
         let mut related_asset_ids = Vec::new();
         for rel in incoming {
@@ -314,8 +314,8 @@ impl AssetService {
 
         let mut related_assets = Vec::new();
         for asset_id in related_asset_ids {
-            if let Some(asset) = self.dao.get_asset_by_id(&asset_id).await
-                .map_err(|e| format!("Database error: {}", e))? {
+            if let Some(asset) = self.db.get_asset_by_id(&asset_id).await
+                .map_err(|e: anyhow::Error| format!("Database error: {}", e))? {
                 related_assets.push(asset);
             }
         }
@@ -342,8 +342,8 @@ impl AssetService {
 
     /// 更新资产的最后发现时间
     pub async fn update_last_seen(&self, asset_id: &str) -> Result<bool, String> {
-        if let Some(mut asset) = self.dao.get_asset_by_id(asset_id).await
-            .map_err(|e| format!("Database error: {}", e))? {
+        if let Some(mut asset) = self.db.get_asset_by_id(asset_id).await
+            .map_err(|e: anyhow::Error| format!("Database error: {}", e))? {
             asset.update_last_seen();
             
             let update_request = UpdateAssetRequest {
@@ -358,8 +358,8 @@ impl AssetService {
                 project_id: None,
             };
             
-            self.dao.update_asset(asset_id, update_request).await
-                .map_err(|e| format!("Database error: {}", e))
+            self.db.update_asset(asset_id, update_request).await
+                .map_err(|e: anyhow::Error| format!("Database error: {}", e))
         } else {
             Ok(false)
         }

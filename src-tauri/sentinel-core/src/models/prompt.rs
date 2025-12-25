@@ -16,9 +16,9 @@ pub enum TemplateType {
     Domain,
     Custom,
     // Plugin generation templates (合并后的完整模板)
-    PluginGeneration,        // 被动扫描插件生成（合并了 interface 和 output format）
+    PluginGeneration,        // 流量分析插件生成（合并了 interface 和 output format）
     AgentPluginGeneration,   // Agent 工具插件生成（合并了 interface 和 output format）
-    PluginFix,               // 被动扫描插件修复
+    PluginFix,               // 流量分析插件修复
     AgentPluginFix,          // Agent 插件修复
     PluginVulnSpecific,      // 漏洞特定插件模板
     // Vision Explorer templates

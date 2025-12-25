@@ -1,6 +1,7 @@
 //! Scan task commands module
 
 use crate::services::database::DatabaseService;
+use sentinel_db::Database;
 use sentinel_core::models::database::ScanTask;
 use std::sync::Arc;
 use tauri::State;
@@ -11,13 +12,9 @@ pub async fn get_scan_tasks(
     project_id: Option<String>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<ScanTask>, String> {
-    let pool = db_service
-        .get_pool()
-        .map_err(|e| format!("Database pool not available: {}", e))?;
-    
-    sentinel_db::database::scan_task_dao::get_scan_tasks(pool, project_id.as_deref())
+    db_service.get_scan_tasks(project_id.as_deref())
         .await
-        .map_err(|e| format!("Failed to get scan tasks: {}", e))
+        .map_err(|e: anyhow::Error| format!("Failed to get scan tasks: {}", e))
 }
 
 /// Create scan task
@@ -26,13 +23,9 @@ pub async fn create_scan_task(
     task: ScanTask,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let pool = db_service
-        .get_pool()
-        .map_err(|e| format!("Database pool not available: {}", e))?;
-    
-    sentinel_db::database::scan_task_dao::create_scan_task(pool, &task)
+    db_service.create_scan_task(&task)
         .await
-        .map_err(|e| format!("Failed to create scan task: {}", e))
+        .map_err(|e: anyhow::Error| format!("Failed to create scan task: {}", e))
 }
 
 /// Update scan task status
@@ -43,13 +36,9 @@ pub async fn update_scan_task_status(
     progress: Option<f64>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let pool = db_service
-        .get_pool()
-        .map_err(|e| format!("Database pool not available: {}", e))?;
-    
-    sentinel_db::database::scan_task_dao::update_scan_task_status(pool, &task_id, &status, progress)
+    db_service.update_scan_task_status(&task_id, &status, progress)
         .await
-        .map_err(|e| format!("Failed to update scan task status: {}", e))
+        .map_err(|e: anyhow::Error| format!("Failed to update scan task status: {}", e))
 }
 
 /// Delete scan task
@@ -58,13 +47,9 @@ pub async fn delete_scan_task(
     task_id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let pool = db_service
-        .get_pool()
-        .map_err(|e| format!("Database pool not available: {}", e))?;
-    
-    sentinel_db::database::scan_task_dao::delete_scan_task(pool, &task_id)
+    db_service.delete_scan_task(&task_id)
         .await
-        .map_err(|e| format!("Failed to delete scan task: {}", e))
+        .map_err(|e: anyhow::Error| format!("Failed to delete scan task: {}", e))
 }
 
 /// Stop scan task
@@ -73,11 +58,8 @@ pub async fn stop_scan_task(
     task_id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let pool = db_service
-        .get_pool()
-        .map_err(|e| format!("Database pool not available: {}", e))?;
-    
-    sentinel_db::database::scan_task_dao::stop_scan_task(pool, &task_id)
+    db_service
+        .stop_scan_task(&task_id)
         .await
         .map_err(|e| format!("Failed to stop scan task: {}", e))
 }

@@ -67,7 +67,8 @@
                     @set-default-chat-model="setDefaultChatModel"
                     @set-default-vlm-provider="setDefaultVlmProvider"
                     @set-default-vision-model="setDefaultVisionModel"
-                    @set-enable-multimodal="setEnableMultimodal" />
+                    @set-enable-multimodal="setEnableMultimodal"
+                    @clear-usage-stats="clearAiUsageStats" />
 
         <!-- 知识库配置 -->
         <RAGSettings v-if="activeCategory === 'rag'"
@@ -303,6 +304,25 @@ const loadAiUsageStats = async () => {
     aiUsageStats.value = stats || {}
   } catch (e) {
     console.warn('Failed to load AI usage stats', e)
+  }
+}
+
+const clearAiUsageStats = async () => {
+  const confirmed = await dialog.confirm({
+    title: t('common.confirm'),
+    message: t('settings.ai.confirmClearStats', 'Are you sure you want to clear AI usage statistics?'),
+    variant: 'warning'
+  })
+  
+  if (confirmed) {
+    try {
+      await invoke('clear_ai_usage_stats')
+      await loadAiUsageStats()
+      dialog.toast.success(t('settings.ai.statsCleared', 'Usage statistics cleared'))
+    } catch (e) {
+      console.error('Failed to clear AI usage stats', e)
+      dialog.toast.error('Failed to clear statistics')
+    }
   }
 }
 

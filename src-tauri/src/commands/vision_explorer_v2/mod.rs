@@ -4,6 +4,7 @@
 
 use crate::engines::vision_explorer_v2::emitter::V2MessageEmitter;
 use crate::engines::vision_explorer_v2::{V2Engine, VisionExplorerV2Config};
+use sentinel_db::Database;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
@@ -110,6 +111,7 @@ pub async fn start_vision_explorer_v2(
 
     // Read LLM/VLM settings from database
     let default_llm_provider = db
+        .inner()
         .get_config("ai", "default_llm_provider")
         .await
         .ok()
@@ -117,6 +119,7 @@ pub async fn start_vision_explorer_v2(
         .unwrap_or_else(|| "anthropic".to_string());
 
     let mut default_llm_model = db
+        .inner()
         .get_config("ai", "default_llm_model")
         .await
         .ok()
@@ -128,6 +131,7 @@ pub async fn start_vision_explorer_v2(
     }
 
     let mut default_vlm_provider = match db
+        .inner()
         .get_config("ai", "default_vlm_provider")
         .await
         .ok()
@@ -142,6 +146,7 @@ pub async fn start_vision_explorer_v2(
     }
 
     let mut default_vlm_model = db
+        .inner()
         .get_config("ai", "default_vlm_model")
         .await
         .ok()

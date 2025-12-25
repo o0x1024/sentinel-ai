@@ -356,13 +356,13 @@ const deleting = ref(false)
 // New Plugin Metadata
 const newPluginMetadata = ref<NewPluginMetadata>({
   id: '', name: '', version: '1.0.0', author: '',
-  mainCategory: 'passive', category: 'vulnerability',
+  mainCategory: 'traffic', category: 'vulnerability',
   default_severity: 'medium', description: '', tagsString: ''
 })
 
 // AI Generate State
 const aiPrompt = ref('')
-const aiPluginType = ref('passive')
+const aiPluginType = ref('traffic')
 const aiSeverity = ref('medium')
 const aiGenerating = ref(false)
 const aiGenerateError = ref('')
@@ -439,7 +439,7 @@ const categories = computed(() => [
 ])
 
 const subCategories = computed<SubCategory[]>(() => {
-  if (newPluginMetadata.value.mainCategory === 'passive') {
+  if (newPluginMetadata.value.mainCategory === 'traffic') {
     return [
       { value: 'sqli', label: 'SQL注入', icon: 'fas fa-database' },
       { value: 'command_injection', label: '命令注入', icon: 'fas fa-terminal' },
@@ -474,9 +474,9 @@ const filteredPlugins = computed(() => {
 
   if (selectedCategory.value === 'traffic') {
     filtered = plugins.value.filter(p => {
-      if (p.metadata.main_category === 'passive') return true
+      if (p.metadata.main_category === 'traffic') return true
       if (trafficCategories.includes(p.metadata.category)) return true
-      if (p.metadata.category === 'passive') return true
+      if (p.metadata.category === 'traffic') return true
       return false
     })
   } else if (selectedCategory.value === 'agents') {
@@ -556,9 +556,9 @@ const installedPluginIds = computed(() => plugins.value.map(p => p.metadata.id))
 const isPluginFavorited = (plugin: PluginRecord): boolean => plugin.is_favorited || false
 
 const isTrafficPluginType = (plugin: PluginRecord): boolean => {
-  if (plugin.metadata.main_category === 'passive') return true
+  if (plugin.metadata.main_category === 'traffic') return true
   if (trafficCategories.includes(plugin.metadata.category)) return true
-  return plugin.metadata.category === 'passive'
+  return plugin.metadata.category === 'traffic'
 }
 
 const isAgentPluginType = (plugin: PluginRecord): boolean => {
@@ -589,7 +589,7 @@ const getCategoryIcon = (category: string): string => {
 const getCategoryCount = (category: string): number => {
   if (category === 'all') return plugins.value.length
   if (category === 'traffic') {
-    return plugins.value.filter(p => p.metadata.main_category === 'passive' || trafficCategories.includes(p.metadata.category)).length
+    return plugins.value.filter(p => p.metadata.main_category === 'traffic' || trafficCategories.includes(p.metadata.category)).length
   }
   if (category === 'agents') {
     return plugins.value.filter(p => p.metadata.main_category === 'agent' || agentsCategories.includes(p.metadata.category)).length
@@ -711,7 +711,7 @@ const clearFilters = () => {
 }
 
 const getAvailableSubCategories = (): string[] => {
-  if (selectedCategory.value === 'passive' || selectedCategory.value === 'agents') {
+  if (selectedCategory.value === 'traffic' || selectedCategory.value === 'agents') {
     const cats = new Set(filteredPlugins.value.map(p => p.metadata.category))
     return Array.from(cats).sort()
   }
@@ -1015,12 +1015,12 @@ const generatePluginWithAI = async () => {
   
   try {
     const systemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
-      pluginType: isAgentPlugin ? 'agent' : 'passive',
+      pluginType: isAgentPlugin ? 'agent' : 'traffic',
       vulnType: 'custom',
       severity: aiSeverity.value
     })
     
-    const userPrompt = `请根据以下需求生成${isAgentPlugin ? 'Agent工具' : '被动扫描'}插件代码：\n\n${aiPrompt.value}`
+    const userPrompt = `please generate ${isAgentPlugin ? 'Agent tool' : 'traffic analysis'} plugin code based on the following requirements:\n\n${aiPrompt.value}`
 
     let generatedCode = ''
     let streamCompleted = false
@@ -1042,7 +1042,7 @@ const generatePluginWithAI = async () => {
 
     const unlistenError = await listen('plugin_gen_error', (event: any) => {
       if (event.payload.stream_id === streamId) {
-        streamError = event.payload.error || 'AI生成失败'
+        streamError = event.payload.error || 'AI generation failed'
         streamCompleted = true
       }
     })
@@ -1064,7 +1064,7 @@ const generatePluginWithAI = async () => {
       }
 
       if (streamError) throw new Error(streamError)
-      if (!generatedCode.trim()) throw new Error('AI未返回任何代码')
+      if (!generatedCode.trim()) throw new Error('AI did not return any code')
 
       generatedCode = generatedCode.trim()
         .replace(/```typescript\n?/g, '').replace(/```ts\n?/g, '')
@@ -1078,7 +1078,7 @@ const generatePluginWithAI = async () => {
         name: aiPrompt.value.substring(0, 50),
         version: '1.0.0',
         author: 'AI Generated',
-        mainCategory: isAgentPlugin ? 'agent' : 'passive',
+        mainCategory: isAgentPlugin ? 'agent' : 'traffic',
         category: '',
         default_severity: aiSeverity.value,
         description: aiPrompt.value,
@@ -1098,7 +1098,7 @@ const generatePluginWithAI = async () => {
       unlistenError()
     }
   } catch (error) {
-    aiGenerateError.value = error instanceof Error ? error.message : 'AI生成失败'
+    aiGenerateError.value = error instanceof Error ? error.message : 'AI generation failed'
   } finally {
     aiGenerating.value = false
   }
@@ -1108,7 +1108,7 @@ const generatePluginWithAI = async () => {
 const openCreateDialog = async () => {
   newPluginMetadata.value = {
     id: '', name: '', version: '1.0.0', author: '',
-    mainCategory: 'passive', category: 'vulnerability',
+    mainCategory: 'traffic', category: 'vulnerability',
     default_severity: 'medium', description: '', tagsString: ''
   }
   pluginCode.value = ''
@@ -1144,10 +1144,10 @@ const viewPluginCode = async (plugin: PluginRecord) => {
       await nextTick()
       initCodeEditor()
     } else {
-      showToast(response.error || '读取代码失败', 'error')
+      showToast(response.error || 'Failed to read code', 'error')
     }
   } catch (error) {
-    showToast('读取代码失败', 'error')
+    showToast('Failed to read code', 'error')
   }
 }
 
@@ -1253,7 +1253,7 @@ const addSelectedCodeToContext = () => {
   
   const selected = getSelectedCode()
   if (!selected || !selected.code.trim()) {
-    showToast(t('plugins.noCodeSelected', '请先选择代码'), 'warning')
+    showToast(t('plugins.noCodeSelected', 'Please select code first'), 'warning')
     return
   }
   
@@ -1275,7 +1275,7 @@ const addSelectedCodeToContext = () => {
     isFullCode: false
   }
   
-  showToast(t('plugins.codeRefAdded', '已添加选中代码到上下文'), 'success')
+  showToast(t('plugins.codeRefAdded', 'Selected code added to context'), 'success')
 }
 
 // Add full code to context (with real-time update)
@@ -1284,7 +1284,7 @@ const addFullCodeToContext = () => {
   const currentCode = getCurrentEditorCode()
   
   if (!currentCode.trim()) {
-    showToast(t('plugins.noCode', '没有代码'), 'warning')
+    showToast(t('plugins.noCode', 'No code'), 'warning')
     return
   }
   
@@ -1300,7 +1300,7 @@ const addFullCodeToContext = () => {
     isFullCode: true
   }
   
-  showToast(t('plugins.fullCodeRefAdded', '已添加完整代码到上下文'), 'success')
+  showToast(t('plugins.fullCodeRefAdded', 'Full code added to context'), 'success')
 }
 
 // Clear code reference
@@ -1334,7 +1334,7 @@ const formatTestResultPreview = (result: TestResult): string => {
 // Add test result to AI context
 const addTestResultToContext = () => {
   if (!lastTestResult.value) {
-    showToast(t('plugins.noTestResult', '请先运行插件测试'), 'warning')
+    showToast(t('plugins.noTestResult', 'Please run plugin test first'), 'warning')
     return
   }
   selectedTestResultRef.value = lastTestResult.value
@@ -1473,7 +1473,7 @@ const sendAiChatMessage = async (message: string) => {
     // Build system prompt for code editing (Vibe Coding Agent Mode)
     const isAgentPlugin = newPluginMetadata.value.mainCategory === 'agent'
     const baseSystemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
-      pluginType: isAgentPlugin ? 'agent' : 'passive',
+      pluginType: isAgentPlugin ? 'agent' : 'traffic',
       vulnType: 'custom',
       severity: newPluginMetadata.value.default_severity
     })
@@ -2094,7 +2094,7 @@ const createNewPlugin = async () => {
 const insertTemplate = async () => {
   const isAgentPlugin = newPluginMetadata.value.mainCategory === 'agent'
   try {
-    const templateType = isAgentPlugin ? 'agent' : 'passive'
+    const templateType = isAgentPlugin ? 'agent' : 'traffic'
     const combinedTemplate = await invoke<string>('get_combined_plugin_prompt_api', {
       pluginType: templateType,
       vulnType: newPluginMetadata.value.category || 'custom',
@@ -2112,7 +2112,7 @@ const insertTemplate = async () => {
     }
 
     if (!codeTemplate) {
-      codeTemplate = isAgentPlugin ? getAgentFallbackTemplate() : getPassiveFallbackTemplate()
+      codeTemplate = isAgentPlugin ? getAgentFallbackTemplate() : getTrafficFallbackTemplate()
     }
 
     pluginCode.value = codeTemplate
@@ -2120,7 +2120,7 @@ const insertTemplate = async () => {
     updateFullscreenCodeEditorContent(codeTemplate)
     showToast('已插入模板代码', 'success')
   } catch (error) {
-    const fallback = isAgentPlugin ? getAgentFallbackTemplate() : getPassiveFallbackTemplate()
+    const fallback = isAgentPlugin ? getAgentFallbackTemplate() : getTrafficFallbackTemplate()
     pluginCode.value = fallback
     updateCodeEditorContent(fallback)
     updateFullscreenCodeEditorContent(fallback)
@@ -2142,7 +2142,7 @@ export async function analyze(input: ToolInput): Promise<ToolOutput> {
 
 globalThis.analyze = analyze;`
 
-const getPassiveFallbackTemplate = () => `export interface HttpRequest { method: string; url: string; headers: Record<string, string>; body?: string; }
+const getTrafficFallbackTemplate = () => `export interface HttpRequest { method: string; url: string; headers: Record<string, string>; body?: string; }
 export interface HttpResponse { status: number; headers: Record<string, string>; body?: string; }
 export interface PluginContext { request: HttpRequest; response: HttpResponse; }
 export interface Finding { title: string; description: string; severity: 'info' | 'low' | 'medium' | 'high' | 'critical'; }

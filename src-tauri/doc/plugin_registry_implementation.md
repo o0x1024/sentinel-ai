@@ -2,7 +2,7 @@
 
 ## 概述
 
-成功将插件系统从被动扫描中独立出来，使用统一的 `plugin_registry` 表管理所有类型的插件（被动扫描插件、Agent插件等）。
+成功将插件系统从流量分析中独立出来，使用统一的 `plugin_registry` 表管理所有类型的插件（流量分析插件、Agent插件等）。
 
 ## 完成的修改
 
@@ -10,9 +10,9 @@
 
 #### 新增 Migration: `20251111_independent_plugin_registry.sql`
 - 创建独立的 `plugin_registry` 表
-- 新增 `main_category` 字段（passive/agent）
+- 新增 `main_category` 字段（traffic/agent）
 - 保留 `category` 字段作为子分类
-- 从旧表 `passive_plugin_registry` 迁移数据
+- 从旧表 `traffic_plugin_registry` 迁移数据
 - 删除旧表（不再使用视图方案）
 
 #### Schema 结构
@@ -22,7 +22,7 @@ CREATE TABLE plugin_registry (
     name TEXT NOT NULL,
     version TEXT NOT NULL,
     author TEXT,
-    main_category TEXT NOT NULL DEFAULT 'passive',  -- 主分类
+    main_category TEXT NOT NULL DEFAULT 'traffic',  -- 主分类
     category TEXT NOT NULL,                         -- 子分类
     description TEXT,
     default_severity TEXT NOT NULL,
@@ -64,7 +64,7 @@ pub struct PluginMetadata {
     
     // 新增字段
     #[serde(default = "default_main_category")]
-    pub main_category: String,  // passive/agent
+    pub main_category: String,  // traffic/agent
     
     pub category: String,       // 子分类
     pub default_severity: Severity,
@@ -73,24 +73,24 @@ pub struct PluginMetadata {
 }
 
 fn default_main_category() -> String {
-    "passive".to_string()
+    "traffic".to_string()
 }
 ```
 
 ### 3. 后端代码更新
 
 #### 批量替换
-- 所有 `.rs` 文件中的 `passive_plugin_registry` → `plugin_registry`
-- 命令: `find . -type f -name "*.rs" -exec sed -i '' 's/passive_plugin_registry/plugin_registry/g' {} +`
+- 所有 `.rs` 文件中的 `traffic_plugin_registry` → `plugin_registry`
+- 命令: `find . -type f -name "*.rs" -exec sed -i '' 's/traffic_plugin_registry/plugin_registry/g' {} +`
 
 #### 数据库操作更新
 
-**文件: `sentinel-passive/src/database.rs`**
+**文件: `sentinel-traffic/src/database.rs`**
 
 ```rust
 // 注册插件时自动推断 main_category
 pub async fn register_plugin_with_code(&self, plugin: &PluginMetadata, plugin_code: &str) {
-    let main_category = if plugin.category == "agents" { "agent" } else { "passive" };
+    let main_category = if plugin.category == "agents" { "agent" } else { "traffic" };
     
     sqlx::query(r#"
         INSERT OR REPLACE INTO plugin_registry (
@@ -119,7 +119,7 @@ pub async fn get_plugin_by_id(&self, plugin_id: &str) -> Result<Option<serde_jso
 }
 ```
 
-**文件: `sentinel-passive/src/scanner.rs`**
+**文件: `sentinel-traffic/src/scanner.rs`**
 
 ```rust
 // 加载插件时默认设置 main_category
@@ -128,7 +128,7 @@ let metadata = PluginMetadata {
     name: name.clone(),
     version,
     author,
-    main_category: "passive".to_string(),  // 从数据库加载默认为passive
+    main_category: "traffic".to_string(),  // 从数据库加载默认为traffic
     category,
     description,
     default_severity: severity,
@@ -136,7 +136,7 @@ let metadata = PluginMetadata {
 };
 ```
 
-**文件: `src/commands/passive_scan_commands.rs`**
+**文件: `src/commands/traffic_scan_commands.rs`**
 
 ```rust
 // 列表插件时设置 main_category
@@ -145,7 +145,7 @@ let metadata = PluginMetadata {
     name,
     version,
     author,
-    main_category: "passive".to_string(),  // 默认passive
+    main_category: "traffic".to_string(),  // 默认traffic
     category,
     description,
     default_severity: severity,
@@ -187,11 +187,11 @@ async fn get_tools(&self) -> anyhow::Result<Vec<Arc<dyn UnifiedTool>>> {
 // 保存时映射到后端
 const backendCategory = newPluginMetadata.value.mainCategory === 'agent' 
     ? 'agents'  // Agent插件统一使用 agents
-    : newPluginMetadata.value.category  // 被动扫描插件保留子分类
+    : newPluginMetadata.value.category  // 流量分析插件保留子分类
 
 // 查询时从数据库 main_category 推断前端主分类
-function inferMainCategory(category: string): 'passive' | 'agent' {
-    return category === 'agents' ? 'agent' : 'passive'
+function inferMainCategory(category: string): 'traffic' | 'agent' {
+    return category === 'agents' ? 'agent' : 'traffic'
 }
 ```
 
@@ -199,9 +199,9 @@ function inferMainCategory(category: string): 'passive' | 'agent' {
 
 | 前端主分类 | 前端子分类 | 后端 main_category | 后端 category | 数据库存储 |
 |-----------|-----------|-------------------|--------------|----------|
-| 被动扫描   | 漏洞检测   | passive | vulnerability | main_category='passive', category='vulnerability' |
-| 被动扫描   | 注入检测   | passive | injection | main_category='passive', category='injection' |
-| 被动扫描   | 跨站脚本   | passive | xss | main_category='passive', category='xss' |
+| 流量分析   | 漏洞检测   | traffic | vulnerability | main_category='traffic', category='vulnerability' |
+| 流量分析   | 注入检测   | traffic | injection | main_category='traffic', category='injection' |
+| 流量分析   | 跨站脚本   | traffic | xss | main_category='traffic', category='xss' |
 | Agent插件 | 扫描器     | agent | scanner | main_category='agent', category='scanner' |
 | Agent插件 | 分析器     | agent | analyzer | main_category='agent', category='analyzer' |
 | Agent插件 | 报告生成   | agent | reporter | main_category='agent', category='reporter' |
@@ -214,15 +214,15 @@ INSERT INTO plugin_registry (main_category, category, ...)
 SELECT 
     CASE 
         WHEN category = 'agents' THEN 'agent'
-        ELSE 'passive'
+        ELSE 'traffic'
     END as main_category,
     CASE 
         WHEN category = 'agents' THEN 'scanner'
-        WHEN category = 'passiveScan' THEN 'vulnerability'
+        WHEN category = 'trafficScan' THEN 'vulnerability'
         ELSE category
     END as category,
     ...
-FROM passive_plugin_registry;
+FROM traffic_plugin_registry;
 ```
 
 ## 工作流程
@@ -235,12 +235,12 @@ FROM passive_plugin_registry;
 5. Agent加载：`AgentPluginProvider` 查询 `WHERE main_category='agent' AND enabled=1`
 6. 工具注册：`plugin::<plugin_id>`
 
-### 创建被动扫描插件
-1. 前端选择：主分类=被动扫描, 子分类=漏洞检测
+### 创建流量分析插件
+1. 前端选择：主分类=流量分析, 子分类=漏洞检测
 2. 前端保存：`category='vulnerability'`
-3. 后端处理：设置 `main_category='passive', category='vulnerability'`
-4. 数据库存储：`main_category='passive', category='vulnerability'`
-5. 扫描器加载：`PassiveScanManager` 查询 `WHERE main_category='passive' AND enabled=1`
+3. 后端处理：设置 `main_category='traffic', category='vulnerability'`
+4. 数据库存储：`main_category='traffic', category='vulnerability'`
+5. 扫描器加载：`TrafficScanManager` 查询 `WHERE main_category='traffic' AND enabled=1`
 
 ## 验证清单
 
@@ -258,7 +258,7 @@ FROM passive_plugin_registry;
 1. **测试数据迁移**
    ```bash
    # 查看旧数据
-   sqlite3 sentinel-ai.db "SELECT id, category FROM passive_plugin_registry"
+   sqlite3 sentinel-ai.db "SELECT id, category FROM traffic_plugin_registry"
    
    # 运行迁移
    # 启动应用（自动执行migration）
@@ -272,20 +272,20 @@ FROM passive_plugin_registry;
    - 检查数据库：`main_category='agent'`
    - 检查工具列表：包含 `plugin::<plugin_id>`
 
-3. **测试被动扫描插件**
-   - 前端创建被动扫描插件
-   - 检查数据库：`main_category='passive'`
-   - 运行被动扫描验证插件加载
+3. **测试流量分析插件**
+   - 前端创建流量分析插件
+   - 检查数据库：`main_category='traffic'`
+   - 运行流量分析验证插件加载
 
 4. **测试向后兼容**
    - 旧插件数据正确迁移
    - Agent工具正常识别
-   - 被动扫描功能正常
+   - 流量分析功能正常
 
 ## 注意事项
 
 1. **不再使用视图方案**：直接使用 `plugin_registry` 表，更清晰直接
-2. **main_category必需**：所有新插件必须设置 main_category（默认为 'passive'）
+2. **main_category必需**：所有新插件必须设置 main_category（默认为 'traffic'）
 3. **Agent识别变更**：从 `category='agents'` 改为 `main_category='agent'`
 4. **前端兼容**：保存时仍然使用 `agents` 以保持向后兼容
 5. **索引性能**：针对 Agent 插件查询添加了部分索引
@@ -294,9 +294,9 @@ FROM passive_plugin_registry;
 
 - Migration: `src-tauri/migrations/20251111_independent_plugin_registry.sql`
 - 类型定义: `src-tauri/sentinel-plugins/src/types.rs`
-- 数据库操作: `src-tauri/sentinel-passive/src/database.rs`
-- 扫描器: `src-tauri/sentinel-passive/src/scanner.rs`
+- 数据库操作: `src-tauri/sentinel-traffic/src/database.rs`
+- 扫描器: `src-tauri/sentinel-traffic/src/scanner.rs`
 - Agent工具: `src-tauri/src/tools/agent_plugin_provider.rs`
-- 命令: `src-tauri/src/commands/passive_scan_commands.rs`
+- 命令: `src-tauri/src/commands/traffic_scan_commands.rs`
 - 前端: `src/views/PluginManagement.vue`
 - i18n: `src/i18n/locales/zh.ts`, `src/i18n/locales/en.ts`

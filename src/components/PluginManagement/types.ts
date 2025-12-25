@@ -136,7 +136,7 @@ export interface SubCategory {
 
 // Main categories
 export const mainCategories: Category[] = [
-  { value: 'passive', label: '流量分析插件', icon: 'fas fa-shield-alt' },
+  { value: 'traffic', label: '流量分析插件', icon: 'fas fa-shield-alt' },
   { value: 'agent', label: 'Agent插件', icon: 'fas fa-robot' }
 ]
 

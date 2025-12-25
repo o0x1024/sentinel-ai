@@ -7,7 +7,7 @@ use chrono::Utc;
 use crate::engine::{WorkflowEngine, WorkflowDefinition, WorkflowMetadata, WorkflowStep};
 use sentinel_db::DatabaseService;
 use sentinel_db::Database;
-use sentinel_passive::PluginManager;
+use sentinel_traffic::PluginManager;
 use rig::tool::ToolSet;
 use serde::{Deserialize, Serialize};
 use sentinel_rag::{RagService, RagQueryRequest, IngestRequest, config::RagConfig};
@@ -279,20 +279,19 @@ pub async fn execute_workflow_steps(
                             
                             // 从数据库加载插件元数据和代码
                             if let Ok(Some(plugin_data)) = db_clone.get_plugin_from_registry(plugin_id).await {
-                                let enabled = plugin_data.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-                                let name = plugin_data.get("name").and_then(|v| v.as_str()).unwrap_or(plugin_id);
-                                let version = plugin_data.get("version").and_then(|v| v.as_str()).unwrap_or("1.0.0");
-                                let author = plugin_data.get("author").and_then(|v| v.as_str());
-                                let main_category = plugin_data.get("main_category").and_then(|v| v.as_str()).unwrap_or("agent");
-                                let category = plugin_data.get("category").and_then(|v| v.as_str()).unwrap_or("scanner");
-                                let description = plugin_data.get("description").and_then(|v| v.as_str());
-                                let tags: Vec<String> = plugin_data.get("tags")
-                                    .and_then(|v| v.as_array())
-                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                                    .unwrap_or_default();
-                                let code = plugin_data.get("plugin_code").and_then(|v| v.as_str()).unwrap_or("");
+                                let enabled = matches!(plugin_data.status, sentinel_traffic::PluginStatus::Enabled);
+                                let name = &plugin_data.metadata.name;
+                                let version = &plugin_data.metadata.version;
+                                let author = plugin_data.metadata.author.as_deref();
+                                let main_category = &plugin_data.metadata.main_category;
+                                let category = &plugin_data.metadata.category;
+                                let description = plugin_data.metadata.description.as_deref();
+                                let tags = plugin_data.metadata.tags.clone();
                                 
-                                let metadata = sentinel_passive::PluginMetadata {
+                                // 从数据库获取代码
+                                let code = db_clone.get_plugin_code(plugin_id).await.ok().flatten().unwrap_or_default();
+                                
+                                let metadata = sentinel_traffic::PluginMetadata {
                                     id: plugin_id.to_string(),
                                     name: name.to_string(),
                                     version: version.to_string(),
@@ -300,7 +299,7 @@ pub async fn execute_workflow_steps(
                                     main_category: main_category.to_string(),
                                     category: category.to_string(),
                                     description: description.map(|s| s.to_string()),
-                                    default_severity: sentinel_passive::types::Severity::Medium,
+                                    default_severity: sentinel_traffic::types::Severity::Medium,
                                     tags,
                                 };
                                 
@@ -446,11 +445,12 @@ pub async fn execute_workflow_steps(
                                     }
                                     wrote_result = true;
                                 }
-                                Err(e) => {
-                                    tracing::warn!("rag ingest failed: {}", e);
-                                    let error_val = serde_json::json!({"error": e.to_string()});
+                                Err(err) => {
+                                    tracing::warn!("rag ingest failed: {}", err);
+                                    let err_msg = err.to_string();
+                                    let error_val = serde_json::json!({"error": err_msg});
                                     engine_clone.mark_step_completed_with_result(&execution_id_for_spawn, &node_id, error_val.clone()).await;
-                                    if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_val.to_string()), Some(&e.to_string())).await {
+                                    if let Err(e) = db_clone.update_workflow_run_step_status(&execution_id_for_spawn, &node_id, "failed", Utc::now(), Some(error_val.to_string()), Some(&err_msg)).await {
                                         tracing::warn!("failed to update step status: {}", e);
                                     }
                                     wrote_result = true;
@@ -913,11 +913,13 @@ pub async fn save_workflow_definition(
         &graph.id,
         &graph.name,
         description.as_deref(),
-        &graph.version,
         &graph_json,
-        tags.as_deref(),
         is_template,
         is_tool.unwrap_or(false),
+        None,
+        tags.as_deref(),
+        &graph.version,
+        "system",
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -929,7 +931,7 @@ pub async fn get_workflow_definition(
     id: String,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<Option<serde_json::Value>, String> {
-    db.get_workflow_definition(&id).await.map_err(|e| e.to_string())
+    db.get_workflow_definition(&id).await.map_err(|e: anyhow::Error| e.to_string())
 }
 
 #[tauri::command]
@@ -937,7 +939,7 @@ pub async fn list_workflow_definitions(
     is_template: Option<bool>,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    db.list_workflow_definitions(is_template).await.map_err(|e| e.to_string())
+    db.list_workflow_definitions(is_template.unwrap_or(false)).await.map_err(|e: anyhow::Error| e.to_string())
 }
 
 /// 列出所有标记为工具的工作流
@@ -945,7 +947,7 @@ pub async fn list_workflow_definitions(
 pub async fn list_workflow_tools(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    db.list_workflow_tools().await.map_err(|e| e.to_string())
+    db.list_workflow_tools().await.map_err(|e: anyhow::Error| e.to_string())
 }
 
 #[tauri::command]
@@ -953,7 +955,7 @@ pub async fn delete_workflow_definition(
     id: String,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    db.delete_workflow_definition(&id).await.map_err(|e| e.to_string())
+    db.delete_workflow_definition(&id).await.map_err(|e: anyhow::Error| e.to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

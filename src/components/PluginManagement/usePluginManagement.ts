@@ -90,7 +90,7 @@ export function usePluginManagement() {
   // New Plugin Metadata
   const newPluginMetadata = ref<NewPluginMetadata>({
     id: '', name: '', version: '1.0.0', author: '',
-    mainCategory: 'passive', category: 'vulnerability',
+    mainCategory: 'traffic', category: 'vulnerability',
     default_severity: 'medium', description: '', tagsString: ''
   })
 
@@ -137,9 +137,9 @@ export function usePluginManagement() {
       filtered = plugins.value
     } else if (selectedCategory.value === 'traffic') {
       filtered = plugins.value.filter(p => {
-        if (p.metadata.main_category === 'passive') return true
+        if (p.metadata.main_category === 'traffic') return true
         if (trafficCategories.includes(p.metadata.category)) return true
-        if (p.metadata.category === 'passive') return true
+        if (p.metadata.category === 'traffic') return true
         return false
       })
     } else if (selectedCategory.value === 'agents') {
@@ -228,9 +228,9 @@ export function usePluginManagement() {
   const isPluginFavorited = (plugin: PluginRecord): boolean => plugin.is_favorited || false
 
   const isTrafficPluginType = (plugin: PluginRecord): boolean => {
-    if (plugin.metadata.main_category === 'passive') return true
+    if (plugin.metadata.main_category === 'traffic') return true
     if (trafficCategories.includes(plugin.metadata.category)) return true
-    if (plugin.metadata.category === 'passive') return true
+    if (plugin.metadata.category === 'traffic') return true
     return false
   }
 
@@ -276,9 +276,9 @@ export function usePluginManagement() {
     if (category === 'all') return plugins.value.length
     if (category === 'traffic') {
       return plugins.value.filter(p => {
-        if (p.metadata.main_category === 'passive') return true
+        if (p.metadata.main_category === 'traffic') return true
         if (trafficCategories.includes(p.metadata.category)) return true
-        if (p.metadata.category === 'passive') return true
+        if (p.metadata.category === 'traffic') return true
         return false
       }).length
     }

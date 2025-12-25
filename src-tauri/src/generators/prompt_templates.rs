@@ -3,6 +3,7 @@
 use super::few_shot_examples::FewShotExample;
 use crate::analyzers::WebsiteAnalysis;
 use crate::services::DatabaseService;
+use sentinel_db::Database;
 use anyhow::Result;
 use sentinel_core::models::prompt::TemplateType;
 use std::sync::Arc;
@@ -24,30 +25,28 @@ impl PromptTemplateBuilder {
     /// Get template from database or fallback to built-in
     async fn get_template_content(&self, template_type: TemplateType) -> Result<String> {
         if let Some(db) = &self.db {
-            if let Ok(pool) = db.get_pool() {
-                // Try to get from database
-                let templates = sentinel_db::database::prompt_dao::list_templates_filtered(
-                    pool,
+            // Try to get from database
+            let templates = db
+                .list_prompt_templates_filtered(
                     None,
                     Some(template_type.clone()),
                     None,
                 )
                 .await?;
 
-                if let Some(template) = templates
-                    .into_iter()
-                    .filter(|t| t.is_active)
-                    .max_by_key(|t| (t.is_default, t.priority, t.updated_at.clone()))
-                {
-                    return Ok(template.content);
-                }
+            if let Some(template) = templates
+                .into_iter()
+                .filter(|t| t.is_active)
+                .max_by_key(|t| (t.is_default, t.priority, t.updated_at.clone()))
+            {
+                return Ok(template.content);
             }
         }
 
         // Fallback to built-in templates (合并后的完整模板)
         match template_type {
             TemplateType::PluginGeneration => {
-                // 被动扫描插件生成 - 使用合并后的完整模板
+                // 流量分析插件生成 - 使用合并后的完整模板
                 Ok("".to_string())
             }
             TemplateType::AgentPluginGeneration => {
@@ -323,7 +322,7 @@ impl PromptTemplateBuilder {
     fn build_header(&self) -> String {
         r#"# Security Plugin Generation Task
 
-You are an expert security researcher and TypeScript developer. Your task is to generate a high-quality security testing plugin for a passive scanning system.
+You are an expert security researcher and TypeScript developer. Your task is to generate a high-quality security testing plugin for a traffic scanning system.
 
 The plugin should:
 1. Be written in TypeScript

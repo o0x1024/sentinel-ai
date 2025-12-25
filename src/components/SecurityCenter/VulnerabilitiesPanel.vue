@@ -574,7 +574,7 @@ const toggleSelectAll = () => {
 const deleteSingle = async (id: string) => {
 
   try {
-    const response = await invoke<any>('delete_passive_vulnerability', { vulnId: id });
+    const response = await invoke<any>('delete_traffic_vulnerability', { vulnId: id });
     if (response.success) {
       console.log('Vulnerability deleted:', id);
       await refreshFindings();
@@ -595,7 +595,7 @@ const deleteSelected = async () => {
   
   try {
     const ids = Array.from(selectedIds.value);
-    const response = await invoke<any>('delete_passive_vulnerabilities_batch', { vulnIds: ids });
+    const response = await invoke<any>('delete_traffic_vulnerabilities_batch', { vulnIds: ids });
     if (response.success) {
       console.log(`Deleted ${ids.length} vulnerabilities`);
       await refreshFindings();
@@ -619,7 +619,7 @@ const confirmDeleteAll = async () => {
   isLoading.value = true;
   
   try {
-    const response = await invoke<any>('delete_all_passive_vulnerabilities');
+    const response = await invoke<any>('delete_all_traffic_vulnerabilities');
     if (response.success) {
       console.log('All vulnerabilities deleted');
       await refreshFindings();

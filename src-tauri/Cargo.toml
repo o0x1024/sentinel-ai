@@ -28,7 +28,7 @@ sentinel-rag = { path = "sentinel-rag" }
 sentinel-tools = { path = "sentinel-tools" }
 sentinel-services = { path = "sentinel-services" }
 sentinel-workflow = { path = "sentinel-workflow" }
-sentinel-passive = { path = "sentinel-passive" }
+sentinel-traffic = { path = "sentinel-traffic" }
 sentinel-notify = { path = "sentinel-notify" }
 sentinel-llm = { path = "sentinel-llm" }
 sentinel-license = { path = "sentinel-license" }
@@ -245,7 +245,7 @@ members = [
     "sentinel-prompt",
     "sentinel-rag",
     "sentinel-tools",
-    "sentinel-passive",
+    "sentinel-traffic",
     "sentinel-plugins",
     "sentinel-notify",
     "sentinel-workflow",

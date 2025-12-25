@@ -2,16 +2,16 @@
 
 use std::sync::Arc;
 
-use sentinel_db::database::ability_group_dao::{
-    AbilityGroup, AbilityGroupDao, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup,
+use sentinel_db::{
+    AbilityGroup, AbilityGroupSummary, CreateAbilityGroup, Database, UpdateAbilityGroup,
 };
 
 /// List all ability groups (summary only)
 pub async fn list_ability_groups(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<AbilityGroupSummary>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    AbilityGroupDao::list_summary(pool)
+    db_service
+        .list_ability_groups_summary()
         .await
         .map_err(|e| e.to_string())
 }
@@ -20,8 +20,8 @@ pub async fn list_ability_groups(
 pub async fn list_ability_groups_full(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<AbilityGroup>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    AbilityGroupDao::list_all(pool)
+    db_service
+        .list_all_ability_groups()
         .await
         .map_err(|e| e.to_string())
 }
@@ -31,8 +31,8 @@ pub async fn get_ability_group(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Option<AbilityGroup>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    AbilityGroupDao::get(pool, &id)
+    db_service
+        .get_ability_group(&id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -42,8 +42,8 @@ pub async fn create_ability_group(
     payload: CreateAbilityGroup,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<AbilityGroup, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    AbilityGroupDao::create(pool, &payload)
+    db_service
+        .create_ability_group(&payload)
         .await
         .map_err(|e| e.to_string())
 }
@@ -54,8 +54,8 @@ pub async fn update_ability_group(
     payload: UpdateAbilityGroup,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<bool, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    AbilityGroupDao::update(pool, &id, &payload)
+    db_service
+        .update_ability_group(&id, &payload)
         .await
         .map_err(|e| e.to_string())
 }
@@ -65,8 +65,8 @@ pub async fn delete_ability_group(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<bool, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    AbilityGroupDao::delete(pool, &id)
+    db_service
+        .delete_ability_group(&id)
         .await
         .map_err(|e| e.to_string())
 }

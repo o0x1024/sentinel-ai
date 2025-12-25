@@ -16,7 +16,7 @@ pub struct PluginMetadata {
     pub version: String,
     /// 作者
     pub author: Option<String>,
-    /// 主分类 (passive/agent)
+    /// 主分类 (traffic/agent)
     #[serde(default = "default_main_category")]
     pub main_category: String,
     /// 子分类 (vulnerability/injection/xss/scanner/analyzer/reporter)
@@ -30,7 +30,7 @@ pub struct PluginMetadata {
 }
 
 fn default_main_category() -> String {
-    "passive".to_string()
+    "traffic".to_string()
 }
 
 /// 严重等级

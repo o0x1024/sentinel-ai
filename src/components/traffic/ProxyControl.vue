@@ -132,7 +132,7 @@ async function toggleProxy() {
   isToggling.value = true;
   try {
     if (proxyStatus.value.running) {
-      await invoke('stop_passive_scan');
+      await invoke('stop_traffic_analysis');
       dialog.toast.success('代理已停止');
     } else {
       // 从配置文件加载配置
@@ -147,7 +147,7 @@ async function toggleProxy() {
             max_response_body_size: 2 * 1024 * 1024,
           };
       
-      const response = await invoke<any>('start_passive_scan', { config });
+      const response = await invoke<any>('start_traffic_analysis', { config });
       if (response.success && response.data) {
         dialog.toast.success(`代理已启动，监听端口: ${response.data}`);
       } else {

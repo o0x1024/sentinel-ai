@@ -509,14 +509,14 @@ async fn get_plugin_input_schema_async(
 /// List all available node types for workflow studio
 #[tauri::command]
 pub async fn list_node_catalog(
-    passive_state: tauri::State<'_, crate::commands::passive_scan_commands::PassiveScanState>,
+    traffic_state: tauri::State<'_, crate::commands::traffic_analysis_commands::TrafficAnalysisState>,
 ) -> Result<Vec<NodeCatalogItem>, String> {
-    build_node_catalog(passive_state.inner()).await
+    build_node_catalog(traffic_state.inner()).await
 }
 
 /// Build node catalog for use by other commands (includes MCP and enabled plugins).
 pub async fn build_node_catalog(
-    passive_state: &crate::commands::passive_scan_commands::PassiveScanState,
+    traffic_state: &crate::commands::traffic_analysis_commands::TrafficAnalysisState,
 ) -> Result<Vec<NodeCatalogItem>, String> {
     let mut catalog = Vec::new();
 
@@ -850,13 +850,13 @@ pub async fn build_node_catalog(
     }
 
     // Agent 插件工具节点 - 从数据库获取已启用的 Agent 工具插件
-    if let Ok(plugins) = passive_state.list_plugins_internal().await {
+    if let Ok(plugins) = traffic_state.list_plugins_internal().await {
         // 获取数据库服务用于查询插件代码
-        let db_service = passive_state.get_db_service().await.ok();
+        let db_service = traffic_state.get_db_service().await.ok();
 
         for plugin in plugins {
             // 只添加已启用的 Agent 类型插件
-            if plugin.status == sentinel_passive::PluginStatus::Enabled
+            if plugin.status == sentinel_traffic::PluginStatus::Enabled
                 && plugin.metadata.main_category == "agent"
             {
                 // 获取插件代码并通过运行时获取 schema（优先），静态解析作为 fallback
@@ -1110,14 +1110,14 @@ pub async fn save_agent_config(
 #[tauri::command]
 pub async fn list_ability_groups(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<Vec<sentinel_db::database::ability_group_dao::AbilityGroupSummary>, String> {
+) -> Result<Vec<sentinel_db::AbilityGroupSummary>, String> {
     ability_groups::list_ability_groups(db_service).await
 }
 
 #[tauri::command]
 pub async fn list_ability_groups_full(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<Vec<sentinel_db::database::ability_group_dao::AbilityGroup>, String> {
+) -> Result<Vec<sentinel_db::AbilityGroup>, String> {
     ability_groups::list_ability_groups_full(db_service).await
 }
 
@@ -1125,22 +1125,22 @@ pub async fn list_ability_groups_full(
 pub async fn get_ability_group(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<Option<sentinel_db::database::ability_group_dao::AbilityGroup>, String> {
+) -> Result<Option<sentinel_db::AbilityGroup>, String> {
     ability_groups::get_ability_group(id, db_service).await
 }
 
 #[tauri::command]
 pub async fn create_ability_group(
-    payload: sentinel_db::database::ability_group_dao::CreateAbilityGroup,
+    payload: sentinel_db::CreateAbilityGroup,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<sentinel_db::database::ability_group_dao::AbilityGroup, String> {
+) -> Result<sentinel_db::AbilityGroup, String> {
     ability_groups::create_ability_group(payload, db_service).await
 }
 
 #[tauri::command]
 pub async fn update_ability_group(
     id: String,
-    payload: sentinel_db::database::ability_group_dao::UpdateAbilityGroup,
+    payload: sentinel_db::UpdateAbilityGroup,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<bool, String> {
     ability_groups::update_ability_group(id, payload, db_service).await

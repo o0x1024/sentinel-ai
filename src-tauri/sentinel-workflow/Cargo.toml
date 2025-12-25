@@ -19,7 +19,7 @@ sentinel-prompt = { path = "../sentinel-prompt" }
 sentinel-rag = { path = "../sentinel-rag" }
 sentinel-notify = { path = "../sentinel-notify" }
 sentinel-llm = { path = "../sentinel-llm" }
-sentinel-passive = { path = "../sentinel-passive" }
+sentinel-traffic = { path = "../sentinel-traffic" }
 sentinel-license = { path = "../sentinel-license" }
 rig-core = { workspace = true }
 tracing = "0.1"

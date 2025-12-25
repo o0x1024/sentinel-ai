@@ -1,7 +1,8 @@
 use anyhow::Result;
 use sqlx::sqlite::SqlitePool;
 
-use crate::database::*;
+use crate::database_service::traits::Database;
+use crate::database_service::service::DatabaseService;
 use sentinel_core::models::prompt::{
     PromptTemplate,
     PromptCategory, TemplateType,
@@ -9,26 +10,28 @@ use sentinel_core::models::prompt::{
 
 #[derive(Clone, Debug)]
 pub struct DatabaseClient {
-    pool: SqlitePool,
+    service: DatabaseService,
 }
 
 impl DatabaseClient {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        let mut service = DatabaseService::new();
+        service.pool = Some(pool);
+        Self { service }
+    }
+
+    pub fn pool(&self) -> &SqlitePool {
+        self.service.get_pool().expect("数据库未初始化")
     }
 
     // Prompt templates
     pub async fn insert_default_templates(&self) -> Result<()> {
-        prompt_template_dao::insert_default_templates(self.pool()).await
-    }
-
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+        self.service.insert_default_templates().await
     }
 
     // Config
     pub async fn get_config(&self, category: &str, key: &str) -> Result<Option<String>> {
-        config_dao::get_config(self.pool(), category, key).await
+        self.service.get_config(category, key).await
     }
     pub async fn set_config(
         &self,
@@ -37,13 +40,13 @@ impl DatabaseClient {
         value: &str,
         description: Option<&str>,
     ) -> Result<()> {
-        config_dao::set_config(self.pool(), category, key, value, description).await
+        self.service.set_config(category, key, value, description).await
     }
     pub async fn get_configs_by_category(
         &self,
         category: &str,
     ) -> Result<Vec<sentinel_core::models::database::Configuration>> {
-        config_dao::get_configs_by_category(self.pool(), category).await
+        self.service.get_configs_by_category(category).await
     }
 
     // MCP
@@ -54,30 +57,30 @@ impl DatabaseClient {
         command: &str,
         args: &[String],
     ) -> Result<String> {
-        mcp_dao::create_mcp_server_config(self.pool(), name, description, command, args).await
+        self.service.create_mcp_server_config(name, description, command, args).await
     }
     pub async fn get_all_mcp_server_configs(
         &self,
     ) -> Result<Vec<sentinel_core::models::database::McpServerConfig>> {
-        mcp_dao::get_all_mcp_server_configs(self.pool()).await
+        self.service.get_all_mcp_server_configs().await
     }
     pub async fn update_mcp_server_config_enabled(&self, id: &str, enabled: bool) -> Result<()> {
-        mcp_dao::update_mcp_server_config_enabled(self.pool(), id, enabled).await
+        self.service.update_mcp_server_config_enabled(id, enabled).await
     }
     pub async fn update_mcp_server_auto_connect(&self, id: &str, auto_connect: bool) -> Result<()> {
-        mcp_dao::update_mcp_server_auto_connect(self.pool(), id, auto_connect).await
+        self.service.update_mcp_server_auto_connect(id, auto_connect).await
     }
     pub async fn get_auto_connect_mcp_servers(&self) -> Result<Vec<sentinel_core::models::database::McpServerConfig>> {
-        mcp_dao::get_auto_connect_mcp_servers(self.pool()).await
+        self.service.get_auto_connect_mcp_servers().await
     }
     pub async fn delete_mcp_server_config(&self, id: &str) -> Result<()> {
-        mcp_dao::delete_mcp_server_config(self.pool(), id).await
+        self.service.delete_mcp_server_config(id).await
     }
     pub async fn get_mcp_server_config_by_name(
         &self,
         name: &str,
     ) -> Result<Option<sentinel_core::models::database::McpServerConfig>> {
-        mcp_dao::get_mcp_server_config_by_name(self.pool(), name).await
+        self.service.get_mcp_server_config_by_name(name).await
     }
     pub async fn update_mcp_server_config(
         &self,
@@ -88,8 +91,7 @@ impl DatabaseClient {
         args: &[String],
         enabled: bool,
     ) -> Result<()> {
-        mcp_dao::update_mcp_server_config(self.pool(), id, name, description, command, args, enabled)
-            .await
+        self.service.update_mcp_server_config(id, name, description, command, args, enabled).await
     }
 
     // Conversations & Messages
@@ -97,42 +99,42 @@ impl DatabaseClient {
         &self,
         c: &sentinel_core::models::database::AiConversation,
     ) -> Result<()> {
-        ai_conversation_dao::create_ai_conversation(self.pool(), c).await
+        self.service.create_ai_conversation(c).await
     }
     pub async fn get_ai_conversations(
         &self,
     ) -> Result<Vec<sentinel_core::models::database::AiConversation>> {
-        ai_conversation_dao::get_ai_conversations(self.pool()).await
+        self.service.get_ai_conversations().await
     }
     pub async fn get_ai_conversation(
         &self,
         id: &str,
     ) -> Result<Option<sentinel_core::models::database::AiConversation>> {
-        ai_conversation_dao::get_ai_conversation(self.pool(), id).await
+        self.service.get_ai_conversation(id).await
     }
     pub async fn update_ai_conversation(
         &self,
         c: &sentinel_core::models::database::AiConversation,
     ) -> Result<()> {
-        ai_conversation_dao::update_ai_conversation(self.pool(), c).await
+        self.service.update_ai_conversation(c).await
     }
     pub async fn delete_ai_conversation(&self, id: &str) -> Result<()> {
-        ai_conversation_dao::delete_ai_conversation(self.pool(), id).await
+        self.service.delete_ai_conversation(id).await
     }
     pub async fn update_conversation_title(&self, id: &str, title: &str) -> Result<()> {
-        ai_conversation_dao::update_conversation_title(self.pool(), id, title).await
+        self.service.update_ai_conversation_title(id, title).await
     }
     pub async fn create_ai_message(
         &self,
         m: &sentinel_core::models::database::AiMessage,
     ) -> Result<()> {
-        ai_conversation_dao::create_ai_message(self.pool(), m).await
+        self.service.create_ai_message(m).await
     }
     pub async fn get_ai_messages_by_conversation(
         &self,
         conversation_id: &str,
     ) -> Result<Vec<sentinel_core::models::database::AiMessage>> {
-        ai_conversation_dao::get_ai_messages_by_conversation(self.pool(), conversation_id).await
+        self.service.get_ai_messages_by_conversation(conversation_id).await
     }
 
     // Scan tasks
@@ -140,19 +142,19 @@ impl DatabaseClient {
         &self,
         t: &sentinel_core::models::database::ScanTask,
     ) -> Result<()> {
-        scan_task_dao::create_scan_task(self.pool(), t).await
+        self.service.create_scan_task(t).await
     }
     pub async fn get_scan_tasks(
         &self,
         project_id: Option<&str>,
     ) -> Result<Vec<sentinel_core::models::database::ScanTask>> {
-        scan_task_dao::get_scan_tasks(self.pool(), project_id).await
+        self.service.get_scan_tasks(project_id).await
     }
     pub async fn get_scan_task(
         &self,
         id: &str,
     ) -> Result<Option<sentinel_core::models::database::ScanTask>> {
-        scan_task_dao::get_scan_task(self.pool(), id).await
+        self.service.get_scan_task(id).await
     }
     pub async fn update_scan_task_status(
         &self,
@@ -160,7 +162,7 @@ impl DatabaseClient {
         status: &str,
         progress: Option<f64>,
     ) -> Result<()> {
-        scan_task_dao::update_scan_task_status(self.pool(), id, status, progress).await
+        self.service.update_scan_task_status(id, status, progress).await
     }
 
     // Vulnerabilities
@@ -168,22 +170,22 @@ impl DatabaseClient {
         &self,
         v: &sentinel_core::models::database::Vulnerability,
     ) -> Result<()> {
-        vulnerability_dao::create_vulnerability(self.pool(), v).await
+        self.service.create_vulnerability(v).await
     }
     pub async fn get_vulnerabilities(
         &self,
         project_id: Option<&str>,
     ) -> Result<Vec<sentinel_core::models::database::Vulnerability>> {
-        vulnerability_dao::get_vulnerabilities(self.pool(), project_id).await
+        self.service.get_vulnerabilities(project_id).await
     }
     pub async fn get_vulnerability(
         &self,
         id: &str,
     ) -> Result<Option<sentinel_core::models::database::Vulnerability>> {
-        vulnerability_dao::get_vulnerability(self.pool(), id).await
+        self.service.get_vulnerability(id).await
     }
     pub async fn update_vulnerability_status(&self, id: &str, status: &str) -> Result<()> {
-        vulnerability_dao::update_vulnerability_status(self.pool(), id, status).await
+        self.service.update_vulnerability_status(id, status).await
     }
 
     // RAG Collections
@@ -192,48 +194,48 @@ impl DatabaseClient {
         name: &str,
         description: Option<&str>,
     ) -> Result<String> {
-        rag_collection_dao::create_rag_collection(self.pool(), name, description).await
+        self.service.create_rag_collection(name, description).await
     }
-    pub async fn get_rag_collections(&self) -> Result<Vec<rag_collection_dao::RagCollectionRow>> {
-        rag_collection_dao::get_rag_collections(self.pool()).await
+    pub async fn get_rag_collections(&self) -> Result<Vec<crate::database_service::rag::RagCollectionRow>> {
+        self.service.get_rag_collections().await
     }
     pub async fn get_rag_collection_by_id(
         &self,
         id: &str,
-    ) -> Result<Option<rag_collection_dao::RagCollectionRow>> {
-        rag_collection_dao::get_rag_collection_by_id(self.pool(), id).await
+    ) -> Result<Option<crate::database_service::rag::RagCollectionRow>> {
+        self.service.get_rag_collection_by_id(id).await
     }
     pub async fn get_rag_collection_by_name(
         &self,
         name: &str,
-    ) -> Result<Option<rag_collection_dao::RagCollectionRow>> {
-        rag_collection_dao::get_rag_collection_by_name(self.pool(), name).await
+    ) -> Result<Option<crate::database_service::rag::RagCollectionRow>> {
+        self.service.get_rag_collection_by_name(name).await
     }
     pub async fn delete_rag_collection(&self, id: &str) -> Result<()> {
-        rag_collection_dao::delete_rag_collection(self.pool(), id).await
+        self.service.delete_rag_collection(id).await
     }
     pub async fn update_rag_collection(&self, id: &str, name: &str, description: Option<&str>) -> Result<()> {
-        rag_collection_dao::update_rag_collection(self.pool(), id, name, description).await
+        self.service.update_rag_collection(id, name, description).await
     }
     pub async fn set_rag_collection_active(&self, id: &str, active: bool) -> Result<()> {
-        rag_collection_dao::set_rag_collection_active(self.pool(), id, active).await
+        self.service.set_rag_collection_active(id, active).await
     }
     pub async fn update_collection_stats(&self, id: &str) -> Result<()> {
-        rag_collection_dao::update_collection_stats(self.pool(), id).await
+        self.service.update_collection_stats(id).await
     }
 
     // RAG Docs/Chunks
     pub async fn get_documents_by_collection_name(
         &self,
         collection_name: &str,
-    ) -> Result<Vec<rag_doc_dao::RagDocumentSourceRow>> {
-        rag_doc_dao::get_documents_by_collection_name(self.pool(), collection_name).await
+    ) -> Result<Vec<crate::database_service::rag::RagDocumentSourceRow>> {
+        self.service.get_documents_by_collection_name(collection_name).await
     }
     pub async fn get_documents_by_collection_id(
         &self,
         collection_id: &str,
-    ) -> Result<Vec<rag_doc_dao::RagDocumentSourceRow>> {
-        rag_doc_dao::get_documents_by_collection_id(self.pool(), collection_id).await
+    ) -> Result<Vec<crate::database_service::rag::RagDocumentSourceRow>> {
+        self.service.get_documents_by_collection_id(collection_id).await
     }
     pub async fn insert_document_source(
         &self,
@@ -249,8 +251,7 @@ impl DatabaseClient {
         created_at: &str,
         updated_at: &str,
     ) -> Result<()> {
-        rag_doc_dao::insert_document_source(
-            self.pool(),
+        self.service.insert_document_source(
             id,
             collection_id,
             file_path,
@@ -266,13 +267,13 @@ impl DatabaseClient {
         .await
     }
     pub async fn delete_document_cascade(&self, document_id: &str) -> Result<()> {
-        rag_doc_dao::delete_document_cascade(self.pool(), document_id).await
+        self.service.delete_document_cascade(document_id).await
     }
     pub async fn get_collection_id_by_document_id(
         &self,
         document_id: &str,
     ) -> Result<Option<String>> {
-        rag_doc_dao::get_collection_id_by_document_id(self.pool(), document_id).await
+        self.service.get_collection_id_by_document_id(document_id).await
     }
     pub async fn insert_chunk(
         &self,
@@ -290,8 +291,7 @@ impl DatabaseClient {
         created_at_ts: i64,
         updated_at_ts: i64,
     ) -> Result<()> {
-        rag_doc_dao::insert_chunk(
-            self.pool(),
+        self.service.insert_chunk(
             id,
             document_id,
             collection_id,
@@ -311,8 +311,8 @@ impl DatabaseClient {
     pub async fn get_chunks_by_document_id(
         &self,
         document_id: &str,
-    ) -> Result<Vec<rag_doc_dao::RagChunkRow>> {
-        rag_doc_dao::get_chunks_by_document_id(self.pool(), document_id).await
+    ) -> Result<Vec<crate::database_service::rag::RagChunkRow>> {
+        self.service.get_chunks_by_document_id(document_id).await
     }
 
     // Tool executions
@@ -320,24 +320,24 @@ impl DatabaseClient {
         &self,
         exec: &sentinel_core::models::database::ToolExecution,
     ) -> Result<()> {
-        tool_execution_dao::create_tool_execution(self.pool(), exec).await
+        self.service.create_tool_execution(exec).await
     }
 
     // Prompt templates
     pub async fn list_templates(&self) -> Result<Vec<sentinel_core::models::prompt::PromptTemplate>> {
-        prompt_dao::list_templates(self.pool()).await
+        self.service.list_prompt_templates().await
     }
     pub async fn get_template(&self, id: i64) -> Result<Option<sentinel_core::models::prompt::PromptTemplate>> {
-        prompt_dao::get_template(self.pool(), id).await
+        self.service.get_prompt_template(id).await
     }
     pub async fn create_template(&self, t: &PromptTemplate) -> Result<i64> {
-        prompt_dao::create_template(self.pool(), t).await
+        self.service.create_prompt_template(t).await
     }
     pub async fn update_template(&self, id: i64, t: &PromptTemplate) -> Result<()> {
-        prompt_dao::update_template(self.pool(), id, t).await
+        self.service.update_prompt_template(id, t).await
     }
     pub async fn delete_template(&self, id: i64) -> Result<()> {
-        prompt_dao::delete_template(self.pool(), id).await
+        self.service.delete_prompt_template(id).await
     }
 
     pub async fn list_templates_filtered(
@@ -346,10 +346,10 @@ impl DatabaseClient {
         template_type: Option<TemplateType>,
         is_system: Option<bool>,
     ) -> Result<Vec<PromptTemplate>> {
-        prompt_dao::list_templates_filtered(self.pool(), category, template_type, is_system).await
+        self.service.list_prompt_templates_filtered(category, template_type, is_system).await
     }
     pub async fn duplicate_template(&self, id: i64, new_name: Option<String>) -> Result<i64> {
-        prompt_dao::duplicate_template(self.pool(), id, new_name).await
+        self.service.duplicate_prompt_template(id, new_name).await
     }
     pub async fn update_tool_execution_status(
         &self,
@@ -359,8 +359,7 @@ impl DatabaseClient {
         end_time: Option<chrono::DateTime<chrono::Utc>>,
         execution_time: Option<i32>,
     ) -> Result<()> {
-        tool_execution_dao::update_tool_execution_status(
-            self.pool(),
+        self.service.update_tool_execution_status(
             id,
             status,
             progress,
@@ -373,8 +372,6 @@ impl DatabaseClient {
         &self,
         tool_id: &str,
     ) -> Result<Vec<sentinel_core::models::database::ToolExecution>> {
-        tool_execution_dao::get_tool_executions_by_tool(self.pool(), tool_id).await
+        self.service.get_tool_executions_by_tool(tool_id).await
     }
 }
-
-

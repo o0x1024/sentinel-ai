@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use serde::{Serialize, Deserialize};
 use crate::services::database::DatabaseService;
+use sentinel_db::Database;
 use sentinel_core::global_proxy::{get_global_proxy, GlobalProxyConfig};
 use tracing::{info, warn};
 
@@ -57,7 +58,7 @@ pub async fn test_proxy_dynamic_update(
     }
     
     // 3. 验证数据库配置是否一致
-    match db.get_config("network", "global_proxy").await {
+    match db.inner().get_config("network", "global_proxy").await {
         Ok(Some(json_str)) => {
             match serde_json::from_str::<GlobalProxyConfig>(&json_str) {
                 Ok(db_config) => {
@@ -101,7 +102,7 @@ pub async fn test_proxy_persistence(
     let mut messages = Vec::new();
     
     // 1. 读取数据库配置
-    let db_config = match db.get_config("network", "global_proxy").await {
+    let db_config = match db.inner().get_config("network", "global_proxy").await {
         Ok(Some(json_str)) => {
             match serde_json::from_str::<GlobalProxyConfig>(&json_str) {
                 Ok(config) => {

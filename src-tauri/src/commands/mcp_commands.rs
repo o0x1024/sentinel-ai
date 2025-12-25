@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::RwLock;
 
+use sentinel_db::Database;
 use sentinel_db::DatabaseService;
 
 use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};

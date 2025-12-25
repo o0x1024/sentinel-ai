@@ -20,7 +20,7 @@ fn metadata(id: &str, name: &str) -> PluginMetadata {
     name: name.to_string(),
     version: "1.0.0".to_string(),
     author: None,
-    main_category: "passive".to_string(),
+    main_category: "traffic".to_string(),
     category: "test".to_string(),
     default_severity: Severity::Info,
     tags: vec!["robustness".to_string()],

@@ -13,7 +13,8 @@ use super::validator::{ExecutionTestResult, PluginValidator, ValidationResult};
 use crate::analyzers::WebsiteAnalysis;
 use crate::models::prompt::TemplateType;
 use crate::services::ai::AiServiceManager;
-use crate::services::prompt_db::PromptRepository;
+use crate::services::DatabaseService;
+use sentinel_db::Database;
 
 /// Maximum number of fix attempts for a failed plugin
 const MAX_FIX_ATTEMPTS: u32 = 3;
@@ -91,7 +92,7 @@ pub enum PluginStatus {
 /// Advanced plugin generator
 pub struct AdvancedPluginGenerator {
     ai_manager: Arc<AiServiceManager>,
-    prompt_repo: Option<Arc<PromptRepository>>,
+    db: Option<Arc<DatabaseService>>,
     validator: PluginValidator,
     prompt_builder: PromptTemplateBuilder,
     few_shot_repo: FewShotRepository,
@@ -102,7 +103,7 @@ impl AdvancedPluginGenerator {
     pub fn new(ai_manager: Arc<AiServiceManager>) -> Self {
         Self {
             ai_manager,
-            prompt_repo: None,
+            db: None,
             validator: PluginValidator::new(),
             prompt_builder: PromptTemplateBuilder::new(),
             few_shot_repo: FewShotRepository::new(),
@@ -116,7 +117,7 @@ impl AdvancedPluginGenerator {
     ) -> Self {
         Self {
             ai_manager,
-            prompt_repo: None,
+            db: None,
             validator: PluginValidator::new(),
             prompt_builder: PromptTemplateBuilder::new(),
             few_shot_repo: FewShotRepository::new(),
@@ -124,23 +125,24 @@ impl AdvancedPluginGenerator {
         }
     }
 
-    pub fn new_with_prompt_repo(
+    pub fn new_with_db(
         ai_manager: Arc<AiServiceManager>,
-        prompt_repo: Arc<PromptRepository>,
+        db: Arc<DatabaseService>,
         auto_approval_config: PluginAutoApprovalConfig,
     ) -> Self {
         Self {
             ai_manager,
-            prompt_repo: Some(prompt_repo),
+            db: Some(db.clone()),
             validator: PluginValidator::new(),
-            prompt_builder: PromptTemplateBuilder::new(),
+            prompt_builder: PromptTemplateBuilder::with_database(db),
             few_shot_repo: FewShotRepository::new(),
             auto_approval_engine: PluginAutoApprovalEngine::new(auto_approval_config),
         }
     }
 
-    pub fn set_prompt_repo(&mut self, prompt_repo: Arc<PromptRepository>) {
-        self.prompt_repo = Some(prompt_repo);
+    pub fn set_db(&mut self, db: Arc<DatabaseService>) {
+        self.db = Some(db.clone());
+        self.prompt_builder = PromptTemplateBuilder::with_database(db);
     }
 
     /// Generate plugin using AI
@@ -238,13 +240,13 @@ impl AdvancedPluginGenerator {
         );
 
         // 2. Build generation prompt with examples
-        let prompt = self.prompt_builder.build_generation_prompt_with_examples(
+        let prompt = self.prompt_builder.build_generation_prompt_with_examples_async(
             &request.analysis,
             vuln_type,
             request.target_endpoints.as_deref(),
             request.requirements.as_deref(),
             &examples,
-        )?;
+        ).await?;
 
         // 3. Call LLM to generate code
         let (code, model) = self.call_llm_for_generation(&prompt).await?;
@@ -513,10 +515,10 @@ impl AdvancedPluginGenerator {
 
         // Build complete prompt with system message
         // 优先使用动态配置的 prompt 模板，回退到硬编码
-        let full_prompt = if let Some(ref prompt_repo) = self.prompt_repo {
+        let full_prompt = if let Some(ref db) = self.db {
             // 尝试从数据库获取激活的插件生成模板
-            match prompt_repo
-                .get_active_template_by_type(TemplateType::PluginGeneration)
+            match db
+                .get_active_prompt_template_by_type(TemplateType::PluginGeneration)
                 .await
             {
                 Ok(Some(template)) => {
@@ -546,7 +548,7 @@ impl AdvancedPluginGenerator {
                 }
             }
         } else {
-            log::debug!("No prompt repository configured, using fallback prompt");
+            log::debug!("No database configured for prompts, using fallback prompt");
             format!(
                 "You are an expert security researcher and TypeScript developer. Generate high-quality security testing plugins based on website analysis.\n\n{}",
                 prompt

@@ -103,7 +103,7 @@ impl PluginValidator {
 
         // DB-only 模式：插件元数据来自数据库 (plugin_registry)，不再要求插件代码提供 get_metadata()
         //
-        // Passive 插件必须提供 scan_transaction 作为唯一入口（function/export function 均可）
+        // Traffic 插件必须提供 scan_transaction 作为唯一入口（function/export function 均可）
         let scan_patterns = [
             "function scan_transaction",
             "export function scan_transaction",
@@ -207,7 +207,7 @@ impl PluginValidator {
 
     /// Run sandbox test.
     ///
-    /// 注意：为避免与被动扫描插件引擎共享 V8 全局状态引发崩溃，
+    /// 注意：为避免与流量分析插件引擎共享 V8 全局状态引发崩溃，
     /// 这里不再实际执行插件代码，仅复用静态校验结果。
     pub async fn run_sandbox_test(&self, code: &str) -> Result<bool> {
         log::debug!("Running sandbox test (static validation only, runtime execution disabled)");

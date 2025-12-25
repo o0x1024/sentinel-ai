@@ -4,15 +4,18 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use crate::services::prompt_db::PromptRepository;
+use crate::services::DatabaseService;
+use std::sync::Arc;
 use serde_json::Value;
 use sentinel_core::models::prompt::{PromptCategory, TemplateType};
+use sentinel_db::Database;
 
 #[derive(Debug, Clone)]
 pub enum PromptStrategy {
     FollowGroup,
     Custom, 
     UserConfig,
+    UserConfig2, // Placeholder to match any other types if they exist
 }
 
 impl From<String> for PromptStrategy {
@@ -57,12 +60,12 @@ impl Default for AgentPromptConfig {
 
 /// 提示词解析器
 pub struct PromptResolver {
-    prompt_repo: PromptRepository,
+    db: Arc<DatabaseService>,
 }
 
 impl PromptResolver {
-    pub fn new(prompt_repo: PromptRepository) -> Self {
-        Self { prompt_repo }
+    pub fn new(db: Arc<DatabaseService>) -> Self {
+        Self { db }
     }
 
     /// 解析最终生效的提示词内容
@@ -88,7 +91,7 @@ impl PromptResolver {
 
         // 2) Agent 指定模板：若存在且（可选）命中pinned_versions
         if let Some(Some(template_id)) = agent_config.prompt_ids.get(&stage) {
-            if let Ok(Some(template)) = self.prompt_repo.get_template(*template_id).await {
+            if let Ok(Some(template)) = self.db.get_prompt_template(*template_id).await {
                 // TODO: 支持版本固定逻辑
                 let content = self.render_variables(&template.content, &HashMap::new())?;
                 return Ok(content);
@@ -104,8 +107,8 @@ impl PromptResolver {
         };
 
         if let Ok(templates) = self
-            .prompt_repo
-            .list_templates_filtered(category_filter, type_filter, None)
+            .db
+            .list_prompt_templates_filtered(category_filter, type_filter, None)
             .await
         {
             // 只在允许范围内选择激活模板

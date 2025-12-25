@@ -279,7 +279,7 @@ pub async fn list_rag_documents(
     database: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<DocumentSource>, String> {
     database
-        .get_rag_documents_by_collection_id(&collection_id)
+        .get_rag_documents(&collection_id)
         .await
         .map_err(|e| format!("获取文档列表失败: {}", e))
 }
@@ -291,7 +291,7 @@ pub async fn get_rag_document_chunks(
     database: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<DocumentChunk>, String> {
     database
-        .get_rag_chunks_by_document_id(&document_id)
+        .get_rag_chunks(&document_id)
         .await
         .map_err(|e| format!("获取文档内容失败: {}", e))
 }

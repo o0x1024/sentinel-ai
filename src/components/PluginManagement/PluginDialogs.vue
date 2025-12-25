@@ -188,7 +188,7 @@
           <div class="form-control">
             <label class="label"><span class="label-text">{{ $t('plugins.pluginType', '插件类型') }}</span></label>
             <select :value="aiPluginType" @change="$emit('update:aiPluginType', ($event.target as HTMLSelectElement).value)" class="select select-bordered select-sm">
-              <option value="passive">{{ $t('plugins.categories.trafficAnalysis', '流量分析插件') }}</option>
+              <option value="traffic">{{ $t('plugins.categories.trafficAnalysis', '流量分析插件') }}</option>
               <option value="agent">{{ $t('plugins.categories.agents', 'Agent工具插件') }}</option>
             </select>
           </div>

@@ -442,7 +442,7 @@ const codeEditorDialogRef = ref()
 const editingPlugin = ref<any>(null)
 const editPluginMetadata = ref<NewPluginMetadata>({
   id: '', name: '', version: '1.0.0', author: '',
-  mainCategory: 'passive', category: 'custom',
+  mainCategory: 'traffic', category: 'custom',
   default_severity: 'medium', description: '', tagsString: ''
 })
 const isEditing = ref(false)
@@ -457,7 +457,7 @@ let fullscreenCodeEditorView: EditorView | null = null
 const codeEditorReadOnly = new Compartment()
 
 const subCategories = computed<SubCategory[]>(() => {
-  if (editPluginMetadata.value.mainCategory === 'passive') {
+  if (editPluginMetadata.value.mainCategory === 'traffic') {
     return [
       { value: 'sqli', label: 'SQL注入', icon: 'fas fa-database' },
       { value: 'command_injection', label: '命令注入', icon: 'fas fa-terminal' },

@@ -14,6 +14,7 @@ pub mod utils;
 
 use std::fs;
 use std::sync::Arc;
+use sentinel_db::Database;
 use tauri::{
     generate_handler,
     menu::{Menu, MenuItem},
@@ -22,12 +23,12 @@ use tauri::{
 };
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
-use services::{ai::AiServiceManager, database::DatabaseService, scan_session::ScanSessionService};
+use services::{ai::AiServiceManager, database::DatabaseService};
 
 use commands::{
     ai, asset, config, database as db_commands, dictionary,
     packet_capture_commands::{self, PacketCaptureState},
-    passive_scan_commands::{self, PassiveScanState},
+    traffic_analysis_commands::{self, TrafficAnalysisState},
     performance, prompt_commands,
     proxifier_commands::{self, ProxifierState},
     rag_commands, scan_session_commands, scan_task_commands, tool_commands, window,
@@ -60,7 +61,7 @@ pub fn run() {
                 .add_directive("sentinel_ai=info".parse().unwrap())
                 .add_directive("sentinel_plugins=info".parse().unwrap())
                 .add_directive("sentinel_workflow=info".parse().unwrap())
-                .add_directive("sentinel_passive=info".parse().unwrap())
+                .add_directive("sentinel_traffic=info".parse().unwrap())
                 .add_directive("hudsucker=off".parse().unwrap())
                 .add_directive(
                     "rig::agent::prompt_request::streaming=warn"
@@ -183,11 +184,11 @@ pub fn run() {
                     tracing::error!("Failed to initialize global RAG service: {}", e);
                 }
 
-                let passive_state = Arc::new(PassiveScanState::new());
-                let passive_state_for_manage = (*passive_state).clone();
+                let traffic_state = Arc::new(TrafficAnalysisState::new());
+                let traffic_state_for_manage = (*traffic_state).clone();
 
                 // Extract PluginManager for workflow executor access
-                let plugin_manager_for_workflow = passive_state.get_plugin_manager();
+                let plugin_manager_for_workflow = traffic_state.get_plugin_manager();
 
                 if let Err(e) = initialize_global_proxy(&db_service).await {
                     tracing::warn!("Failed to initialize global proxy configuration: {}", e);
@@ -204,13 +205,8 @@ pub fn run() {
                 }
 
                 let ai_manager = Arc::new(ai_manager);
-                let scan_session_service = Arc::new(ScanSessionService::new(db_service.clone()));
 
-                let pool = db_service
-                    .get_pool()
-                    .expect("Database pool not initialized")
-                    .clone();
-                let asset_service = crate::services::AssetService::new(pool.clone());
+                let asset_service = crate::services::AssetService::new(db_service.clone());
                 let vulnerability_service = Arc::new(crate::services::VulnerabilityService::new(
                     db_service.clone(),
                     ai_manager.clone(),
@@ -237,10 +233,9 @@ pub fn run() {
 
                 handle.manage(db_service);
                 handle.manage(ai_manager);
-                handle.manage(scan_session_service);
                 handle.manage(asset_service);
                 handle.manage(vulnerability_service);
-                handle.manage(passive_state_for_manage);
+                handle.manage(traffic_state_for_manage);
                 handle.manage(plugin_manager_for_workflow);
                 handle.manage(ProxifierState::new());
                 handle.manage(PacketCaptureState::default());
@@ -266,12 +261,12 @@ pub fn run() {
 
                 // Auto-start proxy listener if enabled in config
                 let handle_for_proxy = handle.clone();
-                let passive_state_for_proxy = passive_state.clone();
+                let traffic_state_for_proxy = traffic_state.clone();
                 tokio::spawn(async move {
                     // Wait a bit for app to be fully ready
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     
-                    if let Err(e) = auto_start_proxy_if_enabled(&handle_for_proxy, &passive_state_for_proxy).await {
+                    if let Err(e) = auto_start_proxy_if_enabled(&handle_for_proxy, &traffic_state_for_proxy).await {
                         tracing::warn!("Failed to auto-start proxy listener: {}", e);
                     }
                 });
@@ -290,7 +285,7 @@ pub fn run() {
                             &tool_server,
                             || async move {
                                 db_workflow
-                                    .list_workflow_definitions(Some(false))
+                                    .list_workflow_definitions(false)
                                     .await
                                     .map_err(|e| e.to_string())
                             },
@@ -307,57 +302,23 @@ pub fn run() {
                             let mut plugin_metas = Vec::new();
                             for plugin in plugins {
                                 // Filter enabled and agent category
-                                let enabled = plugin
-                                    .get("enabled")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-                                let main_category = plugin
-                                    .get("main_category")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
+                                let enabled = plugin.status == sentinel_plugins::PluginStatus::Enabled;
+                                let main_category = &plugin.metadata.main_category;
                                 
                                 if enabled && main_category == "agent" {
-                                    let id = plugin
-                                        .get("id")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
+                                    let id = &plugin.metadata.id;
                                     
                                     if id.is_empty() {
                                         continue;
                                     }
                                     
-                                    let name = plugin
-                                        .get("name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("Unknown")
-                                        .to_string();
-                                        
-                                    let description = plugin
-                                        .get("description")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("Agent plugin tool")
-                                        .to_string();
-                                        
-                                    // Note: database field is 'plugin_code' not 'code'
-                                    let code = plugin
-                                        .get("plugin_code")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
+                                    let name = &plugin.metadata.name;
+                                    let description = plugin.metadata.description.as_deref().unwrap_or("Agent plugin tool");
+                                    let code = db_plugin.get_plugin_code(id).await.unwrap_or(None);
                                     
                                     // 使用运行时调用获取 input_schema
                                     let input_schema = if let Some(code_str) = &code {
-                                        let metadata = sentinel_plugins::PluginMetadata {
-                                            id: id.clone(),
-                                            name: name.clone(),
-                                            version: "1.0.0".to_string(),
-                                            author: None,
-                                            main_category: "agent".to_string(),
-                                            category: "tool".to_string(),
-                                            default_severity: sentinel_plugins::Severity::Medium,
-                                            tags: vec![],
-                                            description: Some(description.clone()),
-                                        };
+                                        let metadata = plugin.metadata.clone();
                                         sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
                                             code_str,
                                             metadata,
@@ -370,9 +331,9 @@ pub fn run() {
                                     };
                                     
                                     plugin_metas.push(sentinel_tools::plugin_adapter::PluginToolMeta {
-                                        plugin_id: id,
-                                        name,
-                                        description,
+                                        plugin_id: id.clone(),
+                                        name: name.clone(),
+                                        description: description.to_string(),
                                         input_schema,
                                         code,
                                     });
@@ -435,6 +396,8 @@ pub fn run() {
             ai::save_scheduler_config,
             ai::get_service_for_stage,
             ai::get_ai_usage_stats,
+            ai::get_detailed_ai_usage_stats,
+            ai::clear_ai_usage_stats,
             ai::generate_workflow_from_nl,
             ai::generate_plugin_stream,
             ai::cancel_plugin_generation,
@@ -614,84 +577,84 @@ pub fn run() {
             rag_commands::assistant_rag_answer,
             rag_commands::ensure_default_rag_collection,
             rag_commands::test_embedding_connection,
-            // Passive scan commands
-            passive_scan_commands::start_passive_scan,
-            passive_scan_commands::stop_passive_scan,
-            passive_scan_commands::get_proxy_status,
-            passive_scan_commands::reload_plugin_in_pipeline,
-            passive_scan_commands::list_findings,
-            passive_scan_commands::count_findings,
-            passive_scan_commands::enable_plugin,
-            passive_scan_commands::disable_plugin,
-            passive_scan_commands::batch_enable_plugins,
-            passive_scan_commands::batch_disable_plugins,
-            passive_scan_commands::list_plugins,
-            passive_scan_commands::download_ca_cert,
-            passive_scan_commands::get_ca_cert_path,
-            passive_scan_commands::trust_ca_cert,
-            passive_scan_commands::regenerate_ca_cert,
-            passive_scan_commands::get_ca_fingerprint,
-            passive_scan_commands::open_ca_cert_dir,
-            passive_scan_commands::export_ca_cert,
-            passive_scan_commands::export_ca_key,
-            passive_scan_commands::export_ca_pkcs12,
-            passive_scan_commands::import_ca_pkcs12,
-            passive_scan_commands::import_ca_der,
-            passive_scan_commands::get_finding,
-            passive_scan_commands::update_finding_status,
-            passive_scan_commands::export_findings_html,
-            passive_scan_commands::list_proxy_requests,
-            passive_scan_commands::get_proxy_request,
-            passive_scan_commands::clear_proxy_requests,
-            passive_scan_commands::count_proxy_requests,
-            passive_scan_commands::create_plugin_in_db,
-            passive_scan_commands::update_plugin,
-            passive_scan_commands::get_plugin_code,
-            passive_scan_commands::get_plugin_by_id,
-            passive_scan_commands::test_plugin,
-            passive_scan_commands::delete_plugin,
-            passive_scan_commands::delete_passive_vulnerability,
-            passive_scan_commands::delete_passive_vulnerabilities_batch,
-            passive_scan_commands::delete_all_passive_vulnerabilities,
-            passive_scan_commands::test_plugin_advanced,
-            passive_scan_commands::test_agent_plugin,
-            passive_scan_commands::get_plugin_input_schema,
-            passive_scan_commands::start_proxy_listener,
-            passive_scan_commands::stop_proxy_listener,
-            passive_scan_commands::save_proxy_config,
-            passive_scan_commands::get_proxy_config,
-            passive_scan_commands::set_proxy_auto_start,
-            passive_scan_commands::get_proxy_auto_start,
-            passive_scan_commands::set_intercept_enabled,
-            passive_scan_commands::get_intercept_enabled,
-            passive_scan_commands::get_intercepted_requests,
-            passive_scan_commands::forward_intercepted_request,
-            passive_scan_commands::drop_intercepted_request,
-            passive_scan_commands::set_response_intercept_enabled,
-            passive_scan_commands::get_response_intercept_enabled,
-            passive_scan_commands::get_intercepted_responses,
-            passive_scan_commands::forward_intercepted_response,
-            passive_scan_commands::drop_intercepted_response,
-            passive_scan_commands::replay_request,
-            passive_scan_commands::replay_raw_request,
-            passive_scan_commands::list_websocket_connections,
-            passive_scan_commands::list_websocket_messages,
-            passive_scan_commands::clear_websocket_history,
-            passive_scan_commands::get_history_stats,
-            passive_scan_commands::clear_all_history,
-            passive_scan_commands::set_websocket_intercept_enabled,
-            passive_scan_commands::get_websocket_intercept_enabled,
-            passive_scan_commands::forward_intercepted_websocket,
-            passive_scan_commands::drop_intercepted_websocket,
-            passive_scan_commands::add_intercept_filter_rule,
-            passive_scan_commands::get_intercept_filter_rules,
-            passive_scan_commands::remove_intercept_filter_rule,
-            passive_scan_commands::update_intercept_filter_rule,
-            passive_scan_commands::update_runtime_filter_rules,
+            // Traffic scan commands
+            traffic_analysis_commands::start_traffic_analysis,
+            traffic_analysis_commands::stop_traffic_analysis,
+            traffic_analysis_commands::get_proxy_status,
+            traffic_analysis_commands::reload_plugin_in_pipeline,
+            traffic_analysis_commands::list_findings,
+            traffic_analysis_commands::count_findings,
+            traffic_analysis_commands::enable_plugin,
+            traffic_analysis_commands::disable_plugin,
+            traffic_analysis_commands::batch_enable_plugins,
+            traffic_analysis_commands::batch_disable_plugins,
+            traffic_analysis_commands::list_plugins,
+            traffic_analysis_commands::download_ca_cert,
+            traffic_analysis_commands::get_ca_cert_path,
+            traffic_analysis_commands::trust_ca_cert,
+            traffic_analysis_commands::regenerate_ca_cert,
+            traffic_analysis_commands::get_ca_fingerprint,
+            traffic_analysis_commands::open_ca_cert_dir,
+            traffic_analysis_commands::export_ca_cert,
+            traffic_analysis_commands::export_ca_key,
+            traffic_analysis_commands::export_ca_pkcs12,
+            traffic_analysis_commands::import_ca_pkcs12,
+            traffic_analysis_commands::import_ca_der,
+            traffic_analysis_commands::get_finding,
+            traffic_analysis_commands::update_finding_status,
+            traffic_analysis_commands::export_findings_html,
+            traffic_analysis_commands::list_proxy_requests,
+            traffic_analysis_commands::get_proxy_request,
+            traffic_analysis_commands::clear_proxy_requests,
+            traffic_analysis_commands::count_proxy_requests,
+            traffic_analysis_commands::create_plugin_in_db,
+            traffic_analysis_commands::update_plugin,
+            traffic_analysis_commands::get_plugin_code,
+            traffic_analysis_commands::get_plugin_by_id,
+            traffic_analysis_commands::test_plugin,
+            traffic_analysis_commands::delete_plugin,
+            traffic_analysis_commands::delete_traffic_vulnerability,
+            traffic_analysis_commands::delete_traffic_vulnerabilities_batch,
+            traffic_analysis_commands::delete_all_traffic_vulnerabilities,
+            traffic_analysis_commands::test_plugin_advanced,
+            traffic_analysis_commands::test_agent_plugin,
+            traffic_analysis_commands::get_plugin_input_schema,
+            traffic_analysis_commands::start_proxy_listener,
+            traffic_analysis_commands::stop_proxy_listener,
+            traffic_analysis_commands::save_proxy_config,
+            traffic_analysis_commands::get_proxy_config,
+            traffic_analysis_commands::set_proxy_auto_start,
+            traffic_analysis_commands::get_proxy_auto_start,
+            traffic_analysis_commands::set_intercept_enabled,
+            traffic_analysis_commands::get_intercept_enabled,
+            traffic_analysis_commands::get_intercepted_requests,
+            traffic_analysis_commands::forward_intercepted_request,
+            traffic_analysis_commands::drop_intercepted_request,
+            traffic_analysis_commands::set_response_intercept_enabled,
+            traffic_analysis_commands::get_response_intercept_enabled,
+            traffic_analysis_commands::get_intercepted_responses,
+            traffic_analysis_commands::forward_intercepted_response,
+            traffic_analysis_commands::drop_intercepted_response,
+            traffic_analysis_commands::replay_request,
+            traffic_analysis_commands::replay_raw_request,
+            traffic_analysis_commands::list_websocket_connections,
+            traffic_analysis_commands::list_websocket_messages,
+            traffic_analysis_commands::clear_websocket_history,
+            traffic_analysis_commands::get_history_stats,
+            traffic_analysis_commands::clear_all_history,
+            traffic_analysis_commands::set_websocket_intercept_enabled,
+            traffic_analysis_commands::get_websocket_intercept_enabled,
+            traffic_analysis_commands::forward_intercepted_websocket,
+            traffic_analysis_commands::drop_intercepted_websocket,
+            traffic_analysis_commands::add_intercept_filter_rule,
+            traffic_analysis_commands::get_intercept_filter_rules,
+            traffic_analysis_commands::remove_intercept_filter_rule,
+            traffic_analysis_commands::update_intercept_filter_rule,
+            traffic_analysis_commands::update_runtime_filter_rules,
             // Plugin store commands
-            passive_scan_commands::fetch_store_plugins,
-            passive_scan_commands::fetch_plugin_code,
-            passive_scan_commands::install_store_plugin,
+            traffic_analysis_commands::fetch_store_plugins,
+            traffic_analysis_commands::fetch_plugin_code,
+            traffic_analysis_commands::install_store_plugin,
             // Proxifier commands
             proxifier_commands::get_proxifier_config,
             proxifier_commands::start_proxifier,
@@ -850,12 +813,12 @@ pub fn run() {
 }
 
 async fn toggle_proxy(app: &tauri::AppHandle) {
-    if let Some(state) = app.try_state::<PassiveScanState>() {
+    if let Some(state) = app.try_state::<TrafficAnalysisState>() {
         let is_running_arc = state.get_is_running();
         let is_running = *is_running_arc.read().await;
 
         if is_running {
-            match passive_scan_commands::stop_passive_scan_internal(app, &state).await {
+            match traffic_analysis_commands::stop_traffic_analysis_internal(app, &state).await {
                 Ok(_) => {
                     tracing::info!("Proxy stopped from tray menu");
                     update_proxy_menu_text(app, false);
@@ -863,7 +826,7 @@ async fn toggle_proxy(app: &tauri::AppHandle) {
                 Err(e) => tracing::error!("Failed to stop proxy: {}", e),
             }
         } else {
-            match passive_scan_commands::start_passive_scan_internal(app, &state, None).await {
+            match traffic_analysis_commands::start_traffic_analysis_internal(app, &state, None).await {
                 Ok(port) => {
                     tracing::info!("Proxy started from tray menu on port {}", port);
                     update_proxy_menu_text(app, true);
@@ -888,11 +851,11 @@ fn update_proxy_menu_text(app: &tauri::AppHandle, is_running: bool) {
 async fn cleanup_and_exit(app: &tauri::AppHandle) {
     let _ = app.save_window_state(StateFlags::all());
 
-    if let Some(state) = app.try_state::<PassiveScanState>() {
+    if let Some(state) = app.try_state::<TrafficAnalysisState>() {
         let is_running_arc = state.get_is_running();
         let is_running = *is_running_arc.read().await;
         if is_running {
-            let _ = passive_scan_commands::stop_passive_scan_internal(app, &state).await;
+            let _ = traffic_analysis_commands::stop_traffic_analysis_internal(app, &state).await;
         }
     }
 
@@ -941,12 +904,12 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
 /// Auto-start proxy listener if enabled in configuration
 async fn auto_start_proxy_if_enabled(
     app: &tauri::AppHandle,
-    passive_state: &PassiveScanState,
+    traffic_state: &TrafficAnalysisState,
 ) -> anyhow::Result<()> {
     tracing::info!("Checking if proxy auto-start is enabled...");
 
     // Get database service
-    let db_service = passive_state.get_db_service().await
+    let db_service = traffic_state.get_db_service().await
         .map_err(|e| anyhow::anyhow!("Failed to get database service: {}", e))?;
 
     // Load proxy auto-start configuration
@@ -961,7 +924,7 @@ async fn auto_start_proxy_if_enabled(
     }
 
     // Check if proxy is already running using public method
-    let is_running_arc = passive_state.get_is_running();
+    let is_running_arc = traffic_state.get_is_running();
     let is_running = *is_running_arc.read().await;
     if is_running {
         tracing::info!("Proxy is already running, skipping auto-start");
@@ -971,7 +934,7 @@ async fn auto_start_proxy_if_enabled(
     // Load proxy configuration from database
     let config = match db_service.load_config("proxy_config").await {
         Ok(Some(config_json)) => {
-            match serde_json::from_str::<sentinel_passive::ProxyConfig>(&config_json) {
+            match serde_json::from_str::<sentinel_traffic::ProxyConfig>(&config_json) {
                 Ok(config) => {
                     tracing::info!("Loaded proxy configuration for auto-start: port {}", config.start_port);
                     Some(config)
@@ -993,7 +956,7 @@ async fn auto_start_proxy_if_enabled(
     };
 
     // Start the proxy listener
-    match passive_scan_commands::start_passive_scan_internal(app, passive_state, config).await {
+    match traffic_analysis_commands::start_traffic_analysis_internal(app, traffic_state, config).await {
         Ok(port) => {
             tracing::info!("✅ Proxy listener auto-started successfully on port {}", port);
             update_proxy_menu_text(app, true);

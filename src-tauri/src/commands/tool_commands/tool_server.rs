@@ -1,6 +1,7 @@
 //! ToolServer management commands
 
 use std::sync::Arc;
+use sentinel_db::Database;
 
 use sentinel_tools::get_tool_server;
 
@@ -155,7 +156,7 @@ pub async fn register_workflow_tools(
 
     // Load workflows marked as tools
     let workflows = db
-        .list_workflow_definitions(Some(false))
+        .list_workflow_definitions(false)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -163,20 +164,20 @@ pub async fn register_workflow_tools(
     for workflow in workflows {
         let is_tool = workflow
             .get("is_tool")
-            .and_then(|v| v.as_bool())
+            .and_then(|v: &serde_json::Value| v.as_bool())
             .unwrap_or(false);
         if !is_tool {
             continue;
         }
 
-        let id = workflow.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let id = workflow.get("id").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("");
         let name = workflow
             .get("name")
-            .and_then(|v| v.as_str())
+            .and_then(|v: &serde_json::Value| v.as_str())
             .unwrap_or("Unknown");
         let description = workflow
             .get("description")
-            .and_then(|v| v.as_str())
+            .and_then(|v: &serde_json::Value| v.as_str())
             .unwrap_or("Workflow tool");
 
         if id.is_empty() {

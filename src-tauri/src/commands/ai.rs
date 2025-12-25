@@ -1,9 +1,9 @@
-use crate::commands::passive_scan_commands::PassiveScanState;
+use sentinel_db::Database;
+use crate::commands::traffic_analysis_commands::TrafficAnalysisState;
 use crate::commands::tool_commands;
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
-use crate::services::database::{Database, DatabaseService};
-use crate::services::prompt_db::PromptRepository;
+use crate::services::database::DatabaseService;
 use crate::services::SchedulerStage;
 use sentinel_core::global_proxy::create_client_with_proxy;
 use crate::utils::ordered_message::ChunkType;
@@ -152,6 +152,10 @@ async fn stream_chat_with_llm(
     let conv_id = conversation_id.to_string();
     let app = app_handle.clone();
 
+    // 记录用量
+    let usage_data = Arc::new(std::sync::Mutex::new(None::<(u32, u32)>));
+    let usage_data_clone = usage_data.clone();
+
     let content = streaming_client
         .stream_chat(
             system_prompt,
@@ -194,6 +198,12 @@ async fn stream_chat_with_llm(
                             None,
                             None,
                         );
+                    }
+                    StreamContent::Usage { input_tokens, output_tokens } => {
+                        tracing::info!("Stream usage received: input={}, output={}", input_tokens, output_tokens);
+                        if let Ok(mut guard) = usage_data_clone.lock() {
+                            *guard = Some((input_tokens, output_tokens));
+                        }
                     }
                     StreamContent::ToolCallStart { id, name } => {
                         tracing::info!("Tool call started: id={}, name={}", id, name);
@@ -277,13 +287,20 @@ async fn stream_chat_with_llm(
     // 保存助手消息
     if has_conversation && !content.is_empty() {
         use sentinel_core::models::database as core_db;
+        
+        let (input_tokens, output_tokens) = if let Ok(guard) = usage_data.lock() {
+            guard.unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+
         let msg = core_db::AiMessage {
             id: message_id.to_string(),
             conversation_id: conversation_id.to_string(),
             role: "assistant".to_string(),
             content: content.clone(),
             metadata: None,
-            token_count: Some(content.len() as i32),
+            token_count: Some(output_tokens as i32),
             cost: None,
             tool_calls: None,
             attachments: None,
@@ -295,6 +312,15 @@ async fn stream_chat_with_llm(
         if let Err(e) = db.upsert_ai_message_append(&msg).await {
             tracing::warn!("Failed to save assistant message: {}", e);
         } else {
+            // 更新用量统计
+            if input_tokens > 0 || output_tokens > 0 {
+                let provider = &service.config.provider;
+                let model = &service.config.model;
+                if let Err(e) = db.update_ai_usage(provider, model, input_tokens as i32, output_tokens as i32, 0.0).await {
+                    tracing::warn!("Failed to update AI usage stats: {}", e);
+                }
+            }
+
             // 发送助手消息保存成功事件到前端
             let _ = app_handle.emit(
                 "agent:assistant_message_saved",
@@ -730,45 +756,47 @@ pub struct ProviderUsageStats {
 /// 聚合全局 AI 用量统计（按 provider 分组）
 #[tauri::command]
 pub async fn get_ai_usage_stats(
-    db: State<'_, Arc<DatabaseService>>,
+    db: tauri::State<'_, Arc<DatabaseService>>,
 ) -> Result<std::collections::HashMap<String, ProviderUsageStats>, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?;
-    let rows = sqlx::query(
-        r#"
-        SELECT 
-            c.model_provider as provider,
-            SUM(COALESCE(m.token_count, 0)) as total_tokens,
-            SUM(CASE WHEN m.role = 'user' THEN COALESCE(m.token_count, 0) ELSE 0 END) as input_tokens,
-            SUM(CASE WHEN m.role = 'assistant' THEN COALESCE(m.token_count, 0) ELSE 0 END) as output_tokens,
-            SUM(COALESCE(CAST(m.cost AS REAL), 0.0)) as cost
-        FROM ai_messages m
-        JOIN ai_conversations c ON m.conversation_id = c.id
-        GROUP BY c.model_provider
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("Failed to query usage stats: {}", e))?;
+    let aggregated = db.get_aggregated_ai_usage()
+        .await
+        .map_err(|e| format!("Failed to get aggregated usage stats: {}", e))?;
 
     let mut map = std::collections::HashMap::new();
-    for row in rows {
-        let provider: String = row.get::<String, _>("provider");
-        let total_tokens: i64 = row.get::<i64, _>("total_tokens");
-        let input_tokens: i64 = row.get::<i64, _>("input_tokens");
-        let output_tokens: i64 = row.get::<i64, _>("output_tokens");
-        let cost: f64 = row.get::<f64, _>("cost");
+    for (provider, stats) in aggregated {
         map.insert(
             provider,
             ProviderUsageStats {
-                input_tokens: input_tokens.max(0) as f64,
-                output_tokens: output_tokens.max(0) as f64,
-                total_tokens: total_tokens.max(0) as f64,
-                cost,
+                input_tokens: stats.input_tokens as f64,
+                output_tokens: stats.output_tokens as f64,
+                total_tokens: stats.total_tokens as f64,
+                cost: stats.cost,
             },
         );
     }
 
     Ok(map)
+}
+
+#[tauri::command]
+pub async fn get_detailed_ai_usage_stats(
+    db: tauri::State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<sentinel_core::models::database::AiUsageStats>, String> {
+    db.get_ai_usage_stats()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn clear_ai_usage_stats(
+    db: tauri::State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
+    let pool = db.get_pool().map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM ai_usage_stats")
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // 添加AI服务
@@ -946,9 +974,9 @@ pub async fn delete_ai_message(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     db_service
-        .delete_message(&message_id)
+        .delete_ai_message(&message_id)
         .await
-        .map_err(|e| format!("Failed to delete AI message {}: {}", message_id, e))
+        .map_err(|e: anyhow::Error| format!("Failed to delete AI message {}: {}", message_id, e))
 }
 
 // 获取会话的所有消息
@@ -975,9 +1003,9 @@ pub async fn clear_conversation_messages(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     db_service
-        .delete_messages_by_conversation(&conversation_id)
+        .delete_ai_messages_by_conversation(&conversation_id)
         .await
-        .map_err(|e| {
+        .map_err(|e: anyhow::Error| {
             format!(
                 "Failed to clear messages for conversation {}: {}",
                 conversation_id, e
@@ -2091,7 +2119,7 @@ pub async fn get_ai_config(
 pub async fn generate_workflow_from_nl(
     description: String,
     ai_manager: State<'_, Arc<AiServiceManager>>,
-    passive_state: State<'_, PassiveScanState>,
+    traffic_state: State<'_, TrafficAnalysisState>,
 ) -> Result<WorkflowGraph, String> {
     let desc = description.trim();
     if desc.is_empty() {
@@ -2131,7 +2159,7 @@ pub async fn generate_workflow_from_nl(
         Err(_) => "".to_string(),
     };
 
-    let catalog_summary = match tool_commands::build_node_catalog(passive_state.inner()).await {
+    let catalog_summary = match tool_commands::build_node_catalog(traffic_state.inner()).await {
         Ok(catalog) => {
             let mut lines = Vec::new();
             for item in catalog.into_iter().take(80) {
@@ -3008,26 +3036,21 @@ pub async fn agent_execute(
         // 解析系统提示
         // 只有当 system_prompt 是 None 时才自动加载默认模板
         // 如果是 Some("")（空字符串），说明用户明确不想使用系统提示
-        if base_system_prompt.is_none() {
             if let Some(db) =
                 app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
             {
-                if let Ok(pool) = db.get_pool() {
-                    let repo = PromptRepository::new(pool.clone());
-                    let resolver = PromptResolver::new(repo);
-                    let cfg = AgentPromptConfig::default();
-                    match resolver
-                        .resolve_prompt(&cfg, CanonicalStage::System, None)
-                        .await
-                    {
-                        Ok(content) if !content.trim().is_empty() => {
-                            base_system_prompt = Some(content);
-                        }
-                        _ => {}
+                let resolver = PromptResolver::new(db.inner().clone());
+                let cfg = AgentPromptConfig::default();
+                match resolver
+                    .resolve_prompt(&cfg, CanonicalStage::System, None)
+                    .await
+                {
+                    Ok(content) if !content.trim().is_empty() => {
+                        base_system_prompt = Some(content);
                     }
+                    _ => {}
                 }
             }
-        }
 
         // 合并角色提示和系统提示
         if !role_prompt.is_empty() {

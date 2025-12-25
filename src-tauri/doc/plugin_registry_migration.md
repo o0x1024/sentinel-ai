@@ -2,13 +2,13 @@
 
 ## 概述
 
-将插件系统从被动扫描中独立出来，创建统一的插件注册表 `plugin_registry`，支持多种插件类型。
+将插件系统从流量分析中独立出来，创建统一的插件注册表 `plugin_registry`，支持多种插件类型。
 
 ## 数据库结构变更
 
-### 旧结构 (passive_plugin_registry)
+### 旧结构 (traffic_plugin_registry)
 ```sql
-CREATE TABLE passive_plugin_registry (
+CREATE TABLE traffic_plugin_registry (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     category TEXT NOT NULL,  -- 单层分类: agents/vulnerability/injection/xss
@@ -21,7 +21,7 @@ CREATE TABLE passive_plugin_registry (
 CREATE TABLE plugin_registry (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    main_category TEXT NOT NULL,  -- 主分类: passive/agent
+    main_category TEXT NOT NULL,  -- 主分类: traffic/agent
     category TEXT NOT NULL,        -- 子分类: vulnerability/injection/xss/scanner/analyzer/reporter
     ...
 );
@@ -33,9 +33,9 @@ CREATE TABLE plugin_registry (
 
 | 前端主分类 | 前端子分类 | 后端 main_category | 后端 category | 说明 |
 |-----------|-----------|-------------------|--------------|------|
-| 被动扫描 | 漏洞检测 | passive | vulnerability | 被动扫描插件 |
-| 被动扫描 | 注入检测 | passive | injection | 被动扫描插件 |
-| 被动扫描 | 跨站脚本 | passive | xss | 被动扫描插件 |
+| 流量分析 | 漏洞检测 | traffic | vulnerability | 流量分析插件 |
+| 流量分析 | 注入检测 | traffic | injection | 流量分析插件 |
+| 流量分析 | 跨站脚本 | traffic | xss | 流量分析插件 |
 | Agent插件 | 扫描器 | agent | scanner | Agent工具插件 |
 | Agent插件 | 分析器 | agent | analyzer | Agent工具插件 |
 | Agent插件 | 报告生成 | agent | reporter | Agent工具插件 |
@@ -45,19 +45,19 @@ CREATE TABLE plugin_registry (
 | 旧 category | 新 main_category | 新 category | 说明 |
 |------------|-----------------|------------|------|
 | agents | agent | scanner | Agent插件默认为扫描器 |
-| passiveScan | passive | vulnerability | 被动扫描默认为漏洞检测 |
-| vulnerability | passive | vulnerability | 保持不变 |
-| injection | passive | injection | 保持不变 |
-| xss | passive | xss | 保持不变 |
-| custom | passive | custom | 保持不变 |
+| trafficScan | traffic | vulnerability | 流量分析默认为漏洞检测 |
+| vulnerability | traffic | vulnerability | 保持不变 |
+| injection | traffic | injection | 保持不变 |
+| xss | traffic | xss | 保持不变 |
+| custom | traffic | custom | 保持不变 |
 
 ## 向后兼容性
 
 ### 视图映射
-创建了 `passive_plugin_registry` 视图指向 `plugin_registry` 表：
+创建了 `traffic_plugin_registry` 视图指向 `plugin_registry` 表：
 
 ```sql
-CREATE VIEW passive_plugin_registry AS
+CREATE VIEW traffic_plugin_registry AS
 SELECT 
     id, name, version, author,
     CASE 
@@ -79,9 +79,9 @@ FROM plugin_registry;
 ✅ 所有现有的 SQL 查询继续工作，无需修改：
 ```rust
 // 这些查询会自动工作
-sqlx::query("SELECT * FROM passive_plugin_registry WHERE id = ?")
-sqlx::query("INSERT INTO passive_plugin_registry (...) VALUES (...)")
-sqlx::query("UPDATE passive_plugin_registry SET enabled = ? WHERE id = ?")
+sqlx::query("SELECT * FROM traffic_plugin_registry WHERE id = ?")
+sqlx::query("INSERT INTO traffic_plugin_registry (...) VALUES (...)")
+sqlx::query("UPDATE traffic_plugin_registry SET enabled = ? WHERE id = ?")
 ```
 
 ## Agent插件工具注册
@@ -106,7 +106,7 @@ for plugin in plugins {
 运行应用时自动执行 `20251111_independent_plugin_registry.sql`：
 
 1. 创建 `plugin_registry` 表
-2. 从 `passive_plugin_registry` 迁移数据
+2. 从 `traffic_plugin_registry` 迁移数据
 3. 删除旧表，创建同名视图
 4. 创建 INSTEAD OF 触发器
 
@@ -116,17 +116,17 @@ for plugin in plugins {
 SELECT * FROM plugin_registry LIMIT 5;
 
 -- 查看视图数据（应该和旧表一致）
-SELECT * FROM passive_plugin_registry LIMIT 5;
+SELECT * FROM traffic_plugin_registry LIMIT 5;
 
 -- 检查Agent插件
 SELECT id, name, main_category, category 
 FROM plugin_registry 
 WHERE main_category = 'agent';
 
--- 检查被动扫描插件
+-- 检查流量分析插件
 SELECT id, name, main_category, category 
 FROM plugin_registry 
-WHERE main_category = 'passive';
+WHERE main_category = 'traffic';
 ```
 
 ## 前端变更
@@ -140,14 +140,14 @@ WHERE main_category = 'passive';
 ### 映射函数
 ```typescript
 // 推断主分类
-function inferMainCategory(category: string): 'passive' | 'agent' {
-  return category === 'agents' ? 'agent' : 'passive'
+function inferMainCategory(category: string): 'traffic' | 'agent' {
+  return category === 'agents' ? 'agent' : 'traffic'
 }
 
 // 转换子分类
 function convertToSubCategory(category: string): string {
   if (category === 'agents') return 'scanner'
-  if (category === 'passiveScan') return 'vulnerability'
+  if (category === 'trafficScan') return 'vulnerability'
   return category
 }
 
@@ -157,18 +157,18 @@ const backendCategory = mainCategory === 'agent' ? 'agents' : category
 
 ## 测试清单
 
-- [ ] 创建新的被动扫描插件
+- [ ] 创建新的流量分析插件
 - [ ] 创建新的Agent插件
 - [ ] 编辑现有插件
 - [ ] 启用/禁用插件
 - [ ] 删除插件
 - [ ] 验证Agent工具注册
-- [ ] 验证被动扫描功能
+- [ ] 验证流量分析功能
 - [ ] 验证数据迁移正确性
 
 ## 注意事项
 
-1. **主分类是必需的**: 所有插件必须有 `main_category`（默认为 'passive'）
+1. **主分类是必需的**: 所有插件必须有 `main_category`（默认为 'traffic'）
 2. **视图限制**: 通过视图修改数据时，触发器会自动处理分类转换
 3. **索引优化**: 新增了 `(main_category, category)` 联合索引
 4. **Agent工具识别**: 基于视图返回的 `category = 'agents'` 进行识别
@@ -180,13 +180,13 @@ const backendCategory = mainCategory === 'agent' ? 'agents' : category
 
 ```sql
 -- 1. 删除视图和触发器
-DROP VIEW IF EXISTS passive_plugin_registry;
-DROP TRIGGER IF EXISTS passive_plugin_registry_insert;
-DROP TRIGGER IF EXISTS passive_plugin_registry_update;
-DROP TRIGGER IF EXISTS passive_plugin_registry_delete;
+DROP VIEW IF EXISTS traffic_plugin_registry;
+DROP TRIGGER IF EXISTS traffic_plugin_registry_insert;
+DROP TRIGGER IF EXISTS traffic_plugin_registry_update;
+DROP TRIGGER IF EXISTS traffic_plugin_registry_delete;
 
 -- 2. 从 plugin_registry 重建旧表
-CREATE TABLE passive_plugin_registry AS
+CREATE TABLE traffic_plugin_registry AS
 SELECT 
     id, name, version, author,
     CASE 

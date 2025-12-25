@@ -167,6 +167,7 @@ pub struct ToolRouter {
     workflow_tools: Vec<ToolMetadata>,
     mcp_tools: Vec<ToolMetadata>,
     plugin_tools: Vec<ToolMetadata>,
+    db_service: Option<Arc<sentinel_db::DatabaseService>>,
 }
 
 impl ToolRouter {
@@ -177,6 +178,7 @@ impl ToolRouter {
             workflow_tools: Vec::new(),
             mcp_tools: Vec::new(),
             plugin_tools: Vec::new(),
+            db_service: None,
         }
     }
 
@@ -185,6 +187,7 @@ impl ToolRouter {
         db_service: Option<&std::sync::Arc<sentinel_db::DatabaseService>>,
     ) -> Self {
         let mut router = Self::new();
+        router.db_service = db_service.cloned();
 
         // 加载工作流工具
         if let Some(db) = db_service {
@@ -542,21 +545,12 @@ impl ToolRouter {
         &self,
         db_service: &std::sync::Arc<sentinel_db::DatabaseService>,
     ) -> Result<Vec<ToolMetadata>> {
+        use sentinel_db::Database;
         let mut workflow_tools = Vec::new();
 
-        match db_service.list_workflow_definitions(Some(false)).await {
+        match db_service.list_workflow_definitions(true).await {
             Ok(workflows) => {
                 for workflow in workflows {
-                    // 只加载被标记为工具的工作流 (is_tool = true)
-                    let is_tool = workflow
-                        .get("is_tool")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-
-                    if !is_tool {
-                        continue;
-                    }
-
                     if let (Some(id), Some(name), description) = (
                         workflow.get("id").and_then(|v| v.as_str()),
                         workflow.get("name").and_then(|v| v.as_str()),
@@ -567,10 +561,7 @@ impl ToolRouter {
 
                         workflow_tools.push(ToolMetadata {
                             id: format!("workflow__{}", id),
-                            name: name.to_string(), // Workflow name usually doesn't have ::, but id does. name is safe?
-                            // Workflow name comes from DB. Could be anything.
-                            // But ID construction used ::.
-                            // Here name is just name.to_string().
+                            name: name.to_string(),
                             description: description.unwrap_or("Workflow tool").to_string(),
                             category: ToolCategory::Workflow,
                             tags,
@@ -783,6 +774,7 @@ impl ToolRouter {
         &self,
         db_service: &std::sync::Arc<sentinel_db::DatabaseService>,
     ) -> Result<Vec<ToolMetadata>> {
+        use sentinel_db::Database;
         let mut plugin_tools = Vec::new();
 
         // 查询所有已启用的 agent 类型插件
@@ -790,34 +782,18 @@ impl ToolRouter {
             Ok(plugins) => {
                 for plugin in plugins {
                     // 只加载已启用的 agent 类型插件
-                    let enabled = plugin
-                        .get("enabled")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let main_category = plugin
-                        .get("main_category")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let enabled = plugin.status == sentinel_plugins::PluginStatus::Enabled;
+                    let main_category = &plugin.metadata.main_category;
 
                     if enabled && main_category == "agent" {
-                        let id = plugin.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        let name = plugin
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown");
-                        let description = plugin
-                            .get("description")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Agent plugin tool");
+                        let id = &plugin.metadata.id;
+                        let name = &plugin.metadata.name;
+                        let description = plugin.metadata.description.as_deref().unwrap_or("Agent plugin tool");
 
                         // 从插件元数据中提取标签
                         let mut tags = vec!["plugin".to_string(), "agent".to_string()];
-                        if let Some(plugin_tags) = plugin.get("tags").and_then(|v| v.as_array()) {
-                            for tag in plugin_tags {
-                                if let Some(tag_str) = tag.as_str() {
-                                    tags.push(tag_str.to_string());
-                                }
-                            }
+                        for tag in &plugin.metadata.tags {
+                            tags.push(tag.clone());
                         }
 
                         let sanitized_id =
@@ -858,6 +834,7 @@ impl ToolRouter {
         db_service: Option<&std::sync::Arc<sentinel_db::DatabaseService>>,
     ) -> Self {
         let mut router = Self::new();
+        router.db_service = db_service.cloned();
 
         // 加载工作流工具
         if let Some(db) = db_service {
@@ -1081,16 +1058,16 @@ Return ONLY the tool names, one per line."#,
         config: &ToolConfig,
         llm_config: Option<&sentinel_llm::LlmConfig>,
         allowed_groups: &[String],
-        db_pool: Option<&sqlx::sqlite::SqlitePool>,
+        _db_pool: Option<&sqlx::sqlite::SqlitePool>,
     ) -> Result<ToolSelectionPlan> {
-        use sentinel_db::database::ability_group_dao::AbilityGroupDao;
+        use sentinel_db::Database;
         use sentinel_llm::{LlmClient, LlmConfig};
 
-        // Need DB pool for ability group queries
-        let pool = match db_pool {
-            Some(p) => p,
+        // Need DB service for ability group queries
+        let db = match &self.db_service {
+            Some(db) => db,
             None => {
-                tracing::warn!("Ability mode requires db_pool, falling back to Keyword");
+                tracing::warn!("Ability mode requires db_service, falling back to Keyword");
                 let tool_ids = self.select_by_keywords(task, config)?;
                 return Ok(ToolSelectionPlan {
                     tool_ids,
@@ -1102,9 +1079,9 @@ Return ONLY the tool names, one per line."#,
 
         // Phase 1: Load group summaries
         let groups = if allowed_groups.is_empty() {
-            AbilityGroupDao::list_summary(pool).await?
+            db.list_ability_groups_summary().await?
         } else {
-            AbilityGroupDao::list_summary_by_ids(pool, allowed_groups).await?
+            db.list_ability_groups_summary_by_ids(allowed_groups).await?
         };
 
         if groups.is_empty() {
@@ -1191,7 +1168,7 @@ Return ONLY the ability group name (one line, no explanation)."#,
         };
 
         // Load full group details
-        let full_group = match AbilityGroupDao::get(pool, &group_id).await? {
+        let full_group = match db.get_ability_group(&group_id).await? {
             Some(g) => g,
             None => {
                 tracing::warn!("Ability group {} not found, falling back to Keyword", group_id);

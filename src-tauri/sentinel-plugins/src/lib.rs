@@ -1,4 +1,4 @@
-//! Sentinel AI 被动扫描插件系统
+//! Sentinel AI 流量分析插件系统
 //!
 //! 此 crate 提供：
 //! - **插件引擎**: 基于 Deno Core 的 JS/TS 插件运行时

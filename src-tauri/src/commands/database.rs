@@ -1,6 +1,7 @@
 // 数据库管理命令模块
 
 use crate::services::database::DatabaseService;
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;

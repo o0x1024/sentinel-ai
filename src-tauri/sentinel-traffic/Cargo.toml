@@ -1,0 +1,117 @@
+[package]
+name = "sentinel-traffic"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# 内部依赖
+sentinel-core = { path = "../sentinel-core" }
+sentinel-tools = { path = "../sentinel-tools" }
+sentinel-plugins = { path = "../sentinel-plugins" }
+
+# HTTP 代理
+hudsucker = { version = "0.24.0", features = ["http2"] }
+hyper = { version = "1.0", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "logging",
+    "tls12",
+    "ring",
+] }
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "logging",
+    "tls12",
+    "ring",
+] }
+tower = { version = "0.4", features = ["util"] }
+http = "1.0"
+http-body = "1.0"
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = ["full"] }
+tokio-tungstenite = { version = "0.28" }
+hyper-rustls = { version = "0.27", default-features = false, features = [
+    "ring",
+    "http1",
+    "http2",
+    "tls12",
+    "native-tokio",
+] }
+headers = "0.4"
+mime = "0.3"
+
+# 压缩
+flate2 = "1.0"
+brotli = "6.0"
+
+# 序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Base64 编码（用于二进制数据）
+base64 = "0.22"
+
+# 数据库
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "sqlite",
+    "chrono",
+    "uuid",
+] }
+
+# 错误处理
+anyhow = "1.0"
+thiserror = "1.0"
+
+# 日志
+tracing = "0.1"
+log = "0.4"
+
+# Tauri (用于事件发送)
+tauri = "2"
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# 时间
+chrono = { version = "0.4", features = ["serde"] }
+time = "0.3"
+
+# 正则
+regex = "1"
+
+# 哈希
+sha2 = "0.10"
+hex = "0.4"
+
+# 目录
+dirs = "5.0"
+
+# 并发
+tokio-util = { version = "0.7", features = ["full"] }
+futures = "0.3"
+
+# URL 解析
+url = "2"
+
+# 网络抓包
+pnet = "0.35"
+pnet_datalink = "0.35"
+
+# 证书相关
+pem = "3"
+rcgen = "0.14"
+x509-parser = "0.15"
+openssl = "0.10"
+
+# PCAP 文件读写
+pcap-file = "2.0"
+
+# 随机数，用于序列号等
+rand = "0.8"
+
+# 高性能缓存
+moka = { version = "0.12", features = ["sync"] }
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.8"
+reqwest = { version = "0.12", features = ["json"] }

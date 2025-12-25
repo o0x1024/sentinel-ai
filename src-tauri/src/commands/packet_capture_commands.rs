@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 
-use sentinel_passive::{CapturedPacket, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps};
+use sentinel_traffic::{CapturedPacket, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps};
 
 /// Packet capture state
 pub struct PacketCaptureState {
@@ -164,7 +164,7 @@ pub struct ExtractedFileInfo {
 }
 
 /// Cached extracted files for download
-static EXTRACTED_FILES_CACHE: std::sync::LazyLock<tokio::sync::RwLock<Vec<sentinel_passive::ExtractedFile>>> = 
+static EXTRACTED_FILES_CACHE: std::sync::LazyLock<tokio::sync::RwLock<Vec<sentinel_traffic::ExtractedFile>>> = 
     std::sync::LazyLock::new(|| tokio::sync::RwLock::new(Vec::new()));
 
 #[tauri::command]

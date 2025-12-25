@@ -1,10 +1,11 @@
-use crate::models::scan_session::*;
-use crate::services::scan_session::ScanSessionService;
+use sentinel_db::core::models::scan_session::*;
+use crate::services::DatabaseService;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
+use sentinel_db::Database;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListSessionsRequest {
@@ -46,9 +47,9 @@ pub struct StagesResponse {
 #[tauri::command]
 pub async fn create_scan_session(
     request: CreateScanSessionRequest,
-    scan_session_service: State<'_, Arc<ScanSessionService>>,
+    db: State<'_, Arc<DatabaseService>>,
 ) -> Result<SessionResponse, String> {
-    match scan_session_service.create_session(request).await {
+    match db.inner().create_scan_session(request).await {
         Ok(session) => Ok(SessionResponse {
             success: true,
             data: Some(session),
@@ -66,11 +67,11 @@ pub async fn create_scan_session(
 #[tauri::command]
 pub async fn get_scan_session(
     session_id: String,
-    scan_session_service: State<'_, Arc<ScanSessionService>>,
+    db: State<'_, Arc<DatabaseService>>,
 ) -> Result<SessionResponse, String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| format!("无效的会话ID: {}", e))?;
 
-    match scan_session_service.get_session(uuid).await {
+    match db.inner().get_scan_session(uuid).await {
         Ok(session) => Ok(SessionResponse {
             success: true,
             data: session,
@@ -89,14 +90,14 @@ pub async fn get_scan_session(
 pub async fn update_scan_session(
     session_id: String,
     request: UpdateScanSessionRequest,
-    scan_session_service: State<'_, Arc<ScanSessionService>>,
+    db: State<'_, Arc<DatabaseService>>,
 ) -> Result<SessionResponse, String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| format!("无效的会话ID: {}", e))?;
 
-    match scan_session_service.update_session(uuid, request).await {
+    match db.inner().update_scan_session(uuid, request).await {
         Ok(_) => {
             // 获取更新后的会话
-            match scan_session_service.get_session(uuid).await {
+            match db.inner().get_scan_session(uuid).await {
                 Ok(session) => Ok(SessionResponse {
                     success: true,
                     data: session,
@@ -121,10 +122,10 @@ pub async fn update_scan_session(
 #[tauri::command]
 pub async fn list_scan_sessions(
     request: ListSessionsRequest,
-    scan_session_service: State<'_, Arc<ScanSessionService>>,
+    db: State<'_, Arc<DatabaseService>>,
 ) -> Result<SessionsListResponse, String> {
-    match scan_session_service
-        .list_sessions(request.limit, request.offset, request.status_filter)
+    match db.inner()
+        .list_scan_sessions(request.limit, request.offset, request.status_filter)
         .await
     {
         Ok(sessions) => {
@@ -149,11 +150,11 @@ pub async fn list_scan_sessions(
 #[tauri::command]
 pub async fn delete_scan_session(
     session_id: String,
-    scan_session_service: State<'_, Arc<ScanSessionService>>,
+    db: State<'_, Arc<DatabaseService>>,
 ) -> Result<SessionResponse, String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| format!("无效的会话ID: {}", e))?;
 
-    match scan_session_service.delete_session(uuid).await {
+    match db.inner().delete_scan_session(uuid).await {
         Ok(_) => Ok(SessionResponse {
             success: true,
             data: None,
@@ -171,11 +172,11 @@ pub async fn delete_scan_session(
 #[tauri::command]
 pub async fn get_scan_progress(
     session_id: String,
-    scan_session_service: State<'_, Arc<ScanSessionService>>,
+    db: State<'_, Arc<DatabaseService>>,
 ) -> Result<ProgressResponse, String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| format!("无效的会话ID: {}", e))?;
 
-    match scan_session_service.get_scan_progress(uuid).await {
+    match db.inner().get_scan_progress(uuid).await {
         Ok(progress) => Ok(ProgressResponse {
             success: true,
             data: progress,
@@ -193,11 +194,11 @@ pub async fn get_scan_progress(
 #[tauri::command]
 pub async fn get_session_stages(
     session_id: String,
-    scan_session_service: State<'_, Arc<ScanSessionService>>,
+    db: State<'_, Arc<DatabaseService>>,
 ) -> Result<StagesResponse, String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| format!("无效的会话ID: {}", e))?;
 
-    match scan_session_service.get_session_stages(uuid).await {
+    match db.inner().get_scan_session_stages(uuid).await {
         Ok(stages) => Ok(StagesResponse {
             success: true,
             data: stages,

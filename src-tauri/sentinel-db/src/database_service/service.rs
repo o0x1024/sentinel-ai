@@ -1,0 +1,217 @@
+use anyhow::Result;
+use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
+use std::path::PathBuf;
+use serde_json::Value;
+use crate::core::models::database::DatabaseStats;
+
+#[derive(Debug, Clone)]
+/// 数据库服务
+pub struct DatabaseService {
+    pub(crate) pool: Option<SqlitePool>,
+    pub(crate) db_path: PathBuf,
+}
+
+impl DatabaseService {
+    pub fn new() -> Self {
+        let db_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("sentinel-ai")
+            .join("database.db");
+
+        Self {
+            pool: None,
+            db_path,
+        }
+    }
+
+    pub fn get_pool(&self) -> Result<&SqlitePool> {
+        self.pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))
+    }
+
+    pub fn get_db(&self) -> Result<crate::client::DatabaseClient> {
+        let pool = self.get_pool()?.clone();
+        Ok(crate::client::DatabaseClient::new(pool))
+    }
+
+    pub fn get_db_path(&self) -> PathBuf {
+        self.db_path.clone()
+    }
+
+    /// 初始化数据库
+    pub async fn initialize(&mut self) -> Result<()> {
+        if let Some(parent) = self.db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let db_url = format!("sqlite:{}?mode=rwc", self.db_path.to_string_lossy());
+        let pool = SqlitePool::connect(&db_url).await?;
+        
+        self.create_database_schema(&pool).await?;
+        self.ensure_migrations(&pool).await?;
+        self.insert_default_data(&pool).await?;
+        
+        self.pool = Some(pool);
+        Ok(())
+    }
+
+    async fn ensure_migrations(&self, pool: &SqlitePool) -> Result<()> {
+        // 确保 workflow_definitions 表有 category 和 tags 字段
+        let rows = sqlx::query("PRAGMA table_info(workflow_definitions)")
+            .fetch_all(pool)
+            .await?;
+        
+        let mut has_category = false;
+        let mut has_tags = false;
+        let mut has_is_tool = false;
+
+        for row in rows {
+            let name: String = sqlx::Row::get(&row, "name");
+            if name == "category" { has_category = true; }
+            if name == "tags" { has_tags = true; }
+            if name == "is_tool" { has_is_tool = true; }
+        }
+
+        if !has_category {
+            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN category TEXT")
+                .execute(pool)
+                .await?;
+        }
+        if !has_tags {
+            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN tags TEXT")
+                .execute(pool)
+                .await?;
+        }
+        if !has_is_tool {
+            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN is_tool BOOLEAN DEFAULT 0")
+                .execute(pool)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// 执行自定义查询
+    pub async fn execute_query(&self, query: &str) -> Result<Vec<Value>> {
+        let pool = self.get_pool()?;
+
+        let rows = sqlx::query(query).fetch_all(pool).await?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let mut obj = serde_json::Map::new();
+
+            for (i, column) in row.columns().iter().enumerate() {
+                let column_name = column.name();
+                let type_name = column.type_info().name();
+                
+                let value: Value = match type_name {
+                    "TEXT" | "VARCHAR" | "CHAR" | "CLOB" => {
+                        let val: Option<String> = row.try_get(i)?;
+                        val.map(Value::String).unwrap_or(Value::Null)
+                    }
+                    "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" => {
+                        let val: Option<i64> = row.try_get(i)?;
+                        val.map(|v| Value::Number(v.into())).unwrap_or(Value::Null)
+                    }
+                    "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" | "DECIMAL" => {
+                        let val: Option<f64> = row.try_get(i)?;
+                        val.map(|v| {
+                            Value::Number(
+                                serde_json::Number::from_f64(v).unwrap_or_else(|| 0.into()),
+                            )
+                        })
+                        .unwrap_or(Value::Null)
+                    }
+                    "BOOLEAN" | "BOOL" => {
+                        let val: Option<bool> = row.try_get(i)?;
+                        val.map(Value::Bool).unwrap_or(Value::Null)
+                    }
+                    "NULL" => Value::Null,
+                    _ => {
+                        if let Ok(Some(val)) = row.try_get::<Option<i64>, _>(i) {
+                            Value::Number(val.into())
+                        } else if let Ok(Some(val)) = row.try_get::<Option<f64>, _>(i) {
+                            Value::Number(serde_json::Number::from_f64(val).unwrap_or_else(|| 0.into()))
+                        } else if let Ok(Some(val)) = row.try_get::<Option<String>, _>(i) {
+                            Value::String(val)
+                        } else if let Ok(Some(val)) = row.try_get::<Option<bool>, _>(i) {
+                            Value::Bool(val)
+                        } else {
+                            Value::Null
+                        }
+                    }
+                };
+                obj.insert(column_name.to_string(), value);
+            }
+
+            results.push(Value::Object(obj));
+        }
+
+        Ok(results)
+    }
+
+    /// 获取数据库统计信息
+    pub async fn get_stats_internal(&self) -> Result<DatabaseStats> {
+        let pool = self.get_pool()?;
+
+        let scan_tasks_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scan_tasks")
+            .fetch_one(pool)
+            .await?;
+
+        let vulnerabilities_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vulnerabilities")
+            .fetch_one(pool)
+            .await?;
+
+        let assets_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM assets")
+            .fetch_one(pool)
+            .await?;
+
+        let conversations_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ai_conversations")
+            .fetch_one(pool)
+            .await?;
+
+        let db_size = std::fs::metadata(&self.db_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        Ok(DatabaseStats {
+            scan_tasks_count: scan_tasks_count as f64,
+            vulnerabilities_count: vulnerabilities_count as f64,
+            assets_count: assets_count as f64,
+            conversations_count: conversations_count as f64,
+            db_size_bytes: db_size,
+            last_backup: None,
+        })
+    }
+
+    /// 备份数据库
+    pub async fn backup(&self, backup_path: Option<PathBuf>) -> Result<PathBuf> {
+        let backup_path = backup_path.unwrap_or_else(|| {
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            self.db_path
+                .parent()
+                .unwrap_or(&PathBuf::from("."))
+                .join(format!("backup_{}.db", timestamp))
+        });
+
+        std::fs::copy(&self.db_path, &backup_path)?;
+
+        tracing::info!("Database backup completed: {}", backup_path.display());
+        Ok(backup_path)
+    }
+
+    /// 恢复数据库
+    pub async fn restore(&self, backup_path: PathBuf) -> Result<()> {
+        std::fs::copy(&backup_path, &self.db_path)?;
+        tracing::info!("Database restoration completed: {}", backup_path.display());
+        Ok(())
+    }
+}
+
+impl Default for DatabaseService {
+    fn default() -> Self {
+        Self::new()
+    }
+}

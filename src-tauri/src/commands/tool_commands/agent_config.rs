@@ -1,6 +1,7 @@
 //! Agent configuration commands
 
 use std::sync::Arc;
+use sentinel_db::Database;
 
 use serde::{Deserialize, Serialize};
 

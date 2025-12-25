@@ -667,10 +667,16 @@
       <!-- AI使用统计 -->
       <div class="card bg-base-100 shadow-sm mt-6">
         <div class="card-body">
-          <h3 class="card-title">
-            <i class="fas fa-chart-bar"></i>
-            {{ t('settings.ai.usageStats') }}
-          </h3>
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="card-title">
+              <i class="fas fa-chart-bar"></i>
+              {{ t('settings.ai.usageStats') }}
+            </h3>
+            <button class="btn btn-ghost btn-xs text-error" @click="clearUsageStats">
+              <i class="fas fa-trash-alt mr-1"></i>
+              {{ t('settings.ai.clearStats', 'Clear Stats') }}
+            </button>
+          </div>
 
           <div class="overflow-x-auto">
             <table class="table table-compact w-full">
@@ -763,6 +769,7 @@ interface Emits {
   'setDefaultChatModel': [model: string]
   'setDefaultVisionModel': [model: string]
   'setDefaultVlmProvider': [provider: string]
+  'clearUsageStats': []
 }
 
 const emit = defineEmits<Emits>()
@@ -1121,6 +1128,10 @@ const testCustomProvider = () => {
 
 const addCustomProvider = () => {
   emit('addCustomProvider')
+}
+
+const clearUsageStats = () => {
+  emit('clearUsageStats')
 }
 
 const saveAiConfig = async () => {

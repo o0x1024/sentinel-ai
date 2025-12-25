@@ -6,7 +6,7 @@
 set -e
 
 CERT_PATH="$HOME/Library/Application Support/sentinel-ai/ca/root-ca.pem"
-CERT_NAME="Sentinel AI Passive Scan CA"
+CERT_NAME="Sentinel AI Traffic Analysis CA"
 
 echo "=== Sentinel AI 证书验证工具 ==="
 echo ""

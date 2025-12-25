@@ -35,13 +35,13 @@
           <div class="text-xs opacity-70 mt-1">{{ t('promptMgmt.applicationPrompts.description') }}</div>
           <div class="mt-2 flex flex-col gap-1">
             <button class="btn btn-xs btn-outline" @click="createPluginGenerationTemplate">
-              {{ t('promptMgmt.applicationPrompts.pluginGenPassive') }}
+              {{ t('promptMgmt.applicationPrompts.pluginGenTraffic') }}
             </button>
             <button class="btn btn-xs btn-outline" @click="createAgentPluginGenerationTemplate">
               {{ t('promptMgmt.applicationPrompts.pluginGenAgent') }}
             </button>
             <button class="btn btn-xs btn-outline" @click="createPluginFixTemplate">
-              {{ t('promptMgmt.applicationPrompts.pluginFixPassive') }}
+              {{ t('promptMgmt.applicationPrompts.pluginFixTraffic') }}
             </button>
             <button class="btn btn-xs btn-outline" @click="createAgentPluginFixTemplate">
               {{ t('promptMgmt.applicationPrompts.pluginFixAgent') }}
@@ -159,9 +159,9 @@
                   <option value="Replanner">{{ t('promptMgmt.templateTypes.replanner') }}</option>
                   <option value="Evaluator">{{ t('promptMgmt.templateTypes.evaluator') }}</option>
                   <option value="ReportGenerator">{{ t('promptMgmt.templateTypes.reportGenerator') }}</option>
-                  <option value="PluginGeneration">{{ t('promptMgmt.templateTypes.pluginGenPassive') }}</option>
+                  <option value="PluginGeneration">{{ t('promptMgmt.templateTypes.pluginGenTraffic') }}</option>
                   <option value="AgentPluginGeneration">{{ t('promptMgmt.templateTypes.pluginGenAgent') }}</option>
-                  <option value="PluginFix">{{ t('promptMgmt.templateTypes.pluginFixPassive') }}</option>
+                  <option value="PluginFix">{{ t('promptMgmt.templateTypes.pluginFixTraffic') }}</option>
                   <option value="AgentPluginFix">{{ t('promptMgmt.templateTypes.pluginFixAgent') }}</option>
                   <option value="PluginVulnSpecific">{{ t('promptMgmt.templateTypes.pluginVulnSpecific') }}</option>
                   <option value="VisionExplorerVision">{{ t('promptMgmt.templateTypes.visionExplorerVision') }}</option>
@@ -642,13 +642,13 @@ function createSystemPromptTemplate() {
   isDirty.value = false
 }
 
-// 创建插件生成模板(被动扫描)
+// 创建插件生成模板(流量分析)
 function createPluginGenerationTemplate() {
   const defaultContent = ``
 
   editingTemplate.value = {
-    name: `被动扫描插件生成模板-${Date.now()}`,
-    description: '用于生成被动扫描插件的AI提示模板',
+    name: `traffic analysis plugin generation template-${Date.now()}`,
+    description: 'AI prompt template for generating traffic analysis plugins',
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -668,8 +668,8 @@ function createAgentPluginGenerationTemplate() {
   const defaultContent = ``
 
   editingTemplate.value = {
-    name: `Agent插件生成模板-${Date.now()}`,
-    description: '用于生成Agent工具插件的AI提示模板',
+    name: `agent plugin generation template-${Date.now()}`,
+    description: 'AI prompt template for generating Agent tool plugins',
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -689,8 +689,8 @@ function createPluginFixTemplate() {
   const defaultContent = ``
 
   editingTemplate.value = {
-    name: `插件修复模板-${Date.now()}`,
-    description: '用于修复失败插件代码的AI提示模板',
+    name: `plugin fix template-${Date.now()}`,
+    description: 'AI prompt template for fixing failed plugin code',
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -721,8 +721,8 @@ You are an expert TypeScript developer. An Agent tool plugin failed execution. Y
 Please analyze the error and provide a fixed version of the plugin code.`
 
   editingTemplate.value = {
-    name: `Agent插件修复模板-${Date.now()}`,
-    description: '用于修复失败Agent工具插件代码的AI提示模板',
+    name: `agent plugin fix template-${Date.now()}`,
+    description: 'AI prompt template for fixing failed Agent tool plugin code',
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -742,8 +742,8 @@ function createVisionExplorerVisionTemplate() {
   const defaultContent = ``
 
   editingTemplate.value = {
-    name: `VisionExplorer多模态提示-${Date.now()}`,
-    description: 'VisionExplorer视觉探索引擎多模态模型专用提示，支持截图分析',
+    name: `vision explorer multimodal prompt-${Date.now()}`,
+    description: 'VisionExplorer multimodal model专用提示，支持截图分析',
     content: defaultContent,
     is_default: false,
     is_active: true,
@@ -763,8 +763,8 @@ function createVisionExplorerTextTemplate() {
   const defaultContent = ``
 
   editingTemplate.value = {
-    name: `VisionExplorer文本模型提示-${Date.now()}`,
-    description: 'VisionExplorer视觉探索引擎文本模型专用提示，基于元素列表分析',
+    name: `vision explorer text model prompt-${Date.now()}`,
+    description: 'VisionExplorer text model special prompt, based on element list analysis',
     content: defaultContent,
     is_default: false,
     is_active: true,

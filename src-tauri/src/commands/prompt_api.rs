@@ -1,5 +1,4 @@
 use crate::models::prompt::{PromptCategory, PromptTemplate, TemplateType};
-use crate::services::prompt_db::PromptRepository;
 use crate::services::DatabaseService;
 use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
 use anyhow::Result;
@@ -7,14 +6,13 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
+use sentinel_db::Database;
 
 #[tauri::command]
 pub async fn list_prompt_templates_api(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<PromptTemplate>, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.list_templates().await.map_err(|e| e.to_string())
+    db.inner().list_prompt_templates().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -22,9 +20,7 @@ pub async fn get_prompt_template_api(
     db: State<'_, Arc<DatabaseService>>,
     id: i64,
 ) -> Result<Option<PromptTemplate>, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.get_template(id).await.map_err(|e| e.to_string())
+    db.inner().get_prompt_template(id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -32,9 +28,7 @@ pub async fn create_prompt_template_api(
     db: State<'_, Arc<DatabaseService>>,
     template: PromptTemplate,
 ) -> Result<i64, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.create_template(&template)
+    db.inner().create_prompt_template(&template)
         .await
         .map_err(|e| e.to_string())
 }
@@ -45,16 +39,15 @@ pub async fn update_prompt_template_api(
     id: i64,
     template: PromptTemplate,
 ) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
+    let db_service = db.inner();
 
     // If activating this template, deactivate other templates of the same type
     if template.is_active && template.template_type.is_some() {
         let template_type = template.template_type.as_ref().unwrap();
 
         // Get all templates of the same type
-        let all_templates = repo
-            .list_templates_filtered(template.category.clone(), Some(template_type.clone()), None)
+        let all_templates = db_service
+            .list_prompt_templates_filtered(template.category.clone(), Some(template_type.clone()), None)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -66,14 +59,14 @@ pub async fn update_prompt_template_api(
             {
                 let mut deactivated = other_template.clone();
                 deactivated.is_active = false;
-                repo.update_template(other_template.id.unwrap(), &deactivated)
+                db_service.update_prompt_template(other_template.id.unwrap(), &deactivated)
                     .await
                     .map_err(|e| e.to_string())?;
             }
         }
     }
 
-    repo.update_template(id, &template)
+    db_service.update_prompt_template(id, &template)
         .await
         .map_err(|e| e.to_string())
 }
@@ -83,9 +76,7 @@ pub async fn delete_prompt_template_api(
     db: State<'_, Arc<DatabaseService>>,
     id: i64,
 ) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.delete_template(id).await.map_err(|e| e.to_string())
+    db.inner().delete_prompt_template(id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -95,9 +86,7 @@ pub async fn list_prompt_templates_filtered_api(
     template_type: Option<TemplateType>,
     is_system: Option<bool>,
 ) -> Result<Vec<PromptTemplate>, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.list_templates_filtered(category, template_type, is_system)
+    db.inner().list_prompt_templates_filtered(category, template_type, is_system)
         .await
         .map_err(|e| e.to_string())
 }
@@ -108,9 +97,7 @@ pub async fn duplicate_prompt_template_api(
     id: i64,
     new_name: Option<String>,
 ) -> Result<i64, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.duplicate_template(id, new_name)
+    db.inner().duplicate_prompt_template(id, new_name)
         .await
         .map_err(|e| e.to_string())
 }
@@ -121,9 +108,7 @@ pub async fn evaluate_prompt_api(
     template_id: i64,
     context: serde_json::Value,
 ) -> Result<String, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
-    repo.evaluate_prompt(template_id, context)
+    db.inner().evaluate_prompt(template_id, context)
         .await
         .map_err(|e| e.to_string())
 }
@@ -145,10 +130,9 @@ pub async fn preview_resolved_prompt_api(
     stage: String,
     agent_config: JsonValue,
 ) -> Result<String, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
+    let db_service = db.inner().clone();
 
-    let resolver = PromptResolver::new(repo);
+    let resolver = PromptResolver::new(db_service);
     let canonical =
         map_stage_to_canonical(&stage).ok_or_else(|| format!("Invalid stage: {}", stage))?;
 
@@ -171,21 +155,20 @@ pub async fn preview_resolved_prompt_api(
 #[tauri::command]
 pub async fn get_plugin_generation_prompt_api(
     db: State<'_, Arc<DatabaseService>>,
-    template_type: String, // "passive" or "agent"
+    template_type: String, // "traffic" or "agent"
 ) -> Result<String, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
+    let db_service = db.inner();
 
     // 根据类型获取对应的模板
     let t_type = match template_type.as_str() {
-        "passive" => TemplateType::PluginGeneration,
+        "traffic" => TemplateType::PluginGeneration,
         "agent" => TemplateType::AgentPluginGeneration,
         _ => return Err(format!("Unknown template type: {}", template_type)),
     };
 
     // 获取该类型的模板（只获取激活的模板）
-    let templates = repo
-        .list_templates_filtered(Some(PromptCategory::Application), Some(t_type), None)
+    let templates = db_service
+        .list_prompt_templates_filtered(Some(PromptCategory::Application), Some(t_type), None)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -198,13 +181,13 @@ pub async fn get_plugin_generation_prompt_api(
     Ok(template.content.clone())
 }
 
-const DEFAULT_PASSIVE_PLUGIN_PROMPT: &str = r#"# Passive Scan Plugin Generation Task
+const DEFAULT_TRAFFIC_PLUGIN_PROMPT: &str = r#"# Traffic Scan Plugin Generation Task
 
-You are a professional security researcher and TypeScript developer. Your task is to generate high-quality Passive Scan plugins for an AI-driven security testing system.
+You are a professional security researcher and TypeScript developer. Your task is to generate high-quality Traffic Scan plugins for an AI-driven security testing system.
 
 ## Task Overview
 
-Passive scan plugins should:
+Traffic scan plugins should:
 1. Be written in TypeScript.
 2. Analyze HTTP traffic (requests and responses) without modifying it.
 3. Detect specific vulnerabilities or collect information.
@@ -213,7 +196,7 @@ Passive scan plugins should:
 
 ## Key Principles
 
-**Passive Analysis**:
+**Traffic Analysis**:
 - NEVER send new requests or block traffic.
 - Analyze existing `HttpTransaction` data strictly.
 - Be stateless and performant (process thousands of requests/sec).
@@ -230,9 +213,9 @@ Passive scan plugins should:
 
 ---
 
-## Passive Plugin Interface (Required Structure)
+## Traffic Plugin Interface (Required Structure)
 
-The Passive Scan plugin you generate **MUST** include the following structure:
+The Traffic Scan plugin you generate **MUST** include the following structure:
 
 ### 1. Main Scan Function
 
@@ -314,10 +297,10 @@ globalThis.scan_transaction = scan_transaction;
 1. **MUST export `scan_transaction`**.
 2. **Handle `transaction.response` being potentially null**.
 3. **Use `Sentinel.emitFinding`** for reporting.
-4. **No network calls** (fetch, etc.) are allowed in passive plugins.
+4. **No network calls** (fetch, etc.) are allowed in traffic plugins.
 5. **MUST include the `globalThis` export at the end** - Without this, the plugin will fail with "Function not found" error.
 
-Now generate the Passive Scan Plugin.
+Now generate the Traffic Scan Plugin.
 "#;
 
 const DEFAULT_AGENT_PLUGIN_PROMPT: &str = r#"# Agent Tool Plugin Generation Task
@@ -651,12 +634,11 @@ Now generate the Agent Tool Plugin.
 #[tauri::command]
 pub async fn get_combined_plugin_prompt_api(
     db: State<'_, Arc<DatabaseService>>,
-    plugin_type: String, // "passive" or "agent"
+    plugin_type: String, // "traffic" or "agent"
     vuln_type: String,
     severity: String,
 ) -> Result<String, String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?.clone();
-    let repo = PromptRepository::new(pool);
+    let db_service = db.inner();
 
     println!("plugin_type: {}", plugin_type);
     println!("vuln_type: {}", vuln_type);
@@ -664,14 +646,14 @@ pub async fn get_combined_plugin_prompt_api(
 
     // 根据插件类型选择对应的模板类型（合并后的完整模板）
     let template_type = match plugin_type.as_str() {
-        "passive" => TemplateType::PluginGeneration,
+        "traffic" => TemplateType::PluginGeneration,
         "agent" => TemplateType::AgentPluginGeneration,
         _ => TemplateType::PluginGeneration,
     };
 
     // 获取合并后的完整模板
-    let templates = repo
-        .list_templates_filtered(Some(PromptCategory::Application), Some(template_type), None)
+    let templates = db_service
+        .list_prompt_templates_filtered(Some(PromptCategory::Application), Some(template_type), None)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -687,7 +669,7 @@ pub async fn get_combined_plugin_prompt_api(
             );
             match plugin_type.as_str() {
                 "agent" => DEFAULT_AGENT_PLUGIN_PROMPT.to_string(),
-                _ => DEFAULT_PASSIVE_PLUGIN_PROMPT.to_string(),
+                _ => DEFAULT_TRAFFIC_PLUGIN_PROMPT.to_string(),
             }
         });
 

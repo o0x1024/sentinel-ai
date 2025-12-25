@@ -584,7 +584,12 @@ impl AiService {
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall(_),
                 )) => {}
-                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                Ok(MultiTurnStreamItem::FinalResponse(resp)) => {
+                    let usage = resp.token_usage();
+                    on_chunk(StreamChunk::Usage {
+                        input_tokens: usage.input_tokens as u32,
+                        output_tokens: usage.output_tokens as u32,
+                    });
                     on_chunk(StreamChunk::Done);
                     break;
                 }
@@ -656,6 +661,11 @@ pub enum StreamChunk {
     Text(String),
     /// 推理内容
     Reasoning(String),
+    /// 用量统计
+    Usage {
+        input_tokens: u32,
+        output_tokens: u32,
+    },
     /// 完成
     Done,
 }

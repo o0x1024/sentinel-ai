@@ -8,7 +8,7 @@ use url::Url;
 
 use super::param_extractor::{ParamExtractor, Parameter};
 use super::tech_stack_detector::{TechStack, TechStackDetector};
-use sentinel_passive::PassiveDatabaseService;
+use sentinel_traffic::TrafficDatabaseService;
 
 /// API endpoint information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,13 +54,13 @@ pub struct WebsiteAnalysis {
 
 /// Website Analyzer
 pub struct WebsiteAnalyzer {
-    db_service: Arc<PassiveDatabaseService>,
+    db_service: Arc<TrafficDatabaseService>,
     param_extractor: ParamExtractor,
     tech_detector: TechStackDetector,
 }
 
 impl WebsiteAnalyzer {
-    pub fn new(db_service: Arc<PassiveDatabaseService>) -> Self {
+    pub fn new(db_service: Arc<TrafficDatabaseService>) -> Self {
         Self {
             db_service,
             param_extractor: ParamExtractor::new(),
@@ -390,7 +390,7 @@ mod tests {
 
     // #[test]
     // fn test_normalize_path() {
-    //     let analyzer = WebsiteAnalyzer::new(Arc::new(PassiveDatabaseService::new().unwrap()));
+    //     let analyzer = WebsiteAnalyzer::new(Arc::new(TrafficDatabaseService::new().unwrap()));
 
     //     assert_eq!(
     //         analyzer.normalize_path("/user/123/profile"),
@@ -404,7 +404,7 @@ mod tests {
 
     // #[test]
     // fn test_is_static_resource() {
-    //     let analyzer = WebsiteAnalyzer::new(Arc::new(PassiveDatabaseService::new().await.unwrap()));
+    //     let analyzer = WebsiteAnalyzer::new(Arc::new(TrafficDatabaseService::new().await.unwrap()));
 
     //     assert!(analyzer.is_static_resource("/assets/main.js"));
     //     assert!(analyzer.is_static_resource("/images/logo.png"));

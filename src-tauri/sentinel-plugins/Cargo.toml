@@ -2,7 +2,7 @@
 name = "sentinel-plugins"
 version = "0.1.0"
 edition = "2021"
-description = "Built-in security scanning plugins for Sentinel AI passive scanner"
+description = "Built-in security scanning plugins for Sentinel AI traffic scanner"
 authors = ["Sentinel AI Team"]
 
 [dependencies]

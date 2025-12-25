@@ -25,6 +25,23 @@ pub struct DatabaseStats {
     pub last_backup: Option<DateTime<Utc>>,
 }
 
+/// 执行统计信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionStatistics {
+    /// 总会话数
+    pub total_sessions: u64,
+    /// 完成会话数
+    pub completed_sessions: u64,
+    /// 失败会话数
+    pub failed_sessions: u64,
+    /// 运行中会话数
+    pub running_sessions: u64,
+    /// 成功率
+    pub success_rate: f64,
+    /// 平均执行时间（秒）
+    pub average_execution_time: u64,
+}
+
 /// 表统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableStats {
@@ -342,6 +359,18 @@ pub struct AiMessage {
     pub architecture_type: Option<String>,
     pub architecture_meta: Option<String>,
     pub structured_data: Option<String>,
+}
+
+/// AI 用量统计
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AiUsageStats {
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+    pub total_tokens: i32,
+    pub cost: f64,
+    pub last_used: Option<DateTime<Utc>>,
 }
 
 

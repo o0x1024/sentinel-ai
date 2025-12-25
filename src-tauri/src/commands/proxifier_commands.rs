@@ -12,11 +12,12 @@ use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
 use tracing::{info, error};
-use sentinel_db::database::proxifier_dao::{self, ProxifierProxyRecord, ProxifierRuleRecord};
+use sentinel_db::{ProxifierProxyRecord, ProxifierRuleRecord};
 use sentinel_db::DatabaseService;
+use sentinel_db::Database;
 
 #[cfg(target_os = "macos")]
-use sentinel_passive::system_proxy::pf_firewall::TransparentProxyManager;
+use sentinel_traffic::system_proxy::pf_firewall::TransparentProxyManager;
 
 /// 代理服务器
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,7 +251,7 @@ pub async fn get_transparent_proxy_status(
     
     #[cfg(target_os = "macos")]
     {
-        use sentinel_passive::system_proxy::pf_firewall::is_pf_enabled;
+        use sentinel_traffic::system_proxy::pf_firewall::is_pf_enabled;
         let mut result = status.clone();
         result.pf_enabled = is_pf_enabled();
         Ok(CommandResponse::ok(result))
@@ -440,7 +441,7 @@ pub struct NetworkExtensionStatus {
 /// 获取 Network Extension 状态
 #[tauri::command]
 pub async fn get_network_extension_status() -> Result<CommandResponse<NetworkExtensionStatus>, String> {
-    use sentinel_passive::system_proxy::NetworkExtensionManager;
+    use sentinel_traffic::system_proxy::NetworkExtensionManager;
     
     let ext_status = NetworkExtensionManager::check_status();
     let proxy_status = NetworkExtensionManager::get_proxy_status();
@@ -458,7 +459,7 @@ pub async fn get_network_extension_status() -> Result<CommandResponse<NetworkExt
 /// 安装 Network Extension
 #[tauri::command]
 pub async fn install_network_extension() -> Result<CommandResponse<()>, String> {
-    use sentinel_passive::system_proxy::NetworkExtensionManager;
+    use sentinel_traffic::system_proxy::NetworkExtensionManager;
     
     match NetworkExtensionManager::install() {
         Ok(()) => {
@@ -475,7 +476,7 @@ pub async fn install_network_extension() -> Result<CommandResponse<()>, String> 
 /// 卸载 Network Extension
 #[tauri::command]
 pub async fn uninstall_network_extension() -> Result<CommandResponse<()>, String> {
-    use sentinel_passive::system_proxy::NetworkExtensionManager;
+    use sentinel_traffic::system_proxy::NetworkExtensionManager;
     
     match NetworkExtensionManager::uninstall() {
         Ok(()) => {
@@ -496,7 +497,7 @@ pub async fn start_network_extension_proxy(
     port: u16,
     target_apps: Vec<String>,
 ) -> Result<CommandResponse<()>, String> {
-    use sentinel_passive::system_proxy::NetworkExtensionManager;
+    use sentinel_traffic::system_proxy::NetworkExtensionManager;
     
     match NetworkExtensionManager::start_proxy(&host, port, &target_apps) {
         Ok(()) => {
@@ -513,7 +514,7 @@ pub async fn start_network_extension_proxy(
 /// 停止 Network Extension 代理
 #[tauri::command]
 pub async fn stop_network_extension_proxy() -> Result<CommandResponse<()>, String> {
-    use sentinel_passive::system_proxy::NetworkExtensionManager;
+    use sentinel_traffic::system_proxy::NetworkExtensionManager;
     
     match NetworkExtensionManager::stop_proxy() {
         Ok(()) => {
@@ -538,9 +539,7 @@ pub async fn load_proxifier_proxies_from_db(
     db_service: State<'_, Arc<DatabaseService>>,
     state: State<'_, ProxifierState>,
 ) -> Result<CommandResponse<Vec<ProxifierProxy>>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    
-    match proxifier_dao::get_all_proxies(pool).await {
+    match db_service.get_all_proxies().await {
         Ok(records) => {
             // 转换为前端格式
             let proxies: Vec<ProxifierProxy> = records.iter().map(|r| ProxifierProxy {
@@ -575,8 +574,6 @@ pub async fn save_proxifier_proxies_to_db(
     state: State<'_, ProxifierState>,
     proxies: Vec<ProxifierProxy>,
 ) -> Result<CommandResponse<()>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    
     // 转换为数据库格式
     let records: Vec<ProxifierProxyRecord> = proxies.iter().map(|p| ProxifierProxyRecord {
         id: p.id.clone(),
@@ -592,7 +589,7 @@ pub async fn save_proxifier_proxies_to_db(
         updated_at: String::new(),
     }).collect();
     
-    match proxifier_dao::save_all_proxies(pool, &records).await {
+    match db_service.save_all_proxies(&records).await {
         Ok(()) => {
             // 更新内存状态
             let mut config = state.config.write().await;
@@ -614,9 +611,7 @@ pub async fn load_proxifier_rules_from_db(
     db_service: State<'_, Arc<DatabaseService>>,
     state: State<'_, ProxifierState>,
 ) -> Result<CommandResponse<Vec<ProxifierRule>>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    
-    match proxifier_dao::get_all_rules(pool).await {
+    match db_service.get_all_rules().await {
         Ok(records) => {
             // 转换为前端格式
             let rules: Vec<ProxifierRule> = records.iter().map(|r| ProxifierRule {
@@ -650,8 +645,6 @@ pub async fn save_proxifier_rules_to_db(
     state: State<'_, ProxifierState>,
     rules: Vec<ProxifierRule>,
 ) -> Result<CommandResponse<()>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
-    
     // 转换为数据库格式
     let records: Vec<ProxifierRuleRecord> = rules.iter().map(|r| ProxifierRuleRecord {
         id: r.id.clone(),
@@ -667,7 +660,7 @@ pub async fn save_proxifier_rules_to_db(
         updated_at: String::new(),
     }).collect();
     
-    match proxifier_dao::save_all_rules(pool, &records).await {
+    match db_service.save_all_rules(&records).await {
         Ok(()) => {
             // 更新内存状态
             let mut config = state.config.write().await;

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use crate::services::database::DatabaseService;
+use sentinel_db::Database;
 
 /// Response for plugin review operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,7 +169,8 @@ pub async fn review_update_plugin_code(
     };
     
     // 使用现有元数据 + 新代码更新
-    match db.inner().update_plugin(&plugin, &code).await {
+    let metadata_json = serde_json::to_value(&plugin.metadata).unwrap_or(serde_json::json!({}));
+    match db.inner().update_plugin(&metadata_json, &code).await {
         Ok(_) => {
             log::info!("Plugin {} code updated successfully", plugin_id);
             Ok(PluginReviewResponse {

@@ -582,7 +582,7 @@ async function startTransparentProxy() {
       max_response_body_size: 2 * 1024 * 1024,
     }
     
-    const proxyResult = await invoke<any>('start_passive_scan', { config: proxyConfig })
+    const proxyResult = await invoke<any>('start_traffic_analysis', { config: proxyConfig })
     if (proxyResult.success && proxyResult.data) {
       addLog('info', `代理服务器已启动，监听端口: ${proxyResult.data}`)
     } else if (proxyResult.error && proxyResult.error.includes('already running')) {
@@ -624,7 +624,7 @@ async function stopTransparentProxy() {
     
     // 2. 停止代理监听器
     addLog('info', '正在停止代理监听器...')
-    const stopResult = await invoke<any>('stop_passive_scan')
+    const stopResult = await invoke<any>('stop_traffic_analysis')
     if (stopResult.success) {
       addLog('info', '代理监听器已停止')
     } else if (stopResult.error) {
@@ -704,7 +704,7 @@ onMounted(async () => {
     ]
   }
   
-  // 监听代理请求事件（从 PassiveProxy 发送）
+  // 监听代理请求事件（从 TrafficProxy 发送）
   unlistenProxyRequest = await listen<ProxyRequest>('proxy:request', (event) => {
     const conn = proxyRequestToConnection(event.payload)
     const existing = connections.value.findIndex(c => c.id === conn.id)

@@ -7,6 +7,7 @@ use sentinel_core::models::dictionary::{
     DictionaryStats, DictionaryType, DictionaryWord, ServiceType,
 };
 use crate::services::DatabaseService;
+use sentinel_db::Database;
 use crate::services::DictionaryService;
 use std::collections::HashMap;
 
@@ -303,7 +304,7 @@ pub async fn export_dictionary_to_file(
     let words = dictionary_service
         .get_dictionary_words(&dictionary_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
 
     match format.as_str() {
         "txt" => {
@@ -381,7 +382,7 @@ pub async fn add_dictionary_to_set(
     dictionary_service
         .add_dictionary_to_set(&set_id, &dictionary_id, priority)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
 
     Ok(())
 }
@@ -434,7 +435,7 @@ pub async fn get_subdomain_dictionary(
         let words = dictionary_service
             .get_dictionary_words(&dict.id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e: anyhow::Error| e.to_string())?;
         Ok(words.into_iter().map(|w| w.word).collect())
     } else {
         Ok(vec![])
@@ -475,11 +476,11 @@ pub async fn set_subdomain_dictionary(
     dictionary_service
         .clear_dictionary(&dict_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     dictionary_service
         .add_words(&dict_id, words)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
 
     Ok(())
 }
@@ -502,7 +503,7 @@ pub async fn add_subdomain_words(
         dictionary_service
             .add_words(&dict.id, words)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e: anyhow::Error| e.to_string())?;
     }
 
     Ok(())
@@ -526,7 +527,7 @@ pub async fn remove_subdomain_words(
         dictionary_service
             .remove_words(&dict.id, words)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e: anyhow::Error| e.to_string())?;
     }
 
     Ok(())
@@ -550,13 +551,13 @@ pub async fn reset_subdomain_dictionary(
         dictionary_service
             .delete_dictionary("builtin_subdomain_common")
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e: anyhow::Error| e.to_string())?;
     }
 
     dictionary_service
         .initialize_builtin_dictionaries()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
 
     Ok(())
 }
@@ -600,7 +601,7 @@ pub async fn import_subdomain_dictionary(
     dictionary_service
         .add_words(&dict_id, words)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
 
     Ok(())
 }
@@ -622,7 +623,7 @@ pub async fn export_subdomain_dictionary(
         let words = dictionary_service
             .get_dictionary_words(&dict.id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e: anyhow::Error| e.to_string())?;
         Ok(words
             .into_iter()
             .map(|w| w.word)
@@ -644,7 +645,7 @@ pub async fn get_default_dictionary_id(
     let value = db_service
         .get_config("dictionary_default", &dict_type)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     let v = value.filter(|s| !s.is_empty());
     Ok(v)
 }
@@ -664,7 +665,7 @@ pub async fn set_default_dictionary(
             Some("默认字典设置"),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     Ok(())
 }
 
@@ -678,7 +679,7 @@ pub async fn clear_default_dictionary(
     db_service
         .set_config("dictionary_default", &dict_type, "", Some("默认字典设置"))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     Ok(())
 }
 
@@ -690,7 +691,7 @@ pub async fn get_default_dictionary_map(
     let configs = db_service
         .get_configs_by_category("dictionary_default")
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     let mut map = HashMap::new();
     for c in configs {
         if let Some(val) = c.value.clone() {
