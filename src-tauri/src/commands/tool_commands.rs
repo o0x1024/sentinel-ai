@@ -8,9 +8,7 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use sentinel_tools::buildin_tools::shell::{
-    get_shell_config, set_permission_handler, set_shell_config, ShellConfig, ShellPermissionHandler,
-};
+use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
 use sentinel_tools::get_tool_server;
 
@@ -43,6 +41,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert("http_request".to_string(), true);
     map.insert("local_time".to_string(), true);
     map.insert("shell".to_string(), true);
+    map.insert("subdomain_brute".to_string(), true);
     RwLock::new(map)
 });
 
@@ -177,6 +176,57 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                     }
                 },
                 "required": ["command"]
+            })),
+        },
+        BuiltinToolInfo {
+            id: "subdomain_brute".to_string(),
+            name: "subdomain_brute".to_string(),
+            description: "High-performance subdomain brute-force scanner. Discovers subdomains using dictionary attack with DNS resolution, HTTP/HTTPS verification, and wildcard detection.".to_string(),
+            category: "network".to_string(),
+            version: "1.0.0".to_string(),
+            enabled: *states.get("subdomain_brute").unwrap_or(&true),
+            input_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "domains": {
+                        "type": "string",
+                        "description": "Target domain(s) to scan, comma-separated for multiple domains"
+                    },
+                    "resolvers": {
+                        "type": "string",
+                        "description": "DNS resolvers (comma-separated, e.g., '8.8.8.8,1.1.1.1')",
+                        "default": "8.8.8.8,1.1.1.1,223.5.5.5"
+                    },
+                    "dictionary_file": {
+                        "type": "string",
+                        "description": "Dictionary file path (optional, uses built-in if not provided)"
+                    },
+                    "dictionary": {
+                        "type": "string",
+                        "description": "Dictionary words (comma-separated, e.g., 'www,mail,api,admin')"
+                    },
+                    "skip_wildcard": {
+                        "type": "boolean",
+                        "description": "Skip wildcard domains",
+                        "default": true
+                    },
+                    "bandwidth_limit": {
+                        "type": "string",
+                        "description": "Bandwidth limit (e.g., '5M', '10M')",
+                        "default": "5M"
+                    },
+                    "verify_mode": {
+                        "type": "boolean",
+                        "description": "Enable HTTP/HTTPS verification",
+                        "default": true
+                    },
+                    "resolve_records": {
+                        "type": "boolean",
+                        "description": "Enable DNS record resolution",
+                        "default": true
+                    }
+                },
+                "required": ["domains"]
             })),
         },
     ];
@@ -950,652 +1000,156 @@ pub async fn clear_tool_usage_stats() -> Result<(), String> {
     Ok(())
 }
 
-// ============================================================================
-// ToolServer Management Commands
-// ============================================================================
-
-/// Initialize the global tool server with builtin tools
-#[tauri::command]
-pub async fn init_tool_server() -> Result<(), String> {
-    let server = get_tool_server();
-    server.init_builtin_tools().await;
-    tracing::info!(
-        "Tool server initialized with {} tools",
-        server.tool_count().await
-    );
-    Ok(())
-}
-
-/// List all tools from ToolServer
-#[tauri::command]
-pub async fn list_tool_server_tools() -> Result<Vec<sentinel_tools::ToolInfo>, String> {
-    let server = get_tool_server();
-    server.init_builtin_tools().await;
-    Ok(server.list_tools().await)
-}
-
-/// List tools by source type (builtin, mcp, plugin, workflow)
-#[tauri::command]
-pub async fn list_tools_by_source(
-    source_type: String,
-) -> Result<Vec<sentinel_tools::ToolInfo>, String> {
-    let server = get_tool_server();
-    server.init_builtin_tools().await;
-    Ok(server.list_tools_by_source(&source_type).await)
-}
-
-/// Get tool info by name
-#[tauri::command]
-pub async fn get_tool_server_tool(
-    tool_name: String,
-) -> Result<Option<sentinel_tools::ToolInfo>, String> {
-    let server = get_tool_server();
-    server.init_builtin_tools().await;
-    Ok(server.get_tool(&tool_name).await)
-}
-
-/// Execute a tool via ToolServer
-#[tauri::command]
-pub async fn execute_tool_server_tool(
-    tool_name: String,
-    args: serde_json::Value,
-) -> Result<sentinel_tools::ToolResult, String> {
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Ok(sentinel_tools::ToolResult {
-            success: false,
-            tool_name: tool_name.clone(),
-            output: None,
-            error: Some("License required for tool execution".to_string()),
-            execution_time_ms: 0,
-        });
-    }
-
-    let server = get_tool_server();
-    server.init_builtin_tools().await;
-    Ok(server.execute(&tool_name, args).await)
-}
-
-/// Get tool server statistics
-#[tauri::command]
-pub async fn get_tool_server_stats() -> Result<serde_json::Value, String> {
-    let server = get_tool_server();
-    server.init_builtin_tools().await;
-
-    let tools = server.list_tools().await;
-    let builtin_count = tools.iter().filter(|t| t.source == "builtin").count();
-    let mcp_count = tools
-        .iter()
-        .filter(|t| t.source.starts_with("mcp::"))
-        .count();
-    let plugin_count = tools
-        .iter()
-        .filter(|t| t.source.starts_with("plugin::"))
-        .count();
-    let workflow_count = tools
-        .iter()
-        .filter(|t| t.source.starts_with("workflow::"))
-        .count();
-
-    Ok(serde_json::json!({
-        "total_tools": tools.len(),
-        "builtin_tools": builtin_count,
-        "mcp_tools": mcp_count,
-        "plugin_tools": plugin_count,
-        "workflow_tools": workflow_count,
-    }))
-}
-
-/// Register MCP tools from a connected server
-#[tauri::command]
-pub async fn register_mcp_tools_from_server(
-    server_name: String,
-    tools: Vec<serde_json::Value>,
-) -> Result<usize, String> {
-    use sentinel_tools::mcp_adapter::{
-        load_mcp_tools_to_server, McpToolMeta,
-    };
-
-    let server = get_tool_server();
-
-    // Parse tools
-    let tool_metas: Vec<McpToolMeta> = tools
-        .into_iter()
-        .filter_map(|t| {
-            let tool_name = t.get("name")?.as_str()?.to_string();
-            let description = t
-                .get("description")
-                .and_then(|d| d.as_str())
-                .map(String::from);
-            let input_schema = t
-                .get("input_schema")
-                .cloned()
-                .unwrap_or(serde_json::json!({"type": "object"}));
-            let connection_id = t
-                .get("connection_id")
-                .and_then(|c| c.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            Some(McpToolMeta {
-                server_name: server_name.clone(),
-                connection_id,
-                tool_name,
-                description,
-                input_schema,
-            })
-        })
-        .collect();
-
-    let count = tool_metas.len();
-    load_mcp_tools_to_server(&server, &server_name, tool_metas).await;
-
-    tracing::info!(
-        "Registered {} MCP tools from server: {}",
-        count,
-        server_name
-    );
-    Ok(count)
-}
-
-/// Register workflow tools from database
-#[tauri::command]
-pub async fn register_workflow_tools(
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<usize, String> {
-    
-
-    let server = get_tool_server();
-    let db = db_service.inner().clone();
-
-    // Load workflows marked as tools
-    let workflows = db
-        .list_workflow_definitions(Some(false))
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut count = 0;
-    for workflow in workflows {
-        let is_tool = workflow
-            .get("is_tool")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !is_tool {
-            continue;
-        }
-
-        let id = workflow.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let name = workflow
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown");
-        let description = workflow
-            .get("description")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Workflow tool");
-
-        if id.is_empty() {
-            continue;
-        }
-
-        // Extract input schema from workflow definition
-        let input_schema =
-            sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(&workflow);
-
-        // Create executor
-        let workflow_id = id.to_string();
-        let executor = sentinel_tools::create_executor(move |args| {
-            let wid = workflow_id.clone();
-            async move {
-                // Execute workflow via sentinel-workflow
-                Ok(serde_json::json!({
-                    "workflow_id": wid,
-                    "status": "initiated",
-                    "input": args,
-                    "message": "Workflow execution started"
-                }))
-            }
-        });
-
-        server
-            .register_workflow_tool(id, name, description, input_schema, executor)
-            .await;
-        count += 1;
-    }
-
-    tracing::info!("Registered {} workflow tools", count);
-    Ok(count)
-}
-
-/// Refresh all dynamic tools (MCP, plugin, workflow)
-#[tauri::command]
-pub async fn refresh_all_dynamic_tools(
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<serde_json::Value, String> {
-    let server = get_tool_server();
-    server.init_builtin_tools().await;
-
-    // Clear existing dynamic tools
-    server.clear_mcp_tools().await;
-    server.clear_plugin_tools().await;
-    server.clear_workflow_tools().await;
-
-    // Reload workflow tools
-    let workflow_count = register_workflow_tools(db_service.clone())
-        .await
-        .unwrap_or(0);
-
-    // Note: MCP and plugin tools need to be registered via their respective commands
-    // when servers connect or plugins are enabled
-
-    Ok(serde_json::json!({
-        "workflow_tools": workflow_count,
-        "message": "Dynamic tools refreshed. MCP and plugin tools will be registered when connected/enabled."
-    }))
-}
+mod tool_server;
+pub use tool_server::{
+    execute_tool_server_tool, get_tool_server_stats, get_tool_server_tool, init_tool_server,
+    list_tool_server_tools, list_tools_by_source, refresh_all_dynamic_tools,
+    register_mcp_tools_from_server, register_workflow_tools,
+};
 
 // ============================================================================
 // Vision Explorer Credential Commands (V2 Compatible)
 // ============================================================================
 
-/// Receive login credentials from frontend for a running VisionExplorer V2
+mod vision_bridge;
+
+mod shell_permissions;
+pub use shell_permissions::PendingPermissionRequest;
+
+mod agent_config;
+pub use agent_config::AgentConfig;
+
+mod ability_groups;
+
+// ============================================================================
+// Command wrappers (registered in src/lib.rs)
+// ============================================================================
+
 #[tauri::command]
 pub async fn vision_explorer_receive_credentials(
     app: tauri::AppHandle,
     execution_id: String,
     username: String,
-    _password: String,
-    _verification_code: Option<String>,
-    _extra_fields: Option<HashMap<String, String>>,
+    password: String,
+    verification_code: Option<String>,
+    extra_fields: Option<HashMap<String, String>>,
 ) -> Result<(), String> {
-    tracing::info!(
-        "V2: Received credentials for VisionExplorer execution_id: {}",
-        execution_id
-    );
-
-    // For V2, credentials are stored in the blackboard via the event system
-    // The V2Engine listens for CredentialsReceived events
-    // Since we don't have direct access to the engine here, we emit events for frontend
-    // and rely on the tool's internal credential handling
-
-    // Notify frontend that credentials were received
-    use tauri::Emitter;
-    let payload = serde_json::json!({
-        "type": "credentials_received",
-        "execution_id": execution_id.clone(),
-        "username": username.clone(),
-    });
-    let _ = app.emit("vision:credentials_received", &payload);
-    let _ = app.emit(
-        "vision:v2",
-        serde_json::json!({
-            "execution_id": execution_id,
-            "type": "credentials_received",
-            "ts": chrono::Utc::now().timestamp_millis(),
-            "data": payload
-        }),
-    );
-
-    Ok(())
+    vision_bridge::vision_explorer_receive_credentials(
+        app,
+        execution_id,
+        username,
+        password,
+        verification_code,
+        extra_fields,
+    )
+    .await
 }
 
-/// Send a user message to a running VisionExplorer V2 (for mid-run guidance)
 #[tauri::command]
 pub async fn vision_explorer_send_user_message(
+    app: tauri::AppHandle,
     execution_id: String,
     message: String,
 ) -> Result<(), String> {
-    tracing::info!(
-        "V2: Received user message for VisionExplorer execution_id: {} ({} chars)",
-        execution_id,
-        message.len()
-    );
-
-    // For V2, user messages can be stored in the blackboard's kv_store
-    // This would require access to the running engine's blackboard
-    // For now, just log and acknowledge
-    tracing::info!("V2: User message: {}", message);
-
-    Ok(())
+    vision_bridge::vision_explorer_send_user_message(app, execution_id, message).await
 }
 
-/// Skip login for a running VisionExplorer V2 (user chose not to provide credentials)
 #[tauri::command]
-pub async fn vision_explorer_skip_login(
-    app: tauri::AppHandle,
-    execution_id: String,
-) -> Result<(), String> {
-    tracing::info!(
-        "V2: Skip login requested for VisionExplorer execution_id: {}",
-        execution_id
-    );
-
-    // Emit event to close takeover UI on the frontend
-    use tauri::Emitter;
-    let payload = serde_json::json!({
-        "type": "credentials_received",
-        "execution_id": execution_id.clone(),
-        "skipped": true,
-    });
-    let _ = app.emit("vision:credentials_received", &payload);
-    let _ = app.emit(
-        "vision:v2",
-        serde_json::json!({
-            "execution_id": execution_id,
-            "type": "credentials_received",
-            "ts": chrono::Utc::now().timestamp_millis(),
-            "data": payload
-        }),
-    );
-
-    Ok(())
+pub async fn vision_explorer_skip_login(app: tauri::AppHandle, execution_id: String) -> Result<(), String> {
+    vision_bridge::vision_explorer_skip_login(app, execution_id).await
 }
 
-/// Mark manual login as complete for a running VisionExplorer V2
 #[tauri::command]
 pub async fn vision_explorer_manual_login_complete(
     app: tauri::AppHandle,
     execution_id: String,
 ) -> Result<(), String> {
-    tracing::info!(
-        "V2: Manual login complete signaled for VisionExplorer execution_id: {}",
-        execution_id
-    );
-
-    // Emit event to close takeover UI on the frontend
-    use tauri::Emitter;
-    let payload = serde_json::json!({
-        "type": "credentials_received",
-        "execution_id": execution_id.clone(),
-        "manual_login": true,
-    });
-    let _ = app.emit("vision:credentials_received", &payload);
-    let _ = app.emit(
-        "vision:v2",
-        serde_json::json!({
-            "execution_id": execution_id,
-            "type": "credentials_received",
-            "ts": chrono::Utc::now().timestamp_millis(),
-            "data": payload
-        }),
-    );
-
-    Ok(())
+    vision_bridge::vision_explorer_manual_login_complete(app, execution_id).await
 }
 
-// ============================================================================
-// Shell Tool Permission Commands
-// ============================================================================
-
-// Global storage for permission response channels
-static SHELL_PERMISSION_SENDERS: Lazy<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-// Global storage for pending permission requests (for frontend polling)
-#[derive(Debug, Clone, Serialize)]
-pub struct PendingPermissionRequest {
-    pub id: String,
-    pub command: String,
-    pub timestamp: u64,
-}
-
-static PENDING_PERMISSION_REQUESTS: Lazy<RwLock<Vec<PendingPermissionRequest>>> =
-    Lazy::new(|| RwLock::new(Vec::new()));
-
-struct ShellPermissionImpl {
-    app: tauri::AppHandle,
-}
-
-#[async_trait::async_trait]
-impl ShellPermissionHandler for ShellPermissionImpl {
-    async fn check_permission(&self, command: &str) -> bool {
-        let id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-
-        {
-            let mut senders = SHELL_PERMISSION_SENDERS.write().await;
-            senders.insert(id.clone(), tx);
-        }
-
-        // Store pending request
-        {
-            let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
-            pending.push(PendingPermissionRequest {
-                id: id.clone(),
-                command: command.to_string(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            });
-        }
-
-        // Emit event to frontend
-        use tauri::Emitter;
-        tracing::info!(
-            "Requesting permission for command: {} (id: {})",
-            command,
-            id
-        );
-        if let Err(e) = self.app.emit(
-            "shell-permission-request",
-            serde_json::json!({
-                "id": id,
-                "command": command
-            }),
-        ) {
-            tracing::error!("Failed to emit permission request: {}", e);
-            // Clean up pending request
-            let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
-            pending.retain(|r| r.id != id);
-            return false;
-        }
-
-        // Wait for response with timeout (e.g. 5 minutes)
-        let result = match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
-            Ok(Ok(allowed)) => {
-                tracing::info!("Permission response for {}: {}", id, allowed);
-                allowed
-            }
-            Ok(Err(_)) => {
-                tracing::warn!("Permission channel dropped for {}", id);
-                false
-            }
-            Err(_) => {
-                tracing::warn!("Permission request timed out for {}", id);
-                false
-            }
-        };
-
-        // Clean up pending request
-        {
-            let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
-            pending.retain(|r| r.id != id);
-        }
-
-        result
-    }
-}
-
-/// Initialize the shell permission handler
 #[tauri::command]
 pub async fn init_shell_permission_handler(app: tauri::AppHandle) -> Result<(), String> {
-    set_permission_handler(Arc::new(ShellPermissionImpl { app })).await;
-    Ok(())
+    shell_permissions::init_shell_permission_handler(app).await
 }
 
-/// Get shell tool configuration
 #[tauri::command]
 pub async fn get_shell_tool_config() -> Result<ShellConfig, String> {
-    Ok(get_shell_config().await)
+    shell_permissions::get_shell_tool_config().await
 }
 
-/// Set shell tool configuration (deprecated, use save_agent_config instead)
 #[tauri::command]
 pub async fn set_shell_tool_config(config: ShellConfig) -> Result<(), String> {
-    set_shell_config(config).await;
-    Ok(())
+    shell_permissions::set_shell_tool_config(config).await
 }
 
-/// Respond to a shell permission request
 #[tauri::command]
 pub async fn respond_shell_permission(id: String, allowed: bool) -> Result<(), String> {
-    tracing::info!(
-        "Responding to shell permission: id={}, allowed={}",
-        id,
-        allowed
-    );
-
-    // Remove from pending requests
-    {
-        let mut pending = PENDING_PERMISSION_REQUESTS.write().await;
-        let before_len = pending.len();
-        pending.retain(|r| r.id != id);
-        tracing::info!(
-            "Removed from pending: before={}, after={}",
-            before_len,
-            pending.len()
-        );
-    }
-
-    let mut senders = SHELL_PERMISSION_SENDERS.write().await;
-    tracing::info!(
-        "Available senders: {:?}",
-        senders.keys().collect::<Vec<_>>()
-    );
-
-    if let Some(tx) = senders.remove(&id) {
-        let send_result = tx.send(allowed);
-        tracing::info!("Sent permission response: {:?}", send_result);
-        Ok(())
-    } else {
-        tracing::warn!("Request ID {} not found in senders map", id);
-        Err(format!("Request ID {} not found or already handled", id))
-    }
+    shell_permissions::respond_shell_permission(id, allowed).await
 }
 
-/// Get all pending shell permission requests (for frontend polling)
 #[tauri::command]
 pub async fn get_pending_shell_permissions() -> Result<Vec<PendingPermissionRequest>, String> {
-    let pending = PENDING_PERMISSION_REQUESTS.read().await;
-    Ok(pending.clone())
+    shell_permissions::get_pending_shell_permissions().await
 }
 
-// ============================================================================
-// Agent Configuration Commands
-// ============================================================================
-
-/// Agent configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
-pub struct AgentConfig {
-    /// Shell/terminal configuration
-    pub shell: ShellConfig,
-    // Future: Add more agent settings here
-    // pub memory: MemoryConfig,
-    // pub tools: ToolsConfig,
-}
-
-
-/// Get agent configuration
 #[tauri::command]
 pub async fn get_agent_config(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<AgentConfig, String> {
-    // Load shell config from database
-    let shell_config = load_shell_config_from_db(db_service.inner()).await;
-
-    Ok(AgentConfig {
-        shell: shell_config,
-    })
+    agent_config::get_agent_config(db_service).await
 }
 
-/// Save agent configuration
 #[tauri::command]
 pub async fn save_agent_config(
     config: AgentConfig,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<(), String> {
-    // Save shell config to database
-    save_shell_config_to_db(&config.shell, db_service.inner()).await?;
-
-    // Update in-memory config
-    set_shell_config(config.shell).await;
-
-    tracing::info!("Agent config saved successfully");
-    Ok(())
+    agent_config::save_agent_config(config, db_service).await
 }
 
-/// Load shell config from database
-async fn load_shell_config_from_db(db: &sentinel_db::DatabaseService) -> ShellConfig {
-    let mut config = ShellConfig::default();
-
-    // Load default_policy
-    if let Ok(Some(value)) = db.get_config("agent", "shell_default_policy").await {
-        config.default_policy = match value.as_str() {
-            "AlwaysProceed" => {
-                sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed
-            }
-            _ => sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::RequestReview,
-        };
-    }
-
-    // Load allowed_commands
-    if let Ok(Some(value)) = db.get_config("agent", "shell_allowed_commands").await {
-        if let Ok(commands) = serde_json::from_str::<Vec<String>>(&value) {
-            config.allowed_commands = commands;
-        }
-    }
-
-    // Load denied_commands
-    if let Ok(Some(value)) = db.get_config("agent", "shell_denied_commands").await {
-        if let Ok(commands) = serde_json::from_str::<Vec<String>>(&value) {
-            config.denied_commands = commands;
-        }
-    }
-
-    config
+#[tauri::command]
+pub async fn list_ability_groups(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Vec<sentinel_db::database::ability_group_dao::AbilityGroupSummary>, String> {
+    ability_groups::list_ability_groups(db_service).await
 }
 
-/// Save shell config to database
-async fn save_shell_config_to_db(
-    config: &ShellConfig,
-    db: &sentinel_db::DatabaseService,
-) -> Result<(), String> {
-    let policy_str = match config.default_policy {
-        sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed => "AlwaysProceed",
-        sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::RequestReview => "RequestReview",
-    };
+#[tauri::command]
+pub async fn list_ability_groups_full(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Vec<sentinel_db::database::ability_group_dao::AbilityGroup>, String> {
+    ability_groups::list_ability_groups_full(db_service).await
+}
 
-    db.set_config(
-        "agent",
-        "shell_default_policy",
-        policy_str,
-        Some("Shell command execution policy"),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+#[tauri::command]
+pub async fn get_ability_group(
+    id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Option<sentinel_db::database::ability_group_dao::AbilityGroup>, String> {
+    ability_groups::get_ability_group(id, db_service).await
+}
 
-    let allowed_json = serde_json::to_string(&config.allowed_commands).unwrap_or_default();
-    db.set_config(
-        "agent",
-        "shell_allowed_commands",
-        &allowed_json,
-        Some("Shell commands allowed to execute without confirmation"),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+#[tauri::command]
+pub async fn create_ability_group(
+    payload: sentinel_db::database::ability_group_dao::CreateAbilityGroup,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<sentinel_db::database::ability_group_dao::AbilityGroup, String> {
+    ability_groups::create_ability_group(payload, db_service).await
+}
 
-    let denied_json = serde_json::to_string(&config.denied_commands).unwrap_or_default();
-    db.set_config(
-        "agent",
-        "shell_denied_commands",
-        &denied_json,
-        Some("Shell commands that require confirmation"),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+#[tauri::command]
+pub async fn update_ability_group(
+    id: String,
+    payload: sentinel_db::database::ability_group_dao::UpdateAbilityGroup,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<bool, String> {
+    ability_groups::update_ability_group(id, payload, db_service).await
+}
 
-    Ok(())
+#[tauri::command]
+pub async fn delete_ability_group(
+    id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<bool, String> {
+    ability_groups::delete_ability_group(id, db_service).await
 }

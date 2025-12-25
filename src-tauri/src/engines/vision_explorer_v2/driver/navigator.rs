@@ -1,3 +1,4 @@
+use crate::engines::vision_explorer_v2::blackboard::Blackboard;
 use crate::engines::vision_explorer_v2::core::{Agent, Event, TaskResult};
 use crate::engines::vision_explorer_v2::driver::BrowserActions;
 use anyhow::Result;
@@ -11,6 +12,7 @@ pub struct NavigatorAgent {
     id: String,
     driver: Arc<Mutex<dyn BrowserActions>>,
     event_tx: mpsc::Sender<Event>,
+    blackboard: Arc<Blackboard>,
 }
 
 impl NavigatorAgent {
@@ -18,11 +20,13 @@ impl NavigatorAgent {
         id: String,
         driver: Arc<Mutex<dyn BrowserActions>>,
         event_tx: mpsc::Sender<Event>,
+        blackboard: Arc<Blackboard>,
     ) -> Self {
         Self {
             id,
             driver,
             event_tx,
+            blackboard,
         }
     }
 }
@@ -70,6 +74,29 @@ impl Agent for NavigatorAgent {
                             }
                             "navigate" => {
                                 driver.goto(&action.selector).await?; // Treat selector as URL for navigate action
+                            }
+                            "fill_form" => {
+                                if let Some(val) = &action.value {
+                                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(val) {
+                                        if let Some(map) = data.as_object() {
+                                            let creds = self.blackboard.get_credentials().await;
+                                            for (sel, field_val) in map {
+                                                if let Some(text) = field_val.as_str() {
+                                                    let resolved_text = if text == "[USERNAME]" {
+                                                        creds.as_ref().map(|c| c.username.as_str()).unwrap_or("")
+                                                    } else if text == "[PASSWORD]" {
+                                                        creds.as_ref().map(|c| c.password.as_str()).unwrap_or("")
+                                                    } else {
+                                                        text
+                                                    };
+                                                    if !resolved_text.is_empty() {
+                                                        driver.type_text(sel, resolved_text).await?;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             _ => {
                                 log::warn!("Unknown action type: {}", action.action_type);

@@ -165,7 +165,6 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
-import type { Todo } from '@/types/todo'
 import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useVisionEvents } from '@/composables/useVisionEvents'
 import { useTodos } from '@/composables/useTodos'
@@ -493,68 +492,97 @@ const loadConversationHistory = async (convId: string) => {
     
     // Clear current messages
     agentEvents.clearMessages()
-    
+
     if (messages && messages.length > 0) {
-      // Convert database messages to AgentMessage format
-      messages.forEach((msg: any) => {
-        const parsedMetadata = msg.metadata && typeof msg.metadata === 'string' 
-          ? JSON.parse(msg.metadata) 
-          : msg.metadata
-        
-        // Parse tool_calls field (if exists)
-        let toolCalls: any[] = []
-        if (msg.tool_calls) {
+      // DB already returns messages ordered by timestamp ASC.
+      // For tool-enabled runs, backend persists assistant segments and tool events as standalone ai_messages rows,
+      // so we can just render them in order (with a stable tie-breaker).
+      const timeline: Array<{ msg: AgentMessage; ts: number; tie: number }> = []
+      let tie = 0
+
+      const toMillis = (v: any) => {
+        const ms = new Date(v).getTime()
+        return Number.isFinite(ms) ? ms : Date.now()
+      }
+
+      messages.forEach((row: any) => {
+        const parsedMetadata =
+          row.metadata && typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata
+        const ts = toMillis(row.timestamp)
+
+        if (row.role === 'tool') {
+          // Persisted tool event message
+          const kind = parsedMetadata?.kind
+          const type = kind === 'tool_result' ? 'tool_result' : 'tool_call'
+          timeline.push({
+            msg: {
+              id: row.id,
+              type: type as any,
+              content: row.content || '',
+              timestamp: ts,
+              metadata: parsedMetadata,
+            },
+            ts,
+            tie: tie++,
+          })
+          return
+        }
+
+        const messageType = row.role === 'user' ? 'user' : 'final'
+        timeline.push({
+          msg: {
+            id: row.id,
+            type: messageType as any,
+            content: row.content,
+            timestamp: ts,
+            metadata: parsedMetadata,
+          },
+          ts,
+          tie: tie++,
+        })
+
+        // Legacy fallback: assistant rows may contain tool_calls (older data). Keep the old behavior but don't reorder.
+        if (row.role === 'assistant' && row.tool_calls) {
           try {
-            toolCalls = typeof msg.tool_calls === 'string' 
-              ? JSON.parse(msg.tool_calls) 
-              : msg.tool_calls
+            const toolCalls = typeof row.tool_calls === 'string' ? JSON.parse(row.tool_calls) : row.tool_calls
+            if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+              toolCalls.forEach((tc: any, i: number) => {
+                let parsedArgs: any = {}
+                try {
+                  parsedArgs = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : (tc.arguments ?? {})
+                } catch {
+                  parsedArgs = { raw: tc.arguments }
+                }
+                timeline.push({
+                  msg: {
+                    id: `toolcall:${row.id}:${tc.id || i}`,
+                    type: 'tool_call' as any,
+                    content: `${t('agent.toolCallCompleted')}: ${tc.name || 'unknown'}`,
+                    timestamp: ts + i + 1,
+                    metadata: {
+                      tool_name: tc.name,
+                      tool_args: parsedArgs,
+                      tool_result: tc.result,
+                      tool_call_id: tc.id,
+                      status: 'completed',
+                      success: tc.success !== false,
+                    },
+                  },
+                  ts: ts + i + 1,
+                  tie: tie++,
+                })
+              })
+            }
           } catch (e) {
-            console.warn('[AgentView] Failed to parse tool_calls:', e)
+            console.warn('[AgentView] Failed to parse legacy tool_calls:', e)
           }
         }
-        
-        // If there are tool calls, add tool call message first
-        if (toolCalls && toolCalls.length > 0) {
-          toolCalls.forEach((tc: any) => {
-            // Parse parameter JSON
-            let parsedArgs: any = {}
-            try {
-              parsedArgs = typeof tc.arguments === 'string' 
-                ? JSON.parse(tc.arguments) 
-                : tc.arguments
-            } catch (e) {
-              parsedArgs = { raw: tc.arguments }
-            }
-            
-            // Create tool call message (with merged results)
-            agentEvents.messages.value.push({
-              id: tc.id || crypto.randomUUID(),
-              type: 'tool_call' as any,
-              content: `${t('agent.toolCallCompleted')}: ${tc.name}`,
-              timestamp: new Date(msg.timestamp).getTime(),
-              metadata: {
-                tool_name: tc.name,
-                tool_args: parsedArgs,
-                tool_result: tc.result,
-                tool_call_id: tc.id,
-                status: 'completed',
-                success: tc.success !== false,
-              },
-            })
-          })
-        }
-        
-        // Add main message (user or assistant)
-        const messageType = msg.role === 'user' ? 'user' : 'final'
-        agentEvents.messages.value.push({
-          id: msg.id,
-          type: messageType as any,
-          content: msg.content,
-          timestamp: new Date(msg.timestamp).getTime(),
-          metadata: parsedMetadata,
-        })
       })
-      console.log('[AgentView] Loaded', messages.length, 'messages with tool calls from conversation:', convId)
+
+      timeline.sort((a, b) => a.ts - b.ts || a.tie - b.tie)
+      agentEvents.messages.value = timeline.map(x => x.msg)
+
+      console.log('[AgentView] Loaded', messages.length, 'messages from conversation:', convId)
     } else {
       console.log('[AgentView] No messages found for conversation:', convId)
     }

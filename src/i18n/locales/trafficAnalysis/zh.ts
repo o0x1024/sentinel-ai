@@ -1,5 +1,5 @@
 export default {
-  title: '被动扫描',
+  title: '流量分析',
   tabs: {
     control: '代理控制',
     history: '历史记录',
@@ -9,7 +9,7 @@ export default {
     proxyConfig: '代理配置'
   },
   ariaLabels: {
-    passiveScanTabs: '被动扫描标签页'
+    trafficAnalysisTabs: '流量分析标签页'
   },
   tooltips: {
     control: '代理控制',

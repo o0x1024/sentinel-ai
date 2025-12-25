@@ -26,7 +26,7 @@ impl StructuralAnalyst {
             r#"You are a structural analyst for web application security testing.
 
 Analyze this webpage DOM structure and identify:
-1. **Forms**: Login forms, search forms, data entry forms
+1. **Forms**: Login forms, search forms, data entry forms. For complete forms (like login), suggest a single "fill_form" action instead of multiple "type" actions if possible.
 2. **Navigation**: Links, buttons, menus, tabs
 3. **Interactive Elements**: Buttons, inputs, dropdowns, toggles
 4. **Authentication Indicators**: Login/signup links, user menus, logout buttons
@@ -45,8 +45,8 @@ Return a JSON object with this exact structure:
     "page_type": "login|dashboard|list|form|settings|error|other",
     "has_login_form": true/false,
     "login_fields": [
-        {{"field_id": "username", "field_type": "text", "label": "Username"}},
-        {{"field_id": "password", "field_type": "password", "label": "Password"}}
+        {{"field_id": "username", "field_type": "text", "label": "Username", "selector": "CSS selector"}},
+        {{"field_id": "password", "field_type": "password", "label": "Password", "selector": "CSS selector"}}
     ],
     "navigation_links": [
         {{"text": "Link text", "href": "/path", "is_menu": false}}
@@ -54,14 +54,16 @@ Return a JSON object with this exact structure:
     "suggested_actions": [
         {{
             "description": "action description",
-            "selector": "CSS selector",
-            "action_type": "click|type|scroll|hover|submit",
-            "value": null,
+            "selector": "CSS selector or form selector",
+            "action_type": "click|type|scroll|hover|submit|fill_form",
+            "value": "string value or JSON string for fill_form: {{\"field_selector\": \"value\", ...}}",
             "confidence": 0.9
         }}
     ],
     "api_endpoints": ["/api/endpoint1", "/api/endpoint2"]
 }}
+
+Note for "fill_form": Use it for login forms. The "selector" should be the form selector or a common parent. The "value" should be a JSON mapping selectors to values (use "[USERNAME]" and "[PASSWORD]" placeholders for credentials).
 
 IMPORTANT: Return ONLY valid JSON, no markdown code blocks."#,
             url = context.url,

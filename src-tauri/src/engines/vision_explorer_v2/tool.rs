@@ -21,7 +21,6 @@ pub struct VisionExplorerV2Args {
     /// Maximum exploration depth
     max_depth: Option<u32>,
     /// Maximum steps
-    #[allow(dead_code)]
     max_steps: Option<u32>,
     /// Custom HTTP headers
     #[allow(dead_code)]
@@ -118,6 +117,7 @@ impl Tool for VisionExplorerV2Tool {
         let config = VisionExplorerV2Config {
             target_url: args.url.clone(),
             max_depth: args.max_depth.unwrap_or(5),
+            max_steps: args.max_steps.unwrap_or(100),
             ai_config,
             ..Default::default()
         };

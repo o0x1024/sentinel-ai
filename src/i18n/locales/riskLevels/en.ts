@@ -3,6 +3,7 @@ export default {
   medium: 'Medium',
   high: 'High',
   critical: 'Critical',
+  info: 'Info',
   unknown: 'Unknown',
   Low: 'Low',
   Medium: 'Medium',

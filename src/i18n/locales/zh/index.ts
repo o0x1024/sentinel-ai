@@ -22,7 +22,7 @@ import mcp from '../mcp/zh'
 import roles from '../roles/zh'
 import scanSessions from '../scanSessions/zh'
 import agents from '../agents/zh'
-import passiveScan from '../passiveScan/zh'
+import trafficAnalysis from '../trafficAnalysis/zh'
 import ragManagement from '../rag/zh'
 import notifications from '../notifications/zh'
 
@@ -57,7 +57,7 @@ export default {
   roles,
   scanSessions,
   agents,
-  passiveScan,
+  trafficAnalysis,
   ragManagement,
   notifications,
 
@@ -243,6 +243,7 @@ export default {
     hybridStrategy: '混合策略（推荐）',
     manualSelection: '手动选择',
     allTools: '全部工具（测试用）',
+    abilityMode: '能力组模式',
     maxTools: '最大工具数量',
     selectTools: '选择工具',
     toolManagement: '工具管理',
@@ -276,6 +277,30 @@ export default {
     data: '数据',
     system: '系统',
     areYouSureClearStatistics: '确定要清空所有工具使用统计吗？',
+    // Ability Group
+    abilityGroups: '能力组',
+    abilityGroupManagement: '能力组管理',
+    manage: '管理',
+    noAbilityGroupsHint: '暂无能力组，请先创建',
+    selectAllowedGroups: '选择允许参与选择的组（不选则全部可用）',
+    groupsSelected: '个组已选',
+    emptyMeansAll: '空表示全部',
+    groups: '组',
+    createGroup: '新建组',
+    noAbilityGroups: '暂无能力组',
+    createFirstGroup: '点击上方按钮创建第一个能力组',
+    groupName: '组名称',
+    groupNamePlaceholder: '输入组名称',
+    groupDescription: '组描述',
+    groupDescriptionPlaceholder: '简短描述组的用途',
+    groupInstructions: '详细说明',
+    instructionsHint: '参数说明、few-shot 示例等',
+    instructionsPlaceholder: '输入详细说明，LLM 选中此组后会看到这些内容...',
+    selected: '个已选',
+    noToolsAvailable: '暂无可用工具',
+    tools: '工具',
+    hasInstructions: '有说明',
+    confirmDeleteGroup: '确定删除能力组 "{name}" 吗？',
     // MessageFlow
     aiIsThinking: 'AI 正在思考...',
     agentReady: 'Agent 已就绪',
@@ -431,7 +456,7 @@ export default {
 
     categories: {
       all: '全部',
-      passive: '被动扫描插件',
+      trafficAnalysis: '流量分析插件',
       agents: 'Agent工具插件',
       security: '安全',
       automation: '自动化',

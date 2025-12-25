@@ -6,17 +6,17 @@
         <div class="flex items-center gap-3">
           <h2 class="font-semibold text-base">
             <i class="fas fa-shield-alt mr-2"></i>
-            {{ $t('passiveScan.intercept.title') }}
+            {{ $t('trafficAnalysis.intercept.title') }}
           </h2>
           <!-- HTTP Intercept Status -->
-          <div class="tooltip" :data-tip="$t('passiveScan.intercept.tooltip.http')">
+          <div class="tooltip" :data-tip="$t('trafficAnalysis.intercept.tooltip.http')">
             <div class="badge badge-sm cursor-help" :class="interceptEnabled ? 'badge-success' : 'badge-neutral'">
               <i :class="['fas fa-circle mr-2', interceptEnabled ? 'text-success-content' : 'text-neutral-content']"></i>
               HTTP
             </div>
           </div>
           <!-- WebSocket Intercept Status -->
-          <div class="tooltip" :data-tip="$t('passiveScan.intercept.tooltip.websocket')">
+          <div class="tooltip" :data-tip="$t('trafficAnalysis.intercept.tooltip.websocket')">
             <div class="badge badge-sm cursor-help" :class="websocketInterceptEnabled ? 'badge-success' : 'badge-neutral'">
               <i :class="['fas fa-circle mr-2', websocketInterceptEnabled ? 'text-success-content' : 'text-neutral-content']"></i>
               WS
@@ -29,7 +29,7 @@
           <button 
             @click="toggleIntercept"
             :class="['btn btn-sm', interceptEnabled ? 'btn-error' : 'btn-success']"
-            :title="$t('passiveScan.intercept.buttons.toggleHttp')"
+            :title="$t('trafficAnalysis.intercept.buttons.toggleHttp')"
           >
             <i :class="['fas', interceptEnabled ? 'fa-stop' : 'fa-play', 'mr-1']"></i>
             HTTP
@@ -39,7 +39,7 @@
           <button 
             @click="toggleWebSocketIntercept"
             :class="['btn btn-sm', websocketInterceptEnabled ? 'btn-error' : 'btn-success']"
-            :title="$t('passiveScan.intercept.buttons.toggleWs')"
+            :title="$t('trafficAnalysis.intercept.buttons.toggleWs')"
           >
             <i :class="['fas', websocketInterceptEnabled ? 'fa-stop' : 'fa-plug', 'mr-1']"></i>
             WS
@@ -49,17 +49,17 @@
           
           <div class="stats stats-horizontal shadow-sm">
             <div class="stat py-2 px-4">
-              <div class="stat-title text-xs">{{ $t('passiveScan.intercept.stats.proxyStatus') }}</div>
+              <div class="stat-title text-xs">{{ $t('trafficAnalysis.intercept.stats.proxyStatus') }}</div>
               <div class="stat-value text-sm" :class="proxyStatus.running ? 'text-success' : 'text-error'">
-                {{ proxyStatus.running ? $t('passiveScan.intercept.stats.running') : $t('passiveScan.intercept.stats.stopped') }}
+                {{ proxyStatus.running ? $t('trafficAnalysis.intercept.stats.running') : $t('trafficAnalysis.intercept.stats.stopped') }}
               </div>
             </div>
             <div class="stat py-2 px-4">
-              <div class="stat-title text-xs">{{ $t('passiveScan.intercept.stats.port') }}</div>
+              <div class="stat-title text-xs">{{ $t('trafficAnalysis.intercept.stats.port') }}</div>
               <div class="stat-value text-sm">{{ proxyStatus.port || 8080 }}</div>
             </div>
             <div class="stat py-2 px-4">
-              <div class="stat-title text-xs">{{ $t('passiveScan.intercept.stats.interceptQueue') }}</div>
+              <div class="stat-title text-xs">{{ $t('trafficAnalysis.intercept.stats.interceptQueue') }}</div>
               <div class="stat-value text-sm">{{ interceptedItems.length }}</div>
             </div>
           </div>
@@ -73,12 +73,12 @@
       <div v-if="interceptedItems.length === 0" class="flex-1 flex items-center justify-center bg-base-100">
         <div class="text-center">
           <i class="fas fa-hourglass-half text-6xl text-base-content/30 mb-4"></i>
-          <p class="text-lg font-semibold text-base-content/70">{{ $t('passiveScan.intercept.waiting') }}</p>
+          <p class="text-lg font-semibold text-base-content/70">{{ $t('trafficAnalysis.intercept.waiting') }}</p>
           <p class="text-sm text-base-content/50 mt-2">
-            {{ interceptEnabled || websocketInterceptEnabled ? $t('passiveScan.intercept.enabled') : $t('passiveScan.intercept.disabled') }}
+            {{ interceptEnabled || websocketInterceptEnabled ? $t('trafficAnalysis.intercept.enabled') : $t('trafficAnalysis.intercept.disabled') }}
           </p>
           <p class="text-sm text-base-content/50">
-            {{ $t('passiveScan.intercept.proxyConfig') }} 127.0.0.1:{{ proxyStatus.port || 8080 }}
+            {{ $t('trafficAnalysis.intercept.proxyConfig') }} 127.0.0.1:{{ proxyStatus.port || 8080 }}
           </p>
         </div>
       </div>
@@ -93,7 +93,7 @@
           <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
             <h3 class="font-semibold text-sm">
               <i class="fas fa-list mr-2"></i>
-              {{ $t('passiveScan.intercept.queue') }} ({{ interceptedItems.length }})
+              {{ $t('trafficAnalysis.intercept.queue') }} ({{ interceptedItems.length }})
             </h3>
             <div class="flex items-center gap-2">
               <button 
@@ -102,7 +102,7 @@
                 :disabled="isProcessing || interceptedItems.length === 0"
               >
                 <i class="fas fa-forward mr-1"></i>
-                {{ $t('passiveScan.intercept.buttons.forwardAll') }}
+                {{ $t('trafficAnalysis.intercept.buttons.forwardAll') }}
               </button>
               <button 
                 @click="dropAll"
@@ -110,7 +110,7 @@
                 :disabled="isProcessing || interceptedItems.length === 0"
               >
                 <i class="fas fa-trash mr-1"></i>
-                {{ $t('passiveScan.intercept.buttons.dropAll') }}
+                {{ $t('trafficAnalysis.intercept.buttons.dropAll') }}
               </button>
             </div>
           </div>
@@ -135,7 +135,7 @@
                 <template v-else-if="item.type === 'response'">
                   <span class="badge badge-sm badge-secondary">RES</span>
                   <span class="badge badge-sm" :class="getStatusClass((item.data as any).status)">{{ (item.data as any).status }}</span>
-                  <span class="truncate flex-1 font-mono text-xs text-base-content/70">{{ $t('passiveScan.intercept.response') }} #{{ (item.data as any).request_id.slice(0, 8) }}</span>
+                  <span class="truncate flex-1 font-mono text-xs text-base-content/70">{{ $t('trafficAnalysis.intercept.response') }} #{{ (item.data as any).request_id.slice(0, 8) }}</span>
                 </template>
                 <!-- WebSocket 显示 -->
                 <template v-else-if="item.type === 'websocket'">
@@ -168,14 +168,14 @@
             @click="contextMenuForward"
           >
             <i class="fas fa-arrow-right w-4 text-success"></i>
-            {{ $t('passiveScan.intercept.buttons.forward') }}
+            {{ $t('trafficAnalysis.intercept.buttons.forward') }}
           </button>
           <button 
             class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
             @click="contextMenuDrop"
           >
             <i class="fas fa-times w-4 text-error"></i>
-            {{ $t('passiveScan.intercept.buttons.drop') }}
+            {{ $t('trafficAnalysis.intercept.buttons.drop') }}
           </button>
           
           <div class="divider my-1 h-px"></div>
@@ -188,14 +188,14 @@
             :class="{ 'opacity-50 cursor-not-allowed': contextMenu.item?.type !== 'request' }"
           >
             <i class="fas fa-redo w-4 text-primary"></i>
-            {{ $t('passiveScan.intercept.contextMenu.sendToRepeater') }}
+            {{ $t('trafficAnalysis.intercept.contextMenu.sendToRepeater') }}
           </button>
           <button 
             class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
             @click="contextMenuSendToAI"
           >
             <i class="fas fa-robot w-4 text-secondary"></i>
-            {{ $t('passiveScan.intercept.contextMenu.sendToAI') }}
+            {{ $t('trafficAnalysis.intercept.contextMenu.sendToAI') }}
           </button>
           
           <div class="divider my-1 h-px"></div>
@@ -207,7 +207,7 @@
             >
               <span class="flex items-center gap-2">
                 <i class="fas fa-filter w-4 text-warning"></i>
-                {{ $t('passiveScan.intercept.contextMenu.addFilter') }}
+                {{ $t('trafficAnalysis.intercept.contextMenu.addFilter') }}
               </span>
               <i class="fas fa-chevron-right text-xs"></i>
             </button>
@@ -218,25 +218,25 @@
                   class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
                   @click="addFilterByDomain"
                 >
-                  {{ $t('passiveScan.intercept.contextMenu.filterByDomain') }}: {{ getItemDomain() }}
+                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByDomain') }}: {{ getItemDomain() }}
                 </button>
                 <button 
                   class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
                   @click="addFilterByUrl"
                 >
-                  {{ $t('passiveScan.intercept.contextMenu.filterByUrl') }}
+                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByUrl') }}
                 </button>
                 <button 
                   class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
                   @click="addFilterByMethod"
                 >
-                  {{ $t('passiveScan.intercept.contextMenu.filterByMethod') }}: {{ getItemMethod() }}
+                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByMethod') }}: {{ getItemMethod() }}
                 </button>
                 <button 
                   class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
                   @click="addFilterByFileExt"
                 >
-                  {{ $t('passiveScan.intercept.contextMenu.filterByFileExt') }}
+                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByFileExt') }}
                 </button>
               </template>
               <template v-else-if="contextMenu.item?.type === 'response'">
@@ -244,13 +244,13 @@
                   class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
                   @click="addFilterByStatus"
                 >
-                  {{ $t('passiveScan.intercept.contextMenu.filterByStatus') }}: {{ getItemStatus() }}
+                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByStatus') }}: {{ getItemStatus() }}
                 </button>
                 <button 
                   class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
                   @click="addFilterByContentType"
                 >
-                  {{ $t('passiveScan.intercept.contextMenu.filterByContentType') }}
+                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByContentType') }}
                 </button>
               </template>
               <template v-else-if="contextMenu.item?.type === 'websocket'">
@@ -258,7 +258,7 @@
                   class="w-full px-4 py-2 text-left text-sm hover:bg-base-200"
                   @click="addFilterByWsDirection"
                 >
-                  {{ $t('passiveScan.intercept.contextMenu.filterByDirection') }}: {{ getItemDirection() }}
+                  {{ $t('trafficAnalysis.intercept.contextMenu.filterByDirection') }}: {{ getItemDirection() }}
                 </button>
               </template>
               <div class="divider my-1 h-px"></div>
@@ -267,7 +267,7 @@
                 @click="openFilterDialog"
               >
                 <i class="fas fa-cog mr-2"></i>
-                {{ $t('passiveScan.intercept.contextMenu.customFilter') }}
+                {{ $t('trafficAnalysis.intercept.contextMenu.customFilter') }}
               </button>
             </div>
           </div>
@@ -281,7 +281,7 @@
             v-if="contextMenu.item?.type === 'request'"
           >
             <i class="fas fa-copy w-4"></i>
-            {{ $t('passiveScan.intercept.contextMenu.copyUrl') }}
+            {{ $t('trafficAnalysis.intercept.contextMenu.copyUrl') }}
           </button>
           <button 
             class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
@@ -289,14 +289,14 @@
             v-if="contextMenu.item?.type === 'request'"
           >
             <i class="fas fa-terminal w-4"></i>
-            {{ $t('passiveScan.intercept.contextMenu.copyAsCurl') }}
+            {{ $t('trafficAnalysis.intercept.contextMenu.copyAsCurl') }}
           </button>
           <button 
             class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
             @click="contextMenuCopyRaw"
           >
             <i class="fas fa-file-alt w-4"></i>
-            {{ $t('passiveScan.intercept.contextMenu.copyRaw') }}
+            {{ $t('trafficAnalysis.intercept.contextMenu.copyRaw') }}
           </button>
         </div>
 
@@ -316,7 +316,7 @@
               :disabled="isProcessing || !currentItem"
             >
               <i class="fas fa-arrow-right mr-1"></i>
-              {{ $t('passiveScan.intercept.buttons.forward') }}
+              {{ $t('trafficAnalysis.intercept.buttons.forward') }}
             </button>
             
             <button 
@@ -325,7 +325,7 @@
               :disabled="isProcessing || interceptedItems.length === 0"
             >
               <i class="fas fa-forward mr-1"></i>
-              {{ $t('passiveScan.intercept.buttons.forwardAll') }}
+              {{ $t('trafficAnalysis.intercept.buttons.forwardAll') }}
             </button>
             
             <button 
@@ -334,7 +334,7 @@
               :disabled="isProcessing || !currentItem"
             >
               <i class="fas fa-times mr-1"></i>
-              {{ $t('passiveScan.intercept.buttons.drop') }}
+              {{ $t('trafficAnalysis.intercept.buttons.drop') }}
             </button>
             
             <div class="divider divider-horizontal mx-1"></div>
@@ -345,7 +345,7 @@
               :disabled="!currentItem || currentItem.type !== 'request'"
             >
               <i class="fas fa-redo mr-1"></i>
-              {{ $t('passiveScan.intercept.buttons.sendToRepeater') }}
+              {{ $t('trafficAnalysis.intercept.buttons.sendToRepeater') }}
             </button>
             
             <div class="flex-1"></div>
@@ -356,7 +356,7 @@
                 {{ (currentItem.data as any).method }} {{ (currentItem.data as any).url }}
               </template>
               <template v-else-if="currentItem.type === 'response'">
-                {{ $t('passiveScan.intercept.response') }} {{ (currentItem.data as any).status }}
+                {{ $t('trafficAnalysis.intercept.response') }} {{ (currentItem.data as any).status }}
               </template>
               <template v-else-if="currentItem.type === 'websocket'">
                 WS {{ (currentItem.data as any).direction === 'client_to_server' ? '↑' : '↓' }} {{ (currentItem.data as any).message_type }}
@@ -370,19 +370,19 @@
               :class="['tab tab-sm', activeTab === 'pretty' ? 'tab-active' : '']"
               @click="activeTab = 'pretty'"
             >
-              {{ $t('passiveScan.intercept.tabs.pretty') }}
+              {{ $t('trafficAnalysis.intercept.tabs.pretty') }}
             </a>
             <a 
               :class="['tab tab-sm', activeTab === 'raw' ? 'tab-active' : '']"
               @click="activeTab = 'raw'"
             >
-              {{ $t('passiveScan.intercept.tabs.raw') }}
+              {{ $t('trafficAnalysis.intercept.tabs.raw') }}
             </a>
             <a 
               :class="['tab tab-sm', activeTab === 'hex' ? 'tab-active' : '']"
               @click="activeTab = 'hex'"
             >
-              {{ $t('passiveScan.intercept.tabs.hex') }}
+              {{ $t('trafficAnalysis.intercept.tabs.hex') }}
             </a>
           </div>
 
@@ -417,7 +417,7 @@
             <div v-else class="flex-1 flex items-center justify-center text-base-content/50">
               <div class="text-center">
                 <i class="fas fa-mouse-pointer text-4xl mb-2"></i>
-                <p>{{ $t('passiveScan.intercept.clickToView') }}</p>
+                <p>{{ $t('trafficAnalysis.intercept.clickToView') }}</p>
               </div>
             </div>
           </div>
@@ -430,38 +430,38 @@
       <div class="modal-box max-w-lg">
         <h3 class="font-bold text-lg mb-4">
           <i class="fas fa-filter mr-2"></i>
-          {{ $t('passiveScan.intercept.filterDialog.title') }}
+          {{ $t('trafficAnalysis.intercept.filterDialog.title') }}
         </h3>
         
         <div class="space-y-4">
           <!-- Filter Type -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.filterType') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.intercept.filterDialog.filterType') }}</span>
             </label>
             <select v-model="filterRule.type" class="select select-bordered w-full">
-              <option value="request">{{ $t('passiveScan.intercept.filterDialog.typeRequest') }}</option>
-              <option value="response">{{ $t('passiveScan.intercept.filterDialog.typeResponse') }}</option>
+              <option value="request">{{ $t('trafficAnalysis.intercept.filterDialog.typeRequest') }}</option>
+              <option value="response">{{ $t('trafficAnalysis.intercept.filterDialog.typeResponse') }}</option>
             </select>
           </div>
           
           <!-- Match Type -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.matchType') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.intercept.filterDialog.matchType') }}</span>
             </label>
             <select v-model="filterRule.matchType" class="select select-bordered w-full">
               <template v-if="filterRule.type === 'request'">
-                <option value="domain">{{ $t('passiveScan.intercept.filterDialog.matchDomain') }}</option>
-                <option value="url">{{ $t('passiveScan.intercept.filterDialog.matchUrl') }}</option>
-                <option value="method">{{ $t('passiveScan.intercept.filterDialog.matchMethod') }}</option>
-                <option value="fileExt">{{ $t('passiveScan.intercept.filterDialog.matchFileExt') }}</option>
-                <option value="header">{{ $t('passiveScan.intercept.filterDialog.matchHeader') }}</option>
+                <option value="domain">{{ $t('trafficAnalysis.intercept.filterDialog.matchDomain') }}</option>
+                <option value="url">{{ $t('trafficAnalysis.intercept.filterDialog.matchUrl') }}</option>
+                <option value="method">{{ $t('trafficAnalysis.intercept.filterDialog.matchMethod') }}</option>
+                <option value="fileExt">{{ $t('trafficAnalysis.intercept.filterDialog.matchFileExt') }}</option>
+                <option value="header">{{ $t('trafficAnalysis.intercept.filterDialog.matchHeader') }}</option>
               </template>
               <template v-else>
-                <option value="status">{{ $t('passiveScan.intercept.filterDialog.matchStatus') }}</option>
-                <option value="contentType">{{ $t('passiveScan.intercept.filterDialog.matchContentType') }}</option>
-                <option value="header">{{ $t('passiveScan.intercept.filterDialog.matchHeader') }}</option>
+                <option value="status">{{ $t('trafficAnalysis.intercept.filterDialog.matchStatus') }}</option>
+                <option value="contentType">{{ $t('trafficAnalysis.intercept.filterDialog.matchContentType') }}</option>
+                <option value="header">{{ $t('trafficAnalysis.intercept.filterDialog.matchHeader') }}</option>
               </template>
             </select>
           </div>
@@ -469,47 +469,47 @@
           <!-- Relationship -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.relationship') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.intercept.filterDialog.relationship') }}</span>
             </label>
             <select v-model="filterRule.relationship" class="select select-bordered w-full">
-              <option value="matches">{{ $t('passiveScan.intercept.filterDialog.matches') }}</option>
-              <option value="notMatches">{{ $t('passiveScan.intercept.filterDialog.notMatches') }}</option>
-              <option value="contains">{{ $t('passiveScan.intercept.filterDialog.contains') }}</option>
-              <option value="notContains">{{ $t('passiveScan.intercept.filterDialog.notContains') }}</option>
+              <option value="matches">{{ $t('trafficAnalysis.intercept.filterDialog.matches') }}</option>
+              <option value="notMatches">{{ $t('trafficAnalysis.intercept.filterDialog.notMatches') }}</option>
+              <option value="contains">{{ $t('trafficAnalysis.intercept.filterDialog.contains') }}</option>
+              <option value="notContains">{{ $t('trafficAnalysis.intercept.filterDialog.notContains') }}</option>
             </select>
           </div>
           
           <!-- Condition -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.condition') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.intercept.filterDialog.condition') }}</span>
             </label>
             <input 
               type="text" 
               v-model="filterRule.condition"
               class="input input-bordered w-full"
-              :placeholder="$t('passiveScan.intercept.filterDialog.conditionPlaceholder')"
+              :placeholder="$t('trafficAnalysis.intercept.filterDialog.conditionPlaceholder')"
             />
           </div>
           
           <!-- Action -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.intercept.filterDialog.action') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.intercept.filterDialog.action') }}</span>
             </label>
             <select v-model="filterRule.action" class="select select-bordered w-full">
-              <option value="exclude">{{ $t('passiveScan.intercept.filterDialog.actionExclude') }}</option>
-              <option value="include">{{ $t('passiveScan.intercept.filterDialog.actionInclude') }}</option>
+              <option value="exclude">{{ $t('trafficAnalysis.intercept.filterDialog.actionExclude') }}</option>
+              <option value="include">{{ $t('trafficAnalysis.intercept.filterDialog.actionInclude') }}</option>
             </select>
           </div>
         </div>
         
         <div class="modal-action">
           <button class="btn btn-ghost" @click="closeFilterDialog">
-            {{ $t('passiveScan.intercept.filterDialog.cancel') }}
+            {{ $t('trafficAnalysis.intercept.filterDialog.cancel') }}
           </button>
           <button class="btn btn-primary" @click="saveFilterRule" :disabled="!filterRule.condition">
-            {{ $t('passiveScan.intercept.filterDialog.save') }}
+            {{ $t('trafficAnalysis.intercept.filterDialog.save') }}
           </button>
         </div>
       </div>
@@ -932,8 +932,8 @@ async function contextMenuSendToAI() {
   });
   emit('sendToAssistant', [proxyRequest]);
   
-  const typeText = sendType === 'request' ? t('passiveScan.intercept.request') : t('passiveScan.intercept.response');
-  dialog.toast.success(t('passiveScan.intercept.sentToAssistant', { type: typeText }));
+  const typeText = sendType === 'request' ? t('trafficAnalysis.intercept.request') : t('trafficAnalysis.intercept.response');
+  dialog.toast.success(t('trafficAnalysis.intercept.sentToAssistant', { type: typeText }));
 }
 
 // Convert intercepted item to ProxyRequest format for AI assistant
@@ -1073,7 +1073,7 @@ async function addFilterByDomain() {
         condition: domain
       }
     });
-    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+    dialog.toast.success(t('trafficAnalysis.intercept.filterDialog.ruleAdded'));
   }
   closeContextMenu();
 }
@@ -1092,7 +1092,7 @@ async function addFilterByUrl() {
         condition: url
       }
     });
-    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+    dialog.toast.success(t('trafficAnalysis.intercept.filterDialog.ruleAdded'));
   }
   closeContextMenu();
 }
@@ -1110,7 +1110,7 @@ async function addFilterByMethod() {
         condition: method.toLowerCase()
       }
     });
-    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+    dialog.toast.success(t('trafficAnalysis.intercept.filterDialog.ruleAdded'));
   }
   closeContextMenu();
 }
@@ -1132,7 +1132,7 @@ async function addFilterByFileExt() {
           condition: `^${ext}$`
         }
       });
-      dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+      dialog.toast.success(t('trafficAnalysis.intercept.filterDialog.ruleAdded'));
     }
   }
   closeContextMenu();
@@ -1151,7 +1151,7 @@ async function addFilterByStatus() {
         condition: `^${status}$`
       }
     });
-    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+    dialog.toast.success(t('trafficAnalysis.intercept.filterDialog.ruleAdded'));
   }
   closeContextMenu();
 }
@@ -1173,7 +1173,7 @@ async function addFilterByContentType() {
           condition: mainType
         }
       });
-      dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+      dialog.toast.success(t('trafficAnalysis.intercept.filterDialog.ruleAdded'));
     }
   }
   closeContextMenu();
@@ -1226,7 +1226,7 @@ async function saveFilterRule() {
       }
     });
     
-    dialog.toast.success(t('passiveScan.intercept.filterDialog.ruleAdded'));
+    dialog.toast.success(t('trafficAnalysis.intercept.filterDialog.ruleAdded'));
     closeFilterDialog();
   } catch (error: any) {
     console.error('Failed to save filter rule:', error);

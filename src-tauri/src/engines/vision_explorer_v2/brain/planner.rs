@@ -1,3 +1,5 @@
+use crate::engines::vision_explorer_v2::blackboard::Blackboard;
+use crate::engines::vision_explorer_v2::brain::auth_agent::AuthAgent;
 use crate::engines::vision_explorer_v2::brain::pattern_solver::NavigationPatternSolver;
 use crate::engines::vision_explorer_v2::core::{
     Agent, Event, PageContext, PerceptionResult,
@@ -16,6 +18,7 @@ use tokio::sync::{mpsc, RwLock};
 pub struct PlannerAgent {
     id: String,
     graph: Arc<RwLock<ExplorationGraph>>,
+    blackboard: Arc<Blackboard>,
     #[allow(dead_code)]
     config: VisionExplorerV2Config,
     frontier: Arc<RwLock<VecDeque<String>>>,
@@ -30,12 +33,14 @@ impl PlannerAgent {
     pub fn new(
         id: String,
         graph: Arc<RwLock<ExplorationGraph>>,
+        blackboard: Arc<Blackboard>,
         config: VisionExplorerV2Config,
         event_tx: mpsc::Sender<Event>,
     ) -> Self {
         Self {
             id: id.clone(),
             graph,
+            blackboard,
             config,
             frontier: Arc::new(RwLock::new(VecDeque::new())),
             event_tx,
@@ -61,16 +66,9 @@ impl PlannerAgent {
         // 1. If we have a current node, process it
         if let Some(current_id) = current_node_opt {
             // Read node status and actions first, then release lock
-            let (node_status, first_action) = {
+            let node_status = {
                 let graph = self.graph.read().await;
-                if let Some(node) = graph.get_node(&current_id) {
-                    (
-                        Some(node.status.clone()),
-                        node.possible_actions.first().cloned(),
-                    )
-                } else {
-                    (None, None)
-                }
+                graph.get_node(&current_id).map(|node| node.status.clone())
             };
 
             // A. Node is Unvisited -> Need Perception
@@ -122,47 +120,60 @@ impl PlannerAgent {
 
             // B. Node is Analyzed -> Need Action
             if node_status == Some(ExplorationStatus::Analyzed) {
-                if let Some(action) = first_action {
-                    log::info!(
-                        "Decided to take action: {} on {}",
-                        action.action_type,
-                        action.selector
-                    );
+                let mut graph = self.graph.write().await;
+                if let Some(node) = graph.get_node_mut(&current_id) {
+                    if !node.possible_actions.is_empty() {
+                        // === AUTH PRIORITY & SAFETY FILTERING ===
+                        let is_authenticated = self.blackboard.is_authenticated().await;
+                        
+                        // 1. Check for high-priority login actions
+                        let priority_idx = node.possible_actions.iter().position(|a| {
+                            let desc = a.description.to_lowercase();
+                            let is_login_action = desc.contains("login") || desc.contains("sign in") || a.action_type == "fill_form";
+                            is_login_action && !is_authenticated
+                        });
 
-                    // Remove the action from possible_actions to prevent infinite loop
-                    // If we execute an action and the page fingerprint doesn't change,
-                    // we don't want to execute the same action again.
-                    {
-                        let mut graph = self.graph.write().await;
-                        if let Some(node) = graph.get_node_mut(&current_id) {
-                            if !node.possible_actions.is_empty() {
-                                node.possible_actions.remove(0);
-                                log::debug!(
-                                    "Removed executed action, {} actions remaining",
-                                    node.possible_actions.len()
-                                );
+                        let action_idx = if let Some(idx) = priority_idx {
+                            log::info!("PRIORITIZING AUTH ACTION: {}", node.possible_actions[idx].description);
+                            idx
+                        } else {
+                            // 2. Filter out dangerous actions if authenticated (to prevent logout loops)
+                            let mut filtered_idx = None;
+                            for (idx, a) in node.possible_actions.iter().enumerate() {
+                                let desc = a.description.to_lowercase();
+                                let is_logout = desc.contains("logout") || desc.contains("sign out") || desc.contains("exit");
+                                if is_authenticated && is_logout {
+                                    log::warn!("SKIPPING DANGEROUS LOGOUT ACTION: {}", a.description);
+                                    continue;
+                                }
+                                filtered_idx = Some(idx);
+                                break;
                             }
+                            filtered_idx.unwrap_or(0) // Default to first if none filtered or all skipped
+                        };
+
+                        if action_idx < node.possible_actions.len() {
+                            let action = node.possible_actions.remove(action_idx);
+                            log::info!(
+                                "Decided to take action: {} on {}",
+                                action.action_type,
+                                action.selector
+                            );
+
+                            return Ok(Some(Event::TaskAssigned {
+                                agent_id: "navigator_1".to_string(),
+                                task_id: uuid::Uuid::new_v4().to_string(),
+                                target_node_id: current_id,
+                                payload: Some(serde_json::to_value(&action)?),
+                            }));
                         }
                     }
-
-                    return Ok(Some(Event::TaskAssigned {
-                        agent_id: "navigator_1".to_string(),
-                        task_id: uuid::Uuid::new_v4().to_string(),
-                        target_node_id: current_id,
-                        payload: Some(serde_json::to_value(&action)?),
-                    }));
-                } else {
+                    
                     log::info!(
                         "No actions available on node {}, marking as Visited.",
                         current_id
                     );
-                    // Mark as Visited/Exhausted and allow backtracking
-                    {
-                        let mut graph = self.graph.write().await;
-                        if let Some(node) = graph.get_node_mut(&current_id) {
-                            node.status = ExplorationStatus::Visited;
-                        }
-                    }
+                    node.status = ExplorationStatus::Visited;
                 }
             }
         }
@@ -230,7 +241,24 @@ impl Agent for PlannerAgent {
                 if agent_id.contains("navigator") {
                     if let Some(data) = &result.data {
                         if let Ok(context) = serde_json::from_value::<PageContext>(data.clone()) {
-                            let fingerprint = context.fingerprint();
+                            let was_authenticated = self.blackboard.is_authenticated().await;
+                            
+                            // 1. Detect Auth Status Transitions
+                            if let Some(old_ctx) = self.current_context.read().await.as_ref() {
+                                // Transition: Login -> Dashboard
+                                if AuthAgent::detect_login_success(old_ctx, &context) {
+                                    log::info!(" Planner: Login SUCCESS detected!");
+                                    self.blackboard.set_authenticated(true).await;
+                                }
+                                
+                                // Transition: LoggedIn -> LoggedOut (Dangerous)
+                                if was_authenticated && AuthAgent::is_login_page(&context) && !AuthAgent::is_login_page(old_ctx) {
+                                    log::warn!(" Planner: AUTHENTICATION LOST (Logout detected)!");
+                                    self.blackboard.set_authenticated(false).await;
+                                }
+                            }
+
+                            let fingerprint = context.fingerprint(self.blackboard.is_authenticated().await);
 
                             let mut graph = self.graph.write().await;
                             // Check if node exists

@@ -23,10 +23,55 @@ pub struct V2Session {
     pub event_tx: mpsc::Sender<crate::engines::vision_explorer_v2::Event>,
     /// Target URL
     pub target_url: String,
-    /// Credentials (if set)
-    pub credentials: Option<(String, String)>,
+    /// Has received credentials (do not store plaintext passwords in memory)
+    pub has_credentials: bool,
+    /// Last provided username (optional, for UI display/debug)
+    pub last_username: Option<String>,
     /// Is running
     pub is_running: bool,
+    /// Session created timestamp (secs)
+    pub created_at: u64,
+    /// Session ended timestamp (secs)
+    pub ended_at: Option<u64>,
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+async fn cleanup_sessions(state: &VisionExplorerV2State) {
+    // Keep it simple: remove ended sessions older than 1 hour, and cap total sessions.
+    const TTL_SECS: u64 = 60 * 60;
+    const MAX_SESSIONS: usize = 50;
+
+    let now = now_secs();
+    let mut sessions = state.sessions.write().await;
+
+    sessions.retain(|_, s| {
+        if s.is_running {
+            return true;
+        }
+        match s.ended_at {
+            Some(ended) => now.saturating_sub(ended) <= TTL_SECS,
+            None => now.saturating_sub(s.created_at) <= TTL_SECS,
+        }
+    });
+
+    if sessions.len() > MAX_SESSIONS {
+        let mut items: Vec<(String, u64)> = sessions
+            .iter()
+            .map(|(id, s)| (id.clone(), s.ended_at.unwrap_or(s.created_at)))
+            .collect();
+        items.sort_by_key(|(_, ts)| *ts);
+
+        let to_remove = sessions.len().saturating_sub(MAX_SESSIONS);
+        for (id, _) in items.into_iter().take(to_remove) {
+            sessions.remove(&id);
+        }
+    }
 }
 
 fn split_model_with_provider(value: &str) -> (Option<String>, String) {
@@ -54,7 +99,14 @@ pub async fn start_vision_explorer_v2(
     state: State<'_, VisionExplorerV2State>,
     db: State<'_, Arc<crate::services::database::DatabaseService>>,
 ) -> Result<String, String> {
-    log::info!("Starting Vision Explorer V2 with config: {:?}", config);
+    cleanup_sessions(state.inner()).await;
+    log::info!(
+        "Starting Vision Explorer V2: target_url={}, max_depth={}, max_steps={}, headless={}",
+        config.target_url,
+        config.max_depth,
+        config.max_steps,
+        config.headless
+    );
 
     // Read LLM/VLM settings from database
     let default_llm_provider = db
@@ -82,24 +134,7 @@ pub async fn start_vision_explorer_v2(
         .flatten()
     {
         Some(value) => value,
-        None => {
-            let legacy_provider = db
-                .get_config("ai", "default_vlm_provider")
-                .await
-                .ok()
-                .flatten();
-            if let Some(ref value) = legacy_provider {
-                let _ = db
-                    .set_config(
-                        "ai",
-                        "default_vlm_provider",
-                        value,
-                        Some("Default VLM provider (migrated)"),
-                    )
-                    .await;
-            }
-            legacy_provider.unwrap_or_else(|| default_llm_provider.clone())
-        }
+        None => default_llm_provider.clone(),
     };
 
     if default_vlm_provider.trim().is_empty() {
@@ -203,8 +238,11 @@ pub async fn start_vision_explorer_v2(
                 session_id: session_id.clone(),
                 event_tx: event_tx.clone(),
                 target_url: target_url.clone(),
-                credentials: None,
+                has_credentials: false,
+                last_username: None,
                 is_running: true,
+                created_at: now_secs(),
+                ended_at: None,
             },
         );
     }
@@ -232,7 +270,9 @@ pub async fn start_vision_explorer_v2(
         let mut sessions = state_sessions.write().await;
         if let Some(session) = sessions.get_mut(&exec_id_clone) {
             session.is_running = false;
-            session.credentials = None;
+            session.has_credentials = false;
+            session.last_username = None;
+            session.ended_at = Some(now_secs());
         }
     });
 
@@ -246,6 +286,7 @@ pub async fn stop_vision_explorer_v2(
     state: State<'_, VisionExplorerV2State>,
 ) -> Result<(), String> {
     log::info!("Stop Vision Explorer V2 requested for: {}", execution_id);
+    cleanup_sessions(state.inner()).await;
 
     let event_tx = {
         let sessions = state.sessions.read().await;
@@ -259,7 +300,7 @@ pub async fn stop_vision_explorer_v2(
             .send(crate::engines::vision_explorer_v2::Event::Stop)
             .await
         {
-            log::warn!("Failed to send stop event: {}", e);
+            return Err(format!("Failed to send stop event: {}", e));
         }
         Ok(())
     } else {
@@ -279,11 +320,13 @@ pub async fn vision_explorer_v2_receive_credentials(
     state: State<'_, VisionExplorerV2State>,
 ) -> Result<(), String> {
     log::info!("V2 Credentials received for: {}", execution_id);
+    cleanup_sessions(state.inner()).await;
 
     let (event_tx, session_id) = {
         let mut sessions = state.sessions.write().await;
         if let Some(session) = sessions.get_mut(&execution_id) {
-            session.credentials = Some((username.clone(), password.clone()));
+            session.has_credentials = true;
+            session.last_username = Some(username.clone());
             (
                 Some(session.event_tx.clone()),
                 Some(session.session_id.clone()),
@@ -304,7 +347,7 @@ pub async fn vision_explorer_v2_receive_credentials(
             )
             .await
         {
-            log::warn!("Failed to send credentials event: {}", e);
+            return Err(format!("Failed to send credentials event: {}", e));
         }
 
         let emitter = V2MessageEmitter::new(Arc::new(app_handle), execution_id.clone(), session_id);
@@ -323,6 +366,7 @@ pub async fn vision_explorer_v2_skip_login(
     state: State<'_, VisionExplorerV2State>,
 ) -> Result<(), String> {
     log::info!("V2 Skip login requested for: {}", execution_id);
+    cleanup_sessions(state.inner()).await;
 
     let event_tx = {
         let sessions = state.sessions.read().await;
@@ -336,7 +380,7 @@ pub async fn vision_explorer_v2_skip_login(
             .send(crate::engines::vision_explorer_v2::Event::SkipLogin)
             .await
         {
-            log::warn!("Failed to send skip login event: {}", e);
+            return Err(format!("Failed to send skip login event: {}", e));
         }
         Ok(())
     } else {
@@ -350,6 +394,7 @@ pub async fn get_vision_explorer_v2_status(
     execution_id: String,
     state: State<'_, VisionExplorerV2State>,
 ) -> Result<serde_json::Value, String> {
+    cleanup_sessions(state.inner()).await;
     let sessions = state.sessions.read().await;
     if let Some(session) = sessions.get(&execution_id) {
         Ok(serde_json::json!({
@@ -357,7 +402,10 @@ pub async fn get_vision_explorer_v2_status(
             "session_id": session.session_id,
             "target_url": session.target_url,
             "is_running": session.is_running,
-            "has_credentials": session.credentials.is_some()
+            "has_credentials": session.has_credentials,
+            "last_username": session.last_username,
+            "created_at": session.created_at,
+            "ended_at": session.ended_at
         }))
     } else {
         Err(format!("Session not found: {}", execution_id))
@@ -369,6 +417,7 @@ pub async fn get_vision_explorer_v2_status(
 pub async fn list_vision_explorer_v2_sessions(
     state: State<'_, VisionExplorerV2State>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    cleanup_sessions(state.inner()).await;
     let sessions = state.sessions.read().await;
     let result: Vec<serde_json::Value> = sessions
         .iter()
@@ -377,7 +426,11 @@ pub async fn list_vision_explorer_v2_sessions(
                 "execution_id": id,
                 "session_id": session.session_id,
                 "target_url": session.target_url,
-                "is_running": session.is_running
+                "is_running": session.is_running,
+                "has_credentials": session.has_credentials,
+                "last_username": session.last_username,
+                "created_at": session.created_at,
+                "ended_at": session.ended_at
             })
         })
         .collect();

@@ -142,6 +142,11 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
   const thinkingBuffer = ref('')
   const currentThinkingMessageId = ref<string | null>(null)
 
+  // Assistant streaming message (so message order reflects arrival order)
+  const currentAssistantMessageId = ref<string | null>(null)
+  // Current assistant segment buffer (reset on tool-call boundaries)
+  const assistantSegmentBuffer = ref('')
+
   // 工具调用追踪 Map: tool_call_id -> { tool_name, arguments, message_id, message_index }
   const toolCallTracker = new Map<string, { tool_name: string; arguments: any; message_id: string; message_index: number }>()
 
@@ -166,6 +171,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     contentBuffer.value = ''
     thinkingBuffer.value = ''
     currentThinkingMessageId.value = null
+    currentAssistantMessageId.value = null
+    assistantSegmentBuffer.value = ''
     error.value = null
     isExecuting.value = false
     currentExecutionId.value = null
@@ -180,6 +187,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     contentBuffer.value = ''
     thinkingBuffer.value = ''
     currentThinkingMessageId.value = null
+    currentAssistantMessageId.value = null
+    assistantSegmentBuffer.value = ''
 
     // 如果有正在流式输出的内容，将其作为最终消息添加
     // 注意：后端取消后可能不会发送 complete 事件，所以这里处理残留内容
@@ -203,6 +212,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       streamingContent.value = ''
       thinkingBuffer.value = ''
       currentThinkingMessageId.value = null
+      currentAssistantMessageId.value = null
+      assistantSegmentBuffer.value = ''
 
       // 添加用户消息
       messages.value.push({
@@ -226,6 +237,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       streamingContent.value = ''
       thinkingBuffer.value = ''
       currentThinkingMessageId.value = null
+      currentAssistantMessageId.value = null
+      assistantSegmentBuffer.value = ''
 
       // 添加用户任务消息（如果没有通过 user_message 事件收到）
       const hasUserMessage = messages.value.some(m =>
@@ -273,6 +286,24 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         }
         contentBuffer.value += payload.content
         streamingContent.value = contentBuffer.value
+        assistantSegmentBuffer.value += payload.content
+
+        // Ensure there's a visible assistant message in the message list so ordering matches arrival order
+        if (!currentAssistantMessageId.value) {
+          const msgId = crypto.randomUUID()
+          currentAssistantMessageId.value = msgId
+          messages.value.push({
+            id: msgId,
+            type: 'final',
+            content: assistantSegmentBuffer.value,
+            timestamp: Date.now(),
+          })
+        } else {
+          const existingMsg = messages.value.find(m => m.id === currentAssistantMessageId.value)
+          if (existingMsg) {
+            existingMsg.content = assistantSegmentBuffer.value
+          }
+        }
       } else if (payload.chunk_type === 'reasoning') {
         // Reasoning content: accumulate in existing thinking message or create new one
         thinkingBuffer.value += payload.content
@@ -302,6 +333,10 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     const unlistenToolCall = await listen<AgentToolCallEvent>('agent:tool_call', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+
+      // Close current assistant segment so later assistant text won't appear above this tool call
+      currentAssistantMessageId.value = null
+      assistantSegmentBuffer.value = ''
 
       messages.value.push({
         id: crypto.randomUUID(),
@@ -339,6 +374,10 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         message_id: messageId,
         message_index: messageIndex,
       })
+
+      // Close current assistant segment so later assistant text won't appear above this tool call
+      currentAssistantMessageId.value = null
+      assistantSegmentBuffer.value = ''
 
       messages.value.push({
         id: messageId,
@@ -475,22 +514,18 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         }
       }
 
-      // 检查是否已经有这条消息（通过ID或内容）
-      const existingById = messages.value.find(m => m.id === payload.message_id)
-      const existingByContent = messages.value.find(m =>
-        m.type === 'final' && m.content === payload.content
-      )
-
-      if (!existingById && !existingByContent) {
-        // 如果没有，添加最终消息
-        messages.value.push({
-          id: payload.message_id,
-          type: 'final',
-          content: payload.content,
-          timestamp: payload.timestamp,
-          metadata: ragMetaInfo.value ? { rag_info: ragMetaInfo.value } : undefined,
-        })
+      // IMPORTANT:
+      // We render assistant text as multiple segments (split by tool-call boundaries) to preserve arrival order.
+      // So we DO NOT overwrite earlier segments with the full final content here (that would "jump" above tool calls).
+      // We only attach metadata to the latest assistant segment if present.
+      if (messages.value.length > 0) {
+        const lastAssistant = [...messages.value].reverse().find(m => m.type === 'final')
+        if (lastAssistant) {
+          lastAssistant.metadata = ragMetaInfo.value ? { rag_info: ragMetaInfo.value } : lastAssistant.metadata
+        }
       }
+      currentAssistantMessageId.value = null
+      assistantSegmentBuffer.value = ''
 
       // 清空缓冲区，避免 agent:complete 事件重复添加
       contentBuffer.value = ''
@@ -533,36 +568,21 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       streamingContent.value = ''
       thinkingBuffer.value = ''
       currentThinkingMessageId.value = null
+      currentAssistantMessageId.value = null
+      assistantSegmentBuffer.value = ''
 
       // 只有当缓冲区有内容时才尝试添加消息
       // 注意：agent:assistant_message_saved 事件已经会清空缓冲区，
       // 所以如果消息已经通过那个事件添加，这里的 contentBuffer 应该是空的
       const finalContent = contentBuffer.value.trim()
       if (finalContent) {
-        // 再次检查是否已有相同内容的消息（双重保险）
-        const hasAssistantMessage = messages.value.some(m =>
-          m.type === 'final' && m.content === finalContent
-        )
-
-        if (!hasAssistantMessage) {
-          // 检测流式内容中的知识库引用
-          if (ragMetaInfo.value?.rag_applied && !ragMetaInfo.value.rag_sources_used) {
-            const sourcePattern = /\[SOURCE\s+\d+\]/gi
-            const matches = finalContent.match(sourcePattern)
-            if (matches && matches.length > 0) {
-              ragMetaInfo.value.rag_sources_used = true
-              ragMetaInfo.value.source_count = matches.length
-              console.log(`[useAgentEvents] Detected ${matches.length} knowledge base citations in stream`)
-            }
+        // Do nothing: segments already reflect the streamed arrival order.
+        // We only attach metadata if needed.
+        if (ragMetaInfo.value) {
+          const lastAssistant = [...messages.value].reverse().find(m => m.type === 'final')
+          if (lastAssistant) {
+            lastAssistant.metadata = { ...(lastAssistant.metadata || {}), rag_info: ragMetaInfo.value }
           }
-
-          messages.value.push({
-            id: crypto.randomUUID(),
-            type: 'final',
-            content: finalContent,
-            timestamp: Date.now(),
-            metadata: ragMetaInfo.value ? { rag_info: ragMetaInfo.value } : undefined,
-          })
         }
       }
 

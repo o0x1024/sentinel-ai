@@ -32,7 +32,7 @@ mod fingerprint_tests {
         };
 
         // Same structure, different text -> should have same fingerprint
-        assert_eq!(ctx1.fingerprint(), ctx2.fingerprint());
+        assert_eq!(ctx1.fingerprint(false), ctx2.fingerprint(false));
     }
 
     #[test]
@@ -54,7 +54,7 @@ mod fingerprint_tests {
         };
 
         // Different structure -> should have different fingerprint
-        assert_ne!(ctx1.fingerprint(), ctx2.fingerprint());
+        assert_ne!(ctx1.fingerprint(false), ctx2.fingerprint(false));
     }
 
     #[test]
@@ -76,7 +76,7 @@ mod fingerprint_tests {
         };
 
         // Same base URL, different query params -> should have same fingerprint
-        assert_eq!(ctx1.fingerprint(), ctx2.fingerprint());
+        assert_eq!(ctx1.fingerprint(false), ctx2.fingerprint(false));
     }
 
     #[test]
@@ -98,7 +98,21 @@ mod fingerprint_tests {
         };
 
         // Different title -> different fingerprint (SPA tab detection)
-        assert_ne!(ctx1.fingerprint(), ctx2.fingerprint());
+        assert_ne!(ctx1.fingerprint(false), ctx2.fingerprint(false));
+    }
+
+    #[test]
+    fn test_fingerprint_considers_auth() {
+        let ctx = PageContext {
+            url: "https://example.com/page".to_string(),
+            title: "Dashboard".to_string(),
+            screenshot: None,
+            dom_snapshot: "<html><body></body></html>".to_string(),
+            accessibility_tree: None,
+        };
+
+        // Same page, different auth status -> different fingerprint
+        assert_ne!(ctx.fingerprint(false), ctx.fingerprint(true));
     }
 }
 

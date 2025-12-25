@@ -336,10 +336,10 @@ export default {
     retryAttemptsDesc: 'Number of retry attempts for failed scans',
     scanThreads: 'Scan Threads',
     scanThreadsDesc: 'Number of threads for scanning',
-    enablePassiveScan: 'Enable Passive Scan',
-    passiveScanDesc: 'Enable passive scanning mode',
-    passiveScanPort: 'Passive Scan Port',
-    passiveScanPortDesc: 'Port for passive scanning'
+    enableTrafficAnalysis: 'Enable Traffic Analysis',
+    trafficAnalysisDesc: 'Enable traffic analysis mode',
+    trafficAnalysisPort: 'Traffic Analysis Port',
+    trafficAnalysisPortDesc: 'Port for traffic analysis'
   },
   network: {
     title: 'Network Settings',

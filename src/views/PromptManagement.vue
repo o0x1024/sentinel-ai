@@ -656,7 +656,7 @@ function createPluginGenerationTemplate() {
     template_type: 'PluginGeneration' as TemplateType,
     is_system: true,
     priority: 90,
-    tags: ['plugin', 'generation', 'security', 'passive'],
+    tags: ['plugin', 'generation', 'security', 'traffic'],
     variables: ['vuln_type', 'analysis', 'endpoints', 'requirements'],
     version: '1.0.0',
   }
@@ -698,7 +698,7 @@ function createPluginFixTemplate() {
     template_type: 'PluginFix' as TemplateType,
     is_system: true,
     priority: 85,
-    tags: ['plugin', 'fix', 'repair', 'passive'],
+    tags: ['plugin', 'fix', 'repair', 'traffic'],
     variables: ['original_code', 'error_message', 'error_details', 'vuln_type', 'attempt'],
     version: '1.0.0',
   }

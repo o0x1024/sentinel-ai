@@ -3,7 +3,7 @@
     <div class="card-body">
       <h2 class="card-title text-base mb-3">
         <i class="fas fa-power-off mr-2"></i>
-        {{ $t('passiveScan.control.title') }}
+        {{ $t('trafficAnalysis.control.title') }}
       </h2>
       
       <!-- 代理状态 -->
@@ -12,40 +12,40 @@
           <div class="stat-figure text-primary">
             <i :class="['fas fa-circle', proxyStatus.running ? 'text-success' : 'text-error', 'stat-icon']"></i>
           </div>
-          <div class="stat-title text-xs">{{ $t('passiveScan.control.stats.proxyStatus') }}</div>
+          <div class="stat-title text-xs">{{ $t('trafficAnalysis.control.stats.proxyStatus') }}</div>
           <div class="stat-value text-base" :class="proxyStatus.running ? 'text-success' : 'text-error'">
-            {{ proxyStatus.running ? $t('passiveScan.control.stats.running') : $t('passiveScan.control.stats.stopped') }}
+            {{ proxyStatus.running ? $t('trafficAnalysis.control.stats.running') : $t('trafficAnalysis.control.stats.stopped') }}
           </div>
-          <div class="stat-desc">{{ proxyStatus.running ? `${$t('passiveScan.control.stats.port')}: ${proxyStatus.port}` : $t('passiveScan.control.stats.notStarted') }}</div>
+          <div class="stat-desc">{{ proxyStatus.running ? `${$t('trafficAnalysis.control.stats.port')}: ${proxyStatus.port}` : $t('trafficAnalysis.control.stats.notStarted') }}</div>
         </div>
         
         <div class="stat">
           <div class="stat-figure text-secondary">
             <i class="fas fa-lock stat-icon"></i>
           </div>
-          <div class="stat-title text-xs">{{ $t('passiveScan.control.stats.mitmStatus') }}</div>
-          <div class="stat-value text-base">{{ proxyStatus.mitm ? $t('passiveScan.control.stats.enabled') : $t('passiveScan.control.stats.disabled') }}</div>
-          <div class="stat-desc text-xs">{{ $t('passiveScan.control.stats.mitmDesc') }}</div>
+          <div class="stat-title text-xs">{{ $t('trafficAnalysis.control.stats.mitmStatus') }}</div>
+          <div class="stat-value text-base">{{ proxyStatus.mitm ? $t('trafficAnalysis.control.stats.enabled') : $t('trafficAnalysis.control.stats.disabled') }}</div>
+          <div class="stat-desc text-xs">{{ $t('trafficAnalysis.control.stats.mitmDesc') }}</div>
         </div>
         
         <div class="stat">
           <div class="stat-figure text-accent">
             <i class="fas fa-tachometer-alt stat-icon"></i>
           </div>
-          <div class="stat-title text-xs">{{ $t('passiveScan.control.stats.qps') }}</div>
+          <div class="stat-title text-xs">{{ $t('trafficAnalysis.control.stats.qps') }}</div>
           <div class="stat-value text-base">{{ proxyStatus.stats.qps.toFixed(2) }}</div>
-          <div class="stat-desc text-xs">{{ $t('passiveScan.control.stats.qpsDesc') }}</div>
+          <div class="stat-desc text-xs">{{ $t('trafficAnalysis.control.stats.qpsDesc') }}</div>
         </div>
         
         <div class="stat">
           <div class="stat-figure text-info">
             <i class="fas fa-exchange-alt stat-icon"></i>
           </div>
-          <div class="stat-title text-xs">{{ $t('passiveScan.control.stats.requestStats') }}</div>
+          <div class="stat-title text-xs">{{ $t('trafficAnalysis.control.stats.requestStats') }}</div>
           <div class="stat-value text-base">{{ totalRequests }}</div>
           <div class="stat-desc">
-            {{ $t('passiveScan.control.stats.http') }}: {{ proxyStatus.stats.http_requests }} | 
-            {{ $t('passiveScan.control.stats.https') }}: {{ proxyStatus.stats.https_requests }}
+            {{ $t('trafficAnalysis.control.stats.http') }}: {{ proxyStatus.stats.http_requests }} | 
+            {{ $t('trafficAnalysis.control.stats.https') }}: {{ proxyStatus.stats.https_requests }}
           </div>
         </div>
       </div>
@@ -59,7 +59,7 @@
         >
           <i v-if="isToggling" class="fas fa-spinner fa-spin mr-2"></i>
           <i v-else :class="['fas', proxyStatus.running ? 'fa-stop' : 'fa-play', 'mr-2']"></i>
-          {{ isToggling ? $t('passiveScan.control.processing') : (proxyStatus.running ? $t('passiveScan.control.stopProxy') : $t('passiveScan.control.startProxy')) }}
+          {{ isToggling ? $t('trafficAnalysis.control.processing') : (proxyStatus.running ? $t('trafficAnalysis.control.stopProxy') : $t('trafficAnalysis.control.startProxy')) }}
         </button>
         
         <button 
@@ -68,15 +68,15 @@
           :disabled="isRefreshing"
         >
           <i :class="['fas fa-sync-alt mr-2', { 'fa-spin': isRefreshing }]"></i>
-          {{ $t('passiveScan.control.refreshStatus') }}
+          {{ $t('trafficAnalysis.control.refreshStatus') }}
         </button>
       </div>
       
       <div class="alert alert-info">
         <i class="fas fa-info-circle"></i>
         <div class="text-sm">
-          <p>{{ $t('passiveScan.control.proxyConfig') }} <code class="font-mono bg-base-300 px-2 py-1 rounded">127.0.0.1:{{ proxyStatus.port || 8080 }}</code></p>
-          <p class="mt-1">{{ $t('passiveScan.control.proxySettings') }}</p>
+          <p>{{ $t('trafficAnalysis.control.proxyConfig') }} <code class="font-mono bg-base-300 px-2 py-1 rounded">127.0.0.1:{{ proxyStatus.port || 8080 }}</code></p>
+          <p class="mt-1">{{ $t('trafficAnalysis.control.proxySettings') }}</p>
         </div>
       </div>
     </div>

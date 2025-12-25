@@ -57,8 +57,29 @@ pub enum ToolSelectionStrategy {
     Hybrid,
     /// 用户手动指定
     Manual(Vec<String>),
+    /// 能力组模式（渐进式披露）
+    /// Vec<String> 为允许参与选择的 ability_group_id 列表；空表示全部
+    Ability(Vec<String>),
     /// 不使用工具
     None,
+}
+
+/// 选中的 Ability Group 摘要
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectedAbilityGroup {
+    pub id: String,
+    pub name: String,
+}
+
+/// 工具选择计划（扩展返回类型，支持注入上下文）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSelectionPlan {
+    /// 最终选中的工具 ID 列表
+    pub tool_ids: Vec<String>,
+    /// 需要注入到 system_prompt 的额外内容（来自 Ability instructions）
+    pub injected_system_prompt: Option<String>,
+    /// 选中的 Ability 组信息
+    pub selected_ability_group: Option<SelectedAbilityGroup>,
 }
 
 
@@ -313,6 +334,46 @@ impl ToolRouter {
             ToolSelectionStrategy::Keyword => self.select_by_keywords(task, config),
             ToolSelectionStrategy::LLM => self.select_by_llm(task, config, llm_config).await,
             ToolSelectionStrategy::Hybrid => self.select_hybrid(task, config, llm_config).await,
+            ToolSelectionStrategy::Ability(allowed_groups) => {
+                // Ability mode: delegate to plan_tools and return only tool_ids
+                let plan = self
+                    .plan_tools_ability(task, config, llm_config, allowed_groups, None)
+                    .await?;
+                Ok(plan.tool_ids)
+            }
+        }
+    }
+
+    /// Plan tools with full selection plan (supports Ability context injection)
+    pub async fn plan_tools(
+        &self,
+        task: &str,
+        config: &ToolConfig,
+        llm_config: Option<&sentinel_llm::LlmConfig>,
+        db_pool: Option<&sqlx::sqlite::SqlitePool>,
+    ) -> Result<ToolSelectionPlan> {
+        if !config.enabled {
+            return Ok(ToolSelectionPlan {
+                tool_ids: vec![],
+                injected_system_prompt: None,
+                selected_ability_group: None,
+            });
+        }
+
+        match &config.selection_strategy {
+            ToolSelectionStrategy::Ability(allowed_groups) => {
+                self.plan_tools_ability(task, config, llm_config, allowed_groups, db_pool)
+                    .await
+            }
+            _ => {
+                // For non-Ability strategies, just wrap select_tools result
+                let tool_ids = self.select_tools(task, config, llm_config).await?;
+                Ok(ToolSelectionPlan {
+                    tool_ids,
+                    injected_system_prompt: None,
+                    selected_ability_group: None,
+                })
+            }
         }
     }
 
@@ -1009,6 +1070,206 @@ Return ONLY the tool names, one per line."#,
                     .collect())
             }
         }
+    }
+
+    /// Ability mode: two-phase progressive disclosure
+    /// Phase 1: Show group summaries to LLM, let it pick one
+    /// Phase 2: Load full group (instructions + tools), inject context
+    async fn plan_tools_ability(
+        &self,
+        task: &str,
+        config: &ToolConfig,
+        llm_config: Option<&sentinel_llm::LlmConfig>,
+        allowed_groups: &[String],
+        db_pool: Option<&sqlx::sqlite::SqlitePool>,
+    ) -> Result<ToolSelectionPlan> {
+        use sentinel_db::database::ability_group_dao::AbilityGroupDao;
+        use sentinel_llm::{LlmClient, LlmConfig};
+
+        // Need DB pool for ability group queries
+        let pool = match db_pool {
+            Some(p) => p,
+            None => {
+                tracing::warn!("Ability mode requires db_pool, falling back to Keyword");
+                let tool_ids = self.select_by_keywords(task, config)?;
+                return Ok(ToolSelectionPlan {
+                    tool_ids,
+                    injected_system_prompt: None,
+                    selected_ability_group: None,
+                });
+            }
+        };
+
+        // Phase 1: Load group summaries
+        let groups = if allowed_groups.is_empty() {
+            AbilityGroupDao::list_summary(pool).await?
+        } else {
+            AbilityGroupDao::list_summary_by_ids(pool, allowed_groups).await?
+        };
+
+        if groups.is_empty() {
+            tracing::warn!("No ability groups found, falling back to Keyword");
+            let tool_ids = self.select_by_keywords(task, config)?;
+            return Ok(ToolSelectionPlan {
+                tool_ids,
+                injected_system_prompt: None,
+                selected_ability_group: None,
+            });
+        }
+
+        // Build group selection prompt
+        let groups_summary = groups
+            .iter()
+            .map(|g| format!("- {}: {}", g.name, g.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let selection_prompt = format!(
+            r#"Task: {}
+
+Available ability groups (choose exactly ONE that best fits the task):
+{}
+
+Return ONLY the ability group name (one line, no explanation)."#,
+            task, groups_summary
+        );
+
+        // Call LLM to select group
+        let llm_cfg = llm_config.cloned().unwrap_or_else(|| {
+            LlmConfig::new("openai", "gpt-3.5-turbo").with_timeout(30)
+        });
+        let client = LlmClient::new(llm_cfg);
+
+        let selected_group_name = match client.completion(None, &selection_prompt).await {
+            Ok(response) => response.trim().to_string(),
+            Err(e) => {
+                tracing::warn!("Ability group selection LLM call failed: {}, falling back to Keyword", e);
+                let tool_ids = self.select_by_keywords(task, config)?;
+                return Ok(ToolSelectionPlan {
+                    tool_ids,
+                    injected_system_prompt: None,
+                    selected_ability_group: None,
+                });
+            }
+        };
+
+        tracing::info!("LLM selected ability group: '{}'", selected_group_name);
+
+        // Phase 2: Match and load full group
+        // Try exact match first, then fuzzy
+        let matched_group = groups.iter().find(|g| {
+            g.name.eq_ignore_ascii_case(&selected_group_name)
+                || g.id == selected_group_name
+        });
+
+        let group_id = match matched_group {
+            Some(g) => g.id.clone(),
+            None => {
+                // Fuzzy match: check if response contains group name
+                let fuzzy_match = groups.iter().find(|g| {
+                    selected_group_name.to_lowercase().contains(&g.name.to_lowercase())
+                });
+                match fuzzy_match {
+                    Some(g) => {
+                        tracing::info!("Fuzzy matched ability group: '{}'", g.name);
+                        g.id.clone()
+                    }
+                    None => {
+                        tracing::warn!(
+                            "Could not match LLM response '{}' to any group, falling back to Keyword",
+                            selected_group_name
+                        );
+                        let tool_ids = self.select_by_keywords(task, config)?;
+                        return Ok(ToolSelectionPlan {
+                            tool_ids,
+                            injected_system_prompt: None,
+                            selected_ability_group: None,
+                        });
+                    }
+                }
+            }
+        };
+
+        // Load full group details
+        let full_group = match AbilityGroupDao::get(pool, &group_id).await? {
+            Some(g) => g,
+            None => {
+                tracing::warn!("Ability group {} not found, falling back to Keyword", group_id);
+                let tool_ids = self.select_by_keywords(task, config)?;
+                return Ok(ToolSelectionPlan {
+                    tool_ids,
+                    injected_system_prompt: None,
+                    selected_ability_group: None,
+                });
+            }
+        };
+
+        // Compute final tool_ids: fixed_tools + group.tool_ids - disabled_tools
+        let all_available = self.get_all_available_tools();
+        let available_ids: std::collections::HashSet<_> = all_available.iter().map(|t| &t.id).collect();
+
+        let mut final_tools: Vec<String> = config.fixed_tools.clone();
+
+        // Add group tools (filter out non-existent and disabled)
+        for tool_id in &full_group.tool_ids {
+            if config.disabled_tools.contains(tool_id) {
+                continue;
+            }
+            // Check if tool exists
+            let normalized_id = tool_id.replace("::", "__");
+            let exists = available_ids.contains(tool_id) || available_ids.contains(&normalized_id);
+            if exists && !final_tools.contains(tool_id) && !final_tools.contains(&normalized_id) {
+                final_tools.push(if available_ids.contains(&normalized_id) {
+                    normalized_id
+                } else {
+                    tool_id.clone()
+                });
+            }
+        }
+
+        // Remove disabled from fixed_tools too
+        final_tools.retain(|t| !config.disabled_tools.contains(t));
+
+        // Respect max_tools
+        if final_tools.len() > config.max_tools {
+            final_tools.truncate(config.max_tools);
+        }
+
+        // Warn if no tools available
+        if final_tools.is_empty() {
+            tracing::warn!(
+                "Ability group '{}' has no available tools after filtering, falling back to Keyword",
+                full_group.name
+            );
+            let tool_ids = self.select_by_keywords(task, config)?;
+            return Ok(ToolSelectionPlan {
+                tool_ids,
+                injected_system_prompt: None,
+                selected_ability_group: None,
+            });
+        }
+
+        // Build injected system prompt
+        let injected = format!(
+            "\n\n[AbilityInstructionsBegin: {}]\n{}\n[AbilityInstructionsEnd]",
+            full_group.name, full_group.instructions
+        );
+
+        tracing::info!(
+            "Ability selection: group='{}', tools={:?}, instructions_len={}",
+            full_group.name,
+            final_tools,
+            full_group.instructions.len()
+        );
+
+        Ok(ToolSelectionPlan {
+            tool_ids: final_tools,
+            injected_system_prompt: Some(injected),
+            selected_ability_group: Some(SelectedAbilityGroup {
+                id: full_group.id,
+                name: full_group.name,
+            }),
+        })
     }
 }
 

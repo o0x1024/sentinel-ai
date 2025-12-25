@@ -12,14 +12,14 @@
         @click="contextMenuSend"
       >
         <i class="fas fa-paper-plane text-primary"></i>
-        {{ $t('passiveScan.repeater.contextMenu.sendRequest') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.sendRequest') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="contextMenuSendToNewTab"
       >
         <i class="fas fa-plus text-success"></i>
-        {{ $t('passiveScan.repeater.contextMenu.sendToNewTab') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.sendToNewTab') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -27,21 +27,21 @@
         @click="contextMenuCopyUrl"
       >
         <i class="fas fa-link text-info"></i>
-        {{ $t('passiveScan.repeater.contextMenu.copyUrl') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.copyUrl') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="contextMenuCopyRequest"
       >
         <i class="fas fa-copy text-secondary"></i>
-        {{ $t('passiveScan.repeater.contextMenu.copyRequest') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.copyRequest') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="contextMenuCopyCurl"
       >
         <i class="fas fa-terminal text-warning"></i>
-        {{ $t('passiveScan.repeater.contextMenu.copyAsCurl') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.copyAsCurl') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -49,7 +49,7 @@
         @click="contextMenuSendRequestToAssistant"
       >
         <i class="fas fa-upload text-accent"></i>
-        {{ $t('passiveScan.repeater.contextMenu.sendRequestToAssistant') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.sendRequestToAssistant') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
@@ -57,7 +57,7 @@
         :disabled="!currentTab?.response"
       >
         <i class="fas fa-download text-accent"></i>
-        {{ $t('passiveScan.repeater.contextMenu.sendResponseToAssistant') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.sendResponseToAssistant') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -65,14 +65,14 @@
         @click="contextMenuPaste"
       >
         <i class="fas fa-paste text-accent"></i>
-        {{ $t('passiveScan.repeater.contextMenu.paste') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.paste') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="contextMenuClear"
       >
         <i class="fas fa-eraser text-error"></i>
-        {{ $t('passiveScan.repeater.contextMenu.clear') }}
+        {{ $t('trafficAnalysis.repeater.contextMenu.clear') }}
       </button>
     </div>
     <!-- Tabs Header -->
@@ -89,7 +89,7 @@
           <button 
             @click.stop="closeTab(index)"
             class="w-4 h-4 ml-2 flex items-center justify-center rounded opacity-40 hover:opacity-100 hover:bg-base-300 transition-opacity"
-            :title="$t('passiveScan.repeater.contextMenu.close')"
+            :title="$t('trafficAnalysis.repeater.contextMenu.close')"
           >
             <i class="fas fa-times text-[10px]"></i>
           </button>
@@ -97,7 +97,7 @@
         <button 
           @click="addTab"
           class="btn btn-xs btn-ghost"
-          :title="$t('passiveScan.repeater.contextMenu.newTab')"
+          :title="$t('trafficAnalysis.repeater.contextMenu.newTab')"
         >
           <i class="fas fa-plus"></i>
         </button>
@@ -107,14 +107,14 @@
         <button 
           :class="['btn btn-xs', layoutMode === 'horizontal' ? 'btn-primary' : 'btn-ghost']"
           @click="layoutMode = 'horizontal'"
-          :title="$t('passiveScan.repeater.contextMenu.horizontalLayout')"
+          :title="$t('trafficAnalysis.repeater.contextMenu.horizontalLayout')"
         >
           <i class="fas fa-columns"></i>
         </button>
         <button 
           :class="['btn btn-xs', layoutMode === 'vertical' ? 'btn-primary' : 'btn-ghost']"
           @click="layoutMode = 'vertical'"
-          :title="$t('passiveScan.repeater.contextMenu.verticalLayout')"
+          :title="$t('trafficAnalysis.repeater.contextMenu.verticalLayout')"
         >
           <i class="fas fa-bars"></i>
         </button>
@@ -131,7 +131,7 @@
           :disabled="isSending || !currentTab.targetHost"
         >
           <i :class="['fas', isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane']"></i>
-          {{ $t('passiveScan.repeater.contextMenu.sendRequest') }}
+          {{ $t('trafficAnalysis.repeater.contextMenu.sendRequest') }}
         </button>
         <button 
           @click="cancelRequest"
@@ -139,14 +139,14 @@
           :disabled="!isSending"
         >
           <i class="fas fa-stop"></i>
-          {{ $t('passiveScan.repeater.contextMenu.cancel') }}
+          {{ $t('trafficAnalysis.repeater.contextMenu.cancel') }}
         </button>
         
         <div class="flex-1"></div>
         
         <!-- Target 显示 -->
         <div class="flex items-center gap-2 text-sm">
-          <span class="text-base-content/70">{{ $t('passiveScan.repeater.contextMenu.target') }}:</span>
+          <span class="text-base-content/70">{{ $t('trafficAnalysis.repeater.contextMenu.target') }}:</span>
           <span class="font-mono font-semibold">
             {{ currentTab.useTls ? 'https' : 'http' }}://{{ currentTab.targetHost }}{{ showPort ? ':' + currentTab.targetPort : '' }}
           </span>
@@ -165,15 +165,15 @@
       <!-- Target 配置对话框 -->
       <dialog :class="['modal', showTargetDialog ? 'modal-open' : '']">
         <div class="modal-box max-w-sm">
-          <h3 class="font-bold text-lg mb-4">{{ $t('passiveScan.repeater.contextMenu.configureTargetDetails') }}</h3>
+          <h3 class="font-bold text-lg mb-4">{{ $t('trafficAnalysis.repeater.contextMenu.configureTargetDetails') }}</h3>
           <p class="text-sm text-base-content/70 mb-4">
-            {{ $t('passiveScan.repeater.contextMenu.configureTargetDetails') }}
+            {{ $t('trafficAnalysis.repeater.contextMenu.configureTargetDetails') }}
           </p>
           
           <div class="space-y-4">
             <div class="form-control">
               <label class="label py-1">
-                <span class="label-text">{{ $t('passiveScan.repeater.contextMenu.host') }}:</span>
+                <span class="label-text">{{ $t('trafficAnalysis.repeater.contextMenu.host') }}:</span>
               </label>
               <input 
                 v-model="currentTab.targetHost"
@@ -189,7 +189,7 @@
                 v-model="currentTab.overrideSni"
                 class="checkbox checkbox-sm"
               />
-              <span class="label-text">{{ $t('passiveScan.repeater.contextMenu.overrideSni') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.repeater.contextMenu.overrideSni') }}</span>
             </label>
             
             <div v-if="currentTab.overrideSni" class="form-control pl-6">
@@ -197,13 +197,13 @@
                 v-model="currentTab.sniHost"
                 type="text" 
                 class="input input-bordered input-sm w-full"
-                :placeholder="$t('passiveScan.repeater.contextMenu.sniHostname')"
+                :placeholder="$t('trafficAnalysis.repeater.contextMenu.sniHostname')"
               />
             </div>
             
             <div class="form-control">
               <label class="label py-1">
-                <span class="label-text">{{ $t('passiveScan.repeater.contextMenu.port') }}:</span>
+                <span class="label-text">{{ $t('trafficAnalysis.repeater.contextMenu.port') }}:</span>
               </label>
               <input 
                 v-model.number="currentTab.targetPort" 
@@ -220,17 +220,17 @@
                 v-model="currentTab.useTls"
                 class="checkbox checkbox-sm checkbox-primary"
               />
-              <span class="label-text">{{ $t('passiveScan.repeater.contextMenu.useHttps') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.repeater.contextMenu.useHttps') }}</span>
             </label>
           </div>
           
           <div class="modal-action">
-            <button class="btn btn-sm" @click="showTargetDialog = false">{{ $t('passiveScan.repeater.contextMenu.cancel') }}</button>
-            <button class="btn btn-primary btn-sm" @click="showTargetDialog = false">{{ $t('passiveScan.repeater.contextMenu.ok') }}</button>
+            <button class="btn btn-sm" @click="showTargetDialog = false">{{ $t('trafficAnalysis.repeater.contextMenu.cancel') }}</button>
+            <button class="btn btn-primary btn-sm" @click="showTargetDialog = false">{{ $t('trafficAnalysis.repeater.contextMenu.ok') }}</button>
           </div>
         </div>
         <form method="dialog" class="modal-backdrop" @click="showTargetDialog = false">
-          <button>{{ $t('passiveScan.repeater.contextMenu.close') }}</button>
+          <button>{{ $t('trafficAnalysis.repeater.contextMenu.close') }}</button>
         </form>
       </dialog>
 
@@ -246,20 +246,20 @@
         >
           <!-- Request Header -->
           <div class="bg-base-200 px-3 py-1 flex items-center justify-between border-b border-base-300">
-            <span class="font-semibold text-sm">{{ $t('passiveScan.repeater.contextMenu.request') }}</span>
+            <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.request') }}</span>
             <div class="tabs tabs-boxed tabs-xs bg-base-300">
               <a 
                 :class="['tab tab-xs', currentTab.requestTab === 'pretty' ? 'tab-active' : '']"
                 @click="currentTab.requestTab = 'pretty'"
-              >{{ $t('passiveScan.repeater.contextMenu.pretty') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.pretty') }}</a>
               <a 
                 :class="['tab tab-xs', currentTab.requestTab === 'raw' ? 'tab-active' : '']"
                 @click="currentTab.requestTab = 'raw'"
-              >{{ $t('passiveScan.repeater.contextMenu.raw') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.raw') }}</a>
               <a 
                 :class="['tab tab-xs', currentTab.requestTab === 'hex' ? 'tab-active' : '']"
                 @click="currentTab.requestTab = 'hex'"
-              >{{ $t('passiveScan.repeater.contextMenu.hex') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.hex') }}</a>
             </div>
           </div>
 
@@ -303,7 +303,7 @@
           <!-- Response Header -->
           <div class="bg-base-200 px-3 py-1 flex items-center justify-between border-b border-base-300">
             <div class="flex items-center gap-2">
-              <span class="font-semibold text-sm">{{ $t('passiveScan.repeater.contextMenu.response') }}</span>
+              <span class="font-semibold text-sm">{{ $t('trafficAnalysis.repeater.contextMenu.response') }}</span>
               <template v-if="currentTab.response">
                 <span 
                   class="badge badge-sm"
@@ -317,19 +317,19 @@
               <a 
                 :class="['tab tab-xs', currentTab.responseTab === 'pretty' ? 'tab-active' : '']"
                 @click="currentTab.responseTab = 'pretty'"
-              >{{ $t('passiveScan.repeater.contextMenu.pretty') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.pretty') }}</a>
               <a 
                 :class="['tab tab-xs', currentTab.responseTab === 'raw' ? 'tab-active' : '']"
                 @click="currentTab.responseTab = 'raw'"
-              >{{ $t('passiveScan.repeater.contextMenu.raw') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.raw') }}</a>
               <a 
                 :class="['tab tab-xs', currentTab.responseTab === 'hex' ? 'tab-active' : '']"
                 @click="currentTab.responseTab = 'hex'"
-              >{{ $t('passiveScan.repeater.contextMenu.hex') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.hex') }}</a>
               <a 
                 :class="['tab tab-xs', currentTab.responseTab === 'render' ? 'tab-active' : '']"
                 @click="currentTab.responseTab = 'render'"
-              >{{ $t('passiveScan.repeater.contextMenu.render') }}</a>
+              >{{ $t('trafficAnalysis.repeater.contextMenu.render') }}</a>
             </div>
           </div>
 
@@ -364,7 +364,7 @@
             <div v-else class="flex items-center justify-center w-full h-full text-base-content/50">
               <div class="text-center">
                 <i class="fas fa-inbox text-4xl mb-2"></i>
-                <p>{{ $t('passiveScan.repeater.contextMenu.clickSendToSendRequest') }}</p>
+                <p>{{ $t('trafficAnalysis.repeater.contextMenu.clickSendToSendRequest') }}</p>
               </div>
             </div>
           </div>

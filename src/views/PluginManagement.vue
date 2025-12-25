@@ -112,7 +112,7 @@
           :get-category-label="getCategoryLabel"
           :get-category-icon="getCategoryIcon"
           :is-plugin-favorited="isPluginFavorited"
-          :ispassive-plugin-type="ispassivePluginType"
+          :is-traffic-plugin-type="isTrafficPluginType"
           :is-agent-plugin-type="isAgentPluginType"
           @update:plugin-view-mode="pluginViewMode = $event"
           @update:search-text="pluginSearchText = $event"
@@ -276,7 +276,7 @@ import type {
   PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
   CommandResponse, BatchToggleResult, NewPluginMetadata, AdvancedForm, SubCategory
 } from '@/components/PluginManagement/types'
-import { passiveCategories, agentsCategories, mainCategories } from '@/components/PluginManagement/types'
+import { trafficCategories, agentsCategories, mainCategories } from '@/components/PluginManagement/types'
 
 const { t } = useI18n()
 
@@ -434,7 +434,7 @@ let pluginChangedUnlisten: UnlistenFn | null = null
 // Computed Properties
 const categories = computed(() => [
   { value: 'all', label: t('plugins.categories.all', '全部'), icon: 'fas fa-th' },
-  { value: 'passive', label: t('plugins.categories.passive', '被动扫描插件'), icon: 'fas fa-shield-alt' },
+  { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件'), icon: 'fas fa-shield-alt' },
   { value: 'agents', label: t('plugins.categories.agents', 'Agent工具插件'), icon: 'fas fa-robot' },
 ])
 
@@ -472,10 +472,10 @@ const subCategories = computed<SubCategory[]>(() => {
 const filteredPlugins = computed(() => {
   let filtered = plugins.value
 
-  if (selectedCategory.value === 'passive') {
+  if (selectedCategory.value === 'traffic') {
     filtered = plugins.value.filter(p => {
       if (p.metadata.main_category === 'passive') return true
-      if (passiveCategories.includes(p.metadata.category)) return true
+      if (trafficCategories.includes(p.metadata.category)) return true
       if (p.metadata.category === 'passive') return true
       return false
     })
@@ -489,7 +489,7 @@ const filteredPlugins = computed(() => {
     filtered = plugins.value.filter(p => p.metadata.category === selectedCategory.value)
   }
 
-  if (['all', 'passive', 'agents'].includes(selectedCategory.value) && pluginViewMode.value === 'favorited') {
+  if (['all', 'traffic', 'agents'].includes(selectedCategory.value) && pluginViewMode.value === 'favorited') {
     filtered = filtered.filter(p => isPluginFavorited(p))
   }
 
@@ -555,9 +555,9 @@ const installedPluginIds = computed(() => plugins.value.map(p => p.metadata.id))
 // Helper Functions
 const isPluginFavorited = (plugin: PluginRecord): boolean => plugin.is_favorited || false
 
-const ispassivePluginType = (plugin: PluginRecord): boolean => {
+const isTrafficPluginType = (plugin: PluginRecord): boolean => {
   if (plugin.metadata.main_category === 'passive') return true
-  if (passiveCategories.includes(plugin.metadata.category)) return true
+  if (trafficCategories.includes(plugin.metadata.category)) return true
   return plugin.metadata.category === 'passive'
 }
 
@@ -588,8 +588,8 @@ const getCategoryIcon = (category: string): string => {
 
 const getCategoryCount = (category: string): number => {
   if (category === 'all') return plugins.value.length
-  if (category === 'passive') {
-    return plugins.value.filter(p => p.metadata.main_category === 'passive' || passiveCategories.includes(p.metadata.category)).length
+  if (category === 'traffic') {
+    return plugins.value.filter(p => p.metadata.main_category === 'passive' || trafficCategories.includes(p.metadata.category)).length
   }
   if (category === 'agents') {
     return plugins.value.filter(p => p.metadata.main_category === 'agent' || agentsCategories.includes(p.metadata.category)).length
@@ -2149,7 +2149,7 @@ export interface Finding { title: string; description: string; severity: 'info' 
 
 export async function analyze(context: PluginContext): Promise<Finding[]> {
   const findings: Finding[] = [];
-  // TODO: Implement your passive scan logic
+  // TODO: Implement your traffic analysis logic
   return findings;
 }
 
@@ -2204,7 +2204,7 @@ const testPlugin = async (plugin: PluginRecord) => {
     if (isAgentPlugin) {
       await testAgentPlugin(plugin)
     } else {
-      await testpassivePlugin(plugin)
+      await testTrafficPlugin(plugin)
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : '测试失败'
@@ -2215,7 +2215,7 @@ const testPlugin = async (plugin: PluginRecord) => {
   }
 }
 
-const testpassivePlugin = async (plugin: PluginRecord) => {
+const testTrafficPlugin = async (plugin: PluginRecord) => {
   const resp = await invoke<CommandResponse<TestResult>>('test_plugin', { pluginId: plugin.metadata.id })
   if (resp.success && resp.data) {
     testResult.value = resp.data

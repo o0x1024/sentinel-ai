@@ -22,7 +22,7 @@ import mcp from '../mcp/en'
 import roles from '../roles/en'
 import scanSessions from '../scanSessions/en'
 import agents from '../agents/en'
-import passiveScan from '../passiveScan/en'
+import trafficAnalysis from '../trafficAnalysis/en'
 import ragManagement from '../rag/en'
 import notifications from '../notifications/en'
 
@@ -57,7 +57,7 @@ export default {
   roles,
   scanSessions,
   agents,
-  passiveScan,
+  trafficAnalysis,
   ragManagement,
   notifications,
 
@@ -233,6 +233,7 @@ export default {
     hybridStrategy: 'Hybrid Strategy (Recommended)',
     manualSelection: 'Manual Selection',
     allTools: 'All Tools (For Testing)',
+    abilityMode: 'Ability Mode (Progressive)',
     maxTools: 'Maximum Tools',
     selectTools: 'Select Tools',
     toolManagement: 'Tool Management',
@@ -266,6 +267,30 @@ export default {
     data: 'Data',
     system: 'System',
     areYouSureClearStatistics: 'Are you sure you want to clear all tool usage statistics?',
+    // Ability Group
+    abilityGroups: 'Ability Groups',
+    abilityGroupManagement: 'Ability Group Management',
+    manage: 'Manage',
+    noAbilityGroupsHint: 'No ability groups yet, please create one first',
+    selectAllowedGroups: 'Select groups allowed for selection (empty means all)',
+    groupsSelected: 'groups selected',
+    emptyMeansAll: 'empty means all',
+    groups: 'groups',
+    createGroup: 'Create Group',
+    noAbilityGroups: 'No ability groups',
+    createFirstGroup: 'Click the button above to create your first ability group',
+    groupName: 'Group Name',
+    groupNamePlaceholder: 'Enter group name',
+    groupDescription: 'Group Description',
+    groupDescriptionPlaceholder: 'Brief description of the group',
+    groupInstructions: 'Instructions',
+    instructionsHint: 'Parameter descriptions, few-shot examples, etc.',
+    instructionsPlaceholder: 'Enter detailed instructions. LLM will see these after selecting this group...',
+    selected: 'selected',
+    noToolsAvailable: 'No tools available',
+    tools: 'tools',
+    hasInstructions: 'has instructions',
+    confirmDeleteGroup: 'Are you sure you want to delete ability group "{name}"?',
     // MessageFlow
     aiIsThinking: 'AI is thinking...',
     agentReady: 'Agent Ready',
@@ -534,8 +559,7 @@ export default {
 
     categories: {
       all: 'All',
-      passive: 'Passive Scan Plugins',
-      passiveScan: 'Passive Scan Plugins',
+      trafficAnalysis: 'Traffic Analysis Plugins',
       agents: 'Agent Tool Plugins',
       builtinTools: 'Built-in Tool Plugins',
       mcpTools: 'MCP Tool Plugins',

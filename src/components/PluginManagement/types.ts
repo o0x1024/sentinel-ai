@@ -136,12 +136,12 @@ export interface SubCategory {
 
 // Main categories
 export const mainCategories: Category[] = [
-  { value: 'passive', label: '被动扫描插件', icon: 'fas fa-shield-alt' },
+  { value: 'passive', label: '流量分析插件', icon: 'fas fa-shield-alt' },
   { value: 'agent', label: 'Agent插件', icon: 'fas fa-robot' }
 ]
 
-// Passive scan plugin subcategories
-export const passiveCategories = [
+// Traffic analysis plugin subcategories
+export const trafficCategories = [
   'sqli', 'command_injection', 'xss', 'idor', 'auth_bypass', 'csrf',
   'info_leak', 'file_upload', 'file_inclusion', 'path_traversal',
   'xxe', 'ssrf', 'report', 'custom'

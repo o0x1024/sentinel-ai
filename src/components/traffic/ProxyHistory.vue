@@ -5,17 +5,17 @@
       <div class="modal-box max-w-2xl">
         <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
           <i class="fas fa-exclamation-triangle text-warning"></i>
-          {{ $t('passiveScan.history.certificateError.title') }}
+          {{ $t('trafficAnalysis.history.certificateError.title') }}
         </h3>
         
         <div class="space-y-4">
           <div class="alert alert-warning">
             <i class="fas fa-info-circle"></i>
-            <span>{{ $t('passiveScan.history.certificateError.message') }}</span>
+            <span>{{ $t('trafficAnalysis.history.certificateError.message') }}</span>
           </div>
           
           <div v-if="certErrorInfo" class="bg-base-200 p-4 rounded-lg">
-            <h4 class="font-semibold mb-2 text-sm">{{ $t('passiveScan.history.certificateError.details') }}</h4>
+            <h4 class="font-semibold mb-2 text-sm">{{ $t('trafficAnalysis.history.certificateError.details') }}</h4>
             <div class="text-xs space-y-1 font-mono">
               <div><span class="text-base-content/70">Host:</span> {{ certErrorInfo.host }}</div>
               <div><span class="text-base-content/70">URL:</span> {{ certErrorInfo.url }}</div>
@@ -26,32 +26,32 @@
           <div class="bg-base-300/50 p-4 rounded-lg">
             <h4 class="font-semibold mb-2 text-sm flex items-center gap-2">
               <i class="fas fa-lightbulb text-info"></i>
-              {{ $t('passiveScan.history.certificateError.commonIssues.invalidCN') }}
+              {{ $t('trafficAnalysis.history.certificateError.commonIssues.invalidCN') }}
             </h4>
             <ul class="text-xs space-y-1 list-disc list-inside text-base-content/80">
-              <li>{{ $t('passiveScan.history.certificateError.tips.installCA') }}</li>
-              <li>{{ $t('passiveScan.history.certificateError.tips.serverCertIssue') }}</li>
+              <li>{{ $t('trafficAnalysis.history.certificateError.tips.installCA') }}</li>
+              <li>{{ $t('trafficAnalysis.history.certificateError.tips.serverCertIssue') }}</li>
             </ul>
           </div>
         </div>
         
         <div class="modal-action justify-between">
           <button class="btn btn-sm btn-ghost" @click="closeCertErrorDialog">
-            {{ $t('passiveScan.history.detailsPanel.close') }}
+            {{ $t('trafficAnalysis.history.detailsPanel.close') }}
           </button>
           <div class="flex gap-2">
             <button class="btn btn-sm btn-info" @click="checkCAInstallation">
               <i class="fas fa-certificate mr-2"></i>
-              {{ $t('passiveScan.history.certificateError.tips.checkCAInstallation') }}
+              {{ $t('trafficAnalysis.history.certificateError.tips.checkCAInstallation') }}
             </button>
             <button class="btn btn-sm btn-primary" @click="closeCertErrorDialog">
-              {{ $t('passiveScan.history.certificateError.actions.ignore') }}
+              {{ $t('trafficAnalysis.history.certificateError.actions.ignore') }}
             </button>
           </div>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.history.detailsPanel.close') }}</button>
+        <button>{{ $t('trafficAnalysis.history.detailsPanel.close') }}</button>
       </form>
     </dialog>
     
@@ -68,21 +68,21 @@
         @click="sendToRepeater"
       >
         <i class="fas fa-redo text-primary"></i>
-        {{ $t('passiveScan.history.contextMenu.sendToRepeater') }}
+        {{ $t('trafficAnalysis.history.contextMenu.sendToRepeater') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="sendRequestToAssistantFromMenu"
       >
         <i class="fas fa-upload text-accent"></i>
-        {{ $t('passiveScan.history.contextMenu.sendRequestToAssistant') }}
+        {{ $t('trafficAnalysis.history.contextMenu.sendRequestToAssistant') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="sendResponseToAssistantFromMenu"
       >
         <i class="fas fa-download text-accent"></i>
-        {{ $t('passiveScan.history.contextMenu.sendResponseToAssistant') }}
+        {{ $t('trafficAnalysis.history.contextMenu.sendResponseToAssistant') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -90,14 +90,14 @@
         @click="copyUrl"
       >
         <i class="fas fa-link text-info"></i>
-        {{ $t('passiveScan.history.contextMenu.copyUrl') }}
+        {{ $t('trafficAnalysis.history.contextMenu.copyUrl') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="copyAsCurl"
       >
         <i class="fas fa-terminal text-warning"></i>
-        {{ $t('passiveScan.history.contextMenu.copyAsCurl') }}
+        {{ $t('trafficAnalysis.history.contextMenu.copyAsCurl') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -105,7 +105,7 @@
         @click="openInBrowser"
       >
         <i class="fas fa-external-link-alt text-success"></i>
-        {{ $t('passiveScan.history.contextMenu.openInBrowser') }}
+        {{ $t('trafficAnalysis.history.contextMenu.openInBrowser') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -113,7 +113,7 @@
         @click="clearHistoryFromMenu"
       >
         <i class="fas fa-trash"></i>
-        {{ $t('passiveScan.history.contextMenu.clearHistory') }}
+        {{ $t('trafficAnalysis.history.contextMenu.clearHistory') }}
       </button>
     </div>
 
@@ -129,21 +129,21 @@
         @click="detailSendToRepeater"
       >
         <i class="fas fa-redo text-primary"></i>
-        {{ $t('passiveScan.history.contextMenu.sendToRepeater') }}
+        {{ $t('trafficAnalysis.history.contextMenu.sendToRepeater') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="detailSendRequestToAssistant"
       >
         <i class="fas fa-upload text-accent"></i>
-        {{ $t('passiveScan.history.contextMenu.sendRequestToAssistant') }}
+        {{ $t('trafficAnalysis.history.contextMenu.sendRequestToAssistant') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="detailSendResponseToAssistant"
       >
         <i class="fas fa-download text-accent"></i>
-        {{ $t('passiveScan.history.contextMenu.sendResponseToAssistant') }}
+        {{ $t('trafficAnalysis.history.contextMenu.sendResponseToAssistant') }}
       </button>
       <div class="divider my-1 h-0"></div>
       <button 
@@ -151,21 +151,21 @@
         @click="detailCopyUrl"
       >
         <i class="fas fa-link text-info"></i>
-        {{ $t('passiveScan.history.contextMenu.copyUrl') }}
+        {{ $t('trafficAnalysis.history.contextMenu.copyUrl') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="detailCopyRequest"
       >
         <i class="fas fa-copy text-secondary"></i>
-        {{ $t('passiveScan.history.contextMenu.copyRequest') }}
+        {{ $t('trafficAnalysis.history.contextMenu.copyRequest') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="detailCopyAsCurl"
       >
         <i class="fas fa-terminal text-warning"></i>
-        {{ $t('passiveScan.history.contextMenu.copyAsCurl') }}
+        {{ $t('trafficAnalysis.history.contextMenu.copyAsCurl') }}
       </button>
     </div>
 
@@ -472,7 +472,7 @@
           @click="toggleMultiSelectMode" 
           class="btn btn-sm btn-ghost"
           :class="{ 'btn-active btn-primary': isMultiSelectMode }"
-          :title="$t('passiveScan.history.toolbar.filter')"
+          :title="$t('trafficAnalysis.history.toolbar.filter')"
         >
           <i class="fas fa-check-square"></i>
         </button>
@@ -482,14 +482,14 @@
           <button 
             @click="selectAllVisible" 
             class="btn btn-sm btn-ghost"
-            :title="$t('passiveScan.history.toolbar.clear')"
+            :title="$t('trafficAnalysis.history.toolbar.clear')"
           >
             <i class="fas fa-check-double"></i>
           </button>
           <button 
             @click="clearSelection" 
             class="btn btn-sm btn-ghost"
-            :title="$t('passiveScan.history.toolbar.refresh')"
+            :title="$t('trafficAnalysis.history.toolbar.refresh')"
             :disabled="selectedRequests.size === 0"
           >
             <i class="fas fa-times"></i>
@@ -501,20 +501,20 @@
               :class="{ 'btn-disabled': selectedRequests.size === 0 }"
             >
               <i class="fas fa-brain"></i>
-              <span class="text-xs">{{ $t('passiveScan.history.toolbar.export') }} ({{ selectedRequests.size }})</span>
+              <span class="text-xs">{{ $t('trafficAnalysis.history.toolbar.export') }} ({{ selectedRequests.size }})</span>
               <i class="fas fa-chevron-down text-xs"></i>
             </label>
             <ul tabindex="0" class="dropdown-content z-[100] menu p-2 shadow bg-base-100 rounded-box w-48">
               <li>
                 <a @click="sendSelectedToAssistant('request')" class="flex items-center gap-2">
                   <i class="fas fa-upload text-accent"></i>
-                  {{ $t('passiveScan.history.contextMenu.sendRequestToAssistant') }}
+                  {{ $t('trafficAnalysis.history.contextMenu.sendRequestToAssistant') }}
                 </a>
               </li>
               <li>
                 <a @click="sendSelectedToAssistant('response')" class="flex items-center gap-2">
                   <i class="fas fa-download text-accent"></i>
-                  {{ $t('passiveScan.history.contextMenu.sendResponseToAssistant') }}
+                  {{ $t('trafficAnalysis.history.contextMenu.sendResponseToAssistant') }}
                 </a>
               </li>
             </ul>
@@ -522,7 +522,7 @@
         </template>
         
         <!-- 快捷操作按钮 -->
-        <button @click="refreshRequests" class="btn btn-sm btn-ghost" :title="$t('passiveScan.history.toolbar.refresh')">
+        <button @click="refreshRequests" class="btn btn-sm btn-ghost" :title="$t('trafficAnalysis.history.toolbar.refresh')">
           <i :class="['fas fa-sync-alt', { 'fa-spin': isLoading }]"></i>
         </button>
       </div>
@@ -544,7 +544,7 @@
             </template>
             <template v-else>
               <i class="fas fa-history mr-2"></i>
-              {{ $t('passiveScan.history.title') }} ({{ filteredRequests.length }})
+              {{ $t('trafficAnalysis.history.title') }} ({{ filteredRequests.length }})
             </template>
           </h3>
           <div class="dropdown dropdown-end">
@@ -552,14 +552,14 @@
               <i class="fas fa-cog"></i>
             </label>
             <div tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 mt-2 max-h-96 overflow-y-auto">
-              <li class="menu-title"><span>{{ $t('passiveScan.history.table.actions') }}</span></li>
+              <li class="menu-title"><span>{{ $t('trafficAnalysis.history.table.actions') }}</span></li>
               <li v-for="col in columns" :key="col.id">
                 <label class="label cursor-pointer justify-start gap-2">
                   <input type="checkbox" :checked="col.visible" @change="toggleColumn(col.id)" class="checkbox checkbox-xs" />
                   <span class="label-text text-xs">{{ col.label }}</span>
                 </label>
               </li>
-              <li><a @click="resetColumns" class="text-xs"><i class="fas fa-undo mr-1"></i>{{ $t('passiveScan.history.filterDialog.reset') }}</a></li>
+              <li><a @click="resetColumns" class="text-xs"><i class="fas fa-undo mr-1"></i>{{ $t('trafficAnalysis.history.filterDialog.reset') }}</a></li>
             </div>
           </div>
         </div>
@@ -650,7 +650,7 @@
                           'fas fa-arrow-up text-success': msg.direction === 'send',
                           'fas fa-arrow-down text-info': msg.direction === 'receive'
                         }"
-                        :title="msg.direction === 'send' ? $t('passiveScan.history.websocket.toServer') : $t('passiveScan.history.websocket.fromServer')"
+                        :title="msg.direction === 'send' ? $t('trafficAnalysis.history.websocket.toServer') : $t('trafficAnalysis.history.websocket.fromServer')"
                       ></i>
                       <span 
                         class="badge badge-xs font-mono"
@@ -775,7 +775,7 @@
                     <i 
                       v-if="item.data.status_code === 0" 
                       class="fas fa-exclamation-circle text-error text-xs cursor-help"
-                      :title="$t('passiveScan.history.certificateError.title')"
+                      :title="$t('trafficAnalysis.history.certificateError.title')"
                       @click.stop="showCertificateError(item.data)"
                     ></i>
                   </div>
@@ -798,7 +798,7 @@
           <div v-else class="flex items-center justify-center h-full text-base-content/50">
             <div class="text-center">
               <i class="fas fa-inbox text-4xl mb-2"></i>
-              <p>{{ $t('passiveScan.history.emptyState.noRequests') }}</p>
+              <p>{{ $t('trafficAnalysis.history.emptyState.noRequests') }}</p>
             </div>
           </div>
         </div>
@@ -819,7 +819,7 @@
         class="bg-base-100 overflow-hidden flex flex-col flex-1 min-h-0"
       >
         <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
-          <h3 class="font-semibold text-sm">{{ $t('passiveScan.history.detailsPanel.requestDetails') }} - ID: {{ selectedRequest.id }}</h3>
+          <h3 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.requestDetails') }} - ID: {{ selectedRequest.id }}</h3>
           <button @click="closeDetails" class="btn btn-xs btn-ghost">
             <i class="fas fa-times"></i>
           </button>
@@ -830,12 +830,12 @@
           <div class="flex flex-col overflow-hidden" :style="{ width: leftPanelWidth + 'px' }">
             <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
               <div class="flex items-center gap-2">
-                <h4 class="font-semibold text-sm">{{ $t('passiveScan.history.detailsPanel.request') }}</h4>
+                <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.request') }}</h4>
                 <!-- Original/Edited 切换下拉 -->
                 <div v-if="selectedRequest?.was_edited" class="dropdown dropdown-bottom">
                   <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
                     <span :class="requestViewMode === 'edited' ? 'text-warning' : ''">
-                      {{ requestViewMode === 'original' ? $t('passiveScan.history.detailsPanel.originalRequest') : $t('passiveScan.history.detailsPanel.editedRequest') }}
+                      {{ requestViewMode === 'original' ? $t('trafficAnalysis.history.detailsPanel.originalRequest') : $t('trafficAnalysis.history.detailsPanel.editedRequest') }}
                     </span>
                     <i class="fas fa-chevron-down text-xs"></i>
                   </label>
@@ -845,7 +845,7 @@
                         :class="{ 'active': requestViewMode === 'original' }"
                         @click="requestViewMode = 'original'"
                       >
-                        {{ $t('passiveScan.history.detailsPanel.originalRequest') }}
+                        {{ $t('trafficAnalysis.history.detailsPanel.originalRequest') }}
                       </a>
                     </li>
                     <li>
@@ -853,7 +853,7 @@
                         :class="{ 'active': requestViewMode === 'edited' }"
                         @click="requestViewMode = 'edited'"
                       >
-                        <span class="text-warning">{{ $t('passiveScan.history.detailsPanel.editedRequest') }}</span>
+                        <span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedRequest') }}</span>
                       </a>
                     </li>
                   </ul>
@@ -864,19 +864,19 @@
                   :class="['btn btn-xs', requestTab === 'pretty' ? 'btn-active' : '']"
                   @click="requestTab = 'pretty'"
                 >
-                  {{ $t('passiveScan.history.detailsPanel.tabs.pretty') }}
+                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.pretty') }}
                 </button>
                 <button 
                   :class="['btn btn-xs', requestTab === 'raw' ? 'btn-active' : '']"
                   @click="requestTab = 'raw'"
                 >
-                  {{ $t('passiveScan.history.detailsPanel.tabs.raw') }}
+                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.raw') }}
                 </button>
                 <button 
                   :class="['btn btn-xs', requestTab === 'hex' ? 'btn-active' : '']"
                   @click="requestTab = 'hex'"
                 >
-                  {{ $t('passiveScan.history.detailsPanel.tabs.hex') }}
+                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.hex') }}
                 </button>
               </div>
             </div>
@@ -907,15 +907,15 @@
           <div class="flex-1 flex flex-col overflow-hidden min-w-0">
             <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
               <div class="flex items-center gap-2">
-                <h4 class="font-semibold text-sm">{{ $t('passiveScan.history.detailsPanel.response') }}</h4>
+                <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.response') }}</h4>
                 <span v-if="isResponseCompressed(selectedRequest)" class="badge badge-xs badge-info" title="响应已自动解压">
-                  <i class="fas fa-file-archive mr-1"></i>{{ $t('passiveScan.history.detailsPanel.decompressed') }}
+                  <i class="fas fa-file-archive mr-1"></i>{{ $t('trafficAnalysis.history.detailsPanel.decompressed') }}
                 </span>
                 <!-- Original/Edited 切换下拉 -->
                 <div v-if="selectedRequest?.was_edited && hasEditedResponse(selectedRequest)" class="dropdown dropdown-bottom">
                   <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
                     <span :class="responseViewMode === 'edited' ? 'text-warning' : ''">
-                      {{ responseViewMode === 'original' ? $t('passiveScan.history.detailsPanel.originalResponse') : $t('passiveScan.history.detailsPanel.editedResponse') }}
+                      {{ responseViewMode === 'original' ? $t('trafficAnalysis.history.detailsPanel.originalResponse') : $t('trafficAnalysis.history.detailsPanel.editedResponse') }}
                     </span>
                     <i class="fas fa-chevron-down text-xs"></i>
                   </label>
@@ -925,7 +925,7 @@
                         :class="{ 'active': responseViewMode === 'original' }"
                         @click="responseViewMode = 'original'"
                       >
-                        {{ $t('passiveScan.history.detailsPanel.originalResponse') }}
+                        {{ $t('trafficAnalysis.history.detailsPanel.originalResponse') }}
                       </a>
                     </li>
                     <li>
@@ -933,7 +933,7 @@
                         :class="{ 'active': responseViewMode === 'edited' }"
                         @click="responseViewMode = 'edited'"
                       >
-                        <span class="text-warning">{{ $t('passiveScan.history.detailsPanel.editedResponse') }}</span>
+                        <span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedResponse') }}</span>
                       </a>
                     </li>
                   </ul>
@@ -944,19 +944,19 @@
                   :class="['btn btn-xs', responseTab === 'pretty' ? 'btn-active' : '']"
                   @click="responseTab = 'pretty'"
                 >
-                  {{ $t('passiveScan.history.detailsPanel.tabs.pretty') }}
+                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.pretty') }}
                 </button>
                 <button 
                   :class="['btn btn-xs', responseTab === 'raw' ? 'btn-active' : '']"
                   @click="responseTab = 'raw'"
                 >
-                  {{ $t('passiveScan.history.detailsPanel.tabs.raw') }}
+                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.raw') }}
                 </button>
                 <button 
                   :class="['btn btn-xs', responseTab === 'hex' ? 'btn-active' : '']"
                   @click="responseTab = 'hex'"
                 >
-                  {{ $t('passiveScan.history.detailsPanel.tabs.hex') }}
+                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.hex') }}
                 </button>
               </div>
             </div>
@@ -1482,21 +1482,21 @@ const filterSummary = computed(() => {
 const translatedColumns = computed(() => {
   return columns.value.map(col => ({
     ...col,
-    label: col.id === 'id' ? t('passiveScan.history.table.id') :
-           col.id === 'host' ? t('passiveScan.history.table.host') :
-           col.id === 'method' ? t('passiveScan.history.table.method') :
-           col.id === 'url' ? t('passiveScan.history.table.url') :
-           col.id === 'status' ? t('passiveScan.history.table.status') :
-           col.id === 'length' ? t('passiveScan.history.table.length') :
-           col.id === 'mime' ? t('passiveScan.history.table.mimeType') :
-           col.id === 'time' ? t('passiveScan.history.table.time') :
-           col.id === 'extension' ? t('passiveScan.history.table.actions') :
-           col.id === 'title' ? t('passiveScan.history.table.actions') :
-           col.id === 'tls' ? t('passiveScan.history.table.actions') :
-           col.id === 'ip' ? t('passiveScan.history.table.actions') :
-           col.id === 'listener' ? t('passiveScan.history.table.actions') :
-           col.id === 'responseTimer' ? t('passiveScan.history.table.actions') :
-           col.id === 'params' ? t('passiveScan.history.table.actions') : col.label
+    label: col.id === 'id' ? t('trafficAnalysis.history.table.id') :
+           col.id === 'host' ? t('trafficAnalysis.history.table.host') :
+           col.id === 'method' ? t('trafficAnalysis.history.table.method') :
+           col.id === 'url' ? t('trafficAnalysis.history.table.url') :
+           col.id === 'status' ? t('trafficAnalysis.history.table.status') :
+           col.id === 'length' ? t('trafficAnalysis.history.table.length') :
+           col.id === 'mime' ? t('trafficAnalysis.history.table.mimeType') :
+           col.id === 'time' ? t('trafficAnalysis.history.table.time') :
+           col.id === 'extension' ? t('trafficAnalysis.history.table.actions') :
+           col.id === 'title' ? t('trafficAnalysis.history.table.actions') :
+           col.id === 'tls' ? t('trafficAnalysis.history.table.actions') :
+           col.id === 'ip' ? t('trafficAnalysis.history.table.actions') :
+           col.id === 'listener' ? t('trafficAnalysis.history.table.actions') :
+           col.id === 'responseTimer' ? t('trafficAnalysis.history.table.actions') :
+           col.id === 'params' ? t('trafficAnalysis.history.table.actions') : col.label
   }));
 });
 
@@ -1828,7 +1828,7 @@ async function checkCAInstallation() {
   try {
     const response = await invoke<any>('export_root_ca');
     if (response.success && response.data) {
-      dialog.toast.info(t('passiveScan.history.certificateError.tips.installCA'));
+      dialog.toast.info(t('trafficAnalysis.history.certificateError.tips.installCA'));
       // 打开证书文件位置
       await invoke('show_in_folder', { path: response.data });
     }

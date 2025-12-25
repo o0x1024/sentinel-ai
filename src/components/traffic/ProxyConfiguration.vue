@@ -5,10 +5,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-network-wired mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.proxyListenersTitle') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.proxyListenersTitle') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.proxyListenersDescription') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.proxyListenersDescription') }}
         </p>
 
         <!-- Auto-start proxy on app launch -->
@@ -21,8 +21,8 @@
               @change="saveProxyAutoStart"
             />
             <div>
-              <span class="label-text font-medium">{{ $t('passiveScan.proxyConfiguration.autoStartProxy') }}</span>
-              <p class="text-xs text-base-content/60 mt-1">{{ $t('passiveScan.proxyConfiguration.autoStartProxyDesc') }}</p>
+              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.autoStartProxy') }}</span>
+              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.autoStartProxyDesc') }}</p>
             </div>
           </label>
         </div>
@@ -31,21 +31,21 @@
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
             <button class="btn btn-sm btn-outline w-24" @click="addListener">
-              {{ $t('passiveScan.proxyConfiguration.add') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.add') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="editListener"
               :disabled="selectedListeners.length !== 1"
             >
-              {{ $t('passiveScan.proxyConfiguration.edit') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.edit') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="removeListener"
               :disabled="selectedListeners.length === 0"
             >
-              {{ $t('passiveScan.proxyConfiguration.remove') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.remove') }}
             </button>
           </div>
           
@@ -63,14 +63,14 @@
                     />
                   </th>
                   <th class="w-16">
-                    {{ $t('passiveScan.proxyConfiguration.running') }}
+                    {{ $t('trafficAnalysis.proxyConfiguration.running') }}
                   </th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.interface') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.invisible') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.redirect') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.certificate') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.tlsProtocols') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.http2Support') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.interface') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.invisible') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.redirect') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.certificate') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.tlsProtocols') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.http2Support') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -138,7 +138,7 @@
               @click="openCertDialog"
             >
               <i class="fas fa-certificate mr-1"></i>
-              {{ $t('passiveScan.proxyConfiguration.exportCACert') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.exportCACert') }}
             </button>
             <button 
               class="btn btn-sm btn-outline"
@@ -146,7 +146,7 @@
               :disabled="isRegeneratingCert"
             >
               <i :class="['fas fa-sync-alt mr-1', { 'fa-spin': isRegeneratingCert }]"></i>
-              {{ $t('passiveScan.proxyConfiguration.regenerateCACert') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.regenerateCACert') }}
             </button>
             <button 
               class="btn btn-sm btn-outline"
@@ -154,11 +154,11 @@
               :disabled="isOpeningCertDir"
             >
               <i :class="['fas fa-folder-open mr-1', { 'fa-spin': isOpeningCertDir }]"></i>
-              {{ $t('passiveScan.proxyConfiguration.openCertDir') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.openCertDir') }}
             </button>
           </div>
           <p class="text-xs text-base-content/60">
-            {{ $t('passiveScan.proxyConfiguration.certInfo') }}
+            {{ $t('trafficAnalysis.proxyConfiguration.certInfo') }}
           </p>
         </div>
       </div>
@@ -168,13 +168,13 @@
     <dialog ref="editDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
-          {{ $t('passiveScan.proxyConfiguration.editListener') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.editListener') }}
         </h3>
         
         <div class="space-y-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.bindAddress') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.bindAddress') }}</span>
             </label>
             <input 
               type="text" 
@@ -186,7 +186,7 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.port') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.port') }}</span>
             </label>
             <input 
               type="number" 
@@ -200,30 +200,30 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.certMode') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.certMode') }}</span>
             </label>
             <select v-model="editingListener.certificate" class="select select-bordered">
-              <option value="Per-host">{{ $t('passiveScan.proxyConfiguration.perHostCert') }}</option>
-              <option value="Wildcard">{{ $t('passiveScan.proxyConfiguration.wildcardCert') }}</option>
-              <option value="Custom">{{ $t('passiveScan.proxyConfiguration.customCert') }}</option>
+              <option value="Per-host">{{ $t('trafficAnalysis.proxyConfiguration.perHostCert') }}</option>
+              <option value="Wildcard">{{ $t('trafficAnalysis.proxyConfiguration.wildcardCert') }}</option>
+              <option value="Custom">{{ $t('trafficAnalysis.proxyConfiguration.customCert') }}</option>
             </select>
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.tlsProtocols') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.tlsProtocols') }}</span>
             </label>
             <select v-model="editingListener.tlsProtocols" class="select select-bordered">
-              <option value="Default">{{ $t('passiveScan.proxyConfiguration.defaultTLS') }}</option>
-              <option value="TLS 1.2">{{ $t('passiveScan.proxyConfiguration.tls12') }}</option>
-              <option value="TLS 1.3">{{ $t('passiveScan.proxyConfiguration.tls13') }}</option>
-              <option value="TLS 1.2+1.3">{{ $t('passiveScan.proxyConfiguration.tls12Plus13') }}</option>
+              <option value="Default">{{ $t('trafficAnalysis.proxyConfiguration.defaultTLS') }}</option>
+              <option value="TLS 1.2">{{ $t('trafficAnalysis.proxyConfiguration.tls12') }}</option>
+              <option value="TLS 1.3">{{ $t('trafficAnalysis.proxyConfiguration.tls13') }}</option>
+              <option value="TLS 1.2+1.3">{{ $t('trafficAnalysis.proxyConfiguration.tls12Plus13') }}</option>
             </select>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.supportHTTP2') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.supportHTTP2') }}</span>
               <input 
                 type="checkbox" 
                 v-model="editingListener.supportHTTP2"
@@ -234,7 +234,7 @@
 
           <div class="form-control">
             <label class="label cursor-pointer">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.invisibleMode') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.invisibleMode') }}</span>
               <input 
                 type="checkbox" 
                 v-model="editingListener.invisible"
@@ -245,7 +245,7 @@
 
           <div class="form-control">
             <label class="label cursor-pointer">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.enableRedirect') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.enableRedirect') }}</span>
               <input 
                 type="checkbox" 
                 v-model="editingListener.redirect"
@@ -256,12 +256,12 @@
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost" @click="cancelEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
-          <button class="btn btn-primary" @click="saveEdit">{{ $t('passiveScan.proxyConfiguration.save') }}</button>
+          <button class="btn btn-ghost" @click="cancelEdit">{{ $t('trafficAnalysis.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveEdit">{{ $t('trafficAnalysis.proxyConfiguration.save') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+        <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
     </dialog>
 
@@ -270,10 +270,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-filter mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.requestInterceptionRules') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.requestInterceptionRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.requestInterceptionRulesDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.requestInterceptionRulesDesc') }}
         </p>
 
         <div class="form-control">
@@ -283,8 +283,8 @@
               class="checkbox checkbox-sm"
               v-model="interceptRequests"
             />
-            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptRequests') }}</span>
-            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm italic">{{ $t('passiveScan.proxyConfiguration.masterInterceptionDisabled') }}</span>
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.interceptRequests') }}</span>
+            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm italic">{{ $t('trafficAnalysis.proxyConfiguration.masterInterceptionDisabled') }}</span>
           </label>
         </div>
 
@@ -292,35 +292,35 @@
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
             <button class="btn btn-sm btn-outline w-24" @click="addRequestRule">
-              {{ $t('passiveScan.proxyConfiguration.addRule') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.addRule') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="editRequestRule"
               :disabled="selectedRequestRuleIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.editRule') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.editRule') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="removeRequestRule"
               :disabled="selectedRequestRuleIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.removeRule') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.removeRule') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="moveRequestRuleUp"
               :disabled="selectedRequestRuleIndex <= 0"
             >
-              {{ $t('passiveScan.proxyConfiguration.moveUp') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.moveUp') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="moveRequestRuleDown"
               :disabled="selectedRequestRuleIndex === -1 || selectedRequestRuleIndex >= requestRules.length - 1"
             >
-              {{ $t('passiveScan.proxyConfiguration.moveDown') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.moveDown') }}
             </button>
           </div>
           
@@ -329,11 +329,11 @@
             <table class="table table-sm w-full">
               <thead>
                 <tr>
-                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enable') }}</th>
-                  <th class="w-20">{{ $t('passiveScan.proxyConfiguration.operator') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.matchType') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.relationship') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.condition') }}</th>
+                  <th class="w-16">{{ $t('trafficAnalysis.proxyConfiguration.enable') }}</th>
+                  <th class="w-20">{{ $t('trafficAnalysis.proxyConfiguration.operator') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.matchType') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.relationship') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.condition') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -366,14 +366,14 @@
         <div class="form-control mt-4">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="autoFixNewlines" />
-            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.autoFixNewlines') }}</span>
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.autoFixNewlines') }}</span>
           </label>
         </div>
 
         <div class="form-control">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="autoUpdateContentLength" />
-            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.autoUpdateContentLength') }}</span>
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.autoUpdateContentLength') }}</span>
           </label>
         </div>
       </div>
@@ -384,10 +384,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-reply mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.responseInterceptionRules') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.responseInterceptionRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.responseInterceptionRulesDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.responseInterceptionRulesDesc') }}
         </p>
 
         <div class="form-control">
@@ -397,8 +397,8 @@
               class="checkbox checkbox-sm"
               v-model="interceptResponses"
             />
-            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptResponses') }}</span>
-            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm italic">{{ $t('passiveScan.proxyConfiguration.masterInterceptionDisabled') }}</span>
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.interceptResponses') }}</span>
+            <span v-if="!masterInterceptionEnabled" class="text-warning text-sm italic">{{ $t('trafficAnalysis.proxyConfiguration.masterInterceptionDisabled') }}</span>
           </label>
         </div>
 
@@ -406,35 +406,35 @@
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
             <button class="btn btn-sm btn-outline w-24" @click="addResponseRule">
-              {{ $t('passiveScan.proxyConfiguration.addRule') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.addRule') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="editResponseRule"
               :disabled="selectedResponseRuleIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.editRule') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.editRule') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="removeResponseRule"
               :disabled="selectedResponseRuleIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.removeRule') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.removeRule') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="moveResponseRuleUp"
               :disabled="selectedResponseRuleIndex <= 0"
             >
-              {{ $t('passiveScan.proxyConfiguration.moveUp') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.moveUp') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="moveResponseRuleDown"
               :disabled="selectedResponseRuleIndex === -1 || selectedResponseRuleIndex >= responseRules.length - 1"
             >
-              {{ $t('passiveScan.proxyConfiguration.moveDown') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.moveDown') }}
             </button>
           </div>
           
@@ -443,11 +443,11 @@
             <table class="table table-sm w-full">
               <thead>
                 <tr>
-                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enable') }}</th>
-                  <th class="w-20">{{ $t('passiveScan.proxyConfiguration.operator') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.matchType') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.relationship') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.condition') }}</th>
+                  <th class="w-16">{{ $t('trafficAnalysis.proxyConfiguration.enable') }}</th>
+                  <th class="w-20">{{ $t('trafficAnalysis.proxyConfiguration.operator') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.matchType') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.relationship') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.condition') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -480,7 +480,7 @@
         <div class="form-control mt-4">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="autoUpdateResponseContentLength" />
-            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.autoUpdateResponseContentLength') }}</span>
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.autoUpdateResponseContentLength') }}</span>
           </label>
         </div>
       </div>
@@ -490,16 +490,16 @@
     <dialog ref="ruleDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
-          {{ editingRuleIsNew ? $t('passiveScan.proxyConfiguration.addInterceptionRule') : $t('passiveScan.proxyConfiguration.editInterceptionRule') }}
+          {{ editingRuleIsNew ? $t('trafficAnalysis.proxyConfiguration.addInterceptionRule') : $t('trafficAnalysis.proxyConfiguration.editInterceptionRule') }}
         </h3>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.specifyRuleDetails') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.specifyRuleDetails') }}
         </p>
         
         <div class="space-y-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.booleanOperator') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.booleanOperator') }}</span>
             </label>
             <select v-model="editingRule.operator" class="select select-bordered w-full">
               <option value="">-</option>
@@ -510,7 +510,7 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.matchType') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.matchType') }}</span>
             </label>
             <select v-model="editingRule.matchType" class="select select-bordered w-full">
               <option v-for="type in currentMatchTypes" :key="type.value" :value="type.value">
@@ -521,7 +521,7 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.matchRelationship') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.matchRelationship') }}</span>
             </label>
             <select v-model="editingRule.relationship" class="select select-bordered w-full">
               <option v-for="rel in relationshipOptions" :key="rel.value" :value="rel.value">
@@ -532,24 +532,24 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.matchCondition') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.matchCondition') }}</span>
             </label>
             <input 
               type="text" 
               v-model="editingRule.condition"
               class="input input-bordered w-full"
-              :placeholder="$t('passiveScan.proxyConfiguration.conditionPlaceholder')"
+              :placeholder="$t('trafficAnalysis.proxyConfiguration.conditionPlaceholder')"
             />
           </div>
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost" @click="cancelRuleEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
-          <button class="btn btn-primary" @click="saveRuleEdit">{{ $t('passiveScan.proxyConfiguration.ok') }}</button>
+          <button class="btn btn-ghost" @click="cancelRuleEdit">{{ $t('trafficAnalysis.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveRuleEdit">{{ $t('trafficAnalysis.proxyConfiguration.ok') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+        <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
     </dialog>
 
@@ -558,31 +558,31 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-server mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.upstreamProxyServers') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.upstreamProxyServers') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.upstreamProxyServersDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.upstreamProxyServersDesc') }}
         </p>
 
         <div class="flex gap-4">
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
             <button class="btn btn-sm btn-outline w-24" @click="addUpstreamProxy">
-              {{ $t('passiveScan.proxyConfiguration.add') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.add') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="editUpstreamProxy"
               :disabled="selectedUpstreamIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.edit') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.edit') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="removeUpstreamProxy"
               :disabled="selectedUpstreamIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.remove') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.remove') }}
             </button>
           </div>
           
@@ -591,12 +591,12 @@
             <table class="table table-sm w-full">
               <thead>
                 <tr>
-                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.destinationHost') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.proxyHost') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.proxyPort') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.authType') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.username') }}</th>
+                  <th class="w-16">{{ $t('trafficAnalysis.proxyConfiguration.enabled') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.destinationHost') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.proxyHost') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.proxyPort') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.authType') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.username') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -624,7 +624,7 @@
                   <td>{{ proxy.username || '-' }}</td>
                 </tr>
                 <tr v-if="upstreamProxies.length === 0">
-                  <td colspan="6" class="text-center text-base-content/50">{{ $t('passiveScan.proxyConfiguration.noUpstreamProxy') }}</td>
+                  <td colspan="6" class="text-center text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.noUpstreamProxy') }}</td>
                 </tr>
               </tbody>
             </table>
@@ -637,31 +637,31 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-exchange-alt mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.websocketInterceptionRules') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.websocketInterceptionRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.websocketInterceptionRulesDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.websocketInterceptionRulesDesc') }}
         </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="interceptClientToServer" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptClientToServer') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.interceptClientToServer') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="interceptServerToClient" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.interceptServerToClient') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.interceptServerToClient') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="onlyInterceptInScope" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.onlyInterceptInScope') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.onlyInterceptInScope') }}</span>
             </label>
           </div>
         </div>
@@ -673,52 +673,52 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-edit mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.responseModificationRules') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.responseModificationRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.responseModificationRulesDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.responseModificationRulesDesc') }}
         </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="unhideHiddenFields" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.unhideHiddenFields') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.unhideHiddenFields') }}</span>
             </label>
           </div>
 
           <div class="form-control ml-6">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="prominentlyHighlightUnhidden" disabled />
-              <span class="label-text text-base-content/50">{{ $t('passiveScan.proxyConfiguration.prominentlyHighlightUnhidden') }}</span>  
+              <span class="label-text text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.prominentlyHighlightUnhidden') }}</span>  
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="enableDisabledFields" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.enableDisabledFields') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.enableDisabledFields') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="removeInputFieldLengthLimits" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.removeInputFieldLengthLimits') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.removeInputFieldLengthLimits') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="removeJavaScriptFormValidation" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.removeJavaScriptFormValidation') }}</span> 
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.removeJavaScriptFormValidation') }}</span> 
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="removeAllJavaScript" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.removeAllJavaScript') }}</span> 
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.removeAllJavaScript') }}</span> 
             </label>
           </div>
         </div>
@@ -730,16 +730,16 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-search-plus mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.matchReplaceRules') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.matchReplaceRules') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.matchReplaceRulesDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.matchReplaceRulesDesc') }}
         </p>
 
         <div class="form-control mb-3">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="onlyApplyToInScope" />
-            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.onlyApplyToInScope') }}</span>
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.onlyApplyToInScope') }}</span>
           </label>
         </div>
 
@@ -747,35 +747,35 @@
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
             <button class="btn btn-sm btn-outline w-24" @click="addMatchReplaceRule">
-              {{ $t('passiveScan.proxyConfiguration.add') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.add') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="editMatchReplaceRule"
               :disabled="selectedMatchReplaceIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.edit') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.edit') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="removeMatchReplaceRule"
               :disabled="selectedMatchReplaceIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.remove') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.remove') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="moveMatchReplaceRuleUp"
               :disabled="selectedMatchReplaceIndex <= 0"
             >
-              {{ $t('passiveScan.proxyConfiguration.moveUp') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.moveUp') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="moveMatchReplaceRuleDown"
               :disabled="selectedMatchReplaceIndex === -1 || selectedMatchReplaceIndex >= matchReplaceRules.length - 1"
             >
-              {{ $t('passiveScan.proxyConfiguration.moveDown') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.moveDown') }}
             </button>
           </div>
           
@@ -784,11 +784,11 @@
             <table class="table table-sm w-full">
               <thead>
                 <tr>
-                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.type') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.match') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.replace') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.comment') }}</th>
+                  <th class="w-16">{{ $t('trafficAnalysis.proxyConfiguration.enabled') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.type') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.match') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.replace') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.comment') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -814,7 +814,7 @@
                   <td class="text-xs">{{ rule.comment }}</td>
                 </tr>
                 <tr v-if="matchReplaceRules.length === 0">
-                  <td colspan="5" class="text-center text-base-content/50">{{ $t('passiveScan.proxyConfiguration.noRules') }}</td>
+                  <td colspan="5" class="text-center text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.noRules') }}</td>
                 </tr>
               </tbody>
             </table>
@@ -830,13 +830,13 @@
     <dialog ref="upstreamDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
-          {{ editingUpstreamIsNew ? $t('passiveScan.proxyConfiguration.addUpstreamProxy') : $t('passiveScan.proxyConfiguration.editUpstreamProxy') }}
+          {{ editingUpstreamIsNew ? $t('trafficAnalysis.proxyConfiguration.addUpstreamProxy') : $t('trafficAnalysis.proxyConfiguration.editUpstreamProxy') }}
         </h3>
         
         <div class="space-y-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.destinationHost') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.destinationHost') }}</span>
             </label>
             <input 
               type="text" 
@@ -845,13 +845,13 @@
               placeholder="*"
             />
             <label class="label">
-              <span class="label-text-alt text-base-content/60">{{ $t('passiveScan.proxyConfiguration.destinationHostHelp') }}</span>
+              <span class="label-text-alt text-base-content/60">{{ $t('trafficAnalysis.proxyConfiguration.destinationHostHelp') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.proxyHost') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.proxyHost') }}</span>
             </label>
             <input 
               type="text" 
@@ -863,7 +863,7 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.proxyPort') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.proxyPort') }}</span>
             </label>
             <input 
               type="number" 
@@ -877,18 +877,18 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.authType') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.authType') }}</span>
             </label>
             <select v-model="editingUpstream.auth_type" class="select select-bordered">
-              <option value="">{{ $t('passiveScan.proxyConfiguration.authNone') }}</option>
-              <option value="Basic">{{ $t('passiveScan.proxyConfiguration.authBasic') }}</option>
+              <option value="">{{ $t('trafficAnalysis.proxyConfiguration.authNone') }}</option>
+              <option value="Basic">{{ $t('trafficAnalysis.proxyConfiguration.authBasic') }}</option>
             </select>
           </div>
 
           <div v-if="editingUpstream.auth_type === 'Basic'" class="space-y-4">
             <div class="form-control">
               <label class="label">
-                <span class="label-text">{{ $t('passiveScan.proxyConfiguration.username') }}</span>
+                <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.username') }}</span>
               </label>
               <input 
                 type="text" 
@@ -900,7 +900,7 @@
 
             <div class="form-control">
               <label class="label">
-                <span class="label-text">{{ $t('passiveScan.proxyConfiguration.password') }}</span>
+                <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.password') }}</span>
               </label>
               <input 
                 type="password" 
@@ -913,12 +913,12 @@
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost" @click="cancelUpstreamEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
-          <button class="btn btn-primary" @click="saveUpstreamEdit">{{ $t('passiveScan.proxyConfiguration.ok') }}</button>
+          <button class="btn btn-ghost" @click="cancelUpstreamEdit">{{ $t('trafficAnalysis.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveUpstreamEdit">{{ $t('trafficAnalysis.proxyConfiguration.ok') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+        <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
     </dialog>
 
@@ -926,52 +926,52 @@
     <dialog ref="matchReplaceDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
-          {{ editingMatchReplaceIsNew ? $t('passiveScan.proxyConfiguration.addMatchReplaceRule') : $t('passiveScan.proxyConfiguration.editMatchReplaceRule') }}
+          {{ editingMatchReplaceIsNew ? $t('trafficAnalysis.proxyConfiguration.addMatchReplaceRule') : $t('trafficAnalysis.proxyConfiguration.editMatchReplaceRule') }}
         </h3>
         
         <div class="space-y-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.type') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.type') }}</span>
             </label>
             <select v-model="editingMatchReplace.type" class="select select-bordered w-full">
-              <option value="Request header">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestHeader') }}</option>
-              <option value="Request body">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestBody') }}</option>
-              <option value="Request param name">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestParamName') }}</option>
-              <option value="Request param value">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestParamValue') }}</option>
-              <option value="Request first line">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.requestFirstLine') }}</option>
-              <option value="Response header">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.responseHeader') }}</option>
-              <option value="Response body">{{ $t('passiveScan.proxyConfiguration.matchReplaceTypes.responseBody') }}</option>
+              <option value="Request header">{{ $t('trafficAnalysis.proxyConfiguration.matchReplaceTypes.requestHeader') }}</option>
+              <option value="Request body">{{ $t('trafficAnalysis.proxyConfiguration.matchReplaceTypes.requestBody') }}</option>
+              <option value="Request param name">{{ $t('trafficAnalysis.proxyConfiguration.matchReplaceTypes.requestParamName') }}</option>
+              <option value="Request param value">{{ $t('trafficAnalysis.proxyConfiguration.matchReplaceTypes.requestParamValue') }}</option>
+              <option value="Request first line">{{ $t('trafficAnalysis.proxyConfiguration.matchReplaceTypes.requestFirstLine') }}</option>
+              <option value="Response header">{{ $t('trafficAnalysis.proxyConfiguration.matchReplaceTypes.responseHeader') }}</option>
+              <option value="Response body">{{ $t('trafficAnalysis.proxyConfiguration.matchReplaceTypes.responseBody') }}</option>
             </select>
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.match') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.match') }}</span>
             </label>
             <input 
               type="text" 
               v-model="editingMatchReplace.match"
               class="input input-bordered w-full font-mono"
-              :placeholder="$t('passiveScan.proxyConfiguration.matchPlaceholder')"
+              :placeholder="$t('trafficAnalysis.proxyConfiguration.matchPlaceholder')"
             />
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.replace') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.replace') }}</span>
             </label>
             <input 
               type="text" 
               v-model="editingMatchReplace.replace"
               class="input input-bordered w-full"
-              :placeholder="$t('passiveScan.proxyConfiguration.replacePlaceholder')"
+              :placeholder="$t('trafficAnalysis.proxyConfiguration.replacePlaceholder')"
             />
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.comment') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.comment') }}</span>
             </label>
             <input 
               type="text" 
@@ -982,12 +982,12 @@
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost" @click="cancelMatchReplaceEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
-          <button class="btn btn-primary" @click="saveMatchReplaceEdit">{{ $t('passiveScan.proxyConfiguration.ok') }}</button>
+          <button class="btn btn-ghost" @click="cancelMatchReplaceEdit">{{ $t('trafficAnalysis.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveMatchReplaceEdit">{{ $t('trafficAnalysis.proxyConfiguration.ok') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+        <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
     </dialog>
 
@@ -995,25 +995,25 @@
     <dialog ref="tlsPassThroughDialogRef" class="modal">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">
-          {{ editingTlsIsNew ? $t('passiveScan.proxyConfiguration.addTlsPassThrough') : $t('passiveScan.proxyConfiguration.editTlsPassThrough') }}
+          {{ editingTlsIsNew ? $t('trafficAnalysis.proxyConfiguration.addTlsPassThrough') : $t('trafficAnalysis.proxyConfiguration.editTlsPassThrough') }}
         </h3>
         
         <div class="space-y-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.hostIPRange') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.hostIPRange') }}</span>
             </label>
             <input 
               type="text" 
               v-model="editingTlsPassThrough.host"
               class="input input-bordered w-full"
-              :placeholder="$t('passiveScan.proxyConfiguration.hostPlaceholder')"
+              :placeholder="$t('trafficAnalysis.proxyConfiguration.hostPlaceholder')"
             />
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.port') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.port') }}</span>
             </label>
             <input 
               type="text" 
@@ -1025,12 +1025,12 @@
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost" @click="cancelTlsPassThroughEdit">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
-          <button class="btn btn-primary" @click="saveTlsPassThroughEdit">{{ $t('passiveScan.proxyConfiguration.ok') }}</button>
+          <button class="btn btn-ghost" @click="cancelTlsPassThroughEdit">{{ $t('trafficAnalysis.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveTlsPassThroughEdit">{{ $t('trafficAnalysis.proxyConfiguration.ok') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+        <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
     </dialog>
 
@@ -1038,7 +1038,7 @@
     <dialog ref="certDialogRef" class="modal">
       <div class="modal-box max-w-lg">
         <h3 class="font-bold text-lg mb-2">
-          {{ $t('passiveScan.proxyConfiguration.caCertDialogTitle') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.caCertDialogTitle') }}
         </h3>
         
         <div class="flex items-start gap-3 mb-6">
@@ -1046,14 +1046,14 @@
             <i class="fas fa-question-circle text-lg"></i>
           </div>
           <p class="text-sm text-base-content/70">
-            {{ $t('passiveScan.proxyConfiguration.caCertDialogDesc') }}
+            {{ $t('trafficAnalysis.proxyConfiguration.caCertDialogDesc') }}
           </p>
         </div>
         
         <div class="space-y-4">
           <!-- Export Section -->
           <div>
-            <h4 class="font-semibold mb-2">{{ $t('passiveScan.proxyConfiguration.exportSection') }}</h4>
+            <h4 class="font-semibold mb-2">{{ $t('trafficAnalysis.proxyConfiguration.exportSection') }}</h4>
             <div class="space-y-2">
               <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
                 <input 
@@ -1063,7 +1063,7 @@
                   v-model="certOperation"
                   class="radio radio-sm"
                 />
-                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.certInDerFormat') }}</span>
+                <span class="text-sm">{{ $t('trafficAnalysis.proxyConfiguration.certInDerFormat') }}</span>
               </label>
               <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
                 <input 
@@ -1073,7 +1073,7 @@
                   v-model="certOperation"
                   class="radio radio-sm"
                 />
-                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.privateKeyInDerFormat') }}</span>
+                <span class="text-sm">{{ $t('trafficAnalysis.proxyConfiguration.privateKeyInDerFormat') }}</span>
               </label>
               <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
                 <input 
@@ -1083,14 +1083,14 @@
                   v-model="certOperation"
                   class="radio radio-sm"
                 />
-                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.certAndKeyInPkcs12') }}</span>
+                <span class="text-sm">{{ $t('trafficAnalysis.proxyConfiguration.certAndKeyInPkcs12') }}</span>
               </label>
             </div>
           </div>
 
           <!-- Import Section -->
           <div>
-            <h4 class="font-semibold mb-2">{{ $t('passiveScan.proxyConfiguration.importSection') }}</h4>
+            <h4 class="font-semibold mb-2">{{ $t('trafficAnalysis.proxyConfiguration.importSection') }}</h4>
             <div class="space-y-2">
               <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
                 <input 
@@ -1100,7 +1100,7 @@
                   v-model="certOperation"
                   class="radio radio-sm"
                 />
-                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.certAndKeyInDerFormat') }}</span>
+                <span class="text-sm">{{ $t('trafficAnalysis.proxyConfiguration.certAndKeyInDerFormat') }}</span>
               </label>
               <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-base-200">
                 <input 
@@ -1110,26 +1110,26 @@
                   v-model="certOperation"
                   class="radio radio-sm"
                 />
-                <span class="text-sm">{{ $t('passiveScan.proxyConfiguration.certAndKeyFromPkcs12') }}</span>
+                <span class="text-sm">{{ $t('trafficAnalysis.proxyConfiguration.certAndKeyFromPkcs12') }}</span>
               </label>
             </div>
           </div>
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost" @click="closeCertDialog">{{ $t('passiveScan.proxyConfiguration.cancel') }}</button>
+          <button class="btn btn-ghost" @click="closeCertDialog">{{ $t('trafficAnalysis.proxyConfiguration.cancel') }}</button>
           <button 
             class="btn btn-primary" 
             @click="executeCertOperation"
             :disabled="!certOperation || isProcessingCert"
           >
             <i v-if="isProcessingCert" class="fas fa-spinner fa-spin mr-1"></i>
-            {{ $t('passiveScan.proxyConfiguration.next') }}
+            {{ $t('trafficAnalysis.proxyConfiguration.next') }}
           </button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.proxyConfiguration.close') }}</button>
+        <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
     </dialog>
 
@@ -1138,34 +1138,34 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-lock mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.tlsPassThrough') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.tlsPassThrough') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.tlsPassThroughDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.tlsPassThroughDesc') }}
         </p>
 
         <div class="flex gap-4">
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
             <button class="btn btn-sm btn-outline w-24" @click="addTlsPassThroughRule">
-              {{ $t('passiveScan.proxyConfiguration.add') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.add') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="editTlsPassThroughRule"
               :disabled="selectedTlsPassThroughIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.edit') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.edit') }}
             </button>
             <button 
               class="btn btn-sm btn-outline w-24" 
               @click="removeTlsPassThroughRule"
               :disabled="selectedTlsPassThroughIndex === -1"
             >
-              {{ $t('passiveScan.proxyConfiguration.remove') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.remove') }}
             </button>
             <button class="btn btn-sm btn-outline w-24" @click="pasteUrlToTlsPassThrough">
-              {{ $t('passiveScan.proxyConfiguration.pasteURL') }}
+              {{ $t('trafficAnalysis.proxyConfiguration.pasteURL') }}
             </button>
           </div>
           
@@ -1174,9 +1174,9 @@
             <table class="table table-sm w-full">
               <thead>
                 <tr>
-                  <th class="w-16">{{ $t('passiveScan.proxyConfiguration.enabled') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.hostIPRange') }}</th>
-                  <th>{{ $t('passiveScan.proxyConfiguration.port') }}</th>
+                  <th class="w-16">{{ $t('trafficAnalysis.proxyConfiguration.enabled') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.hostIPRange') }}</th>
+                  <th>{{ $t('trafficAnalysis.proxyConfiguration.port') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1200,7 +1200,7 @@
                   <td>{{ rule.port }}</td>
                 </tr>
                 <tr v-if="tlsPassThroughRules.length === 0">
-                  <td colspan="3" class="text-center text-base-content/50">{{ $t('passiveScan.proxyConfiguration.noRules') }}</td>
+                  <td colspan="3" class="text-center text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.noRules') }}</td>
                 </tr>
               </tbody>
             </table>
@@ -1210,14 +1210,14 @@
         <div class="form-control mt-4">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="autoAddTLSOnFailure" />
-            <span class="label-text">{{ $t('passiveScan.proxyConfiguration.autoAddTLSOnFailure') }}</span>
+            <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.autoAddTLSOnFailure') }}</span>
           </label>
         </div>
 
         <div class="form-control">
           <label class="label cursor-pointer justify-start gap-2">
             <input type="checkbox" class="checkbox checkbox-sm" v-model="applyToOutOfScope" disabled />
-            <span class="label-text text-base-content/50">{{ $t('passiveScan.proxyConfiguration.applyToOutOfScope') }}</span>
+            <span class="label-text text-base-content/50">{{ $t('trafficAnalysis.proxyConfiguration.applyToOutOfScope') }}</span>
           </label>
         </div>
       </div>
@@ -1228,10 +1228,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-history mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.proxyHistoryLogging') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.proxyHistoryLogging') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.proxyHistoryLoggingDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.proxyHistoryLoggingDesc') }}
         </p>
 
         <div class="space-y-2">
@@ -1245,7 +1245,7 @@
                 v-model="historyLogging"
                 checked
               />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.stopLoggingOutOfScope') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.stopLoggingOutOfScope') }}</span>
             </label>
           </div>
 
@@ -1258,7 +1258,7 @@
                 value="ask"
                 v-model="historyLogging"
               />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.askUser') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.askUser') }}</span>
             </label>
           </div>
 
@@ -1271,7 +1271,7 @@
                 value="nothing"
                 v-model="historyLogging"
               />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.doNothing') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.doNothing') }}</span>
             </label>
           </div>
         </div>
@@ -1283,10 +1283,10 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-power-off mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.defaultInterceptionState') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.defaultInterceptionState') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.defaultInterceptionStateDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.defaultInterceptionStateDesc') }}
         </p>
 
         <div class="space-y-2">
@@ -1299,7 +1299,7 @@
                 value="enable"
                 v-model="interceptionState"
               />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.enableInterception') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.enableInterception') }}</span>
             </label>
           </div>
 
@@ -1313,7 +1313,7 @@
                 v-model="interceptionState"
                 checked
               />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.disableInterception') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.disableInterception') }}</span>
             </label>
           </div>
 
@@ -1326,7 +1326,7 @@
                 value="restore"
                 v-model="interceptionState"
               />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.restoreInterceptionState') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.restoreInterceptionState') }}</span>
             </label>
           </div>
         </div>
@@ -1338,73 +1338,73 @@
       <div class="card-body">
         <h2 class="card-title text-base mb-3">
           <i class="fas fa-cogs mr-2"></i>
-          {{ $t('passiveScan.proxyConfiguration.miscellaneousSettings') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.miscellaneousSettings') }}
         </h2>
         <p class="text-sm text-base-content/70 mb-4">
-          {{ $t('passiveScan.proxyConfiguration.miscellaneousSettingsDesc') }}
+          {{ $t('trafficAnalysis.proxyConfiguration.miscellaneousSettingsDesc') }}
         </p>
 
         <div class="space-y-2">
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="useHTTP1_1ToServer" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.useHTTP1_1ToServer') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.useHTTP1_1ToServer') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="useHTTP1_1ToClient" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.useHTTP1_1ToClient') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.useHTTP1_1ToClient') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="setConnectionClose" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.setConnectionClose') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.setConnectionClose') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="setConnectionHeader" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.setConnectionHeader') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.setConnectionHeader') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="stripProxyHeaders" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.stripProxyHeaders') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.stripProxyHeaders') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="removeUnsupportedEncodings" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.removeUnsupportedEncodings') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.removeUnsupportedEncodings') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="stripWebSocketExtensions" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.stripWebSocketExtensions') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.stripWebSocketExtensions') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="unpackCompressedRequests" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.unpackCompressedRequests') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.unpackCompressedRequests') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="unpackCompressedResponses" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.unpackCompressedResponses') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.unpackCompressedResponses') }}</span>
             </label>
           </div>
 
@@ -1412,21 +1412,21 @@
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="suppressBurpErrorMessages" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.suppressBurpErrorMessages') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.suppressBurpErrorMessages') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="dontSendToProxyHistory" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.dontSendToProxyHistory') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.dontSendToProxyHistory') }}</span>
             </label>
           </div>
 
           <div class="form-control">
             <label class="label cursor-pointer justify-start gap-2">
               <input type="checkbox" class="checkbox checkbox-sm" v-model="dontSendToProxyHistoryIfOutOfScope" />
-              <span class="label-text">{{ $t('passiveScan.proxyConfiguration.dontSendToProxyHistoryIfOutOfScope') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxyConfiguration.dontSendToProxyHistoryIfOutOfScope') }}</span>
             </label>
           </div>
         </div>
@@ -1438,11 +1438,11 @@
     <div class="flex justify-end gap-2">
       <button class="btn btn-outline" @click="resetToDefaults">
         <i class="fas fa-undo mr-2"></i>
-        {{ $t('passiveScan.proxyConfiguration.resetToDefaults') }}
+        {{ $t('trafficAnalysis.proxyConfiguration.resetToDefaults') }}
       </button>
       <div v-if="isSaving" class="flex items-center gap-2 text-sm text-base-content/70">
         <i class="fas fa-spinner fa-spin"></i>
-        <span>{{ $t('passiveScan.proxyConfiguration.saving') }}</span>
+        <span>{{ $t('trafficAnalysis.proxyConfiguration.saving') }}</span>
       </div>
     </div>
   </div>
@@ -1643,7 +1643,7 @@ const currentMatchTypes = computed(() => {
   const values = editingRuleType.value === 'request' ? requestMatchTypeValues : responseMatchTypeValues
   return values.map(value => ({
     value,
-    label: t(`passiveScan.proxyConfiguration.matchTypes.${value}`)
+    label: t(`trafficAnalysis.proxyConfiguration.matchTypes.${value}`)
   }))
 })
 
@@ -1651,18 +1651,18 @@ const currentMatchTypes = computed(() => {
 const relationshipOptions = computed(() => {
   return relationshipValues.map(value => ({
     value,
-    label: t(`passiveScan.proxyConfiguration.relationships.${value}`)
+    label: t(`trafficAnalysis.proxyConfiguration.relationships.${value}`)
   }))
 })
 
 // Get match type label
 const getMatchTypeLabel = (value: string) => {
-  return t(`passiveScan.proxyConfiguration.matchTypes.${value}`, value)
+  return t(`trafficAnalysis.proxyConfiguration.matchTypes.${value}`, value)
 }
 
 // Get relationship label
 const getRelationshipLabel = (value: string) => {
-  return t(`passiveScan.proxyConfiguration.relationships.${value}`, value)
+  return t(`trafficAnalysis.proxyConfiguration.relationships.${value}`, value)
 }
 
 // Upstream proxy settings - now supports multiple proxies
@@ -2493,7 +2493,7 @@ async function executeCertOperation() {
 async function exportCertInDer() {
   const response = await invoke<any>('export_ca_cert', { format: 'der' })
   if (response.success && response.data) {
-    dialog.toast.success(`${t('passiveScan.proxyConfiguration.certInDerFormat')}: ${response.data.path}`)
+    dialog.toast.success(`${t('trafficAnalysis.proxyConfiguration.certInDerFormat')}: ${response.data.path}`)
   } else {
     throw new Error(response.error || 'Export failed')
   }
@@ -2502,7 +2502,7 @@ async function exportCertInDer() {
 async function exportKeyInDer() {
   const response = await invoke<any>('export_ca_key', { format: 'der' })
   if (response.success && response.data) {
-    dialog.toast.success(`${t('passiveScan.proxyConfiguration.privateKeyInDerFormat')}: ${response.data.path}`)
+    dialog.toast.success(`${t('trafficAnalysis.proxyConfiguration.privateKeyInDerFormat')}: ${response.data.path}`)
   } else {
     throw new Error(response.error || 'Export failed')
   }
@@ -2511,7 +2511,7 @@ async function exportKeyInDer() {
 async function exportPkcs12() {
   const response = await invoke<any>('export_ca_pkcs12', {})
   if (response.success && response.data) {
-    dialog.toast.success(`${t('passiveScan.proxyConfiguration.certAndKeyInPkcs12')}: ${response.data.path}`)
+    dialog.toast.success(`${t('trafficAnalysis.proxyConfiguration.certAndKeyInPkcs12')}: ${response.data.path}`)
   } else {
     throw new Error(response.error || 'Export failed')
   }

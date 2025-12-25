@@ -333,6 +333,14 @@ pub struct ToolCallRecord {
     pub arguments: String,
     pub result: Option<String>,
     pub success: bool,
+    /// Sequence number within one agent execution (0-based).
+    pub sequence: u32,
+    /// Tool call started timestamp (UTC millis).
+    pub started_at_ms: i64,
+    /// Tool call completed timestamp (UTC millis).
+    pub completed_at_ms: i64,
+    /// Tool call duration in millis.
+    pub duration_ms: i64,
 }
 
 /// 带工具调用的 Agent 执行（使用 rig-core 原生工具调用）
@@ -363,9 +371,13 @@ async fn execute_agent_with_tools(
         llm_config = llm_config.with_base_url(api_base);
     }
 
-    let selected_tool_ids = tool_router
-        .select_tools(&params.task, &tool_config, Some(&llm_config))
+    // Use plan_tools to support Ability mode with injected context
+    let db_pool = db_service.get_pool().ok();
+    let selection_plan = tool_router
+        .plan_tools(&params.task, &tool_config, Some(&llm_config), db_pool)
         .await?;
+
+    let selected_tool_ids = selection_plan.tool_ids.clone();
 
     tracing::info!(
         "Selected {} tools for execution_id {}: {:?}",
@@ -373,6 +385,18 @@ async fn execute_agent_with_tools(
         params.execution_id,
         selected_tool_ids
     );
+
+    // Emit ability_selected event if applicable
+    if let Some(ref group) = selection_plan.selected_ability_group {
+        let _ = app_handle.emit(
+            "agent:ability_selected",
+            &json!({
+                "execution_id": params.execution_id,
+                "group_id": group.id,
+                "group_name": group.name,
+            }),
+        );
+    }
 
     // 发送工具选择事件到前端
     let _ = app_handle.emit(
@@ -391,25 +415,40 @@ async fn execute_agent_with_tools(
         dynamic_tools.len()
     );
 
-    // 4. 使用 rig-core 原生工具调用
+    // 4. Build final system prompt (with injected Ability instructions if any)
+    let final_system_prompt = if let Some(ref injected) = selection_plan.injected_system_prompt {
+        format!("{}{}", params.system_prompt, injected)
+    } else {
+        params.system_prompt.clone()
+    };
+
+    // 5. 使用 rig-core 原生工具调用
     // rig 的 multi_turn() 会自动处理工具调用循环
     let client = StreamingLlmClient::new(llm_config);
     let execution_id = params.execution_id.clone();
     let app = app_handle.clone();
+    let db_for_stream: Option<std::sync::Arc<sentinel_db::DatabaseService>> = app_handle
+        .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+        .map(|s| s.inner().clone());
 
     // 用于收集工具调用信息
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU32, Ordering};
     let tool_calls_collector: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
-    let pending_calls: Arc<Mutex<std::collections::HashMap<String, (String, String)>>> = 
+    let pending_calls: Arc<Mutex<std::collections::HashMap<String, (String, String, i64, u32)>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let tool_seq: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
+    let assistant_segment_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     
     let collector = tool_calls_collector.clone();
     let pending = pending_calls.clone();
+    let seq_counter = tool_seq.clone();
+    let segment_buf = assistant_segment_buf.clone();
 
-    // 5. 调用带动态工具的流式方法
+    // 6. 调用带动态工具的流式方法
     let result = client
         .stream_chat_with_dynamic_tools(
-            Some(&params.system_prompt),
+            Some(&final_system_prompt),
             &params.task,
             &[],  // 空的历史记录
             None, // 无图片
@@ -420,6 +459,10 @@ async fn execute_agent_with_tools(
                 }
                 match content {
                 StreamContent::Text(text) => {
+                    // Accumulate assistant text into a segment buffer.
+                    if let Ok(mut buf) = segment_buf.lock() {
+                        buf.push_str(&text);
+                    }
                     let _ = app.emit(
                         "agent:chunk",
                         &json!({
@@ -469,7 +512,94 @@ async fn execute_agent_with_tools(
                     
                     // 记录 pending 的工具调用，等待结果
                     if let Ok(mut pending_map) = pending.lock() {
-                        pending_map.insert(id.clone(), (name.clone(), arguments.clone()));
+                        let seq = seq_counter.fetch_add(1, Ordering::Relaxed);
+                        let started_at_ms = chrono::Utc::now().timestamp_millis() + seq as i64;
+                        pending_map.insert(id.clone(), (name.clone(), arguments.clone(), started_at_ms, seq));
+                    }
+
+                    // Flush assistant segment BEFORE inserting tool call message (preserve ordering on reload).
+                    if let Some(db) = db_for_stream.clone() {
+                        use sentinel_core::models::database as core_db;
+                        use chrono::TimeZone;
+                        let seg = segment_buf.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
+                        let seg_trimmed = seg.trim().to_string();
+                        if !seg_trimmed.trim().is_empty() {
+                            // Ensure segment timestamp is slightly before tool call timestamp.
+                            let seg_ts_ms = chrono::Utc::now().timestamp_millis() - 1;
+                            let seg_ts = chrono::Utc
+                                .timestamp_millis_opt(seg_ts_ms)
+                                .single()
+                                .unwrap_or_else(chrono::Utc::now);
+                            let seg_msg = core_db::AiMessage {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                conversation_id: execution_id.clone(),
+                                role: "assistant".to_string(),
+                                content: seg_trimmed.clone(),
+                                metadata: None,
+                                token_count: Some(seg_trimmed.len() as i32),
+                                cost: None,
+                                tool_calls: None,
+                                attachments: None,
+                                timestamp: seg_ts,
+                                architecture_type: None,
+                                architecture_meta: None,
+                                structured_data: None,
+                            };
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = db.upsert_ai_message_append(&seg_msg).await {
+                                    tracing::warn!("Failed to persist assistant segment: {}", e);
+                                }
+                            });
+                        }
+                    }
+
+                    // Persist tool call as a standalone message (role=tool) so history ordering is correct.
+                    if let Some(db) = db_for_stream.clone() {
+                        use sentinel_core::models::database as core_db;
+                        use chrono::TimeZone;
+                        let (started_at_ms, seq) = pending
+                            .lock()
+                            .ok()
+                            .and_then(|m| m.get(&id).map(|(_, _, ms, s)| (*ms, *s)))
+                            .unwrap_or((chrono::Utc::now().timestamp_millis(), 0));
+
+                        let started_at = chrono::Utc
+                            .timestamp_millis_opt(started_at_ms)
+                            .single()
+                            .unwrap_or_else(chrono::Utc::now);
+
+                        let tool_args_val: serde_json::Value = serde_json::from_str(&arguments)
+                            .unwrap_or_else(|_| json!({ "raw": arguments }));
+                        let meta = json!({
+                            "kind": "tool_call",
+                            "tool_name": name,
+                            "tool_args": tool_args_val,
+                            "tool_call_id": id,
+                            "status": "running",
+                            "sequence": seq,
+                            "started_at_ms": started_at_ms,
+                        });
+
+                        let tool_msg = core_db::AiMessage {
+                            id: id.clone(),
+                            conversation_id: execution_id.clone(),
+                            role: "tool".to_string(),
+                            content: String::new(),
+                            metadata: Some(meta.to_string()),
+                            token_count: None,
+                            cost: None,
+                            tool_calls: None,
+                            attachments: None,
+                            timestamp: started_at,
+                            architecture_type: None,
+                            architecture_meta: None,
+                            structured_data: None,
+                        };
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = db.upsert_ai_message_append(&tool_msg).await {
+                                tracing::warn!("Failed to persist tool call message: {}", e);
+                            }
+                        });
                     }
                     
                     let _ = app.emit(
@@ -487,7 +617,11 @@ async fn execute_agent_with_tools(
                     
                     // 将工具调用完整信息添加到收集器
                     if let Ok(mut pending_map) = pending.lock() {
-                        if let Some((name, arguments)) = pending_map.remove(&id) {
+                        if let Some((name, arguments, started_at_ms, seq)) = pending_map.remove(&id) {
+                            let completed_at_ms = chrono::Utc::now().timestamp_millis();
+                            let duration_ms = completed_at_ms.saturating_sub(started_at_ms);
+                            let name_for_meta = name.clone();
+                            let args_for_meta = arguments.clone();
                             if let Ok(mut records) = collector.lock() {
                                 records.push(ToolCallRecord {
                                     id: id.clone(),
@@ -495,6 +629,56 @@ async fn execute_agent_with_tools(
                                     arguments,
                                     result: Some(result.clone()),
                                     success: !result.to_lowercase().contains("error"),
+                                    sequence: seq,
+                                    started_at_ms,
+                                    completed_at_ms,
+                                    duration_ms,
+                                });
+                            }
+
+                            // Update persisted tool message with result (keep timestamp as started_at to avoid reordering).
+                            if let Some(db) = db_for_stream.clone() {
+                                use sentinel_core::models::database as core_db;
+                                use chrono::TimeZone;
+                                let started_at = chrono::Utc
+                                    .timestamp_millis_opt(started_at_ms)
+                                    .single()
+                                    .unwrap_or_else(chrono::Utc::now);
+
+                                let tool_args_val: serde_json::Value = serde_json::from_str(&args_for_meta)
+                                    .unwrap_or_else(|_| json!({ "raw": args_for_meta }));
+                                let meta = json!({
+                                    "kind": "tool_call",
+                                    "tool_name": name_for_meta,
+                                    "tool_args": tool_args_val,
+                                    "tool_call_id": id,
+                                    "status": "completed",
+                                    "sequence": seq,
+                                    "started_at_ms": started_at_ms,
+                                    "completed_at_ms": completed_at_ms,
+                                    "duration_ms": duration_ms,
+                                    "tool_result": result,
+                                    "success": !result.to_lowercase().contains("error"),
+                                });
+                                let tool_msg = core_db::AiMessage {
+                                    id: id.clone(),
+                                    conversation_id: execution_id.clone(),
+                                    role: "tool".to_string(),
+                                    content: String::new(),
+                                    metadata: Some(meta.to_string()),
+                                    token_count: None,
+                                    cost: None,
+                                    tool_calls: None,
+                                    attachments: None,
+                                    timestamp: started_at,
+                                    architecture_type: None,
+                                    architecture_meta: None,
+                                    structured_data: None,
+                                };
+                                tauri::async_runtime::spawn(async move {
+                                    if let Err(e) = db.upsert_ai_message_append(&tool_msg).await {
+                                        tracing::warn!("Failed to persist tool result update: {}", e);
+                                    }
                                 });
                             }
                         }
@@ -511,6 +695,34 @@ async fn execute_agent_with_tools(
                 }
                 StreamContent::Done => {
                     tracing::info!("Stream completed - execution_id: {}", execution_id);
+                    // Flush any remaining assistant segment at the end (so history shows it after the last tool call).
+                    if let Some(db) = db_for_stream.clone() {
+                        use sentinel_core::models::database as core_db;
+                        let seg = segment_buf.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
+                        let seg_trimmed = seg.trim().to_string();
+                        if !seg_trimmed.trim().is_empty() {
+                            let seg_msg = core_db::AiMessage {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                conversation_id: execution_id.clone(),
+                                role: "assistant".to_string(),
+                                content: seg_trimmed.clone(),
+                                metadata: None,
+                                token_count: Some(seg_trimmed.len() as i32),
+                                cost: None,
+                                tool_calls: None,
+                                attachments: None,
+                                timestamp: chrono::Utc::now(),
+                                architecture_type: None,
+                                architecture_meta: None,
+                                structured_data: None,
+                            };
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = db.upsert_ai_message_append(&seg_msg).await {
+                                    tracing::warn!("Failed to persist final assistant segment: {}", e);
+                                }
+                            });
+                        }
+                    }
                 }
             }},
         )
@@ -524,25 +736,10 @@ async fn execute_agent_with_tools(
                 response.len()
             );
 
-            // 获取收集到的工具调用记录
-            let tool_call_records: Vec<ToolCallRecord> = tool_calls_collector
-                .lock()
-                .map(|guard| guard.clone())
-                .unwrap_or_default();
-            
-            tracing::info!(
-                "Collected {} tool call records for execution_id {}",
-                tool_call_records.len(),
-                params.execution_id
-            );
-
-            // 保存助手消息到数据库（带工具调用信息）
-            let records_ref = if tool_call_records.is_empty() {
-                None
-            } else {
-                Some(tool_call_records.as_slice())
-            };
-            save_assistant_message(app_handle, &params.execution_id, &response, records_ref).await;
+            // NOTE:
+            // We persist assistant output as multiple "assistant" segments and tool calls as "tool" messages
+            // during streaming, to preserve strict event ordering when reloading history.
+            // So we intentionally do NOT save a single aggregated assistant message here.
 
             // 记录工具使用（用于智能选择学习）
             // FIXME: record_tool_usage signature mismatch

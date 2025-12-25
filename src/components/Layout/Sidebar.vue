@@ -158,8 +158,8 @@ const mainMenuItems = computed(() => [
     badgeClass: 'badge-primary'
   },
   {
-    path: '/passive-scan',
-    name: t('sidebar.passive', '被动扫描'),
+    path: '/traffic',
+    name: t('sidebar.traffic', '流量分析'),
     icon: 'fas fa-satellite-dish',
     badge: null,
     badgeClass: 'badge-info'

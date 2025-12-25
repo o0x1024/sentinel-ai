@@ -13,7 +13,7 @@ export default {
 
   // Sidebar main entries (used by Layout/Sidebar.vue)
   securityCenter: '安全中心',
-  passive: '被动扫描',
+  traffic: '流量分析',
   aiAssistant: 'AI助手',
   ragManagement: '知识库管理',
   Tools: '应用工具',

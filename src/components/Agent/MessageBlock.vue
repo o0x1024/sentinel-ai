@@ -1,6 +1,51 @@
 <template>
-  <div class="message-container group relative my-2 max-w-full pt-2">
-    <div :class="['message-block rounded-lg px-3 py-2 overflow-hidden ', typeClass]">
+  <div class="message-container group relative  max-w-full ">
+    <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden ', typeClass]">
+      <!-- Actions (overlay) -->
+      <div
+        v-if="message.type === 'user' || message.type === 'final'"
+        class="message-actions absolute right-2 top-2 z-10"
+      >
+        <!-- Desktop/hover: icon buttons -->
+        <div class="hidden md:flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
+          <button
+            @click="handleCopy"
+            class="action-btn btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
+            :title="t('agent.copyMessage')"
+          >
+            <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
+          </button>
+          <button
+            v-if="message.type === 'user'"
+            @click="handleResend"
+            class="action-btn btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
+            :title="t('agent.resendMessage')"
+          >
+            <i class="fas fa-redo"></i>
+          </button>
+        </div>
+
+        <!-- Touch/mobile: overflow menu -->
+        <details class="dropdown dropdown-end md:hidden">
+          <summary class="btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content">
+            <i class="fas fa-ellipsis-h"></i>
+          </summary>
+          <ul class="menu dropdown-content bg-base-100 rounded-box shadow w-40 p-1 mt-1">
+            <li>
+              <button @click="handleCopy">
+                <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
+                <span class="text-xs">{{ t('agent.copy') }}</span>
+              </button>
+            </li>
+            <li v-if="message.type === 'user'">
+              <button @click="handleResend">
+                <i class="fas fa-redo"></i>
+                <span class="text-xs">{{ t('agent.resend') }}</span>
+              </button>
+            </li>
+          </ul>
+        </details>
+      </div>
       <!-- Header with type indicator -->
       <div class="message-header flex items-center gap-2 mb-23 text-sm" v-if="showHeader">
         <span class="message-type font-semibold text-base-content/70">{{ typeName }}</span>
@@ -90,38 +135,6 @@
           </div>
         </div>
       </div>
-    </div>
-    
-    <!-- 消息操作按钮 - 用户消息 (Outside the message block) -->
-    <div v-if="message.type === 'user'" class="message-actions absolute top-full left-0 z-10 mt-1 flex justify-start gap-2 opacity-0 group-hover:opacity-100 transition-opacity px-1">
-      <button
-        @click="handleCopy"
-        class="action-btn btn btn-xs btn-ghost text-base-content/50 hover:text-base-content hover:bg-base-200"
-        :title="t('agent.copyMessage')"
-      >
-        <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
-        <span class="text-xs ml-1">{{ t('agent.copy') }}</span>
-      </button>
-      <button
-        @click="handleResend"
-        class="action-btn btn btn-xs btn-ghost text-base-content/50 hover:text-base-content hover:bg-base-200"
-        :title="t('agent.resendMessage')"
-      >
-        <i class="fas fa-redo"></i>
-        <span class="text-xs ml-1">{{ t('agent.resend') }}</span>
-      </button>
-    </div>
-    
-    <!-- 消息操作按钮 - AI响应 (Outside the message block) -->
-    <div v-else-if="message.type === 'final'" class="message-actions absolute top-full left-0 z-10 mt-1 flex justify-start gap-2 opacity-0 group-hover:opacity-100 transition-opacity px-1">
-      <button
-        @click="handleCopy"
-        class="action-btn btn btn-xs btn-ghost text-base-content/50 hover:text-base-content hover:bg-base-200"
-        :title="t('agent.copyMessage')"
-      >
-        <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
-        <span class="text-xs ml-1">{{ t('agent.copy') }}</span>
-      </button>
     </div>
   </div>
 </template>

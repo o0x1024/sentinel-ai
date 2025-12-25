@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- View Mode Toggle -->
-    <div v-if="['all', 'passive', 'agents'].includes(selectedCategory)" class="flex gap-2 mb-4">
+    <div v-if="['all', 'traffic', 'agents'].includes(selectedCategory)" class="flex gap-2 mb-4">
       <button class="btn btn-sm" :class="pluginViewMode === 'favorited' ? 'btn-primary' : 'btn-ghost'"
         @click="$emit('update:pluginViewMode', 'favorited')">
         <i class="fas fa-star mr-1"></i>
@@ -44,7 +44,7 @@
       </button>
 
       <!-- Batch Toggle Buttons -->
-      <div v-if="['all', 'passive', 'agents'].includes(selectedCategory)" class="ml-auto flex gap-2">
+      <div v-if="['all', 'traffic', 'agents'].includes(selectedCategory)" class="ml-auto flex gap-2">
         <button class="btn btn-sm btn-success" :disabled="filteredPlugins.length === 0 || batchToggling"
           @click="$emit('batchEnable')">
           <span v-if="batchToggling" class="loading loading-spinner"></span>
@@ -152,7 +152,7 @@
             <td>
               <div class="flex gap-1 flex-wrap">
                 <!-- Favorite Button -->
-                <div v-if="ispassivePluginType(plugin) || isAgentPluginType(plugin)" class="tooltip"
+                <div v-if="isTrafficPluginType(plugin) || isAgentPluginType(plugin)" class="tooltip"
                   :data-tip="isPluginFavorited(plugin) ? $t('plugins.unfavorite', '取消收藏') : $t('plugins.favorite', '收藏插件')">
                   <button class="btn btn-sm btn-ghost" @click="$emit('toggleFavorite', plugin)">
                     <i :class="isPluginFavorited(plugin) ? 'fas fa-star text-yellow-500' : 'far fa-star'"></i>
@@ -161,7 +161,7 @@
 
                 <!-- Test Plugin -->
                 <div class="tooltip"
-                  :data-tip="isAgentPluginType(plugin) ? '测试 Agent 工具 (analyze)' : '测试被动扫描 (scan_request/scan_response)'">
+                  :data-tip="isAgentPluginType(plugin) ? '测试 Agent 工具 (analyze)' : '测试流量分析 (scan_request/scan_response)'">
                   <button class="btn btn-sm btn-outline" @click="$emit('testPlugin', plugin)"
                     :disabled="plugin.status !== 'Enabled'">
                     <i class="fas fa-vial mr-1"></i>
@@ -169,7 +169,7 @@
                 </div>
 
                 <!-- Advanced Test -->
-                <div class="tooltip" :data-tip="isAgentPluginType(plugin) ? 'Agent 高级测试' : '被动扫描高级测试'">
+                <div class="tooltip" :data-tip="isAgentPluginType(plugin) ? 'Agent 高级测试' : '流量分析高级测试'">
                   <button class="btn btn-sm btn-outline" @click="$emit('advancedTest', plugin)"
                     :disabled="plugin.status !== 'Enabled'">
                     <i class="fas fa-gauge-high mr-1"></i>
@@ -250,7 +250,7 @@ const props = defineProps<{
   getCategoryLabel: (category: string) => string
   getCategoryIcon: (category: string) => string
   isPluginFavorited: (plugin: PluginRecord) => boolean
-  ispassivePluginType: (plugin: PluginRecord) => boolean
+  isTrafficPluginType: (plugin: PluginRecord) => boolean
   isAgentPluginType: (plugin: PluginRecord) => boolean
 }>()
 

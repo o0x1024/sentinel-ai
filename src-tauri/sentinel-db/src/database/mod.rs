@@ -10,6 +10,7 @@ pub mod rag_doc_dao;
 pub mod prompt_template_dao;
 pub mod prompt_dao;
 pub mod proxifier_dao;
+pub mod ability_group_dao;
 
 pub use asset_dao::AssetDao;
 pub use scan_task_dao::*;
@@ -23,3 +24,4 @@ pub use rag_doc_dao::*;
 pub use prompt_template_dao::*;
 pub use prompt_dao::*;
 pub use proxifier_dao::*;
+pub use ability_group_dao::*;

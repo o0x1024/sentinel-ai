@@ -5,7 +5,7 @@
             <!-- 网卡选择 -->
             <select v-model="selectedInterface" class="select select-sm select-bordered min-w-56"
                 :disabled="isCapturing">
-                <option value="">{{ $t('passiveScan.packetCapture.toolbar.selectInterface') }}</option>
+                <option value="">{{ $t('trafficAnalysis.packetCapture.toolbar.selectInterface') }}</option>
                 <option v-for="iface in interfaces" :key="iface.name" :value="iface.name">
                     {{ getInterfaceDisplayName(iface) }}
                 </option>
@@ -15,13 +15,13 @@
             <button class="btn btn-sm" :class="isCapturing ? 'btn-error' : 'btn-success'"
                 @click="toggleCapture" :disabled="!selectedInterface && !isCapturing">
                 <i :class="isCapturing ? 'fas fa-stop' : 'fas fa-play'" class="mr-1"></i>
-                {{ isCapturing ? $t('passiveScan.packetCapture.toolbar.stop') : $t('passiveScan.packetCapture.toolbar.start') }}
+                {{ isCapturing ? $t('trafficAnalysis.packetCapture.toolbar.stop') : $t('trafficAnalysis.packetCapture.toolbar.start') }}
             </button>
 
             <!-- 清空按钮 -->
             <button class="btn btn-sm btn-ghost" @click="clearPackets" :disabled="packets.length === 0">
                 <i class="fas fa-trash mr-1"></i>
-                {{ $t('passiveScan.packetCapture.toolbar.clear') }}
+                {{ $t('trafficAnalysis.packetCapture.toolbar.clear') }}
             </button>
 
             <div class="divider divider-horizontal mx-0"></div>
@@ -29,19 +29,19 @@
             <!-- 打开文件按钮 -->
             <button class="btn btn-sm btn-ghost" @click="openPcapFile" :disabled="isCapturing">
                 <i class="fas fa-folder-open mr-1"></i>
-                {{ $t('passiveScan.packetCapture.toolbar.open') }}
+                {{ $t('trafficAnalysis.packetCapture.toolbar.open') }}
             </button>
 
             <!-- 保存文件按钮 -->
             <button class="btn btn-sm btn-ghost" @click="savePcapFile" :disabled="packets.length === 0">
                 <i class="fas fa-save mr-1"></i>
-                {{ $t('passiveScan.packetCapture.toolbar.save') }}
+                {{ $t('trafficAnalysis.packetCapture.toolbar.save') }}
             </button>
 
             <!-- 导出文件按钮 -->
             <button class="btn btn-sm btn-ghost" @click="showExtractDialog = true" :disabled="packets.length === 0">
                 <i class="fas fa-file-export mr-1"></i>
-                {{ $t('passiveScan.packetCapture.toolbar.export') }}
+                {{ $t('trafficAnalysis.packetCapture.toolbar.export') }}
             </button>
 
             <div class="divider divider-horizontal mx-0"></div>
@@ -49,7 +49,7 @@
             <!-- 高级过滤按钮 -->
             <button class="btn btn-sm btn-ghost" @click="showFilterDialog = true">
                 <i class="fas fa-sliders-h mr-1"></i>
-                {{ $t('passiveScan.packetCapture.toolbar.advancedFilter') }}
+                {{ $t('trafficAnalysis.packetCapture.toolbar.advancedFilter') }}
             </button>
 
             <!-- 过滤器输入 -->
@@ -72,7 +72,7 @@
 
             <!-- 统计信息 -->
             <div class="flex items-center gap-2">
-                <span v-if="hasAdvancedFilter" class="badge badge-info badge-sm">{{ $t('passiveScan.packetCapture.toolbar.advancedFilterBadge') }}</span>
+                <span v-if="hasAdvancedFilter" class="badge badge-info badge-sm">{{ $t('trafficAnalysis.packetCapture.toolbar.advancedFilterBadge') }}</span>
                 <span class="badge badge-ghost">{{ filteredPackets.length }} / {{ packets.length }}</span>
             </div>
         </div>
@@ -95,13 +95,13 @@
                     <!-- 表头 -->
                     <div class="sticky top-0 z-10 flex bg-base-200 border-b border-base-300" :style="{ height: headerHeight + 'px' }">
                         <div class="w-12 flex items-center justify-center px-2 border-r border-base-300"></div>
-                        <div class="w-16 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('passiveScan.packetCapture.table.no') }}</div>
-                        <div class="w-24 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('passiveScan.packetCapture.table.time') }}</div>
-                        <div class="w-40 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('passiveScan.packetCapture.table.source') }}</div>
-                        <div class="w-40 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('passiveScan.packetCapture.table.destination') }}</div>
-                        <div class="w-20 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('passiveScan.packetCapture.table.protocol') }}</div>
-                        <div class="w-16 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('passiveScan.packetCapture.table.length') }}</div>
-                        <div class="flex-1 flex items-center px-2 text-xs font-semibold">{{ $t('passiveScan.packetCapture.table.info') }}</div>
+                        <div class="w-16 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.no') }}</div>
+                        <div class="w-24 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.time') }}</div>
+                        <div class="w-40 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.source') }}</div>
+                        <div class="w-40 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.destination') }}</div>
+                        <div class="w-20 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.protocol') }}</div>
+                        <div class="w-16 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.length') }}</div>
+                        <div class="flex-1 flex items-center px-2 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.info') }}</div>
                     </div>
 
                     <!-- 数据行 - 虚拟渲染 -->
@@ -143,14 +143,14 @@
                 <div v-if="filteredPackets.length === 0" class="flex flex-col items-center justify-center h-full text-base-content/50 py-12">
                     <template v-if="isLoading">
                         <span class="loading loading-spinner loading-lg mb-4"></span>
-                        <p>{{ $t('passiveScan.packetCapture.emptyState.loadingInterfaces') }}</p>
+                        <p>{{ $t('trafficAnalysis.packetCapture.emptyState.loadingInterfaces') }}</p>
                     </template>
                     <template v-else-if="loadError === 'no_interfaces'">
                         <i class="fas fa-exclamation-triangle text-4xl mb-4 text-warning"></i>
-                        <p class="mb-2">{{ $t('passiveScan.packetCapture.emptyState.noInterfaces') }}</p>
-                        <p class="text-sm mb-4">{{ $t('passiveScan.packetCapture.emptyState.npcapRequired') }}</p>
+                        <p class="mb-2">{{ $t('trafficAnalysis.packetCapture.emptyState.noInterfaces') }}</p>
+                        <p class="text-sm mb-4">{{ $t('trafficAnalysis.packetCapture.emptyState.npcapRequired') }}</p>
                         <a href="https://nmap.org/npcap/" target="_blank" class="btn btn-sm btn-primary">
-                            <i class="fas fa-download mr-2"></i>{{ $t('passiveScan.packetCapture.emptyState.downloadNpcap') }}
+                            <i class="fas fa-download mr-2"></i>{{ $t('trafficAnalysis.packetCapture.emptyState.downloadNpcap') }}
                         </a>
                     </template>
                     <template v-else-if="loadError">
@@ -159,8 +159,8 @@
                     </template>
                     <template v-else>
                         <i class="fas fa-broadcast-tower text-4xl mb-4"></i>
-                        <p v-if="!isCapturing">{{ $t('passiveScan.packetCapture.emptyState.selectAndStart') }}</p>
-                        <p v-else>{{ $t('passiveScan.packetCapture.emptyState.waitingForPackets') }}</p>
+                        <p v-if="!isCapturing">{{ $t('trafficAnalysis.packetCapture.emptyState.selectAndStart') }}</p>
+                        <p v-else>{{ $t('trafficAnalysis.packetCapture.emptyState.waitingForPackets') }}</p>
                     </template>
                 </div>
             </div>
@@ -229,12 +229,12 @@
                     {{ selectedInterfaceDisplayName }}
                 </span>
                 <span v-if="isCapturing" class="text-success">
-                    <i class="fas fa-circle animate-pulse mr-1"></i>{{ $t('passiveScan.packetCapture.statusBar.capturing') }}
+                    <i class="fas fa-circle animate-pulse mr-1"></i>{{ $t('trafficAnalysis.packetCapture.statusBar.capturing') }}
                 </span>
             </div>
             <div class="flex items-center gap-4">
-                <span v-if="selectedPacket">{{ $t('passiveScan.packetCapture.statusBar.selected') }}: #{{ selectedPacket.id }}</span>
-                <span>{{ $t('passiveScan.packetCapture.statusBar.captured') }}: {{ packets.length }} {{ $t('passiveScan.packetCapture.statusBar.packets') }}</span>
+                <span v-if="selectedPacket">{{ $t('trafficAnalysis.packetCapture.statusBar.selected') }}: #{{ selectedPacket.id }}</span>
+                <span>{{ $t('trafficAnalysis.packetCapture.statusBar.captured') }}: {{ packets.length }} {{ $t('trafficAnalysis.packetCapture.statusBar.packets') }}</span>
             </div>
         </div>
 
@@ -242,46 +242,46 @@
         <div v-if="contextMenu.visible" class="context-menu"
              :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }" @click.stop>
             <ul class="menu menu-sm bg-base-100 rounded-lg shadow-xl border border-base-300 p-1 w-44">
-                <li><a @click="toggleMark" class="text-xs"><i class="fas fa-bookmark w-3 mr-1"></i>{{ isCurrentPacketMarked ? $t('passiveScan.packetCapture.contextMenu.unmark') : $t('passiveScan.packetCapture.contextMenu.mark') }}</a></li>
-                <li><a @click="toggleIgnore" class="text-xs"><i class="fas fa-eye-slash w-3 mr-1"></i>{{ isCurrentPacketIgnored ? $t('passiveScan.packetCapture.contextMenu.unignore') : $t('passiveScan.packetCapture.contextMenu.ignore') }}</a></li>
+                <li><a @click="toggleMark" class="text-xs"><i class="fas fa-bookmark w-3 mr-1"></i>{{ isCurrentPacketMarked ? $t('trafficAnalysis.packetCapture.contextMenu.unmark') : $t('trafficAnalysis.packetCapture.contextMenu.mark') }}</a></li>
+                <li><a @click="toggleIgnore" class="text-xs"><i class="fas fa-eye-slash w-3 mr-1"></i>{{ isCurrentPacketIgnored ? $t('trafficAnalysis.packetCapture.contextMenu.unignore') : $t('trafficAnalysis.packetCapture.contextMenu.ignore') }}</a></li>
                 <div class="divider my-0.5"></div>
                 <!-- 过滤 - 右侧弹出 -->
                 <li class="submenu-parent">
                     <a class="text-xs justify-between">
-                        <span><i class="fas fa-filter w-3 mr-1"></i>{{ $t('passiveScan.packetCapture.contextMenu.filter') }}</span>
+                        <span><i class="fas fa-filter w-3 mr-1"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.filter') }}</span>
                         <i class="fas fa-chevron-right text-xs"></i>
                     </a>
                     <ul class="submenu">
-                        <li><a @click="filterByField('src')" class="text-xs">{{ $t('passiveScan.packetCapture.contextMenu.sourceAddress') }}</a></li>
-                        <li><a @click="filterByField('dst')" class="text-xs">{{ $t('passiveScan.packetCapture.contextMenu.destinationAddress') }}</a></li>
-                        <li><a @click="filterByField('protocol')" class="text-xs">{{ $t('passiveScan.packetCapture.contextMenu.protocol') }}</a></li>
-                        <li><a @click="filterByConversation" class="text-xs">{{ $t('passiveScan.packetCapture.contextMenu.conversation') }}</a></li>
+                        <li><a @click="filterByField('src')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.sourceAddress') }}</a></li>
+                        <li><a @click="filterByField('dst')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.destinationAddress') }}</a></li>
+                        <li><a @click="filterByField('protocol')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.protocol') }}</a></li>
+                        <li><a @click="filterByConversation" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.conversation') }}</a></li>
                     </ul>
                 </li>
                 <!-- 追踪流 - 右侧弹出 -->
                 <li class="submenu-parent">
                     <a class="text-xs justify-between">
-                        <span><i class="fas fa-stream w-3 mr-1"></i>{{ $t('passiveScan.packetCapture.contextMenu.followStream') }}</span>
+                        <span><i class="fas fa-stream w-3 mr-1"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.followStream') }}</span>
                         <i class="fas fa-chevron-right text-xs"></i>
                     </a>
                     <ul class="submenu">
-                        <li><a @click="followStream('tcp')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowTcp }">{{ $t('passiveScan.packetCapture.contextMenu.tcpStream') }}</a></li>
-                        <li><a @click="followStream('udp')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowUdp }">{{ $t('passiveScan.packetCapture.contextMenu.udpStream') }}</a></li>
-                        <li><a @click="followStream('http')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowHttp }">{{ $t('passiveScan.packetCapture.contextMenu.httpStream') }}</a></li>
+                        <li><a @click="followStream('tcp')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowTcp }">{{ $t('trafficAnalysis.packetCapture.contextMenu.tcpStream') }}</a></li>
+                        <li><a @click="followStream('udp')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowUdp }">{{ $t('trafficAnalysis.packetCapture.contextMenu.udpStream') }}</a></li>
+                        <li><a @click="followStream('http')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowHttp }">{{ $t('trafficAnalysis.packetCapture.contextMenu.httpStream') }}</a></li>
                     </ul>
                 </li>
                 <div class="divider my-0.5"></div>
                 <!-- 复制 - 右侧弹出 -->
                 <li class="submenu-parent">
                     <a class="text-xs justify-between">
-                        <span><i class="fas fa-copy w-3 mr-1"></i>{{ $t('passiveScan.packetCapture.contextMenu.copy') }}</span>
+                        <span><i class="fas fa-copy w-3 mr-1"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.copy') }}</span>
                         <i class="fas fa-chevron-right text-xs"></i>
                     </a>
                     <ul class="submenu">
-                        <li><a @click="copyPacketInfo" class="text-xs">{{ $t('passiveScan.packetCapture.contextMenu.summary') }}</a></li>
-                        <li><a @click="copyPacketHex" class="text-xs">{{ $t('passiveScan.packetCapture.contextMenu.hex') }}</a></li>
-                        <li><a @click="copyField('src')" class="text-xs">{{ $t('passiveScan.packetCapture.contextMenu.sourceAddress') }}</a></li>
-                        <li><a @click="copyField('dst')" class="text-xs">{{ $t('passiveScan.packetCapture.contextMenu.destinationAddress') }}</a></li>
+                        <li><a @click="copyPacketInfo" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.summary') }}</a></li>
+                        <li><a @click="copyPacketHex" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.hex') }}</a></li>
+                        <li><a @click="copyField('src')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.sourceAddress') }}</a></li>
+                        <li><a @click="copyField('dst')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.destinationAddress') }}</a></li>
                     </ul>
                 </li>
             </ul>
@@ -291,8 +291,8 @@
         <div v-if="fieldContextMenu.visible" class="context-menu"
              :style="{ left: fieldContextMenu.x + 'px', top: fieldContextMenu.y + 'px' }" @click.stop>
             <ul class="menu bg-base-100 rounded-box shadow-xl border border-base-300 p-1 w-64">
-                <li><a @click="filterByFieldValue"><i class="fas fa-filter w-4"></i>{{ $t('passiveScan.packetCapture.contextMenu.filterThisValue') }}</a></li>
-                <li><a @click="copyFieldValue"><i class="fas fa-copy w-4"></i>{{ $t('passiveScan.packetCapture.contextMenu.copy') }}: {{ fieldContextMenu.value }}</a></li>
+                <li><a @click="filterByFieldValue"><i class="fas fa-filter w-4"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.filterThisValue') }}</a></li>
+                <li><a @click="copyFieldValue"><i class="fas fa-copy w-4"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.copy') }}: {{ fieldContextMenu.value }}</a></li>
             </ul>
         </div>
 
@@ -300,13 +300,13 @@
         <div v-if="showFilterDialog" class="modal modal-open">
             <div class="modal-box max-w-2xl">
                 <h3 class="font-bold text-lg mb-4">
-                    <i class="fas fa-sliders-h mr-2"></i>{{ $t('passiveScan.packetCapture.filterDialog.title') }}
+                    <i class="fas fa-sliders-h mr-2"></i>{{ $t('trafficAnalysis.packetCapture.filterDialog.title') }}
                 </h3>
                 
                 <div class="space-y-4">
                     <!-- 协议过滤 -->
                     <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.protocol') }}</span></label>
+                        <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.protocol') }}</span></label>
                         <div class="flex flex-wrap gap-2">
                             <label v-for="proto in ['TCP', 'UDP', 'HTTP', 'DNS', 'ICMP', 'ARP', 'TLS']" :key="proto"
                                    class="label cursor-pointer gap-2 bg-base-200 px-3 py-1 rounded-lg">
@@ -320,22 +320,22 @@
                     <!-- IP/端口过滤 -->
                     <div class="grid grid-cols-2 gap-4">
                         <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.sourceIp') }}</span></label>
+                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.sourceIp') }}</span></label>
                             <input type="text" class="input input-sm input-bordered" 
                                    v-model="advancedFilter.srcIp" placeholder="192.168.1.1" />
                         </div>
                         <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.destinationIp') }}</span></label>
+                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.destinationIp') }}</span></label>
                             <input type="text" class="input input-sm input-bordered" 
                                    v-model="advancedFilter.dstIp" placeholder="10.0.0.1" />
                         </div>
                         <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.sourcePort') }}</span></label>
+                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.sourcePort') }}</span></label>
                             <input type="text" class="input input-sm input-bordered" 
                                    v-model="advancedFilter.srcPort" placeholder="80 或 1000-2000" />
                         </div>
                         <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.destinationPort') }}</span></label>
+                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.destinationPort') }}</span></label>
                             <input type="text" class="input input-sm input-bordered" 
                                    v-model="advancedFilter.dstPort" placeholder="443 或 8000-9000" />
                         </div>
@@ -343,13 +343,13 @@
 
                     <!-- 内容过滤 -->
                     <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.containsString') }}</span></label>
+                        <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.containsString') }}</span></label>
                         <input type="text" class="input input-sm input-bordered" 
                                v-model="advancedFilter.containsString" placeholder="GET /api, password" />
                     </div>
 
                     <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.containsHex') }}</span></label>
+                        <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.containsHex') }}</span></label>
                         <input type="text" class="input input-sm input-bordered" 
                                v-model="advancedFilter.containsHex" placeholder="48 54 54 50 (HTTP)" />
                     </div>
@@ -357,12 +357,12 @@
                     <!-- 大小过滤 -->
                     <div class="grid grid-cols-2 gap-4">
                         <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.minLength') }}</span></label>
+                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.minLength') }}</span></label>
                             <input type="number" class="input input-sm input-bordered" 
                                    v-model.number="advancedFilter.minLength" placeholder="0" />
                         </div>
                         <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.maxLength') }}</span></label>
+                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.maxLength') }}</span></label>
                             <input type="number" class="input input-sm input-bordered" 
                                    v-model.number="advancedFilter.maxLength" placeholder="65535" />
                         </div>
@@ -370,7 +370,7 @@
 
                     <!-- TCP 标志 -->
                     <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">{{ $t('passiveScan.packetCapture.filterDialog.tcpFlags') }}</span></label>
+                        <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.tcpFlags') }}</span></label>
                         <div class="flex flex-wrap gap-2">
                             <label v-for="flag in ['SYN', 'ACK', 'FIN', 'RST', 'PSH', 'URG']" :key="flag"
                                    class="label cursor-pointer gap-2 bg-base-200 px-3 py-1 rounded-lg">
@@ -383,9 +383,9 @@
                 </div>
 
                 <div class="modal-action">
-                    <button class="btn btn-ghost" @click="resetAdvancedFilter">{{ $t('passiveScan.packetCapture.filterDialog.reset') }}</button>
-                    <button class="btn btn-ghost" @click="showFilterDialog = false">{{ $t('passiveScan.packetCapture.filterDialog.cancel') }}</button>
-                    <button class="btn btn-primary" @click="applyAdvancedFilter">{{ $t('passiveScan.packetCapture.filterDialog.apply') }}</button>
+                    <button class="btn btn-ghost" @click="resetAdvancedFilter">{{ $t('trafficAnalysis.packetCapture.filterDialog.reset') }}</button>
+                    <button class="btn btn-ghost" @click="showFilterDialog = false">{{ $t('trafficAnalysis.packetCapture.filterDialog.cancel') }}</button>
+                    <button class="btn btn-primary" @click="applyAdvancedFilter">{{ $t('trafficAnalysis.packetCapture.filterDialog.apply') }}</button>
                 </div>
             </div>
             <div class="modal-backdrop" @click="showFilterDialog = false"></div>
@@ -400,9 +400,9 @@
                     </h3>
                     <div class="flex items-center gap-2">
                         <select v-model="streamDialog.displayMode" class="select select-sm select-bordered">
-                            <option value="ascii">{{ $t('passiveScan.packetCapture.streamDialog.ascii') }}</option>
-                            <option value="hex">{{ $t('passiveScan.packetCapture.streamDialog.hex') }}</option>
-                            <option value="raw">{{ $t('passiveScan.packetCapture.streamDialog.raw') }}</option>
+                            <option value="ascii">{{ $t('trafficAnalysis.packetCapture.streamDialog.ascii') }}</option>
+                            <option value="hex">{{ $t('trafficAnalysis.packetCapture.streamDialog.hex') }}</option>
+                            <option value="raw">{{ $t('trafficAnalysis.packetCapture.streamDialog.raw') }}</option>
                         </select>
                         <button class="btn btn-sm btn-ghost" @click="copyStreamContent">
                             <i class="fas fa-copy"></i>
@@ -417,14 +417,14 @@
                 <div class="flex items-center justify-between mt-4">
                     <div class="flex items-center gap-4 text-sm">
                         <span class="flex items-center gap-1">
-                            <span class="w-3 h-3 rounded-full bg-error"></span> {{ $t('passiveScan.packetCapture.streamDialog.clientToServer') }}
+                            <span class="w-3 h-3 rounded-full bg-error"></span> {{ $t('trafficAnalysis.packetCapture.streamDialog.clientToServer') }}
                         </span>
                         <span class="flex items-center gap-1">
-                            <span class="w-3 h-3 rounded-full bg-info"></span> {{ $t('passiveScan.packetCapture.streamDialog.serverToClient') }}
+                            <span class="w-3 h-3 rounded-full bg-info"></span> {{ $t('trafficAnalysis.packetCapture.streamDialog.serverToClient') }}
                         </span>
-                        <span class="badge badge-ghost">{{ streamDialog.packets.length }} {{ $t('passiveScan.packetCapture.streamDialog.packets') }}</span>
+                        <span class="badge badge-ghost">{{ streamDialog.packets.length }} {{ $t('trafficAnalysis.packetCapture.streamDialog.packets') }}</span>
                     </div>
-                    <button class="btn" @click="closeStreamDialog">{{ $t('passiveScan.packetCapture.streamDialog.close') }}</button>
+                    <button class="btn" @click="closeStreamDialog">{{ $t('trafficAnalysis.packetCapture.streamDialog.close') }}</button>
                 </div>
             </div>
             <div class="modal-backdrop" @click="closeStreamDialog"></div>
@@ -434,23 +434,23 @@
         <div v-if="showExtractDialog" class="modal modal-open">
             <div class="modal-box max-w-5xl max-h-[90vh]">
                 <h3 class="font-bold text-lg mb-4 flex items-center justify-between">
-                    <span><i class="fas fa-file-export mr-2"></i>{{ $t('passiveScan.packetCapture.extractDialog.title') }}</span>
+                    <span><i class="fas fa-file-export mr-2"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.title') }}</span>
                     <span v-if="!extractLoading && extractedFiles.length > 0" class="text-sm font-normal text-base-content/70">
-                        {{ $t('passiveScan.packetCapture.extractDialog.foundFiles', { count: extractedFiles.length }) }}
+                        {{ $t('trafficAnalysis.packetCapture.extractDialog.foundFiles', { count: extractedFiles.length }) }}
                     </span>
                 </h3>
                 
                 <div v-if="extractLoading" class="flex flex-col items-center py-8">
                     <span class="loading loading-spinner loading-lg mb-4"></span>
-                    <p>{{ $t('passiveScan.packetCapture.extractDialog.analyzing') }}</p>
-                    <p class="text-sm text-base-content/50 mt-2">{{ $t('passiveScan.packetCapture.extractDialog.supportedProtocols') }}</p>
+                    <p>{{ $t('trafficAnalysis.packetCapture.extractDialog.analyzing') }}</p>
+                    <p class="text-sm text-base-content/50 mt-2">{{ $t('trafficAnalysis.packetCapture.extractDialog.supportedProtocols') }}</p>
                 </div>
                 
                 <div v-else-if="extractedFiles.length === 0" class="text-center py-8 text-base-content/50">
                     <i class="fas fa-inbox text-4xl mb-4"></i>
-                    <p>{{ $t('passiveScan.packetCapture.extractDialog.noFilesFound') }}</p>
-                    <p class="text-sm mt-2">{{ $t('passiveScan.packetCapture.extractDialog.supportedProtocols') }}</p>
-                    <p class="text-xs mt-1">{{ $t('passiveScan.packetCapture.extractDialog.protocolExamples') }}</p>
+                    <p>{{ $t('trafficAnalysis.packetCapture.extractDialog.noFilesFound') }}</p>
+                    <p class="text-sm mt-2">{{ $t('trafficAnalysis.packetCapture.extractDialog.supportedProtocols') }}</p>
+                    <p class="text-xs mt-1">{{ $t('trafficAnalysis.packetCapture.extractDialog.protocolExamples') }}</p>
                 </div>
                 
                 <div v-else>
@@ -458,53 +458,53 @@
                     <div class="bg-base-200 rounded-lg p-3 mb-3">
                         <div class="flex items-center gap-2 mb-2">
                             <i class="fas fa-filter text-sm text-base-content/50"></i>
-                            <span class="text-sm font-medium">{{ $t('passiveScan.packetCapture.extractDialog.filterConditions') }}</span>
+                            <span class="text-sm font-medium">{{ $t('trafficAnalysis.packetCapture.extractDialog.filterConditions') }}</span>
                             <button v-if="hasExtractFilter" class="btn btn-xs btn-ghost text-error" @click="clearExtractFilter">
-                                <i class="fas fa-times mr-1"></i>{{ $t('passiveScan.packetCapture.extractDialog.clearFilter') }}
+                                <i class="fas fa-times mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.clearFilter') }}
                             </button>
                         </div>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <!-- 文件名搜索 -->
                             <div class="form-control">
-                                <label class="label py-0"><span class="label-text text-xs">{{ $t('passiveScan.packetCapture.extractDialog.filename') }}</span></label>
+                                <label class="label py-0"><span class="label-text text-xs">{{ $t('trafficAnalysis.packetCapture.extractDialog.filename') }}</span></label>
                                 <input type="text" v-model="extractFilter.filename" 
-                                       class="input input-xs input-bordered" placeholder="{{ $t('passiveScan.packetCapture.extractDialog.searchFilename') }}" />
+                                       class="input input-xs input-bordered" placeholder="{{ $t('trafficAnalysis.packetCapture.extractDialog.searchFilename') }}" />
                             </div>
                             
                             <!-- 文件类型 -->
                             <div class="form-control">
-                                <label class="label py-0"><span class="label-text text-xs">{{ $t('passiveScan.packetCapture.extractDialog.fileType') }}</span></label>
+                                <label class="label py-0"><span class="label-text text-xs">{{ $t('trafficAnalysis.packetCapture.extractDialog.fileType') }}</span></label>
                                 <select v-model="extractFilter.fileType" class="select select-xs select-bordered">
-                                    <option value="">{{ $t('passiveScan.packetCapture.extractDialog.allTypes') }}</option>
-                                    <option value="image">{{ $t('passiveScan.packetCapture.extractDialog.image') }}</option>
-                                    <option value="video">{{ $t('passiveScan.packetCapture.extractDialog.video') }}</option>
-                                    <option value="audio">{{ $t('passiveScan.packetCapture.extractDialog.audio') }}</option>
-                                    <option value="archive">{{ $t('passiveScan.packetCapture.extractDialog.archive') }}</option>
-                                    <option value="document">{{ $t('passiveScan.packetCapture.extractDialog.document') }}</option>
-                                    <option value="executable">{{ $t('passiveScan.packetCapture.extractDialog.executable') }}</option>
-                                    <option value="other">{{ $t('passiveScan.packetCapture.extractDialog.other') }}</option>
+                                    <option value="">{{ $t('trafficAnalysis.packetCapture.extractDialog.allTypes') }}</option>
+                                    <option value="image">{{ $t('trafficAnalysis.packetCapture.extractDialog.image') }}</option>
+                                    <option value="video">{{ $t('trafficAnalysis.packetCapture.extractDialog.video') }}</option>
+                                    <option value="audio">{{ $t('trafficAnalysis.packetCapture.extractDialog.audio') }}</option>
+                                    <option value="archive">{{ $t('trafficAnalysis.packetCapture.extractDialog.archive') }}</option>
+                                    <option value="document">{{ $t('trafficAnalysis.packetCapture.extractDialog.document') }}</option>
+                                    <option value="executable">{{ $t('trafficAnalysis.packetCapture.extractDialog.executable') }}</option>
+                                    <option value="other">{{ $t('trafficAnalysis.packetCapture.extractDialog.other') }}</option>
                                 </select>
                             </div>
                             
                             <!-- 来源协议 -->
                             <div class="form-control">
-                                <label class="label py-0"><span class="label-text text-xs">{{ $t('passiveScan.packetCapture.extractDialog.sourceProtocol') }}</span></label>
+                                <label class="label py-0"><span class="label-text text-xs">{{ $t('trafficAnalysis.packetCapture.extractDialog.sourceProtocol') }}</span></label>
                                 <select v-model="extractFilter.sourceType" class="select select-xs select-bordered">
-                                    <option value="">{{ $t('passiveScan.packetCapture.extractDialog.allSources') }}</option>
+                                    <option value="">{{ $t('trafficAnalysis.packetCapture.extractDialog.allSources') }}</option>
                                     <option v-for="st in availableSourceTypes" :key="st" :value="st">{{ st }}</option>
                                 </select>
                             </div>
                             
                             <!-- 文件大小 -->
                             <div class="form-control">
-                                <label class="label py-0"><span class="label-text text-xs">{{ $t('passiveScan.packetCapture.extractDialog.fileSize') }}</span></label>
+                                <label class="label py-0"><span class="label-text text-xs">{{ $t('trafficAnalysis.packetCapture.extractDialog.fileSize') }}</span></label>
                                 <select v-model="extractFilter.sizeRange" class="select select-xs select-bordered">
-                                    <option value="">{{ $t('passiveScan.packetCapture.extractDialog.anySize') }}</option>
-                                    <option value="tiny">{{ $t('passiveScan.packetCapture.extractDialog.sizeTiny') }}</option>
-                                    <option value="small">{{ $t('passiveScan.packetCapture.extractDialog.sizeSmall') }}</option>
-                                    <option value="medium">{{ $t('passiveScan.packetCapture.extractDialog.sizeMedium') }}</option>
-                                    <option value="large">{{ $t('passiveScan.packetCapture.extractDialog.sizeLarge') }}</option>
-                                    <option value="huge">{{ $t('passiveScan.packetCapture.extractDialog.sizeHuge') }}</option>
+                                    <option value="">{{ $t('trafficAnalysis.packetCapture.extractDialog.anySize') }}</option>
+                                    <option value="tiny">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeTiny') }}</option>
+                                    <option value="small">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeSmall') }}</option>
+                                    <option value="medium">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeMedium') }}</option>
+                                    <option value="large">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeLarge') }}</option>
+                                    <option value="huge">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeHuge') }}</option>
                                 </select>
                             </div>
                         </div>
@@ -513,29 +513,29 @@
                         <div class="flex flex-wrap gap-1 mt-2">
                             <button class="btn btn-xs" :class="extractFilter.fileType === 'image' ? 'btn-success' : 'btn-ghost'" 
                                     @click="extractFilter.fileType = extractFilter.fileType === 'image' ? '' : 'image'">
-                                <i class="fas fa-image mr-1"></i>{{ $t('passiveScan.packetCapture.extractDialog.image') }}
+                                <i class="fas fa-image mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.image') }}
                             </button>
                             <button class="btn btn-xs" :class="extractFilter.fileType === 'archive' ? 'btn-info' : 'btn-ghost'" 
                                     @click="extractFilter.fileType = extractFilter.fileType === 'archive' ? '' : 'archive'">
-                                <i class="fas fa-file-archive mr-1"></i>{{ $t('passiveScan.packetCapture.extractDialog.archive') }}
+                                <i class="fas fa-file-archive mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.archive') }}
                             </button>
                             <button class="btn btn-xs" :class="extractFilter.fileType === 'document' ? 'btn-error' : 'btn-ghost'" 
                                     @click="extractFilter.fileType = extractFilter.fileType === 'document' ? '' : 'document'">
-                                <i class="fas fa-file-pdf mr-1"></i>{{ $t('passiveScan.packetCapture.extractDialog.document') }}
+                                <i class="fas fa-file-pdf mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.document') }}
                             </button>
                             <button class="btn btn-xs" :class="extractFilter.fileType === 'executable' ? 'btn-warning' : 'btn-ghost'" 
                                     @click="extractFilter.fileType = extractFilter.fileType === 'executable' ? '' : 'executable'">
-                                <i class="fas fa-cog mr-1"></i>{{ $t('passiveScan.packetCapture.extractDialog.executable') }}
+                                <i class="fas fa-cog mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.executable') }}
                             </button>
                             <span class="divider divider-horizontal mx-0"></span>
                             <button class="btn btn-xs" :class="extractFilter.sourceType === 'HTTP' ? 'btn-success' : 'btn-ghost'" 
-                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'HTTP' ? '' : 'HTTP'">{{ $t('passiveScan.packetCapture.extractDialog.http') }}</button>
+                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'HTTP' ? '' : 'HTTP'">{{ $t('trafficAnalysis.packetCapture.extractDialog.http') }}</button>
                             <button class="btn btn-xs" :class="extractFilter.sourceType === 'FTP' ? 'btn-info' : 'btn-ghost'" 
-                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'FTP' ? '' : 'FTP'">{{ $t('passiveScan.packetCapture.extractDialog.ftp') }}</button>
+                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'FTP' ? '' : 'FTP'">{{ $t('trafficAnalysis.packetCapture.extractDialog.ftp') }}</button>
                             <button class="btn btn-xs" :class="extractFilter.sourceType === 'EMAIL' ? 'btn-warning' : 'btn-ghost'" 
-                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'EMAIL' ? '' : 'EMAIL'">{{ $t('passiveScan.packetCapture.extractDialog.email') }}</button>
+                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'EMAIL' ? '' : 'EMAIL'">{{ $t('trafficAnalysis.packetCapture.extractDialog.email') }}</button>
                             <button class="btn btn-xs" :class="extractFilter.sourceType === 'DNS_TUNNEL' ? 'btn-error' : 'btn-ghost'" 
-                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'DNS_TUNNEL' ? '' : 'DNS_TUNNEL'">{{ $t('passiveScan.packetCapture.extractDialog.dnsTunnel') }}</button>
+                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'DNS_TUNNEL' ? '' : 'DNS_TUNNEL'">{{ $t('trafficAnalysis.packetCapture.extractDialog.dnsTunnel') }}</button>
                         </div>
                     </div>
 
@@ -548,12 +548,12 @@
                                         <input type="checkbox" class="checkbox checkbox-sm" 
                                                v-model="selectAllFilteredFiles" @change="toggleSelectAllFilteredFiles" />
                                     </th>
-                                    <th>{{ $t('passiveScan.packetCapture.extractDialog.filename') }}</th>
-                                    <th class="w-20">{{ $t('passiveScan.packetCapture.extractDialog.type') }}</th>
-                                    <th class="w-20">{{ $t('passiveScan.packetCapture.extractDialog.size') }}</th>
-                                    <th class="w-20">{{ $t('passiveScan.packetCapture.extractDialog.source') }}</th>
-                                    <th class="w-36">{{ $t('passiveScan.packetCapture.extractDialog.traffic') }}</th>
-                                    <th class="w-28">{{ $t('passiveScan.packetCapture.extractDialog.actions') }}</th>
+                                    <th>{{ $t('trafficAnalysis.packetCapture.extractDialog.filename') }}</th>
+                                    <th class="w-20">{{ $t('trafficAnalysis.packetCapture.extractDialog.type') }}</th>
+                                    <th class="w-20">{{ $t('trafficAnalysis.packetCapture.extractDialog.size') }}</th>
+                                    <th class="w-20">{{ $t('trafficAnalysis.packetCapture.extractDialog.source') }}</th>
+                                    <th class="w-36">{{ $t('trafficAnalysis.packetCapture.extractDialog.traffic') }}</th>
+                                    <th class="w-28">{{ $t('trafficAnalysis.packetCapture.extractDialog.actions') }}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -582,13 +582,13 @@
                                         {{ file.src.split(':')[0] }} → {{ file.dst.split(':')[0] }}
                                     </td>
                                     <td class="flex gap-1">
-                                        <button class="btn btn-xs btn-ghost" @click="downloadSingleFile(file)" :title="$t('passiveScan.packetCapture.extractDialog.downloadFile')">
+                                        <button class="btn btn-xs btn-ghost" @click="downloadSingleFile(file)" :title="$t('trafficAnalysis.packetCapture.extractDialog.downloadFile')">
                                             <i class="fas fa-download"></i>
                                         </button>
-                                        <button class="btn btn-xs btn-ghost" @click="followFileStream(file)" :title="$t('passiveScan.packetCapture.extractDialog.traceTraffic')">
+                                        <button class="btn btn-xs btn-ghost" @click="followFileStream(file)" :title="$t('trafficAnalysis.packetCapture.extractDialog.traceTraffic')">
                                             <i class="fas fa-stream"></i>
                                         </button>
-                                        <button class="btn btn-xs btn-ghost" @click="locateFilePackets(file)" :title="$t('passiveScan.packetCapture.extractDialog.locatePackets')">
+                                        <button class="btn btn-xs btn-ghost" @click="locateFilePackets(file)" :title="$t('trafficAnalysis.packetCapture.extractDialog.locatePackets')">
                                             <i class="fas fa-crosshairs"></i>
                                         </button>
                                     </td>
@@ -600,7 +600,7 @@
                         <div v-if="filteredExtractedFiles.length === 0 && extractedFiles.length > 0" 
                              class="text-center py-6 text-base-content/50">
                             <i class="fas fa-filter text-2xl mb-2"></i>
-                            <p>{{ $t('passiveScan.packetCapture.extractDialog.noMatchingFiles') }}</p>
+                            <p>{{ $t('trafficAnalysis.packetCapture.extractDialog.noMatchingFiles') }}</p>
                         </div>
                     </div>
                     
@@ -608,8 +608,8 @@
                     <div class="flex items-center justify-between mt-3 pt-3 border-t border-base-300">
                         <div class="flex items-center gap-4">
                             <span class="text-sm text-base-content/70">
-                                {{ $t('passiveScan.packetCapture.extractDialog.selectedFiles', { count: selectedExtractFileIds.size }) }}
-                                <span v-if="hasExtractFilter" class="text-xs">({{ $t('passiveScan.packetCapture.extractDialog.displaying', { filtered: filteredExtractedFiles.length, total: extractedFiles.length }) }})</span>
+                                {{ $t('trafficAnalysis.packetCapture.extractDialog.selectedFiles', { count: selectedExtractFileIds.size }) }}
+                                <span v-if="hasExtractFilter" class="text-xs">({{ $t('trafficAnalysis.packetCapture.extractDialog.displaying', { filtered: filteredExtractedFiles.length, total: extractedFiles.length }) }})</span>
                             </span>
                             <div class="flex flex-wrap gap-1 text-xs text-base-content/50">
                                 <template v-for="st in sourceTypeStats" :key="st.type">
@@ -619,17 +619,17 @@
                             </div>
                         </div>
                         <div class="text-sm text-base-content/50">
-                            {{ $t('passiveScan.packetCapture.extractDialog.selectedSize') }}: {{ formatFileSize(selectedFilesTotalSize) }}
+                            {{ $t('trafficAnalysis.packetCapture.extractDialog.selectedSize') }}: {{ formatFileSize(selectedFilesTotalSize) }}
                         </div>
                     </div>
                 </div>
 
                 <div class="modal-action">
-                    <button class="btn btn-ghost" @click="closeExtractDialog">{{ $t('passiveScan.packetCapture.extractDialog.close') }}</button>
+                    <button class="btn btn-ghost" @click="closeExtractDialog">{{ $t('trafficAnalysis.packetCapture.extractDialog.close') }}</button>
                     <button class="btn btn-primary" @click="saveExtractedFiles" 
                             :disabled="selectedExtractFileIds.size === 0 || extractLoading">
                         <i class="fas fa-folder-open mr-1"></i>
-                        {{ $t('passiveScan.packetCapture.extractDialog.saveSelectedFiles', { count: selectedExtractFileIds.size }) }}
+                        {{ $t('trafficAnalysis.packetCapture.extractDialog.saveSelectedFiles', { count: selectedExtractFileIds.size }) }}
                     </button>
                 </div>
             </div>
@@ -782,7 +782,7 @@ let unlistenPacket: UnlistenFn | null = null
 let packetCounter = 0
 
 // 计算属性
-const filterPlaceholder = computed(() => appliedFilter.value ? `${t('passiveScan.packetCapture.toolbar.filtering')}: ${appliedFilter.value}` : t('passiveScan.packetCapture.toolbar.filterPlaceholder'))
+const filterPlaceholder = computed(() => appliedFilter.value ? `${t('trafficAnalysis.packetCapture.toolbar.filtering')}: ${appliedFilter.value}` : t('trafficAnalysis.packetCapture.toolbar.filterPlaceholder'))
 const hasAdvancedFilter = computed(() => advancedFilterApplied.value)
 const selectedInterfaceDisplayName = computed(() => {
     const iface = interfaces.value.find(i => i.name === selectedInterface.value)

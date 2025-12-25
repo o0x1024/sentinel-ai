@@ -61,7 +61,7 @@ export default {
     enablePortScan: 'Enable Port Scan',
     enableWebScan: 'Enable Web Scan',
     enableNetworkScan: 'Enable Network Scan',
-    enablePassiveScan: 'Enable Passive Scan',
+    enableTrafficAnalysis: 'Enable Traffic Analysis',
     scanOptions: 'Scan Options',
     scanOptionsHint: 'Select scan options',
     advancedOptions: 'Advanced Options',

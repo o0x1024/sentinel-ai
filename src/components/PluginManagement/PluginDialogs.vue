@@ -188,7 +188,7 @@
           <div class="form-control">
             <label class="label"><span class="label-text">{{ $t('plugins.pluginType', '插件类型') }}</span></label>
             <select :value="aiPluginType" @change="$emit('update:aiPluginType', ($event.target as HTMLSelectElement).value)" class="select select-bordered select-sm">
-              <option value="passive">{{ $t('plugins.categories.passive', '被动扫描插件') }}</option>
+              <option value="passive">{{ $t('plugins.categories.trafficAnalysis', '流量分析插件') }}</option>
               <option value="agent">{{ $t('plugins.categories.agents', 'Agent工具插件') }}</option>
             </select>
           </div>
@@ -298,7 +298,7 @@
           <textarea :value="advancedForm.agent_inputs_text" @input="$emit('update:advancedForm', { ...advancedForm, agent_inputs_text: ($event.target as HTMLTextAreaElement).value })"
             class="textarea textarea-bordered font-mono text-xs h-32" placeholder='{"target":"https://example.com"}'></textarea>
         </div>
-        <!-- Passive scan inputs -->
+        <!-- Traffic analysis inputs -->
         <template v-else>
           <div class="form-control col-span-2">
             <label class="label"><span class="label-text">{{ $t('plugins.requestUrl', '请求 URL') }}</span></label>

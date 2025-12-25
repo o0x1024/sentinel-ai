@@ -11,7 +11,7 @@ import type {
   PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
   CommandResponse, BatchToggleResult, ReviewStats, NewPluginMetadata, AdvancedForm
 } from './types'
-import { passiveCategories, agentsCategories } from './types'
+import { trafficCategories, agentsCategories } from './types'
 
 export function usePluginManagement() {
   const { t } = useI18n()
@@ -125,7 +125,7 @@ export function usePluginManagement() {
   // Categories Definition
   const categories = computed(() => [
     { value: 'all', label: t('plugins.categories.all', '全部'), icon: 'fas fa-th' },
-    { value: 'passive', label: t('plugins.categories.passive', '被动扫描插件'), icon: 'fas fa-shield-alt' },
+    { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件'), icon: 'fas fa-shield-alt' },
     { value: 'agents', label: t('plugins.categories.agents', 'Agent工具插件'), icon: 'fas fa-robot' },
   ])
 
@@ -135,10 +135,10 @@ export function usePluginManagement() {
 
     if (selectedCategory.value === 'all') {
       filtered = plugins.value
-    } else if (selectedCategory.value === 'passive') {
+    } else if (selectedCategory.value === 'traffic') {
       filtered = plugins.value.filter(p => {
         if (p.metadata.main_category === 'passive') return true
-        if (passiveCategories.includes(p.metadata.category)) return true
+        if (trafficCategories.includes(p.metadata.category)) return true
         if (p.metadata.category === 'passive') return true
         return false
       })
@@ -152,8 +152,8 @@ export function usePluginManagement() {
       filtered = plugins.value.filter(p => p.metadata.category === selectedCategory.value)
     }
 
-    // Favorite filter for passive plugins
-    if (selectedCategory.value === 'passive' && pluginViewMode.value === 'favorited') {
+    // Favorite filter for traffic plugins
+    if (selectedCategory.value === 'traffic' && pluginViewMode.value === 'favorited') {
       filtered = filtered.filter(p => isPluginFavorited(p))
     }
 
@@ -227,9 +227,9 @@ export function usePluginManagement() {
   // Helper Functions
   const isPluginFavorited = (plugin: PluginRecord): boolean => plugin.is_favorited || false
 
-  const ispassivePluginType = (plugin: PluginRecord): boolean => {
+  const isTrafficPluginType = (plugin: PluginRecord): boolean => {
     if (plugin.metadata.main_category === 'passive') return true
-    if (passiveCategories.includes(plugin.metadata.category)) return true
+    if (trafficCategories.includes(plugin.metadata.category)) return true
     if (plugin.metadata.category === 'passive') return true
     return false
   }
@@ -274,10 +274,10 @@ export function usePluginManagement() {
 
   const getCategoryCount = (category: string): number => {
     if (category === 'all') return plugins.value.length
-    if (category === 'passive') {
+    if (category === 'traffic') {
       return plugins.value.filter(p => {
         if (p.metadata.main_category === 'passive') return true
-        if (passiveCategories.includes(p.metadata.category)) return true
+        if (trafficCategories.includes(p.metadata.category)) return true
         if (p.metadata.category === 'passive') return true
         return false
       }).length
@@ -415,7 +415,7 @@ export function usePluginManagement() {
   }
 
   const getAvailableSubCategories = (): string[] => {
-    if (selectedCategory.value === 'passive') {
+    if (selectedCategory.value === 'traffic') {
       const cats = new Set(filteredPlugins.value.filter(p => !selectedSubCategory.value || p.metadata.category === selectedSubCategory.value).map(p => p.metadata.category))
       return Array.from(cats).sort()
     } else if (selectedCategory.value === 'agents') {
@@ -697,7 +697,7 @@ export function usePluginManagement() {
 
     // Methods
     isPluginFavorited,
-    ispassivePluginType,
+    isTrafficPluginType,
     isAgentPluginType,
     getStatusText,
     getCategoryLabel,

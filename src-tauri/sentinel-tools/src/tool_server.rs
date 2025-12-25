@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
-use crate::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
+use crate::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool};
 use crate::dynamic_tool::{
     DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolExecutor, ToolRegistry, ToolSource,
 };
@@ -246,6 +246,72 @@ impl ToolServer {
             .expect("Failed to build shell tool");
 
         self.registry.register(shell_def).await;
+
+        // Register subdomain_brute tool
+        let subdomain_brute_def = DynamicToolBuilder::new("subdomain_brute")
+            .description("High-performance subdomain brute-force scanner with DNS resolution and HTTP verification")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "domains": {
+                        "type": "string",
+                        "description": "Target domain(s) to scan, comma-separated for multiple domains"
+                    },
+                    "resolvers": {
+                        "type": "string",
+                        "description": "DNS resolvers (comma-separated)",
+                        "default": "8.8.8.8,1.1.1.1,223.5.5.5"
+                    },
+                    "dictionary_file": {
+                        "type": "string",
+                        "description": "Dictionary file path (optional)"
+                    },
+                    "dictionary": {
+                        "type": "string",
+                        "description": "Dictionary words (comma-separated)"
+                    },
+                    "skip_wildcard": {
+                        "type": "boolean",
+                        "description": "Skip wildcard domains",
+                        "default": true
+                    },
+                    "bandwidth_limit": {
+                        "type": "string",
+                        "description": "Bandwidth limit (e.g., '5M')",
+                        "default": "5M"
+                    },
+                    "verify_mode": {
+                        "type": "boolean",
+                        "description": "Enable HTTP/HTTPS verification",
+                        "default": true
+                    },
+                    "resolve_records": {
+                        "type": "boolean",
+                        "description": "Enable DNS record resolution",
+                        "default": true
+                    }
+                },
+                "required": ["domains"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::subdomain_brute::SubdomainBruteArgs;
+                use rig::tool::Tool;
+                
+                let tool_args: SubdomainBruteArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = SubdomainBruteTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subdomain brute failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subdomain_brute tool");
+
+        self.registry.register(subdomain_brute_def).await;
 
         *initialized = true;
         tracing::info!("Builtin tools initialized");

@@ -1454,6 +1454,11 @@ impl DatabaseService {
             .execute(&mut *tx)
             .await?;
 
+        // AbilityGroup table
+        sqlx::query(crate::database::ability_group_dao::CREATE_ABILITY_GROUP_TABLE_SQL)
+            .execute(&mut *tx)
+            .await?;
+
         // 提交事务
         tx.commit().await?;
 

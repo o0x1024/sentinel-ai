@@ -1,5 +1,5 @@
 export default {
-  title: 'Passive Scan',
+  title: 'Traffic Analysis',
   tabs: {
     control: 'Proxy Control',
     history: 'History',
@@ -9,7 +9,7 @@ export default {
     proxyConfig: 'Proxy Configuration'
   },
   ariaLabels: {
-    passiveScanTabs: 'Passive scan tabs'
+    trafficAnalysisTabs: 'Traffic analysis tabs'
   },
   tooltips: {
     control: 'Proxy Control',

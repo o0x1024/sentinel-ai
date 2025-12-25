@@ -61,7 +61,7 @@ export default {
     enablePortScan: '启用端口扫描',
     enableWebScan: '启用Web扫描',
     enableNetworkScan: '启用网络扫描',
-    enablePassiveScan: '启用被动扫描',
+    enableTrafficAnalysis: '启用流量分析',
     scanOptions: '扫描选项',
     scanOptionsHint: '选择扫描选项',
     advancedOptions: '高级选项',

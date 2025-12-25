@@ -71,7 +71,7 @@ impl V2Engine {
         let exploration_config = ExplorationConfig {
             scope_base_url: Some(config.target_url.clone()),
             max_depth: config.max_depth,
-            max_steps: 500,
+            max_steps: config.max_steps,
             exclude_patterns: vec![r"logout".to_string(), r"signout".to_string()],
             allow_destructive: false,
             auto_fill_forms: true,
@@ -182,6 +182,7 @@ impl V2Engine {
         let planner = PlannerAgent::new(
             "global_planner".to_string(),
             self.graph.clone(),
+            self.blackboard.clone(),
             self.config.clone(),
             self.event_tx.clone(),
         );
@@ -203,6 +204,7 @@ impl V2Engine {
             "navigator_1".to_string(),
             driver.clone(),
             self.event_tx.clone(),
+            self.blackboard.clone(),
         );
 
         let operator = OperatorAgent::new(

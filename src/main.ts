@@ -72,7 +72,7 @@ const WorkflowStudio = () => import('./views/WorkflowStudio.vue');
 const PromptManagement = () => import('./views/PromptManagement.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
 const RAGManagement = () => import('./views/RAGManagement.vue');
-const PassiveScan = () => import('./views/PassiveScan.vue');
+const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue');
 const PluginManagement = () => import('./views/PluginManagement.vue');
 
 const Settings = () => import('./views/Settings.vue');
@@ -135,10 +135,10 @@ const routes = [
     meta: { title: '工作流工作室' }
   },
   { 
-    path: '/passive-scan', 
-    name: 'PassiveScan', 
-    component: PassiveScan,
-    meta: { title: '被动扫描' }
+    path: '/traffic', 
+    name: 'TrafficAnalysis', 
+    component: TrafficAnalysis,
+    meta: { title: '流量分析' }
   },
   { 
     path: '/scan-tasks', 

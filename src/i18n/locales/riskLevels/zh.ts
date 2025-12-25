@@ -3,6 +3,7 @@ export default {
   medium: '中',
   high: '高',
   critical: '严重',
+  info: '提示',
   unknown: '未知',
   Low: '低',
   Medium: '中',

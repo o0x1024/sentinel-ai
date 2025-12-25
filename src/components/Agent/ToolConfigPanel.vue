@@ -44,6 +44,7 @@
             <option value="LLM">{{ t('agent.intelligentAnalysis') }}</option>
             <option value="Hybrid">{{ t('agent.hybridStrategy') }}</option>
             <option value="Manual">{{ t('agent.manualSelection') }}</option>
+            <option value="Ability">{{ t('agent.abilityMode') }}</option>
             <option value="All">{{ t('agent.allTools') }}</option>
           </select>
           <label class="label">
@@ -76,8 +77,78 @@
           </div>
         </div>
 
-        <!-- Tool Management -->
-        <div class="form-control">
+        <!-- Ability Mode: Group Selection -->
+        <div v-if="localConfig.selection_strategy === 'Ability'" class="form-control">
+          <label class="label">
+            <span class="label-text font-medium">{{ t('agent.abilityGroups') }}</span>
+            <div class="flex gap-1">
+              <button @click="loadAbilityGroups" class="btn btn-xs btn-ghost">
+                <i class="fas fa-sync-alt"></i>
+              </button>
+              <button @click="showAbilityManager = true" class="btn btn-xs btn-primary btn-outline">
+                <i class="fas fa-cog"></i>
+                {{ t('agent.manage') }}
+              </button>
+            </div>
+          </label>
+
+          <div v-if="loadingAbilityGroups" class="flex justify-center py-4">
+            <span class="loading loading-spinner loading-sm"></span>
+          </div>
+
+          <div v-else-if="abilityGroups.length === 0" class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>{{ t('agent.noAbilityGroupsHint') }}</span>
+          </div>
+
+          <div v-else class="space-y-2 border border-base-300 rounded-lg p-3 max-h-48 overflow-y-auto">
+            <p class="text-xs text-base-content/60 mb-2">{{ t('agent.selectAllowedGroups') }}</p>
+            <label 
+              v-for="group in abilityGroups" 
+              :key="group.id"
+              class="flex items-center gap-2 p-2 hover:bg-base-200 rounded cursor-pointer"
+            >
+              <input 
+                type="checkbox"
+                :value="group.id"
+                v-model="localConfig.ability_groups"
+                class="checkbox checkbox-sm checkbox-primary"
+                @change="emitUpdate"
+              />
+              <div class="flex-1 min-w-0">
+                <div class="font-medium text-sm">{{ group.name }}</div>
+                <div class="text-xs text-base-content/60 truncate">{{ group.description }}</div>
+              </div>
+            </label>
+          </div>
+
+          <label class="label">
+            <span class="label-text-alt text-base-content/60">
+              {{ localConfig.ability_groups?.length || 0 }} {{ t('agent.groupsSelected') }}（{{ t('agent.emptyMeansAll') }}）
+            </span>
+          </label>
+        </div>
+
+        <!-- Ability Group Manager Modal -->
+        <dialog
+          ref="abilityDialogRef"
+          class="modal"
+          @close="showAbilityManager = false"
+        >
+          <div class="modal-box max-w-2xl">
+            <AbilityGroupManager 
+              v-if="showAbilityManager"
+              @close="showAbilityManager = false"
+              @changed="loadAbilityGroups"
+            />
+          </div>
+          <form method="dialog" class="modal-backdrop" @submit.prevent="showAbilityManager = false">
+            <button>close</button>
+          </form>
+        </dialog>
+
+        <!-- Tool Management (hidden in Ability mode) -->
+        <div v-if="localConfig.selection_strategy !== 'Ability'" class="form-control">
           <label class="label">
             <span class="label-text font-medium">
               {{ localConfig.selection_strategy === 'Manual' ? t('agent.selectTools') : t('agent.toolManagement') }}
@@ -346,9 +417,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
+import AbilityGroupManager from './AbilityGroupManager.vue'
 
 interface ToolMetadata {
   id: string
@@ -360,6 +432,12 @@ interface ToolMetadata {
   always_available: boolean
 }
 
+interface AbilityGroupSummary {
+  id: string
+  name: string
+  description: string
+}
+
 interface ToolConfig {
   enabled: boolean
   selection_strategy: string
@@ -367,6 +445,7 @@ interface ToolConfig {
   fixed_tools: string[]
   disabled_tools: string[]
   manual_tools?: string[]
+  ability_groups?: string[]
 }
 
 interface ToolStatistics {
@@ -417,20 +496,25 @@ const emit = defineEmits<{
   'close': []
 }>()
 
-// 初始化 localConfig，处理 Manual 枚举格式
+// 初始化 localConfig，处理 Manual/Ability 枚举格式
 const initLocalConfig = () => {
   let manualTools: string[] = []
+  let abilityGroupIds: string[] = []
   const rawStrategy = props.config.selection_strategy
   let strategy: string = 'Keyword'
   
   if (rawStrategy !== null && rawStrategy !== undefined) {
-    // 如果 selection_strategy 是 Manual 枚举格式 { Manual: [...] }，提取工具列表
+    // 如果 selection_strategy 是枚举格式 { Manual: [...] } 或 { Ability: [...] }，提取列表
     if (typeof rawStrategy === 'object') {
       const manualValue = (rawStrategy as any).Manual
+      const abilityValue = (rawStrategy as any).Ability
       if (manualValue) {
         // 统一工具 ID 格式：将 :: 替换为 __
         manualTools = manualValue.map((id: string) => id.replace(/::/g, '__'))
         strategy = 'Manual'
+      } else if (abilityValue !== undefined) {
+        abilityGroupIds = abilityValue || []
+        strategy = 'Ability'
       }
     } else {
       strategy = rawStrategy as string
@@ -440,7 +524,8 @@ const initLocalConfig = () => {
   return { 
     ...props.config, 
     selection_strategy: strategy,
-    manual_tools: manualTools 
+    manual_tools: manualTools,
+    ability_groups: abilityGroupIds,
   }
 }
 
@@ -453,6 +538,24 @@ const usageStats = ref<ToolUsageStatistics | null>(null)
 const loading = ref(false)
 const selectedCategories = ref<string[]>([])
 const searchQuery = ref('')
+
+// Ability mode state
+const abilityGroups = ref<AbilityGroupSummary[]>([])
+const loadingAbilityGroups = ref(false)
+const showAbilityManager = ref(false)
+const abilityDialogRef = ref<HTMLDialogElement | null>(null)
+
+watch(showAbilityManager, async open => {
+  // Use native dialog API for stability across webviews
+  await nextTick()
+  const el = abilityDialogRef.value
+  if (!el) return
+  if (open) {
+    if (!el.open) el.showModal()
+  } else {
+    if (el.open) el.close()
+  }
+})
 
 const categories = computed(() => {
   const cats = new Set(allTools.value.map(t => t.category))
@@ -535,6 +638,7 @@ const getStrategyDescription = (strategy: string) => {
     'LLM': '使用 LLM 智能分析任务，准确度高，有少量 token 成本',
     'Hybrid': '关键词初筛 + LLM 精选，兼顾速度和准确度',
     'Manual': '手动选择需要的工具',
+    'Ability': '渐进式披露：先选工具组，再暴露组内工具，token 可控',
     'All': '使用所有可用工具（不推荐，token 消耗大）',
   }
   return descriptions[strategy] || ''
@@ -549,6 +653,17 @@ const loadTools = async () => {
     console.error('Failed to load tools:', error)
   } finally {
     loading.value = false
+  }
+}
+
+const loadAbilityGroups = async () => {
+  loadingAbilityGroups.value = true
+  try {
+    abilityGroups.value = await invoke<AbilityGroupSummary[]>('list_ability_groups')
+  } catch (error) {
+    console.error('Failed to load ability groups:', error)
+  } finally {
+    loadingAbilityGroups.value = false
   }
 }
 
@@ -619,13 +734,15 @@ const resetToDefault = () => {
     fixed_tools: ['local_time'],
     disabled_tools: [],
     manual_tools: [],
+    ability_groups: [],
   }
   emitUpdate()
 }
 
 const emitUpdate = () => {
-  // 如果是手动模式，需要将 manual_tools 转换为 Manual(Vec<String>) 格式
+  // 处理枚举格式的策略转换
   const configToEmit = { ...localConfig.value }
+  
   if (configToEmit.selection_strategy === 'Manual' && configToEmit.manual_tools) {
     // 统一工具 ID 格式：将 :: 替换为 __，并去重
     const normalizedTools = [...new Set(
@@ -635,24 +752,34 @@ const emitUpdate = () => {
     // 将 selection_strategy 转换为 Rust 枚举格式: { Manual: [...] }
     configToEmit.selection_strategy = { Manual: normalizedTools } as any
     delete configToEmit.manual_tools
+  } else if (configToEmit.selection_strategy === 'Ability') {
+    // 将 selection_strategy 转换为 Rust 枚举格式: { Ability: [...] }
+    const groupIds = configToEmit.ability_groups || []
+    console.log('[ToolConfigPanel] Emitting ability_groups:', groupIds)
+    configToEmit.selection_strategy = { Ability: groupIds } as any
+    delete configToEmit.ability_groups
   }
+  
   emit('update:config', configToEmit)
 }
 
 watch(() => props.config, (newConfig) => {
-  // 如果 selection_strategy 是 Manual 枚举，提取工具列表
+  // 处理 Manual/Ability 枚举格式
   let manualTools: string[] = []
+  let abilityGroupIds: string[] = []
   const rawStrategy = newConfig.selection_strategy
   let strategy: string = 'Keyword'
   
   if (rawStrategy !== null && rawStrategy !== undefined) {
     if (typeof rawStrategy === 'object') {
-      // 安全地检查 Manual 属性
       const manualValue = (rawStrategy as any).Manual
+      const abilityValue = (rawStrategy as any).Ability
       if (manualValue) {
-        // 统一工具 ID 格式：将 :: 替换为 __
         manualTools = manualValue.map((id: string) => id.replace(/::/g, '__'))
         strategy = 'Manual'
+      } else if (abilityValue !== undefined) {
+        abilityGroupIds = abilityValue || []
+        strategy = 'Ability'
       }
     } else {
       strategy = rawStrategy as string
@@ -662,13 +789,15 @@ watch(() => props.config, (newConfig) => {
   localConfig.value = { 
     ...newConfig, 
     selection_strategy: strategy,
-    manual_tools: manualTools 
+    manual_tools: manualTools,
+    ability_groups: abilityGroupIds,
   }
 }, { deep: true })
 
 onMounted(() => {
   loadTools()
   loadUsageStats()
+  loadAbilityGroups()
 })
 </script>
 

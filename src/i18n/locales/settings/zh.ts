@@ -328,10 +328,10 @@ export default {
     retryAttemptsDesc: '失败扫描的重试次数',
     scanThreads: '扫描线程',
     scanThreadsDesc: '扫描的线程数',
-    enablePassiveScan: '启用被动扫描',
-    passiveScanDesc: '启用被动扫描模式',
-    passiveScanPort: '被动扫描端口',
-    passiveScanPortDesc: '被动扫描的端口'
+    enableTrafficAnalysis: '启用流量分析',
+    trafficAnalysisDesc: '启用流量分析模式',
+    trafficAnalysisPort: '流量分析端口',
+    trafficAnalysisPortDesc: '流量分析的端口'
   },
   network: {
     title: '网络设置',

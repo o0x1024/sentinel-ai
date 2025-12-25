@@ -6,4 +6,4 @@ pub mod tool_router;
 
 pub use agent_builder::*;
 pub use executor::{execute_agent, AgentExecuteParams};
-pub use tool_router::{ToolConfig, ToolRouter, ToolSelectionStrategy};
+pub use tool_router::{ToolConfig, ToolRouter, ToolSelectionStrategy, ToolSelectionPlan, SelectedAbilityGroup};

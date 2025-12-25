@@ -3,7 +3,7 @@
     <div class="p-3 border-b border-base-300">
       <h3 class="font-semibold text-sm flex items-center gap-2">
         <i class="fas fa-server text-primary"></i>
-        {{ $t('passiveScan.proxifierProxies.title') }}
+        {{ $t('trafficAnalysis.proxifierProxies.title') }}
       </h3>
     </div>
 
@@ -12,15 +12,15 @@
       <table class="table table-xs table-pin-rows">
         <thead>
           <tr class="bg-base-200">
-            <th class="w-40">{{ $t('passiveScan.proxifierProxies.table.name') }}</th>
-            <th class="w-20">{{ $t('passiveScan.proxifierProxies.table.port') }}</th>
-            <th class="w-20">{{ $t('passiveScan.proxifierProxies.table.type') }}</th>
+            <th class="w-40">{{ $t('trafficAnalysis.proxifierProxies.table.name') }}</th>
+            <th class="w-20">{{ $t('trafficAnalysis.proxifierProxies.table.port') }}</th>
+            <th class="w-20">{{ $t('trafficAnalysis.proxifierProxies.table.type') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="localProxies.length === 0">
             <td colspan="3" class="text-center text-base-content/50 py-4">
-              {{ $t('passiveScan.proxifierProxies.emptyState.noProxies') }}
+              {{ $t('trafficAnalysis.proxifierProxies.emptyState.noProxies') }}
             </td>
           </tr>
           <tr 
@@ -44,29 +44,29 @@
     <!-- 操作按钮 -->
     <div class="p-2 border-t border-base-300 flex gap-2">
       <button class="btn btn-xs btn-primary" @click="addProxy">
-        {{ $t('passiveScan.proxifierProxies.buttons.add') }}
+        {{ $t('trafficAnalysis.proxifierProxies.buttons.add') }}
       </button>
       <button 
         class="btn btn-xs btn-ghost" 
         @click="editProxy(selectedIndex)"
         :disabled="selectedIndex < 0"
       >
-        {{ $t('passiveScan.proxifierProxies.buttons.edit') }}
+        {{ $t('trafficAnalysis.proxifierProxies.buttons.edit') }}
       </button>
       <button 
         class="btn btn-xs btn-ghost text-error" 
         @click="removeProxy"
         :disabled="selectedIndex < 0"
       >
-        {{ $t('passiveScan.proxifierProxies.buttons.remove') }}
+        {{ $t('trafficAnalysis.proxifierProxies.buttons.remove') }}
       </button>
     </div>
 
     <!-- 代理链按钮 -->
     <div class="p-2 border-t border-base-300">
-      <p class="text-xs text-base-content/60 mb-2">{{ $t('passiveScan.proxifierProxies.description') }}</p>
+      <p class="text-xs text-base-content/60 mb-2">{{ $t('trafficAnalysis.proxifierProxies.description') }}</p>
       <button class="btn btn-xs btn-outline w-full" @click="showProxyChains">
-        {{ $t('passiveScan.proxifierProxies.buttons.proxyChains') }}
+        {{ $t('trafficAnalysis.proxifierProxies.buttons.proxyChains') }}
       </button>
     </div>
 
@@ -74,31 +74,31 @@
     <dialog ref="editDialog" class="modal">
       <div class="modal-box max-w-md">
         <h3 class="font-bold text-lg mb-4">
-          {{ editingProxy.id ? $t('passiveScan.proxifierProxies.dialog.editTitle') : $t('passiveScan.proxifierProxies.dialog.addTitle') }}
+          {{ editingProxy.id ? $t('trafficAnalysis.proxifierProxies.dialog.editTitle') : $t('trafficAnalysis.proxifierProxies.dialog.addTitle') }}
         </h3>
         
         <div class="space-y-4">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxifierProxies.dialog.host.label') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxifierProxies.dialog.host.label') }}</span>
             </label>
             <input 
               type="text" 
               v-model="editingProxy.host"
               class="input input-bordered input-sm"
-              :placeholder="$t('passiveScan.proxifierProxies.dialog.host.placeholder')"
+              :placeholder="$t('trafficAnalysis.proxifierProxies.dialog.host.placeholder')"
             />
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxifierProxies.dialog.port.label') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxifierProxies.dialog.port.label') }}</span>
             </label>
             <input 
               type="number" 
               v-model.number="editingProxy.port"
               class="input input-bordered input-sm"
-              :placeholder="$t('passiveScan.proxifierProxies.dialog.port.placeholder')"
+              :placeholder="$t('trafficAnalysis.proxifierProxies.dialog.port.placeholder')"
               min="1"
               max="65535"
             />
@@ -106,49 +106,49 @@
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxifierProxies.dialog.type.label') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxifierProxies.dialog.type.label') }}</span>
             </label>
             <select v-model="editingProxy.type" class="select select-bordered select-sm">
-              <option value="HTTP">{{ $t('passiveScan.proxifierProxies.dialog.type.http') }}</option>
-              <option value="HTTPS">{{ $t('passiveScan.proxifierProxies.dialog.type.https') }}</option>
-              <option value="SOCKS5">{{ $t('passiveScan.proxifierProxies.dialog.type.socks5') }}</option>
+              <option value="HTTP">{{ $t('trafficAnalysis.proxifierProxies.dialog.type.http') }}</option>
+              <option value="HTTPS">{{ $t('trafficAnalysis.proxifierProxies.dialog.type.https') }}</option>
+              <option value="SOCKS5">{{ $t('trafficAnalysis.proxifierProxies.dialog.type.socks5') }}</option>
             </select>
           </div>
 
-          <div class="divider my-2">{{ $t('passiveScan.proxifierProxies.dialog.auth') }}</div>
+          <div class="divider my-2">{{ $t('trafficAnalysis.proxifierProxies.dialog.auth') }}</div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxifierProxies.dialog.username.label') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxifierProxies.dialog.username.label') }}</span>
             </label>
             <input 
               type="text" 
               v-model="editingProxy.username"
               class="input input-bordered input-sm"
-              :placeholder="$t('passiveScan.proxifierProxies.dialog.username.placeholder')"
+              :placeholder="$t('trafficAnalysis.proxifierProxies.dialog.username.placeholder')"
             />
           </div>
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('passiveScan.proxifierProxies.dialog.password.label') }}</span>
+              <span class="label-text">{{ $t('trafficAnalysis.proxifierProxies.dialog.password.label') }}</span>
             </label>
             <input 
               type="password" 
               v-model="editingProxy.password"
               class="input input-bordered input-sm"
-              :placeholder="$t('passiveScan.proxifierProxies.dialog.password.placeholder')"
+              :placeholder="$t('trafficAnalysis.proxifierProxies.dialog.password.placeholder')"
             />
           </div>
         </div>
 
         <div class="modal-action">
-          <button class="btn btn-ghost btn-sm" @click="cancelEdit">{{ $t('passiveScan.proxifierProxies.dialog.buttons.cancel') }}</button>
-          <button class="btn btn-primary btn-sm" @click="saveProxy">{{ $t('passiveScan.proxifierProxies.dialog.buttons.save') }}</button>
+          <button class="btn btn-ghost btn-sm" @click="cancelEdit">{{ $t('trafficAnalysis.proxifierProxies.dialog.buttons.cancel') }}</button>
+          <button class="btn btn-primary btn-sm" @click="saveProxy">{{ $t('trafficAnalysis.proxifierProxies.dialog.buttons.save') }}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
-        <button>{{ $t('passiveScan.history.detailsPanel.close') }}</button>
+        <button>{{ $t('trafficAnalysis.history.detailsPanel.close') }}</button>
       </form>
     </dialog>
   </div>

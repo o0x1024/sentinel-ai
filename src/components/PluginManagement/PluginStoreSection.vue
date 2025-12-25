@@ -59,7 +59,7 @@
       
       <select v-model="categoryFilter" class="select select-bordered select-sm">
         <option value="">{{ $t('plugins.store.allCategories') }}</option>
-        <option value="passive">{{ $t('plugins.categories.passive') }}</option>
+        <option value="traffic">{{ $t('plugins.categories.trafficAnalysis') }}</option>
         <option value="agent">{{ $t('plugins.categories.agents') }}</option>
       </select>
     </div>
@@ -362,13 +362,13 @@ const isInstalled = (pluginId: string): boolean => {
 }
 
 const getCategoryLabel = (category: string): string => {
-  if (category === 'passive') return t('plugins.categories.passive')
+  if (category === 'traffic') return t('plugins.categories.trafficAnalysis')
   if (category === 'agent') return t('plugins.categories.agents')
   return category
 }
 
 const getCategoryBadgeClass = (category: string): string => {
-  if (category === 'passive') return 'badge-info'
+  if (category === 'traffic') return 'badge-info'
   if (category === 'agent') return 'badge-warning'
   return 'badge-ghost'
 }

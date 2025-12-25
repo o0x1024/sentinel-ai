@@ -1,43 +1,43 @@
 <template>
     <div class="page-content-padded flex flex-col h-[calc(100vh-4rem)]">
         <!-- Tab 切换 -->
-        <div class="tabs tabs-boxed bg-base-200 flex-shrink-0 mb-4" role="tablist" :aria-label="$t('passiveScan.ariaLabels.passiveScanTabs')">
+        <div class="tabs tabs-boxed bg-base-200 flex-shrink-0 mb-4" role="tablist" :aria-label="$t('trafficAnalysis.ariaLabels.trafficAnalysisTabs')">
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'control'"
                 :class="{ 'tab-active': activeTab === 'control' }" @click="activeTab = 'control'">
                 <i class="fas fa-sliders-h mr-2"></i>
-                {{ $t('passiveScan.tabs.control') }}
+                {{ $t('trafficAnalysis.tabs.control') }}
             </button>
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'proxyhistory'"
                 :class="{ 'tab-active': activeTab === 'proxyhistory' }" @click="activeTab = 'proxyhistory'">
                 <i class="fas fa-history mr-2"></i>
-                {{ $t('passiveScan.tabs.history') }}
+                {{ $t('trafficAnalysis.tabs.history') }}
             </button>
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'repeater'"
                 :class="{ 'tab-active': activeTab === 'repeater' }" @click="activeTab = 'repeater'">
                 <i class="fas fa-redo mr-2"></i>
-                {{ $t('passiveScan.tabs.repeater') }}
+                {{ $t('trafficAnalysis.tabs.repeater') }}
                 <span v-if="repeaterCount > 0" class="badge badge-xs badge-primary ml-1">{{ repeaterCount }}</span>
             </button>
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'proxifier'"
                 :class="{ 'tab-active': activeTab === 'proxifier' }" @click="activeTab = 'proxifier'">
                 <i class="fas fa-network-wired mr-2"></i>
-                {{ $t('passiveScan.tabs.proxifier') }}
+                {{ $t('trafficAnalysis.tabs.proxifier') }}
             </button>
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'capture'"
                 :class="{ 'tab-active': activeTab === 'capture' }" @click="activeTab = 'capture'">
                 <i class="fas fa-broadcast-tower mr-2"></i>
-                {{ $t('passiveScan.tabs.capture') }}
+                {{ $t('trafficAnalysis.tabs.capture') }}
             </button>
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'proxyconfig'"
                 :class="{ 'tab-active': activeTab === 'proxyconfig' }" @click="activeTab = 'proxyconfig'">
                 <i class="fas fa-cog mr-2"></i>
-                {{ $t('passiveScan.tabs.proxyConfig') }}
+                {{ $t('trafficAnalysis.tabs.proxyConfig') }}
             </button>
         </div>
 
         <!-- 内容区域：使用 v-show 避免组件销毁重建，保留临时数据 -->
         <div class="flex-1 min-h-0 relative">
-            <PassiveControl 
+            <TrafficControl 
                 v-show="activeTab === 'control'" 
                 @sendToRepeater="handleSendToRepeater"
                 class="h-full absolute inset-0 overflow-auto"
@@ -69,12 +69,12 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onActivated, onDeactivated, onErrorCaptured, watch, provide } from 'vue'
-import PassiveControl from '../components/passive/ProxyIntercept.vue'
-import ProxyHistory from '../components/passive/ProxyHistory.vue'
-import ProxyRepeater from '../components/passive/ProxyRepeater.vue'
-import ProxyConfiguration from '../components/passive/ProxyConfiguration.vue'
-import ProxifierPanel from '../components/passive/ProxifierPanel.vue'
-import PacketCapture from '../components/passive/PacketCapture.vue'
+import TrafficControl from '../components/traffic/ProxyIntercept.vue'
+import ProxyHistory from '../components/traffic/ProxyHistory.vue'
+import ProxyRepeater from '../components/traffic/ProxyRepeater.vue'
+import ProxyConfiguration from '../components/traffic/ProxyConfiguration.vue'
+import ProxifierPanel from '../components/traffic/ProxifierPanel.vue'
+import PacketCapture from '../components/traffic/PacketCapture.vue'
 
 // Types
 interface RepeaterRequest {
@@ -93,7 +93,7 @@ const pendingRepeaterRequest = ref<RepeaterRequest | undefined>(undefined)
 const repeaterCount = ref(0)
 
 defineOptions({
-  name: 'Passive'
+  name: 'TrafficAnalysis'
 });
 
 
@@ -102,7 +102,7 @@ provide('refreshTrigger', refreshTrigger)
 
 // 处理发送到 Repeater 的请求
 function handleSendToRepeater(request: RepeaterRequest) {
-    console.log('[PassiveScan] Sending to repeater:', request)
+    console.log('[TrafficAnalysis] Sending to repeater:', request)
     
     // 如果当前在 Repeater 页面，直接调用方法
     if (activeTab.value === 'repeater' && repeaterRef.value) {
@@ -118,7 +118,7 @@ function handleSendToRepeater(request: RepeaterRequest) {
 
 // 监听 Tab 切换，清除待处理请求
 watch(activeTab, (newTab) => {
-    console.log('[PassiveScan] activeTab ->', newTab)
+    console.log('[TrafficAnalysis] activeTab ->', newTab)
     if (newTab !== 'repeater') {
         // 切换离开 Repeater 时清除待处理请求
         pendingRepeaterRequest.value = undefined
@@ -126,18 +126,18 @@ watch(activeTab, (newTab) => {
 })
 
 onMounted(() => {
-    console.log('passive view mounted, activeTab:', activeTab.value)
+    console.log('traffic view mounted, activeTab:', activeTab.value)
 })
 
 // 当组件从缓存中激活时，触发刷新
 onActivated(() => {
-    console.log('passive view activated, triggering refresh')
+    console.log('traffic view activated, triggering refresh')
     refreshTrigger.value++
 })
 
 // 当组件被缓存时
 onDeactivated(() => {
-    console.log('passive view deactivated')
+    console.log('traffic view deactivated')
 })
 
 // 捕获子组件错误

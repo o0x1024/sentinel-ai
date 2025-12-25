@@ -791,6 +791,13 @@ pub fn run() {
             // Agent config commands
             tool_commands::get_agent_config,
             tool_commands::save_agent_config,
+            // Ability group commands
+            tool_commands::list_ability_groups,
+            tool_commands::list_ability_groups_full,
+            tool_commands::get_ability_group,
+            tool_commands::create_ability_group,
+            tool_commands::update_ability_group,
+            tool_commands::delete_ability_group,
             // MCP commands
             commands::mcp_commands::mcp_get_connections,
             commands::mcp_commands::mcp_get_connection_status,

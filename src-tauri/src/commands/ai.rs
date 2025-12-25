@@ -2146,14 +2146,14 @@ pub async fn generate_workflow_from_nl(
     };
 
     let system_prompt = format!(
-        r#"你是 Sentinel AI 的工作流设计助手。
-根据用户的自然语言描述，输出一个严格符合下面 JSON Schema 的 WorkflowGraph。
-只输出 JSON，不要解释，不要包含 Markdown。
+        r#"you are a workflow design assistant for Sentinel AI.
+Based on the user's natural language description, output a WorkflowGraph that strictly conforms to the following JSON Schema.
+Only output JSON, do not explain, do not include Markdown.
 
-可用统一工具列表（tool::<name> 用于工具节点）：
+Available unified tool list (tool::<name> for tool nodes):
 {}
 
-可用节点类型列表（node_type 必须从中选择或基于其命名）：
+Available node type list (node_type must be chosen from or based on its name):
 {}
 
 Schema:
@@ -2181,10 +2181,10 @@ Schema:
 }}
 
 规则：
-1) 用简洁的 node_type，能对应内置工具则用 "tool::<name>"，需要 AI 推理则用 "llm::completion"。
-2) 每个节点给出 node_name 与简短 params.description。
-3) 至少包含一个入口节点（node_type 可以为 "start"）。
-4) 给出合理的 x/y 布局（从左到右）。
+1) Use a concise node_type, use "tool::<name>" if it corresponds to a built-in tool, use "llm::completion" if it needs AI reasoning.
+2) For each node, give node_name and a brief params.description.
+3) At least one entry node (node_type can be "start").
+4) Give a reasonable x/y layout (from left to right).
 "#,
         tools_summary, catalog_summary
     );
