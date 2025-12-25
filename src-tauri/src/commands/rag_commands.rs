@@ -1,20 +1,17 @@
-use crate::models::database::AiMessage;
-use crate::services::ai::AiServiceManager;
-use crate::services::database::{Database, DatabaseService};
-use chrono::Utc;
+use crate::services::database::DatabaseService;
+use sentinel_db::Database;
 use log::{info, warn};
-use sentinel_llm::LlmClient;
 use sentinel_rag::config::RagConfig as RagConfigRag;
 use sentinel_core::models::rag_config::RagConfig as RagConfigCore;
 use sentinel_rag::models::{
-    AssistantRagRequest, AssistantRagResponse, DocumentChunk, DocumentSource,
     IngestRequest, IngestResponse, RagQueryRequest, RagQueryResponse, RagStatus,
+    DocumentSource, DocumentChunk,
 };
 use sentinel_rag::service::RagService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::RwLock;
 
 // ============================================================================
@@ -217,6 +214,8 @@ pub async fn rag_query(
     use_mmr: Option<bool>,
     mmr_lambda: Option<f32>,
     filters: Option<HashMap<String, String>>,
+    use_embedding: Option<bool>,
+    reranking_enabled: Option<bool>,
 ) -> Result<RagQueryResponse, String> {
     info!("RAG查询: {}", query);
 
@@ -227,8 +226,8 @@ pub async fn rag_query(
         use_mmr,
         mmr_lambda,
         filters,
-        use_embedding: Some(true),
-        reranking_enabled: Some(true),
+        use_embedding: Some(use_embedding.unwrap_or(true)),
+        reranking_enabled: Some(reranking_enabled.unwrap_or(true)),
     };
 
     let rag_service = get_global_rag_service().await?;
@@ -351,8 +350,10 @@ pub async fn create_rag_collection(
     info!("创建RAG集合: {}", name);
 
     let rag_service = get_global_rag_service().await?;
+    let embedding_model = rag_service.get_config().embedding_model.clone();
+    
     let _collection_id = rag_service
-        .create_collection(&name, description.as_deref(), "default")
+        .create_collection(&name, description.as_deref(), &embedding_model)
         .await
         .map_err(|e| e.to_string())?;
     Ok(true)
@@ -522,322 +523,6 @@ pub async fn get_folder_files(
     Ok(files)
 }
 
-/// AI助手RAG答案生成（非流式）
-#[tauri::command]
-pub async fn assistant_rag_answer(
-    request: AssistantRagRequest,
-    collection_ids: Option<Vec<String>>,
-    conversation_id: Option<String>,
-    message_id: Option<String>,
-    user_message_id: Option<String>,
-    database: State<'_, Arc<DatabaseService>>,
-    ai_manager: State<'_, Arc<AiServiceManager>>,
-    app: AppHandle,
-) -> Result<AssistantRagResponse, String> {
-    use AssistantRagResponse;
-
-    // License check
-    #[cfg(not(debug_assertions))]
-    if !sentinel_license::is_licensed() {
-        return Err("License required for RAG assistant".to_string());
-    }
-
-    let start_time = std::time::Instant::now();
-    info!("AI助手RAG查询: {}", request.query);
-
-    // 全局开关：若未启用增强，则直接返回提示并不进行检索
-    match database.get_rag_config().await {
-        Ok(Some(cfg)) if !cfg.augmentation_enabled => {
-            return Ok(AssistantRagResponse {
-                answer: "知识检索增强已关闭。本次未使用知识库。".to_string(),
-                citations: vec![],
-                context_used: String::new(),
-                total_tokens_used: 0,
-                rag_tokens: 0,
-                llm_tokens: 0,
-                processing_time_ms: start_time.elapsed().as_millis() as u64,
-                fallback_reason: Some("RAG disabled".to_string()),
-            });
-        }
-        Ok(None) => {
-            // 无配置等同未启用
-            return Ok(AssistantRagResponse {
-                answer: "知识检索增强未启用。本次未使用知识库。".to_string(),
-                citations: vec![],
-                context_used: String::new(),
-                total_tokens_used: 0,
-                rag_tokens: 0,
-                llm_tokens: 0,
-                processing_time_ms: start_time.elapsed().as_millis() as u64,
-                fallback_reason: Some("RAG disabled (no config)".to_string()),
-            });
-        }
-        Err(e) => {
-            log::warn!("读取RAG配置失败({}), 视为未启用", e);
-            return Ok(AssistantRagResponse {
-                answer: "知识检索增强状态未知，已按未启用处理。".to_string(),
-                citations: vec![],
-                context_used: String::new(),
-                total_tokens_used: 0,
-                rag_tokens: 0,
-                llm_tokens: 0,
-                processing_time_ms: start_time.elapsed().as_millis() as u64,
-                fallback_reason: Some("RAG disabled (config error)".to_string()),
-            });
-        }
-        _ => {}
-    }
-
-    // 获取RAG服务实例
-    let rag_service = get_global_rag_service()
-        .await
-        .map_err(|e| format!("Failed to get RAG service: {}", e))?;
-
-    // 执行RAG检索 (支持多集合)
-    let (context, citations) = if let Some(ids) = &collection_ids {
-        if !ids.is_empty() {
-            let mut combined_context = String::new();
-            let mut combined_citations = Vec::new();
-
-            for cid in ids {
-                let mut sub_req = request.clone();
-                sub_req.collection_id = Some(cid.clone());
-
-                match rag_service.query_for_assistant(&sub_req).await {
-                    Ok((ctx, cits)) => {
-                        if !ctx.is_empty() {
-                            if !combined_context.is_empty() {
-                                combined_context.push_str("\n\n");
-                            }
-                            combined_context.push_str(&ctx);
-                        }
-                        combined_citations.extend(cits);
-                    }
-                    Err(e) => {
-                        warn!("集合 {} 检索失败: {}", cid, e);
-                    }
-                }
-            }
-            (combined_context, combined_citations)
-        } else {
-            // 空列表，尝试使用 request.collection_id 或默认
-            match rag_service.query_for_assistant(&request).await {
-                Ok(result) => result,
-                Err(e) => {
-                    warn!("RAG检索失败: {}, 将返回无上下文回答", e);
-                    (String::new(), Vec::new())
-                }
-            }
-        }
-    } else {
-        // 未提供列表，使用 request.collection_id
-        match rag_service.query_for_assistant(&request).await {
-            Ok(result) => result,
-            Err(e) => {
-                warn!("RAG检索失败: {}, 将返回无上下文回答", e);
-                (String::new(), Vec::new())
-            }
-        }
-    };
-
-    // 如果检索失败且无上下文，但不是因为禁用，则继续尝试回答
-    if context.is_empty() && citations.is_empty() {
-        // 这里的逻辑保持原样，允许无上下文回答
-    }
-
-    // 记录是否找到了相关上下文，但不提前返回，继续调用LLM
-    let has_context = !context.is_empty();
-    if !has_context {
-        info!("未找到相关上下文，但将继续调用LLM处理用户输入");
-    }
-
-    // 获取当前角色提示词
-    let mut role_prompt = String::new();
-    if let Ok(Some(current_role)) = database.get_current_ai_role().await {
-        if !current_role.prompt.trim().is_empty() {
-            role_prompt = current_role.prompt;
-            tracing::info!("Using role prompt from: {}", current_role.title);
-        }
-    }
-
-    // 构建系统提示词（根据是否有上下文调整策略）
-    let system_prompt = {
-        let history = request
-            .conversation_history
-            .as_ref()
-            .map(|h| {
-                if h.is_empty() {
-                    String::new()
-                } else {
-                    format!("\n[CONVERSATION HISTORY]\n{}\n", h.join("\n"))
-                }
-            })
-            .unwrap_or_default();
-
-        // 基础系统提示词（角色提示词优先）
-        let base_system = if !role_prompt.is_empty() {
-            role_prompt
-        } else if let Some(custom_prompt) = &request.system_prompt {
-            if !custom_prompt.trim().is_empty() {
-                custom_prompt.clone()
-            } else {
-                "你是一个有用的AI助手。".to_string()
-            }
-        } else {
-            "你是一个有用的AI助手。".to_string()
-        };
-
-        if has_context {
-            let policy = "你必须严格基于证据回答问题。在回答中引用证据时，使用 [SOURCE n] 格式。如果证据不足，请直接回答并避免编造。";
-            format!(
-                "{}\n\n[知识溯源规范]\n{}\n\n[证据块]\n{}{}",
-                base_system, policy, context, history
-            )
-        } else {
-            format!(
-                "{}。由于没有找到特定知识库上下文，请根据您的训练数据提供一般有用的回答。{}",
-                base_system, history
-            )
-        }
-    };
-
-    // 选择模型：优先请求体中的 provider/model，其次默认聊天模型
-    let (provider, model) =
-        if let (Some(p), Some(m)) = (request.model_provider.clone(), request.model_name.clone()) {
-            (p, m)
-        } else {
-            match ai_manager
-                .get_default_llm_model()
-                .await
-                .map_err(|e| e.to_string())?
-            {
-                Some((p, m)) => (p, m),
-                None => {
-                    let msg = "No default chat model configured".to_string();
-                    log::error!("{}", msg);
-                    return Err(msg);
-                }
-            }
-        };
-
-    // 直接基于配置构建 LLM 客户端
-    let service = if let Ok(Some(provider_config)) = ai_manager.get_provider_config(&provider).await
-    {
-        let mut dynamic_config = provider_config;
-        dynamic_config.model = model.clone();
-        let db_service = app.state::<Arc<crate::services::database::DatabaseService>>();
-        crate::services::ai::AiService::new(
-            dynamic_config,
-            db_service.inner().clone(),
-            Some(app.clone()),
-        )
-    } else {
-        let msg = format!("Provider config not found for: {}", provider);
-        log::error!("{}", msg);
-        return Err(msg);
-    };
-
-    // 使用 LlmClient 进行非流式调用
-    let llm_config = service.service.to_llm_config();
-    let llm_client = LlmClient::new(llm_config);
-
-    let answer = match llm_client
-        .completion(Some(&system_prompt), &request.query)
-        .await
-    {
-        Ok(content) => content,
-        Err(e) => {
-            warn!("LLM请求失败: {}", e);
-            return Ok(AssistantRagResponse {
-                answer: "抱歉，生成回答失败。请检查AI服务配置或稍后再试。".to_string(),
-                citations,
-                context_used: context,
-                total_tokens_used: 0,
-                rag_tokens: 0,
-                llm_tokens: 0,
-                processing_time_ms: start_time.elapsed().as_millis() as u64,
-                fallback_reason: Some(format!("LLM request failed: {}", e)),
-            });
-        }
-    };
-
-    let processing_time = start_time.elapsed().as_millis() as u64;
-
-    // 简单 token 估算（长度近似）
-    let rag_tokens = context.len();
-    let llm_tokens = answer.len();
-    let total_tokens = rag_tokens + llm_tokens;
-
-    info!(
-        "AI助手RAG回答生成完成，耗时: {}ms, tokens: {}",
-        processing_time, total_tokens
-    );
-
-    // 持久化消息到数据库
-    if let Some(conv_id) = conversation_id {
-        // 1. 保存用户消息 (如果提供了ID)
-        if let Some(user_msg_id) = user_message_id {
-            let user_msg = AiMessage {
-                id: user_msg_id,
-                conversation_id: conv_id.clone(),
-                role: "user".to_string(),
-                content: request.query.clone(),
-                metadata: None,
-                token_count: Some(request.query.len() as i32),
-                cost: None,
-                tool_calls: None,
-                attachments: None,
-                timestamp: Utc::now(),
-                architecture_type: None,
-                architecture_meta: None,
-                structured_data: None,
-            };
-            if let Err(e) = database.upsert_ai_message_append(&user_msg).await {
-                warn!("Failed to save user message in RAG flow: {}", e);
-            }
-        }
-
-        // 2. 保存助手消息 (如果提供了ID)
-        if let Some(asst_msg_id) = message_id {
-            let asst_msg = AiMessage {
-                id: asst_msg_id,
-                conversation_id: conv_id,
-                role: "assistant".to_string(),
-                content: answer.clone(),
-                metadata: Some(
-                    serde_json::to_string(&serde_json::json!({ "citations": citations }))
-                        .unwrap_or_default(),
-                ),
-                token_count: Some(total_tokens as i32),
-                cost: None,
-                tool_calls: None,
-                attachments: None,
-                timestamp: Utc::now(),
-                architecture_type: None, // RAG is standard architecture for now
-                architecture_meta: None,
-                structured_data: None,
-            };
-            if let Err(e) = database.upsert_ai_message_append(&asst_msg).await {
-                warn!("Failed to save assistant message in RAG flow: {}", e);
-            }
-        }
-    }
-
-    Ok(AssistantRagResponse {
-        answer,
-        citations,
-        context_used: context,
-        total_tokens_used: total_tokens,
-        rag_tokens,
-        llm_tokens,
-        processing_time_ms: processing_time,
-        fallback_reason: if !has_context {
-            Some("No relevant context found, using general AI knowledge".to_string())
-        } else {
-            None
-        },
-    })
-}
 
 /// 确保默认RAG集合存在
 #[tauri::command]

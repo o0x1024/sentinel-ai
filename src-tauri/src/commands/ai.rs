@@ -13,9 +13,9 @@ use chrono::Utc;
 use sentinel_llm::{
     parse_image_from_json, ChatMessage as LlmChatMessage, StreamContent, StreamingLlmClient,
 };
+use sentinel_rag;
 use sentinel_workflow::WorkflowGraph;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -146,6 +146,72 @@ async fn stream_chat_with_llm(
     let llm_config = service.service.to_llm_config();
     let streaming_client = StreamingLlmClient::new(llm_config);
 
+    // --- RAG 增强逻辑 ---
+    let mut final_system_prompt = system_prompt.map(|s| s.to_string()).unwrap_or_default();
+    
+    // 获取已激活的 RAG 集合
+    let active_collections = match db.get_rag_collections().await {
+        Ok(cols) => cols.into_iter().filter(|c| c.is_active).collect::<Vec<_>>(),
+        Err(_) => Vec::new(),
+    };
+
+    if !active_collections.is_empty() {
+        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+            let _ = app_handle.emit("agent:rag_retrieval_start", serde_json::json!({
+                "execution_id": message_id,
+                "collections": active_collections.iter().map(|c| &c.name).collect::<Vec<_>>(),
+            }));
+
+            let mut all_context = String::new();
+            let mut all_citations = Vec::new();
+
+            for col in active_collections {
+                let rag_req = sentinel_rag::models::AssistantRagRequest {
+                    query: user_message.to_string(),
+                    collection_id: Some(col.id),
+                    conversation_history: None,
+                    top_k: Some(5),
+                    use_mmr: None,
+                    mmr_lambda: None,
+                    similarity_threshold: None,
+                    reranking_enabled: Some(true),
+                    model_provider: None,
+                    model_name: None,
+                    max_tokens: None,
+                    temperature: None,
+                    system_prompt: None,
+                };
+                
+                if let Ok((context, citations)) = rag_service.query_for_assistant(&rag_req).await {
+                    if !context.is_empty() {
+                        if all_context.is_empty() {
+                            all_context.push_str("\n\n以下是相关的参考知识：\n");
+                        }
+                        all_context.push_str(&context);
+                        all_context.push_str("\n\n");
+                        all_citations.extend(citations);
+                    }
+                }
+            }
+
+            if !all_context.is_empty() {
+                final_system_prompt.push_str(&all_context);
+                
+                // 发送 RAG 检索结果事件（包含引用）
+                let _ = app_handle.emit("agent:rag_retrieval_complete", serde_json::json!({
+                    "execution_id": message_id,
+                    "citations": all_citations,
+                }));
+            } else {
+                let _ = app_handle.emit("agent:rag_retrieval_complete", serde_json::json!({
+                    "execution_id": message_id,
+                    "citations": Vec::<String>::new(),
+                }));
+            }
+        }
+    }
+    // -------------------
+
     // 流式调用
     let execution_id = message_id.to_string();
     let msg_id = message_id.to_string();
@@ -158,7 +224,7 @@ async fn stream_chat_with_llm(
 
     let content = streaming_client
         .stream_chat(
-            system_prompt,
+            Some(&final_system_prompt),
             user_message,
             &history,
             image.as_ref(),

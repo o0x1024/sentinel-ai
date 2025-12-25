@@ -574,7 +574,6 @@ pub fn run() {
             rag_commands::list_rag_documents,
             rag_commands::get_rag_document_chunks,
             rag_commands::delete_rag_document,
-            rag_commands::assistant_rag_answer,
             rag_commands::ensure_default_rag_collection,
             rag_commands::test_embedding_connection,
             // Traffic scan commands

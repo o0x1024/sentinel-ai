@@ -585,7 +585,7 @@ impl AiService {
                     StreamedAssistantContent::ToolCall(_),
                 )) => {}
                 Ok(MultiTurnStreamItem::FinalResponse(resp)) => {
-                    let usage = resp.token_usage();
+                    let usage = resp.usage();
                     on_chunk(StreamChunk::Usage {
                         input_tokens: usage.input_tokens as u32,
                         output_tokens: usage.output_tokens as u32,

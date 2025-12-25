@@ -296,7 +296,7 @@
                   ref="fileInput"
                   type="file" 
                   class="file-input file-input-bordered flex-1" 
-                  accept=".txt,.md,.pdf,.docx"
+                  :accept="supportedFileTypes.map(t => '.' + t).join(',')"
                   multiple
                   @change="handleFileSelect"
                 >
@@ -334,11 +334,25 @@
             </div>
             
             <!-- 文件列表 -->
-            <div v-if="selectedFiles.length > 1" class="mb-4">
+            <div v-if="selectedFiles.length > 1 && failedFiles.length === 0" class="mb-4">
               <h5 class="font-semibold mb-2">{{ t('ragManagement.ingest.fileList') }}</h5>
               <div class="max-h-32 overflow-y-auto bg-base-200 rounded p-2">
                 <div v-for="(file, index) in selectedFiles" :key="index" class="text-sm py-1">
                   <i class="fas fa-file mr-2"></i>{{ file.name }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 失败文件详情 -->
+            <div v-if="failedFiles.length > 0" class="mb-4">
+              <h5 class="font-semibold text-error mb-2">
+                <i class="fas fa-exclamation-triangle mr-2"></i>
+                {{ t('ragManagement.ingest.failedFiles', 'Failed Files') }}
+              </h5>
+              <div class="max-h-48 overflow-y-auto bg-error/5 border border-error/20 rounded p-2">
+                <div v-for="(file, index) in failedFiles" :key="index" class="mb-2 last:mb-0">
+                  <div class="text-sm font-medium text-error">{{ file.name }}</div>
+                  <div class="text-xs opacity-70">{{ file.error }}</div>
                 </div>
               </div>
             </div>
@@ -713,6 +727,7 @@ const editingCollection = ref({
 // 文档摄取
 const selectedCollection = ref(null)
 const selectedFiles = ref([])
+const failedFiles = ref<Array<{name: string, error: string}>>([])
 const selectedFolder = ref('')
 const fileInput = ref(null)
 const batchProgress = ref({
@@ -726,6 +741,20 @@ const manualInput = ref({
   title: '',
   content: ''
 })
+
+// 支持的文件类型
+const supportedFileTypes = ref<string[]>(['txt', 'md', 'pdf', 'docx'])
+
+const loadSupportedFileTypes = async () => {
+  try {
+    const types = await invoke('rag_get_supported_file_types') as string[]
+    if (types && types.length > 0) {
+      supportedFileTypes.value = types
+    }
+  } catch (e) {
+    console.warn('Failed to load supported file types', e)
+  }
+}
 
 // 查询相关
 const queryText = ref('')
@@ -1106,6 +1135,7 @@ const ingestDocument = async () => {
   }
 
   ingesting.value = true
+  failedFiles.value = [] // 重置失败列表
   
   try {
     if (ingestMode.value === 'manual') {
@@ -1134,7 +1164,6 @@ const ingestDocument = async () => {
       failed: 0
     }
     
-    const failedFiles = []
     let totalChunks = 0
     
     for (let i = 0; i < selectedFiles.value.length; i++) {
@@ -1160,7 +1189,7 @@ const ingestDocument = async () => {
       } catch (error) {
         console.error(`文件 ${file.name} 摄取失败:`, error)
         batchProgress.value.failed++
-        failedFiles.push({
+        failedFiles.value.push({
           name: file.name,
           error: error.toString()
         })
@@ -1170,18 +1199,13 @@ const ingestDocument = async () => {
     // 显示最终结果
     if (batchProgress.value.failed === 0) {
       showToast(t('ragManagement.messages.ingestSuccess', { chunks: totalChunks }), 'success')
+      closeIngestModal()
     } else if (batchProgress.value.success > 0) {
       showToast(t('ragManagement.messages.ingestPartialSuccess', { success: batchProgress.value.success, failed: batchProgress.value.failed, chunks: totalChunks }), 'warning')
     } else {
       showToast(t('ragManagement.messages.ingestAllFailed'), 'error')
     }
     
-    // 如果有失败的文件，在控制台输出详细错误信息
-    if (failedFiles.length > 0) {
-      console.warn('失败的文件:', failedFiles)
-    }
-    
-    closeIngestModal()
     await refreshCollections()
     
   } catch (error) {
@@ -1276,6 +1300,7 @@ const closeDetailsModal = () => {
 // 生命周期
 onMounted(() => {
   refreshCollections()
+  loadSupportedFileTypes()
 })
 </script>
 

@@ -18,9 +18,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            platform: 'darwin-x86_64'
-            rust_target: 'x86_64-apple-darwin'
           - os: macos-14
             platform: 'darwin-aarch64'
             rust_target: 'aarch64-apple-darwin'
@@ -51,40 +48,11 @@ jobs:
       - name: Install OpenSSL for macOS
         if: runner.os == 'macOS'
         run: |
-          if [[ "${{ matrix.rust_target }}" == "x86_64-apple-darwin" ]]; then
-            # For x86_64 build, use the correct Homebrew path
-            brew uninstall --ignore-dependencies openssl@3 || true
-            
-            # Check and install x86_64 Homebrew to /usr/local
-            if [ ! -f "/usr/local/bin/brew" ]; then
-              arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            fi
-            
-            # Install OpenSSL using /usr/local/bin/brew
-            arch -x86_64 /usr/local/bin/brew install openssl@3
-            
-            echo "/usr/local/bin" >> $GITHUB_PATH
-            
-            OPENSSL_PREFIX=$(arch -x86_64 /usr/local/bin/brew --prefix openssl@3)
-            echo "OPENSSL_DIR=$OPENSSL_PREFIX" >> $GITHUB_ENV
-            echo "OPENSSL_LIB_DIR=$OPENSSL_PREFIX/lib" >> $GITHUB_ENV
-            echo "OPENSSL_INCLUDE_DIR=$OPENSSL_PREFIX/include" >> $GITHUB_ENV
-            echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
-            echo "OPENSSL_NO_VENDOR=1" >> $GITHUB_ENV
-            
-            echo "CFLAGS=-arch x86_64 -I$OPENSSL_PREFIX/include" >> $GITHUB_ENV
-            echo "LDFLAGS=-arch x86_64 -L$OPENSSL_PREFIX/lib" >> $GITHUB_ENV
-            echo "CPPFLAGS=-I$OPENSSL_PREFIX/include" >> $GITHUB_ENV
-            echo "PKG_CONFIG_PATH=$OPENSSL_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
-            echo "RUSTFLAGS=-C target-cpu=x86-64 -C link-arg=-arch -C link-arg=x86_64 -L $OPENSSL_PREFIX/lib" >> $GITHUB_ENV
-          else
-            # For aarch64 build
-            brew install openssl@3
-            echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
-            echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
-            echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
-            echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
-          fi
+          brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
 
       - name: Install OpenSSL for Windows
         if: runner.os == 'Windows'
@@ -106,26 +74,9 @@ jobs:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
-      - name: Clean Rust cache for macOS x86_64
-        if: matrix.rust_target == 'x86_64-apple-darwin'
-        run: |
-          cd src-tauri
-          rm -rf target
-          cd ..
-          rm -rf ~/.cargo/registry/cache
-          rm -rf ~/.cargo/git/db
-
       - name: Build Tauri App
         shell: bash
-        run: |
-          if [[ "${{ matrix.rust_target }}" == "x86_64-apple-darwin" ]]; then
-            echo "Checking openssl-sys in Cargo.lock..."
-            if [ -f "src-tauri/Cargo.lock" ] && grep -q 'name = "openssl-sys"' src-tauri/Cargo.lock; then
-              (cd src-tauri && cargo update -p openssl-sys) || true
-            fi
-          fi
-          
-          yarn tauri build --target ${{ matrix.rust_target }}
+        run: yarn tauri build --target ${{ matrix.rust_target }}
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -202,7 +153,6 @@ jobs:
             
             ### 📦 Platform Support
             - Windows x64 (.exe installer)
-            - macOS x64 (.dmg)
             - macOS ARM64 (.dmg)
             
             See [CHANGELOG.md](CHANGELOG.md) for full changelog.
@@ -219,18 +169,6 @@ jobs:
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           UPLOAD_DIR=$(mktemp -d)
           echo "UPLOAD_DIR=$UPLOAD_DIR" >> $GITHUB_ENV
-
-          # macOS x64 artifacts
-          if [ -d "$TARGET_DIR/tauri-build-darwin-x86_64" ]; then
-            find "$TARGET_DIR/tauri-build-darwin-x86_64/macos" -name "*.app.tar.gz" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x86_64.app.tar.gz" \;
-            find "$TARGET_DIR/tauri-build-darwin-x86_64/macos" -name "*.app.tar.gz.sig" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x86_64.app.tar.gz.sig" \;
-            find "$TARGET_DIR/tauri-build-darwin-x86_64/dmg" -name "*.dmg" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x86_64.dmg" \;
-            find "$TARGET_DIR/tauri-build-darwin-x86_64/dmg" -name "*.dmg.sig" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x86_64.dmg.sig" \;
-            if [ ! -f "$UPLOAD_DIR/sentinel-ai-${VERSION}-x86_64.dmg" ]; then
-              find "$TARGET_DIR/tauri-build-darwin-x86_64" -name "*.dmg" -exec cp {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x86_64.dmg" \;
-              find "$TARGET_DIR/tauri-build-darwin-x86_64" -name "*.dmg.sig" -exec cp {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x86_64.dmg.sig" \;
-            fi
-          fi
 
           # macOS aarch64 artifacts
           if [ -d "$TARGET_DIR/tauri-build-darwin-aarch64" ]; then

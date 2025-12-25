@@ -137,13 +137,14 @@ impl<D: RagDatabase> RagService<D> {
 
     /// 创建RAG集合
     pub async fn create_collection(&self, name: &str, description: Option<&str>, _embedding_model: &str) -> Result<String> {
-        info!("创建RAG集合: {}", name);
+        info!("创建RAG集合: {}, 使用模型: {}", name, _embedding_model);
         
         // Create in SQL database for metadata
         let collection_id = self.database.create_rag_collection(name, description).await?;
         
         // Create in vector store
-        self.vector_store.create_collection(name, 768).await?;
+        let dimensions = self._config.embedding_dimensions.unwrap_or(768);
+        self.vector_store.create_collection(name, dimensions).await?;
         
         Ok(collection_id)
     }

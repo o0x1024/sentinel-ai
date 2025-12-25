@@ -233,6 +233,17 @@ async fn execute_agent_simple(
                             }),
                         );
                     }
+                    StreamContent::Usage { input_tokens, output_tokens } => {
+                        let _ = app.emit(
+                            "agent:chunk",
+                            &json!({
+                                "execution_id": execution_id,
+                                "chunk_type": "usage",
+                                "input_tokens": input_tokens,
+                                "output_tokens": output_tokens,
+                            }),
+                        );
+                    }
                     StreamContent::Done => {
                         tracing::info!("Agent completed - execution_id: {}", execution_id);
                     }
@@ -690,6 +701,17 @@ async fn execute_agent_with_tools(
                             "execution_id": execution_id,
                             "tool_call_id": id,
                             "result": result,
+                        }),
+                    );
+                }
+                StreamContent::Usage { input_tokens, output_tokens } => {
+                    let _ = app.emit(
+                        "agent:chunk",
+                        &json!({
+                            "execution_id": execution_id,
+                            "chunk_type": "usage",
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
                         }),
                     );
                 }

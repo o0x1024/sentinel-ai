@@ -676,7 +676,7 @@ impl StreamingLlmClient {
                         content.push_str(final_text);
                     }
                     
-                    let usage = final_resp.token_usage();
+                    let usage = final_resp.usage();
                     on_content(StreamContent::Usage {
                         input_tokens: usage.input_tokens as u32,
                         output_tokens: usage.output_tokens as u32,
