@@ -68,21 +68,24 @@ jobs:
         run: yarn install
 
       - name: Import Apple Certificate
-        if: runner.os == 'macOS' && secrets.MACOS_CERTIFICATE != ''
+        if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
         uses: apple-actions/import-codesign-certs@v2
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
 
       - name: Build Tauri App
         shell: bash
         run: |
-          if [ "${{ runner.os }}" == "macOS" ] && [ -z "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+          if [ "${{ runner.os }}" == "macOS" ] && [ -z "$MACOS_CERT_CHECK" ]; then
             echo "Building without code signing..."
             export APPLE_SIGNING_IDENTITY="-"
           fi
           yarn tauri build --target ${{ matrix.rust_target }}
         env:
+          MACOS_CERT_CHECK: ${{ secrets.MACOS_CERTIFICATE }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           OPENSSL_DIR: ${{ env.OPENSSL_DIR }}
