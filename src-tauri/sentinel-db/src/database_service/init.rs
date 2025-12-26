@@ -17,8 +17,8 @@ impl DatabaseService {
                 value TEXT,
                 description TEXT,
                 is_encrypted BOOLEAN DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(category, key)
             )"#
         ).execute(pool).await?;
@@ -43,8 +43,8 @@ impl DatabaseService {
                 tags TEXT,
                 tool_config TEXT,
                 is_archived BOOLEAN DEFAULT 0,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -59,7 +59,8 @@ impl DatabaseService {
                 cost REAL,
                 tool_calls TEXT,
                 attachments TEXT,
-                timestamp DATETIME NOT NULL,
+                reasoning_content TEXT,
+                timestamp TEXT NOT NULL,
                 architecture_type TEXT,
                 architecture_meta TEXT,
                 structured_data TEXT,
@@ -81,15 +82,15 @@ impl DatabaseService {
                 status TEXT NOT NULL,
                 progress REAL DEFAULT 0.0,
                 priority INTEGER DEFAULT 1,
-                scheduled_at DATETIME,
-                started_at DATETIME,
-                completed_at DATETIME,
+                scheduled_at TEXT,
+                started_at TEXT,
+                completed_at TEXT,
                 execution_time INTEGER,
                 results_summary TEXT,
                 error_message TEXT,
                 created_by TEXT NOT NULL,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -109,9 +110,9 @@ impl DatabaseService {
                 completed_stages INTEGER DEFAULT 0,
                 results_summary TEXT,
                 error_message TEXT,
-                created_at DATETIME NOT NULL,
-                started_at DATETIME,
-                completed_at DATETIME,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
                 created_by TEXT
             )"#
         ).execute(pool).await?;
@@ -127,8 +128,8 @@ impl DatabaseService {
                 config TEXT NOT NULL,
                 results TEXT,
                 error_message TEXT,
-                started_at DATETIME,
-                completed_at DATETIME,
+                started_at TEXT,
+                completed_at TEXT,
                 duration_ms INTEGER,
                 FOREIGN KEY(session_id) REFERENCES scan_sessions(id)
             )"#
@@ -154,12 +155,12 @@ impl DatabaseService {
                 references_json TEXT,
                 status TEXT NOT NULL,
                 verification_status TEXT NOT NULL,
-                resolution_date DATETIME,
+                resolution_date TEXT,
                 tags TEXT,
                 attachments TEXT,
                 notes TEXT,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -174,11 +175,11 @@ impl DatabaseService {
                 progress INTEGER DEFAULT 0,
                 completed_steps INTEGER DEFAULT 0,
                 total_steps INTEGER DEFAULT 0,
-                started_at DATETIME NOT NULL,
-                completed_at DATETIME,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
                 error_message TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -187,8 +188,8 @@ impl DatabaseService {
                 run_id TEXT NOT NULL,
                 step_id TEXT NOT NULL,
                 status TEXT NOT NULL,
-                started_at DATETIME NOT NULL,
-                completed_at DATETIME,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
                 result_json TEXT,
                 error_message TEXT,
                 PRIMARY KEY(run_id, step_id),
@@ -208,8 +209,8 @@ impl DatabaseService {
                 tags TEXT,
                 version TEXT NOT NULL,
                 created_by TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
         
@@ -224,8 +225,8 @@ impl DatabaseService {
                 arguments TEXT,
                 status TEXT NOT NULL,
                 progress REAL DEFAULT 0.0,
-                start_time DATETIME,
-                end_time DATETIME,
+                start_time TEXT,
+                end_time TEXT,
                 execution_time INTEGER,
                 output TEXT,
                 error_output TEXT,
@@ -233,7 +234,7 @@ impl DatabaseService {
                 resource_usage TEXT,
                 artifacts TEXT,
                 metadata TEXT,
-                created_at DATETIME NOT NULL
+                created_at TEXT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -248,12 +249,12 @@ impl DatabaseService {
                 priority TEXT NOT NULL,
                 timeout INTEGER,
                 status TEXT DEFAULT 'pending',
-                started_at DATETIME,
-                completed_at DATETIME,
+                started_at TEXT,
+                completed_at TEXT,
                 execution_time_ms INTEGER,
                 error_message TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -263,8 +264,8 @@ impl DatabaseService {
                 task_id TEXT NOT NULL,
                 agent_name TEXT NOT NULL,
                 status TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(task_id) REFERENCES agent_tasks(id)
             )"#
         ).execute(pool).await?;
@@ -276,7 +277,7 @@ impl DatabaseService {
                 level TEXT NOT NULL,
                 message TEXT NOT NULL,
                 source TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
             )"#
         ).execute(pool).await?;
@@ -288,7 +289,7 @@ impl DatabaseService {
                 success BOOLEAN NOT NULL,
                 data TEXT,
                 error TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
             )"#
         ).execute(pool).await?;
@@ -299,12 +300,12 @@ impl DatabaseService {
                 session_id TEXT NOT NULL,
                 step_name TEXT NOT NULL,
                 status TEXT NOT NULL,
-                started_at DATETIME,
-                completed_at DATETIME,
+                started_at TEXT,
+                completed_at TEXT,
                 duration_ms INTEGER,
                 result_data TEXT,
                 error_message TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
             )"#
         ).execute(pool).await?;
@@ -328,8 +329,8 @@ impl DatabaseService {
                 status TEXT NOT NULL DEFAULT 'active',
                 quality_score REAL,
                 validation_status TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -337,7 +338,7 @@ impl DatabaseService {
             r#"CREATE TABLE IF NOT EXISTS plugin_favorites (
                 plugin_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(plugin_id, user_id),
                 FOREIGN KEY(plugin_id) REFERENCES plugin_registry(id)
             )"#
@@ -353,8 +354,8 @@ impl DatabaseService {
                 config TEXT,
                 is_encrypted BOOLEAN DEFAULT 0,
                 enabled BOOLEAN DEFAULT 1,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -369,8 +370,8 @@ impl DatabaseService {
                 args TEXT NOT NULL,
                 is_enabled BOOLEAN DEFAULT 1,
                 auto_connect BOOLEAN DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -382,8 +383,8 @@ impl DatabaseService {
                 description TEXT,
                 prompt TEXT NOT NULL,
                 is_system BOOLEAN DEFAULT 0,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -402,8 +403,8 @@ impl DatabaseService {
                 tags TEXT,
                 variables TEXT,
                 version TEXT DEFAULT '1.0.0',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -416,7 +417,7 @@ impl DatabaseService {
                 output_tokens INTEGER DEFAULT 0,
                 total_tokens INTEGER DEFAULT 0,
                 cost REAL DEFAULT 0.0,
-                last_used DATETIME,
+                last_used TEXT,
                 PRIMARY KEY(provider, model)
             )"#
         ).execute(pool).await?;
@@ -428,8 +429,8 @@ impl DatabaseService {
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 estimated_duration INTEGER DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 metadata TEXT NOT NULL DEFAULT '{}'
             )"#
         ).execute(pool).await?;
@@ -439,13 +440,13 @@ impl DatabaseService {
                 id TEXT PRIMARY KEY,
                 plan_id TEXT NOT NULL,
                 status TEXT NOT NULL,
-                started_at DATETIME NOT NULL,
-                completed_at DATETIME,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
                 current_step INTEGER,
                 progress REAL DEFAULT 0.0,
                 context TEXT NOT NULL DEFAULT '{}',
                 metadata TEXT NOT NULL DEFAULT '{}',
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(plan_id) REFERENCES execution_plans(id)
             )"#
         ).execute(pool).await?;
@@ -466,10 +467,10 @@ impl DatabaseService {
                 metadata TEXT,
                 tags TEXT,
                 risk_level TEXT,
-                last_seen DATETIME NOT NULL,
-                first_seen DATETIME NOT NULL,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL,
+                last_seen TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
                 created_by TEXT NOT NULL
             )"#
         ).execute(pool).await?;
@@ -483,7 +484,7 @@ impl DatabaseService {
                 description TEXT,
                 confidence REAL DEFAULT 1.0,
                 metadata TEXT,
-                created_at DATETIME NOT NULL,
+                created_at TEXT NOT NULL,
                 created_by TEXT NOT NULL,
                 FOREIGN KEY(source_asset_id) REFERENCES assets(id),
                 FOREIGN KEY(target_asset_id) REFERENCES assets(id)
@@ -498,8 +499,8 @@ impl DatabaseService {
                 description TEXT NOT NULL DEFAULT '',
                 instructions TEXT NOT NULL DEFAULT '',
                 tool_ids TEXT NOT NULL DEFAULT '[]',
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -515,8 +516,8 @@ impl DatabaseService {
                 password TEXT,
                 enabled BOOLEAN DEFAULT 1,
                 sort_order INTEGER DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -531,8 +532,8 @@ impl DatabaseService {
                 action TEXT NOT NULL,
                 proxy_id TEXT,
                 sort_order INTEGER DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(proxy_id) REFERENCES proxifier_proxies(id)
             )"#
         ).execute(pool).await?;
@@ -556,8 +557,8 @@ impl DatabaseService {
                 source_url TEXT,
                 tags TEXT,
                 metadata TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -569,7 +570,7 @@ impl DatabaseService {
                 weight REAL DEFAULT 1.0,
                 category TEXT,
                 metadata TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
@@ -592,8 +593,8 @@ impl DatabaseService {
                 service_type TEXT,
                 scenario TEXT,
                 is_active BOOLEAN DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -604,7 +605,7 @@ impl DatabaseService {
                 dictionary_id TEXT NOT NULL,
                 priority INTEGER DEFAULT 0,
                 is_enabled BOOLEAN DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(set_id) REFERENCES dictionary_sets(id) ON DELETE CASCADE,
                 FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
             )"#
@@ -617,9 +618,9 @@ impl DatabaseService {
                 cache_value TEXT NOT NULL,
                 cache_type TEXT NOT NULL,
                 version TEXT DEFAULT '1.0',
-                expires_at DATETIME,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                expires_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -642,8 +643,8 @@ impl DatabaseService {
                 is_active BOOLEAN DEFAULT 0,
                 document_count INTEGER DEFAULT 0,
                 chunk_count INTEGER DEFAULT 0,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -657,10 +658,12 @@ impl DatabaseService {
                 file_size INTEGER,
                 file_hash TEXT,
                 content_hash TEXT,
+                status TEXT DEFAULT 'Pending',
+                chunk_count INTEGER DEFAULT 0,
                 metadata TEXT,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL,
-                FOREIGN KEY(collection_id) REFERENCES rag_collections(id)
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
 
@@ -674,13 +677,11 @@ impl DatabaseService {
                 chunk_index INTEGER,
                 char_count INTEGER,
                 embedding BLOB,
-                embedding_model TEXT,
-                embedding_dimension INTEGER,
                 metadata TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                FOREIGN KEY(document_id) REFERENCES rag_document_sources(id),
-                FOREIGN KEY(collection_id) REFERENCES rag_collections(id)
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(document_id) REFERENCES rag_document_sources(id) ON DELETE CASCADE,
+                FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
 
@@ -688,11 +689,12 @@ impl DatabaseService {
             r#"CREATE TABLE IF NOT EXISTS rag_queries (
                 id TEXT PRIMARY KEY,
                 collection_id TEXT,
+                conversation_id TEXT,
                 query TEXT NOT NULL,
                 response TEXT NOT NULL,
                 processing_time_ms INTEGER,
-                created_at DATETIME NOT NULL,
-                FOREIGN KEY(collection_id) REFERENCES rag_collections(id)
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
 

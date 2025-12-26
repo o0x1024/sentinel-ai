@@ -53,9 +53,6 @@ tauri-plugin-shell = "2"
 futures-util = "0.3"
 # LRU 缓存 (用于 Travel Token优化)
 lru = "0.12"
-# 子域名扫描工具
-rsubdomain = "1.2.6"
-
 
 rustscan = "2.4.1"
 petgraph = "0.6"
@@ -274,3 +271,7 @@ rmcp = { version = "0.9.1", features = [
 ] }
 rig-core = { version = "0.26.0", features = ["derive"] }
 rig-lancedb = "=0.2.29"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+# 子域名扫描工具 (依赖 pnet, 在 Windows 上不可用)
+rsubdomain = "1.2.6"

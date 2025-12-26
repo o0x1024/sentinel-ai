@@ -825,5 +825,25 @@ export default {
   
   // Missing keys
   noMore: '没有更多',
-  endpoint: '端点'
+  endpoint: '端点',
+  noData: '暂无数据',
+  provider: '提供商',
+  total: '总计',
+  cost: '成本',
+  viewAll: '查看全部',
+
+  // Tour guide
+  tour: {
+    next: '下一步',
+    previous: '上一步',
+    done: '完成',
+    skip: '跳过',
+    progress: '{{current}} / {{total}}',
+    confirmExit: '确定要退出向导吗？',
+    startTour: '开始向导',
+    restartTour: '重新开始向导',
+    help: '帮助',
+    guide: '功能向导',
+    documentation: '帮助文档'
+  }
 }

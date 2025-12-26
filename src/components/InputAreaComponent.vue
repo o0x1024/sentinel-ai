@@ -92,12 +92,12 @@
           <!-- Leading action icons -->
           <div class="flex items-center gap-2 text-base-content/60 shrink-0">
             <button class="icon-btn" title="附件" @click="triggerFileSelect"><i class="fas fa-paperclip"></i></button>
-            <button class="icon-btn" :class="{ active: toolsEnabled }" title="工具调用" @click="toggleTools"><i class="fas fa-tools"></i></button>
-            <button v-if="toolsEnabled" class="icon-btn" title="工具配置" @click="emit('open-tool-config')"><i class="fas fa-cog"></i></button>
+            <button class="icon-btn" :class="{ active: localToolsEnabled }" title="工具调用" @click="toggleTools"><i class="fas fa-tools"></i></button>
+            <button v-if="localToolsEnabled" class="icon-btn" title="工具配置" @click="emit('open-tool-config')"><i class="fas fa-cog"></i></button>
             <button class="icon-btn" :class="{ active: searchEnabled }" title="联网搜索" @click="toggleWebSearch"><i class="fas fa-globe"></i></button>
             <button 
               class="icon-btn" 
-              :class="{ active: ragEnabled }" 
+              :class="{ active: localRagEnabled }" 
               title="知识检索增强 - AI将使用 [SOURCE n] 格式引用知识库内容" 
               @click="toggleRAG"
             >
@@ -177,22 +177,22 @@ const props = defineProps<{
   referencedTraffic?: ReferencedTraffic[]
 }>()
 
-const emit = defineEmits([
-  'update:input-message',
-  'send-message',
-  'stop-execution',
-  'toggle-debug',
-  'create-new-conversation',
-  'clear-conversation',
-  'toggle-rag',
-  'toggle-tools',
-  'open-tool-config',
-  'toggle-web-search',
-  'add-attachments',
-  'remove-attachment',
-  'remove-traffic',
-  'clear-traffic'
-])
+const emit = defineEmits<{
+  (e: 'update:input-message', value: string): void
+  (e: 'send-message'): void
+  (e: 'stop-execution'): void
+  (e: 'toggle-debug', value: boolean): void
+  (e: 'create-new-conversation'): void
+  (e: 'clear-conversation'): void
+  (e: 'toggle-rag', enabled: boolean): void
+  (e: 'toggle-tools', enabled: boolean): void
+  (e: 'open-tool-config'): void
+  (e: 'toggle-web-search', enabled: boolean): void
+  (e: 'add-attachments', files: string[]): void
+  (e: 'remove-attachment', index: number): void
+  (e: 'remove-traffic', index: number): void
+  (e: 'clear-traffic'): void
+}>()
 
 // removed architecture utilities
 
@@ -231,8 +231,8 @@ const setBool = (key: string, value: boolean) => {
 // Feature states (controlled by parent via props, with persistence)
 const showSearch = ref(false)
 const searchEnabled = ref(false)
-const ragEnabled = ref<boolean>(!!props.ragEnabled)
-const toolsEnabled = ref<boolean>(!!props.toolsEnabled)
+const localRagEnabled = ref<boolean>(!!props.ragEnabled)
+const localToolsEnabled = ref<boolean>(!!props.toolsEnabled)
 
 // init guard
 const initialized = ref(false)
@@ -320,17 +320,17 @@ const toggleWebSearch = () => {
 }
 
 const toggleRAG = () => {
-  ragEnabled.value = !ragEnabled.value
-  setBool(STORAGE_KEYS.rag, ragEnabled.value)
+  localRagEnabled.value = !localRagEnabled.value
+  setBool(STORAGE_KEYS.rag, localRagEnabled.value)
   // 通知父组件RAG状态变化
-  emit('toggle-rag', ragEnabled.value)
+  emit('toggle-rag', localRagEnabled.value)
 }
 
 const toggleTools = () => {
-  toolsEnabled.value = !toolsEnabled.value
-  setBool(STORAGE_KEYS.tools, toolsEnabled.value)
+  localToolsEnabled.value = !localToolsEnabled.value
+  setBool(STORAGE_KEYS.tools, localToolsEnabled.value)
   // 通知父组件Tools状态变化
-  emit('toggle-tools', toolsEnabled.value)
+  emit('toggle-tools', localToolsEnabled.value)
 }
 
 // 点击外部区域关闭弹层
@@ -464,14 +464,14 @@ onMounted(() => {
     // RAG: prefer persisted value if exists, otherwise use prop
     const hasPersistedRag = localStorage.getItem(STORAGE_KEYS.rag) !== null
     const savedRag = hasPersistedRag ? getBool(STORAGE_KEYS.rag) : !!props.ragEnabled
-    ragEnabled.value = savedRag
+    localRagEnabled.value = savedRag
     setBool(STORAGE_KEYS.rag, savedRag)
     emit('toggle-rag', savedRag)
     
     // Tools: prefer persisted value if exists, otherwise use prop
     const hasPersistedTools = localStorage.getItem(STORAGE_KEYS.tools) !== null
     const savedTools = hasPersistedTools ? getBool(STORAGE_KEYS.tools) : !!props.toolsEnabled
-    toolsEnabled.value = savedTools
+    localToolsEnabled.value = savedTools
     setBool(STORAGE_KEYS.tools, savedTools)
     emit('toggle-tools', savedTools)
   } catch {
@@ -497,7 +497,7 @@ watch(
   () => props.ragEnabled,
   (val) => {
     if (typeof val === 'boolean') {
-      ragEnabled.value = val
+      localRagEnabled.value = val
       setBool(STORAGE_KEYS.rag, val)
     }
   }
@@ -508,7 +508,7 @@ watch(
   () => props.toolsEnabled,
   (val) => {
     if (typeof val === 'boolean') {
-      toolsEnabled.value = val
+      localToolsEnabled.value = val
       setBool(STORAGE_KEYS.tools, val)
     }
   }

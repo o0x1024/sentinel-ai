@@ -84,8 +84,10 @@ export default {
   defaultModel: '默认模型',
   temperature: '温度',
   temperatureHint: '较低的值使输出更加确定性，较高的值使输出更加随机和创造性',
-  maxTokens: '最大令牌数',
-  maxTokensHint: '限制AI响应的最大长度',
+  maxTokens: '最大生成令牌数 (Max Tokens)',
+  maxTokensHint: '限制AI单次回复的最大长度，不影响上下文总容量',
+  toolOutputLimit: '工具输出截断阈值',
+  toolOutputLimitHint: '限制工具（如网页抓取）返回的最大字符数，防止上下文溢出',
   availableModels: '可用模型',
   modelName: '模型',
   contextLength: '上下文长度',
@@ -117,5 +119,8 @@ export default {
   totalTokens: '总令牌数',
   estimatedCost: '估计成本',
   selectModel: '请选择模型',
-  refreshModels: '刷新模型'
+  refreshModels: '刷新模型',
+  fastModel: '快速模型',
+  smartModel: '智能模型',
+  clearStats: '清空统计'
 }

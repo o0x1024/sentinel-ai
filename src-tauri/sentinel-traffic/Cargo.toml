@@ -93,15 +93,10 @@ futures = "0.3"
 # URL 解析
 url = "2"
 
-# 网络抓包
-pnet = "0.35"
-pnet_datalink = "0.35"
-
 # 证书相关
 pem = "3"
 rcgen = "0.14"
 x509-parser = "0.15"
-openssl = "0.10"
 
 # PCAP 文件读写
 pcap-file = "2.0"
@@ -111,6 +106,12 @@ rand = "0.8"
 
 # 高性能缓存
 moka = { version = "0.12", features = ["sync"] }
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+# Network packet capture (requires WinPcap/Npcap on Windows, which is not available)
+pnet = "0.35"
+pnet_datalink = "0.35"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.8"

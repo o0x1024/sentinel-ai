@@ -61,6 +61,14 @@ export default {
   ragManagement,
   notifications,
 
+  // Top-level aliases for sidebar navigation
+  rag: {
+    title: 'RAG Management'
+  },
+  workflow: {
+    title: 'Workflow Studio'
+  },
+
   // Placeholder for remaining sections that need to be extracted
   // These will be added as we create the corresponding modules
   agentCreator: {
@@ -500,6 +508,9 @@ export default {
     items: 'items',
     pageSize: 'Page Size',
     favorited: 'Favorited',
+    favorite: 'Favorite Plugin',
+    unfavorite: 'Unfavorite',
+    copyPlugin: 'Copy Plugin',
     allPlugins: 'All Plugins',
     agentInputs: 'Agent Inputs (JSON)',
     allStatus: 'All',

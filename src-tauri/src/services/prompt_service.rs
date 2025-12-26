@@ -21,13 +21,10 @@ use uuid::Uuid;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
-use crate::services::database::Database;
 
 /// Prompt服务
 #[derive(Debug)]
 pub struct PromptService {
-    /// 数据库服务
-    db: Arc<dyn Database + Send + Sync>,
     /// 配置管理器
     config_manager: Arc<PromptConfigManager>,
     /// 模板管理器
@@ -256,7 +253,7 @@ impl Default for SessionPerformanceStats {
 
 impl PromptService {
     /// 创建新的Prompt服务
-    pub async fn new(config: PromptServiceConfig, db: Arc<dyn Database + Send + Sync>) -> Result<Self> {
+    pub async fn new(config: PromptServiceConfig) -> Result<Self> {
         // 确保数据目录存在
         tokio::fs::create_dir_all(&config.data_path).await?;
         
@@ -299,7 +296,6 @@ impl PromptService {
         let builder = Arc::new(PromptBuilder::new((*config_manager).clone()));
         
         Ok(Self {
-            db,
             config_manager,
             template_manager,
             ab_test_manager,

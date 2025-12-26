@@ -85,7 +85,6 @@ fn remove_cancellation_token(conversation_id: &str) {
 pub fn cancel_conversation_stream(conversation_id: &str) {
     if let Some(token) = get_cancellation_token(conversation_id) {
         token.cancel();
-        remove_cancellation_token(conversation_id);
         tracing::info!("Cancelled conversation stream: {}", conversation_id);
     }
 }
@@ -97,8 +96,233 @@ pub fn is_conversation_cancelled(conversation_id: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 辅助结构：用于在任务结束时自动移除取消令牌
+pub struct CancellationGuard(pub String);
+
+impl Drop for CancellationGuard {
+    fn drop(&mut self) {
+        remove_cancellation_token(&self.0);
+    }
+}
+
+/// 执行 RAG 增强：包含查询重写、多集合检索和配置透传
+async fn perform_rag_enhancement(
+    app_handle: &AppHandle,
+    conversation_id: &str,
+    user_message: &str,
+    history_messages: &[AiMessage],
+    rag_config: Option<sentinel_rag::config::RagConfig>,
+) -> Result<(String, Vec<sentinel_rag::models::Citation>), String> {
+    // 1. 获取数据库服务
+    let db = app_handle
+        .try_state::<Arc<DatabaseService>>()
+        .ok_or("Database service not initialized")?;
+
+    // 2. 查询重写 (Query Rewriting)
+    let mut search_query = user_message.to_string();
+    if !history_messages.is_empty() {
+        // 使用默认模型重写
+        if let Ok(Some((provider, model))) = app_handle.state::<Arc<AiServiceManager>>().get_default_llm_model().await {
+            // 获取 provider 配置
+            if let Ok(Some(provider_cfg)) = app_handle.state::<Arc<AiServiceManager>>().get_provider_config(&provider).await {
+                let llm_config = sentinel_llm::LlmConfig::new(&provider, &model)
+                    .with_api_key(provider_cfg.api_key.as_deref().unwrap_or_default())
+                    .with_base_url(provider_cfg.api_base.as_deref().unwrap_or_default());
+                
+                let client = sentinel_llm::LlmClient::new(llm_config);
+                
+                let rewrite_prompt = "you are a search query rewrite expert. Please rewrite the user's latest question into a independent and complete search query for retrieval in the vector database. If the user's question is already independent, return it as is. Only return the rewritten query text, no additional explanation.";
+                let mut history_text = String::new();
+                // 取最近几条历史
+                for msg in history_messages.iter().rev().take(6).rev() {
+                    history_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
+                }
+                let input = format!("conversation history: \n{}\nuser question: {}", history_text, user_message);
+                
+                if let Ok(rewritten) = client.completion(Some(rewrite_prompt), &input).await {
+                    if !rewritten.trim().is_empty() {
+                        search_query = rewritten.trim().to_string();
+                        tracing::info!("Query rewritten: {} -> {}", user_message, search_query);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. 获取所有激活的集合
+    let active_collections = match db.get_rag_collections().await {
+        Ok(cols) => cols.into_iter().filter(|c| c.is_active).collect::<Vec<_>>(),
+        Err(_) => Vec::new(),
+    };
+
+    if active_collections.is_empty() {
+        return Ok((String::new(), Vec::new()));
+    }
+
+    // 4. 执行多集合检索
+    let rag_service = crate::commands::rag_commands::get_global_rag_service().await?;
+
+    // 如果没有传入配置，尝试从数据库获取
+    let effective_config = if let Some(cfg) = rag_config {
+        cfg
+    } else {
+        match db.get_rag_config().await {
+            Ok(Some(cfg_core)) => crate::commands::rag_commands::convert_core_to_rag(cfg_core),
+            _ => sentinel_rag::config::RagConfig::default(),
+        }
+    };
+
+        let rag_req = sentinel_rag::models::AssistantRagRequest {
+            query: search_query.clone(),
+            conversation_id: Some(conversation_id.to_string()),
+            collection_id: None,
+            collection_ids: Some(active_collections.into_iter().map(|c| c.id).collect()),
+            conversation_history: None, // 我们已经重写了查询
+            top_k: Some(effective_config.top_k),
+            use_mmr: Some(effective_config.mmr_lambda < 1.0),
+            mmr_lambda: Some(effective_config.mmr_lambda),
+            similarity_threshold: Some(effective_config.similarity_threshold),
+            reranking_enabled: Some(effective_config.reranking_enabled),
+            model_provider: None,
+            model_name: None,
+            max_tokens: None,
+            temperature: None,
+            system_prompt: None,
+        };
+
+    // 设置 5 秒超时支持多集合检索
+    let (all_context, all_citations) = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        rag_service.query_for_assistant(&rag_req),
+    ).await {
+        Ok(Ok(res)) => res,
+        Ok(Err(e)) => {
+            tracing::warn!("RAG search error: {}", e);
+            (String::new(), Vec::new())
+        }
+        Err(_) => {
+            tracing::warn!("RAG search timeout");
+            (String::new(), Vec::new())
+        }
+    };
+
+    Ok((all_context, all_citations))
+}
+
 /// 流式调用 LLM 并处理事件发送、消息保存
 ///
+/// 重新组合历史消息，将 role=tool 的消息转换为符合 DeepSeek API 的格式
+/// 
+/// 当前数据库存储格式：
+/// - role=assistant: 文本片段（有 reasoning_content，无 tool_calls）
+/// - role=tool: 工具调用信息（metadata 中包含 tool_name, tool_args, tool_result）
+///
+/// DeepSeek API 期望格式：
+/// - role=assistant: 包含 reasoning_content 和 tool_calls
+/// - role=tool: 工具执行结果
+fn reconstruct_chat_history(messages: &[sentinel_core::models::database::AiMessage]) -> Vec<LlmChatMessage> {
+    use serde_json::Value;
+    
+    let mut result = Vec::new();
+    let mut i = 0;
+    
+    while i < messages.len() {
+        let msg = &messages[i];
+        
+        match msg.role.as_str() {
+            "user" => {
+                if !msg.content.trim().is_empty() {
+                    result.push(LlmChatMessage::user(&msg.content));
+                }
+                i += 1;
+            }
+            "assistant" => {
+                // 检查后面是否有 tool 消息
+                let mut tool_calls_json = Vec::new();
+                let mut tool_results = Vec::new();
+                let mut j = i + 1;
+                let reasoning_content = msg.reasoning_content.clone();
+                
+                // 收集所有连续的 tool 消息
+                while j < messages.len() && messages[j].role == "tool" {
+                    if let Some(ref metadata_str) = messages[j].metadata {
+                        if let Ok(metadata) = serde_json::from_str::<Value>(metadata_str) {
+                            if metadata.get("kind").and_then(|v| v.as_str()) == Some("tool_call") {
+                                // 这是一个工具调用
+                                let tool_call_id = metadata.get("tool_call_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let tool_name = metadata.get("tool_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let tool_args = metadata.get("tool_args")
+                                    .cloned()
+                                    .unwrap_or(Value::Object(serde_json::Map::new()));
+                                let tool_result = metadata.get("tool_result")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                
+                                // 构建 tool_call JSON
+                                tool_calls_json.push(serde_json::json!({
+                                    "id": tool_call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_name,
+                                        "arguments": tool_args
+                                    }
+                                }));
+                                
+                                // 如果有结果，保存为 tool result 消息
+                                if let Some(result_str) = tool_result {
+                                    tool_results.push((tool_call_id, result_str));
+                                }
+                            }
+                        }
+                    }
+                    j += 1;
+                }
+                
+                // 创建 assistant 消息
+                let mut chat_msg = LlmChatMessage::new("assistant", &msg.content);
+                
+                // 如果有工具调用，添加 tool_calls 和 reasoning_content
+                if !tool_calls_json.is_empty() {
+                    chat_msg.tool_calls = Some(serde_json::to_string(&tool_calls_json).unwrap_or_default());
+                    // 确保有 reasoning_content（即使为空）
+                    chat_msg.reasoning_content = Some(reasoning_content.unwrap_or_default());
+                } else if reasoning_content.is_some() {
+                    chat_msg.reasoning_content = reasoning_content;
+                }
+                
+                result.push(chat_msg);
+                
+                // 添加 tool result 消息
+                for (_tool_call_id, tool_result) in tool_results {
+                    let tool_msg = LlmChatMessage::new("tool", &tool_result);
+                    // Note: rig 的 Message::tool_result 需要 tool_call_id
+                    // 但 LlmChatMessage 没有 tool_call_id 字段
+                    // 我们需要在 metadata 中存储它，或者扩展 LlmChatMessage
+                    result.push(tool_msg);
+                }
+                
+                i = j;
+            }
+            "tool" => {
+                // 独立的 tool 消息（不跟在 assistant 后面的）
+                // 这种情况不应该发生，但为了安全起见还是处理一下
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    
+    result
+}
+
 /// 使用 sentinel_llm::StreamingLlmClient 处理 LLM 调用
 async fn stream_chat_with_llm(
     service: &AiServiceWrapper,
@@ -135,82 +359,20 @@ async fn stream_chat_with_llm(
     // 解析图片附件
     let image = parse_image_from_json(attachments.as_ref());
 
-    // 转换历史消息
-    let history: Vec<LlmChatMessage> = history_messages
-        .iter()
-        .filter(|msg| !msg.content.trim().is_empty())
-        .map(|msg| LlmChatMessage::new(&msg.role, &msg.content))
-        .collect();
+    // 转换历史消息，重新组合 assistant + tool 消息以符合 DeepSeek API 要求
+    let history: Vec<LlmChatMessage> = reconstruct_chat_history(&history_messages);
 
     // 创建 LLM 客户端
     let llm_config = service.service.to_llm_config();
     let streaming_client = StreamingLlmClient::new(llm_config);
 
-    // --- RAG 增强逻辑 ---
-    let mut final_system_prompt = system_prompt.map(|s| s.to_string()).unwrap_or_default();
-    
-    // 获取已激活的 RAG 集合
-    let active_collections = match db.get_rag_collections().await {
-        Ok(cols) => cols.into_iter().filter(|c| c.is_active).collect::<Vec<_>>(),
-        Err(_) => Vec::new(),
-    };
-
-    if !active_collections.is_empty() {
-        if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
-            let _ = app_handle.emit("agent:rag_retrieval_start", serde_json::json!({
-                "execution_id": message_id,
-                "collections": active_collections.iter().map(|c| &c.name).collect::<Vec<_>>(),
-            }));
-
-            let mut all_context = String::new();
-            let mut all_citations = Vec::new();
-
-            for col in active_collections {
-                let rag_req = sentinel_rag::models::AssistantRagRequest {
-                    query: user_message.to_string(),
-                    collection_id: Some(col.id),
-                    conversation_history: None,
-                    top_k: Some(5),
-                    use_mmr: None,
-                    mmr_lambda: None,
-                    similarity_threshold: None,
-                    reranking_enabled: Some(true),
-                    model_provider: None,
-                    model_name: None,
-                    max_tokens: None,
-                    temperature: None,
-                    system_prompt: None,
-                };
-                
-                if let Ok((context, citations)) = rag_service.query_for_assistant(&rag_req).await {
-                    if !context.is_empty() {
-                        if all_context.is_empty() {
-                            all_context.push_str("\n\n以下是相关的参考知识：\n");
-                        }
-                        all_context.push_str(&context);
-                        all_context.push_str("\n\n");
-                        all_citations.extend(citations);
-                    }
-                }
-            }
-
-            if !all_context.is_empty() {
-                final_system_prompt.push_str(&all_context);
-                
-                // 发送 RAG 检索结果事件（包含引用）
-                let _ = app_handle.emit("agent:rag_retrieval_complete", serde_json::json!({
-                    "execution_id": message_id,
-                    "citations": all_citations,
-                }));
-            } else {
-                let _ = app_handle.emit("agent:rag_retrieval_complete", serde_json::json!({
-                    "execution_id": message_id,
-                    "citations": Vec::<String>::new(),
-                }));
-            }
-        }
-    }
     // -------------------
+    
+    // 准备系统提示词
+    let final_system_prompt = system_prompt.unwrap_or("").to_string();
+    
+    // 注意：RAG 增强逻辑已移至 agent_execute 中统一处理，通过 system_prompt 传入。
+    // 这里保持 stream_chat_with_llm 职责单一，仅负责流式输出。
 
     // 流式调用
     let execution_id = message_id.to_string();
@@ -230,7 +392,7 @@ async fn stream_chat_with_llm(
             image.as_ref(),
             move |chunk| {
                 if is_conversation_cancelled(&conv_id) {
-                    return;
+                    return false;
                 }
                 match chunk {
                     StreamContent::Text(text) => {
@@ -328,6 +490,7 @@ async fn stream_chat_with_llm(
                         tracing::debug!("Stream done received");
                     }
                 }
+                true
             },
         )
         .await
@@ -370,6 +533,7 @@ async fn stream_chat_with_llm(
             cost: None,
             tool_calls: None,
             attachments: None,
+            reasoning_content: None,
             timestamp: chrono::Utc::now(),
             architecture_type: None,
             architecture_meta: None,
@@ -621,6 +785,7 @@ pub async fn generate_plugin_stream(
     let sid = stream_id.clone();
 
     tokio::spawn(async move {
+        let _guard = CancellationGuard(sid.clone());
         // Start event
         let _ = app_clone.emit("plugin_gen_start", &serde_json::json!({ "stream_id": sid }));
 
@@ -638,7 +803,7 @@ pub async fn generate_plugin_stream(
                 None,
                 move |chunk| {
                     if is_conversation_cancelled(&sid_for_callback) {
-                        return;
+                        return false;
                     }
                     match chunk {
                         StreamContent::Text(text) => {
@@ -662,6 +827,7 @@ pub async fn generate_plugin_stream(
                         StreamContent::Done => {}
                         _ => {}
                     }
+                    true
                 },
             )
             .await;
@@ -686,8 +852,6 @@ pub async fn generate_plugin_stream(
                 );
             }
         }
-
-        remove_cancellation_token(&sid);
     });
 
     Ok(stream_id)
@@ -946,6 +1110,7 @@ pub async fn save_ai_message(
         cost: None,
         tool_calls: None,
         attachments: None,
+        reasoning_content: None,
         timestamp: Utc::now(),
         architecture_type: request.architecture_type,
         architecture_meta: request.architecture_meta,
@@ -2649,7 +2814,7 @@ fn default_providers_config() -> serde_json::Value {
                 "name": "LM Studio",
                 "enabled": false,
                 "api_key": null,
-                "api_base": "http://localhost:1234/v1",
+                "api_base": "http://172.28.38.178:1234",
                 "organization": null,
                 "default_model": "",
                 "models": []
@@ -3030,8 +3195,6 @@ pub async fn agent_execute(
     app_handle: AppHandle,
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<String, String> {
-    use std::time::Duration;
-
     // Multi-point license verification
     #[cfg(not(debug_assertions))]
     if !sentinel_license::is_licensed() {
@@ -3112,6 +3275,18 @@ pub async fn agent_execute(
     );
     service.set_app_handle(app_handle.clone());
 
+    // 从数据库读取并应用工具输出限制配置
+    if let Ok(limit_str_opt) = db_service.get_config_internal("ai", "tool_output_limit").await {
+        if let Some(limit_str) = limit_str_opt {
+             if let Ok(limit) = limit_str.parse::<usize>() {
+                 tracing::info!("Setting global tool output limit to {} chars", limit);
+                 sentinel_tools::set_tool_execution_config(sentinel_tools::ToolExecutionConfig {
+                     max_output_chars: limit,
+                 });
+             }
+        }
+    }
+
     // 创建取消令牌
     let _cancellation_token = create_cancellation_token(&conversation_id);
 
@@ -3134,6 +3309,7 @@ pub async fn agent_execute(
     let provider_config_for_closure = provider_config.clone();
 
     tokio::spawn(async move {
+        let _guard = CancellationGuard(conv_id.clone());
         // 确保会话存在并保存用户消息
         if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
         {
@@ -3192,6 +3368,7 @@ pub async fn agent_execute(
                 attachments: attachments
                     .as_ref()
                     .and_then(|v| serde_json::to_string(v).ok()),
+                reasoning_content: None,
                 timestamp: chrono::Utc::now(),
                 architecture_type: None,
                 architecture_meta: None,
@@ -3280,67 +3457,31 @@ pub async fn agent_execute(
             }
         }
 
-        // RAG知识检索增强
+        // RAG 知识检索增强
         if enable_rag {
             if let Some(db) =
                 app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
             {
-                // 获取已激活的集合
-                let active_collection_id: Option<String> = match db.get_rag_collections().await {
-                    Ok(cols) => cols.into_iter().find(|c| c.is_active).map(|c| c.id),
-                    Err(_) => None,
+                // 获取对话历史用于查询重写
+                let history_messages = match db.get_ai_messages_by_conversation(&conv_id).await {
+                    Ok(msgs) => msgs,
+                    Err(_) => Vec::new(),
                 };
 
-                if let Ok(rag_service) =
-                    crate::commands::rag_commands::get_global_rag_service().await
-                {
-                    let mut history_snippets: Vec<String> = Vec::new();
-                    if let Ok(msgs) = db.get_ai_messages_by_conversation(&conv_id).await {
-                        for msg in msgs.iter().rev().take(6) {
-                            let prefix = match msg.role.as_str() {
-                                "user" => "U:",
-                                "assistant" => "A:",
-                                _ => "",
-                            };
-                            let snippet: String = msg.content.chars().take(200).collect();
-                            history_snippets.push(format!("{} {}", prefix, snippet));
-                        }
-                    }
+                // 使用显示文本（原始查询）进行 RAG，而不是包含流量上下文的完整任务
+                let rag_query = display_content_clone.as_ref().unwrap_or(&task_clone);
 
-                    let rag_req = sentinel_rag::models::AssistantRagRequest {
-                        query: task_clone.clone(),
-                        collection_id: active_collection_id,
-                        conversation_history: if history_snippets.is_empty() {
-                            None
-                        } else {
-                            Some(history_snippets)
-                        },
-                        top_k: Some(5),
-                        use_mmr: Some(true),
-                        mmr_lambda: Some(0.7),
-                        similarity_threshold: Some(0.65),
-                        reranking_enabled: Some(false),
-                        model_provider: None,
-                        model_name: None,
-                        max_tokens: None,
-                        temperature: None,
-                        system_prompt: None,
-                    };
-
-                    if let Ok(Ok((context, citations))) = tokio::time::timeout(
-                        Duration::from_millis(1200),
-                        rag_service.query_for_assistant(&rag_req),
-                    )
-                    .await
-                    {
+                // 执行统一的 RAG 增强逻辑
+                match perform_rag_enhancement(&app_handle, &conv_id, rag_query, &history_messages, None).await {
+                    Ok((context, citations)) => {
                         if !context.trim().is_empty() {
                             let base = base_system_prompt.unwrap_or_default();
-                            let policy = "你必须严格基于证据回答问题。在回答中引用证据时，使用 [SOURCE n] 格式。如果证据不足，请直接回答并避免编造。";
+                            let policy = "you must strictly answer the question based on the evidence. When citing evidence in your response, use the [SOURCE n] format. If the evidence is insufficient, please answer directly and avoid fabricating. ";
                             let augmented = if base.trim().is_empty() {
-                                format!("[知识溯源规范]\n{}\n\n[证据块]\n{}", policy, context)
+                                format!("[rule of knowledge]\n{}\n\n[Source Evidence Block]\n{}", policy, context)
                             } else {
                                 format!(
-                                    "{}\n\n[知识溯源规范]\n{}\n\n[证据块]\n{}",
+                                    "{}\n\n[rule of knowledge]\n{}\n\n[Source Evidence Block]\n{}",
                                     base, policy, context
                                 )
                             };
@@ -3353,10 +3494,14 @@ pub async fn agent_execute(
                                     "message_id": msg_id,
                                     "rag_applied": true,
                                     "rag_sources_used": !citations.is_empty(),
-                                    "source_count": citations.len()
+                                    "source_count": citations.len(),
+                                    "citations": citations // 发送完整引用信息供前端交互
                                 }),
                             );
                         }
+                    }
+                    Err(e) => {
+                        tracing::warn!("RAG enhancement failed in agent_execute: {}", e);
                     }
                 }
             }

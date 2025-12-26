@@ -86,6 +86,12 @@ export default {
     items: 'items',
     importing: 'Importing...',
     never: 'Never',
+    justNow: 'Just now',
+    viewAll: 'View All',
+    provider: 'Provider',
+    inputTokens: 'Input Tokens',
+    outputTokens: 'Output Tokens',
+    cost: 'Cost',
   },
   assetManagement: {
     title: 'Asset Management',
@@ -144,6 +150,7 @@ export default {
     high: 'High',
     critical: 'Critical',
     unknown: 'Unknown',
+    info: 'Info',
     Low: 'Low',
     Medium: 'Medium',
     High: 'High',
@@ -850,7 +857,17 @@ export default {
     startNewScan: 'Start New Scan',
     viewAllVulnerabilities: 'View All Vulnerabilities',
     manageProjects: 'Manage Projects',
-
+    trafficStats: 'Traffic Statistics',
+    httpRequests: 'HTTP Requests',
+    aiUsage: 'AI Usage',
+    totalTokens: 'Total Tokens',
+    vulnerabilitySeverity: 'Vulnerability Severity Distribution',
+    vulnerabilityType: 'Vulnerability Type Distribution',
+    databaseStats: 'Database Overview',
+    dbSize: 'Database Size',
+    tasks: 'Tasks Count',
+    conversations: 'Conversations Count',
+    lastBackup: 'Last Backup Time',
   },
   scanTasks: {
     title: 'Scan Tasks',
@@ -1194,6 +1211,14 @@ export default {
     promptManagement: 'Prompt Management',
     projects: 'Bounty Projects',
 
+  },
+  rag: {
+    title: 'Knowledge Base',
+    description: 'Manage and retrieve knowledge base documents',
+  },
+  workflow: {
+    title: 'Workflow Studio',
+    description: 'Design and execute automated workflows',
   },
   dictionary: {
     title: 'Dictionary Management',
@@ -1837,5 +1862,27 @@ export default {
     invalid: 'Invalid license',
     expired: 'License expired',
     machineMismatch: 'Machine ID mismatch'
+  },
+
+  // Agent component
+  agent: {
+    detailsInVisionPanel: 'Details shown in Vision Explorer panel',
+    collapseDetails: 'Collapse Details',
+    expandDetails: 'Expand Details',
+    inputParameters: 'Input Parameters',
+    executionResult: 'Execution Result',
+    toolCallId: 'Tool Call ID',
+    copyMessage: 'Copy Message',
+    copy: 'Copy',
+    resendMessage: 'Resend Message',
+    resend: 'Resend',
+    statusRunning: 'Running',
+    statusCompleted: 'Completed',
+    statusFailed: 'Failed',
+    statusPending: 'Pending',
+    sourceCitation: 'View Source {number}',
+    close: 'Close',
+    knowledgeBaseCited: 'Knowledge base cited ({count} times)',
+    noKnowledgeBaseCitations: 'No knowledge base citations',
   }
 }

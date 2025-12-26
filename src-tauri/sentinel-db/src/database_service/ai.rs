@@ -188,15 +188,19 @@ impl DatabaseService {
     }
 
     pub async fn create_ai_message_internal(&self, message: &AiMessage) -> Result<()> {
+        // Acquire write lock to serialize database writes
+        let _permit = self.write_semaphore.acquire().await
+            .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {}", e))?;
+        
         let pool = self.get_pool()?;
 
         sqlx::query(
             r#"
             INSERT INTO ai_messages (
                 id, conversation_id, role, content, metadata,
-                token_count, cost, tool_calls, attachments, timestamp,
+                token_count, cost, tool_calls, attachments, reasoning_content, timestamp,
                 architecture_type, architecture_meta, structured_data
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         )
         .bind(&message.id)
@@ -208,6 +212,7 @@ impl DatabaseService {
         .bind(message.cost)
         .bind(&message.tool_calls)
         .bind(&message.attachments)
+        .bind(&message.reasoning_content)
         .bind(message.timestamp)
         .bind(&message.architecture_type)
         .bind(&message.architecture_meta)
@@ -226,42 +231,50 @@ impl DatabaseService {
     }
 
     pub async fn upsert_ai_message_append_internal(&self, message: &AiMessage) -> Result<()> {
-        let pool = self.get_pool()?;
-        let mut tx = pool.begin().await?;
+        // Acquire write lock to serialize database writes
+        let _permit = self.write_semaphore.acquire().await
+            .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {}", e))?;
+        
+        let pool = self.get_pool()?.clone();
+        let msg = message.clone();
+        
+        self.retry_on_locked(|| async {
+            let mut tx = pool.begin().await?;
 
-        let exists = sqlx::query("SELECT id FROM ai_messages WHERE id = ?")
-            .bind(&message.id)
-            .fetch_optional(&mut *tx)
-            .await?;
+            let exists = sqlx::query("SELECT id FROM ai_messages WHERE id = ?")
+                .bind(&msg.id)
+                .fetch_optional(&mut *tx)
+                .await?;
 
-        if exists.is_some() {
-            sqlx::query("UPDATE ai_messages SET content = content || ?, token_count = ?, cost = ?, timestamp = ? WHERE id = ?")
-                .bind(&message.content)
-                .bind(message.token_count)
-                .bind(message.cost)
-                .bind(message.timestamp)
-                .bind(&message.id)
+            if exists.is_some() {
+                sqlx::query("UPDATE ai_messages SET content = content || ?, token_count = ?, cost = ?, timestamp = ? WHERE id = ?")
+                    .bind(&msg.content)
+                    .bind(msg.token_count)
+                    .bind(msg.cost)
+                    .bind(msg.timestamp)
+                    .bind(&msg.id)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                sqlx::query(
+                    "INSERT INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, timestamp)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                )
+                .bind(&msg.id)
+                .bind(&msg.conversation_id)
+                .bind(&msg.role)
+                .bind(&msg.content)
+                .bind(&msg.metadata)
+                .bind(msg.token_count)
+                .bind(msg.cost)
+                .bind(msg.timestamp)
                 .execute(&mut *tx)
                 .await?;
-        } else {
-            sqlx::query(
-                "INSERT INTO ai_messages (id, conversation_id, role, content, metadata, token_count, cost, timestamp)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-            )
-            .bind(&message.id)
-            .bind(&message.conversation_id)
-            .bind(&message.role)
-            .bind(&message.content)
-            .bind(&message.metadata)
-            .bind(message.token_count)
-            .bind(message.cost)
-            .bind(message.timestamp)
-            .execute(&mut *tx)
-            .await?;
-        }
+            }
 
-        tx.commit().await?;
-        Ok(())
+            tx.commit().await?;
+            Ok(())
+        }).await
     }
 
     pub async fn get_ai_messages_by_conversation_internal(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {

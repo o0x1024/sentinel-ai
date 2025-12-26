@@ -16,6 +16,7 @@ export default {
   deleteError: 'Failed to delete role',
   gridView: 'Grid View',
   listView: 'List View',
+  systemRole: 'System Role',
   systemRoleNoEdit: 'System roles cannot be edited',
   systemRoleNoDelete: 'System roles cannot be deleted'
 }

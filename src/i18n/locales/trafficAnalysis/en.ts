@@ -267,7 +267,8 @@ export default {
         headers: 'Headers',
         raw: 'Raw',
         pretty: 'Pretty',
-        hex: 'Hex'
+        hex: 'Hex',
+        render: 'Render'
       },
       request: 'Request',
       response: 'Response',
@@ -368,6 +369,35 @@ export default {
       hex: 'Hex',
       render: 'Render',
       clickSendToSendRequest: 'Click "Send Request" to send the request'
+    },
+    messages: {
+      requestCancelled: 'Request cancelled',
+      fillTargetAndRequest: 'Please fill in target host and request content',
+      urlCopied: 'URL copied',
+      copyFailed: 'Copy failed',
+      requestCopied: 'Request copied',
+      curlCopied: 'cURL command copied',
+      pasted: 'Pasted',
+      cannotReadClipboard: 'Cannot read clipboard',
+      sentToAssistant: 'Sent {type} to AI Assistant',
+      noResponseData: 'No response data available',
+      requestFailed: 'Request failed',
+      sendRequestFailed: 'Failed to send request',
+      networkError: 'Network error',
+      timeout: 'Request timeout',
+      connectionRefused: 'Connection refused',
+      unknownError: 'Unknown error',
+      hexDisplayLimited: 'Hex display limited to first {size}',
+      invalidUrl: 'Invalid URL format',
+      confirmCloseTab: 'Confirm close tab?',
+      confirmCloseTabMessage: 'This tab has unsaved content. Are you sure you want to close it?',
+      tabRestored: 'Restored {count} tab(s)',
+      tabsSaved: 'Tabs auto-saved'
+    },
+    types: {
+      request: 'request',
+      response: 'response',
+      both: 'traffic'
     }
   },
   // Packet Capture Component

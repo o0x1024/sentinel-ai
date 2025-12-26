@@ -1,5 +1,5 @@
 <template>
-  <div class="container mx-auto p-6 max-w-7xl">
+  <div class="container  p-6 ">
     <!-- 头部控制栏 -->
     <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-8">
       <div class="flex items-center gap-4">

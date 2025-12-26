@@ -3,6 +3,7 @@ import { createPinia } from 'pinia';
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
 import App from "./App.vue";
 import "./style.css";
+import 'driver.js/dist/driver.css';
 import { performanceService } from './services/performance';
 import { initializeCache } from './services/cache';
 import i18n from './i18n'; // 导入i18n配置

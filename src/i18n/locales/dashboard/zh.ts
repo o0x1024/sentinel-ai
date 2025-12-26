@@ -33,4 +33,5 @@ export default {
   vulnerabilityType: '漏洞类型分布',
   activeAgents: '活跃 Agent',
   toolExecutions: '工具执行',
+  lastBackup: '最后备份'
 }

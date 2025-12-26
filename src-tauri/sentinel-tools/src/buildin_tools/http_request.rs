@@ -42,6 +42,8 @@ pub struct HttpRequestOutput {
     pub body: String,
     pub body_length: usize,
     pub response_time_ms: u64,
+    pub truncated: bool,
+    pub original_size: usize,
 }
 
 /// HTTP request errors
@@ -151,8 +153,25 @@ impl Tool for HttpRequestTool {
         // Get body
         let body = response.text().await
             .map_err(|e| HttpRequestError::RequestFailed(e.to_string()))?;
-        let body_length = body.len();
+        let original_size = body.len();
+        
+        let max_chars = crate::get_tool_execution_config().max_output_chars;
 
+        // Truncate body if exceeds max size
+        let (body, truncated) = if original_size > max_chars {
+            let truncated_body = body.chars().take(max_chars).collect::<String>();
+            let truncation_msg = format!(
+                "\n\n[Response truncated: showing {} chars of {} bytes total. Original size: {} KB]",
+                truncated_body.len(),
+                original_size,
+                original_size / 1024
+            );
+            (format!("{}{}", truncated_body, truncation_msg), true)
+        } else {
+            (body, false)
+        };
+        
+        let body_length = body.len();
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(HttpRequestOutput {
@@ -163,6 +182,8 @@ impl Tool for HttpRequestTool {
             body,
             body_length,
             response_time_ms,
+            truncated,
+            original_size,
         })
     }
 }

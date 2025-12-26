@@ -42,6 +42,12 @@
                   {{ provider }}
                 </option>
               </select>
+              <label class="label">
+                <span class="label-text-alt">
+                  <i class="fas fa-info-circle mr-1"></i>
+                  将使用 AI 设置中该提供商的配置（API Key、Base URL 等）
+                </span>
+              </label>
             </div>
 
             <!-- 嵌入模型选择 -->
@@ -59,19 +65,11 @@
                   {{ model.name }}
                 </option>
               </select>
-            </div>
-
-            <!-- 嵌入服务地址 -->
-            <div class="form-control">
               <label class="label">
-                <span class="label-text">嵌入服务地址</span>
-              </label>
-              <input type="url" class="input input-bordered" 
-                     v-model="ragConfig.embedding_base_url"
-                     @blur="saveRagConfig"
-                     placeholder="http://localhost:1234">
-              <label class="label">
-                <span class="label-text-alt">LM Studio 默认: http://localhost:1234, Ollama 默认: http://localhost:11434</span>
+                <span class="label-text-alt">
+                  <i class="fas fa-lightbulb mr-1"></i>
+                  推荐使用专门的嵌入模型，如 nomic-embed-text、text-embedding-3-small 等
+                </span>
               </label>
             </div>
 
@@ -89,7 +87,18 @@
               </label>
             </div>
 
-            
+            <!-- 提示信息 -->
+            <div class="alert alert-info">
+              <i class="fas fa-info-circle"></i>
+              <div class="text-sm">
+                <p class="font-semibold mb-1">配置说明：</p>
+                <ul class="list-disc list-inside space-y-1">
+                  <li>嵌入服务的详细配置（Rig 提供商类型、API Key、Base URL）请在 <strong>AI 设置</strong> 中配置</li>
+                  <li>此处只需选择提供商和模型即可</li>
+                  <li>系统会自动继承 AI 设置中的提供商配置</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -299,6 +308,79 @@
             <label class="label">
               <span class="label-text-alt">低于此阈值的结果将被过滤</span>
             </label>
+          </div>
+        </div>
+
+        <!-- Chunk扩展配置 -->
+        <div class="divider mt-6 mb-4">上下文扩展</div>
+        
+        <div class="space-y-4">
+          <!-- 启用Chunk扩展 -->
+          <div class="form-control">
+            <label class="label cursor-pointer">
+              <span class="label-text">
+                <i class="fas fa-expand-arrows-alt mr-2"></i>
+                启用上下文扩展
+              </span>
+              <input type="checkbox" class="toggle toggle-success" 
+                     v-model="ragConfig.chunk_expansion_enabled"
+                     @change="saveRagConfig">
+            </label>
+            <label class="label">
+              <span class="label-text-alt">
+                <i class="fas fa-info-circle mr-1"></i>
+                自动包含匹配块的相邻块，确保POC等重要内容的完整性
+              </span>
+            </label>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4" 
+               :class="{ 'opacity-50': !ragConfig.chunk_expansion_enabled }">
+            <!-- 前向扩展数量 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">前向扩展块数</span>
+              </label>
+              <input type="number" class="input input-bordered" 
+                     v-model.number="ragConfig.chunk_expansion_before"
+                     @blur="saveRagConfig"
+                     :disabled="!ragConfig.chunk_expansion_enabled"
+                     min="0" max="5"
+                     placeholder="1">
+              <label class="label">
+                <span class="label-text-alt">包含匹配块之前的N个块</span>
+              </label>
+            </div>
+
+            <!-- 后向扩展数量 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">后向扩展块数</span>
+              </label>
+              <input type="number" class="input input-bordered" 
+                     v-model.number="ragConfig.chunk_expansion_after"
+                     @blur="saveRagConfig"
+                     :disabled="!ragConfig.chunk_expansion_enabled"
+                     min="0" max="5"
+                     placeholder="1">
+              <label class="label">
+                <span class="label-text-alt">包含匹配块之后的N个块</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 提示信息 -->
+          <div class="alert alert-success" v-if="ragConfig.chunk_expansion_enabled">
+            <i class="fas fa-lightbulb"></i>
+            <div class="text-sm">
+              <p class="font-semibold mb-1">智能扩展说明：</p>
+              <ul class="list-disc list-inside space-y-1">
+                <li>系统会自动检测POC、漏洞利用等文档类型</li>
+                <li>对于POC文档，会自动扩大扩展范围以确保完整性</li>
+                <li>普通文档按配置的扩展数量进行上下文扩展</li>
+                <li>扩展后的内容会在metadata中标记，便于追溯</li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>
@@ -536,8 +618,6 @@ const ragConfig = computed({
     embedding_provider: 'ollama',
     embedding_model: 'nomic-embed-text',
     embedding_dimensions: null,
-    embedding_api_key: '',
-    embedding_base_url: 'http://localhost:11434',
     chunk_size_chars: 1000,
     chunk_overlap_chars: 200,
     chunking_strategy: 'RecursiveCharacter',
@@ -577,51 +657,62 @@ const resetRagConfig = () => {
 
 // 获取嵌入模型列表
 const getEmbeddingModels = (provider: string) => {
-  if (!provider || !props.availableModels) return []
+  if (!provider || !props.availableModels || props.availableModels.length === 0) return []
   
-  // 从可用模型中过滤出该提供商的嵌入模型
+  // 从可用模型中过滤出该提供商的模型（不区分大小写）
   const providerModels = props.availableModels.filter(model => 
-    model.provider.toLowerCase() === provider.toLowerCase()
+    model.provider && provider && model.provider.toLowerCase() === provider.toLowerCase()
   )
   
-  // 如果模型有type字段，过滤embedding类型；否则返回所有模型（默认可用于embedding）
-  if (providerModels.length > 0 && providerModels[0].type !== undefined) {
-    return providerModels.filter(model => !model.type || model.type === 'embedding')
+  if (providerModels.length === 0) return []
+
+  // 如果模型有 type 字段，优先按 type 过滤；否则按名称排除 reranking 模型
+  const hasTypeInfo = providerModels.some(m => m.type !== undefined)
+  if (hasTypeInfo) {
+    const embeddingModels = providerModels.filter(model => !model.type || model.type === 'embedding')
+    if (embeddingModels.length > 0) return embeddingModels
   }
   
-  // 排除明显的reranking模型（通过名称识别）
-  return providerModels.filter(model => 
-    !model.name?.toLowerCase().includes('rerank') && 
-    !model.id?.toLowerCase().includes('rerank')
-  )
+  // 排除明显的 reranking 模型（通过名称或 ID 识别）
+  return providerModels.filter(model => {
+    const name = (model.name || '').toLowerCase()
+    const id = (model.id || '').toLowerCase()
+    return !name.includes('rerank') && !id.includes('rerank')
+  })
 }
 
 // 获取重排序模型列表
 const getRerankingModels = (provider: string) => {
-  if (!provider || !props.availableModels) return []
+  if (!provider || !props.availableModels || props.availableModels.length === 0) return []
   
-  // 从可用模型中过滤出该提供商的重排序模型
+  // 从可用模型中过滤出该提供商的模型（不区分大小写）
   const providerModels = props.availableModels.filter(model => 
-    model.provider.toLowerCase() === provider.toLowerCase()
+    model.provider && provider && model.provider.toLowerCase() === provider.toLowerCase()
   )
+
+  if (providerModels.length === 0) return []
   
-  // 如果模型有type字段，过滤reranking类型；否则通过名称识别reranking模型
-  if (providerModels.length > 0 && providerModels[0].type !== undefined) {
-    return providerModels.filter(model => model.type === 'reranking')
+  // 如果模型有 type 字段，过滤 reranking 类型
+  const hasTypeInfo = providerModels.some(m => m.type !== undefined)
+  if (hasTypeInfo) {
+    const rerankingModels = providerModels.filter(model => model.type === 'reranking')
+    if (rerankingModels.length > 0) return rerankingModels
   }
   
-  // 通过名称识别reranking模型
-  const rerankingModels = providerModels.filter(model => 
-    model.name?.toLowerCase().includes('rerank') || 
-    model.id?.toLowerCase().includes('rerank')
-  )
+  // 通过名称识别 reranking 模型
+  const rerankingModels = providerModels.filter(model => {
+    const name = (model.name || '').toLowerCase()
+    const id = (model.id || '').toLowerCase()
+    return name.includes('rerank') || id.includes('rerank')
+  })
   
   // 如果没有专门的重排序模型，对于某些提供商可以使用嵌入模型进行重排序
-  if (rerankingModels.length === 0 && ['openai', 'azure'].includes(provider.toLowerCase())) {
-    return providerModels.filter(model => 
-      model.name?.toLowerCase().includes('embedding') || 
-      model.id?.toLowerCase().includes('embedding')
-    ).map(model => ({
+  if (rerankingModels.length === 0 && ['openai', 'azure', 'aliyun'].includes(provider.toLowerCase())) {
+    return providerModels.filter(model => {
+      const name = (model.name || '').toLowerCase()
+      const id = (model.id || '').toLowerCase()
+      return name.includes('embedding') || id.includes('embedding')
+    }).map(model => ({
       ...model,
       name: `${model.name} (Rerank)`
     }))
@@ -635,27 +726,6 @@ const availableProviders = computed(() => {
   return props.availableProviders || []
 })
 
-// 获取提供商默认 base_url
-const getDefaultBaseUrl = (provider: string): string => {
-  const providerLower = provider.toLowerCase()
-  switch (providerLower) {
-    case 'lm studio':
-      return 'http://localhost:1234'
-    case 'ollama':
-      return 'http://localhost:11434'
-    case 'openai':
-      return 'https://api.openai.com'
-    case 'deepseek':
-      return 'https://api.deepseek.com'
-    case 'moonshot':
-      return 'https://api.moonshot.cn'
-    case 'zhipu':
-      return 'https://open.bigmodel.cn'
-    default:
-      return ''
-  }
-}
-
 // 提供商变更处理
 const onProviderChange = (stage: string, evt: Event) => {
   const target = evt?.target as HTMLSelectElement | null
@@ -664,11 +734,6 @@ const onProviderChange = (stage: string, evt: Event) => {
   // 当提供商改变时，重置对应的模型选择
   if (stage === 'rag_embedding') {
     ragConfig.value.embedding_model = ''
-    // 自动设置默认 base_url
-    const defaultUrl = getDefaultBaseUrl(provider)
-    if (defaultUrl) {
-      ragConfig.value.embedding_base_url = defaultUrl
-    }
   } else if (stage === 'rag_reranking') {
     ragConfig.value.reranking_model = ''
   }

@@ -102,6 +102,21 @@ impl Tool for VisionExplorerV2Tool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        // Check if Playwright MCP is connected
+        let connections = self.mcp_service.get_connection_info().await.map_err(|e| {
+            ToolError::ToolCallError(format!("Failed to check MCP connections: {}", e).into())
+        })?;
+
+        let playwright_connected = connections.iter().any(|c| {
+            c.name.to_lowercase().contains("playwright") && c.status.to_lowercase() == "connected"
+        });
+
+        if !playwright_connected {
+            return Err(ToolError::ToolCallError(
+                "Playwright MCP server not connected. Please connect the server to use Vision Explorer.".into(),
+            ));
+        }
+
         // Build V2 config
         let ai_config = crate::engines::vision_explorer_v2::types::AIConfig {
             fast_model_id: self.llm_config.model.clone(),

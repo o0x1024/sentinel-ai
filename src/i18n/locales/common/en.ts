@@ -88,4 +88,22 @@ export default {
   items: 'items',
   importing: 'Importing...',
   never: 'Never',
+  provider: 'Provider',
+  cost: 'Cost',
+  viewAll: 'View All',
+
+  // Tour guide
+  tour: {
+    next: 'Next',
+    previous: 'Previous',
+    done: 'Done',
+    skip: 'Skip',
+    progress: '{{current}} of {{total}}',
+    confirmExit: 'Are you sure you want to exit the tour?',
+    startTour: 'Start Tour',
+    restartTour: 'Restart Tour',
+    help: 'Help',
+    guide: 'Feature Guide',
+    documentation: 'Documentation'
+  }
 }

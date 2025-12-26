@@ -27,12 +27,14 @@ use services::{ai::AiServiceManager, database::DatabaseService};
 
 use commands::{
     ai, asset, config, database as db_commands, dictionary,
-    packet_capture_commands::{self, PacketCaptureState},
     traffic_analysis_commands::{self, TrafficAnalysisState},
     performance, prompt_commands,
     proxifier_commands::{self, ProxifierState},
     rag_commands, scan_session_commands, scan_task_commands, tool_commands, window,
 };
+
+#[cfg(not(target_os = "windows"))]
+use commands::packet_capture_commands::{self, PacketCaptureState};
 
 // Workflow engine and scheduler
 use sentinel_workflow::{WorkflowEngine, WorkflowScheduler};
@@ -62,6 +64,7 @@ pub fn run() {
                 .add_directive("sentinel_plugins=info".parse().unwrap())
                 .add_directive("sentinel_workflow=info".parse().unwrap())
                 .add_directive("sentinel_traffic=info".parse().unwrap())
+                .add_directive("sentinel_rag=info".parse().unwrap())
                 .add_directive("hudsucker=off".parse().unwrap())
                 .add_directive(
                     "rig::agent::prompt_request::streaming=warn"
@@ -85,11 +88,23 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
-        .on_window_event(|window, event| if let WindowEvent::CloseRequested { api, .. } = event {
-            let app_handle = window.app_handle();
-            let _ = app_handle.save_window_state(StateFlags::all());
-            window.hide().unwrap();
-            api.prevent_close();
+        .on_window_event(|window, event| {
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    let app_handle = window.app_handle();
+                    let _ = app_handle.save_window_state(StateFlags::all());
+                    
+                    // Hide taskbar icon on Windows/Linux before hiding window
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        let _ = window.set_skip_taskbar(true);
+                    }
+                    
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
+                _ => {}
+            }
         })
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -104,11 +119,17 @@ pub fn run() {
             let _tray_icon = TrayIconBuilder::with_id("main")
                 .tooltip("Sentinel AI")
                 .menu(&tray_menu)
+                .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                let _ = window.set_skip_taskbar(false);
+                            }
                             let _ = window.show();
                             let _ = window.set_focus();
+                            let _ = window.unminimize();
                         }
                     }
                     "proxy" => {
@@ -125,22 +146,32 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| if let TrayIconEvent::Click {
-                        button,
-                        button_state,
-                        ..
-                    } = event {
-                    // Left click: show main window
-                    if button == tauri::tray::MouseButton::Left
-                        && button_state == tauri::tray::MouseButtonState::Up
-                    {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                .on_tray_icon_event(|tray, event| {
+                    match event {
+                        TrayIconEvent::Click {
+                            button,
+                            button_state,
+                            ..
+                        } => {
+                            // Left click: show main window
+                            if button == tauri::tray::MouseButton::Left
+                                && button_state == tauri::tray::MouseButtonState::Up
+                            {
+                                let app = tray.app_handle();
+                                if let Some(window) = app.get_webview_window("main") {
+                                    #[cfg(not(target_os = "macos"))]
+                                    {
+                                        let _ = window.set_skip_taskbar(false);
+                                    }
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                    let _ = window.unminimize();
+                                }
+                            }
+                            // Right click menu is handled automatically by .menu()
                         }
+                        _ => {}
                     }
-                    // Right click menu is handled automatically by .menu()
                 })
                 .icon(app.default_window_icon().unwrap().clone())
                 .build(app)?;
@@ -238,6 +269,7 @@ pub fn run() {
                 handle.manage(traffic_state_for_manage);
                 handle.manage(plugin_manager_for_workflow);
                 handle.manage(ProxifierState::new());
+                #[cfg(not(target_os = "windows"))]
                 handle.manage(PacketCaptureState::default());
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
@@ -573,6 +605,8 @@ pub fn run() {
             rag_commands::reload_rag_service,
             rag_commands::get_folder_files,
             rag_commands::list_rag_documents,
+            rag_commands::list_rag_documents_paginated,
+            rag_commands::rag_batch_ingest_sources,
             rag_commands::get_rag_document_chunks,
             rag_commands::delete_rag_document,
             rag_commands::ensure_default_rag_collection,
@@ -598,8 +632,6 @@ pub fn run() {
             traffic_analysis_commands::export_ca_cert,
             traffic_analysis_commands::export_ca_key,
             traffic_analysis_commands::export_ca_pkcs12,
-            traffic_analysis_commands::import_ca_pkcs12,
-            traffic_analysis_commands::import_ca_der,
             traffic_analysis_commands::get_finding,
             traffic_analysis_commands::update_finding_status,
             traffic_analysis_commands::export_findings_html,
@@ -701,18 +733,30 @@ pub fn run() {
             commands::notifications::list_notification_rules,
             commands::notifications::get_notification_rule,
             commands::notifications::test_notification_rule_connection,
-            // Packet capture
+            // Packet capture (not available on Windows)
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::get_network_interfaces,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::start_packet_capture,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::stop_packet_capture,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::is_capture_running,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::open_pcap_file,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::save_pcap_file,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::extract_files_preview,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::extract_files_to_dir,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::save_extracted_file,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::get_file_related_packets,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::get_file_stream_packets,
+            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::save_selected_files,
             // Test commands
             commands::test_proxy::test_proxy_dynamic_update,

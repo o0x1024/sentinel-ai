@@ -1502,110 +1502,14 @@ pub async fn export_ca_pkcs12(
         return Ok(CommandResponse::err(format!("Failed to ensure CA: {}", e)));
     }
 
-    // Use empty password for easier import
-    match state.certificate_service.export_pkcs12(Some("")) {
+    // Export PEM format instead
+    match state.certificate_service.export_root_ca() {
         Ok(path) => {
             let path_str = path.to_string_lossy().to_string();
-            tracing::info!("Exported CA in PKCS#12 format: {}", path_str);
+            tracing::info!("Exported CA in PEM format: {}", path_str);
             Ok(CommandResponse::ok(CaCertPath { path: path_str }))
         }
         Err(e) => Ok(CommandResponse::err(format!("Failed to export: {}", e))),
-    }
-}
-
-/// 从 PKCS#12 文件导入证书和私钥
-#[tauri::command]
-pub async fn import_ca_pkcs12(
-    app: AppHandle,
-    state: State<'_, TrafficAnalysisState>,
-) -> Result<CommandResponse<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    // Open file dialog to select PKCS#12 file
-    let file_path = app
-        .dialog()
-        .file()
-        .add_filter("PKCS#12 Files", &["p12", "pfx"])
-        .blocking_pick_file();
-
-    let file_path = match file_path {
-        Some(path) => path
-            .into_path()
-            .map_err(|e| format!("Invalid path: {}", e))?,
-        None => return Ok(CommandResponse::err("No file selected".to_string())),
-    };
-
-    // Read file
-    let data = std::fs::read(&file_path).map_err(|e| format!("Failed to read file: {}", e))?;
-
-    // Import with empty password (user can be prompted for password if needed)
-    match state.certificate_service.import_pkcs12(&data, "") {
-        Ok(_) => {
-            tracing::info!("Imported CA from PKCS#12: {}", file_path.display());
-            Ok(CommandResponse::ok(
-                "Certificate imported successfully".to_string(),
-            ))
-        }
-        Err(e) => Ok(CommandResponse::err(format!("Failed to import: {}", e))),
-    }
-}
-
-/// 从 DER 格式导入证书和私钥
-#[tauri::command]
-pub async fn import_ca_der(
-    app: AppHandle,
-    state: State<'_, TrafficAnalysisState>,
-) -> Result<CommandResponse<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    // Select certificate file
-    let cert_path = app
-        .dialog()
-        .file()
-        .set_title("Select Certificate (DER format)")
-        .add_filter("DER Certificate", &["der", "cer", "crt"])
-        .blocking_pick_file();
-
-    let cert_path = match cert_path {
-        Some(path) => path
-            .into_path()
-            .map_err(|e| format!("Invalid path: {}", e))?,
-        None => {
-            return Ok(CommandResponse::err(
-                "No certificate file selected".to_string(),
-            ))
-        }
-    };
-
-    // Select key file
-    let key_path = app
-        .dialog()
-        .file()
-        .set_title("Select Private Key (DER format)")
-        .add_filter("DER Key", &["der", "key"])
-        .blocking_pick_file();
-
-    let key_path = match key_path {
-        Some(path) => path
-            .into_path()
-            .map_err(|e| format!("Invalid path: {}", e))?,
-        None => return Ok(CommandResponse::err("No key file selected".to_string())),
-    };
-
-    // Read files
-    let cert_data =
-        std::fs::read(&cert_path).map_err(|e| format!("Failed to read certificate: {}", e))?;
-    let key_data = std::fs::read(&key_path).map_err(|e| format!("Failed to read key: {}", e))?;
-
-    // Import
-    match state.certificate_service.import_der(&cert_data, &key_data) {
-        Ok(_) => {
-            tracing::info!("Imported CA from DER format");
-            Ok(CommandResponse::ok(
-                "Certificate imported successfully".to_string(),
-            ))
-        }
-        Err(e) => Ok(CommandResponse::err(format!("Failed to import: {}", e))),
     }
 }
 

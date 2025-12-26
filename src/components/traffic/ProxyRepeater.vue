@@ -358,7 +358,7 @@
                 v-else-if="currentTab.responseTab === 'render'"
                 :srcdoc="currentTab.response?.body || ''"
                 class="w-full h-full border-0 bg-white"
-                sandbox="allow-same-origin"
+                sandbox="allow-scripts allow-forms allow-popups allow-modals"
               ></iframe>
             </template>
             <div v-else class="flex items-center justify-center w-full h-full text-base-content/50">
@@ -386,10 +386,12 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { dialog } from '@/composables/useDialog';
 import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
 
 const router = useRouter();
+const { t } = useI18n();
 
 // Props
 const props = defineProps<{
@@ -422,29 +424,34 @@ interface RepeaterTab {
   requestTab: 'pretty' | 'raw' | 'hex';
   responseTab: 'pretty' | 'raw' | 'hex' | 'render';
   response: ReplayResponse | null;
+  isSending: boolean; // 每个 tab 独立的发送状态
+  modified: boolean; // 标记是否有未保存的修改
 }
 
 // Refs
 const tabs = ref<RepeaterTab[]>([]);
 const activeTabIndex = ref(0);
-const isSending = ref(false);
 const showTargetDialog = ref(false);
 const requestEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
 const responseEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
 
-let requestCancelled = false;
+// 请求取消控制器映射（每个 tab 一个）
+const abortControllers = new Map<string, { cancelled: boolean }>();
 
 // 右键菜单状态
 const contextMenu = ref({
   visible: false,
   x: 0,
   y: 0,
+  width: 0,
+  height: 0,
 });
 
 // Layout
 const STORAGE_KEY_LAYOUT = 'proxyRepeater.layoutMode';
 const STORAGE_KEY_LEFT_WIDTH = 'proxyRepeater.leftPanelWidth';
 const STORAGE_KEY_TOP_HEIGHT = 'proxyRepeater.topPanelHeight';
+const STORAGE_KEY_TABS = 'proxyRepeater.tabs';
 
 const layoutMode = ref<'horizontal' | 'vertical'>(
   (localStorage.getItem(STORAGE_KEY_LAYOUT) as 'horizontal' | 'vertical') || 'horizontal'
@@ -457,6 +464,8 @@ let startX = 0;
 let startY = 0;
 let startWidth = 0;
 let startHeight = 0;
+let saveTimer: number | null = null;
+let hostDetectionTimer: number | null = null;
 
 // Computed
 const currentTab = computed(() => {
@@ -472,6 +481,9 @@ const showPort = computed(() => {
   if (!useTls && port === 80) return false;
   return true;
 });
+
+// 向后兼容的 isSending（用于模板）
+const isSending = computed(() => currentTab.value?.isSending || false);
 
 // Methods
 function generateId(): string {
@@ -524,6 +536,8 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
     requestTab: 'pretty',
     responseTab: 'pretty',
     response: null,
+    isSending: false,
+    modified: false,
   };
 }
 
@@ -533,9 +547,29 @@ function addTab() {
   activeTabIndex.value = tabs.value.length - 1;
 }
 
-function closeTab(index: number) {
+async function closeTab(index: number) {
+  const tab = tabs.value[index];
+  
+  // 检查是否有未保存的修改
+  if (tab && tab.modified && tab.rawRequest.trim()) {
+    const confirmed = await dialog.confirm({
+      title: t('trafficAnalysis.repeater.messages.confirmCloseTab'),
+      message: t('trafficAnalysis.repeater.messages.confirmCloseTabMessage'),
+    });
+    
+    if (!confirmed) {
+      return;
+    }
+  }
+  
+  // 清理该 tab 的取消控制器
+  if (tab) {
+    abortControllers.delete(tab.id);
+  }
+  
   if (tabs.value.length === 1) {
-    tabs.value = [];
+    // 关闭最后一个 tab 时，创建一个新的空 tab
+    tabs.value = [createTab()];
     activeTabIndex.value = 0;
     return;
   }
@@ -544,6 +578,9 @@ function closeTab(index: number) {
   if (activeTabIndex.value >= tabs.value.length) {
     activeTabIndex.value = tabs.value.length - 1;
   }
+  
+  // 保存到 localStorage
+  saveTabs();
 }
 
 function selectTab(index: number) {
@@ -551,28 +588,38 @@ function selectTab(index: number) {
 }
 
 function cancelRequest() {
-  requestCancelled = true;
-  isSending.value = false;
-  dialog.toast.info('请求已取消');
+  if (!currentTab.value) return;
+  
+  const controller = abortControllers.get(currentTab.value.id);
+  if (controller) {
+    controller.cancelled = true;
+  }
+  
+  currentTab.value.isSending = false;
+  dialog.toast.info(t('trafficAnalysis.repeater.messages.requestCancelled'));
 }
 
 async function sendRequest() {
-  if (!currentTab.value || isSending.value) return;
+  if (!currentTab.value || currentTab.value.isSending) return;
   
   if (!currentTab.value.targetHost || !currentTab.value.rawRequest.trim()) {
-    dialog.toast.warning('请填写目标 Host 和请求内容');
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.fillTargetAndRequest'));
     return;
   }
   
-  isSending.value = true;
-  requestCancelled = false;
-  currentTab.value.response = null;
-  currentTab.value.rawResponse = '';
+  const tab = currentTab.value;
+  tab.isSending = true;
+  tab.response = null;
+  tab.rawResponse = '';
   
-  const tabId = currentTab.value.id;
+  // 创建取消控制器
+  const controller = { cancelled: false };
+  abortControllers.set(tab.id, controller);
+  
+  const tabId = tab.id;
   
   try {
-    let rawRequest = currentTab.value.rawRequest;
+    let rawRequest = tab.rawRequest;
     rawRequest = rawRequest.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
     
     if (!rawRequest.endsWith('\r\n\r\n')) {
@@ -584,58 +631,124 @@ async function sendRequest() {
     }
     
     const response = await invoke<any>('replay_raw_request', {
-      host: currentTab.value.targetHost,
-      port: currentTab.value.targetPort || 443,
-      useTls: currentTab.value.useTls,
+      host: tab.targetHost,
+      port: tab.targetPort || 443,
+      useTls: tab.useTls,
       rawRequest: rawRequest,
       timeoutSecs: 30,
     });
     
-    if (requestCancelled) return;
+    // 检查是否已取消
+    if (controller.cancelled) return;
+    
+    // 查找目标 tab（可能已被删除或切换）
     const targetTab = tabs.value.find(t => t.id === tabId);
     if (!targetTab) return;
     
     if (response.success && response.data) {
       targetTab.rawResponse = response.data.raw_response;
       
-      const rawResp = response.data.raw_response;
-      const headerEnd = rawResp.indexOf('\r\n\r\n');
-      if (headerEnd > 0) {
-        const headerPart = rawResp.substring(0, headerEnd);
-        const bodyPart = rawResp.substring(headerEnd + 4);
-        
-        const statusLine = headerPart.split('\r\n')[0];
-        const statusMatch = statusLine.match(/HTTP\/[\d.]+\s+(\d+)/);
-        const statusCode = statusMatch ? parseInt(statusMatch[1]) : 0;
-        
-        const headers: Record<string, string> = {};
-        const headerLines = headerPart.split('\r\n').slice(1);
-        for (const line of headerLines) {
-          const colonIndex = line.indexOf(':');
-          if (colonIndex > 0) {
-            headers[line.substring(0, colonIndex).trim()] = line.substring(colonIndex + 1).trim();
-          }
-        }
-        
-        targetTab.response = {
-          statusCode,
-          headers,
-          body: bodyPart,
-          responseTimeMs: response.data.response_time_ms,
-        };
+      // 解析响应
+      const parsedResponse = parseRawResponse(response.data.raw_response, response.data.response_time_ms);
+      if (parsedResponse) {
+        targetTab.response = parsedResponse;
       }
       
       targetTab.name = targetTab.targetHost;
+      targetTab.modified = false;
     } else {
-      dialog.toast.error(response.error || '请求失败');
+      const errorMsg = parseErrorMessage(response.error);
+      dialog.toast.error(errorMsg);
     }
   } catch (error: any) {
-    if (requestCancelled) return;
+    if (controller.cancelled) return;
+    
+    const targetTab = tabs.value.find(t => t.id === tabId);
+    if (!targetTab) return;
+    
     console.error('Failed to send request:', error);
-    dialog.toast.error(`发送请求失败: ${error}`);
+    const errorMsg = parseErrorMessage(error);
+    dialog.toast.error(errorMsg);
   } finally {
-    isSending.value = false;
+    const targetTab = tabs.value.find(t => t.id === tabId);
+    if (targetTab) {
+      targetTab.isSending = false;
+    }
+    abortControllers.delete(tabId);
   }
+}
+
+// 解析原始响应
+function parseRawResponse(rawResp: string, responseTimeMs: number): ReplayResponse | null {
+  if (!rawResp) return null;
+  
+  // 支持多种分隔符
+  let headerEnd = rawResp.indexOf('\r\n\r\n');
+  let separatorLen = 4;
+  
+  if (headerEnd === -1) {
+    headerEnd = rawResp.indexOf('\n\n');
+    separatorLen = 2;
+  }
+  
+  if (headerEnd === -1) {
+    headerEnd = rawResp.indexOf('\r\r');
+    separatorLen = 2;
+  }
+  
+  if (headerEnd === -1) {
+    // 没有找到分隔符，可能是纯头部
+    return null;
+  }
+  
+  const headerPart = rawResp.substring(0, headerEnd);
+  const bodyPart = rawResp.substring(headerEnd + separatorLen);
+  
+  // 解析状态行
+  const lines = headerPart.split(/\r\n|\r|\n/);
+  const statusLine = lines[0];
+  const statusMatch = statusLine.match(/HTTP\/[\d.]+\s+(\d+)/);
+  const statusCode = statusMatch ? parseInt(statusMatch[1]) : 0;
+  
+  // 解析响应头
+  const headers: Record<string, string> = {};
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const colonIndex = line.indexOf(':');
+    if (colonIndex > 0) {
+      const key = line.substring(0, colonIndex).trim();
+      const value = line.substring(colonIndex + 1).trim();
+      headers[key] = value;
+    }
+  }
+  
+  return {
+    statusCode,
+    headers,
+    body: bodyPart,
+    responseTimeMs,
+  };
+}
+
+// 解析错误信息
+function parseErrorMessage(error: any): string {
+  if (!error) return t('trafficAnalysis.repeater.messages.unknownError');
+  
+  const errorStr = String(error).toLowerCase();
+  
+  if (errorStr.includes('timeout')) {
+    return t('trafficAnalysis.repeater.messages.timeout');
+  }
+  if (errorStr.includes('connection refused') || errorStr.includes('econnrefused')) {
+    return t('trafficAnalysis.repeater.messages.connectionRefused');
+  }
+  if (errorStr.includes('network')) {
+    return t('trafficAnalysis.repeater.messages.networkError');
+  }
+  
+  // 返回原始错误信息（但限制长度）
+  const msg = String(error);
+  return msg.length > 100 ? msg.substring(0, 100) + '...' : msg;
 }
 
 function formatPrettyRequest(): string {
@@ -693,6 +806,8 @@ function onPrettyRequestUpdate(value: string) {
   if (headerEnd === -1) {
     // 没有 body
     currentTab.value.rawRequest = value.replace(/\n/g, '\r\n');
+    autoDetectHostFromRequest(value);
+    currentTab.value.modified = true;
     return;
   }
   
@@ -709,6 +824,8 @@ function onPrettyRequestUpdate(value: string) {
   }
   
   currentTab.value.rawRequest = headerPart + '\r\n\r\n' + finalBody;
+  autoDetectHostFromRequest(value);
+  currentTab.value.modified = true;
 }
 
 function formatPrettyResponse(): string {
@@ -739,28 +856,41 @@ function formatPrettyResponse(): string {
 
 function toHex(str: string): string {
   if (!str) return '';
+  
+  // 限制最大显示长度（1MB）
+  const MAX_HEX_LENGTH = 1024 * 1024;
+  const limited = str.length > MAX_HEX_LENGTH;
+  const displayStr = limited ? str.substring(0, MAX_HEX_LENGTH) : str;
+  
+  const lines: string[] = [];
   let hex = '';
   let ascii = '';
   let lineCount = 0;
   
-  for (let i = 0; i < str.length; i++) {
-    const charCode = str.charCodeAt(i);
+  for (let i = 0; i < displayStr.length; i++) {
+    const charCode = displayStr.charCodeAt(i);
     hex += charCode.toString(16).padStart(2, '0') + ' ';
-    ascii += charCode >= 32 && charCode < 127 ? str[i] : '.';
+    ascii += charCode >= 32 && charCode < 127 ? displayStr[i] : '.';
     lineCount++;
     
     if (lineCount === 16) {
-      hex += ' ' + ascii + '\n';
+      lines.push(hex + ' ' + ascii);
+      hex = '';
       ascii = '';
       lineCount = 0;
     }
   }
   
   if (lineCount > 0) {
-    hex += '   '.repeat(16 - lineCount) + ' ' + ascii;
+    lines.push(hex + '   '.repeat(16 - lineCount) + ' ' + ascii);
   }
   
-  return hex;
+  if (limited) {
+    lines.push('');
+    lines.push(t('trafficAnalysis.repeater.messages.hexDisplayLimited', { size: formatBytes(MAX_HEX_LENGTH) }));
+  }
+  
+  return lines.join('\n');
 }
 
 function getStatusClass(status: number): string {
@@ -781,10 +911,32 @@ function formatBytes(bytes: number): string {
 
 // 右键菜单
 function showContextMenu(event: MouseEvent) {
+  // 估算菜单尺寸（基于菜单项数量）
+  const MENU_WIDTH = 220;
+  const MENU_HEIGHT = 400;
+  
+  // 计算菜单位置，确保不超出视口
+  let x = event.clientX;
+  let y = event.clientY;
+  
+  // 考虑滚动位置
+  const scrollX = window.scrollX || window.pageXOffset;
+  const scrollY = window.scrollY || window.pageYOffset;
+  
+  // 调整位置避免超出视口
+  if (x + MENU_WIDTH > window.innerWidth) {
+    x = window.innerWidth - MENU_WIDTH - 10;
+  }
+  if (y + MENU_HEIGHT > window.innerHeight) {
+    y = window.innerHeight - MENU_HEIGHT - 10;
+  }
+  
   contextMenu.value = {
     visible: true,
-    x: Math.min(event.clientX, window.innerWidth - 200),
-    y: Math.min(event.clientY, window.innerHeight - 300),
+    x: Math.max(0, x),
+    y: Math.max(0, y),
+    width: MENU_WIDTH,
+    height: MENU_HEIGHT,
   };
   
   setTimeout(() => {
@@ -820,8 +972,8 @@ function contextMenuCopyUrl() {
   const url = buildFullUrl();
   if (url) {
     navigator.clipboard.writeText(url)
-      .then(() => dialog.toast.success('URL 已复制'))
-      .catch(() => dialog.toast.error('复制失败'));
+      .then(() => dialog.toast.success(t('trafficAnalysis.repeater.messages.urlCopied')))
+      .catch(() => dialog.toast.error(t('trafficAnalysis.repeater.messages.copyFailed')));
   }
 }
 
@@ -830,8 +982,8 @@ function contextMenuCopyRequest() {
   if (!currentTab.value?.rawRequest) return;
   
   navigator.clipboard.writeText(currentTab.value.rawRequest)
-    .then(() => dialog.toast.success('请求已复制'))
-    .catch(() => dialog.toast.error('复制失败'));
+    .then(() => dialog.toast.success(t('trafficAnalysis.repeater.messages.requestCopied')))
+    .catch(() => dialog.toast.error(t('trafficAnalysis.repeater.messages.copyFailed')));
 }
 
 function contextMenuCopyCurl() {
@@ -839,8 +991,8 @@ function contextMenuCopyCurl() {
   const curl = buildCurlCommand();
   if (curl) {
     navigator.clipboard.writeText(curl)
-      .then(() => dialog.toast.success('cURL 命令已复制'))
-      .catch(() => dialog.toast.error('复制失败'));
+      .then(() => dialog.toast.success(t('trafficAnalysis.repeater.messages.curlCopied')))
+      .catch(() => dialog.toast.error(t('trafficAnalysis.repeater.messages.copyFailed')));
   }
 }
 
@@ -851,9 +1003,14 @@ async function contextMenuPaste() {
   try {
     const text = await navigator.clipboard.readText();
     currentTab.value.rawRequest += text;
-    dialog.toast.success('已粘贴');
+    currentTab.value.modified = true;
+    
+    // 立即检测 Host（粘贴操作时不使用防抖）
+    autoDetectHostFromRequest(currentTab.value.rawRequest);
+    
+    dialog.toast.success(t('trafficAnalysis.repeater.messages.pasted'));
   } catch {
-    dialog.toast.error('无法读取剪贴板');
+    dialog.toast.error(t('trafficAnalysis.repeater.messages.cannotReadClipboard'));
   }
 }
 
@@ -861,6 +1018,7 @@ function contextMenuClear() {
   hideContextMenu();
   if (!currentTab.value) return;
   currentTab.value.rawRequest = '';
+  currentTab.value.modified = true;
 }
 
 // 发送到 AI 助手
@@ -918,8 +1076,9 @@ async function sendToAssistant(type: SendType) {
   // 发送全局事件
   await tauriEmit('traffic:send-to-assistant', { requests: [trafficData], type });
   
-  const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量';
-  dialog.toast.success(`已发送${typeText}到 AI 助手`);
+  const typeKey = type === 'request' ? 'request' : type === 'response' ? 'response' : 'both';
+  const typeText = t(`trafficAnalysis.repeater.types.${typeKey}`);
+  dialog.toast.success(t('trafficAnalysis.repeater.messages.sentToAssistant', { type: typeText }));
   
   // 跳转到 AI 助手页面
   router.push('/ai-assistant');
@@ -933,7 +1092,7 @@ function contextMenuSendRequestToAssistant() {
 function contextMenuSendResponseToAssistant() {
   hideContextMenu();
   if (!currentTab.value?.response) {
-    dialog.toast.warning('暂无响应数据');
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.noResponseData'));
     return;
   }
   sendToAssistant('response');
@@ -942,18 +1101,42 @@ function contextMenuSendResponseToAssistant() {
 function buildFullUrl(): string {
   if (!currentTab.value) return '';
   
-  const protocol = currentTab.value.useTls ? 'https' : 'http';
-  const host = currentTab.value.targetHost;
-  const port = currentTab.value.targetPort;
-  const defaultPort = currentTab.value.useTls ? 443 : 80;
-  const portStr = port !== defaultPort ? `:${port}` : '';
-  
-  // 从 rawRequest 提取路径
-  const firstLine = currentTab.value.rawRequest.split(/\r\n|\r|\n/)[0];
-  const match = firstLine.match(/^\w+\s+(\S+)/);
-  const path = match ? match[1] : '/';
-  
-  return `${protocol}://${host}${portStr}${path}`;
+  try {
+    const protocol = currentTab.value.useTls ? 'https' : 'http';
+    const host = currentTab.value.targetHost;
+    const port = currentTab.value.targetPort;
+    const defaultPort = currentTab.value.useTls ? 443 : 80;
+    const portStr = port !== defaultPort ? `:${port}` : '';
+    
+    // 从 rawRequest 提取路径
+    const firstLine = currentTab.value.rawRequest.split(/\r\n|\r|\n/)[0];
+    const match = firstLine.match(/^\w+\s+(\S+)/);
+    let path = match ? match[1] : '/';
+    
+    // 确保路径以 / 开头
+    if (!path.startsWith('/') && !path.startsWith('http')) {
+      path = '/' + path;
+    }
+    
+    // 如果路径已经是完整 URL，直接返回
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+    
+    const url = `${protocol}://${host}${portStr}${path}`;
+    
+    // 验证 URL 格式
+    try {
+      new URL(url);
+      return url;
+    } catch {
+      console.warn('Invalid URL constructed:', url);
+      return url; // 仍然返回，但已记录警告
+    }
+  } catch (error) {
+    console.error('Error building URL:', error);
+    return '';
+  }
 }
 
 function buildCurlCommand(): string {
@@ -997,6 +1180,109 @@ function buildCurlCommand(): string {
   }
   
   return curl;
+}
+
+// 数据持久化
+function saveTabs() {
+  try {
+    const tabsToSave = tabs.value.map(tab => ({
+      id: tab.id,
+      name: tab.name,
+      targetHost: tab.targetHost,
+      targetPort: tab.targetPort,
+      useTls: tab.useTls,
+      overrideSni: tab.overrideSni,
+      sniHost: tab.sniHost,
+      rawRequest: tab.rawRequest,
+      requestTab: tab.requestTab,
+      responseTab: tab.responseTab,
+      // 不保存响应数据和发送状态
+    }));
+    
+    localStorage.setItem(STORAGE_KEY_TABS, JSON.stringify(tabsToSave));
+  } catch (error) {
+    console.error('Failed to save tabs:', error);
+  }
+}
+
+function loadTabs() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_TABS);
+    if (!saved) return;
+    
+    const tabsData = JSON.parse(saved);
+    if (!Array.isArray(tabsData) || tabsData.length === 0) return;
+    
+    tabs.value = tabsData.map(data => ({
+      ...data,
+      rawResponse: '',
+      response: null,
+      isSending: false,
+      modified: false,
+    }));
+    
+    dialog.toast.success(t('trafficAnalysis.repeater.messages.tabRestored', { count: tabs.value.length }));
+  } catch (error) {
+    console.error('Failed to load tabs:', error);
+  }
+}
+
+// 自动检测并填充 Host 配置
+function autoDetectHostFromRequest(requestText: string) {
+  if (!currentTab.value || !requestText) return;
+  
+  // 解析请求文本，查找 Host 头
+  const lines = requestText.split(/\r\n|\r|\n/);
+  let hostValue = '';
+  
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (trimmedLine === '') break; // 到达 body 部分
+    
+    const colonIndex = line.indexOf(':');
+    if (colonIndex > 0) {
+      const key = line.substring(0, colonIndex).trim();
+      const value = line.substring(colonIndex + 1).trim();
+      
+      if (key.toLowerCase() === 'host') {
+        hostValue = value;
+        break;
+      }
+    }
+  }
+  
+  if (!hostValue) return;
+  
+  // 解析 Host 值，可能包含端口号
+  const hostPortMatch = hostValue.match(/^([^:]+)(?::(\d+))?$/);
+  if (!hostPortMatch) return;
+  
+  const hostname = hostPortMatch[1];
+  const port = hostPortMatch[2] ? parseInt(hostPortMatch[2]) : null;
+  
+  // 检查是否需要更新（避免不必要的更新）
+  const needsUpdate = !currentTab.value.targetHost || 
+                      currentTab.value.targetHost === 'example.com' ||
+                      currentTab.value.targetHost !== hostname;
+  
+  if (needsUpdate) {
+    currentTab.value.targetHost = hostname;
+    
+    // 根据端口号判断协议
+    if (port !== null) {
+      currentTab.value.targetPort = port;
+      currentTab.value.useTls = port === 443;
+    } else {
+      // 没有指定端口，默认使用 HTTPS/443
+      currentTab.value.targetPort = 443;
+      currentTab.value.useTls = true;
+    }
+    
+    // 更新 tab 名称
+    currentTab.value.name = hostname;
+    
+    console.log(`Auto-detected host: ${hostname}, port: ${currentTab.value.targetPort}, TLS: ${currentTab.value.useTls}`);
+  }
 }
 
 // Resize
@@ -1058,6 +1344,36 @@ watch(layoutMode, (newMode) => {
   localStorage.setItem(STORAGE_KEY_LAYOUT, newMode);
 });
 
+// 监听 tabs 变化，自动保存（防抖）
+watch(tabs, () => {
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+  }
+  
+  saveTimer = window.setTimeout(() => {
+    saveTabs();
+    saveTimer = null;
+  }, 1000); // 1秒后保存
+}, { deep: true });
+
+// 监听 rawRequest 变化，自动检测 Host（使用防抖避免频繁触发）
+watch(() => currentTab.value?.rawRequest, (newRequest, oldRequest) => {
+  if (newRequest && currentTab.value && newRequest !== oldRequest) {
+    // 清除之前的定时器
+    if (hostDetectionTimer !== null) {
+      clearTimeout(hostDetectionTimer);
+    }
+    
+    // 使用防抖，500ms 后执行检测
+    hostDetectionTimer = window.setTimeout(() => {
+      if (currentTab.value) {
+        autoDetectHostFromRequest(newRequest);
+      }
+      hostDetectionTimer = null;
+    }, 500);
+  }
+}, { deep: false });
+
 // 键盘快捷键处理
 function handleKeydown(event: KeyboardEvent) {
   // Cmd/Ctrl + R 发送当前请求到新标签（Send to Repeater）
@@ -1072,6 +1388,10 @@ function handleKeydown(event: KeyboardEvent) {
 
 // Lifecycle
 onMounted(() => {
+  // 尝试从 localStorage 恢复 tabs
+  loadTabs();
+  
+  // 如果没有恢复到任何 tab，创建一个新的
   if (tabs.value.length === 0 && !props.initialRequest) {
     addTab();
   }
@@ -1083,8 +1403,25 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('mousemove', handleResize);
   document.removeEventListener('mouseup', stopResize);
-  // 清理键盘快捷键监听
   document.removeEventListener('keydown', handleKeydown);
+  
+  // 清理所有取消控制器
+  abortControllers.clear();
+  
+  // 清理 host 检测定时器
+  if (hostDetectionTimer !== null) {
+    clearTimeout(hostDetectionTimer);
+    hostDetectionTimer = null;
+  }
+  
+  // 清理保存定时器
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  
+  // 保存 tabs 到 localStorage
+  saveTabs();
 });
 </script>
 

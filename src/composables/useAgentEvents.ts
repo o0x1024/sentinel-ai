@@ -108,6 +108,7 @@ interface RagMetaInfo {
   rag_applied: boolean
   rag_sources_used: boolean
   source_count: number
+  citations?: any[]
 }
 
 export interface UseAgentEventsReturn {
@@ -541,6 +542,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       web_search_applied?: boolean
       rag_sources_used?: boolean
       source_count?: number
+      citations?: any[]
     }>('ai_meta_info', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.conversation_id)) return
@@ -553,11 +555,39 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         ragMetaInfo.value = {
           rag_applied: true,
           rag_sources_used: used,
-          source_count: count
+          source_count: count,
+          citations: payload.citations
         }
       }
     })
     unlisteners.push(unlistenMetaInfo)
+
+    // 监听 agent:rag_retrieval_complete 事件
+    const unlistenRagComplete = await listen<{
+      execution_id: string
+      citations: any[]
+    }>('agent:rag_retrieval_complete', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      console.log('[useAgentEvents] RAG retrieval complete:', payload)
+
+      if (payload.citations) {
+        if (!ragMetaInfo.value) {
+          ragMetaInfo.value = {
+            rag_applied: true,
+            rag_sources_used: payload.citations.length > 0,
+            source_count: payload.citations.length,
+            citations: payload.citations
+          }
+        } else {
+          ragMetaInfo.value.citations = payload.citations
+          ragMetaInfo.value.rag_sources_used = payload.citations.length > 0
+          ragMetaInfo.value.source_count = payload.citations.length
+        }
+      }
+    })
+    unlisteners.push(unlistenRagComplete)
 
     // 监听 agent:complete 事件
     const unlistenComplete = await listen<AgentCompleteEvent>('agent:complete', (event) => {

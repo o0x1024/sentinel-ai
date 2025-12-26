@@ -166,5 +166,8 @@ export default {
         folderFilesFailed: 'Failed to get folder files: {error}',
         noSupportedFiles: 'No supported document files found in folder',
         foundFiles: 'Found {count} document files',
+        embeddingDimensionMismatch: 'Embedding Dimension Mismatch',
+        embeddingDimensionMismatchDetail: 'The embedding model dimension used by this collection is inconsistent with the configured model. Please use the same embedding model in RAG settings, or delete and recreate this collection.',
+        failedFiles: 'Failed Files',
     },
 }

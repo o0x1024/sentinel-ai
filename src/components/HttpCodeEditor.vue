@@ -248,11 +248,11 @@ function initEditor() {
       keymap.of([...defaultKeymap, indentWithTab]),
       history(),
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
+        if (update.docChanged && !props.readonly) {
           emit('update:modelValue', update.state.doc.toString())
         }
       }),
-      readOnlyCompartment.of(EditorView.editable.of(!props.readonly)),
+      readOnlyCompartment.of(EditorState.readOnly.of(props.readonly)),
       EditorView.lineWrapping,
     ],
   })
@@ -282,7 +282,7 @@ function updateContent(content: string) {
 function updateReadonly(readonly: boolean) {
   if (!editorView) return
   editorView.dispatch({
-    effects: readOnlyCompartment.reconfigure(EditorView.editable.of(!readonly))
+    effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(readonly))
   })
 }
 
@@ -387,6 +387,21 @@ onUnmounted(() => {
 /* Readonly styling */
 :deep(.cm-editor.cm-focused) {
   outline: none;
+}
+
+/* Improve readonly mode: allow text selection and copy */
+:deep(.cm-editor) {
+  cursor: text;
+  user-select: text;
+}
+
+:deep(.cm-content) {
+  user-select: text;
+}
+
+/* Show selection even when not focused in readonly mode */
+:deep(.cm-selectionBackground) {
+  background-color: oklch(var(--p) / 0.2) !important;
 }
 </style>
 

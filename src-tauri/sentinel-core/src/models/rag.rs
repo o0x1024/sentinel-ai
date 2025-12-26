@@ -68,7 +68,6 @@ pub struct CollectionInfo {
     pub name: String,
     pub description: Option<String>,
     pub is_active: bool,
-    pub embedding_model: String,
     pub document_count: usize,
     pub chunk_count: usize,
     pub created_at: DateTime<Utc>,

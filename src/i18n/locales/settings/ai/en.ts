@@ -84,8 +84,10 @@ export default {
   defaultModel: 'Default Model',
   temperature: 'Temperature',
   temperatureHint: 'Lower values make the output more deterministic, higher values make it more random and creative',
-  maxTokens: 'Max Tokens',
-  maxTokensHint: 'Limit the maximum length of the AI response',
+  maxTokens: 'Max Generation Tokens',
+  maxTokensHint: 'Limit the maximum length of the AI response per turn',
+  toolOutputLimit: 'Tool Output Limit',
+  toolOutputLimitHint: 'Truncate tool output (e.g. web scraping) to prevent context overflow',
   availableModels: 'Available Models',
   modelName: 'Model',
   contextLength: 'Context Length',
@@ -117,5 +119,8 @@ export default {
   totalTokens: 'Total Tokens',
   estimatedCost: 'Estimated Cost',
   selectModel: 'Please select a model',
-  refreshModels: 'Refresh Models'
+  refreshModels: 'Refresh Models',
+  fastModel: 'Fast Model',
+  smartModel: 'Smart Model',
+  clearStats: 'Clear Statistics'
 }

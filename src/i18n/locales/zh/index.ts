@@ -61,6 +61,14 @@ export default {
   ragManagement,
   notifications,
 
+  // Top-level aliases for sidebar navigation
+  rag: {
+    title: '知识库管理'
+  },
+  workflow: {
+    title: '工作流工作室'
+  },
+
   // Security Center section
   securityCenter: {
     title: '安全中心',
@@ -277,6 +285,30 @@ export default {
     data: '数据',
     system: '系统',
     areYouSureClearStatistics: '确定要清空所有工具使用统计吗？',
+    
+    // Tour guide
+    tour: {
+      welcome: {
+        title: '欢迎使用 AI Agent',
+        description: '这是您的智能助手，可以帮助您完成各种安全测试任务。'
+      },
+      conversationList: {
+        title: '会话列表',
+        description: '点击这里可以查看和切换不同的会话，每个会话都保持独立的上下文。'
+      },
+      newConversation: {
+        title: '新建会话',
+        description: '创建一个新的会话，开始全新的对话。'
+      },
+      messageArea: {
+        title: '消息区域',
+        description: '这里显示您与 AI 的对话历史，支持代码高亮和 Markdown 渲染。'
+      },
+      inputArea: {
+        title: '输入区域',
+        description: '在这里输入您的问题或指令，AI 会根据您的需求执行相应的任务。'
+      }
+    },
     // Ability Group
     abilityGroups: '能力组',
     abilityGroupManagement: '能力组管理',
@@ -437,6 +469,9 @@ export default {
     noReviewPlugins: '暂无待审核的插件',
     allPlugins: '全部插件',
     favorited: '已收藏',
+    favorite: '收藏插件',
+    unfavorite: '取消收藏',
+    copyPlugin: '复制插件',
     showing: '显示',
     of: '共',
     items: '条',

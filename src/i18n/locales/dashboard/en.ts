@@ -33,4 +33,5 @@ export default {
   vulnerabilityType: 'Vulnerability Type',
   activeAgents: 'Active Agents',
   toolExecutions: 'Tool Executions',
+  lastBackup: 'Last Backup'
 }

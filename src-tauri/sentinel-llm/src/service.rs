@@ -69,7 +69,7 @@ impl AiService {
         mut on_chunk: F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         info!("发送流式消息请求 - 模型: {}", self.config.model);
 
@@ -284,7 +284,7 @@ impl AiService {
         on_chunk: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::openai;
 
@@ -333,7 +333,7 @@ impl AiService {
         on_chunk: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::anthropic;
 
@@ -389,7 +389,7 @@ impl AiService {
         on_chunk: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::gemini;
         let client = gemini::Client::from_env();
@@ -414,7 +414,7 @@ impl AiService {
         on_chunk: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::ollama;
         let client = ollama::Client::from_env();
@@ -433,7 +433,7 @@ impl AiService {
         on_chunk: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::deepseek;
 
@@ -483,7 +483,7 @@ impl AiService {
         on_chunk: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::openrouter;
         let client = openrouter::Client::from_env();
@@ -502,7 +502,7 @@ impl AiService {
         on_chunk: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::xai;
         let client = xai::Client::from_env();
@@ -521,7 +521,7 @@ impl AiService {
         on_chunk: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::groq;
         let client = groq::Client::from_env();
@@ -541,7 +541,7 @@ impl AiService {
     where
         M: rig::completion::CompletionModel + 'static,
         M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
-        F: FnMut(StreamChunk),
+        F: FnMut(StreamChunk) -> bool,
     {
         // 流式调用
         let stream_result = tokio::time::timeout(
@@ -570,7 +570,9 @@ impl AiService {
                     let piece = t.text;
                     if !piece.is_empty() {
                         content.push_str(&piece);
-                        on_chunk(StreamChunk::Text(piece));
+                        if !on_chunk(StreamChunk::Text(piece)) {
+                            break;
+                        }
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
@@ -578,7 +580,9 @@ impl AiService {
                 )) => {
                     let piece = r.reasoning.join("");
                     if !piece.is_empty() {
-                        on_chunk(StreamChunk::Reasoning(piece));
+                        if !on_chunk(StreamChunk::Reasoning(piece)) {
+                            break;
+                        }
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
@@ -586,11 +590,11 @@ impl AiService {
                 )) => {}
                 Ok(MultiTurnStreamItem::FinalResponse(resp)) => {
                     let usage = resp.usage();
-                    on_chunk(StreamChunk::Usage {
+                    let _ = on_chunk(StreamChunk::Usage {
                         input_tokens: usage.input_tokens as u32,
                         output_tokens: usage.output_tokens as u32,
                     });
-                    on_chunk(StreamChunk::Done);
+                    let _ = on_chunk(StreamChunk::Done);
                     break;
                 }
                 Ok(_) => {}
@@ -622,6 +626,7 @@ impl AiService {
                 if let StreamChunk::Text(text) = chunk {
                     result.push_str(&text);
                 }
+                true
             },
         )
         .await?;

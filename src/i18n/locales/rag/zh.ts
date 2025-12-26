@@ -166,5 +166,8 @@ export default {
         folderFilesFailed: '获取文件夹文件失败: {error}',
         noSupportedFiles: '文件夹中没有找到支持的文档文件',
         foundFiles: '找到 {count} 个文档文件',
+        embeddingDimensionMismatch: '嵌入模型维度不匹配',
+        embeddingDimensionMismatchDetail: '当前集合使用的嵌入模型维度与配置的模型不一致。请在 RAG 设置中使用相同的嵌入模型，或删除此集合后重新创建。',
+        failedFiles: '失败文件',
     },
 }

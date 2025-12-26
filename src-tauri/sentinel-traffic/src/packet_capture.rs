@@ -1,6 +1,10 @@
 //! Packet capture module - provides network packet capture functionality
 //!
 //! Similar to Wireshark, captures raw network packets from network interfaces
+//!
+//! Note: This module is not available on Windows due to WinPcap/Npcap dependency issues
+
+#![cfg(not(target_os = "windows"))]
 
 use pcap_file::pcap::{PcapHeader, PcapPacket, PcapReader, PcapWriter};
 use pcap_file::pcapng::{Block, PcapNgBlock, PcapNgReader, PcapNgWriter};

@@ -21,7 +21,11 @@ use deno_core::{
 };
 use deno_core::v8;
 use deno_features::FeatureChecker;
+#[cfg(not(target_os = "windows"))]
 use deno_permissions::{PermissionsContainer, RuntimePermissionDescriptorParser};
+
+#[cfg(target_os = "windows")]
+use deno_permissions::PermissionsContainer;
 use deno_error::JsErrorBox;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -321,10 +325,22 @@ impl PluginEngine {
         {
             let op_state = runtime.op_state();
             let mut state = op_state.borrow_mut();
-            let parser = Arc::new(RuntimePermissionDescriptorParser::new(
-                sys_traits::impls::RealSys,
-            ));
-            state.put(PermissionsContainer::allow_all(parser));
+            
+            #[cfg(not(target_os = "windows"))]
+            {
+                let parser = Arc::new(RuntimePermissionDescriptorParser::new(
+                    sys_traits::impls::RealSys,
+                ));
+                state.put(PermissionsContainer::allow_all(parser));
+            }
+            
+            #[cfg(target_os = "windows")]
+            {
+                // On Windows, skip permission setup due to cross-compilation issues
+                // Plugins will run without permission checks
+                tracing::warn!("Running without permission checks on Windows");
+            }
+            
             let mut features = FeatureChecker::default();
             features.enable_feature(deno_net::UNSTABLE_FEATURE_NAME);
             state.put(Arc::new(features));

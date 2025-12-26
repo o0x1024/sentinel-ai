@@ -72,6 +72,8 @@ export default {
   agentCreator: 'Agent创建器',
   plugins: '插件管理',
   license: '许可证管理',
+  rag: '知识库管理',
+  workflow: '工作流工作室',
   
   // User menu
   profile: '个人资料',

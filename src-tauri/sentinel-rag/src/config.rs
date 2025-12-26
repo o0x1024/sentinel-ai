@@ -29,6 +29,15 @@ pub struct RagConfig {
     pub min_chunk_size_chars: usize,
     #[serde(default = "default_max_chunk_size")]
     pub max_chunk_size_chars: usize,
+    /// Enable automatic expansion of retrieved chunks with adjacent chunks
+    #[serde(default = "default_chunk_expansion_enabled")]
+    pub chunk_expansion_enabled: bool,
+    /// Number of adjacent chunks to include before the matched chunk
+    #[serde(default = "default_chunk_expansion_before")]
+    pub chunk_expansion_before: usize,
+    /// Number of adjacent chunks to include after the matched chunk
+    #[serde(default = "default_chunk_expansion_after")]
+    pub chunk_expansion_after: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,12 +70,15 @@ impl Default for RagConfig {
             reranking_provider: None,
             reranking_model: None,
             reranking_enabled: false,
-            similarity_threshold: 0.7,
+            similarity_threshold: 0.2,
             augmentation_enabled: false,
             context_window_size: 1,
             chunking_strategy: ChunkingStrategy::RecursiveCharacter,
             min_chunk_size_chars: 100,
             max_chunk_size_chars: 3000,
+            chunk_expansion_enabled: true,
+            chunk_expansion_before: 1,
+            chunk_expansion_after: 1,
         }
     }
 }
@@ -110,9 +122,33 @@ impl SupportedFileType {
             _ => None,
         }
     }
+    
+    /// Get all supported file extensions
+    pub fn all_extensions() -> Vec<String> {
+        vec![
+            "txt".to_string(),
+            "md".to_string(),
+            "markdown".to_string(),
+            "docx".to_string(),
+            "pdf".to_string(),
+        ]
+    }
+    
+    /// Get primary extensions (without aliases)
+    pub fn primary_extensions() -> Vec<String> {
+        vec![
+            "txt".to_string(),
+            "md".to_string(),
+            "docx".to_string(),
+            "pdf".to_string(),
+        ]
+    }
 }
 
 fn default_context_window() -> usize { 1 }
 fn default_min_chunk_size() -> usize { 100 }
 fn default_max_chunk_size() -> usize { 3000 }
+fn default_chunk_expansion_enabled() -> bool { true }
+fn default_chunk_expansion_before() -> usize { 1 }
+fn default_chunk_expansion_after() -> usize { 1 }
 

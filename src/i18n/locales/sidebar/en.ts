@@ -44,4 +44,6 @@ export default {
   vulnerabilityCount: '12',
   remainingTimeDefault: '2h 15m remaining',
   intelligentTest: 'Intelligent Security Test',
+  rag: 'RAG Management',
+  workflow: 'Workflow Studio',
 }

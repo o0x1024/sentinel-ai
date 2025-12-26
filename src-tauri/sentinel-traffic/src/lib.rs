@@ -15,6 +15,7 @@ pub mod database;
 pub mod error;
 pub mod finding;
 pub mod history_cache;
+#[cfg(not(target_os = "windows"))]
 pub mod packet_capture;
 pub mod proxy;
 pub mod scanner;
@@ -34,6 +35,7 @@ pub use history_cache::{
     WebSocketConnectionStatus, WebSocketDirection, WebSocketFilters, WebSocketMessageRecord,
     WebSocketMessageType,
 };
+#[cfg(not(target_os = "windows"))]
 pub use packet_capture::{
     CapturedPacket, ExtractedFile, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps,
     ProtocolLayer,

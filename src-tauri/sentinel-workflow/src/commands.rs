@@ -163,6 +163,9 @@ fn convert_core_to_rag(core: CoreRagConfig) -> RagConfig {
         similarity_threshold: core.similarity_threshold,
         augmentation_enabled: core.augmentation_enabled,
         context_window_size: core.context_window_size,
+        chunk_expansion_enabled: core.chunk_expansion_enabled,
+        chunk_expansion_before: core.chunk_expansion_before,
+        chunk_expansion_after: core.chunk_expansion_after,
         chunking_strategy: match core.chunking_strategy {
             sentinel_db::core::models::rag_config::ChunkingStrategy::FixedSize => sentinel_rag::config::ChunkingStrategy::FixedSize,
             sentinel_db::core::models::rag_config::ChunkingStrategy::RecursiveCharacter => sentinel_rag::config::ChunkingStrategy::RecursiveCharacter,
@@ -480,7 +483,7 @@ pub async fn execute_workflow_steps(
                     let rag_config = match db_clone.get_rag_config().await { Ok(Some(core_cfg)) => convert_core_to_rag(core_cfg), _ => RagConfig::default() };
                     match RagService::new(rag_config, db_clone.clone()).await {
                         Ok(service) => {
-                            let req = RagQueryRequest { query, collection_id, top_k, use_mmr, mmr_lambda, filters: if filters.is_empty() { None } else { Some(filters) }, use_embedding: Some(true), reranking_enabled: Some(true) };
+                            let req = RagQueryRequest { query, collection_id, top_k, use_mmr, mmr_lambda, filters: if filters.is_empty() { None } else { Some(filters) }, use_embedding: Some(true), reranking_enabled: Some(true), similarity_threshold: None };
                             match service.query(req).await {
                                 Ok(resp) => {
                                     let result_json = serde_json::to_value(resp).unwrap_or(serde_json::json!({"status":"ok"}));

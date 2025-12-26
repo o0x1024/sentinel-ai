@@ -389,21 +389,14 @@ const securityStatus = ref({
 const availableModels = computed(() => {
   const models: any[] = []
   
-  Object.values(aiConfig.value.providers || {}).forEach((provider: any) => {
-    // 统一规范化 provider 名称
-    const providerName = provider.name || provider.provider || 'Unknown'
+  Object.entries(aiConfig.value.providers || {}).forEach(([providerKey, provider]: [string, any]) => {
     if (provider.models && Array.isArray(provider.models)) {
       provider.models.forEach((model: any) => {
         // 放宽条件：默认展示；若存在 is_available 显式为 false 则过滤
         if (model.is_available !== false) {
           models.push({
-            id: model.id,
-            name: model.name,
-            provider: providerName,
-            description: model.description || '',
-            context_length: model.context_length || 4096,
-            supports_tools: model.supports_tools || false,
-            supports_vision: model.supports_vision || false
+            ...model,
+            provider: providerKey, // 使用提供商的 KEY 作为名称，确保一致性
           })
         }
       })
@@ -417,11 +410,10 @@ const availableModels = computed(() => {
 const availableProviders = computed(() => {
   const providers: string[] = []
   
-  Object.values(aiConfig.value.providers || {}).forEach((provider: any) => {
+  Object.entries(aiConfig.value.providers || {}).forEach(([providerKey, provider]: [string, any]) => {
     if (provider.enabled) {
-      const providerName = provider.provider || provider.name || 'Unknown'
-      if (!providers.includes(providerName)) {
-        providers.push(providerName)
+      if (!providers.includes(providerKey)) {
+        providers.push(providerKey)
       }
     }
   })
@@ -437,16 +429,27 @@ const loadSettings = async () => {
     const aiConfigData = await invoke('get_ai_config')
     aiConfig.value = aiConfigData as any
     
-    // 加载 enable_multimodal 配置
+    // 加载 enable_multimodal 和 tool_output_limit 配置
     try {
-      const configs = await invoke('get_config', { request: { category: 'ai', key: 'enable_multimodal' } }) as Array<{ key: string, value: string }>
-      if (configs && configs.length > 0) {
-        aiConfig.value.enable_multimodal = configs[0].value === 'true'
+      const configs = await invoke('get_config', { request: { category: 'ai', key: null } }) as Array<{ key: string, value: string }>
+      
+      const configMap = new Map(configs.map(c => [c.key, c.value]))
+      
+      // enable_multimodal
+      if (configMap.has('enable_multimodal')) {
+        aiConfig.value.enable_multimodal = configMap.get('enable_multimodal') === 'true'
       } else {
-        // 默认启用多模态
         aiConfig.value.enable_multimodal = true
       }
-    } catch {
+      
+      // tool_output_limit
+      if (configMap.has('tool_output_limit')) {
+         const limit = parseInt(configMap.get('tool_output_limit') || '50000')
+         if (!settings.value.ai) settings.value.ai = {}
+         settings.value.ai.toolOutputLimit = limit
+      }
+    } catch (e) {
+      console.warn('Failed to load extra AI configs', e)
       // 默认启用多模态
       aiConfig.value.enable_multimodal = true
     }
@@ -667,6 +670,18 @@ const getSupportsVision = (provider: string, modelId: string): boolean => {
 const saveAiConfig = async () => {
   try {
     await invoke('save_ai_config', { config: aiConfig.value })
+    
+    // 保存 tool_output_limit
+    try {
+       const toolLimit = settings.value.ai?.toolOutputLimit || 50000
+       const configs = [
+          { category: 'ai', key: 'tool_output_limit', value: String(toolLimit), description: 'Max chars for tool output', is_encrypted: false }
+       ]
+       await invoke('save_config_batch', { configs })
+    } catch(e) {
+       console.error('Failed to save tool limit', e)
+    }
+
     dialog.toast.success('AI配置已保存')
   } catch (error) {
     console.error('Failed to save AI config:', error)
@@ -1378,23 +1393,33 @@ const saveSecurityConfig = async () => {
 // 数据库相关方法
 const saveRagConfig = async () => {
   try {
+    saving.value = true
     await invoke('save_rag_config', { config: ragConfig.value })
-    dialog.toast.success('RAG配置已保存')
+    
+    // 重载RAG服务以应用新配置
+    try {
+      await invoke('reload_rag_service')
+      dialog.toast.success('RAG配置已保存并应用')
+    } catch (reloadError) {
+      console.error('Failed to reload RAG service:', reloadError)
+      dialog.toast.warning('RAG配置已保存，但服务重载失败。请重启应用以应用新配置。')
+    }
   } catch (error) {
     console.error('Failed to save RAG config:', error)
     dialog.toast.error('保存RAG配置失败')
+  } finally {
+    saving.value = false
   }
 }
 
 const testEmbeddingConnection = async () => {
   try {
     dialog.toast.info('测试嵌入连接...')
+    // 只传递 provider 和 model，后端会从 AI 配置中获取 api_key 和 base_url
     const result = await invoke('test_embedding_connection', { 
       config: {
         provider: ragConfig.value.embedding_provider,
-        model: ragConfig.value.embedding_model,
-        api_key: ragConfig.value.embedding_api_key,
-        base_url: ragConfig.value.embedding_base_url
+        model: ragConfig.value.embedding_model
       }
     })
     dialog.toast.success('嵌入连接测试成功')
@@ -1409,14 +1434,20 @@ const resetRagConfig = () => {
     embedding_provider: 'ollama',
     embedding_model: 'nomic-embed-text',
     embedding_dimensions: null,
-    embedding_api_key: '',
-    embedding_base_url: 'http://localhost:11434',
     chunk_size_chars: 1000,
     chunk_overlap_chars: 200,
+    chunking_strategy: 'RecursiveCharacter',
+    min_chunk_size_chars: 100,
+    max_chunk_size_chars: 3000,
     top_k: 5,
     mmr_lambda: 0.7,
+    similarity_threshold: 0.7,
     batch_size: 10,
-    max_concurrent: 4
+    max_concurrent: 4,
+    reranking_enabled: false,
+    reranking_provider: '',
+    reranking_model: '',
+    augmentation_enabled: false
   }
   dialog.toast.success('RAG配置已重置为默认值')
 }

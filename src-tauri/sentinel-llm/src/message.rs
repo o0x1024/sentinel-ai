@@ -1,7 +1,7 @@
 //! 消息类型模块
 
-use rig::completion::{message::Image, Message};
-use rig::message::{AssistantContent, DocumentSourceKind, ImageDetail, ImageMediaType, UserContent};
+use rig::completion::{message::Image, Message, AssistantContent};
+use rig::message::{DocumentSourceKind, ImageDetail, ImageMediaType, UserContent, ToolCall};
 use rig::one_or_many::OneOrMany;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,6 +17,12 @@ pub struct ChatMessage {
     pub role: String,
     /// 消息内容
     pub content: String,
+    /// 工具调用（仅 assistant 消息）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<String>,
+    /// 推理内容（deepseek-reasoner 模型需要）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 impl ChatMessage {
@@ -25,6 +31,8 @@ impl ChatMessage {
         Self {
             role: "user".to_string(),
             content: content.into(),
+            tool_calls: None,
+            reasoning_content: None,
         }
     }
 
@@ -33,6 +41,8 @@ impl ChatMessage {
         Self {
             role: "assistant".to_string(),
             content: content.into(),
+            tool_calls: None,
+            reasoning_content: None,
         }
     }
 
@@ -41,6 +51,8 @@ impl ChatMessage {
         Self {
             role: role.into(),
             content: content.into(),
+            tool_calls: None,
+            reasoning_content: None,
         }
     }
 }
@@ -51,19 +63,88 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
         .iter()
         .filter_map(|msg| {
             let content = msg.content.trim();
-            if content.is_empty() {
-                return None;
-            }
-            match msg.role.to_lowercase().as_str() {
-                "user" => Some(Message::User {
-                    content: OneOrMany::one(UserContent::text(content.to_string())),
-                }),
-                "assistant" => Some(Message::Assistant {
-                    id: None,
-                    content: OneOrMany::one(AssistantContent::Text(rig::message::Text::from(
-                        content.to_string(),
-                    ))),
-                }),
+            let role = msg.role.to_lowercase();
+            
+            match role.as_str() {
+                "user" => {
+                    if content.is_empty() {
+                        return None;
+                    }
+                    Some(Message::User {
+                        content: OneOrMany::one(UserContent::text(content.to_string())),
+                    })
+                },
+                "assistant" => {
+                    // assistant 消息可能只有 tool_calls 而没有 content
+                    let has_content = !content.is_empty();
+                    let has_tool_calls = msg.tool_calls.as_ref().map(|tc| !tc.trim().is_empty()).unwrap_or(false);
+                    
+                    if !has_content && !has_tool_calls {
+                        return None;
+                    }
+                    
+                    // 构建 AssistantContent
+                    let mut contents = Vec::new();
+                    
+                    // 根据 DeepSeek API 要求，如果有 tool_calls，必须先添加 reasoning_content
+                    // 参考：https://api-docs.deepseek.com/guides/thinking_mode#tool-calls
+                    if has_tool_calls {
+                        // 如果有推理内容，使用它；否则使用空字符串
+                        let reasoning = msg.reasoning_content.as_ref()
+                            .map(|r| r.trim())
+                            .filter(|r| !r.is_empty())
+                            .unwrap_or("");
+                        contents.push(AssistantContent::reasoning(reasoning.to_string()));
+                    } else if let Some(ref reasoning) = msg.reasoning_content {
+                        // 没有 tool_calls 但有 reasoning_content 的情况
+                        if !reasoning.trim().is_empty() {
+                            contents.push(AssistantContent::reasoning(reasoning.clone()));
+                        }
+                    }
+                    
+                    // 添加工具调用（如果有）
+                    if has_tool_calls {
+                        if let Some(ref tc_str) = msg.tool_calls {
+                            if let Ok(tool_calls) = serde_json::from_str::<Vec<ToolCall>>(tc_str) {
+                                for tc in tool_calls {
+                                    contents.push(AssistantContent::tool_call(
+                                        tc.id.clone(),
+                                        tc.function.name.clone(),
+                                        tc.function.arguments.clone(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 添加文本内容（如果有）
+                    if has_content {
+                        contents.push(AssistantContent::Text(rig::message::Text::from(content.to_string())));
+                    }
+                    
+                    if contents.is_empty() {
+                        return None;
+                    }
+                    
+                    Some(Message::Assistant {
+                        id: None,
+                        content: if contents.len() == 1 {
+                            OneOrMany::one(contents.into_iter().next().unwrap())
+                        } else {
+                            OneOrMany::many(contents).ok()?
+                        },
+                    })
+                },
+                "tool" => {
+                    // 处理 tool 角色的消息
+                    if content.is_empty() {
+                        return None;
+                    }
+                    // tool 消息需要 tool_call_id，可以从 metadata 或 tool_calls 中提取
+                    // 由于 rig 的 Message::tool_result 需要 id 和 content，我们简化处理
+                    // 实际上 tool 消息在当前实现中是通过 rig 自动处理的
+                    None
+                },
                 _ => None,
             }
         })

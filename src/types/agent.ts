@@ -35,6 +35,7 @@ export interface MessageMetadata {
     rag_applied: boolean
     rag_sources_used: boolean
     source_count: number
+    citations?: any[]
   }
   execution_id?: string
 }

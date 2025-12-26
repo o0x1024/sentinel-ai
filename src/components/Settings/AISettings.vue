@@ -385,7 +385,7 @@
               <!-- 最大Token设置 -->
               <div class="form-control">
                 <label class="label">
-                  <span class="label-text">{{ t('settings.ai.maxTokens') }}</span>
+                  <span class="label-text">{{ t('settings.ai.maxTokens') }} (Max Generation)</span>
                 </label>
                 <div class="flex items-center gap-4">
                   <input v-model.number="settings.ai.maxTokens" type="range" min="500" max="8000" step="500"
@@ -394,6 +394,21 @@
                 </div>
                 <label class="label">
                   <span class="label-text-alt">{{ t('settings.ai.maxTokensHint') }}</span>
+                </label>
+              </div>
+
+              <!-- 工具输出限制设置 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.toolOutputLimit') }}</span>
+                </label>
+                <div class="flex items-center gap-4">
+                  <input v-model.number="settings.ai.toolOutputLimit" type="range" min="10000" max="200000" step="10000"
+                    class="range range-secondary flex-1" @change="saveAiConfig" />
+                  <span class="text-sm min-w-[60px]">{{ (settings.ai.toolOutputLimit || 50000) / 1000 }}K</span>
+                </div>
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.ai.toolOutputLimitHint') }}</span>
                 </label>
               </div>
             </div>

@@ -34,6 +34,7 @@
 pub mod agent;
 mod client;
 mod config;
+pub mod custom_provider;
 pub mod log;
 mod message;
 pub mod service;
@@ -104,7 +105,7 @@ impl StreamingLlmClient {
         on_content: F,
     ) -> anyhow::Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         self.stream_chat(system_prompt, user_prompt, &[], None, on_content)
             .await

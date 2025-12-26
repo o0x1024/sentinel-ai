@@ -65,7 +65,7 @@ impl StreamingLlmClient {
         on_content: F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         self.stream_chat_with_dynamic_tools(
             system_prompt,
@@ -90,7 +90,7 @@ impl StreamingLlmClient {
         mut on_content: F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         let provider = self.config.provider.to_lowercase();
         let provider_for_agent = self.config.get_effective_rig_provider();
@@ -210,7 +210,7 @@ impl StreamingLlmClient {
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::deepseek;
         
@@ -261,7 +261,7 @@ impl StreamingLlmClient {
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::openai;
         
@@ -314,7 +314,7 @@ impl StreamingLlmClient {
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::anthropic;
         
@@ -369,7 +369,7 @@ impl StreamingLlmClient {
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::gemini;
         let client = gemini::Client::from_env();
@@ -393,15 +393,15 @@ impl StreamingLlmClient {
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
-        timeout: std::time::Duration,
+        _timeout: std::time::Duration,
         dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
-        use rig::providers::deepseek;
-        
+        use rig::tool::Tool;
+
         let api_key = std::env::var("DEEPSEEK_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
@@ -419,27 +419,38 @@ impl StreamingLlmClient {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         
-        let mut builder = deepseek::Client::<reqwest::Client>::builder()
-            .api_key(api_key)
-            .http_client(http_client);
+        // Build tools map and JSON definitions
+        let mut tools_map = std::collections::HashMap::new();
+        let mut tools_json = Vec::new();
         
-        // Use custom base_url if configured
-        if let Some(base_url) = &self.config.base_url {
-            info!("Using custom DeepSeek base URL: {}", base_url);
-            builder = builder.base_url(base_url);
-        }
-        
-        let client = builder.build()
-            .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
-        
-        let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
-            .agent(model)
-            .preamble(preamble)
-            .tool_server_handle(tool_server_handle)
-            .build();
+        for t in dynamic_tools {
+            let def = t.definition(String::new()).await;
+            let name = def.name.clone();
             
-        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
+            tools_json.push(serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": def.name,
+                    "description": def.description,
+                    "parameters": def.parameters
+                }
+            }));
+            
+            tools_map.insert(name, t);
+        }
+
+        crate::custom_provider::stream_deepseek(
+            http_client,
+            self.config.base_url.clone().unwrap_or_else(|| "https://api.deepseek.com".to_string()),
+            api_key,
+            model.to_string(),
+            preamble.to_string(),
+            user_message,
+            chat_history,
+            tools_map,
+            tools_json,
+            on_content
+        ).await
     }
 
     async fn stream_with_ollama<F>(
@@ -453,7 +464,7 @@ impl StreamingLlmClient {
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::ollama;
         let client = ollama::Client::from_env();
@@ -479,7 +490,7 @@ impl StreamingLlmClient {
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::openrouter;
         let client = openrouter::Client::from_env();
@@ -505,7 +516,7 @@ impl StreamingLlmClient {
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::xai;
         let client = xai::Client::from_env();
@@ -531,7 +542,7 @@ impl StreamingLlmClient {
         on_content: &mut F,
     ) -> Result<String>
     where
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         use rig::providers::groq;
         let client = groq::Client::from_env();
@@ -568,7 +579,7 @@ impl StreamingLlmClient {
     where
         M: rig::completion::CompletionModel + 'static,
         M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
-        F: FnMut(StreamContent),
+        F: FnMut(StreamContent) -> bool,
     {
         let mut tool_call_args: HashMap<String, String> = HashMap::new();
         let mut tool_call_names: HashMap<String, String> = HashMap::new();
@@ -612,7 +623,10 @@ impl StreamingLlmClient {
                     let piece = t.text;
                     if !piece.is_empty() {
                         content.push_str(&piece);
-                        on_content(StreamContent::Text(piece));
+                        if !on_content(StreamContent::Text(piece)) {
+                            info!("Stream cancelled by callback");
+                            break;
+                        }
                     }
                 }
                 // 推理内容
@@ -621,7 +635,10 @@ impl StreamingLlmClient {
                 )) => {
                     let piece = r.reasoning.join("");
                     if !piece.is_empty() {
-                        on_content(StreamContent::Reasoning(piece));
+                        if !on_content(StreamContent::Reasoning(piece)) {
+                            info!("Stream cancelled by callback");
+                            break;
+                        }
                     }
                 }
                 // 完整的工具调用
@@ -632,11 +649,14 @@ impl StreamingLlmClient {
                         "Tool call received: id={}, name={}, args={}",
                         tool_call.id, tool_call.function.name, tool_call.function.arguments
                     );
-                    on_content(StreamContent::ToolCallComplete {
+                    if !on_content(StreamContent::ToolCallComplete {
                         id: tool_call.id.clone(),
                         name: tool_call.function.name.clone(),
                         arguments: tool_call.function.arguments.to_string(),
-                    });
+                    }) {
+                        info!("Stream cancelled by callback");
+                        break;
+                    }
                     tool_call_names.insert(tool_call.id.clone(), tool_call.function.name.clone());
                 }
                 // 工具调用增量
@@ -647,7 +667,10 @@ impl StreamingLlmClient {
                         .entry(id.clone())
                         .or_default()
                         .push_str(&delta);
-                    on_content(StreamContent::ToolCallDelta { id, delta });
+                    if !on_content(StreamContent::ToolCallDelta { id, delta }) {
+                        info!("Stream cancelled by callback");
+                        break;
+                    }
                 }
                 // 工具执行结果
                 Ok(MultiTurnStreamItem::StreamUserItem(user_content)) => {
@@ -659,10 +682,13 @@ impl StreamingLlmClient {
                         result_str.len(),
                         &result_str.chars().take(300).collect::<String>()
                     );
-                    on_content(StreamContent::ToolResult {
+                    if !on_content(StreamContent::ToolResult {
                         id: tool_result.id,
                         result: result_str,
-                    });
+                    }) {
+                        info!("Stream cancelled by callback");
+                        break;
+                    }
                 }
                 // 最终响应
                 Ok(MultiTurnStreamItem::FinalResponse(final_resp)) => {
@@ -677,12 +703,12 @@ impl StreamingLlmClient {
                     }
                     
                     let usage = final_resp.usage();
-                    on_content(StreamContent::Usage {
+                    let _ = on_content(StreamContent::Usage {
                         input_tokens: usage.input_tokens as u32,
                         output_tokens: usage.output_tokens as u32,
                     });
                     
-                    on_content(StreamContent::Done);
+                    let _ = on_content(StreamContent::Done);
                     break;
                 }
                 Ok(_) => {}

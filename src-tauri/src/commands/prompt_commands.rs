@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 
 use sentinel_prompt::{ABTest, CustomTemplate, TemplateType, TestScenario, UsageStats};
-use crate::services::{PromptBuildRequest, PromptService, DatabaseService};
+use crate::services::{PromptBuildRequest, PromptService};
 use sentinel_prompt::{
     CreateTestRequest, OptimizationResult, OptimizationSuggestion,
     PerformanceRecord, 
@@ -26,12 +26,11 @@ pub type PromptServiceState = Arc<RwLock<Option<PromptService>>>;
 #[tauri::command]
 pub async fn init_prompt_service(
     state: State<'_, PromptServiceState>,
-    db: State<'_, Arc<DatabaseService>>,
     config: Option<PromptServiceConfig>,
 ) -> Result<String, String> {
     let config = config.unwrap_or_default();
     
-    match PromptService::new(config, db.inner().clone()).await {
+    match PromptService::new(config).await {
         Ok(service) => {
             let mut state_guard = state.write().await;
             *state_guard = Some(service);

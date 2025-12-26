@@ -18,6 +18,9 @@ export interface RagConfig {
   reranking_enabled: boolean
   similarity_threshold: number
   augmentation_enabled: boolean
+  chunk_expansion_enabled: boolean
+  chunk_expansion_before: number
+  chunk_expansion_after: number
 }
 
 export async function getRagConfig(): Promise<RagConfig> {

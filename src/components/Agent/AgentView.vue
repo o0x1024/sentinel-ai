@@ -161,7 +161,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
@@ -301,7 +301,7 @@ const handleAddAttachments = async (filePaths: string[]) => {
   if (!filePaths || filePaths.length === 0) return
   
   try {
-    const attachments = await invoke<any[]>('upload_multiple_images', { filePaths })
+    const attachments = await invoke<any[]>('upload_multiple_images', { filePaths: filePaths })
     if (attachments && attachments.length > 0) {
       pendingAttachments.value.push(...attachments)
       console.log('[AgentView] Uploaded', attachments.length, 'attachments')
@@ -690,6 +690,11 @@ const handleSubmit = async () => {
   const usedTraffic = [...referencedTraffic.value]
   pendingAttachments.value = []
   referencedTraffic.value = []
+  
+  // Force scroll to bottom when user sends a message
+  nextTick(() => {
+    messageFlowRef.value?.scrollToBottom()
+  })
   
   // Emit submit event
   emit('submit', fullTask)

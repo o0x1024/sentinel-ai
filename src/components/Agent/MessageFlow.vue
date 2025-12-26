@@ -1,5 +1,9 @@
 <template>
-  <div class="message-flow flex flex-col gap-2 pl-4  overflow-y-auto flex-1 mt-2 " ref="containerRef">
+  <div 
+    class="message-flow flex flex-col gap-2 pl-4  overflow-y-auto flex-1 mt-2 " 
+    ref="containerRef"
+    @scroll="handleScroll"
+  >
     <div v-for="msg in messages" :key="msg.id" class="message-wrapper animate-fadeIn min-w-0">
       <MessageBlock :message="msg" :is-vision-active="isVisionActive" @resend="handleResend" />
     </div>
@@ -44,16 +48,27 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
+const isUserAtBottom = ref(true)
 
 const hasMessages = computed(() => props.messages.length > 0)
+
+const handleScroll = () => {
+  if (!containerRef.value) return
+  const { scrollTop, scrollHeight, clientHeight } = containerRef.value
+  // Use a threshold (e.g., 50px) to determine if we are "at the bottom"
+  isUserAtBottom.value = scrollHeight - scrollTop - clientHeight < 50
+}
 
 // Auto-scroll to bottom when new messages arrive
 watch(
   () => props.messages.length,
   () => {
-    nextTick(() => {
-      scrollToBottom()
-    })
+    // Scroll if user is at bottom or if it's a new conversation start
+    if (isUserAtBottom.value || props.messages.length <= 1) {
+      nextTick(() => {
+        scrollToBottom()
+      })
+    }
   }
 )
 
@@ -61,15 +76,19 @@ watch(
 watch(
   () => props.streamingContent,
   () => {
-    nextTick(() => {
-      scrollToBottom()
-    })
+    if (isUserAtBottom.value) {
+      nextTick(() => {
+        scrollToBottom()
+      })
+    }
   }
 )
 
 const scrollToBottom = () => {
   if (containerRef.value) {
     containerRef.value.scrollTop = containerRef.value.scrollHeight
+    // We can assume we are at bottom after this
+    isUserAtBottom.value = true
   }
 }
 

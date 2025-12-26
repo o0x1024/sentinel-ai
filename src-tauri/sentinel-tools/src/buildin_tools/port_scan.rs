@@ -211,6 +211,16 @@ impl Tool for PortScanTool {
                 }
             }
         }
+        
+        // Sort by port number
+        open_ports.sort_by_key(|p| p.port);
+        
+        let max_ports = 500; // Hard limit to prevent huge JSON
+        if open_ports.len() > max_ports {
+             open_ports.truncate(max_ports);
+             // Maybe add a warning or indicator in the output struct, but struct is fixed.
+             // We'll just truncate for now, the user can scan smaller ranges if needed.
+        }
 
         let scan_duration_ms = start_time.elapsed().as_millis() as u64;
 

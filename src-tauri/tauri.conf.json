@@ -20,7 +20,8 @@
         "minHeight": 900,
         "closable": true,
         "minimizable": true,
-        "maximizable": true
+        "maximizable": true,
+        "skipTaskbar": false
       }
     ],
     "security": {

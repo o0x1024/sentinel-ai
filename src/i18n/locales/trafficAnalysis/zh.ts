@@ -216,10 +216,11 @@ export default {
       requestDetails: '请求详情',
       responseDetails: '响应详情',
       tabs: {
-        headers: 'Headers',
-        raw: 'Raw',
-        pretty: 'Pretty',
-        hex: 'Hex'
+        headers: '请求头',
+        raw: '原始',
+        pretty: '格式化',
+        hex: '十六进制',
+        render: '渲染'
       },
       request: '请求',
       response: '响应',
@@ -303,11 +304,40 @@ export default {
       useHttps: '使用 HTTPS',
       request: '请求',
       response: '响应',
-      pretty: '美化',
+      pretty: '格式化',
       raw: '原始',
       hex: '十六进制',
       render: '渲染',
-      clickSendToSendRequest: '点击“发送请求”以发送请求'
+      clickSendToSendRequest: '点击"发送请求"以发送请求'
+    },
+    messages: {
+      requestCancelled: '请求已取消',
+      fillTargetAndRequest: '请填写目标 Host 和请求内容',
+      urlCopied: 'URL 已复制',
+      copyFailed: '复制失败',
+      requestCopied: '请求已复制',
+      curlCopied: 'cURL 命令已复制',
+      pasted: '已粘贴',
+      cannotReadClipboard: '无法读取剪贴板',
+      sentToAssistant: '已发送{type}到 AI 助手',
+      noResponseData: '暂无响应数据',
+      requestFailed: '请求失败',
+      sendRequestFailed: '发送请求失败',
+      networkError: '网络错误',
+      timeout: '请求超时',
+      connectionRefused: '连接被拒绝',
+      unknownError: '未知错误',
+      hexDisplayLimited: 'Hex 显示已限制到前 {size}',
+      invalidUrl: 'URL 格式不正确',
+      confirmCloseTab: '确认关闭标签页？',
+      confirmCloseTabMessage: '此标签页有未保存的内容，确认关闭吗？',
+      tabRestored: '已恢复 {count} 个标签页',
+      tabsSaved: '标签页已自动保存'
+    },
+    types: {
+      request: '请求',
+      response: '响应',
+      both: '流量'
     }
   },
   // Packet Capture Component
@@ -1202,6 +1232,71 @@ export default {
     errors: {
       invalidWorkflowFile: '无效的工作流文件格式',
       jsonFormatError: 'JSON格式错误: {message}'
+    }
+  },
+
+  // Tour guide for pages
+  tour: {
+    proxyHistory: {
+      title: '流量历史记录向导',
+      welcome: {
+        title: '欢迎使用流量历史记录',
+        description: '这里记录了所有通过代理的HTTP/HTTPS请求。让我们快速了解主要功能。'
+      },
+      filterBar: {
+        title: '搜索和筛选',
+        description: '使用搜索框快速查找请求，支持URL、方法、状态码等多种筛选条件。'
+      },
+      requestList: {
+        title: '请求列表',
+        description: '显示所有捕获的请求，点击任意请求可查看详细信息。支持按时间、状态码等排序。'
+      },
+      requestDetails: {
+        title: '请求详情',
+        description: '查看完整的请求和响应信息，包括请求头、请求体、响应头、响应体等。'
+      },
+      actions: {
+        title: '快捷操作',
+        description: '可以重放请求、发送到其他工具、导出数据等操作。'
+      }
+    },
+    proxyIntercept: {
+      title: '流量拦截向导',
+      welcome: {
+        title: '欢迎使用流量拦截',
+        description: '在这里可以实时拦截和修改HTTP/HTTPS请求和响应。'
+      },
+      interceptToggle: {
+        title: '拦截开关',
+        description: '开启后，匹配规则的请求将被拦截，您可以修改后再放行。'
+      },
+      rules: {
+        title: '拦截规则',
+        description: '配置拦截规则，支持URL匹配、方法筛选等条件。'
+      },
+      interceptedRequest: {
+        title: '被拦截的请求',
+        description: '修改请求内容后点击"放行"继续，或点击"丢弃"取消请求。'
+      }
+    },
+    proxySettings: {
+      title: '代理设置向导',
+      welcome: {
+        title: '欢迎使用代理设置',
+        description: '配置代理服务器的监听端口、证书和其他选项。'
+      },
+      port: {
+        title: '监听端口',
+        description: '设置代理服务器监听的端口号，默认为8080。'
+      },
+      certificate: {
+        title: 'HTTPS证书',
+        description: '配置HTTPS拦截所需的CA证书，可以生成新证书或导入现有证书。'
+      },
+      upstream: {
+        title: '上游代理',
+        description: '如果需要通过其他代理访问网络，可以在这里配置上游代理。'
+      }
     }
   }
 }

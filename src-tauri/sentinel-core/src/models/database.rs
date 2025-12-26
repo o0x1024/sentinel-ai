@@ -355,6 +355,7 @@ pub struct AiMessage {
     pub cost: Option<f64>,
     pub tool_calls: Option<String>,  // JSON数组
     pub attachments: Option<String>, // JSON数组
+    pub reasoning_content: Option<String>, // 推理内容（deepseek-reasoner）
     pub timestamp: DateTime<Utc>,
     pub architecture_type: Option<String>,
     pub architecture_meta: Option<String>,

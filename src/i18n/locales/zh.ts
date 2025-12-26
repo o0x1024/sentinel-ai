@@ -114,6 +114,11 @@ export default {
     never: '从未',
     justNow: '刚刚',
     url: '网址',
+    viewAll: '查看全部',
+    provider: '提供商',
+    inputTokens: '输入 Token',
+    outputTokens: '输出 Token',
+    cost: '成本',
   },
   assetManagement: {
     title: '资产管理',
@@ -187,6 +192,7 @@ export default {
     high: '高',
     critical: '严重',
     unknown: '未知',
+    info: '信息',
     Low: '低',
     Medium: '中',
     High: '高',
@@ -989,7 +995,17 @@ export default {
     startNewScan: '开始新扫描',
     viewAllVulnerabilities: '查看所有漏洞',
     manageProjects: '管理项目',
-
+    trafficStats: '流量统计',
+    httpRequests: 'HTTP 请求',
+    aiUsage: 'AI 使用情况',
+    totalTokens: '总 Token 数',
+    vulnerabilitySeverity: '漏洞严重程度分布',
+    vulnerabilityType: '漏洞类型分布',
+    databaseStats: '数据库概览',
+    dbSize: '数据库大小',
+    tasks: '任务数量',
+    conversations: '对话数量',
+    lastBackup: '最后备份时间',
   },
   scanTasks: {
     title: '扫描任务',
@@ -1345,6 +1361,14 @@ export default {
     intelligentTest: '智能安全测试',
     workflowStudio: '工作流工作室',
     notifications: '通知',
+  },
+  rag: {
+    title: '知识库管理',
+    description: '管理和检索知识库文档',
+  },
+  workflow: {
+    title: '工作流工作室',
+    description: '设计和执行自动化工作流',
   },
   dictionary: {
     title: '字典管理',
@@ -1971,6 +1995,8 @@ export default {
     statusCompleted: '已完成',
     statusFailed: '失败',
     statusPending: '等待中',
+    sourceCitation: '查看来源 {number}',
+    close: '关闭',
     // 知识库引用
     knowledgeBaseCited: '已引用知识库 ({count} 处)',
     noKnowledgeBaseCitations: '未引用知识库',

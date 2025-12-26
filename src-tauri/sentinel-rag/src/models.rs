@@ -17,6 +17,7 @@ pub struct RagQueryRequest {
     pub use_embedding: Option<bool>,
     #[serde(default)]
     pub reranking_enabled: Option<bool>,
+    pub similarity_threshold: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +46,9 @@ pub struct Citation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantRagRequest {
     pub query: String,
+    pub conversation_id: Option<String>,
     pub collection_id: Option<String>,
+    pub collection_ids: Option<Vec<String>>,
     pub conversation_history: Option<Vec<String>>,
     pub top_k: Option<usize>,
     pub use_mmr: Option<bool>,

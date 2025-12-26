@@ -456,8 +456,8 @@ impl Database for DatabaseService {
     async fn get_documents_by_collection_id(&self, id: &str) -> Result<Vec<RagDocumentSourceRow>> {
         Self::get_documents_by_collection_id_internal(self, id).await
     }
-    async fn insert_document_source(&self, id: &str, collection_id: &str, file_path: &str, file_name: &str, file_type: &str, file_size: i64, file_hash: &str, content_hash: &str, metadata: &str, created_at: &str, updated_at: &str) -> Result<()> {
-        Self::insert_document_source_internal(self, id, collection_id, file_path, file_name, file_type, file_size, file_hash, content_hash, metadata, created_at, updated_at).await
+    async fn insert_document_source(&self, id: &str, collection_id: &str, file_path: &str, file_name: &str, file_type: &str, file_size: i64, file_hash: &str, content_hash: &str, status: &str, metadata: &str, created_at: &str, updated_at: &str) -> Result<()> {
+        Self::insert_document_source_internal(self, id, collection_id, file_path, file_name, file_type, file_size, file_hash, content_hash, status, metadata, created_at, updated_at).await
     }
     async fn delete_document_cascade(&self, id: &str) -> Result<()> {
         Self::delete_document_cascade_internal(self, id).await
@@ -468,8 +468,8 @@ impl Database for DatabaseService {
     async fn get_collection_id_by_document_id(&self, id: &str) -> Result<Option<String>> {
         Self::get_collection_id_by_document_id_internal(self, id).await
     }
-    async fn insert_chunk(&self, id: &str, document_id: &str, collection_id: &str, content: &str, content_hash: &str, chunk_index: i32, char_count: i32, embedding_bytes: Option<Vec<u8>>, embedding_model: &str, embedding_dimension: i32, metadata_json: &str, created_at_ts: i64, updated_at_ts: i64) -> Result<()> {
-        Self::insert_chunk_internal(self, id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding_bytes, embedding_model, embedding_dimension, metadata_json, created_at_ts, updated_at_ts).await
+    async fn insert_chunk(&self, id: &str, document_id: &str, collection_id: &str, content: &str, content_hash: &str, chunk_index: i32, char_count: i32, embedding_bytes: Option<Vec<u8>>, metadata_json: &str, created_at_ts: i64, updated_at_ts: i64) -> Result<()> {
+        Self::insert_chunk_internal(self, id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding_bytes, metadata_json, created_at_ts, updated_at_ts).await
     }
     async fn get_chunks_by_document_id(&self, id: &str) -> Result<Vec<RagChunkRow>> {
         Self::get_chunks_by_document_id_internal(self, id).await
@@ -655,7 +655,6 @@ impl RagDatabase for DatabaseService {
                 name: r.name,
                 description: r.description,
                 is_active: r.is_active,
-                embedding_model: String::new(),
                 document_count: r.document_count as usize,
                 chunk_count: r.chunk_count as usize,
                 created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at).unwrap_or_default().with_timezone(&chrono::Utc),
@@ -671,7 +670,6 @@ impl RagDatabase for DatabaseService {
             name: r.name,
             description: r.description,
             is_active: r.is_active,
-            embedding_model: String::new(),
             document_count: r.document_count as usize,
             chunk_count: r.chunk_count as usize,
             created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at).unwrap_or_default().with_timezone(&chrono::Utc),
@@ -685,7 +683,6 @@ impl RagDatabase for DatabaseService {
             name: r.name,
             description: r.description,
             is_active: r.is_active,
-            embedding_model: String::new(),
             document_count: r.document_count as usize,
             chunk_count: r.chunk_count as usize,
             created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at).unwrap_or_default().with_timezone(&chrono::Utc),
@@ -698,8 +695,11 @@ impl RagDatabase for DatabaseService {
     async fn create_rag_document(&self, collection_id: &str, file_path: &str, file_name: &str, content: &str, metadata: &str) -> Result<String> {
         Self::create_rag_document_internal(self, collection_id, file_path, file_name, content, metadata).await
     }
-    async fn create_rag_chunk(&self, document_id: &str, collection_id: &str, content: &str, chunk_index: i32, embedding: Option<&[f32]>, embedding_model: &str, embedding_dimension: i32, metadata_json: &str) -> Result<String> {
-        Self::create_rag_chunk_internal(self, document_id, collection_id, content, chunk_index, embedding, embedding_model, embedding_dimension, metadata_json).await
+    async fn insert_document_source(&self, id: &str, collection_id: &str, file_path: &str, file_name: &str, file_type: &str, file_size: i64, file_hash: &str, content_hash: &str, status: &str, metadata: &str, created_at: &str, updated_at: &str) -> Result<()> {
+        Self::insert_document_source_internal(self, id, collection_id, file_path, file_name, file_type, file_size, file_hash, content_hash, status, metadata, created_at, updated_at).await
+    }
+    async fn create_rag_chunk(&self, document_id: &str, collection_id: &str, content: &str, chunk_index: i32, embedding: Option<&[f32]>, metadata_json: &str) -> Result<String> {
+        Self::create_rag_chunk_internal(self, document_id, collection_id, content, chunk_index, embedding, metadata_json).await
     }
     async fn update_collection_stats(&self, collection_id: &str) -> Result<()> {
         Self::update_collection_stats_internal(self, collection_id).await
@@ -707,14 +707,17 @@ impl RagDatabase for DatabaseService {
     async fn get_rag_documents(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
         Self::get_rag_documents_internal(self, collection_id).await
     }
+    async fn get_rag_documents_paginated(&self, collection_id: &str, limit: i64, offset: i64, search_query: Option<&str>) -> Result<(Vec<sentinel_rag::models::DocumentSource>, i64)> {
+        Self::get_rag_documents_paginated_internal(self, collection_id, limit, offset, search_query).await
+    }
     async fn get_rag_chunks(&self, document_id: &str) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
         Self::get_rag_chunks_internal(self, document_id).await
     }
     async fn delete_rag_document(&self, document_id: &str) -> Result<()> {
         Self::delete_rag_document_internal(self, document_id).await
     }
-    async fn save_rag_query(&self, collection_id: Option<&str>, query: &str, response: &str, processing_time_ms: u64) -> Result<()> {
-        Self::save_rag_query_internal(self, collection_id, query, response, processing_time_ms).await
+    async fn save_rag_query(&self, collection_id: Option<&str>, conversation_id: Option<&str>, query: &str, response: &str, processing_time_ms: u64) -> Result<()> {
+        Self::save_rag_query_internal(self, collection_id, conversation_id, query, response, processing_time_ms).await
     }
     async fn get_rag_query_history(&self, collection_id: Option<&str>, limit: Option<i32>) -> Result<Vec<sentinel_rag::models::QueryResult>> {
         Self::get_rag_query_history_internal(self, collection_id, limit).await

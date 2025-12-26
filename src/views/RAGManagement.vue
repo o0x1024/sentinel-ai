@@ -88,7 +88,6 @@
               <tr>
                 <th>{{ t('ragManagement.table.name') }}</th>
                 <th>{{ t('ragManagement.table.description') }}</th>
-                <th>{{ t('ragManagement.table.embeddingModel') }}</th>
                 <th>{{ t('ragManagement.table.documentCount') }}</th>
                 <th>{{ t('ragManagement.table.createdAt') }}</th>
                 <th class="text-center">{{ t('ragManagement.table.activate') }}</th>
@@ -111,9 +110,6 @@
                   </div>
                 </td>
                 <td>{{ collection.description || t('ragManagement.collection.noDescription') }}</td>
-                <td>
-                  <div class="badge badge-outline">{{ collection.embedding_model }}</div>
-                </td>
                 <td>{{ collection.document_count }}</td>
                 <td>{{ formatDate(collection.created_at) }}</td>
                 <td class="text-center">
@@ -172,7 +168,7 @@
     </div>
 
     <!-- 创建集合模态框 -->
-    <div v-if="showCreateCollectionModal" class="modal modal-open">
+    <div v-if="showCreateCollectionModal" class="modal modal-open" @click.self="showCreateCollectionModal = false">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.collection.createTitle') }}</h3>
         
@@ -216,7 +212,7 @@
     </div>
 
     <!-- 编辑集合模态框 -->
-    <div v-if="showEditCollectionModal" class="modal modal-open">
+    <div v-if="showEditCollectionModal" class="modal modal-open" @click.self="showEditCollectionModal = false">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.collection.editTitle') }}</h3>
         
@@ -260,7 +256,7 @@
     </div>
 
     <!-- 文档摄取模态框 -->
-    <div v-if="showIngestDocumentModal" class="modal modal-open">
+    <div v-if="showIngestDocumentModal" class="modal modal-open" @click.self="closeIngestModal">
       <div class="modal-box max-w-2xl">
         <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.ingest.title', { name: selectedCollection?.name }) }}</h3>
         
@@ -343,6 +339,22 @@
               </div>
             </div>
 
+            <!-- 批量导入进度条 -->
+            <div v-if="ingesting && batchProgress.total > 0" class="mb-4">
+              <div class="mb-2 flex justify-between text-sm">
+                <span>{{ t('ragManagement.ingest.progress', 'Progress') }}: {{ batchProgress.current }} / {{ batchProgress.total }}</span>
+                <span>
+                  <span class="text-success">✓ {{ batchProgress.success }}</span>
+                  <span v-if="batchProgress.failed > 0" class="text-error ml-2">✗ {{ batchProgress.failed }}</span>
+                </span>
+              </div>
+              <progress 
+                class="progress progress-primary w-full" 
+                :value="batchProgress.current" 
+                :max="batchProgress.total"
+              ></progress>
+            </div>
+
             <!-- 失败文件详情 -->
             <div v-if="failedFiles.length > 0" class="mb-4">
               <h5 class="font-semibold text-error mb-2">
@@ -402,7 +414,16 @@
               :disabled="ingesting || selectedFiles.length === 0"
             >
               <span v-if="ingesting" class="loading loading-spinner loading-sm"></span>
-              {{ ingesting ? t('ragManagement.ingest.processingProgress', { current: batchProgress.current, total: batchProgress.total }) : (selectedFiles.length > 1 ? t('ragManagement.ingest.addMultiple', { count: selectedFiles.length }) : t('ragManagement.addDocument')) }}
+              <span v-if="ingesting && batchProgress.total > 0">
+                {{ t('ragManagement.ingest.processingProgress', { current: batchProgress.current, total: batchProgress.total }) }}
+                ({{ t('ragManagement.ingest.successCount', { count: batchProgress.success }) }})
+              </span>
+              <span v-else-if="ingesting">
+                {{ t('ragManagement.processing') }}
+              </span>
+              <span v-else>
+                {{ selectedFiles.length > 1 ? t('ragManagement.ingest.addMultiple', { count: selectedFiles.length }) : t('ragManagement.addDocument') }}
+              </span>
             </button>
             <button 
               v-else
@@ -419,12 +440,12 @@
     </div>
 
     <!-- 集合详情模态框 -->
-    <div v-if="showCollectionDetailsModal" class="modal modal-open">
+    <div v-if="showCollectionDetailsModal" class="modal modal-open" @click.self="closeDetailsModal">
       <div class="modal-box max-w-4xl">
         <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.details.title', { name: selectedCollection?.name }) }}</h3>
         
         <!-- 基本信息 -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div class="stat bg-base-200 rounded-lg">
             <div class="stat-title">{{ t('ragManagement.details.documentCount') }}</div>
             <div class="stat-value text-primary">{{ collectionDetails.stats.totalDocuments }}</div>
@@ -432,10 +453,6 @@
           <div class="stat bg-base-200 rounded-lg">
             <div class="stat-title">{{ t('ragManagement.details.chunkCount') }}</div>
             <div class="stat-value text-secondary">{{ collectionDetails.stats.totalChunks }}</div>
-          </div>
-          <div class="stat bg-base-200 rounded-lg">
-            <div class="stat-title">{{ t('ragManagement.details.embeddingModel') }}</div>
-            <div class="stat-value text-sm">{{ collectionDetails.stats.embeddingModel }}</div>
           </div>
         </div>
 
@@ -546,7 +563,7 @@
     </div>
 
     <!-- 文档预览模态框 -->
-    <div v-if="showDocumentModal" class="modal modal-open">
+    <div v-if="showDocumentModal" class="modal modal-open" @click.self="showDocumentModal = false">
       <div class="modal-box max-w-5xl">
         <h3 class="font-bold text-lg mb-2">{{ t('ragManagement.document.previewTitle', { name: selectedDocument?.file_name }) }}</h3>
         <div class="text-xs text-base-content/60 mb-4 break-all">{{ selectedDocument?.file_path }}</div>
@@ -582,7 +599,7 @@
     </div>
 
     <!-- 查询模态框 -->
-    <div v-if="showQueryModal" class="modal modal-open">
+    <div v-if="showQueryModal" class="modal modal-open" @click.self="showQueryModal = false">
       <div class="modal-box max-w-4xl">
         <h3 class="font-bold text-lg mb-4">{{ t('ragManagement.query.title', { name: selectedCollection?.name }) }}</h3>
         
@@ -622,6 +639,12 @@
               <span class="label-text">{{ t('ragManagement.query.rerankingLabel') }}</span>
             </label>
             <input type="checkbox" class="toggle" v-model="queryReranking" />
+          </div>
+          <div class="form-control flex-1">
+            <label class="label">
+              <span class="label-text">{{ t('ragManagement.query.thresholdLabel', '相似度阈值') }} ({{ queryThreshold }})</span>
+            </label>
+            <input type="range" min="0" max="1" step="0.05" v-model.number="queryThreshold" class="range range-xs range-primary" />
           </div>
         </div>
         
@@ -762,12 +785,24 @@ const queryTopK = ref(5)
 const queryResults = ref([])
 const queryUseEmbedding = ref(true)
 const queryReranking = ref(true)
+const queryThreshold = ref(0.2)
+
+// 加载全局 RAG 配置以同步默认值
+const loadRagConfig = async () => {
+  try {
+    const config = await invoke('get_rag_config') as any
+    if (config && typeof config.similarity_threshold === 'number') {
+      queryThreshold.value = config.similarity_threshold
+    }
+  } catch (e) {
+    console.warn('Failed to load RAG config:', e)
+  }
+}
 
 // 集合详情相关
 interface CollectionStats {
   totalDocuments: number
   totalChunks: number
-  embeddingModel: string
 }
 
 interface CollectionDetails {
@@ -781,8 +816,7 @@ const collectionDetails = ref<CollectionDetails>({
   chunks: [],
   stats: {
     totalDocuments: 0,
-    totalChunks: 0,
-    embeddingModel: 'default'
+    totalChunks: 0
   }
 })
 
@@ -948,8 +982,7 @@ const loadCollectionDetails = async (collectionId: string) => {
       chunks: [],
       stats: {
         totalDocuments: selectedCollection.value?.document_count || 0,
-        totalChunks: selectedCollection.value?.chunk_count || 0,
-        embeddingModel: selectedCollection.value?.embedding_model || 'default'
+        totalChunks: selectedCollection.value?.chunk_count || 0
       }
     }
   } catch (error) {
@@ -964,8 +997,20 @@ const reloadDocuments = async () => {
   if (!selectedCollection.value) return
   loadingDocuments.value = true
   try {
-    const list = await invoke('list_rag_documents', { collectionId: selectedCollection.value.id }) as any[]
-    documents.value = list || []
+    // 使用新的分页接口
+    const response = await invoke('list_rag_documents_paginated', { 
+      collectionId: selectedCollection.value.id,
+      page: docCurrentPage.value,
+      pageSize: docPageSize.value,
+      searchQuery: documentSearch.value || null
+    }) as any
+    
+    documents.value = response.documents || []
+    // 更新总数用于分页计算
+    if (response.total_count !== undefined) {
+      // 存储总数以便分页使用
+      collectionDetails.value.stats.totalDocuments = response.total_count
+    }
   } catch (e) {
     console.error('获取文档列表失败:', e)
     showToast(t('ragManagement.messages.loadDocumentsFailed'), 'error')
@@ -974,31 +1019,32 @@ const reloadDocuments = async () => {
   }
 }
 
+// 服务端分页，不需要前端过滤和分页
 const filteredDocuments = computed(() => {
-  const list = documents.value || []
-  const q = (documentSearch.value || '').trim().toLowerCase()
-  if (!q) return list
-  return list.filter((d: any) => (d.file_name || '').toLowerCase().includes(q))
+  return documents.value || []
 })
 
 const totalDocPages = computed(() => {
-  const total = filteredDocuments.value.length
+  const total = collectionDetails.value.stats.totalDocuments || 0
   const size = Math.max(1, Number(docPageSize.value) || 10)
   return Math.max(1, Math.ceil(total / size))
 })
 
 const paginatedDocuments = computed(() => {
-  const size = Math.max(1, Number(docPageSize.value) || 10)
-  const page = Math.min(Math.max(1, docCurrentPage.value), totalDocPages.value)
-  const start = (page - 1) * size
-  return filteredDocuments.value.slice(start, start + size)
+  // 服务端已经分页，直接返回
+  return documents.value || []
 })
 
-watch([filteredDocuments, docPageSize], () => {
-  // 当过滤或页大小变化时，重置/矫正页码
-  if (docCurrentPage.value > totalDocPages.value) {
-    docCurrentPage.value = 1
-  }
+// 监听搜索、分页大小、页码变化，重新加载数据
+watch([documentSearch, docPageSize], () => {
+  // 搜索或页大小变化时，重置到第一页
+  docCurrentPage.value = 1
+  reloadDocuments()
+})
+
+watch(docCurrentPage, () => {
+  // 页码变化时重新加载
+  reloadDocuments()
 })
 
 const viewDocument = async (doc: any) => {
@@ -1156,7 +1202,7 @@ const ingestDocument = async () => {
       return
     }
     
-    // 文件选择模式
+    // 文件选择模式 - 使用新的批量导入接口
     batchProgress.value = {
       current: 0,
       total: selectedFiles.value.length,
@@ -1164,44 +1210,33 @@ const ingestDocument = async () => {
       failed: 0
     }
     
-    let totalChunks = 0
+    // 准备文件路径列表
+    const filePaths = selectedFiles.value.map(file => file.path || file.name)
     
-    for (let i = 0; i < selectedFiles.value.length; i++) {
-      const file = selectedFiles.value[i]
-      batchProgress.value.current = i + 1
-      
-      try {
-        const filePath = file.path || file.name
-        
-        const response = await invoke('rag_ingest_source', {
-          filePath: filePath,
-          collectionId: selectedCollection.value.id,
-          metadata: {
-            originalName: file.name,
-            fileSize: file.size.toString(),
-            fileType: file.type
-          }
-        }) as any
-        
-        totalChunks += response.chunks_created || 0
-        batchProgress.value.success++
-        
-      } catch (error) {
-        console.error(`文件 ${file.name} 摄取失败:`, error)
-        batchProgress.value.failed++
-        failedFiles.value.push({
-          name: file.name,
-          error: error.toString()
-        })
-      }
+    // 调用批量导入接口
+    const response = await invoke('rag_batch_ingest_sources', {
+      filePaths,
+      collectionId: selectedCollection.value.id
+    }) as any
+    
+    // 更新失败文件列表
+    if (response.failures && response.failures.length > 0) {
+      failedFiles.value = response.failures.map((f: any) => ({
+        name: f.file_path.split('/').pop() || f.file_path,
+        error: f.error
+      }))
     }
     
     // 显示最终结果
-    if (batchProgress.value.failed === 0) {
-      showToast(t('ragManagement.messages.ingestSuccess', { chunks: totalChunks }), 'success')
+    if (response.failed === 0) {
+      showToast(t('ragManagement.messages.ingestSuccess', { chunks: response.total_chunks }), 'success')
       closeIngestModal()
-    } else if (batchProgress.value.success > 0) {
-      showToast(t('ragManagement.messages.ingestPartialSuccess', { success: batchProgress.value.success, failed: batchProgress.value.failed, chunks: totalChunks }), 'warning')
+    } else if (response.success > 0) {
+      showToast(t('ragManagement.messages.ingestPartialSuccess', { 
+        success: response.success, 
+        failed: response.failed, 
+        chunks: response.total_chunks 
+      }), 'warning')
     } else {
       showToast(t('ragManagement.messages.ingestAllFailed'), 'error')
     }
@@ -1210,7 +1245,14 @@ const ingestDocument = async () => {
     
   } catch (error) {
     console.error('文档摄取失败:', error)
-    showToast(t('ragManagement.messages.ingestFailed', { error }), 'error')
+    const errorMsg = String(error)
+    
+    // 检查是否是维度不匹配错误
+    if (errorMsg.includes('Embedding dimension mismatch') || errorMsg.includes('different schema')) {
+      showToast(t('ragManagement.messages.embeddingDimensionMismatchDetail'), 'error')
+    } else {
+      showToast(t('ragManagement.messages.ingestFailed', { error }), 'error')
+    }
   } finally {
     ingesting.value = false
     batchProgress.value = { current: 0, total: 0, success: 0, failed: 0 }
@@ -1228,10 +1270,11 @@ const closeIngestModal = () => {
   }
 }
 
-const queryCollection = (collection: any) => {
+const queryCollection = async (collection: any) => {
   selectedCollection.value = collection
   queryText.value = ''
   queryResults.value = []
+  await loadRagConfig()
   showQueryModal.value = true
 }
 
@@ -1249,7 +1292,8 @@ const executeQuery = async () => {
         query: queryText.value,
         top_k: queryTopK.value,
         use_embedding: queryUseEmbedding.value,
-        reranking_enabled: queryReranking.value
+        reranking_enabled: queryReranking.value,
+        similarity_threshold: queryThreshold.value
       }
     }) as any
     
@@ -1298,9 +1342,48 @@ const closeDetailsModal = () => {
 }
 
 // 生命周期
-onMounted(() => {
+onMounted(async () => {
   refreshCollections()
   loadSupportedFileTypes()
+  
+  // 监听批量导入进度事件
+  const { listen } = await import('@tauri-apps/api/event')
+  
+  listen('rag_batch_ingest_progress', (event: any) => {
+    const progress = event.payload
+    if (progress) {
+      batchProgress.value = {
+        current: progress.current || 0,
+        total: progress.total || 0,
+        success: progress.success || 0,
+        failed: progress.failed || 0
+      }
+      
+      // 如果有当前文件信息，可以显示在UI上
+      if (progress.current_file) {
+        console.log(`正在处理: ${progress.current_file}`)
+      }
+    }
+  })
+  
+  // 监听RAG配置更新事件
+  listen('rag_config_updated', async (event: any) => {
+    console.log('RAG配置已更新:', event.payload)
+    // 重新加载全局配置，更新查询参数
+    await loadRagConfig()
+    showToast(t('ragManagement.messages.configUpdated', 'Configuration updated'), 'info')
+  })
+  
+  // 监听RAG服务重载事件
+  listen('rag_service_reloaded', () => {
+    console.log('RAG服务已重载')
+    showToast(t('ragManagement.messages.serviceReloaded', 'Service reloaded successfully'), 'success')
+  })
+  
+  listen('rag_service_reload_failed', (event: any) => {
+    console.error('RAG服务重载失败:', event.payload)
+    showToast(t('ragManagement.messages.serviceReloadFailed', 'Service reload failed') + ': ' + event.payload, 'error')
+  })
 })
 </script>
 

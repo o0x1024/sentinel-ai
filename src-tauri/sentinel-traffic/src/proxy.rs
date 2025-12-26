@@ -511,7 +511,7 @@ fn default_bypass_threshold() -> u32 {
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
-            start_port: 4201,
+            start_port: 8080,
             max_port_attempts: 10,
             mitm_enabled: true,
             max_request_body_size: 2 * 1024 * 1024,

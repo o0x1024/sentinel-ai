@@ -78,7 +78,7 @@
           <i class="fas fa-external-link-alt"></i>
           <span>{{ t('agent.detailsInVisionPanel') }}</span>
         </div>
-        <MarkdownRenderer v-else :content="formattedContent" />
+        <MarkdownRenderer v-else :content="formattedContent" :citations="ragInfo?.citations" />
       </div>
       
       <!-- Shell Tool - Special Terminal Display -->

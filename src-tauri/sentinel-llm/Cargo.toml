@@ -37,3 +37,4 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # Tools (for native tool calling)
 sentinel-tools = { path = "../sentinel-tools" }
+async-stream = "0.3.6"

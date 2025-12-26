@@ -89,6 +89,25 @@
         </ul>
       </div>
 
+      <!-- 帮助按钮 -->
+      <div class="dropdown dropdown-end">
+        <div tabindex="0" role="button" class="btn btn-ghost btn-circle btn-sm sm:btn-md tooltip tooltip-bottom" :data-tip="t('common.tour.help')">
+          <i class="fas fa-question-circle text-lg sm:text-xl"></i>
+        </div>
+        <ul tabindex="0" class="dropdown-content z-[60] menu p-2 shadow bg-base-100 rounded-box w-52">
+          <li>
+            <a @click="startPageTour">
+              <i class="fas fa-route mr-2"></i>{{ t('common.tour.guide') }}
+            </a>
+          </li>
+          <li>
+            <a href="https://docs.sentinel-ai.com" target="_blank" rel="noopener noreferrer">
+              <i class="fas fa-book mr-2"></i>{{ t('common.tour.documentation') }}
+            </a>
+          </li>
+        </ul>
+      </div>
+
     </div>
   </div>
 </template>
@@ -96,8 +115,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
+import { usePageTour, type TourStep } from '@/composables/usePageTour'
 
 
 
@@ -111,6 +131,8 @@ const emit = defineEmits<{
 // Composables
 const { t, locale } = useI18n()
 const router = useRouter()
+const route = useRoute()
+const { manualStartTour } = usePageTour()
 
 // 搜索相关
 const searchQuery = ref('')
@@ -154,6 +176,148 @@ const performSearch = () => {
     console.log('搜索:', searchQuery.value)
     // 可以导航到搜索结果页面
     router.push({ path: '/search', query: { q: searchQuery.value } })
+  }
+}
+
+// 页面向导配置映射
+const getPageTourSteps = (): TourStep[] => {
+  const currentPath = route.path
+  
+  // 流量分析 - 历史记录
+  if (currentPath === '/traffic') {
+    return [
+      {
+        element: '.tabs.tabs-boxed',
+        popover: {
+          title: t('trafficAnalysis.tour.proxyHistory.filterBar.title'),
+          description: t('trafficAnalysis.tour.proxyHistory.filterBar.description'),
+          side: 'bottom' as const,
+          align: 'start' as const
+        }
+      },
+      {
+        element: 'table',
+        popover: {
+          title: t('trafficAnalysis.tour.proxyHistory.requestList.title'),
+          description: t('trafficAnalysis.tour.proxyHistory.requestList.description'),
+          side: 'top' as const,
+          align: 'start' as const
+        }
+      }
+    ]
+  }
+  
+  // AI 助手
+  if (currentPath === '/ai-assistant') {
+    return [
+      {
+        element: '.btn.btn-sm.btn-ghost[title*="会话"]',
+        popover: {
+          title: t('agent.tour.conversationList.title'),
+          description: t('agent.tour.conversationList.description'),
+          side: 'right' as const,
+          align: 'start' as const
+        }
+      },
+      {
+        element: '.conversation-header',
+        popover: {
+          title: t('agent.tour.newConversation.title'),
+          description: t('agent.tour.newConversation.description'),
+          side: 'bottom' as const,
+          align: 'center' as const
+        }
+      }
+    ]
+  }
+  
+  // 仪表板
+  if (currentPath === '/dashboard') {
+    return [
+      {
+        element: '.stats',
+        popover: {
+          title: '统计概览',
+          description: '这里显示系统的关键指标和统计数据，包括扫描任务、漏洞数量等。',
+          side: 'bottom' as const,
+          align: 'start' as const
+        }
+      }
+    ]
+  }
+  
+  // 安全中心
+  if (currentPath === '/security-center') {
+    return [
+      {
+        element: '.tabs',
+        popover: {
+          title: '功能标签',
+          description: '切换不同的安全功能模块：漏洞管理、扫描任务、资产管理等。',
+          side: 'bottom' as const,
+          align: 'start' as const
+        }
+      }
+    ]
+  }
+  
+  // 工作流工作室
+  if (currentPath === '/workflow-studio') {
+    return [
+      {
+        element: '.workflow-canvas',
+        popover: {
+          title: '工作流画布',
+          description: '在这里拖拽节点创建自动化工作流，连接不同的安全测试步骤。',
+          side: 'right' as const,
+          align: 'start' as const
+        }
+      }
+    ]
+  }
+  
+  // 知识库管理
+  if (currentPath === '/rag-management') {
+    return [
+      {
+        element: '.file-upload',
+        popover: {
+          title: '上传文档',
+          description: '上传文档到知识库，AI 助手可以基于这些文档回答问题。',
+          side: 'bottom' as const,
+          align: 'start' as const
+        }
+      }
+    ]
+  }
+  
+  // 默认通用向导
+  return [
+    {
+      element: '.navbar-start',
+      popover: {
+        title: '导航栏',
+        description: '点击左侧菜单按钮可以展开/收起侧边栏，访问不同的功能模块。',
+        side: 'bottom' as const,
+        align: 'start' as const
+      }
+    },
+    {
+      element: '.navbar-end',
+      popover: {
+        title: '快捷操作',
+        description: '这里提供通知、语言切换、主题切换等快捷功能。',
+        side: 'bottom' as const,
+        align: 'end' as const
+      }
+    }
+  ]
+}
+
+const startPageTour = () => {
+  const steps = getPageTourSteps()
+  if (steps.length > 0) {
+    manualStartTour(steps)
   }
 }
 

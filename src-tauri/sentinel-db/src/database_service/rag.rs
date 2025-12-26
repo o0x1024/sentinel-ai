@@ -24,6 +24,7 @@ pub struct RagDocumentSourceRow {
     pub file_size: i64,
     pub file_hash: String,
     pub content_hash: String,
+    pub status: String,
     pub metadata: String,
     pub chunk_count: i64,
     pub created_at: String,
@@ -40,15 +41,17 @@ pub struct RagChunkRow {
     pub chunk_index: i32,
     pub char_count: i32,
     pub embedding: Option<Vec<u8>>,
-    pub embedding_model: String,
-    pub embedding_dimension: i32,
     pub metadata: String,
-    pub created_at: i64,
-    pub updated_at: i64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 impl DatabaseService {
-    pub async fn create_rag_collection_internal(&self, name: &str, description: Option<&str>) -> Result<String> {
+    pub async fn create_rag_collection_internal(
+        &self, 
+        name: &str, 
+        description: Option<&str>,
+    ) -> Result<String> {
         let pool = self.get_pool()?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
@@ -68,7 +71,7 @@ impl DatabaseService {
     pub async fn get_rag_collections_internal(&self) -> Result<Vec<RagCollectionRow>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query(
-            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections ORDER BY created_at DESC",
+            "SELECT * FROM rag_collections ORDER BY created_at DESC",
         )
         .fetch_all(pool)
         .await?;
@@ -91,7 +94,7 @@ impl DatabaseService {
     pub async fn get_rag_collection_by_id_internal(&self, collection_id: &str) -> Result<Option<RagCollectionRow>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
-            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE id = ?",
+            "SELECT * FROM rag_collections WHERE id = ?",
         )
         .bind(collection_id)
         .fetch_optional(pool)
@@ -111,7 +114,7 @@ impl DatabaseService {
     pub async fn get_rag_collection_by_name_internal(&self, name: &str) -> Result<Option<RagCollectionRow>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
-            "SELECT id, name, description, is_active, document_count, chunk_count, created_at, updated_at FROM rag_collections WHERE name = ?",
+            "SELECT * FROM rag_collections WHERE name = ?",
         )
         .bind(name)
         .fetch_optional(pool)
@@ -130,10 +133,33 @@ impl DatabaseService {
 
     pub async fn delete_rag_collection_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
+        let mut tx = pool.begin().await?;
+
+        // 1. Delete chunks associated with the collection
+        sqlx::query("DELETE FROM rag_chunks WHERE collection_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
+        // 2. Delete document sources associated with the collection
+        sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
+        // 3. Delete queries associated with the collection
+        sqlx::query("DELETE FROM rag_queries WHERE collection_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
+        // 4. Finally delete the collection itself
         sqlx::query("DELETE FROM rag_collections WHERE id = ?")
             .bind(id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -224,6 +250,7 @@ impl DatabaseService {
         file_size: i64,
         file_hash: &str,
         content_hash: &str,
+        status: &str,
         metadata: &str,
         created_at: &str,
         updated_at: &str,
@@ -232,8 +259,8 @@ impl DatabaseService {
         sqlx::query(
             r#"INSERT INTO rag_document_sources (
                 id, collection_id, file_path, file_name, file_type, file_size, 
-                file_hash, content_hash, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+                file_hash, content_hash, status, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(collection_id)
@@ -243,6 +270,7 @@ impl DatabaseService {
         .bind(file_size)
         .bind(file_hash)
         .bind(content_hash)
+        .bind(status)
         .bind(metadata)
         .bind(created_at)
         .bind(updated_at)
@@ -279,8 +307,6 @@ impl DatabaseService {
         chunk_index: i32,
         char_count: i32,
         embedding_bytes: Option<Vec<u8>>,
-        embedding_model: &str,
-        embedding_dimension: i32,
         metadata_json: &str,
         created_at_ts: i64,
         updated_at_ts: i64,
@@ -289,8 +315,8 @@ impl DatabaseService {
         sqlx::query(
             r#"INSERT INTO rag_chunks (
                 id, document_id, collection_id, content, content_hash, chunk_index, char_count,
-                embedding, embedding_model, embedding_dimension, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+                embedding, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(document_id)
@@ -300,8 +326,6 @@ impl DatabaseService {
         .bind(chunk_index)
         .bind(char_count)
         .bind(embedding_bytes)
-        .bind(embedding_model)
-        .bind(embedding_dimension)
         .bind(metadata_json)
         .bind(created_at_ts)
         .bind(updated_at_ts)
@@ -329,6 +353,7 @@ impl DatabaseService {
             file_size: row.get("file_size"),
             file_hash: row.get("file_hash"),
             content_hash: row.get("content_hash"),
+            status: row.get("status"),
             metadata: row.get("metadata"),
             chunk_count: row.get("chunk_count"),
             created_at: row.get("created_at"),
@@ -346,8 +371,6 @@ impl DatabaseService {
             chunk_index: row.get("chunk_index"),
             char_count: row.get("char_count"),
             embedding: row.get("embedding"),
-            embedding_model: row.get("embedding_model"),
-            embedding_dimension: row.get("embedding_dimension"),
             metadata: row.get("metadata"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
@@ -368,8 +391,8 @@ impl DatabaseService {
         let content_hash = format!("{:x}", md5::compute(content));
         
         sqlx::query(
-            r#"INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, content_hash, metadata, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, content_hash, status, metadata, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(&id)
         .bind(collection_id)
@@ -378,6 +401,7 @@ impl DatabaseService {
         .bind("text")
         .bind(content.len() as i64)
         .bind(content_hash)
+        .bind("Completed") // Since we are creating it with content, mark as completed
         .bind(metadata)
         .bind(&now)
         .bind(&now)
@@ -393,13 +417,11 @@ impl DatabaseService {
         content: &str,
         chunk_index: i32,
         embedding: Option<&[f32]>,
-        embedding_model: &str,
-        embedding_dimension: i32,
         metadata_json: &str,
     ) -> Result<String> {
         let pool = self.get_pool()?;
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().timestamp();
+        let now = chrono::Utc::now().to_rfc3339();
         let content_hash = format!("{:x}", md5::compute(content));
         
         let embedding_bytes = embedding.map(|e| {
@@ -411,8 +433,8 @@ impl DatabaseService {
         });
 
         sqlx::query(
-            r#"INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding, embedding_model, embedding_dimension, metadata, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding, metadata, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(&id)
         .bind(document_id)
@@ -422,11 +444,9 @@ impl DatabaseService {
         .bind(chunk_index)
         .bind(content.len() as i32)
         .bind(embedding_bytes)
-        .bind(embedding_model)
-        .bind(embedding_dimension)
         .bind(metadata_json)
-        .bind(now)
-        .bind(now)
+        .bind(&now)
+        .bind(&now)
         .execute(pool)
         .await?;
         Ok(id)
@@ -434,13 +454,22 @@ impl DatabaseService {
 
     pub async fn get_rag_documents_internal(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
         let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = ?")
+        let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC")
             .bind(collection_id)
             .fetch_all(pool)
             .await?;
             
         let mut docs = Vec::new();
         for row in rows {
+            let status_str: String = row.get("status");
+            let ingestion_status = match status_str.to_lowercase().as_str() {
+                "pending" => sentinel_rag::models::IngestionStatusEnum::Pending,
+                "processing" => sentinel_rag::models::IngestionStatusEnum::Processing,
+                "completed" => sentinel_rag::models::IngestionStatusEnum::Completed,
+                "failed" => sentinel_rag::models::IngestionStatusEnum::Failed,
+                _ => sentinel_rag::models::IngestionStatusEnum::Pending,
+            };
+
             docs.push(sentinel_rag::models::DocumentSource {
                 id: row.get("id"),
                 file_path: row.get("file_path"),
@@ -449,7 +478,7 @@ impl DatabaseService {
                 file_size: row.get::<i64, _>("file_size") as u64,
                 file_hash: row.get("file_hash"),
                 chunk_count: row.get::<i64, _>("chunk_count") as usize,
-                ingestion_status: sentinel_rag::models::IngestionStatusEnum::Completed,
+                ingestion_status,
                 created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at")).unwrap_or_default().with_timezone(&chrono::Utc),
                 updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at")).unwrap_or_default().with_timezone(&chrono::Utc),
                 metadata: std::collections::HashMap::new(),
@@ -458,12 +487,110 @@ impl DatabaseService {
         Ok(docs)
     }
 
+    pub async fn get_rag_documents_paginated_internal(
+        &self, 
+        collection_id: &str, 
+        limit: i64, 
+        offset: i64,
+        search_query: Option<&str>
+    ) -> Result<(Vec<sentinel_rag::models::DocumentSource>, i64)> {
+        let pool = self.get_pool()?;
+        
+        // Build query with optional search
+        let (query_str, count_str) = if let Some(_search) = search_query {
+            (
+                format!(
+                    "SELECT * FROM rag_document_sources WHERE collection_id = ? AND (file_name LIKE ? OR file_path LIKE ?) ORDER BY created_at DESC LIMIT ? OFFSET ?"
+                ),
+                format!(
+                    "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = ? AND (file_name LIKE ? OR file_path LIKE ?)"
+                )
+            )
+        } else {
+            (
+                "SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?".to_string(),
+                "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = ?".to_string()
+            )
+        };
+        
+        // Get total count
+        let total_count: i64 = if let Some(search) = search_query {
+            let search_pattern = format!("%{}%", search);
+            sqlx::query(&count_str)
+                .bind(collection_id)
+                .bind(&search_pattern)
+                .bind(&search_pattern)
+                .fetch_one(pool)
+                .await?
+                .get("count")
+        } else {
+            sqlx::query(&count_str)
+                .bind(collection_id)
+                .fetch_one(pool)
+                .await?
+                .get("count")
+        };
+        
+        // Get paginated documents
+        let rows = if let Some(search) = search_query {
+            let search_pattern = format!("%{}%", search);
+            sqlx::query(&query_str)
+                .bind(collection_id)
+                .bind(&search_pattern)
+                .bind(&search_pattern)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await?
+        } else {
+            sqlx::query(&query_str)
+                .bind(collection_id)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await?
+        };
+            
+        let mut docs = Vec::new();
+        for row in rows {
+            let status_str: String = row.get("status");
+            let ingestion_status = match status_str.to_lowercase().as_str() {
+                "pending" => sentinel_rag::models::IngestionStatusEnum::Pending,
+                "processing" => sentinel_rag::models::IngestionStatusEnum::Processing,
+                "completed" => sentinel_rag::models::IngestionStatusEnum::Completed,
+                "failed" => sentinel_rag::models::IngestionStatusEnum::Failed,
+                _ => sentinel_rag::models::IngestionStatusEnum::Pending,
+            };
+
+            docs.push(sentinel_rag::models::DocumentSource {
+                id: row.get("id"),
+                file_path: row.get("file_path"),
+                file_name: row.get("file_name"),
+                file_type: row.get("file_type"),
+                file_size: row.get::<i64, _>("file_size") as u64,
+                file_hash: row.get("file_hash"),
+                chunk_count: row.get::<i64, _>("chunk_count") as usize,
+                ingestion_status,
+                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at")).unwrap_or_default().with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at")).unwrap_or_default().with_timezone(&chrono::Utc),
+                metadata: std::collections::HashMap::new(),
+            });
+        }
+        
+        Ok((docs, total_count))
+    }
+
     pub async fn get_rag_chunks_internal(&self, document_id: &str) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
         let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = ? ORDER BY chunk_index ASC")
-            .bind(document_id)
-            .fetch_all(pool)
-            .await?;
+        let rows = sqlx::query(
+            r#"SELECT c.*, s.file_path, s.file_name, s.file_type, s.file_size 
+               FROM rag_chunks c 
+               JOIN rag_document_sources s ON c.document_id = s.id 
+               WHERE c.document_id = ? ORDER BY c.chunk_index ASC"#
+        )
+        .bind(document_id)
+        .fetch_all(pool)
+        .await?;
             
         let mut chunks = Vec::new();
         for row in rows {
@@ -474,10 +601,10 @@ impl DatabaseService {
                 content_hash: row.get("content_hash"),
                 chunk_index: row.get::<i32, _>("chunk_index") as usize,
                 metadata: sentinel_rag::models::ChunkMetadata {
-                    file_path: String::new(),
-                    file_name: String::new(),
-                    file_type: String::new(),
-                    file_size: 0,
+                    file_path: row.get("file_path"),
+                    file_name: row.get("file_name"),
+                    file_type: row.get("file_type"),
+                    file_size: row.get::<i64, _>("file_size") as u64,
                     chunk_start_char: 0,
                     chunk_end_char: 0,
                     page_number: None,
@@ -485,7 +612,7 @@ impl DatabaseService {
                     custom_fields: std::collections::HashMap::new(),
                 },
                 embedding: None,
-                created_at: chrono::Utc::now(),
+                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at")).unwrap_or_default().with_timezone(&chrono::Utc),
             });
         }
         Ok(chunks)
@@ -501,6 +628,7 @@ impl DatabaseService {
     pub async fn save_rag_query_internal(
         &self,
         collection_id: Option<&str>,
+        conversation_id: Option<&str>,
         query: &str,
         response: &str,
         processing_time_ms: u64,
@@ -508,11 +636,12 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            r#"INSERT INTO rag_queries (id, collection_id, query, response, processing_time_ms, created_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#
+            r#"INSERT INTO rag_queries (id, collection_id, conversation_id, query, response, processing_time_ms, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#
         )
         .bind(&id)
         .bind(collection_id)
+        .bind(conversation_id)
         .bind(query)
         .bind(response)
         .bind(processing_time_ms as i64)

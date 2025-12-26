@@ -10727,6 +10727,7 @@ name = "sentinel-llm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "chrono",
  "futures",
  "reqwest 0.12.28",
@@ -10919,7 +10920,6 @@ dependencies = [
  "log",
  "mime",
  "moka",
- "openssl",
  "pcap-file",
  "pem",
  "pnet",

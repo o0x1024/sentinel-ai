@@ -1,4 +1,8 @@
 //! Packet capture commands - Tauri commands for network packet capture
+//!
+//! Note: This module is not available on Windows due to WinPcap/Npcap dependency issues
+
+#![cfg(not(target_os = "windows"))]
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

@@ -29,6 +29,12 @@ pub struct RagConfig {
     pub min_chunk_size_chars: usize,
     #[serde(default = "default_max_chunk_size")]
     pub max_chunk_size_chars: usize,
+    #[serde(default = "default_chunk_expansion_enabled")]
+    pub chunk_expansion_enabled: bool,
+    #[serde(default = "default_chunk_expansion_before")]
+    pub chunk_expansion_before: usize,
+    #[serde(default = "default_chunk_expansion_after")]
+    pub chunk_expansion_after: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +45,9 @@ impl Default for ChunkingStrategy { fn default() -> Self { Self::RecursiveCharac
 fn default_context_window() -> usize { 1 }
 fn default_min_chunk_size() -> usize { 100 }
 fn default_max_chunk_size() -> usize { 3000 }
+fn default_chunk_expansion_enabled() -> bool { true }
+fn default_chunk_expansion_before() -> usize { 1 }
+fn default_chunk_expansion_after() -> usize { 1 }
 
 impl Default for RagConfig {
     fn default() -> Self {
@@ -64,6 +73,9 @@ impl Default for RagConfig {
             chunking_strategy: ChunkingStrategy::RecursiveCharacter,
             min_chunk_size_chars: 100,
             max_chunk_size_chars: 3000,
+            chunk_expansion_enabled: true,
+            chunk_expansion_before: 1,
+            chunk_expansion_after: 1,
         }
     }
 }

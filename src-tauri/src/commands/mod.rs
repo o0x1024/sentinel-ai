@@ -11,6 +11,7 @@ pub mod dictionary;
 pub mod license_commands;
 pub mod mcp_commands;
 pub mod notifications;
+#[cfg(not(target_os = "windows"))]
 pub mod packet_capture_commands;
 pub mod traffic_analysis_commands;
 pub mod performance;
@@ -39,6 +40,7 @@ pub use dictionary::*;
 pub use license_commands::*;
 pub use mcp_commands::*;
 pub use notifications::*;
+#[cfg(not(target_os = "windows"))]
 pub use packet_capture_commands::*;
 pub use traffic_analysis_commands::*;
 pub use performance::*;

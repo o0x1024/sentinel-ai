@@ -643,7 +643,7 @@ const stopVision = async () => {
   }
   isStopping.value = true
   try {
-    await invoke('cancel_ai_stream', { conversationId: eid })
+    await invoke('cancel_ai_stream', { conversation_id: eid })
     console.log('[VisionPanel] Stop command sent')
   } catch (error) {
     console.error('[VisionPanel] Failed to stop:', error)

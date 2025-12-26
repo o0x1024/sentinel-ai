@@ -169,32 +169,6 @@ impl<D: RagDatabase> RagService<D> {
         self.database.delete_rag_collection(collection_id).await
     }
 
-    /// 检测文档是否为POC类型（需要完整性保证）
-    fn is_poc_document(&self, file_path: &str, content: &str) -> bool {
-        // 检查文件名
-        let file_name_lower = file_path.to_lowercase();
-        if file_name_lower.contains("poc") 
-            || file_name_lower.contains("exploit") 
-            || file_name_lower.contains("payload") {
-            return true;
-        }
-        
-        // 检查内容关键词
-        let content_lower = content.to_lowercase();
-        let poc_keywords = [
-            "poc", "exploit", "payload", "vulnerability", "cve-",
-            "proof of concept", "security test", "penetration test",
-            "漏洞验证", "漏洞利用", "安全测试", "渗透测试"
-        ];
-        
-        let keyword_count = poc_keywords.iter()
-            .filter(|&keyword| content_lower.contains(keyword))
-            .count();
-        
-        // 如果包含3个或以上POC相关关键词，认为是POC文档
-        keyword_count >= 3
-    }
-
     /// 摄取文档源
     pub async fn ingest_source(&self, request: IngestRequest) -> Result<IngestResponse> {
         let task_id = Uuid::new_v4().to_string();
@@ -240,7 +214,7 @@ impl<D: RagDatabase> RagService<D> {
         };
 
         // 分块处理
-        let (document_source, mut chunks) = match self.chunker.process_document(&request.file_path).await {
+        let (document_source, chunks) = match self.chunker.process_document(&request.file_path).await {
             Ok((source, chunks)) => (source, chunks),
             Err(e) => {
                 error!("文档分块处理失败: {}", e);
@@ -253,34 +227,13 @@ impl<D: RagDatabase> RagService<D> {
         };
         ingestion_status.total_chunks = chunks.len();
         
-        // 检测是否为POC文档
-        let full_content: String = chunks.iter().map(|c| c.content.as_str()).collect::<Vec<_>>().join("\n");
-        let is_poc = self.is_poc_document(&request.file_path, &full_content);
-        
-        if is_poc {
-            info!("检测到POC文档，将在metadata中标记");
-            // 为所有chunks添加POC标记
-            for chunk in &mut chunks {
-                chunk.metadata.custom_fields.insert("document_type".to_string(), "poc".to_string());
-                chunk.metadata.custom_fields.insert("requires_completeness".to_string(), "true".to_string());
-            }
-        }
-        
-        // 准备metadata JSON
-        let mut metadata_map = request.metadata.unwrap_or_default();
-        if is_poc {
-            metadata_map.insert("document_type".to_string(), "poc".to_string());
-            metadata_map.insert("requires_completeness".to_string(), "true".to_string());
-        }
-        let metadata_json = serde_json::to_string(&metadata_map).unwrap_or_default();
-        
         // 创建文档记录
         let document_id = match self.database.create_rag_document(
             &collection_id,
             &document_source.file_path,
             &document_source.file_name,
             "", // 内容在chunks中
-            &metadata_json,
+            request.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()).as_deref().unwrap_or(""),
         ).await {
             Ok(id) => id,
             Err(e) => {
@@ -292,12 +245,6 @@ impl<D: RagDatabase> RagService<D> {
                 return Err(anyhow!("创建文档记录失败: {}", e));
             }
         };
-
-        // 关键修复：确保所有chunks使用正确的document_id (source_id)
-        // 这样在检索时才能正确关联到SQL数据库中的记录
-        for chunk in &mut chunks {
-            chunk.source_id = document_id.clone();
-        }
         
         // Get collection name for vector store
         let collection_name = if let Some(collection) = self.database.get_rag_collection_by_id(&collection_id).await? {
@@ -311,14 +258,6 @@ impl<D: RagDatabase> RagService<D> {
             Ok(count) => count,
             Err(e) => {
                 error!("向量存储插入失败: {}", e);
-                
-                // Rollback: delete the document from SQL database
-                if let Err(del_err) = self.database.delete_rag_document(&document_id).await {
-                    error!("Failed to rollback (delete) document {} after vector insertion failure: {}", document_id, del_err);
-                } else {
-                    info!("Rolled back document {} due to vector insertion failure", document_id);
-                }
-
                 ingestion_status.status = "failed".to_string();
                 ingestion_status.error_message = Some(format!("向量存储插入失败: {}", e));
                 ingestion_status.completed_at = Some(chrono::Utc::now());
@@ -412,28 +351,8 @@ impl<D: RagDatabase> RagService<D> {
         };
 
         // 直接对文本进行分块
-        let mut chunks = self.chunk_raw_text(content, title)?;
+        let chunks = self.chunk_raw_text(content, title)?;
         ingestion_status.total_chunks = chunks.len();
-
-        // 检测是否为POC文档
-        let is_poc = self.is_poc_document(title, content);
-        
-        if is_poc {
-            info!("检测到POC文本，将在metadata中标记");
-            // 为所有chunks添加POC标记
-            for chunk in &mut chunks {
-                chunk.metadata.custom_fields.insert("document_type".to_string(), "poc".to_string());
-                chunk.metadata.custom_fields.insert("requires_completeness".to_string(), "true".to_string());
-            }
-        }
-        
-        // 准备metadata JSON
-        let mut metadata_map = metadata.unwrap_or_default();
-        if is_poc {
-            metadata_map.insert("document_type".to_string(), "poc".to_string());
-            metadata_map.insert("requires_completeness".to_string(), "true".to_string());
-        }
-        let metadata_json = serde_json::to_string(&metadata_map).unwrap_or_default();
 
         // 创建文档记录
         let document_id = match self.database.create_rag_document(
@@ -441,7 +360,7 @@ impl<D: RagDatabase> RagService<D> {
             &format!("manual://{}", title),
             title,
             content, // 传入实际内容用于计算大小
-            &metadata_json,
+            metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()).as_deref().unwrap_or(""),
         ).await {
             Ok(id) => id,
             Err(e) => {
@@ -453,12 +372,6 @@ impl<D: RagDatabase> RagService<D> {
                 return Err(anyhow!("创建文档记录失败: {}", e));
             }
         };
-
-        // 关键修复：确保所有chunks使用正确的document_id (source_id)
-        // 这样在检索时才能正确关联到SQL数据库中的记录
-        for chunk in &mut chunks {
-            chunk.source_id = document_id.clone();
-        }
 
         // 获取集合名称用于向量存储
         let collection_name = if let Some(collection) = self.database.get_rag_collection_by_id(&target_collection_id).await? {
@@ -472,14 +385,6 @@ impl<D: RagDatabase> RagService<D> {
             Ok(count) => count,
             Err(e) => {
                 error!("向量存储插入失败: {}", e);
-
-                // Rollback: delete the document from SQL database
-                if let Err(del_err) = self.database.delete_rag_document(&document_id).await {
-                    error!("Failed to rollback (delete) document {} after vector insertion failure: {}", document_id, del_err);
-                } else {
-                    info!("Rolled back document {} due to vector insertion failure", document_id);
-                }
-
                 ingestion_status.status = "failed".to_string();
                 ingestion_status.error_message = Some(format!("向量存储插入失败: {}", e));
                 ingestion_status.completed_at = Some(chrono::Utc::now());
@@ -611,129 +516,6 @@ impl<D: RagDatabase> RagService<D> {
         Ok(chunks)
     }
 
-    /// 扩展chunk上下文：获取相邻的chunks并合并
-    async fn expand_chunk_context(&self, results: Vec<QueryResult>) -> Result<Vec<QueryResult>> {
-        if !self._config.chunk_expansion_enabled || results.is_empty() {
-            return Ok(results);
-        }
-
-        let mut before = self._config.chunk_expansion_before;
-        let mut after = self._config.chunk_expansion_after;
-        
-        if before == 0 && after == 0 {
-            return Ok(results);
-        }
-
-        info!("Expanding chunk context: before={}, after={}", before, after);
-        
-        let mut expanded_results = Vec::new();
-        
-        for result in results {
-            let chunk = &result.chunk;
-            let document_id = &chunk.source_id;
-            let current_index = chunk.chunk_index;
-            
-            // 获取该文档的所有chunks
-            let all_chunks = match self.database.get_rag_chunks(document_id).await {
-                Ok(chunks) => chunks,
-                Err(e) => {
-                    warn!("Failed to get chunks for document {}: {}", document_id, e);
-                    expanded_results.push(result);
-                    continue;
-                }
-            };
-            
-            if all_chunks.is_empty() {
-                expanded_results.push(result);
-                continue;
-            }
-            
-            // 检查是否为POC文档，如果是则扩大扩展范围
-            let is_poc = chunk.metadata.custom_fields.get("document_type")
-                .map(|v| v == "poc")
-                .unwrap_or(false);
-            
-            if is_poc {
-                // POC文档需要更大的上下文，扩展到前后各2个chunk或整个文档
-                before = std::cmp::max(before, 2);
-                after = std::cmp::max(after, 2);
-                info!("POC document detected, expanding context to before={}, after={}", before, after);
-            }
-            
-            // 计算需要包含的chunk索引范围
-            let start_index = current_index.saturating_sub(before);
-            let end_index = std::cmp::min(current_index + after + 1, all_chunks.len());
-            
-            // 收集相关chunks并按索引排序
-            let mut relevant_chunks: Vec<&DocumentChunk> = all_chunks
-                .iter()
-                .filter(|c| c.chunk_index >= start_index && c.chunk_index < end_index)
-                .collect();
-            relevant_chunks.sort_by_key(|c| c.chunk_index);
-            
-            if relevant_chunks.is_empty() {
-                expanded_results.push(result);
-                continue;
-            }
-            
-            // 合并chunks内容
-            let expanded_content = relevant_chunks
-                .iter()
-                .map(|c| c.content.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            
-            // 创建扩展后的chunk
-            let mut expanded_chunk = chunk.clone();
-            expanded_chunk.content = expanded_content;
-            expanded_chunk.content_hash = format!("{:x}", md5::compute(expanded_chunk.content.as_bytes()));
-            
-            // 更新metadata以反映扩展范围
-            if let Some(first) = relevant_chunks.first() {
-                expanded_chunk.metadata.chunk_start_char = first.metadata.chunk_start_char;
-            }
-            if let Some(last) = relevant_chunks.last() {
-                expanded_chunk.metadata.chunk_end_char = last.metadata.chunk_end_char;
-            }
-            
-            // 在metadata中标记扩展信息
-            expanded_chunk.metadata.custom_fields.insert(
-                "expanded".to_string(),
-                "true".to_string()
-            );
-            expanded_chunk.metadata.custom_fields.insert(
-                "original_chunk_index".to_string(),
-                current_index.to_string()
-            );
-            expanded_chunk.metadata.custom_fields.insert(
-                "expanded_range".to_string(),
-                format!("{}-{}", start_index, end_index - 1)
-            );
-            expanded_chunk.metadata.custom_fields.insert(
-                "chunks_merged".to_string(),
-                relevant_chunks.len().to_string()
-            );
-            expanded_chunk.metadata.custom_fields.insert(
-                "skip_similarity_filter".to_string(),
-                "true".to_string()
-            );
-            
-            info!(
-                "Expanded chunk {} from index {} to range {}-{} ({} chunks merged)",
-                chunk.id, current_index, start_index, end_index - 1, relevant_chunks.len()
-            );
-            
-            // 扩展后的chunk使用原始分数，但标记为跳过相似度过滤
-            expanded_results.push(QueryResult {
-                chunk: expanded_chunk,
-                score: result.score,
-                rank: result.rank,
-            });
-        }
-        
-        Ok(expanded_results)
-    }
-
     /// 查询相似文档 - 使用 Rig + LanceDB
     pub async fn query(&self, request: RagQueryRequest) -> Result<RagQueryResponse> {
         info!("执行RAG查询 (使用 Rig + LanceDB): {}", request.query);
@@ -759,88 +541,7 @@ impl<D: RagDatabase> RagService<D> {
         let top_k = request.top_k.unwrap_or(5);
         
         // 使用 Rig + LanceDB 进行语义搜索
-        let mut query_results = self.vector_store.search_similar(&collection_name, &request.query, top_k).await?;
-        
-        info!("Vector search returned {} results", query_results.len());
-        for (i, r) in query_results.iter().enumerate() {
-            info!("  Result {}: score={:.4}, content_preview={}", 
-                  i+1, r.score, r.chunk.content.chars().take(50).collect::<String>());
-        }
-
-        // Deduplicate by content_hash to prevent duplicate chunks from multiple ingestions
-        use std::collections::HashSet;
-        let mut seen_hashes = HashSet::new();
-        let before_dedup = query_results.len();
-        query_results.retain(|r| {
-            let hash = &r.chunk.content_hash;
-            if seen_hashes.contains(hash) {
-                false
-            } else {
-                seen_hashes.insert(hash.clone());
-                true
-            }
-        });
-        let after_dedup = query_results.len();
-        
-        if before_dedup > after_dedup {
-            info!("Removed {} duplicate chunks (content_hash deduplication)", before_dedup - after_dedup);
-        }
-        
-        // 先进行chunk上下文扩展（在相似度过滤之前）
-        // 这样可以确保POC等重要文档的完整性，即使某些部分相似度较低
-        query_results = self.expand_chunk_context(query_results).await?;
-        info!("After chunk expansion: {} results", query_results.len());
-
-        // 第二轮去重：去除扩展后产生的重复内容
-        // 场景：同一个文档的不同chunk被检索到，扩展后变成了完全相同的内容
-        // 我们只保留分数最高的那一个
-        let mut unique_results = Vec::new();
-        let mut seen_expanded_hashes = HashSet::new();
-        
-        // 按分数降序排序，确保保留分数最高的
-        query_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        
-        for result in query_results {
-            let hash = &result.chunk.content_hash;
-            if !seen_expanded_hashes.contains(hash) {
-                seen_expanded_hashes.insert(hash.clone());
-                unique_results.push(result);
-            } else {
-                info!("Removed duplicate expanded content (score: {:.4})", result.score);
-            }
-        }
-        query_results = unique_results;
-        
-        // Apply similarity threshold filter (but skip expanded chunks)
-        let similarity_threshold = request.similarity_threshold.unwrap_or(self._config.similarity_threshold);
-        info!("Applying similarity threshold: {:.2}", similarity_threshold);
-        let before_filter = query_results.len();
-        query_results.retain(|r| {
-            // 扩展后的chunk跳过相似度过滤
-            let skip_filter = r.chunk.metadata.custom_fields
-                .get("skip_similarity_filter")
-                .map(|v| v == "true")
-                .unwrap_or(false);
-            
-            if skip_filter {
-                info!("Skipping similarity filter for expanded chunk: {}", r.chunk.id);
-                true
-            } else {
-                r.score >= similarity_threshold
-            }
-        });
-        let after_filter = query_results.len();
-        
-        if before_filter > after_filter {
-            info!("Filtered out {} results below similarity threshold {:.2}", 
-                  before_filter - after_filter, similarity_threshold);
-        }
-        
-        if query_results.is_empty() {
-            info!("No results above similarity threshold {:.2}, returning empty", similarity_threshold);
-        } else {
-            info!("Returning {} results after threshold filter", query_results.len());
-        }
+        let query_results = self.vector_store.search_similar(&collection_name, &request.query, top_k).await?;
         
         // 构建上下文
         let context_parts: Vec<String> = query_results.iter().map(|r| r.chunk.content.clone()).collect();
@@ -903,12 +604,6 @@ impl<D: RagDatabase> RagService<D> {
         for collection_name in collection_names {
             match self.vector_store.search_similar(&collection_name, &request.query, top_k).await {
                 Ok(results) => {
-                    info!("Collection '{}' returned {} results", collection_name, results.len());
-                    for (i, r) in results.iter().enumerate() {
-                        info!("  Result {}: score={:.4}, content_hash={}, preview={}", 
-                              i+1, r.score, &r.chunk.content_hash[..8], 
-                              r.chunk.content.chars().take(50).collect::<String>());
-                    }
                     all_results.extend(results);
                 }
                 Err(e) => {
@@ -922,62 +617,9 @@ impl<D: RagDatabase> RagService<D> {
             return Ok((String::new(), vec![]));
         }
 
-        // 排序并取 Top K（在扩展之前）
+        // 排序并取 Top K
         all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         let mut results: Vec<crate::models::QueryResult> = all_results.into_iter().take(top_k).collect();
-
-        // 先进行chunk上下文扩展（在相似度过滤之前）
-        // 这样可以确保POC等重要文档的完整性，即使某些部分相似度较低
-        results = self.expand_chunk_context(results).await?;
-        info!("After chunk expansion: {} results", results.len());
-
-        // Apply similarity threshold filter (but skip expanded chunks)
-        let similarity_threshold = request.similarity_threshold.unwrap_or(self._config.similarity_threshold);
-        let before_filter = results.len();
-        results.retain(|r| {
-            // 扩展后的chunk跳过相似度过滤
-            let skip_filter = r.chunk.metadata.custom_fields
-                .get("skip_similarity_filter")
-                .map(|v| v == "true")
-                .unwrap_or(false);
-            
-            if skip_filter {
-                info!("Skipping similarity filter for expanded chunk in assistant query: {}", r.chunk.id);
-                true
-            } else {
-                r.score >= similarity_threshold
-            }
-        });
-        let after_filter = results.len();
-        
-        if before_filter > after_filter {
-            info!("Filtered out {} results below similarity threshold {:.2}", 
-                  before_filter - after_filter, similarity_threshold);
-        }
-        
-        if results.is_empty() {
-            info!("No results above similarity threshold {:.2}, returning empty", similarity_threshold);
-            return Ok((String::new(), vec![]));
-        }
-
-        // Deduplicate by content_hash to prevent duplicate chunks (after expansion)
-        use std::collections::HashSet;
-        let mut seen_hashes = HashSet::new();
-        let before_dedup = results.len();
-        results.retain(|r| {
-            let hash = &r.chunk.content_hash;
-            if seen_hashes.contains(hash) {
-                false
-            } else {
-                seen_hashes.insert(hash.clone());
-                true
-            }
-        });
-        let after_dedup = results.len();
-        
-        if before_dedup > after_dedup {
-            info!("Removed {} duplicate chunks (content_hash deduplication)", before_dedup - after_dedup);
-        }
 
         // Optional reranking step
         let rerank_enabled_req = request.reranking_enabled.unwrap_or(false);
@@ -1117,6 +759,20 @@ impl<D: RagDatabase> RagService<D> {
         }
         
         // Clear SQL database
+        self.database.delete_rag_collection(collection_id).await
+    }
+
+    /// 删除集合（包括向量库数据）
+    pub async fn delete_collection(&self, collection_id: &str) -> Result<()> {
+        info!("删除集合: {}", collection_id);
+        
+        // Get collection name before deleting from database
+        if let Some(collection) = self.database.get_rag_collection_by_id(collection_id).await? {
+            // Delete from vector store (don't recreate)
+            self.vector_store.delete_collection(&collection.name).await?;
+        }
+        
+        // Delete from SQL database
         self.database.delete_rag_collection(collection_id).await
     }
 

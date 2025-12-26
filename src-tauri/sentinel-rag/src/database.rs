@@ -13,7 +13,7 @@ use rig::client::EmbeddingsClient;
 use rig::vector_store::VectorStoreIndex;
 use rig::vector_store::VectorSearchRequest;
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
-use lancedb::{connect, Connection, Table};
+use lancedb::{connect, Connection};
 use lancedb::arrow::arrow_schema::{DataType, Field, Fields, Schema};
 use arrow_array::{ArrayRef, RecordBatch, StringArray, Int64Array, Float64Array, FixedSizeListArray, Array};
 use futures_util::StreamExt;
@@ -68,10 +68,16 @@ impl LanceDbManager {
     async fn insert_chunks_ollama(&self, collection_name: &str, chunks: Vec<DocumentChunk>) -> Result<usize> {
         let base_url = self.embedding_config.base_url.as_deref().unwrap_or("http://localhost:11434");
         info!("Using Ollama embedding service at: {}", base_url);
-        // rig-core 的 Ollama provider 使用 OLLAMA_API_BASE_URL 环境变量
-        std::env::set_var("OLLAMA_API_BASE_URL", base_url);
-        let client = rig::providers::ollama::Client::from_env();
-        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        
+        let client = rig::providers::ollama::Client::builder()
+            .api_key(rig::client::Nothing)
+            .base_url(base_url)
+            .build()
+            .map_err(|e| anyhow!("Failed to create Ollama client: {}", e))?;
+            
+        let dimensions = self.embedding_config.dimensions.unwrap_or(768);
+        let embedding_model: rig::providers::ollama::EmbeddingModel<reqwest::Client> = rig::providers::ollama::EmbeddingModel::new(client, &self.embedding_config.model, dimensions);
+        
         self.insert_chunks_impl(collection_name, chunks, embedding_model).await
     }
     
@@ -215,12 +221,37 @@ impl LanceDbManager {
         ])));
         let batch = RecordBatch::try_new(schema.clone(), vec![id_arr, source_id_arr, chunk_index_arr, definition_arr, embedding_arr, file_name_arr, file_path_arr, start_char_arr, end_char_arr]).map_err(|e| anyhow!(e.to_string()))?;
         let conn = { let guard = self.conn.read().await; guard.as_ref().cloned().ok_or_else(|| anyhow!("LanceDB not initialized"))? };
-        let table: Table = match conn.open_table(collection_name).execute().await { Ok(t) => t, Err(_) => { let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch.clone())].into_iter(), schema.clone()); conn.create_table(collection_name, Box::new(reader)).execute().await? } };
-        let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-        table.add(Box::new(reader)).execute().await?;
+        
+        // Check if table exists and validate schema
+        if let Ok(existing_table) = conn.open_table(collection_name).execute().await {
+            // Validate embedding dimensions
+            let existing_schema = existing_table.schema().await?;
+            if let Some(embedding_field) = existing_schema.field_with_name("embedding").ok() {
+                if let DataType::FixedSizeList(_, existing_dim) = embedding_field.data_type() {
+                    if *existing_dim != list_size_i32 {
+                        return Err(anyhow!(
+                            "Embedding dimension mismatch: Collection '{}' was created with dimension {} but current model generates dimension {}. \
+                            Please either: 1) Use the same embedding model (check RAG settings), or 2) Delete this collection and recreate it with the new model.",
+                            collection_name, existing_dim, list_size_i32
+                        ));
+                    }
+                }
+            }
+            // Table exists, append data
+            let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+            existing_table.add(Box::new(reader)).execute().await
+                .map_err(|e| anyhow!("Failed to insert into vector store: {}", e))?;
+        } else {
+            // Create new table with data
+            let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema.clone());
+            conn.create_table(collection_name, Box::new(reader)).execute().await?;
+        }
+        
+        // Get final count
+        let table = conn.open_table(collection_name).execute().await?;
         let count = table.count_rows(None).await.unwrap_or(0) as usize;
-        info!("Inserted chunks into collection '{}' (total rows: {})", collection_name, count);
-        Ok(count)
+        info!("Inserted {} chunks into collection '{}' (total rows: {})", chunks.len(), collection_name, count);
+        Ok(chunks.len())
     }
     
     async fn call_lmstudio_embedding(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
@@ -355,12 +386,40 @@ impl LanceDbManager {
         ])));
         let batch = RecordBatch::try_new(schema.clone(), vec![id_arr, source_id_arr, chunk_index_arr, definition_arr, embedding_arr, file_name_arr, file_path_arr, start_char_arr, end_char_arr]).map_err(|e| anyhow!(e.to_string()))?;
         let conn = { let guard = self.conn.read().await; guard.as_ref().cloned().ok_or_else(|| anyhow!("LanceDB not initialized"))? };
-        let table: Table = match conn.open_table(collection_name).execute().await { Ok(t) => t, Err(_) => { let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch.clone())].into_iter(), schema.clone()); conn.create_table(collection_name, Box::new(reader)).execute().await? } };
-        let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-        table.add(Box::new(reader)).execute().await?;
+        
+        // Check if table exists and validate schema
+        if let Ok(existing_table) = conn.open_table(collection_name).execute().await {
+            // Table exists, validate embedding dimensions
+            let existing_schema = existing_table.schema().await?;
+            
+            // Extract embedding dimension from existing schema
+            if let Some(embedding_field) = existing_schema.field_with_name("embedding").ok() {
+                if let DataType::FixedSizeList(_, existing_dim) = embedding_field.data_type() {
+                    if *existing_dim != list_size_i32 {
+                        return Err(anyhow!(
+                            "Embedding dimension mismatch: Collection '{}' was created with dimension {} but current model generates dimension {}. \
+                            Please either: 1) Use the same embedding model (check RAG settings), or 2) Delete this collection and recreate it with the new model.",
+                            collection_name, existing_dim, list_size_i32
+                        ));
+                    }
+                }
+            }
+            
+            // Dimensions match, add the data
+            let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+            existing_table.add(Box::new(reader)).execute().await
+                .map_err(|e| anyhow!("Failed to insert into vector store: {}", e))?;
+        } else {
+            // Table doesn't exist, create it with the data
+            let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema.clone());
+            conn.create_table(collection_name, Box::new(reader)).execute().await?;
+        }
+        
+        // Get final count
+        let table = conn.open_table(collection_name).execute().await?;
         let count = table.count_rows(None).await.unwrap_or(0) as usize;
-        info!("Inserted chunks into collection '{}' (total rows: {})", collection_name, count);
-        Ok(count)
+        info!("Inserted {} chunks into collection '{}' (total rows: {})", chunks.len(), collection_name, count);
+        Ok(chunks.len())
     }
 
     pub async fn search_similar(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
@@ -384,10 +443,17 @@ impl LanceDbManager {
     
     async fn search_similar_ollama(&self, collection_name: &str, query: &str, top_k: usize) -> Result<Vec<QueryResult>> {
         let base_url = self.embedding_config.base_url.as_deref().unwrap_or("http://localhost:11434");
-        // 与 insert_chunks 保持一致，使用 OLLAMA_API_BASE_URL 供 rig-core 读取
-        std::env::set_var("OLLAMA_API_BASE_URL", base_url);
-        let client = rig::providers::ollama::Client::from_env();
-        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        info!("Using Ollama embedding service for search at: {}", base_url);
+        
+        let client = rig::providers::ollama::Client::builder()
+            .api_key(rig::client::Nothing)
+            .base_url(base_url)
+            .build()
+            .map_err(|e| anyhow!("Failed to create Ollama client: {}", e))?;
+            
+        let dimensions = self.embedding_config.dimensions.unwrap_or(768);
+        let embedding_model: rig::providers::ollama::EmbeddingModel<reqwest::Client> = rig::providers::ollama::EmbeddingModel::new(client, &self.embedding_config.model, dimensions);
+        
         self.search_similar_impl(collection_name, query, top_k, embedding_model).await
     }
     
@@ -497,6 +563,12 @@ impl LanceDbManager {
             let batch = batch_res.map_err(|e| anyhow!(e.to_string()))?;
             let schema = batch.schema();
             
+            // Debug: log all column names to find the distance field
+            if rank == 0 {
+                let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().to_string()).collect();
+                info!("LanceDB schema columns: {:?}", column_names);
+            }
+            
             let id_idx = schema.index_of("id").ok();
             let source_id_idx = schema.index_of("source_id").ok();
             let definition_idx = schema.index_of("definition").ok();
@@ -505,7 +577,10 @@ impl LanceDbManager {
             let chunk_index_idx = schema.index_of("chunk_index").ok();
             let start_char_idx = schema.index_of("start_char").ok();
             let end_char_idx = schema.index_of("end_char").ok();
-            let distance_idx = schema.index_of("_distance").ok();
+            // Try different possible distance field names
+            let distance_idx = schema.index_of("_distance").ok()
+                .or_else(|| schema.index_of("distance").ok())
+                .or_else(|| schema.index_of("score").ok());
             
             for row in 0..batch.num_rows() {
                 let id = id_idx.and_then(|i| batch.column(i).as_any().downcast_ref::<StringArray>())
@@ -524,10 +599,31 @@ impl LanceDbManager {
                     .map(|a| a.value(row) as usize).unwrap_or(0);
                 let end_char = end_char_idx.and_then(|i| batch.column(i).as_any().downcast_ref::<Int64Array>())
                     .map(|a| a.value(row) as usize).unwrap_or(0);
-                let distance = distance_idx.and_then(|i| batch.column(i).as_any().downcast_ref::<Float64Array>())
-                    .map(|a| a.value(row) as f32).unwrap_or(0.0);
-                // Convert distance to similarity score (1 - distance for L2, or use directly for cosine)
+                
+                // Try to read distance as Float64 or Float32
+                let distance = if let Some(idx) = distance_idx {
+                    batch.column(idx).as_any().downcast_ref::<Float64Array>()
+                        .map(|a| a.value(row) as f32)
+                        .or_else(|| {
+                            batch.column(idx).as_any().downcast_ref::<arrow_array::Float32Array>()
+                                .map(|a| a.value(row))
+                        })
+                        .unwrap_or_else(|| {
+                            warn!("Failed to read distance value at row {}, using default", row);
+                            f32::MAX // Use large distance as fallback
+                        })
+                } else {
+                    warn!("Distance column not found in schema, using default");
+                    f32::MAX // Use large distance as fallback
+                };
+                
+                // Convert distance to similarity score
+                // For L2 distance: smaller is better, convert to similarity score [0, 1]
                 let score = 1.0 / (1.0 + distance);
+                
+                if rank == 0 && row == 0 {
+                    info!("First result: distance={}, score={}", distance, score);
+                }
                 
                 let chunk = DocumentChunk {
                     id,

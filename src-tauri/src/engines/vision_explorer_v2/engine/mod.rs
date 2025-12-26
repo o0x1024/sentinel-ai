@@ -469,6 +469,14 @@ impl V2Engine {
 
                         if !result.success {
                             emitter.emit_error(step_count, &result.message);
+
+                            // Check for fatal errors that should stop the engine
+                            if result.message.contains("Playwright MCP server not connected") {
+                                log::error!("Fatal error: MCP server not connected. Stopping engine.");
+                                if let Err(e) = self.event_tx.send(Event::Stop).await {
+                                    log::error!("Failed to send Stop event: {}", e);
+                                }
+                            }
                         }
                     }
 

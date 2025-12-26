@@ -217,11 +217,11 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn update_collection_stats(&self, id: &str) -> Result<()>;
     async fn get_documents_by_collection_name(&self, name: &str) -> Result<Vec<RagDocumentSourceRow>>;
     async fn get_documents_by_collection_id(&self, id: &str) -> Result<Vec<RagDocumentSourceRow>>;
-    async fn insert_document_source(&self, id: &str, collection_id: &str, file_path: &str, file_name: &str, file_type: &str, file_size: i64, file_hash: &str, content_hash: &str, metadata: &str, created_at: &str, updated_at: &str) -> Result<()>;
+    async fn insert_document_source(&self, id: &str, collection_id: &str, file_path: &str, file_name: &str, file_type: &str, file_size: i64, file_hash: &str, content_hash: &str, status: &str, metadata: &str, created_at: &str, updated_at: &str) -> Result<()>;
     async fn delete_document_cascade(&self, id: &str) -> Result<()>;
     async fn delete_rag_document(&self, id: &str) -> Result<()>;
     async fn get_collection_id_by_document_id(&self, id: &str) -> Result<Option<String>>;
-    async fn insert_chunk(&self, id: &str, document_id: &str, collection_id: &str, content: &str, content_hash: &str, chunk_index: i32, char_count: i32, embedding_bytes: Option<Vec<u8>>, embedding_model: &str, embedding_dimension: i32, metadata_json: &str, created_at_ts: i64, updated_at_ts: i64) -> Result<()>;
+    async fn insert_chunk(&self, id: &str, document_id: &str, collection_id: &str, content: &str, content_hash: &str, chunk_index: i32, char_count: i32, embedding_bytes: Option<Vec<u8>>, metadata_json: &str, created_at_ts: i64, updated_at_ts: i64) -> Result<()>;
     async fn get_chunks_by_document_id(&self, id: &str) -> Result<Vec<RagChunkRow>>;
     async fn get_rag_documents(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>>;
     async fn get_rag_chunks(&self, document_id: &str) -> Result<Vec<sentinel_rag::models::DocumentChunk>>;

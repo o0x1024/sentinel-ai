@@ -3,12 +3,16 @@ use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
 use std::path::PathBuf;
 use serde_json::Value;
 use crate::core::models::database::DatabaseStats;
+use std::time::Duration;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 #[derive(Debug, Clone)]
 /// 数据库服务
 pub struct DatabaseService {
     pub(crate) pool: Option<SqlitePool>,
     pub(crate) db_path: PathBuf,
+    pub(crate) write_semaphore: Arc<Semaphore>,
 }
 
 impl DatabaseService {
@@ -18,9 +22,11 @@ impl DatabaseService {
             .join("sentinel-ai")
             .join("database.db");
 
+        // Limit concurrent writes to 1 to prevent database locking
         Self {
             pool: None,
             db_path,
+            write_semaphore: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -47,6 +53,16 @@ impl DatabaseService {
 
         let db_url = format!("sqlite:{}?mode=rwc", self.db_path.to_string_lossy());
         let pool = SqlitePool::connect(&db_url).await?;
+        
+        // Enable WAL mode for better concurrent write handling
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await?;
+        
+        // Set busy timeout to 5 seconds for locked database retry
+        sqlx::query("PRAGMA busy_timeout=5000")
+            .execute(&pool)
+            .await?;
         
         self.create_database_schema(&pool).await?;
         self.ensure_migrations(&pool).await?;
@@ -87,6 +103,27 @@ impl DatabaseService {
         }
         if !has_is_tool {
             sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN is_tool BOOLEAN DEFAULT 0")
+                .execute(pool)
+                .await?;
+        }
+
+        // 确保 ai_messages 表有 reasoning_content 字段
+        let ai_messages_rows = sqlx::query("PRAGMA table_info(ai_messages)")
+            .fetch_all(pool)
+            .await?;
+        
+        let mut has_reasoning_content = false;
+        for row in ai_messages_rows {
+            let name: String = sqlx::Row::get(&row, "name");
+            if name == "reasoning_content" { 
+                has_reasoning_content = true;
+                break;
+            }
+        }
+
+        if !has_reasoning_content {
+            info!("Adding reasoning_content column to ai_messages table");
+            sqlx::query("ALTER TABLE ai_messages ADD COLUMN reasoning_content TEXT")
                 .execute(pool)
                 .await?;
         }
@@ -329,6 +366,43 @@ impl DatabaseService {
         std::fs::copy(&backup_path, &self.db_path)?;
         tracing::info!("Database restoration completed: {}", backup_path.display());
         Ok(())
+    }
+
+    /// Retry database operation with exponential backoff for locked database
+    pub async fn retry_on_locked<F, Fut, T>(&self, operation: F) -> Result<T>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        const MAX_RETRIES: u32 = 5;
+        const INITIAL_DELAY_MS: u64 = 10;
+        
+        let mut retries = 0;
+        loop {
+            match operation().await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    let is_locked = err_msg.contains("database is locked") 
+                        || err_msg.contains("SQLITE_BUSY")
+                        || err_msg.contains("code: 5");
+                    
+                    if is_locked && retries < MAX_RETRIES {
+                        retries += 1;
+                        let delay_ms = INITIAL_DELAY_MS * 2u64.pow(retries - 1);
+                        tracing::debug!(
+                            "Database locked, retry {}/{} after {}ms",
+                            retries,
+                            MAX_RETRIES,
+                            delay_ms
+                        );
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -958,20 +958,33 @@
                 >
                   {{ $t('trafficAnalysis.history.detailsPanel.tabs.hex') }}
                 </button>
+                <button 
+                  :class="['btn btn-xs', responseTab === 'render' ? 'btn-active' : '']"
+                  @click="responseTab = 'render'"
+                >
+                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.render') }}
+                </button>
               </div>
             </div>
             <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent>
-              <template v-if="responseTab !== 'hex'">
+              <template v-if="responseTab === 'render'">
+                <iframe 
+                  :srcdoc="getResponseBody(selectedRequest, responseViewMode)"
+                  class="w-full h-full border-0 bg-white"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                ></iframe>
+              </template>
+              <template v-else-if="responseTab === 'hex'">
+                <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
+                  <pre>{{ stringToHex(formatResponseRaw(selectedRequest, responseViewMode)) }}</pre>
+                </div>
+              </template>
+              <template v-else>
                 <HttpCodeEditor
                   :modelValue="formatResponse(selectedRequest, responseTab, responseViewMode)"
                   :readonly="true"
                   height="100%"
                 />
-              </template>
-              <template v-else>
-                <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
-                  <pre>{{ stringToHex(formatResponseRaw(selectedRequest, responseViewMode)) }}</pre>
-                </div>
               </template>
             </div>
           </div>
@@ -1153,7 +1166,7 @@ const isLoadingMore = ref(false); // 是否正在加载更多
 
 // 详情面板的标签页
 const requestTab = ref<'pretty' | 'raw' | 'hex'>('pretty');
-const responseTab = ref<'pretty' | 'raw' | 'hex'>('pretty');
+const responseTab = ref<'pretty' | 'raw' | 'hex' | 'render'>('pretty');
 
 // Original/Edited 切换（类似 Burp Suite）
 const requestViewMode = ref<'original' | 'edited'>('edited');
@@ -2803,6 +2816,13 @@ function stringToHex(str: string): string {
     }
   }
   return hex;
+}
+
+// 获取响应体用于渲染
+function getResponseBody(request: ProxyRequest, viewMode: 'original' | 'edited' = 'edited'): string {
+  const useEdited = viewMode === 'edited' && request.was_edited;
+  const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body;
+  return body || '';
 }
 
 async function setupEventListeners() {

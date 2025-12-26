@@ -165,7 +165,7 @@ async fn execute_agent_simple(
             &params.task,
             |content| {
                 if crate::commands::ai::is_conversation_cancelled(&execution_id) {
-                    return;
+                    return false;
                 }
                 match content {
                     StreamContent::Text(text) => {
@@ -248,6 +248,7 @@ async fn execute_agent_simple(
                         tracing::info!("Agent completed - execution_id: {}", execution_id);
                     }
                 }
+                true
             },
         )
         .await;
@@ -261,7 +262,7 @@ async fn execute_agent_simple(
             );
 
             // 保存助手消息到数据库（无工具调用）
-            save_assistant_message(app_handle, &params.execution_id, &response, None).await;
+            save_assistant_message(app_handle, &params.execution_id, &response, None, None).await;
 
             Ok(response)
         }
@@ -282,6 +283,7 @@ async fn save_assistant_message(
     conversation_id: &str, 
     content: &str,
     tool_calls: Option<&[ToolCallRecord]>,
+    reasoning_content: Option<String>,
 ) {
     if content.trim().is_empty() && tool_calls.is_none_or(|tc| tc.is_empty()) {
         return;
@@ -305,6 +307,7 @@ async fn save_assistant_message(
             cost: None,
             tool_calls: tool_calls_json,
             attachments: None,
+            reasoning_content,
             timestamp: chrono::Utc::now(),
             architecture_type: None,
             architecture_meta: None,
@@ -450,11 +453,13 @@ async fn execute_agent_with_tools(
         Arc::new(Mutex::new(std::collections::HashMap::new()));
     let tool_seq: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
     let assistant_segment_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let reasoning_content_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     
     let collector = tool_calls_collector.clone();
     let pending = pending_calls.clone();
     let seq_counter = tool_seq.clone();
     let segment_buf = assistant_segment_buf.clone();
+    let reasoning_buf = reasoning_content_buf.clone();
 
     // 6. 调用带动态工具的流式方法
     let result = client
@@ -466,7 +471,7 @@ async fn execute_agent_with_tools(
             dynamic_tools,
             |content| {
                 if crate::commands::ai::is_conversation_cancelled(&execution_id) {
-                    return;
+                    return false;
                 }
                 match content {
                 StreamContent::Text(text) => {
@@ -484,6 +489,10 @@ async fn execute_agent_with_tools(
                     );
                 }
                 StreamContent::Reasoning(reasoning) => {
+                    // Accumulate reasoning content
+                    if let Ok(mut buf) = reasoning_buf.lock() {
+                        buf.push_str(&reasoning);
+                    }
                     let _ = app.emit(
                         "agent:chunk",
                         &json!({
@@ -541,6 +550,15 @@ async fn execute_agent_with_tools(
                                 .timestamp_millis_opt(seg_ts_ms)
                                 .single()
                                 .unwrap_or_else(chrono::Utc::now);
+                            
+                            // Get reasoning content (for deepseek-reasoner with tool calls, always include it)
+                            // 参考：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode#tool-calls
+                            let reasoning = reasoning_buf.lock().map(|g| {
+                                let r = g.clone();
+                                // 即使为空也返回 Some("")，因为 deepseek-reasoner 要求必须有此字段
+                                Some(if r.trim().is_empty() { String::new() } else { r })
+                            }).ok().flatten();
+                            
                             let seg_msg = core_db::AiMessage {
                                 id: uuid::Uuid::new_v4().to_string(),
                                 conversation_id: execution_id.clone(),
@@ -551,6 +569,7 @@ async fn execute_agent_with_tools(
                                 cost: None,
                                 tool_calls: None,
                                 attachments: None,
+                                reasoning_content: reasoning,
                                 timestamp: seg_ts,
                                 architecture_type: None,
                                 architecture_meta: None,
@@ -601,6 +620,7 @@ async fn execute_agent_with_tools(
                             cost: None,
                             tool_calls: None,
                             attachments: None,
+                            reasoning_content: None,
                             timestamp: started_at,
                             architecture_type: None,
                             architecture_meta: None,
@@ -681,6 +701,7 @@ async fn execute_agent_with_tools(
                                     cost: None,
                                     tool_calls: None,
                                     attachments: None,
+                                    reasoning_content: None,
                                     timestamp: started_at,
                                     architecture_type: None,
                                     architecture_meta: None,
@@ -723,6 +744,14 @@ async fn execute_agent_with_tools(
                         let seg = segment_buf.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
                         let seg_trimmed = seg.trim().to_string();
                         if !seg_trimmed.trim().is_empty() {
+                            // Get reasoning content for final segment
+                            // 参考：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode#tool-calls
+                            let reasoning = reasoning_buf.lock().map(|mut g| {
+                                let r = std::mem::take(&mut *g);
+                                // 即使为空也返回 Some("")，因为 deepseek-reasoner 要求必须有此字段
+                                Some(if r.trim().is_empty() { String::new() } else { r })
+                            }).ok().flatten();
+                            
                             let seg_msg = core_db::AiMessage {
                                 id: uuid::Uuid::new_v4().to_string(),
                                 conversation_id: execution_id.clone(),
@@ -733,6 +762,7 @@ async fn execute_agent_with_tools(
                                 cost: None,
                                 tool_calls: None,
                                 attachments: None,
+                                reasoning_content: reasoning,
                                 timestamp: chrono::Utc::now(),
                                 architecture_type: None,
                                 architecture_meta: None,
@@ -746,7 +776,9 @@ async fn execute_agent_with_tools(
                         }
                     }
                 }
-            }},
+                }
+                true
+            },
         )
         .await;
 

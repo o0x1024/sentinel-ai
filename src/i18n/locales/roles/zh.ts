@@ -16,6 +16,7 @@ export default {
   deleteError: '删除角色失败',
   gridView: '网格视图',
   listView: '列表视图',
+  systemRole: '系统角色',
   systemRoleNoEdit: '系统角色无法编辑',
   systemRoleNoDelete: '系统角色无法删除'
 }

@@ -290,8 +290,22 @@ impl Tool for ShellTool {
 
         match result {
             Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let max_chars = crate::get_tool_execution_config().max_output_chars;
+
+                let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                if stdout.len() > max_chars {
+                    let original_len = stdout.len();
+                    stdout = stdout.chars().take(max_chars).collect();
+                    stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", stdout.len(), original_len));
+                }
+
+                let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                 if stderr.len() > max_chars {
+                    let original_len = stderr.len();
+                    stderr = stderr.chars().take(max_chars).collect();
+                    stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", stderr.len(), original_len));
+                }
+
                 let exit_code = output.status.code();
                 let success = output.status.success();
                 let execution_time_ms = start_time.elapsed().as_millis() as u64;

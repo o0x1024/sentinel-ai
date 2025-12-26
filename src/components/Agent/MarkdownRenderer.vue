@@ -1,17 +1,74 @@
 <template>
-  <div class="markdown-body leading-relaxed text-sm text-base-content" v-html="renderedHtml"></div>
+  <div 
+    class="markdown-body leading-relaxed text-sm text-base-content" 
+    v-html="renderedHtml"
+    @click="handleCitationClick"
+  ></div>
+
+  <!-- Citation Detail Popover -->
+  <Teleport to="body">
+    <div 
+      v-if="showCitationDetails" 
+      class="citation-popover fixed z-[9999] bg-base-100 shadow-2xl rounded-xl border border-base-300 p-4 w-80 md:w-96 animate-in fade-in zoom-in duration-200"
+      :style="{ left: `${citationPosition.x}px`, top: `${citationPosition.y}px`, transform: 'translate(-50%, -100%) translateY(-10px)' }"
+    >
+      <div class="flex justify-between items-start mb-2">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-file-alt text-primary"></i>
+          <span class="font-bold text-sm truncate max-w-[200px]">{{ selectedCitation?.file_name }}</span>
+        </div>
+        <button @click="showCitationDetails = false" class="btn btn-ghost btn-xs btn-circle">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      
+      <div class="space-y-2">
+        <div class="flex items-center gap-4 text-[10px] text-base-content/60">
+          <span v-if="selectedCitation?.page_number">Page: {{ selectedCitation.page_number }}</span>
+          <span v-if="selectedCitation?.score">Score: {{ (selectedCitation.score * 100).toFixed(1) }}%</span>
+        </div>
+        
+        <div class="bg-base-200/50 rounded-lg p-3 text-xs leading-relaxed max-h-48 overflow-y-auto italic border-l-2 border-primary/30">
+          "{{ selectedCitation?.content_preview }}"
+        </div>
+        
+        <div v-if="selectedCitation?.file_path" class="text-[10px] text-base-content/40 truncate mt-2">
+          Path: {{ selectedCitation.file_path }}
+        </div>
+      </div>
+      
+      <div class="mt-3 flex justify-end">
+        <button class="btn btn-primary btn-xs" @click="showCitationDetails = false">
+          {{ t('agent.close') }}
+        </button>
+      </div>
+    </div>
+    
+    <!-- Backdrop to close popover -->
+    <div 
+      v-if="showCitationDetails" 
+      class="fixed inset-0 z-[9998] bg-transparent" 
+      @click="showCitationDetails = false"
+    ></div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 
-const { t } = useI18n()
-
 const props = defineProps<{
   content: string
+  citations?: any[]
 }>()
+
+const { t } = useI18n()
+
+// Handle citation click/hover to show details
+const showCitationDetails = ref(false)
+const selectedCitation = ref<any>(null)
+const citationPosition = ref({ x: 0, y: 0 })
 
 // Configure marked
 marked.setOptions({
@@ -24,9 +81,15 @@ const renderedHtml = computed(() => {
     let content = props.content
     
     // Highlight knowledge base citations [SOURCE n]
+    // Use data-index to associate with citations array
     content = content.replace(
       /\[SOURCE\s+(\d+)\]/gi,
-      '<span class="source-citation" :title="t(\'agent.sourceCitation\', { number: \'$1\' })">[SOURCE $1]</span>'
+      (match, p1) => {
+        const index = parseInt(p1) - 1
+        const citation = props.citations && props.citations[index]
+        const title = citation ? `${citation.file_name} (Page ${citation.page_number || 1})` : t('agent.sourceCitation', { number: p1 })
+        return `<span class="source-citation" data-index="${index}" title="${title}">[SOURCE ${p1}]</span>`
+      }
     )
     
     return marked(content)
@@ -35,6 +98,18 @@ const renderedHtml = computed(() => {
     return props.content
   }
 })
+
+const handleCitationClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement
+  if (target.classList.contains('source-citation')) {
+    const index = parseInt(target.getAttribute('data-index') || '-1')
+    if (props.citations && props.citations[index]) {
+      selectedCitation.value = props.citations[index]
+      citationPosition.value = { x: event.clientX, y: event.clientY }
+      showCitationDetails.value = true
+    }
+  }
+}
 </script>
 
 <style scoped>
@@ -203,5 +278,22 @@ const renderedHtml = computed(() => {
   border-color: hsl(var(--in) / 0.5);
   transform: translateY(-1px);
   box-shadow: 0 2px 4px hsl(var(--in) / 0.2);
+}
+
+.citation-popover {
+  filter: drop-shadow(0 10px 15px rgba(0, 0, 0, 0.1));
+}
+
+.citation-popover::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background: hsl(var(--b1));
+  border-right: 1px solid hsl(var(--b3));
+  border-bottom: 1px solid hsl(var(--b3));
 }
 </style>
