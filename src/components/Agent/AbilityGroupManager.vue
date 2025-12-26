@@ -52,7 +52,19 @@
 
         <div class="form-control">
           <label class="label py-1">
-            <span class="label-text">{{ t('agent.selectTools') }}</span>
+            <span class="label-text flex items-center gap-2">
+              {{ t('agent.selectTools') }}
+              <button 
+                v-if="selectedToolCount > 0"
+                @click="generateWithAI" 
+                class="btn btn-xs btn-primary btn-outline gap-1"
+                :disabled="aiGenerating"
+              >
+                <span v-if="aiGenerating" class="loading loading-spinner loading-xs"></span>
+                <i v-else class="fas fa-magic"></i>
+                {{ aiGenerating ? t('agent.aiGenerating') : t('agent.aiGenerate') }}
+              </button>
+            </span>
             <span class="label-text-alt">{{ selectedToolCount }} {{ t('agent.selected') }}</span>
           </label>
           <div class="border border-base-300 rounded-lg p-2 max-h-48 overflow-y-auto">
@@ -154,6 +166,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 
 interface AbilityGroup {
@@ -186,6 +199,8 @@ const loading = ref(false)
 const loadingTools = ref(false)
 const editingGroup = ref<AbilityGroup | null>(null)
 const isNewGroup = ref(false)
+const aiGenerating = ref(false)
+const generatedContent = ref('')
 
 const selectedToolCount = computed(() => editingGroup.value?.tool_ids?.length || 0)
 
@@ -280,6 +295,103 @@ const confirmDelete = async (group: AbilityGroup) => {
     emit('changed')
   } catch (error) {
     console.error('Failed to delete ability group:', error)
+  }
+}
+
+const generateWithAI = async () => {
+  if (!editingGroup.value || editingGroup.value.tool_ids.length === 0) {
+    alert(t('agent.selectToolsFirst'))
+    return
+  }
+
+  aiGenerating.value = true
+  generatedContent.value = ''
+  
+  const selectedTools = availableTools.value.filter(t => editingGroup.value?.tool_ids.includes(t.id))
+  const toolsContext = selectedTools.map(t => `- ${t.name}: ${t.description}`).join('\n')
+  
+  const prompt = `Based on the following tools, please generate a name, description, and detailed instructions for an ability group.
+Tools:
+${toolsContext}
+
+Return ONLY a JSON object with the following structure:
+{
+  "name": "Group Name",
+  "description": "Short description",
+  "instructions": "Detailed instructions on when and how to use this group"
+}
+Ensure the content is in the same language as the tool descriptions (or Chinese if unsure).
+`
+
+  const streamId = crypto.randomUUID()
+  
+  let unlistenDelta: (() => void) | undefined
+  let unlistenComplete: (() => void) | undefined
+  let unlistenError: (() => void) | undefined
+
+  try {
+    unlistenDelta = await listen(`plugin_gen_delta`, (event) => {
+      const payload = event.payload as any
+      if (payload.stream_id === streamId) {
+        generatedContent.value += payload.delta
+      }
+    })
+
+    unlistenComplete = await listen(`plugin_gen_complete`, (event) => {
+      const payload = event.payload as any
+      if (payload.stream_id === streamId) {
+        try {
+          let jsonStr = generatedContent.value.trim()
+          // Extract JSON from markdown code blocks
+          const jsonMatch = jsonStr.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/)
+          if (jsonMatch) {
+            jsonStr = jsonMatch[1]
+          } else if (jsonStr.startsWith('```')) {
+             jsonStr = jsonStr.replace(/^```(?:json)?/, '').replace(/```$/, '')
+          }
+          
+          const data = JSON.parse(jsonStr)
+          if (editingGroup.value) {
+            editingGroup.value.name = data.name
+            editingGroup.value.description = data.description
+            editingGroup.value.instructions = data.instructions
+          }
+        } catch (e) {
+          console.error('Failed to parse AI response', e)
+        } finally {
+          aiGenerating.value = false
+          if (unlistenDelta) unlistenDelta()
+          if (unlistenComplete) unlistenComplete()
+          if (unlistenError) unlistenError()
+        }
+      }
+    })
+    
+    unlistenError = await listen(`plugin_gen_error`, (event) => {
+        const payload = event.payload as any
+        if (payload.stream_id === streamId) {
+            console.error('AI Generation Error:', payload.error)
+            aiGenerating.value = false
+            if (unlistenDelta) unlistenDelta()
+            if (unlistenComplete) unlistenComplete()
+            if (unlistenError) unlistenError()
+        }
+    })
+
+    await invoke('generate_plugin_stream', {
+      request: {
+        stream_id: streamId,
+        message: prompt,
+        system_prompt: "You are a helpful assistant that generates configuration for AI agent ability groups. Return valid JSON only.",
+        service_name: "default"
+      }
+    })
+  } catch (e) {
+    console.error(e)
+    aiGenerating.value = false
+    if (unlistenDelta) unlistenDelta()
+    if (unlistenComplete) unlistenComplete()
+    if (unlistenError) unlistenError()
   }
 }
 
