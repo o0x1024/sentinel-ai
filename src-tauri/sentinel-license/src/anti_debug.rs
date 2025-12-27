@@ -82,6 +82,7 @@ fn platform_check_debugger() -> bool {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn platform_check_debugger() -> bool {
     use windows::Win32::System::Diagnostics::Debug::{IsDebuggerPresent, CheckRemoteDebuggerPresent};
     use windows::Win32::Foundation::BOOL;

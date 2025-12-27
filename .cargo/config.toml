@@ -16,7 +16,14 @@ rustflags = [
 RUST_BACKTRACE = "0"
 # 为 aws-lc-sys 设置 CMake 生成器为 Ninja
 CMAKE_GENERATOR = "Ninja"
+# 强制使用预生成的汇编代码，减少对编译工具链的依赖
+AWS_LC_SYS_PREGENERATED = "1"
+
+# 手动指定 Windows SDK 和 MSVC 包含路径，解决 cl.exe 找不到 windows.h 的问题
+# 注意：这些路径基于您提供的 SDK 目录和之前的报错日志
+INCLUDE = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\ucrt;C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\um;C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared;C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.50.35717\\include"
+LIB = "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\ucrt\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\um\\x64;C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.50.35717\\lib\\x64"
+
 # Protobuf 编译器路径 - 留空让系统自动查找
-# 如果在 Windows 上需要手动设置，请取消下面两行的注释并修改路径
-# PROTOC = "C:\\protoc\\bin\\protoc.exe"
-# PROTOC_INCLUDE = "C:\\protoc\\include"
+PROTOC = "C:\\protoc\\bin\\protoc.exe"
+PROTOC_INCLUDE = "C:\\protoc\\include"

@@ -852,7 +852,7 @@ pub async fn build_node_catalog(
     // Agent 插件工具节点 - 从数据库获取已启用的 Agent 工具插件
     if let Ok(plugins) = traffic_state.list_plugins_internal().await {
         // 获取数据库服务用于查询插件代码
-        let db_service = traffic_state.get_db_service().await.ok();
+        let db_service = Some(traffic_state.get_db_service());
 
         for plugin in plugins {
             // 只添加已启用的 Agent 类型插件
@@ -861,7 +861,7 @@ pub async fn build_node_catalog(
             {
                 // 获取插件代码并通过运行时获取 schema（优先），静态解析作为 fallback
                 let params_schema = if let Some(ref db) = db_service {
-                    if let Ok(Some(code)) = db.get_plugin_code(&plugin.metadata.id).await {
+                    if let Ok(Some(code)) = db.get_traffic_plugin_code(&plugin.metadata.id).await {
                         // 使用运行时方法获取 schema
                         get_plugin_input_schema_async(
                             &plugin.metadata.id,

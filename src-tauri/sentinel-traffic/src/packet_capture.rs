@@ -2,9 +2,9 @@
 //!
 //! Similar to Wireshark, captures raw network packets from network interfaces
 //!
-//! Note: This module is not available on Windows due to WinPcap/Npcap dependency issues
-
-#![cfg(not(target_os = "windows"))]
+//! Windows Support: Requires Npcap to be installed (https://nmap.org/npcap/)
+//! - Download and install Npcap in WinPcap API-compatible mode
+//! - Packet.lib should be automatically found by pnet crate
 
 use pcap_file::pcap::{PcapHeader, PcapPacket, PcapReader, PcapWriter};
 use pcap_file::pcapng::{Block, PcapNgBlock, PcapNgReader, PcapNgWriter};
@@ -101,6 +101,12 @@ impl PacketCaptureService {
         let all_interfaces = datalink::interfaces();
         debug!("Found {} total interfaces", all_interfaces.len());
         
+        #[cfg(target_os = "windows")]
+        if all_interfaces.is_empty() {
+            warn!("No network interfaces found. On Windows, this usually means Npcap is not installed or not running in WinPcap-compatible mode.");
+            warn!("Please install Npcap from https://nmap.org/npcap/ and enable 'WinPcap API-compatible Mode'");
+        }
+        
         all_interfaces
             .into_iter()
             .filter(|iface| {
@@ -177,8 +183,18 @@ impl PacketCaptureService {
     ) {
         let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
             Ok(Ethernet(tx, rx)) => (tx, rx),
-            Ok(_) => { error!("Unsupported channel type"); return; }
-            Err(e) => { error!("Failed to create datalink channel: {}", e); return; }
+            Ok(_) => { 
+                error!("Unsupported channel type"); 
+                return; 
+            }
+            Err(e) => { 
+                error!("Failed to create datalink channel: {}", e);
+                #[cfg(target_os = "windows")]
+                error!("On Windows, ensure Npcap is installed with 'WinPcap API-compatible Mode' enabled");
+                #[cfg(target_os = "windows")]
+                error!("Also ensure you have Administrator privileges to capture packets");
+                return; 
+            }
         };
 
         let mut packet_id: u64 = 0;

@@ -7,14 +7,12 @@ pub mod port_scan;
 pub mod http_request;
 pub mod local_time;
 pub mod shell;
-#[cfg(not(target_os = "windows"))]
 pub mod subdomain_brute;
 
 pub use port_scan::PortScanTool;
 pub use http_request::HttpRequestTool;
 pub use local_time::LocalTimeTool;
 pub use shell::ShellTool;
-#[cfg(not(target_os = "windows"))]
 pub use subdomain_brute::SubdomainBruteTool;
 
 use rig::tool::ToolSet;
@@ -26,22 +24,19 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(HttpRequestTool::default());
     toolset.add_tool(LocalTimeTool);
     toolset.add_tool(ShellTool::new());
-    #[cfg(not(target_os = "windows"))]
     toolset.add_tool(SubdomainBruteTool);
     toolset
 }
 
 /// Get all builtin tool definitions
 pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
-    let mut tools: Vec<Box<dyn rig::tool::ToolDyn>> = vec![
+    let tools: Vec<Box<dyn rig::tool::ToolDyn>> = vec![
         Box::new(PortScanTool),
         Box::new(HttpRequestTool::default()),
         Box::new(LocalTimeTool),
         Box::new(ShellTool::new()),
+        Box::new(SubdomainBruteTool),
     ];
-    
-    #[cfg(not(target_os = "windows"))]
-    tools.push(Box::new(SubdomainBruteTool));
     
     let mut definitions = Vec::new();
     for tool in tools {

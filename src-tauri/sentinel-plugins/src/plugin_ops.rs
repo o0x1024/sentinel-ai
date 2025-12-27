@@ -41,7 +41,7 @@ impl PluginContext {
 /// Finding 的 JavaScript 表示（用于序列化）
 /// 插件调用 op_emit_finding 时使用的简化结构
 /// 所有字段都是可选的，以支持不同格式的插件
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JsFinding {
     #[serde(default)]
     pub title: String,

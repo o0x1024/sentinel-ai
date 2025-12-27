@@ -7,9 +7,10 @@
 
 use crate::history_cache::{HttpRequestRecord, ProxyHistoryCache};
 use crate::{
-    Finding, TrafficDatabaseService, TrafficError, RequestContext, ResponseContext,
+    Finding, TrafficError, RequestContext, ResponseContext,
     Result,
 };
+use sentinel_db::DatabaseService;
 use sentinel_plugins::{types::HttpTransaction, PluginExecutor};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,7 +40,7 @@ pub struct ScanPipeline {
     /// 用于匹配请求和响应
     request_cache: Arc<RwLock<HashMap<String, RequestContext>>>,
     /// 数据库服务（用于加载插件和存储漏洞）
-    db_service: Option<Arc<TrafficDatabaseService>>,
+    db_service: Option<Arc<DatabaseService>>,
     /// 历史记录内存缓存（用于存储 HTTP/WebSocket 请求历史）
     history_cache: Option<Arc<ProxyHistoryCache>>,
     /// App Handle (用于发送事件到前端)
@@ -61,7 +62,7 @@ impl ScanPipeline {
     }
 
     /// 设置数据库服务（用于加载插件和存储漏洞，不再用于请求历史）
-    pub fn with_db_service(mut self, db_service: Arc<TrafficDatabaseService>) -> Self {
+    pub fn with_db_service(mut self, db_service: Arc<DatabaseService>) -> Self {
         self.db_service = Some(db_service);
         self
     }
@@ -606,7 +607,7 @@ impl ScanPipeline {
     /// - v8::Global 到 String 的转换尚未完全实现
     pub async fn load_enabled_plugins_from_db(
         &self,
-        db_service: &Arc<TrafficDatabaseService>,
+        db_service: &Arc<DatabaseService>,
     ) -> Result<usize> {
         use crate::types::PluginMetadata;
 
@@ -723,7 +724,7 @@ impl ScanPipeline {
     pub async fn reload_plugin(
         &self,
         plugin_id: &str,
-        db_service: &Arc<TrafficDatabaseService>,
+        db_service: &Arc<DatabaseService>,
     ) -> Result<()> {
         use crate::types::PluginMetadata;
 
@@ -851,7 +852,7 @@ pub struct FindingDeduplicator {
     /// 去重缓存（使用 Finding 签名）
     cache: Arc<RwLock<std::collections::HashSet<String>>>,
     /// 数据库服务（可选）
-    db_service: Option<Arc<TrafficDatabaseService>>,
+    db_service: Option<Arc<DatabaseService>>,
     /// 新 Finding 事件发送器（用于通知前端）
     event_tx: Option<mpsc::UnboundedSender<Finding>>,
 }
@@ -870,7 +871,7 @@ impl FindingDeduplicator {
     /// 创建去重服务（带数据库）
     pub fn with_database(
         finding_rx: FindingReceiver,
-        db_service: Arc<TrafficDatabaseService>,
+        db_service: Arc<DatabaseService>,
     ) -> Self {
         Self {
             finding_rx,
@@ -886,6 +887,37 @@ impl FindingDeduplicator {
         self
     }
 
+    /// 将 Finding 转换为 TrafficFinding 并插入数据库
+    async fn insert_finding_to_db(&self, finding: &Finding, db: &Arc<DatabaseService>) -> Result<()> {
+        use sentinel_db::TrafficFinding;
+        
+        let traffic_finding = TrafficFinding {
+            id: finding.id.clone(),
+            plugin_id: finding.plugin_id.clone(),
+            vuln_type: finding.vuln_type.clone(),
+            severity: format!("{}", finding.severity),
+            confidence: format!("{:?}", finding.confidence),
+            title: finding.title.clone(),
+            description: finding.description.clone(),
+            cwe: finding.cwe.clone(),
+            owasp: finding.owasp.clone(),
+            remediation: finding.remediation.clone(),
+            url: finding.url.clone(),
+            method: finding.method.clone(),
+            location: finding.location.clone(),
+            evidence: finding.evidence.clone(),
+            request_headers: finding.request_headers.clone(),
+            request_body: finding.request_body.clone(),
+            response_status: finding.response_status,
+            response_headers: finding.response_headers.clone(),
+            response_body: finding.response_body.clone(),
+            created_at: finding.created_at,
+        };
+        
+        db.insert_traffic_vulnerability(&traffic_finding).await?;
+        Ok(())
+    }
+
     /// 启动去重服务
     pub async fn start(mut self) -> Result<()> {
         info!("FindingDeduplicator started");
@@ -899,7 +931,7 @@ impl FindingDeduplicator {
                 if cache.contains(&signature) {
                     // 内存缓存命中，更新数据库命中次数
                     if let Some(ref db) = self.db_service {
-                        if let Err(e) = db.update_vulnerability_hit(&signature).await {
+                        if let Err(e) = db.update_traffic_vulnerability_hit(&signature).await {
                             error!("Failed to update hit count: {}", e);
                         }
                     }
@@ -909,10 +941,10 @@ impl FindingDeduplicator {
 
             // 检查数据库（如果配置了）
             if let Some(ref db) = self.db_service {
-                match db.check_signature_exists(&signature).await {
+                match db.check_traffic_signature_exists(&signature).await {
                     Ok(true) => {
                         // 数据库已存在，更新命中次数并加入内存缓存
-                        if let Err(e) = db.update_vulnerability_hit(&signature).await {
+                        if let Err(e) = db.update_traffic_vulnerability_hit(&signature).await {
                             error!("Failed to update hit count: {}", e);
                         }
                         self.cache.write().await.insert(signature.clone());
@@ -925,7 +957,7 @@ impl FindingDeduplicator {
                     }
                     Ok(false) => {
                         // 数据库不存在，插入新记录
-                        match db.insert_vulnerability(&finding).await {
+                        match self.insert_finding_to_db(&finding, db).await {
                             Ok(_) => {
                                 self.cache.write().await.insert(signature.clone());
                                 debug!(

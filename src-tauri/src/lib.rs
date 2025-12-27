@@ -31,10 +31,8 @@ use commands::{
     performance, prompt_commands,
     proxifier_commands::{self, ProxifierState},
     rag_commands, scan_session_commands, scan_task_commands, tool_commands, window,
+    packet_capture_commands::{self, PacketCaptureState},
 };
-
-#[cfg(not(target_os = "windows"))]
-use commands::packet_capture_commands::{self, PacketCaptureState};
 
 // Workflow engine and scheduler
 use sentinel_workflow::{WorkflowEngine, WorkflowScheduler};
@@ -215,7 +213,7 @@ pub fn run() {
                     tracing::error!("Failed to initialize global RAG service: {}", e);
                 }
 
-                let traffic_state = Arc::new(TrafficAnalysisState::new());
+                let traffic_state = Arc::new(TrafficAnalysisState::new(db_service.clone()));
                 let traffic_state_for_manage = (*traffic_state).clone();
 
                 // Extract PluginManager for workflow executor access
@@ -269,7 +267,6 @@ pub fn run() {
                 handle.manage(traffic_state_for_manage);
                 handle.manage(plugin_manager_for_workflow);
                 handle.manage(ProxifierState::new());
-                #[cfg(not(target_os = "windows"))]
                 handle.manage(PacketCaptureState::default());
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
@@ -731,30 +728,18 @@ pub fn run() {
             commands::notifications::list_notification_rules,
             commands::notifications::get_notification_rule,
             commands::notifications::test_notification_rule_connection,
-            // Packet capture (not available on Windows)
-            #[cfg(not(target_os = "windows"))]
+            // Packet capture (requires Npcap on Windows)
             packet_capture_commands::get_network_interfaces,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::start_packet_capture,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::stop_packet_capture,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::is_capture_running,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::open_pcap_file,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::save_pcap_file,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::extract_files_preview,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::extract_files_to_dir,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::save_extracted_file,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::get_file_related_packets,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::get_file_stream_packets,
-            #[cfg(not(target_os = "windows"))]
             packet_capture_commands::save_selected_files,
             // Test commands
             commands::test_proxy::test_proxy_dynamic_update,
@@ -951,11 +936,10 @@ async fn auto_start_proxy_if_enabled(
     tracing::info!("Checking if proxy auto-start is enabled...");
 
     // Get database service
-    let db_service = traffic_state.get_db_service().await
-        .map_err(|e| anyhow::anyhow!("Failed to get database service: {}", e))?;
+    let db_service = traffic_state.get_db_service();
 
     // Load proxy auto-start configuration
-    let auto_start_enabled = match db_service.load_config("proxy_auto_start_enabled").await {
+    let auto_start_enabled = match db_service.load_proxy_config("proxy_auto_start_enabled").await {
         Ok(Some(value)) => value.parse::<bool>().unwrap_or(false),
         _ => false,
     };
@@ -974,7 +958,7 @@ async fn auto_start_proxy_if_enabled(
     }
 
     // Load proxy configuration from database
-    let config = match db_service.load_config("proxy_config").await {
+    let config = match db_service.load_proxy_config("proxy_config").await {
         Ok(Some(config_json)) => {
             match serde_json::from_str::<sentinel_traffic::ProxyConfig>(&config_json) {
                 Ok(config) => {

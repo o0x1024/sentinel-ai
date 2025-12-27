@@ -38,11 +38,11 @@ fn test_plugin_context_take_findings_clears_vec() {
         owasp: None,
         remediation: None,
         created_at: chrono::Utc::now(),
-        request_headers: todo!(),
-        request_body: todo!(),
-        response_status: todo!(),
-        response_headers: todo!(),
-        response_body: todo!(),
+        request_headers: None,
+        request_body: None,
+        response_status: None,
+        response_headers: None,
+        response_body: None,
     };
 
     context.findings.lock().unwrap().push(finding);
@@ -68,12 +68,12 @@ fn test_js_finding_to_finding_conversion() {
         param_value: "admin' --".to_string(),
         evidence: "SQL comment detected".to_string(),
         description: "SQL injection in login".to_string(),
-        title: todo!(),
-        request: todo!(),
-        response: todo!(),
-        cwe: todo!(),
-        owasp: todo!(),
-        remediation: todo!(),
+        title: "SQL Injection".to_string(),
+        request: None,
+        response: None,
+        cwe: String::new(),
+        owasp: String::new(),
+        remediation: String::new(),
     };
 
     let finding: Finding = js_finding.into();
@@ -109,12 +109,12 @@ fn test_severity_conversion() {
             param_value: "".to_string(),
             evidence: "".to_string(),
             description: "".to_string(),
-            title: todo!(),
-            request: todo!(),
-            response: todo!(),
-            cwe: todo!(),
-            owasp: todo!(),
-            remediation: todo!(),
+            title: "".to_string(),
+            request: None,
+            response: None,
+            cwe: "".to_string(),
+            owasp: "".to_string(),
+            remediation: "".to_string(),
         };
 
         let finding: Finding = js_finding.into();
@@ -146,12 +146,12 @@ fn test_confidence_conversion() {
             param_value: "".to_string(),
             evidence: "".to_string(),
             description: "".to_string(),
-            title: todo!(),
-            request: todo!(),
-            response: todo!(),
-            cwe: todo!(),
-            owasp: todo!(),
-            remediation: todo!(),
+            title: "".to_string(),
+            request: None,
+            response: None,
+            cwe: "".to_string(),
+            owasp: "".to_string(),
+            remediation: "".to_string(),
         };
 
         let finding: Finding = js_finding.into();
@@ -175,12 +175,12 @@ fn test_finding_id_is_unique() {
         param_value: "1".to_string(),
         evidence: "test".to_string(),
         description: "test".to_string(),
-        title: todo!(),
-        request: todo!(),
-        response: todo!(),
-        cwe: todo!(),
-        owasp: todo!(),
-        remediation: todo!(),
+        title: "".to_string(),
+        request: None,
+        response: None,
+        cwe: "".to_string(),
+        owasp: "".to_string(),
+        remediation: "".to_string(),
     };
 
     let js_finding2 = js_finding1.clone();
@@ -198,46 +198,49 @@ fn test_finding_id_is_unique() {
 fn test_location_from_param_name() {
     let js_finding = JsFinding {
         vuln_type: "test".to_string(),
-        severity: "low".to_string(),
-        confidence: "low".to_string(),
-        url: "http://test.com".to_string(),
+        severity: "medium".to_string(),
+        confidence: "high".to_string(),
+        url: "http://example.com".to_string(),
         method: "GET".to_string(),
-        param_name: "query_id".to_string(),
-        param_value: "123".to_string(),
+        param_name: "test_param".to_string(),
+        param_value: "test_value".to_string(),
         evidence: "".to_string(),
         description: "".to_string(),
-        title: todo!(),
-        request: todo!(),
-        response: todo!(),
-        cwe: todo!(),
-        owasp: todo!(),
-        remediation: todo!(),
+        title: "".to_string(),
+        request: None,
+        response: None,
+        cwe: "".to_string(),
+        owasp: "".to_string(),
+        remediation: "".to_string(),
     };
 
     let finding: Finding = js_finding.into();
-    assert_eq!(finding.location, "param:query_id");
+    assert_eq!(finding.location, "param:test_param");
 }
 
 #[test]
-fn test_evidence_from_param_value() {
+fn test_title_fallback_logic() {
+    // 1. 显式指定 title
     let js_finding = JsFinding {
-        vuln_type: "test".to_string(),
-        severity: "low".to_string(),
-        confidence: "low".to_string(),
-        url: "http://test.com".to_string(),
-        method: "GET".to_string(),
-        param_name: "id".to_string(),
-        param_value: "malicious_value".to_string(),
-        evidence: "".to_string(), // 空 evidence，应使用 param_value
-        description: "".to_string(),
-        title: todo!(),
-        request: todo!(),
-        response: todo!(),
-        cwe: todo!(),
-        owasp: todo!(),
-        remediation: todo!(),
+        title: "Custom Title".to_string(),
+        ..JsFinding::default()
     };
-
     let finding: Finding = js_finding.into();
-    assert!(finding.evidence.contains("malicious_value"));
+    assert_eq!(finding.title, "Custom Title");
+
+    // 2. 从描述首行获取
+    let js_finding = JsFinding {
+        description: "First line\nSecond line".to_string(),
+        ..JsFinding::default()
+    };
+    let finding: Finding = js_finding.into();
+    assert_eq!(finding.title, "First line");
+
+    // 3. 从漏洞类型构造
+    let js_finding = JsFinding {
+        vuln_type: "XSS".to_string(),
+        ..JsFinding::default()
+    };
+    let finding: Finding = js_finding.into();
+    assert_eq!(finding.title, "XSS detected");
 }

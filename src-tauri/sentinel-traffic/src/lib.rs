@@ -11,11 +11,9 @@
 
 pub mod certificate;
 pub mod certificate_authority;
-pub mod database;
 pub mod error;
 pub mod finding;
 pub mod history_cache;
-#[cfg(not(target_os = "windows"))]
 pub mod packet_capture;
 pub mod proxy;
 pub mod scanner;
@@ -24,18 +22,23 @@ pub mod types;
 
 pub use certificate::CertificateService;
 pub use certificate_authority::ChainedCertificateAuthority;
-pub use database::{
-    EvidenceRecord, TrafficDatabaseService, ProxyRequestFilters, ProxyRequestRecord,
-    VulnerabilityFilters, VulnerabilityRecord, VulnerabilityWithEvidence,
-};
 pub use error::{TrafficError, Result};
+
+// Re-export traffic database types from sentinel-db
+pub use sentinel_db::{
+    TrafficEvidenceRecord as EvidenceRecord,
+    TrafficVulnerabilityFilters as VulnerabilityFilters,
+    TrafficVulnerabilityRecord as VulnerabilityRecord,
+    TrafficVulnerabilityWithEvidence as VulnerabilityWithEvidence,
+    ProxyRequestFilters,
+    ProxyRequestRecord,
+};
 pub use history_cache::{
     HistoryCacheConfig, HistoryCacheStats, HttpRequestFilters, HttpRequestRecord,
     ProxyHistoryCache, ProxyHistoryFilters, ProxyHistoryItem, WebSocketConnectionRecord,
     WebSocketConnectionStatus, WebSocketDirection, WebSocketFilters, WebSocketMessageRecord,
     WebSocketMessageType,
 };
-#[cfg(not(target_os = "windows"))]
 pub use packet_capture::{
     CapturedPacket, ExtractedFile, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps,
     ProtocolLayer,

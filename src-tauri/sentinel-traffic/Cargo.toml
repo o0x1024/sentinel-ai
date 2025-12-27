@@ -8,6 +8,7 @@ edition = "2021"
 sentinel-core = { path = "../sentinel-core" }
 sentinel-tools = { path = "../sentinel-tools" }
 sentinel-plugins = { path = "../sentinel-plugins" }
+sentinel-db = { path = "../sentinel-db" }
 
 # HTTP 代理
 hudsucker = { version = "0.24.0", features = ["http2"] }
@@ -107,10 +108,10 @@ rand = "0.8"
 # 高性能缓存
 moka = { version = "0.12", features = ["sync"] }
 
-[target.'cfg(not(target_os = "windows"))'.dependencies]
-# Network packet capture (requires WinPcap/Npcap on Windows, which is not available)
+# Network packet capture - now supported on Windows with Npcap
 pnet = "0.35"
 pnet_datalink = "0.35"
+pnet_packet = "0.35"
 
 [dev-dependencies]
 tokio-test = "0.4"

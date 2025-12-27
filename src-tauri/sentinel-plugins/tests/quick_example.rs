@@ -385,7 +385,7 @@ export function scan_transaction(transaction) {
         }
 
         let duration = start.elapsed();
-        let success_count = success.load(Ordering::Relaxed);
+        let _success_count = success.load(Ordering::Relaxed);
         let error_count = errors.load(Ordering::Relaxed);
         let throughput = iterations_per_level as f64 / duration.as_secs_f64();
         let error_rate = error_count as f64 / iterations_per_level as f64 * 100.0;

@@ -35,6 +35,9 @@ export default {
   low: '低',
   medium: '中',
   high: '高',
+  type: '类型',
+  details: '详情',
+  operations: '操作',
   
   // Navigation
   nav: {

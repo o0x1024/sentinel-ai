@@ -77,14 +77,14 @@ sqlx = { version = "0.8.6", features = [
     "uuid",
 ] }
 
-# HTTP客户端
-# 关键features:
-# - rustls-tls: 启用 HTTPS 支持（使用 Rustls 作为 TLS 后端）
-# - rustls-tls-native-roots: 使用系统根证书（避免证书验证问题）
-# - socks: 支持 SOCKS5 代理
-# - cookies: 支持 Cookie 管理
-# 注意：reqwest 默认不会自动读取环境变量代理，需要手动应用 Proxy::all()
-reqwest = { version = "0.12.0", features = [
+# HTTP 客户端配置
+# 强制 rustls 使用 ring 而不是 aws-lc-rs，以减少 Windows 编译负担
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+http = "1"
+
+# 针对非 Windows 平台使用 rustls
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+reqwest = { version = "0.12", features = [
     "json",
     "stream",
     "socks",
@@ -92,10 +92,16 @@ reqwest = { version = "0.12.0", features = [
     "rustls-tls-native-roots",
     "cookies",
 ] }
-http = "1"
 
-# Rustls (for CryptoProvider initialization)
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# 针对 Windows 平台使用 native-tls (避免 aws-lc-rs 编译失败)
+[target.'cfg(target_os = "windows")'.dependencies]
+reqwest = { version = "0.12", features = [
+    "json",
+    "stream",
+    "socks",
+    "native-tls",
+    "cookies",
+] }
 
 # SSE客户端支持
 eventsource-client = "0.12"
@@ -191,6 +197,7 @@ tempfile = "3.8"
 headers = "0.4"
 mime = "0.3"
 tauri-plugin-fs = "2"
+rsubdomain = "1.2.6"
 
 # 文件系统监控
 notify = "6.1"
@@ -271,7 +278,3 @@ rmcp = { version = "0.9.1", features = [
 ] }
 rig-core = { version = "0.26.0", features = ["derive"] }
 rig-lancedb = "=0.2.29"
-
-[target.'cfg(not(target_os = "windows"))'.dependencies]
-# 子域名扫描工具 (依赖 pnet, 在 Windows 上不可用)
-rsubdomain = "1.2.6"

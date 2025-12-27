@@ -8,7 +8,7 @@ use url::Url;
 
 use super::param_extractor::{ParamExtractor, Parameter};
 use super::tech_stack_detector::{TechStack, TechStackDetector};
-use sentinel_traffic::TrafficDatabaseService;
+use sentinel_db::DatabaseService;
 
 /// API endpoint information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,13 +54,13 @@ pub struct WebsiteAnalysis {
 
 /// Website Analyzer
 pub struct WebsiteAnalyzer {
-    db_service: Arc<TrafficDatabaseService>,
+    db_service: Arc<DatabaseService>,
     param_extractor: ParamExtractor,
     tech_detector: TechStackDetector,
 }
 
 impl WebsiteAnalyzer {
-    pub fn new(db_service: Arc<TrafficDatabaseService>) -> Self {
+    pub fn new(db_service: Arc<DatabaseService>) -> Self {
         Self {
             db_service,
             param_extractor: ParamExtractor::new(),

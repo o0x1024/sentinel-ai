@@ -18,11 +18,13 @@ use tokio::sync::{mpsc::UnboundedSender, RwLock};
 use sentinel_traffic::{
     CertificateService, EvidenceRecord, Finding, FindingDeduplicator,
     InterceptAction as TrafficInterceptAction, InterceptFilterRule as TrafficInterceptFilterRule,
-    InterceptState, TrafficDatabaseService, PendingInterceptRequest, PendingInterceptResponse,
+    InterceptState, PendingInterceptRequest, PendingInterceptResponse,
     PendingInterceptWebSocketMessage, PluginManager, PluginMetadata, PluginRecord, PluginStatus,
     ProxyConfig, ProxyService, ProxyStats, ProxyStatus, ScanPipeline, ScanTask,
     VulnerabilityFilters, VulnerabilityRecord,
 };
+
+use sentinel_db::DatabaseService;
 
 use crate::events::{
     emit_finding, emit_intercept_request, emit_intercept_response, emit_plugin_changed,
@@ -77,8 +79,7 @@ pub struct TrafficAnalysisState {
     proxy_service: Arc<RwLock<Option<ProxyService>>>,
     plugin_manager: Arc<PluginManager>,
     certificate_service: Arc<CertificateService>,
-    db_service: std::sync::OnceLock<Arc<TrafficDatabaseService>>,
-    database_url: String,
+    db_service: Arc<DatabaseService>,
     is_running: Arc<RwLock<bool>>,
     scan_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<sentinel_traffic::ScanTask>>>>,
     /// 是否启用请求拦截
@@ -132,8 +133,7 @@ impl Clone for TrafficAnalysisState {
             proxy_service: self.proxy_service.clone(),
             plugin_manager: self.plugin_manager.clone(),
             certificate_service: self.certificate_service.clone(),
-            db_service: std::sync::OnceLock::new(), // OnceLock doesn't support clone, create new
-            database_url: self.database_url.clone(),
+            db_service: self.db_service.clone(),
             is_running: self.is_running.clone(),
             scan_tx: self.scan_tx.clone(),
             intercept_enabled: self.intercept_enabled.clone(),
@@ -156,20 +156,13 @@ impl Clone for TrafficAnalysisState {
 impl std::fmt::Debug for TrafficAnalysisState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TrafficAnalysisState")
-            .field("database_url", &self.database_url)
             .field("is_running", &"RwLock<bool>")
             .finish()
     }
 }
 
-impl Default for TrafficAnalysisState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl TrafficAnalysisState {
-    pub fn new() -> Self {
+    pub fn new(db_service: Arc<DatabaseService>) -> Self {
         // 使用系统应用数据目录，与主数据库保持一致
         // macOS: ~/Library/Application Support/sentinel-ai/
         // Linux: ~/.local/share/sentinel-ai/
@@ -181,17 +174,11 @@ impl TrafficAnalysisState {
         // 证书目录固定在用户数据目录下的 ca 子目录
         let ca_dir = app_data_dir.join("ca");
 
-        // 数据库路径：使用主数据库 database.db
-        let db_path = app_data_dir.join("database.db");
-
-        let database_url = format!("sqlite://{}", db_path.display());
-
         Self {
             proxy_service: Arc::new(RwLock::new(None)),
             plugin_manager: Arc::new(PluginManager::new()),
             certificate_service: Arc::new(CertificateService::new(ca_dir)),
-            db_service: std::sync::OnceLock::new(),
-            database_url,
+            db_service,
             is_running: Arc::new(RwLock::new(false)),
             scan_tx: Arc::new(RwLock::new(None)),
             intercept_enabled: Arc::new(RwLock::new(false)),
@@ -210,29 +197,9 @@ impl TrafficAnalysisState {
         }
     }
 
-    /// 获取或初始化数据库服务（懒加载 - 内部方法）
-    async fn get_db_service_internal(&self) -> Result<Arc<TrafficDatabaseService>, String> {
-        if let Some(db) = self.db_service.get() {
-            return Ok(db.clone());
-        }
-
-        // 初始化数据库
-        let db = Arc::new(
-            TrafficDatabaseService::new(&self.database_url)
-                .await
-                .map_err(|e| format!("Failed to initialize database: {}", e))?,
-        );
-
-        // 尝试设置（如果其他线程已经设置了，使用已有的）
-        match self.db_service.set(db.clone()) {
-            Ok(_) => Ok(db),
-            Err(_) => Ok(self.db_service.get().unwrap().clone()),
-        }
-    }
-
     /// 公开方法：获取数据库服务（用于工具提供者）
-    pub async fn get_db_service(&self) -> Result<Arc<TrafficDatabaseService>, String> {
-        self.get_db_service_internal().await
+    pub fn get_db_service(&self) -> Arc<DatabaseService> {
+        self.db_service.clone()
     }
 
     /// 公开方法：获取插件管理器（用于工具提供者）
@@ -310,7 +277,7 @@ impl TrafficAnalysisState {
     /// 内部方法：列出所有插件（数据库来源，供工具提供者使用）
     /// 只返回已批准（Approved）的插件，待审核和已拒绝的插件不显示
     pub async fn list_plugins_internal(&self) -> Result<Vec<PluginRecord>, String> {
-        let db = self.get_db_service().await.map_err(|e| e.to_string())?;
+        let db = self.get_db_service();
         // 查询数据库中所有插件（包含 main_category 和收藏状态）
         // 只查询已批准的插件：validation_status = 'Approved'
         let rows = sqlx::query_as::<
@@ -521,8 +488,8 @@ pub async fn start_traffic_analysis_internal(
         *scan_tx_guard = Some(scan_tx.clone());
     }
 
-    // 获取数据库服务（懒加载初始化）
-    let db_service = state.get_db_service().await.map_err(|e| e.to_string())?;
+    // 获取数据库服务
+    let db_service = state.get_db_service();
 
     // 获取历史记录缓存
     let history_cache = state.get_history_cache();
@@ -740,7 +707,7 @@ pub async fn start_traffic_analysis_internal(
 
                 // 查询数据库中的总漏洞数
                 let total_findings = db_service_arc
-                    .count_vulnerabilities(Default::default())
+                    .count_traffic_vulnerabilities(Default::default())
                     .await
                     .unwrap_or(0);
 
@@ -930,8 +897,8 @@ pub async fn list_findings(
         ..Default::default()
     };
 
-    let db_service = state.get_db_service().await?;
-    match db_service.list_vulnerabilities_with_evidence(filters).await {
+    let db_service = state.get_db_service();
+    match db_service.list_traffic_vulnerabilities_with_evidence(filters).await {
         Ok(records) => {
             tracing::info!(
                 "Loaded {} findings with evidence from database",
@@ -957,8 +924,8 @@ pub async fn count_findings(
         ..Default::default()
     };
 
-    let db_service = state.get_db_service().await?;
-    match db_service.count_vulnerabilities(filters).await {
+    let db_service = state.get_db_service();
+    match db_service.count_traffic_vulnerabilities(filters).await {
         Ok(count) => {
             tracing::info!("Total findings count: {}", count);
             Ok(CommandResponse::ok(count))
@@ -980,7 +947,7 @@ pub async fn enable_plugin(
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
     // DB-only：直接更新数据库中的插件状态
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     // 获取插件的main_category
     let _main_category: Option<String> =
@@ -1043,7 +1010,7 @@ pub async fn disable_plugin(
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
     // DB-only：直接更新数据库中的插件状态
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     // 获取插件的main_category
     let _main_category: Option<String> =
@@ -1132,7 +1099,7 @@ pub async fn batch_enable_plugins(
     state: State<'_, TrafficAnalysisState>,
     plugin_ids: Vec<String>,
 ) -> Result<CommandResponse<BatchToggleResult>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     let mut enabled_count: usize = 0;
     let mut failed_ids: Vec<String> = Vec::new();
@@ -1196,7 +1163,7 @@ pub async fn batch_disable_plugins(
     state: State<'_, TrafficAnalysisState>,
     plugin_ids: Vec<String>,
 ) -> Result<CommandResponse<BatchToggleResult>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     let mut disabled_count: usize = 0;
     let mut failed_ids: Vec<String> = Vec::new();
@@ -1303,7 +1270,7 @@ pub async fn get_ca_cert_path(
 /// 信任 Root CA 到系统 Keychain（仅 macOS）
 #[tauri::command]
 pub async fn trust_ca_cert(
-    state: State<'_, TrafficAnalysisState>,
+    _state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<String>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -1596,11 +1563,11 @@ pub async fn get_finding(
     finding_id: String,
 ) -> Result<CommandResponse<Option<FindingDetail>>, String> {
     // 获取数据库服务
-    let db_service = state.get_db_service().await?;
+    let db_service = state.get_db_service();
 
     // 查询漏洞
     let vulnerability = db_service
-        .get_vulnerability_by_id(&finding_id)
+        .get_traffic_vulnerability_by_id(&finding_id)
         .await
         .map_err(|e| format!("Failed to fetch vulnerability: {}", e))?;
 
@@ -1612,7 +1579,7 @@ pub async fn get_finding(
 
     // 查询相关证据
     let evidence = db_service
-        .get_evidence_by_vuln_id(&finding_id)
+        .get_traffic_evidence_by_vuln_id(&finding_id)
         .await
         .map_err(|e| format!("Failed to fetch evidence: {}", e))?;
 
@@ -1648,11 +1615,11 @@ pub async fn update_finding_status(
     }
 
     // 获取数据库服务
-    let db_service = state.get_db_service().await?;
+    let db_service = state.get_db_service();
 
     // 更新状态
     db_service
-        .update_vulnerability_status(&finding_id, &status)
+        .update_traffic_vulnerability_status(&finding_id, &status)
         .await
         .map_err(|e| format!("Failed to update vulnerability status: {}", e))?;
 
@@ -1720,7 +1687,7 @@ pub async fn export_findings_html(
     tracing::info!("Exporting HTML report with filters: {:?}", filters);
 
     // 获取数据库服务
-    let db_service = state.get_db_service().await?;
+    let db_service = state.get_db_service();
 
     // 查询漏洞数据
     let filters = filters.unwrap_or(VulnerabilityFilters {
@@ -1733,7 +1700,7 @@ pub async fn export_findings_html(
     });
 
     let vulnerabilities = db_service
-        .list_vulnerabilities(filters.clone())
+        .list_traffic_vulnerabilities(filters.clone())
         .await
         .map_err(|e| format!("Failed to list vulnerabilities: {}", e))?;
 
@@ -1801,7 +1768,7 @@ pub async fn export_findings_html(
     for v in vulnerabilities {
         // 尝试获取第一个证据
         let evidence_list = db_service
-            .get_evidence_by_vuln_id(&v.id)
+            .get_traffic_evidence_by_vuln_id(&v.id)
             .await
             .unwrap_or_default();
 
@@ -2101,7 +2068,7 @@ pub async fn create_plugin_in_db(
     metadata: serde_json::Value,
     plugin_code: String,
 ) -> Result<CommandResponse<String>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     // 解析元数据
     let plugin: sentinel_traffic::PluginMetadata =
@@ -2109,8 +2076,22 @@ pub async fn create_plugin_in_db(
 
     let plugin_id = plugin.id.clone();
 
+    // Convert to TrafficPluginMetadata
+    use sentinel_db::TrafficPluginMetadata;
+    let traffic_plugin = TrafficPluginMetadata {
+        id: plugin.id.clone(),
+        name: plugin.name.clone(),
+        version: plugin.version.clone(),
+        author: plugin.author.clone(),
+        main_category: plugin.main_category.clone(),
+        category: plugin.category.clone(),
+        description: plugin.description.clone(),
+        default_severity: format!("{}", plugin.default_severity),
+        tags: plugin.tags.clone(),
+    };
+
     // 注册插件到数据库
-    db.register_plugin_with_code(&plugin, &plugin_code)
+    db.register_traffic_plugin_with_code(&traffic_plugin, &plugin_code)
         .await
         .map_err(|e| format!("Failed to create plugin in database: {}", e))?;
 
@@ -2140,7 +2121,7 @@ pub async fn update_plugin(
     metadata: serde_json::Value,
     plugin_code: String,
 ) -> Result<CommandResponse<()>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     let plugin_id = metadata
         .get("id")
@@ -2170,7 +2151,21 @@ pub async fn update_plugin(
     let plugin: sentinel_traffic::PluginMetadata =
         serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
 
-    db.update_plugin(&plugin, &plugin_code)
+    // Convert to TrafficPluginMetadata
+    use sentinel_db::TrafficPluginMetadata;
+    let traffic_plugin = TrafficPluginMetadata {
+        id: plugin.id.clone(),
+        name: plugin.name.clone(),
+        version: plugin.version.clone(),
+        author: plugin.author.clone(),
+        main_category: plugin.main_category.clone(),
+        category: plugin.category.clone(),
+        description: plugin.description.clone(),
+        default_severity: format!("{}", plugin.default_severity),
+        tags: plugin.tags.clone(),
+    };
+
+    db.update_traffic_plugin(&traffic_plugin, &plugin_code)
         .await
         .map_err(|e| format!("Failed to update plugin: {}", e))?;
 
@@ -2276,10 +2271,10 @@ pub async fn get_plugin_code(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<Option<String>>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     let code = db
-        .get_plugin_code(&plugin_id)
+        .get_traffic_plugin_code(&plugin_id)
         .await
         .map_err(|e| format!("Failed to get plugin code: {}", e))?;
 
@@ -2292,10 +2287,10 @@ pub async fn get_plugin_by_id(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<Option<serde_json::Value>>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     let plugin = db
-        .get_plugin_by_id(&plugin_id)
+        .get_traffic_plugin_by_id(&plugin_id)
         .await
         .map_err(|e| format!("Failed to get plugin: {}", e))?;
 
@@ -2310,7 +2305,7 @@ pub async fn test_plugin(
 ) -> Result<CommandResponse<TestPluginResult>, String> {
     // 改进：真正执行插件一次（构造一个最小的模拟请求上下文），返回真实的 findings（不再只返回元数据）
     // 如果插件未启用或不存在，保持原有提示逻辑。
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     let row: Option<(
         String,
@@ -2558,7 +2553,7 @@ pub async fn test_plugin_advanced(
 ) -> Result<CommandResponse<AdvancedTestResult>, String> {
     let runs = runs.unwrap_or(1).max(1);
     let concurrency = concurrency.unwrap_or(1).max(1);
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
     // 复用 test_plugin 的加载逻辑：确保插件已注册
     let _ = test_plugin(state.clone(), plugin_id.clone()).await; // 忽略结果，只用于触发注册（若未启用会返回提示）
 
@@ -2739,7 +2734,7 @@ pub async fn test_agent_plugin(
     plugin_id: String,
     inputs: Option<serde_json::Value>,
 ) -> Result<CommandResponse<AgentTestResult>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     // 验证插件存在且是 Agent 类型
     let row: Option<(String, String, bool)> =
@@ -2917,7 +2912,7 @@ pub async fn get_plugin_input_schema(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<serde_json::Value>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     // 获取插件代码
     let code: Option<String> =
@@ -2973,15 +2968,15 @@ pub async fn delete_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     // 先禁用插件
-    db.update_plugin_enabled(&plugin_id, false)
+    db.update_traffic_plugin_enabled(&plugin_id, false)
         .await
         .map_err(|e| format!("Failed to disable plugin before deletion: {}", e))?;
 
     // 删除插件
-    db.delete_plugin(&plugin_id)
+    db.delete_traffic_plugin(&plugin_id)
         .await
         .map_err(|e| format!("Failed to delete plugin: {}", e))?;
 
@@ -2995,9 +2990,9 @@ pub async fn delete_traffic_vulnerability(
     state: State<'_, TrafficAnalysisState>,
     vuln_id: String,
 ) -> Result<CommandResponse<()>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
-    db.delete_vulnerability(&vuln_id)
+    db.delete_traffic_vulnerability(&vuln_id)
         .await
         .map_err(|e| format!("Failed to delete vulnerability: {}", e))?;
 
@@ -3011,11 +3006,11 @@ pub async fn delete_traffic_vulnerabilities_batch(
     state: State<'_, TrafficAnalysisState>,
     vuln_ids: Vec<String>,
 ) -> Result<CommandResponse<()>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
     let mut deleted_count = 0;
     for vuln_id in &vuln_ids {
-        match db.delete_vulnerability(vuln_id).await {
+        match db.delete_traffic_vulnerability(vuln_id).await {
             Ok(_) => deleted_count += 1,
             Err(e) => {
                 tracing::warn!("Failed to delete vulnerability {}: {}", vuln_id, e);
@@ -3036,9 +3031,9 @@ pub async fn delete_traffic_vulnerabilities_batch(
 pub async fn delete_all_traffic_vulnerabilities(
     state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<()>, String> {
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
 
-    db.delete_all_vulnerabilities()
+    db.delete_all_traffic_vulnerabilities()
         .await
         .map_err(|e| format!("Failed to delete all vulnerabilities: {}", e))?;
 
@@ -3082,12 +3077,9 @@ pub async fn start_proxy_listener(
     }
 
     // 从数据库加载代理配置
-    let db = state.get_db_service().await.map_err(|e| {
-        tracing::error!("Failed to get database service: {}", e);
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state.get_db_service();
 
-    let mut config = match db.load_config("proxy_config").await {
+    let mut config = match db.load_proxy_config("proxy_config").await {
         Ok(Some(config_json)) => match serde_json::from_str::<ProxyConfig>(&config_json) {
             Ok(config) => {
                 tracing::info!(
@@ -3200,10 +3192,7 @@ pub async fn save_proxy_config(
     tracing::info!("Saving proxy configuration: {:?}", config);
 
     // 获取数据库服务
-    let db = state.get_db_service().await.map_err(|e| {
-        tracing::error!("Failed to get database service: {}", e);
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state.get_db_service();
 
     // 将配置序列化为 JSON
     let config_json = serde_json::to_string(&config).map_err(|e| {
@@ -3212,7 +3201,7 @@ pub async fn save_proxy_config(
     })?;
 
     // 保存到数据库
-    db.save_config("proxy_config", &config_json)
+    db.save_proxy_config("proxy_config", &config_json)
         .await
         .map_err(|e| {
             tracing::error!("Failed to save config to database: {}", e);
@@ -3231,13 +3220,10 @@ pub async fn get_proxy_config(
     tracing::info!("Getting proxy configuration");
 
     // 获取数据库服务
-    let db = state.get_db_service().await.map_err(|e| {
-        tracing::error!("Failed to get database service: {}", e);
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state.get_db_service();
 
     // 从数据库加载配置
-    let config = match db.load_config("proxy_config").await {
+    let config = match db.load_proxy_config("proxy_config").await {
         Ok(Some(config_json)) => {
             // 反序列化配置
             match serde_json::from_str::<ProxyConfig>(&config_json) {
@@ -3272,12 +3258,9 @@ pub async fn set_proxy_auto_start(
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Setting proxy auto-start to: {}", enabled);
 
-    let db = state.get_db_service().await.map_err(|e| {
-        tracing::error!("Failed to get database service: {}", e);
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state.get_db_service();
 
-    db.save_config("proxy_auto_start_enabled", &enabled.to_string())
+    db.save_proxy_config("proxy_auto_start_enabled", &enabled.to_string())
         .await
         .map_err(|e| {
             tracing::error!("Failed to save proxy auto-start config: {}", e);
@@ -3293,12 +3276,9 @@ pub async fn set_proxy_auto_start(
 pub async fn get_proxy_auto_start(
     state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<bool>, String> {
-    let db = state.get_db_service().await.map_err(|e| {
-        tracing::error!("Failed to get database service: {}", e);
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state.get_db_service();
 
-    let enabled = match db.load_config("proxy_auto_start_enabled").await {
+    let enabled = match db.load_proxy_config("proxy_auto_start_enabled").await {
         Ok(Some(value)) => value.parse::<bool>().unwrap_or(false),
         _ => false,
     };
@@ -4024,13 +4004,10 @@ pub async fn add_intercept_filter_rule(
 ) -> Result<CommandResponse<InterceptFilterRule>, String> {
     tracing::info!("Adding intercept filter rule: {:?}", rule);
 
-    let db = state.get_db_service().await.map_err(|e| {
-        tracing::error!("Failed to get database service: {}", e);
-        format!("Failed to get database service: {}", e)
-    })?;
+    let db = state.get_db_service();
 
     // Load existing rules
-    let mut rules = match db.load_config("intercept_filter_rules").await {
+    let mut rules = match db.load_proxy_config("intercept_filter_rules").await {
         Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
         _ => InterceptFilterRules::default(),
     };
@@ -4050,7 +4027,7 @@ pub async fn add_intercept_filter_rule(
 
     // Save rules
     let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
-    db.save_config("intercept_filter_rules", &json)
+    db.save_proxy_config("intercept_filter_rules", &json)
         .await
         .map_err(|e| format!("Failed to save rules: {}", e))?;
 
@@ -4063,12 +4040,9 @@ pub async fn add_intercept_filter_rule(
 pub async fn get_intercept_filter_rules(
     state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<Vec<InterceptFilterRule>>, String> {
-    let db = state
-        .get_db_service()
-        .await
-        .map_err(|e| format!("Failed to get database service: {}", e))?;
+    let db = state.get_db_service();
 
-    let rules = match db.load_config("intercept_filter_rules").await {
+    let rules = match db.load_proxy_config("intercept_filter_rules").await {
         Ok(Some(json)) => {
             serde_json::from_str::<InterceptFilterRules>(&json)
                 .unwrap_or_default()
@@ -4088,12 +4062,9 @@ pub async fn remove_intercept_filter_rule(
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Removing intercept filter rule: {}", rule_id);
 
-    let db = state
-        .get_db_service()
-        .await
-        .map_err(|e| format!("Failed to get database service: {}", e))?;
+    let db = state.get_db_service();
 
-    let mut rules = match db.load_config("intercept_filter_rules").await {
+    let mut rules = match db.load_proxy_config("intercept_filter_rules").await {
         Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
         _ => InterceptFilterRules::default(),
     };
@@ -4101,7 +4072,7 @@ pub async fn remove_intercept_filter_rule(
     rules.rules.retain(|r| r.id != rule_id);
 
     let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
-    db.save_config("intercept_filter_rules", &json)
+    db.save_proxy_config("intercept_filter_rules", &json)
         .await
         .map_err(|e| format!("Failed to save rules: {}", e))?;
 
@@ -4117,12 +4088,9 @@ pub async fn update_intercept_filter_rule(
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Updating intercept filter rule: {:?}", rule);
 
-    let db = state
-        .get_db_service()
-        .await
-        .map_err(|e| format!("Failed to get database service: {}", e))?;
+    let db = state.get_db_service();
 
-    let mut rules = match db.load_config("intercept_filter_rules").await {
+    let mut rules = match db.load_proxy_config("intercept_filter_rules").await {
         Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
         _ => InterceptFilterRules::default(),
     };
@@ -4135,7 +4103,7 @@ pub async fn update_intercept_filter_rule(
     }
 
     let json = serde_json::to_string(&rules).map_err(|e| format!("Serialization error: {}", e))?;
-    db.save_config("intercept_filter_rules", &json)
+    db.save_proxy_config("intercept_filter_rules", &json)
         .await
         .map_err(|e| format!("Failed to save rules: {}", e))?;
 
@@ -4422,9 +4390,23 @@ pub async fn install_store_plugin(
     };
     
     // Register plugin to database
-    let db = state.get_db_service().await?;
+    let db = state.get_db_service();
     
-    db.register_plugin_with_code(&metadata, &plugin_code)
+    // Convert to TrafficPluginMetadata
+    use sentinel_db::TrafficPluginMetadata;
+    let traffic_metadata = TrafficPluginMetadata {
+        id: metadata.id.clone(),
+        name: metadata.name.clone(),
+        version: metadata.version.clone(),
+        author: metadata.author.clone(),
+        main_category: metadata.main_category.clone(),
+        category: metadata.category.clone(),
+        description: metadata.description.clone(),
+        default_severity: format!("{}", metadata.default_severity),
+        tags: metadata.tags.clone(),
+    };
+    
+    db.register_traffic_plugin_with_code(&traffic_metadata, &plugin_code)
         .await
         .map_err(|e| format!("Failed to install plugin: {}", e))?;
     

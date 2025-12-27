@@ -46,7 +46,4 @@ sqlx = { version = "0.8.6", features = [
 # rig-core for Tool trait
 rig-core = { workspace = true }
 schemars = "1.1.0"
-
-[target.'cfg(not(target_os = "windows"))'.dependencies]
-# 子域名扫描工具 (依赖 pnet, 在 Windows 上不可用)
 rsubdomain = "1.2.6"

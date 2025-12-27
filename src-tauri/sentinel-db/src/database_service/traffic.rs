@@ -1,64 +1,23 @@
-//! 数据库操作模块
+//! Traffic analysis database operations
 //!
-//! 负责流量分析相关的数据持久化：
-//! - 漏洞存储与查询
-//! - 证据存储
-//! - 插件注册表
-//! - 扫描会话管理
+//! Handles data persistence for traffic analysis:
+//! - Vulnerability storage and queries
+//! - Evidence storage
+//! - Plugin registry
+//! - Proxy request history
+//! - Proxy configuration
 
-use crate::{Finding, TrafficError, PluginMetadata, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Sqlite, SqlitePool};
+use sqlx::SqlitePool;
 use tracing::{debug, info};
 
-/// 数据库服务
-pub struct TrafficDatabaseService {
-    pool: Pool<Sqlite>,
-}
+use super::service::DatabaseService;
 
-impl TrafficDatabaseService {
-    /// 获取数据库连接池（用于测试）
-    #[allow(dead_code)]
-    pub fn pool(&self) -> &Pool<Sqlite> {
-        &self.pool
-    }
-
-    /// 创建数据库服务
-    pub async fn new(database_url: &str) -> Result<Self> {
-        // 解析数据库文件路径
-        let db_path = database_url
-            .strip_prefix("sqlite://")
-            .ok_or_else(|| TrafficError::Database("Invalid database URL".to_string()))?;
-        
-        // 确保数据库目录存在
-        if let Some(parent) = std::path::Path::new(db_path).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| TrafficError::Database(format!("Failed to create database directory: {}", e)))?;
-        }
-
-        // 创建连接池，自动创建数据库文件
-        let pool = SqlitePool::connect_with(
-            sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(db_path)
-                .create_if_missing(true)
-                .journal_mode(sqlx::sqlite::SqliteJournalMode::Delete)
-                .synchronous(sqlx::sqlite::SqliteSynchronous::Normal),
-        )
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to connect: {}", e)))?;
-
-        let service = Self { pool };
-        
-        // 自动运行表结构创建
-        service.run_migrations().await?;
-        
-        Ok(service)
-    }
-
-    /// 迁移旧表名\n    
-    async fn migrate_old_tables(&self) -> Result<()> 
-    {
+impl DatabaseService {
+    /// Migrate old table names
+    pub async fn migrate_traffic_old_tables(&self, pool: &SqlitePool) -> Result<()> {
         let old_new_tables = vec![
             ("passive_vulnerabilities", "traffic_vulnerabilities"),
             ("passive_evidence", "traffic_evidence"),
@@ -68,201 +27,34 @@ impl TrafficDatabaseService {
         for (old_table, new_table) in old_new_tables {
             let check_query = format!("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{}'", old_table);
             let count: i64 = sqlx::query_scalar(&check_query)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| TrafficError::Database(format!("Failed to check for old table {}: {}", old_table, e)))?;
+                .fetch_one(pool)
+                .await?;
 
             if count > 0 {
                 info!("Migrating old table {} to {}", old_table, new_table);
                 let rename_query = format!("ALTER TABLE {} RENAME TO {}", old_table, new_table);
                 sqlx::query(&rename_query)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| TrafficError::Database(format!("Failed to rename table {} to {}: {}", old_table, new_table, e)))?;
+                    .execute(pool)
+                    .await?;
             }
         }
 
-        // 迁移 main_category 字段值
+        // Migrate main_category field values
         let update_category_query = "UPDATE plugin_registry SET main_category = 'traffic' WHERE main_category = 'traffic'";
         let _ = sqlx::query(update_category_query)
-            .execute(&self.pool)
+            .execute(pool)
             .await;
 
         Ok(())
     }
 
-    /// 创建数据库表结构
-    pub async fn run_migrations(&self) -> Result<()> {
-        // 检查并迁移旧表名
-        self.migrate_old_tables().await?;
-
-        // 漏洞表
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS traffic_vulnerabilities (
-                id TEXT PRIMARY KEY,
-                plugin_id TEXT NOT NULL,
-                vuln_type TEXT NOT NULL,
-                severity TEXT NOT NULL,
-                confidence TEXT NOT NULL,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL,
-                cwe TEXT,
-                owasp TEXT,
-                remediation TEXT,
-                status TEXT NOT NULL DEFAULT 'open',
-                signature TEXT NOT NULL,
-                first_seen_at DATETIME NOT NULL,
-                last_seen_at DATETIME NOT NULL,
-                hit_count INTEGER NOT NULL DEFAULT 1,
-                session_id TEXT,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to create traffic_vulnerabilities table: {}", e)))?;
-
-        // 证据表
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS traffic_evidence (
-                id TEXT PRIMARY KEY,
-                vuln_id TEXT NOT NULL,
-                url TEXT NOT NULL,
-                method TEXT NOT NULL,
-                location TEXT,
-                evidence_snippet TEXT,
-                request_headers TEXT,
-                request_body TEXT,
-                response_status INTEGER,
-                response_headers TEXT,
-                response_body TEXT,
-                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (vuln_id) REFERENCES traffic_vulnerabilities(id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to create traffic_evidence table: {}", e)))?;
-
-        // 去重索引表
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS traffic_dedupe_index (
-                signature TEXT PRIMARY KEY,
-                vuln_id TEXT NOT NULL,
-                first_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (vuln_id) REFERENCES traffic_vulnerabilities(id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to create traffic_dedupe_index table: {}", e)))?;
-
-        // 代理请求历史表
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS proxy_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT NOT NULL,
-                host TEXT NOT NULL,
-                protocol TEXT NOT NULL,
-                method TEXT NOT NULL,
-                status_code INTEGER NOT NULL,
-                request_headers TEXT,
-                request_body TEXT,
-                response_headers TEXT,
-                response_body TEXT,
-                response_size INTEGER NOT NULL DEFAULT 0,
-                response_time INTEGER NOT NULL DEFAULT 0,
-                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to create proxy_requests table: {}", e)))?;
-
-        // 插件注册表 (用于存储AI生成的插件和手动创建的插件)
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS plugin_registry (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                version TEXT NOT NULL,
-                author TEXT,
-                main_category TEXT NOT NULL,
-                category TEXT NOT NULL,
-                description TEXT,
-                default_severity TEXT NOT NULL,
-                tags TEXT,
-                enabled BOOLEAN NOT NULL DEFAULT 0,
-                plugin_code TEXT,
-                quality_score REAL,
-                validation_status TEXT,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to create plugin_registry table: {}", e)))?;
-
-        // 配置表 (用于存储代理配置)
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS proxy_config (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to create proxy_config table: {}", e)))?;
-
-        // 创建索引
-        let indices = vec![
-            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_plugin ON traffic_vulnerabilities(plugin_id)",
-            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_severity ON traffic_vulnerabilities(severity)",
-            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_status ON traffic_vulnerabilities(status)",
-            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_created ON traffic_vulnerabilities(created_at DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_vuln ON traffic_evidence(vuln_id)",
-            "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_timestamp ON traffic_evidence(timestamp DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_timestamp ON proxy_requests(timestamp DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_host ON proxy_requests(host)",
-            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_method ON proxy_requests(method)",
-            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)",
-            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_category ON plugin_registry(main_category, category)",
-            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_enabled ON plugin_registry(enabled)",
-            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_created ON plugin_registry(created_at DESC)",
-        ];
-
-        for index_sql in indices {
-            sqlx::query(index_sql)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| TrafficError::Database(format!("Failed to create index: {}", e)))?;
-        }
-        
-        info!("Traffic scan database schema created successfully");
-        Ok(())
-    }
-
     // ============================================================
-    // 漏洞操作
+    // Vulnerability Operations
     // ============================================================
 
-    /// 插入新漏洞
-    pub async fn insert_vulnerability(&self, finding: &Finding) -> Result<()> {
+    /// Insert new vulnerability
+    pub async fn insert_traffic_vulnerability(&self, finding: &TrafficFinding) -> Result<()> {
+        let pool = self.get_pool()?;
         let signature = finding.calculate_signature();
 
         debug!("Inserting vulnerability: title='{}', description='{}'", 
@@ -289,11 +81,10 @@ impl TrafficDatabaseService {
         .bind(&signature)
         .bind(&finding.created_at)
         .bind(&finding.created_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to insert vulnerability: {}", e)))?;
+        .execute(pool)
+        .await?;
 
-        // 插入去重索引
+        // Insert deduplication index
         sqlx::query(
             r#"
             INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES (?, ?)
@@ -301,12 +92,11 @@ impl TrafficDatabaseService {
         )
         .bind(&signature)
         .bind(&finding.id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to insert dedupe index: {}", e)))?;
+        .execute(pool)
+        .await?;
 
-        // 插入证据记录（保存原始请求/响应）
-        let evidence = EvidenceRecord {
+        // Insert evidence record
+        let evidence = TrafficEvidenceRecord {
             id: format!("{}-evidence-{}", finding.id, chrono::Utc::now().timestamp_millis()),
             vuln_id: finding.id.clone(),
             url: finding.url.clone(),
@@ -321,14 +111,16 @@ impl TrafficDatabaseService {
             timestamp: finding.created_at,
         };
         
-        self.insert_evidence(&evidence).await?;
+        self.insert_traffic_evidence(&evidence).await?;
 
         debug!("Vulnerability inserted with evidence: {} - {}", finding.id, finding.title);
         Ok(())
     }
 
-    /// 更新漏洞命中次数
-    pub async fn update_vulnerability_hit(&self, signature: &str) -> Result<()> {
+    /// Update vulnerability hit count
+    pub async fn update_traffic_vulnerability_hit(&self, signature: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         sqlx::query(
             r#"
             UPDATE traffic_vulnerabilities 
@@ -341,33 +133,35 @@ impl TrafficDatabaseService {
         .bind(Utc::now())
         .bind(Utc::now())
         .bind(signature)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to update hit count: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
-    /// 检查签名是否已存在
-    pub async fn check_signature_exists(&self, signature: &str) -> Result<bool> {
+    /// Check if signature exists
+    pub async fn check_traffic_signature_exists(&self, signature: &str) -> Result<bool> {
+        let pool = self.get_pool()?;
+        
         let count: i64 = sqlx::query_scalar(
             r#"
             SELECT COUNT(*) FROM traffic_dedupe_index WHERE signature = ?
             "#,
         )
         .bind(signature)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to check signature: {}", e)))?;
+        .fetch_one(pool)
+        .await?;
 
         Ok(count > 0)
     }
 
-    /// 列出漏洞（带分页和筛选）
-    pub async fn list_vulnerabilities(
+    /// List vulnerabilities with pagination and filters
+    pub async fn list_traffic_vulnerabilities(
         &self,
-        filters: VulnerabilityFilters,
-    ) -> Result<Vec<VulnerabilityRecord>> {
+        filters: TrafficVulnerabilityFilters,
+    ) -> Result<Vec<TrafficVulnerabilityRecord>> {
+        let pool = self.get_pool()?;
+        
         let mut query = String::from(
             r#"
             SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
@@ -378,7 +172,7 @@ impl TrafficDatabaseService {
             "#,
         );
 
-        // 动态拼接筛选条件
+        // Dynamic filter conditions
         if let Some(ref vuln_type) = filters.vuln_type {
             query.push_str(&format!(" AND vuln_type = '{}'", vuln_type));
         }
@@ -401,33 +195,29 @@ impl TrafficDatabaseService {
             query.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let records = sqlx::query_as::<_, VulnerabilityRecord>(&query)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to list vulnerabilities: {}", e)))?;
+        let records = sqlx::query_as::<_, TrafficVulnerabilityRecord>(&query)
+            .fetch_all(pool)
+            .await?;
 
         Ok(records)
     }
 
-    /// 列出漏洞（带证据和分页）
-    pub async fn list_vulnerabilities_with_evidence(
+    /// List vulnerabilities with evidence
+    pub async fn list_traffic_vulnerabilities_with_evidence(
         &self,
-        filters: VulnerabilityFilters,
-    ) -> Result<Vec<VulnerabilityWithEvidence>> {
-        // 先获取漏洞记录
-        let vulnerabilities = self.list_vulnerabilities(filters).await?;
+        filters: TrafficVulnerabilityFilters,
+    ) -> Result<Vec<TrafficVulnerabilityWithEvidence>> {
+        let vulnerabilities = self.list_traffic_vulnerabilities(filters).await?;
         
-        // 为每个漏洞获取证据
         let mut results = Vec::new();
         for vuln in vulnerabilities {
-            let evidence = self.get_evidence_by_vuln_id(&vuln.id).await?;
+            let evidence = self.get_traffic_evidence_by_vuln_id(&vuln.id).await?;
             
-            // 从第一条证据中提取 URL 和方法
             let (url, method) = evidence.first()
                 .map(|e| (Some(e.url.clone()), Some(e.method.clone())))
                 .unwrap_or((None, None));
             
-            results.push(VulnerabilityWithEvidence {
+            results.push(TrafficVulnerabilityWithEvidence {
                 vulnerability: vuln,
                 evidence,
                 url,
@@ -438,8 +228,10 @@ impl TrafficDatabaseService {
         Ok(results)
     }
 
-    /// 统计漏洞数量
-    pub async fn count_vulnerabilities(&self, filters: VulnerabilityFilters) -> Result<i64> {
+    /// Count vulnerabilities
+    pub async fn count_traffic_vulnerabilities(&self, filters: TrafficVulnerabilityFilters) -> Result<i64> {
+        let pool = self.get_pool()?;
+        
         let mut query = String::from(
             r#"
             SELECT COUNT(*) as count
@@ -448,7 +240,6 @@ impl TrafficDatabaseService {
             "#,
         );
 
-        // 动态拼接筛选条件
         if let Some(ref vuln_type) = filters.vuln_type {
             query.push_str(&format!(" AND vuln_type = '{}'", vuln_type));
         }
@@ -463,16 +254,17 @@ impl TrafficDatabaseService {
         }
 
         let row: (i64,) = sqlx::query_as(&query)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to count vulnerabilities: {}", e)))?;
+            .fetch_one(pool)
+            .await?;
 
         Ok(row.0)
     }
 
-    /// 根据 ID 获取单个漏洞详情
-    pub async fn get_vulnerability_by_id(&self, vuln_id: &str) -> Result<Option<VulnerabilityRecord>> {
-        let record = sqlx::query_as::<_, VulnerabilityRecord>(
+    /// Get vulnerability by ID
+    pub async fn get_traffic_vulnerability_by_id(&self, vuln_id: &str) -> Result<Option<TrafficVulnerabilityRecord>> {
+        let pool = self.get_pool()?;
+        
+        let record = sqlx::query_as::<_, TrafficVulnerabilityRecord>(
             r#"
             SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                    cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
@@ -482,16 +274,17 @@ impl TrafficDatabaseService {
             "#,
         )
         .bind(vuln_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to fetch vulnerability: {}", e)))?;
+        .fetch_optional(pool)
+        .await?;
 
         Ok(record)
     }
 
-    /// 根据漏洞 ID 获取所有相关证据
-    pub async fn get_evidence_by_vuln_id(&self, vuln_id: &str) -> Result<Vec<EvidenceRecord>> {
-        let records = sqlx::query_as::<_, EvidenceRecord>(
+    /// Get evidence by vulnerability ID
+    pub async fn get_traffic_evidence_by_vuln_id(&self, vuln_id: &str) -> Result<Vec<TrafficEvidenceRecord>> {
+        let pool = self.get_pool()?;
+        
+        let records = sqlx::query_as::<_, TrafficEvidenceRecord>(
             r#"
             SELECT id, vuln_id, url, method, location, evidence_snippet,
                    request_headers, request_body, response_status, response_headers,
@@ -502,15 +295,16 @@ impl TrafficDatabaseService {
             "#,
         )
         .bind(vuln_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to fetch evidence: {}", e)))?;
+        .fetch_all(pool)
+        .await?;
 
         Ok(records)
     }
 
-    /// 更新漏洞状态
-    pub async fn update_vulnerability_status(&self, vuln_id: &str, status: &str) -> Result<()> {
+    /// Update vulnerability status
+    pub async fn update_traffic_vulnerability_status(&self, vuln_id: &str, status: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         let result = sqlx::query(
             r#"
             UPDATE traffic_vulnerabilities 
@@ -521,57 +315,58 @@ impl TrafficDatabaseService {
         .bind(status)
         .bind(Utc::now())
         .bind(vuln_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to update vulnerability status: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         if result.rows_affected() == 0 {
-            return Err(TrafficError::Database(format!("Vulnerability not found: {}", vuln_id)));
+            return Err(anyhow::anyhow!("Vulnerability not found: {}", vuln_id));
         }
 
         info!("Vulnerability status updated: {} -> {}", vuln_id, status);
         Ok(())
     }
 
-    /// 删除单个漏洞及其关联的证据和去重索引
-    pub async fn delete_vulnerability(&self, vuln_id: &str) -> Result<()> {
-        // SQLite 会自动通过 FOREIGN KEY ON DELETE CASCADE 删除关联的证据和去重索引
+    /// Delete vulnerability and related evidence
+    pub async fn delete_traffic_vulnerability(&self, vuln_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         let result = sqlx::query(
             r#"
             DELETE FROM traffic_vulnerabilities WHERE id = ?
             "#,
         )
         .bind(vuln_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to delete vulnerability: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         if result.rows_affected() == 0 {
-            return Err(TrafficError::Database(format!("Vulnerability not found: {}", vuln_id)));
+            return Err(anyhow::anyhow!("Vulnerability not found: {}", vuln_id));
         }
 
         info!("Vulnerability deleted: {}", vuln_id);
         Ok(())
     }
 
-    /// 删除所有漏洞
-    pub async fn delete_all_vulnerabilities(&self) -> Result<()> {
-        // 删除所有漏洞（级联删除会自动处理证据和去重索引）
+    /// Delete all vulnerabilities
+    pub async fn delete_all_traffic_vulnerabilities(&self) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         sqlx::query("DELETE FROM traffic_vulnerabilities")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to delete all vulnerabilities: {}", e)))?;
+            .execute(pool)
+            .await?;
 
         info!("All vulnerabilities deleted");
         Ok(())
     }
 
     // ============================================================
-    // 证据操作
+    // Evidence Operations
     // ============================================================
 
-    /// 插入证据
-    pub async fn insert_evidence(&self, evidence: &EvidenceRecord) -> Result<()> {
+    /// Insert evidence
+    pub async fn insert_traffic_evidence(&self, evidence: &TrafficEvidenceRecord) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         sqlx::query(
             r#"
             INSERT INTO traffic_evidence (
@@ -593,35 +388,34 @@ impl TrafficDatabaseService {
         .bind(&evidence.response_headers)
         .bind(&evidence.response_body)
         .bind(&evidence.timestamp)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to insert evidence: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
     // ============================================================
-    // 插件注册表操作
+    // Plugin Registry Operations
     // ============================================================
 
-    /// 注册插件（数据库存储代码方式）
-    pub async fn register_plugin_with_code(
+    /// Register plugin with code
+    pub async fn register_traffic_plugin_with_code(
         &self, 
-        plugin: &PluginMetadata, 
+        plugin: &TrafficPluginMetadata, 
         plugin_code: &str
     ) -> Result<()> {
-        // 手动创建的插件默认自动批准，不需要审核
-        self.register_plugin_with_code_and_quality(plugin, plugin_code, None, Some("Approved")).await
+        self.register_traffic_plugin_with_code_and_quality(plugin, plugin_code, None, Some("Approved")).await
     }
 
-    /// Register plugin with code and optional quality score
-    pub async fn register_plugin_with_code_and_quality(
+    /// Register plugin with code and quality score
+    pub async fn register_traffic_plugin_with_code_and_quality(
         &self, 
-        plugin: &PluginMetadata, 
+        plugin: &TrafficPluginMetadata, 
         plugin_code: &str,
         quality_score: Option<f64>,
         validation_status: Option<&str>
     ) -> Result<()> {
+        let pool = self.get_pool()?;
         let tags_json = serde_json::to_string(&plugin.tags).unwrap_or_default();
 
         sqlx::query(
@@ -644,15 +438,15 @@ impl TrafficDatabaseService {
         .bind(plugin_code)
         .bind(quality_score)
         .bind(validation_status)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to register plugin with code: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
-    /// 全量更新插件（元数据 + 代码）
-    pub async fn update_plugin(&self, plugin: &PluginMetadata, plugin_code: &str) -> Result<()> {
+    /// Update plugin
+    pub async fn update_traffic_plugin(&self, plugin: &TrafficPluginMetadata, plugin_code: &str) -> Result<()> {
+        let pool = self.get_pool()?;
         let tags_json = serde_json::to_string(&plugin.tags).unwrap_or_default();
         
         sqlx::query(
@@ -674,15 +468,16 @@ impl TrafficDatabaseService {
         .bind(plugin_code)
         .bind(Utc::now())
         .bind(&plugin.id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to update plugin: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
-    /// 获取插件代码
-    pub async fn get_plugin_code(&self, plugin_id: &str) -> Result<Option<String>> {
+    /// Get plugin code
+    pub async fn get_traffic_plugin_code(&self, plugin_id: &str) -> Result<Option<String>> {
+        let pool = self.get_pool()?;
+        
         let result = sqlx::query_scalar::<_, Option<String>>(
             r#"
             SELECT plugin_code
@@ -691,15 +486,16 @@ impl TrafficDatabaseService {
             "#,
         )
         .bind(plugin_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to get plugin code: {}", e)))?;
+        .fetch_optional(pool)
+        .await?;
 
         Ok(result.flatten())
     }
 
-    /// 获取完整插件信息（包含代码）
-    pub async fn get_plugin_by_id(&self, plugin_id: &str) -> Result<Option<serde_json::Value>> {
+    /// Get plugin by ID
+    pub async fn get_traffic_plugin_by_id(&self, plugin_id: &str) -> Result<Option<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        
         let row: Option<(
             String, String, String, Option<String>, String, String, Option<String>, 
             String, Option<String>, bool, Option<String>
@@ -712,9 +508,8 @@ impl TrafficDatabaseService {
             "#,
         )
         .bind(plugin_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to get plugin: {}", e)))?;
+        .fetch_optional(pool)
+        .await?;
 
         if let Some((id, name, version, author, main_category, category, description, 
                      default_severity, tags, enabled, plugin_code)) = row {
@@ -740,12 +535,14 @@ impl TrafficDatabaseService {
         }
     }
 
-    /// 查询指定类别的高质量插件（用于复用检查）
-    pub async fn find_reusable_plugins_by_category(
+    /// Find reusable plugins by category
+    pub async fn find_reusable_traffic_plugins_by_category(
         &self,
         category: &str,
         min_quality_score: f64,
     ) -> Result<Vec<serde_json::Value>> {
+        let pool = self.get_pool()?;
+        
         let rows: Vec<(
             String, String, String, Option<String>, String, String, Option<String>,
             String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
@@ -764,9 +561,8 @@ impl TrafficDatabaseService {
         )
         .bind(category)
         .bind(min_quality_score)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to query reusable plugins: {}", e)))?;
+        .fetch_all(pool)
+        .await?;
 
         let mut plugins = Vec::new();
         for (id, name, version, author, main_category, category, description,
@@ -796,8 +592,10 @@ impl TrafficDatabaseService {
         Ok(plugins)
     }
 
-    /// 更新插件启用状态
-    pub async fn update_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> Result<()> {
+    /// Update plugin enabled status
+    pub async fn update_traffic_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         sqlx::query(
             r#"
             UPDATE plugin_registry 
@@ -808,15 +606,16 @@ impl TrafficDatabaseService {
         .bind(enabled)
         .bind(Utc::now())
         .bind(plugin_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to update plugin status: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
-    /// 删除插件
-    pub async fn delete_plugin(&self, plugin_id: &str) -> Result<()> {
+    /// Delete plugin
+    pub async fn delete_traffic_plugin(&self, plugin_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         sqlx::query(
             r#"
             DELETE FROM plugin_registry 
@@ -824,19 +623,20 @@ impl TrafficDatabaseService {
             "#,
         )
         .bind(plugin_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to delete plugin: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
     // ============================================================
-    // 代理请求历史操作
+    // Proxy Request History Operations
     // ============================================================
 
-    /// 插入代理请求记录
+    /// Insert proxy request record
     pub async fn insert_proxy_request(&self, request: &ProxyRequestRecord) -> Result<i64> {
+        let pool = self.get_pool()?;
+        
         let result = sqlx::query(
             r#"
             INSERT INTO proxy_requests (
@@ -858,18 +658,19 @@ impl TrafficDatabaseService {
         .bind(request.response_size)
         .bind(request.response_time)
         .bind(&request.timestamp)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to insert proxy request: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         Ok(result.last_insert_rowid())
     }
 
-    /// 列出代理请求（带分页和筛选）
+    /// List proxy requests with filters
     pub async fn list_proxy_requests(
         &self,
         filters: ProxyRequestFilters,
     ) -> Result<Vec<ProxyRequestRecord>> {
+        let pool = self.get_pool()?;
+        
         let mut query = String::from(
             r#"
             SELECT id, url, host, protocol, method, status_code,
@@ -880,7 +681,6 @@ impl TrafficDatabaseService {
             "#,
         );
 
-        // 动态拼接筛选条件
         if let Some(ref protocol) = filters.protocol {
             query.push_str(&format!(" AND protocol = '{}'", protocol));
         }
@@ -907,14 +707,13 @@ impl TrafficDatabaseService {
         }
 
         let records = sqlx::query_as::<_, ProxyRequestRecord>(&query)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to list proxy requests: {}", e)))?;
+            .fetch_all(pool)
+            .await?;
 
         Ok(records)
     }
 
-    /// 按主机名列出代理请求（便捷方法）
+    /// List proxy requests by host
     pub async fn list_proxy_requests_by_host(
         &self,
         host: &str,
@@ -927,8 +726,10 @@ impl TrafficDatabaseService {
         }).await
     }
 
-    /// 统计代理请求数量
+    /// Count proxy requests
     pub async fn count_proxy_requests(&self, filters: ProxyRequestFilters) -> Result<i64> {
+        let pool = self.get_pool()?;
+        
         let mut query = String::from(
             r#"
             SELECT COUNT(*) as count
@@ -937,7 +738,6 @@ impl TrafficDatabaseService {
             "#,
         );
 
-        // 动态拼接筛选条件
         if let Some(ref protocol) = filters.protocol {
             query.push_str(&format!(" AND protocol = '{}'", protocol));
         }
@@ -955,15 +755,16 @@ impl TrafficDatabaseService {
         }
 
         let row: (i64,) = sqlx::query_as(&query)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to count proxy requests: {}", e)))?;
+            .fetch_one(pool)
+            .await?;
 
         Ok(row.0)
     }
 
-    /// 根据 ID 获取单个代理请求详情
+    /// Get proxy request by ID
     pub async fn get_proxy_request_by_id(&self, id: i64) -> Result<Option<ProxyRequestRecord>> {
+        let pool = self.get_pool()?;
+        
         let record = sqlx::query_as::<_, ProxyRequestRecord>(
             r#"
             SELECT id, url, host, protocol, method, status_code,
@@ -974,50 +775,49 @@ impl TrafficDatabaseService {
             "#,
         )
         .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to fetch proxy request: {}", e)))?;
+        .fetch_optional(pool)
+        .await?;
 
         Ok(record)
     }
 
-    /// 清空所有代理请求历史
+    /// Clear all proxy requests
     pub async fn clear_proxy_requests(&self) -> Result<u64> {
-        let mut tx = self.pool.begin().await
-            .map_err(|e| TrafficError::Database(format!("Failed to begin transaction: {}", e)))?;
+        let pool = self.get_pool()?;
+        
+        let mut tx = pool.begin().await?;
 
         let result = sqlx::query("DELETE FROM proxy_requests")
             .execute(&mut *tx)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to clear proxy requests: {}", e)))?;
+            .await?;
 
-        // 重置自增 ID
         sqlx::query("DELETE FROM sqlite_sequence WHERE name='proxy_requests'")
             .execute(&mut *tx)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to reset auto increment: {}", e)))?;
+            .await?;
 
-        tx.commit().await
-            .map_err(|e| TrafficError::Database(format!("Failed to commit transaction: {}", e)))?;
+        tx.commit().await?;
 
         info!("Cleared {} proxy request records and reset ID", result.rows_affected());
         Ok(result.rows_affected())
     }
 
-    /// 删除指定时间之前的代理请求记录
+    /// Delete proxy requests before specified time
     pub async fn delete_proxy_requests_before(&self, before: DateTime<Utc>) -> Result<u64> {
+        let pool = self.get_pool()?;
+        
         let result = sqlx::query("DELETE FROM proxy_requests WHERE timestamp < ?")
             .bind(before)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to delete old proxy requests: {}", e)))?;
+            .execute(pool)
+            .await?;
 
         info!("Deleted {} old proxy request records", result.rows_affected());
         Ok(result.rows_affected())
     }
 
-    /// 保存配置项
-    pub async fn save_config(&self, key: &str, value: &str) -> Result<()> {
+    /// Save proxy config
+    pub async fn save_proxy_config(&self, key: &str, value: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         sqlx::query(
             r#"
             INSERT INTO proxy_config (key, value, updated_at)
@@ -1029,34 +829,35 @@ impl TrafficDatabaseService {
         )
         .bind(key)
         .bind(value)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to save config: {}", e)))?;
+        .execute(pool)
+        .await?;
 
         info!("Saved config: {} = {}", key, value);
         Ok(())
     }
 
-    /// 加载配置项
-    pub async fn load_config(&self, key: &str) -> Result<Option<String>> {
+    /// Load proxy config
+    pub async fn load_proxy_config(&self, key: &str) -> Result<Option<String>> {
+        let pool = self.get_pool()?;
+        
         let result: Option<(String,)> = sqlx::query_as(
             "SELECT value FROM proxy_config WHERE key = ?"
         )
         .bind(key)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to load config: {}", e)))?;
+        .fetch_optional(pool)
+        .await?;
 
         Ok(result.map(|(value,)| value))
     }
 
-    /// 删除配置项
-    pub async fn delete_config(&self, key: &str) -> Result<()> {
+    /// Delete proxy config
+    pub async fn delete_proxy_config(&self, key: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
         sqlx::query("DELETE FROM proxy_config WHERE key = ?")
             .bind(key)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| TrafficError::Database(format!("Failed to delete config: {}", e)))?;
+            .execute(pool)
+            .await?;
 
         info!("Deleted config: {}", key);
         Ok(())
@@ -1064,12 +865,12 @@ impl TrafficDatabaseService {
 }
 
 // ============================================================
-// 数据结构
+// Data Structures
 // ============================================================
 
-/// 漏洞筛选条件
+/// Vulnerability filters
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct VulnerabilityFilters {
+pub struct TrafficVulnerabilityFilters {
     pub vuln_type: Option<String>,
     pub severity: Option<String>,
     pub status: Option<String>,
@@ -1078,9 +879,9 @@ pub struct VulnerabilityFilters {
     pub offset: Option<i64>,
 }
 
-/// 漏洞记录（数据库）
+/// Vulnerability record
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct VulnerabilityRecord {
+pub struct TrafficVulnerabilityRecord {
     pub id: String,
     pub plugin_id: String,
     pub vuln_type: String,
@@ -1101,9 +902,9 @@ pub struct VulnerabilityRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-/// 证据记录
+/// Evidence record
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct EvidenceRecord {
+pub struct TrafficEvidenceRecord {
     pub id: String,
     pub vuln_id: String,
     pub url: String,
@@ -1118,20 +919,19 @@ pub struct EvidenceRecord {
     pub timestamp: DateTime<Utc>,
 }
 
-/// 漏洞记录（带证据）
+/// Vulnerability with evidence
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VulnerabilityWithEvidence {
+pub struct TrafficVulnerabilityWithEvidence {
     #[serde(flatten)]
-    pub vulnerability: VulnerabilityRecord,
-    pub evidence: Vec<EvidenceRecord>,
-    // 从第一条证据中提取的 URL 和方法（用于显示）
+    pub vulnerability: TrafficVulnerabilityRecord,
+    pub evidence: Vec<TrafficEvidenceRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
 }
 
-/// 代理请求记录
+/// Proxy request record
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ProxyRequestRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1150,7 +950,7 @@ pub struct ProxyRequestRecord {
     pub timestamp: DateTime<Utc>,
 }
 
-/// 代理请求筛选条件
+/// Proxy request filters
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProxyRequestFilters {
     pub protocol: Option<String>,
@@ -1160,5 +960,56 @@ pub struct ProxyRequestFilters {
     pub status_code_max: Option<i32>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+/// Traffic finding (temporary structure for compatibility)
+#[derive(Debug, Clone)]
+pub struct TrafficFinding {
+    pub id: String,
+    pub plugin_id: String,
+    pub vuln_type: String,
+    pub severity: String,
+    pub confidence: String,
+    pub title: String,
+    pub description: String,
+    pub cwe: Option<String>,
+    pub owasp: Option<String>,
+    pub remediation: Option<String>,
+    pub url: String,
+    pub method: String,
+    pub location: String,
+    pub evidence: String,
+    pub request_headers: Option<String>,
+    pub request_body: Option<String>,
+    pub response_status: Option<i32>,
+    pub response_headers: Option<String>,
+    pub response_body: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl TrafficFinding {
+    pub fn calculate_signature(&self) -> String {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(&self.plugin_id);
+        hasher.update(&self.vuln_type);
+        hasher.update(&self.url);
+        hasher.update(&self.location);
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+/// Traffic plugin metadata (temporary structure for compatibility)
+#[derive(Debug, Clone)]
+pub struct TrafficPluginMetadata {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub author: Option<String>,
+    pub main_category: String,
+    pub category: String,
+    pub description: Option<String>,
+    pub default_severity: String,
+    pub tags: Vec<String>,
 }
 

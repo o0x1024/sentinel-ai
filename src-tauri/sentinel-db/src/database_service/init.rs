@@ -698,6 +698,136 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
+        // Traffic analysis tables
+        // Migrate old table names first
+        self.migrate_traffic_old_tables(pool).await?;
+
+        // Vulnerability table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS traffic_vulnerabilities (
+                id TEXT PRIMARY KEY,
+                plugin_id TEXT NOT NULL,
+                vuln_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                cwe TEXT,
+                owasp TEXT,
+                remediation TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                signature TEXT NOT NULL,
+                first_seen_at DATETIME NOT NULL,
+                last_seen_at DATETIME NOT NULL,
+                hit_count INTEGER NOT NULL DEFAULT 1,
+                session_id TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // Evidence table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS traffic_evidence (
+                id TEXT PRIMARY KEY,
+                vuln_id TEXT NOT NULL,
+                url TEXT NOT NULL,
+                method TEXT NOT NULL,
+                location TEXT,
+                evidence_snippet TEXT,
+                request_headers TEXT,
+                request_body TEXT,
+                response_status INTEGER,
+                response_headers TEXT,
+                response_body TEXT,
+                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (vuln_id) REFERENCES traffic_vulnerabilities(id) ON DELETE CASCADE
+            )"#
+        ).execute(pool).await?;
+
+        // Deduplication index table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS traffic_dedupe_index (
+                signature TEXT PRIMARY KEY,
+                vuln_id TEXT NOT NULL,
+                first_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (vuln_id) REFERENCES traffic_vulnerabilities(id) ON DELETE CASCADE
+            )"#
+        ).execute(pool).await?;
+
+        // Proxy request history table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS proxy_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL,
+                host TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                method TEXT NOT NULL,
+                status_code INTEGER NOT NULL,
+                request_headers TEXT,
+                request_body TEXT,
+                response_headers TEXT,
+                response_body TEXT,
+                response_size INTEGER NOT NULL DEFAULT 0,
+                response_time INTEGER NOT NULL DEFAULT 0,
+                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // Plugin registry table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS plugin_registry (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                author TEXT,
+                main_category TEXT NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT,
+                default_severity TEXT NOT NULL,
+                tags TEXT,
+                enabled BOOLEAN NOT NULL DEFAULT 0,
+                plugin_code TEXT,
+                quality_score REAL,
+                validation_status TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // Proxy config table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS proxy_config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // Create traffic-related indices
+        let traffic_indices = vec![
+            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_plugin ON traffic_vulnerabilities(plugin_id)",
+            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_severity ON traffic_vulnerabilities(severity)",
+            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_status ON traffic_vulnerabilities(status)",
+            "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_created ON traffic_vulnerabilities(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_vuln ON traffic_evidence(vuln_id)",
+            "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_timestamp ON traffic_evidence(timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_timestamp ON proxy_requests(timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_host ON proxy_requests(host)",
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_method ON proxy_requests(method)",
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)",
+            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_category ON plugin_registry(main_category, category)",
+            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_enabled ON plugin_registry(enabled)",
+            "CREATE INDEX IF NOT EXISTS idx_plugin_registry_created ON plugin_registry(created_at DESC)",
+        ];
+
+        for index_sql in traffic_indices {
+            sqlx::query(index_sql)
+                .execute(pool)
+                .await?;
+        }
+
         info!("Database schema creation completed");
         Ok(())
     }

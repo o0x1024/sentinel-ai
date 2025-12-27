@@ -22,10 +22,8 @@ use deno_core::{
 use deno_core::v8;
 use deno_features::FeatureChecker;
 #[cfg(not(target_os = "windows"))]
-use deno_permissions::{PermissionsContainer, RuntimePermissionDescriptorParser};
+use deno_permissions::RuntimePermissionDescriptorParser;
 
-#[cfg(target_os = "windows")]
-use deno_permissions::PermissionsContainer;
 use deno_error::JsErrorBox;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;

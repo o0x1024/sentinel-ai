@@ -36,6 +36,11 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))
     }
 
+    /// Get database pool (public method for external use)
+    pub fn pool(&self) -> &SqlitePool {
+        self.pool.as_ref().expect("Database not initialized")
+    }
+
     pub fn get_db(&self) -> Result<crate::client::DatabaseClient> {
         let pool = self.get_pool()?.clone();
         Ok(crate::client::DatabaseClient::new(pool))

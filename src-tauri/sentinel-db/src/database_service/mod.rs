@@ -14,6 +14,7 @@ pub mod proxifier;
 pub mod ability;
 pub mod prompt;
 pub mod scan_session;
+pub mod traffic;
 
 #[allow(unused_imports)]
 pub use agent::*;
@@ -47,3 +48,5 @@ pub use ability::*;
 pub use prompt::*;
 #[allow(unused_imports)]
 pub use scan_session::*;
+#[allow(unused_imports)]
+pub use traffic::*;

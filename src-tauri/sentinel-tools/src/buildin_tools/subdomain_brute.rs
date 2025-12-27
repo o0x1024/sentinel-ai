@@ -1,8 +1,4 @@
 //! Subdomain brute-force tool using rig-core Tool trait
-//!
-//! Note: This module is not available on Windows due to pnet dependency
-
-#![cfg(not(target_os = "windows"))]
 
 use rig::tool::Tool;
 use rsubdomain::{SubdomainBruteConfig, SubdomainBruteEngine};

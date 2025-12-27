@@ -1,39 +1,37 @@
 // 测试流量分析数据库初始化
-use sentinel_traffic::TrafficDatabaseService;
+// 注意：流量分析数据库表现在由 sentinel-db 统一管理
+use sentinel_db::DatabaseService;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     println!("=== 流量分析数据库初始化测试 ===\n");
+    println!("注意：流量分析数据库表现在由 sentinel-db 统一管理");
+    println!("请使用主数据库服务进行测试\n");
 
     // 数据库路径
-    let db_path = dirs::home_dir()
-        .unwrap()
-        .join(".sentinel-ai")
-        .join("traffic_scan_test.db");
+    let db_path = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("sentinel-ai")
+        .join("database.db");
 
-    // 删除旧数据库
-    if db_path.exists() {
-        std::fs::remove_file(&db_path)?;
-        println!("✓ 删除旧数据库");
-    }
-
-    let database_url = format!("sqlite://{}", db_path.display());
     println!("数据库路径: {}\n", db_path.display());
 
     // 初始化数据库
     println!("正在初始化数据库...");
-    let db_service = TrafficDatabaseService::new(&database_url).await?;
+    let mut db_service = DatabaseService::new();
+    db_service.initialize().await?;
     println!("✓ 数据库初始化成功\n");
 
     // 验证表结构
-    println!("验证表结构...");
+    println!("验证流量分析相关表...");
+    let pool = db_service.get_pool()?;
     let tables: Vec<(String,)> = sqlx::query_as(
-        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'traffic_%' OR name IN ('plugin_registry', 'proxy_config', 'proxy_requests') ORDER BY name"
     )
-    .fetch_all(db_service.pool())
+    .fetch_all(pool)
     .await?;
 
-    println!("已创建的表 ({} 个):", tables.len());
+    println!("流量分析相关表 ({} 个):", tables.len());
     for (name,) in &tables {
         println!("  - {}", name);
     }
@@ -42,9 +40,10 @@ async fn main() -> anyhow::Result<()> {
     let required_tables = [
         "traffic_vulnerabilities",
         "traffic_evidence",
-        "plugin_registry",
-        "traffic_scan_sessions",
         "traffic_dedupe_index",
+        "plugin_registry",
+        "proxy_requests",
+        "proxy_config",
     ];
 
     println!("\n检查必需的表:");

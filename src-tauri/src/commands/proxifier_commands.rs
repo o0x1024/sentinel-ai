@@ -266,9 +266,9 @@ pub async fn get_transparent_proxy_status(
 /// 启动透明代理
 #[tauri::command]
 pub async fn start_transparent_proxy(
-    state: State<'_, ProxifierState>,
-    proxy_port: u16,
-    redirect_ports: Vec<u16>,
+    _state: State<'_, ProxifierState>,
+    _proxy_port: u16,
+    _redirect_ports: Vec<u16>,
 ) -> Result<CommandResponse<()>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -318,7 +318,7 @@ pub async fn start_transparent_proxy(
 /// 停止透明代理
 #[tauri::command]
 pub async fn stop_transparent_proxy(
-    state: State<'_, ProxifierState>,
+    _state: State<'_, ProxifierState>,
 ) -> Result<CommandResponse<()>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -358,8 +358,8 @@ pub async fn stop_transparent_proxy(
 /// 添加重定向端口
 #[tauri::command]
 pub async fn add_transparent_redirect_port(
-    state: State<'_, ProxifierState>,
-    port: u16,
+    _state: State<'_, ProxifierState>,
+    _port: u16,
 ) -> Result<CommandResponse<()>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -394,8 +394,8 @@ pub async fn add_transparent_redirect_port(
 /// 移除重定向端口
 #[tauri::command]
 pub async fn remove_transparent_redirect_port(
-    state: State<'_, ProxifierState>,
-    port: u16,
+    _state: State<'_, ProxifierState>,
+    _port: u16,
 ) -> Result<CommandResponse<()>, String> {
     #[cfg(target_os = "macos")]
     {

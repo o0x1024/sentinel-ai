@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::database::Database;
 use crate::utils::ordered_message::ChunkType;
-use sentinel_llm::{AiConfig, AiService, SchedulerConfig, SchedulerStage};
+use sentinel_llm::{AiConfig, AiService};
 
 /// AI 服务管理器
 #[derive(Debug, Clone)]

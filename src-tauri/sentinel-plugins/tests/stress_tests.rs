@@ -8,10 +8,10 @@
 //! 5. 资源耗尽场景（文件句柄、网络连接）
 
 use sentinel_plugins::{
-    Finding, HttpTransaction, PluginEngine, PluginExecutor, PluginManager, PluginMetadata,
+    HttpTransaction, PluginEngine, PluginExecutor, PluginManager, PluginMetadata,
     RequestContext, ResponseContext, Severity,
 };
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -406,7 +406,7 @@ async fn test_cpu_intensive_plugin() {
     let mut success = 0;
     let mut errors = 0;
 
-    for i in 0..iterations {
+    for _i in 0..iterations {
         monitor.sample();
 
         let transaction = create_test_transaction(10);
@@ -540,7 +540,7 @@ async fn test_max_concurrent_threads() {
         
         let current_success = success.load(Ordering::Relaxed);
         let current_errors = errors.load(Ordering::Relaxed);
-        let (peak_mem, avg_mem, peak_cpu, avg_cpu) = monitor.get_stats();
+        let (peak_mem, _avg_mem, peak_cpu, _avg_cpu) = monitor.get_stats();
         
         println!("  Success: {} | Errors: {}", current_success, current_errors);
         println!("  Memory: {:.2}MB | CPU: {:.2}%", peak_mem, peak_cpu);

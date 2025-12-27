@@ -440,8 +440,8 @@ mod tests {
             is_final: false,
             stage: None,
             tool_name: None,
-            architecture: todo!(),
-            structured_data: todo!(),
+            architecture: None,
+            structured_data: None,
         };
         
         let thinking_chunk = OrderedMessageChunk {
@@ -455,8 +455,8 @@ mod tests {
             is_final: false,
             stage: None,
             tool_name: None,
-            architecture: todo!(),
-            structured_data: todo!(),
+            architecture: None,
+            structured_data: None,
         };
         
         assert_eq!(content_chunk.to_markdown(), "Hello world");

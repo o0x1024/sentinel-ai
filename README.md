@@ -1,6 +1,25 @@
-# Tauri + Vue + TypeScript
+# Sentinel AI - Security Analysis Platform
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+A comprehensive security analysis platform built with Tauri, Vue 3, and Rust.
+
+## Features
+
+- 🔍 **Traffic Analysis**: HTTP/HTTPS proxy with MITM capabilities
+- 📦 **Packet Capture**: Network packet capture and analysis (Wireshark-like)
+- 🤖 **AI-Powered Analysis**: Multi-agent AI system for vulnerability detection
+- 🔌 **Plugin System**: Extensible plugin architecture with JavaScript/TypeScript support
+- 📊 **RAG System**: Retrieval-Augmented Generation for security knowledge
+- 🔐 **Security Center**: Comprehensive security scanning and reporting
+
+## Windows Packet Capture Setup
+
+For packet capture functionality on Windows, you need to install **Npcap**:
+
+1. Download Npcap from: https://nmap.org/npcap/
+2. During installation, **enable "Install Npcap in WinPcap API-compatible Mode"**
+3. Restart your computer after installation
+
+For detailed setup instructions, see: [Windows Packet Capture Setup Guide](src-tauri/docs/windows_packet_capture_setup.md)
 
 ## Recommended IDE Setup
 

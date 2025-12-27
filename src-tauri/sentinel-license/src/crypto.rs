@@ -173,6 +173,7 @@ pub fn import_signing_key(s: &str) -> Result<SigningKey, CryptoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
     
     #[test]
     fn test_keypair_generation() {
