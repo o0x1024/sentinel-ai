@@ -11,8 +11,6 @@
     "opener:default",
     "dialog:allow-message",
     "dialog:default",
-    "dialog:default",
-    "fs:default",
     "shell:allow-open",
     "shell:default",
     "window-state:default"

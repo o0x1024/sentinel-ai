@@ -19,36 +19,36 @@ export default {
   Tools: '应用工具',
   promptManagement: 'Prompt管理',
   performance: '性能监控',
-  
+
   // Settings submenu
   aiSettings: 'AI服务',
   ragSettings: '知识库配置',
   databaseSettings: '数据库',
   schedulerSettings: '模型配置',
-  
+
   // Dashboard submenu
   overview: '总览',
   statistics: '统计',
   recentActivity: '最近活动',
-  
+
   // Scan tasks submenu
   activeTasks: '活跃任务',
   completedTasks: '已完成任务',
   scheduledTasks: '计划任务',
   taskTemplates: '任务模板',
-  
+
   // Vulnerabilities submenu
   allVulnerabilities: '所有漏洞',
   criticalVulnerabilities: '严重漏洞',
   highVulnerabilities: '高危漏洞',
   mediumVulnerabilities: '中危漏洞',
   lowVulnerabilities: '低危漏洞',
-  
+
   // Tools submenu
   mcpServers: 'MCP服务器',
   availableTools: '可用工具',
   toolManagement: '工具管理',
-  
+
   // Settings submenu (detailed)
   generalSettings: '常规设置',
   aiServiceConfig: 'AI服务配置',
@@ -58,7 +58,7 @@ export default {
   systemSettings: '系统设置',
   securitySettings: '安全设置',
   networkSettings: '网络设置',
-  
+
   // Additional navigation items
   assetManagement: '资产管理',
   promptMgmt: '提示词管理',
@@ -73,21 +73,20 @@ export default {
   plugins: '插件管理',
   license: '许可证管理',
   rag: '知识库管理',
-  workflow: '工作流工作室',
-  
+
   // User menu
   profile: '个人资料',
   accountSettings: '账户设置',
   preferences: '偏好设置',
   logout: '退出登录',
-  
+
   // System menu
   about: '关于',
   help: '帮助',
   documentation: '文档',
   support: '支持',
   feedback: '反馈',
-  
+
   // Status indicators
   status: {
     online: '在线',
@@ -96,7 +95,7 @@ export default {
     available: '可用',
     unavailable: '不可用'
   },
-  
+
   // Notifications
   notifications: '通知管理',
   unreadNotifications: '未读通知',
@@ -104,34 +103,34 @@ export default {
   markAllAsRead: '全部标记为已读',
   clearAll: '清空全部',
   viewAll: '查看全部',
-  
+
   // Quick actions
   quickActions: '快速操作',
   startNewScan: '开始新扫描',
   viewAllVulnerabilities: '查看所有漏洞',
   manageProjects: '管理项目',
-  
+
   // Search
   search: '搜索',
   searchPlaceholder: '搜索菜单项...',
   noResults: '未找到结果',
-  
+
   // Menu states
   expanded: '展开',
   collapsed: '收起',
-  
+
   // Menu actions
   pinMenu: '固定菜单',
   unpinMenu: '取消固定菜单',
   showText: '显示文本',
   hideText: '隐藏文本',
-  
+
   // Menu sections
   mainMenu: '主菜单',
   adminMenu: '管理员菜单',
   userMenu: '用户菜单',
   systemMenu: '系统菜单',
-  
+
   // Menu items (additional)
   home: '首页',
   analytics: '分析',
@@ -161,7 +160,7 @@ export default {
   timezone: '时区',
   dateFormat: '日期格式',
   timeFormat: '时间格式',
-  
+
   // User roles
   roles: {
     admin: '管理员',
@@ -172,7 +171,7 @@ export default {
     moderator: '版主',
     owner: '所有者'
   },
-  
+
   // Access levels
   access: {
     full: '完全访问',

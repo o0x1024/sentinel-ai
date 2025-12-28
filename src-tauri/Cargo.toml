@@ -82,27 +82,6 @@ sqlx = { version = "0.8.6", features = [
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 http = "1"
 
-# 针对非 Windows 平台使用 rustls
-[target.'cfg(not(target_os = "windows"))'.dependencies]
-reqwest = { version = "0.12", features = [
-    "json",
-    "stream",
-    "socks",
-    "rustls-tls",
-    "rustls-tls-native-roots",
-    "cookies",
-] }
-
-# 针对 Windows 平台使用 native-tls (避免 aws-lc-rs 编译失败)
-[target.'cfg(target_os = "windows")'.dependencies]
-reqwest = { version = "0.12", features = [
-    "json",
-    "stream",
-    "socks",
-    "native-tls",
-    "cookies",
-] }
-
 # SSE客户端支持
 eventsource-client = "0.12"
 
@@ -207,6 +186,27 @@ rig-core = { version = "0.26.0", features = ["derive"] }
 rig-lancedb = "=0.2.29"
 arrow-array = "55.2.0"
 arrow-schema = "55.2.0"
+
+# 针对非 Windows 平台使用 rustls
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+reqwest = { version = "0.12", features = [
+    "json",
+    "stream",
+    "socks",
+    "rustls-tls",
+    "rustls-tls-native-roots",
+    "cookies",
+] }
+
+# 针对 Windows 平台使用 native-tls (避免 aws-lc-rs 编译失败)
+[target.'cfg(target_os = "windows")'.dependencies]
+reqwest = { version = "0.12", features = [
+    "json",
+    "stream",
+    "socks",
+    "native-tls",
+    "cookies",
+] }
 
 
 [target.'cfg(unix)'.dependencies]

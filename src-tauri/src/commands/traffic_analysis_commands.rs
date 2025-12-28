@@ -1270,10 +1270,10 @@ pub async fn get_ca_cert_path(
 /// 信任 Root CA 到系统 Keychain（仅 macOS）
 #[tauri::command]
 pub async fn trust_ca_cert(
-    _state: State<'_, TrafficAnalysisState>,
+    state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<String>, String> {
     #[cfg(target_os = "macos")]
-    {
+    { 
         // 确保 CA 存在
         if let Err(e) = state.certificate_service.ensure_root_ca().await {
             return Ok(CommandResponse::err(format!("Failed to ensure CA: {}", e)));
