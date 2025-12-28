@@ -309,6 +309,9 @@ pub fn run() {
                     // Register workflow tools
                     {
                         let tool_server = sentinel_tools::get_tool_server();
+                        // Ensure builtin tools are initialized before loading workflow tools
+                        // so that extract_input_schema can look up builtin tool schemas
+                        tool_server.init_builtin_tools().await;
                         let db_workflow = db_service_for_mcp.clone();
                         sentinel_tools::workflow_adapter::load_workflows_from_db(
                             &tool_server,
@@ -327,27 +330,45 @@ pub fn run() {
                         let tool_server = sentinel_tools::get_tool_server();
                         let db_plugin = db_service_for_mcp.clone();
                         
-                        if let Ok(plugins) = db_plugin.get_plugins_from_registry().await {
-                            let mut plugin_metas = Vec::new();
-                            for plugin in plugins {
-                                // Filter enabled and agent category
-                                let enabled = plugin.status == sentinel_plugins::PluginStatus::Enabled;
-                                let main_category = &plugin.metadata.main_category;
-                                
-                                if enabled && main_category == "agent" {
-                                    let id = &plugin.metadata.id;
-                                    
+                        // 使用直接 SQL 查询获取已启用的 agent 插件
+                        // 避免使用 get_plugins_from_registry() 因为其 metadata JSON 反序列化可能失败
+                        let plugin_rows: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
+                            r#"
+                            SELECT id, name, description
+                            FROM plugin_registry
+                            WHERE main_category = 'agent' 
+                              AND enabled = 1 
+                              AND validation_status = 'Approved'
+                            "#,
+                        )
+                        .fetch_all(db_plugin.pool())
+                        .await;
+                        
+                        match plugin_rows {
+                            Ok(plugins) => {
+                                let mut plugin_metas = Vec::new();
+                                for (id, name, description) in plugins {
                                     if id.is_empty() {
                                         continue;
                                     }
                                     
-                                    let name = &plugin.metadata.name;
-                                    let description = plugin.metadata.description.as_deref().unwrap_or("Agent plugin tool");
-                                    let code = db_plugin.get_plugin_code(id).await.unwrap_or(None);
+                                    let description_str = description.as_deref().unwrap_or("Agent plugin tool");
+                                    let code = db_plugin.get_plugin_code(&id).await.unwrap_or(None);
                                     
                                     // 使用运行时调用获取 input_schema
                                     let input_schema = if let Some(code_str) = &code {
-                                        let metadata = plugin.metadata.clone();
+                                        // 构建插件元数据用于 get_input_schema_runtime
+                                        let metadata = sentinel_plugins::PluginMetadata {
+                                            id: id.clone(),
+                                            name: name.clone(),
+                                            version: "1.0.0".to_string(),
+                                            author: None,
+                                            main_category: "agent".to_string(),
+                                            category: "tool".to_string(),
+                                            default_severity: sentinel_plugins::Severity::Medium,
+                                            tags: vec![],
+                                            description: Some(description_str.to_string()),
+                                        };
                                         sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
                                             code_str,
                                             metadata,
@@ -359,22 +380,27 @@ pub fn run() {
                                         })
                                     };
                                     
+                                    tracing::debug!("Plugin {} input_schema: {:?}", id, input_schema);
+                                    
                                     plugin_metas.push(sentinel_tools::plugin_adapter::PluginToolMeta {
                                         plugin_id: id.clone(),
                                         name: name.clone(),
-                                        description: description.to_string(),
+                                        description: description_str.to_string(),
                                         input_schema,
                                         code,
                                     });
                                 }
+                                
+                                if !plugin_metas.is_empty() {
+                                    tracing::info!("Loading {} plugin tools...", plugin_metas.len());
+                                    sentinel_tools::plugin_adapter::load_plugin_tools_to_server(
+                                        &tool_server, 
+                                        plugin_metas
+                                    ).await;
+                                }
                             }
-                            
-                            if !plugin_metas.is_empty() {
-                                tracing::info!("Loading {} plugin tools...", plugin_metas.len());
-                                sentinel_tools::plugin_adapter::load_plugin_tools_to_server(
-                                    &tool_server, 
-                                    plugin_metas
-                                ).await;
+                            Err(e) => {
+                                tracing::warn!("Failed to query plugin tools from database: {}", e);
                             }
                         }
                     }

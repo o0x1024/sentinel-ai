@@ -147,7 +147,7 @@
                         getNodeClass(node)
                     ]" :style="{
                     transform: `translate3d(${node.x}px, ${node.y}px, 0) ${node.id === draggedNode?.id ? 'scale(1.05)' : 'scale(1)'}`
-                }" @pointerdown="on_node_pointer_down($event, node)" @click="onNodeClick(node)" @contextmenu.prevent="onNodeContextMenu($event, node)" @mouseenter="onNodeEnter(node)" @mouseleave="onNodeLeave(node)">
+                }" @pointerdown="on_node_pointer_down($event, node)" @contextmenu.prevent="onNodeContextMenu($event, node)" @mouseenter="onNodeEnter(node)" @mouseleave="onNodeLeave(node)">
                     <!-- 输入端口 -->
                     <div class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 flex flex-col gap-1">
                         <div 
@@ -551,7 +551,11 @@ const initializeFlowchart = () => {
 }
 
 const onNodeClick = (node: FlowchartNode, event?: MouseEvent) => {
-    if (dragMoved.value) { dragMoved.value = false; return }
+    // 如果刚刚拖拽移动过节点，不触发点击事件
+    if (dragMoved.value) { 
+        dragMoved.value = false
+        return 
+    }
     emit('nodeClick', node)
 }
 
@@ -835,7 +839,8 @@ const toggleDeleteConnectionMode = () => {
 }
 
 // 拖拽功能
-const drag_ctx = reactive({ rect_left: 0, rect_top: 0, scale: 1 })
+const drag_ctx = reactive({ rect_left: 0, rect_top: 0, scale: 1, startX: 0, startY: 0 })
+const DRAG_THRESHOLD = 5 // 移动超过5像素才认为是拖拽
 
 const on_node_pointer_down = (event: PointerEvent, node: FlowchartNode) => {
     // 只允许左键拖拽
@@ -863,6 +868,8 @@ const on_node_pointer_down = (event: PointerEvent, node: FlowchartNode) => {
         drag_ctx.rect_left = rect.left
         drag_ctx.rect_top = rect.top
         drag_ctx.scale = zoomLevel.value * viewportScale.value
+        drag_ctx.startX = event.clientX
+        drag_ctx.startY = event.clientY
         const localX = (event.clientX - drag_ctx.rect_left) / drag_ctx.scale
         const localY = (event.clientY - drag_ctx.rect_top) / drag_ctx.scale
         dragOffset.x = localX - node.x
@@ -936,7 +943,14 @@ const on_pointer_down = (event: PointerEvent) => {
     // 节点拖拽
     if (isDragging.value && draggedNode.value) {
         event.preventDefault()
-        dragMoved.value = true
+        
+        // 计算移动距离，只有超过阈值才认为是拖拽
+        const deltaX = Math.abs(event.clientX - drag_ctx.startX)
+        const deltaY = Math.abs(event.clientY - drag_ctx.startY)
+        if (deltaX > DRAG_THRESHOLD || deltaY > DRAG_THRESHOLD) {
+            dragMoved.value = true
+        }
+        
         const localX = (event.clientX - drag_ctx.rect_left) / drag_ctx.scale
         const localY = (event.clientY - drag_ctx.rect_top) / drag_ctx.scale
         draggedNode.value.x = localX - dragOffset.x
@@ -969,10 +983,15 @@ const on_pointer_up = (event: PointerEvent) => {
     if (isDragging.value && dragMoved.value) {
         saveHistory()
         emit('change') // 节点位置变化
+    } else if (isDragging.value && !dragMoved.value && draggedNode.value) {
+        // 模拟点击事件：如果是拖拽状态但没有移动，说明是点击
+        emit('nodeClick', draggedNode.value)
     }
     
     isDragging.value = false
     draggedNode.value = null
+    // 注意：不在这里重置 dragMoved，因为 click 事件会在 pointerup 之后触发
+    // dragMoved 会在 onNodeClick 中被重置
     updateConnections()
 }
 

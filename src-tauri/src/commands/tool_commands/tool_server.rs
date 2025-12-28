@@ -186,7 +186,7 @@ pub async fn register_workflow_tools(
 
         // Extract input schema from workflow definition
         let input_schema =
-            sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(&workflow);
+            sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(&workflow, Some(&server)).await;
 
         // Create executor
         let workflow_id = id.to_string();

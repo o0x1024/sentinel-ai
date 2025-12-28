@@ -159,8 +159,15 @@ impl Tool for SubdomainBruteTool {
                     .map_err(|e| e.to_string())
             })
         })
+
         .await
-        .map_err(|e| SubdomainBruteError::ScanFailed(e.to_string()))?
+        .map_err(|e| {
+            if e.is_panic() {
+                SubdomainBruteError::ScanFailed("Tool execution crashed. This tool attempts to use raw sockets for high-speed scanning, which requires root privileges (sudo) on macOS/Linux. Please try running the application with sudo or use a different tool.".to_string())
+            } else {
+                SubdomainBruteError::ScanFailed(format!("Task execution failed: {}", e))
+            }
+        })?
         .map_err(SubdomainBruteError::ScanFailed)?;
 
         // Convert results

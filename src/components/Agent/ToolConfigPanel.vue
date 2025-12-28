@@ -191,24 +191,24 @@
               <button 
                 @click="clearCategoryFilter"
                 class="btn btn-xs"
-                :class="selectedCategories.length === 0 ? 'btn-primary' : 'btn-ghost'"
+                :class="selectedCategories.length === 0 && !showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
               >
                 {{ t('agent.all') }}
               </button>
-              
-              <!-- 工具插件按钮 -->
+
+              <!-- 已选按钮 (仅手动模式) -->
               <button 
-                v-if="hasPluginTools"
-                @click="toggleCategory('Plugin')"
+                v-if="localConfig.selection_strategy === 'Manual'"
+                @click="toggleShowSelected"
                 class="btn btn-xs"
-                :class="selectedCategories.includes('Plugin') ? 'btn-primary' : 'btn-ghost'"
+                :class="showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
               >
-                {{ t('agent.plugins') }}
+                {{ t('agent.selected') }} ({{ (localConfig.manual_tools || []).length }})
               </button>
               
-              <!-- 其他分类按钮 -->
+              <!-- 所有分类按钮（包括插件） -->
               <button 
-                v-for="cat in categories.filter(c => c !== 'Plugin')" 
+                v-for="cat in allCategories" 
                 :key="cat"
                 @click="toggleCategory(cat)"
                 class="btn btn-xs"
@@ -562,6 +562,14 @@ const categories = computed(() => {
   return Array.from(cats).sort()
 })
 
+// 所有分类（包括 Plugin，即使没有插件工具也显示）
+const allCategories = computed(() => {
+  const cats = new Set(allTools.value.map(t => t.category))
+  // 确保 Plugin 分类始终存在
+  cats.add('Plugin')
+  return Array.from(cats).sort()
+})
+
 const hasPluginTools = computed(() => {
   return allTools.value.some(t => t.category === 'Plugin')
 })
@@ -576,6 +584,12 @@ const filteredTools = computed(() => {
       t.name.toLowerCase().includes(query) || 
       t.description.toLowerCase().includes(query)
     )
+  }
+
+  // Filter by Selected Only
+  if (showSelectedOnly.value) {
+    const selectedIds = localConfig.value.manual_tools || []
+    tools = tools.filter(t => selectedIds.includes(t.id))
   }
 
   // Filter by category
@@ -600,8 +614,19 @@ const toggleCategory = (cat: string) => {
   }
 }
 
+const showSelectedOnly = ref(false)
+
+const toggleShowSelected = () => {
+  showSelectedOnly.value = !showSelectedOnly.value
+  if (showSelectedOnly.value) {
+    // Optional: Clear other filters if desired, but user might want to filter selected list by category
+    selectedCategories.value = []
+  }
+}
+
 const clearCategoryFilter = () => {
   selectedCategories.value = []
+  showSelectedOnly.value = false
 }
 
 const getCategoryDisplayName = (category: string) => {

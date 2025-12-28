@@ -912,13 +912,15 @@ pub async fn save_workflow_definition(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let graph_json = serde_json::to_string(&graph).map_err(|e| e.to_string())?;
+    let is_tool_flag = is_tool.unwrap_or(false);
+    
     db.save_workflow_definition(
         &graph.id,
         &graph.name,
         description.as_deref(),
         &graph_json,
         is_template,
-        is_tool.unwrap_or(false),
+        is_tool_flag,
         None,
         tags.as_deref(),
         &graph.version,
@@ -926,6 +928,45 @@ pub async fn save_workflow_definition(
     )
     .await
     .map_err(|e| e.to_string())?;
+    
+    // 如果工作流被标记为工具，刷新 ToolServer 中的注册
+    if is_tool_flag {
+        let tool_server = sentinel_tools::get_tool_server();
+        // 确保内置工具已初始化
+        tool_server.init_builtin_tools().await;
+        
+        // 构建工作流 JSON 用于 schema 提取
+        let workflow_json = serde_json::json!({
+            "id": graph.id,
+            "name": graph.name,
+            "description": description,
+            "is_tool": true,
+            "nodes": graph.nodes,
+            "edges": graph.edges,
+        });
+        
+        // 提取 input schema
+        let input_schema = sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(
+            &workflow_json, 
+            Some(&tool_server)
+        ).await;
+        
+        // 创建执行器
+        let workflow_id = graph.id.clone();
+        let executor = sentinel_tools::workflow_adapter::create_workflow_executor(workflow_id.clone());
+        
+        // 重新注册工作流工具（会覆盖旧的注册）
+        tool_server.register_workflow_tool(
+            &graph.id,
+            &graph.name,
+            description.as_deref().unwrap_or("Workflow tool"),
+            input_schema,
+            executor,
+        ).await;
+        
+        tracing::info!("Refreshed workflow tool registration: {} ({})", graph.name, graph.id);
+    }
+    
     Ok(graph.id)
 }
 

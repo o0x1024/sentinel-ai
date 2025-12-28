@@ -80,7 +80,7 @@ pub async fn list_workflow_contexts() -> Vec<WorkflowContext> {
 }
 
 /// Create workflow tool executor
-fn create_workflow_executor(workflow_id: String) -> ToolExecutor {
+pub fn create_workflow_executor(workflow_id: String) -> ToolExecutor {
     create_executor(move |args: Value| {
         let wid = workflow_id.clone();
 
@@ -174,7 +174,7 @@ impl WorkflowToolAdapter {
     }
 
     /// Extract input schema from workflow definition
-    pub fn extract_input_schema(definition: &Value) -> Value {
+    pub async fn extract_input_schema(definition: &Value, tool_server: Option<&ToolServer>) -> Value {
         let keys: Vec<String> = definition.as_object()
             .map(|o| o.keys().cloned().collect())
             .unwrap_or_default();
@@ -501,6 +501,61 @@ impl WorkflowToolAdapter {
                         }
                     }
                 }
+
+                // Fallback Method 3: Check data/inputs fields (for first node)
+                if let Some(data) = first_node.get("data").or(first_node.get("inputs")) {
+                    if let Some(schema) = data.get("input_schema") {
+                        tracing::info!("Found input_schema in first node data");
+                        return schema.clone();
+                    }
+                    if let Some(inputs) = data.get("inputs") {
+                        if let Some(schema) = build_schema_from_params(inputs) {
+                            tracing::info!("Built schema from first node data.inputs");
+                            return schema;
+                        }
+                    }
+                    if let Some(schema) = build_schema_from_params(data) {
+                        tracing::info!("Built schema from first node data");
+                        return schema;
+                    }
+                }
+
+                // Fallback Method 4: Lookup tool definition in ToolServer
+                // If the first node is a known tool, use its schema
+                if let Some(server) = tool_server {
+                    // Start node types like "start" are already handled, so if we are here,
+                    // it might be a tool node. The 'node_type' might correspond to a tool ID.
+                    // Or it might be stored in data.tool_id or similar.
+                    
+                    let mut candidate_tool_ids = Vec::new();
+
+                    // 1. Direct node type (e.g. "http_request", "plugin__xyz")
+                    if let Some(nt) = first_node.get("node_type").and_then(|t| t.as_str()) {
+                         candidate_tool_ids.push(nt.to_string());
+                    }
+                     if let Some(nt) = first_node.get("type").and_then(|t| t.as_str()) {
+                         candidate_tool_ids.push(nt.to_string());
+                    }
+
+                    // 2. data.tool_id
+                    if let Some(data) = first_node.get("data").and_then(|d| d.as_object()) {
+                        if let Some(tid) = data.get("tool_id").and_then(|t| t.as_str()) {
+                            candidate_tool_ids.push(tid.to_string());
+                        }
+                    }
+
+                    for tool_name in candidate_tool_ids {
+                        // Skip internal node types
+                        if tool_name == "start" || tool_name == "trigger" || tool_name == "note" {
+                            continue;
+                        }
+
+                        if let Some(tool_info) = server.get_tool(&tool_name).await {
+                             tracing::info!("Found schema for first node tool: {}", tool_name);
+                             return tool_info.input_schema.clone();
+                        }
+                    }
+                }
             }
         }
 
@@ -601,7 +656,7 @@ where
                     continue;
                 }
 
-                let input_schema = WorkflowToolAdapter::extract_input_schema(&workflow);
+                let input_schema = WorkflowToolAdapter::extract_input_schema(&workflow, Some(tool_server)).await;
 
                 // Register workflow context
                 let ctx = WorkflowContext {
@@ -663,8 +718,8 @@ mod tests {
         assert!(tags.contains(&"vulnerability".to_string()));
     }
 
-    #[test]
-    fn test_extract_input_schema() {
+    #[tokio::test]
+    async fn test_extract_input_schema() {
         let definition = serde_json::json!({
             "inputs": {
                 "schema": {
@@ -676,7 +731,7 @@ mod tests {
             }
         });
 
-        let schema = WorkflowToolAdapter::extract_input_schema(&definition);
+        let schema = WorkflowToolAdapter::extract_input_schema(&definition, None).await;
         assert!(schema.get("properties").is_some());
     }
 }

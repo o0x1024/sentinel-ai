@@ -94,37 +94,148 @@ impl DatabaseService {
         Ok(runs)
     }
 
-    pub async fn list_workflow_runs_paginated_internal(&self, page: i64, page_size: i64, _search: Option<&str>, workflow_id: Option<&str>) -> Result<(Vec<serde_json::Value>, i64)> {
+    pub async fn list_workflow_runs_paginated_internal(&self, page: i64, page_size: i64, search: Option<&str>, workflow_id: Option<&str>) -> Result<(Vec<serde_json::Value>, i64)> {
         let pool = self.get_pool()?;
         let offset = (page - 1) * page_size;
 
-        let mut query_str = "SELECT * FROM workflow_runs WHERE 1=1".to_string();
+        let mut where_clause = "WHERE 1=1".to_string();
         if let Some(wid) = workflow_id {
-            query_str.push_str(&format!(" AND workflow_id = '{}'", wid));
+            where_clause.push_str(&format!(" AND workflow_id = '{}'", wid));
         }
-        query_str.push_str(&format!(" ORDER BY started_at DESC LIMIT {} OFFSET {}", page_size, offset));
+        if let Some(s) = search {
+            where_clause.push_str(&format!(" AND (workflow_name LIKE '%{}%' OR id LIKE '%{}%')", s, s));
+        }
 
+        // Count total
+        let count_query = format!("SELECT COUNT(*) FROM workflow_runs {}", where_clause);
+        let total: i64 = sqlx::query_scalar(&count_query).fetch_one(pool).await?;
+
+        // Query data
+        let query_str = format!("SELECT * FROM workflow_runs {} ORDER BY started_at DESC LIMIT {} OFFSET {}", where_clause, page_size, offset);
+        
         let rows = sqlx::query(&query_str).fetch_all(pool).await?;
         let mut runs = Vec::new();
         for row in rows {
-            let id: String = sqlx::Row::get(&row, "id");
-            runs.push(serde_json::json!({ "id": id }));
+            use sqlx::Row;
+            let id: String = row.get("id");
+            let workflow_id: String = row.get("workflow_id");
+            let workflow_name: String = row.get("workflow_name");
+            let version: String = row.get("version");
+            let status: String = row.get("status");
+            let started_at: chrono::DateTime<chrono::Utc> = row.get("started_at");
+            let completed_at: Option<chrono::DateTime<chrono::Utc>> = row.get("completed_at");
+            let error_message: Option<String> = row.get("error_message");
+            let progress: i32 = row.get("progress");
+            let completed_steps: i32 = row.get("completed_steps");
+            let total_steps: i32 = row.get("total_steps");
+            
+            let duration_ms = if let Some(end) = completed_at {
+                (end - started_at).num_milliseconds()
+            } else {
+                0
+            };
+
+            runs.push(serde_json::json!({
+                "execution_id": id,
+                "workflow_id": workflow_id,
+                "workflow_name": workflow_name,
+                "version": version,
+                "status": status,
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "duration_ms": duration_ms,
+                "progress": progress,
+                "completed_steps": completed_steps,
+                "total_steps": total_steps,
+                "error_message": error_message,
+            }));
         }
 
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workflow_runs").fetch_one(pool).await?;
         Ok((runs, total))
     }
 
     pub async fn get_workflow_run_detail_internal(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query("SELECT * FROM workflow_runs WHERE id = ?")
+        
+        // Fetch run info
+        let row_opt = sqlx::query("SELECT * FROM workflow_runs WHERE id = ?")
             .bind(run_id)
             .fetch_optional(pool)
             .await?;
 
-        if let Some(row) = row {
-            let id: String = sqlx::Row::get(&row, "id");
-            Ok(Some(serde_json::json!({ "id": id })))
+        if let Some(row) = row_opt {
+            use sqlx::Row;
+            let id: String = row.get("id");
+            let workflow_id: String = row.get("workflow_id");
+            let workflow_name: String = row.get("workflow_name");
+            let version: String = row.get("version");
+            let status: String = row.get("status");
+            let started_at: chrono::DateTime<chrono::Utc> = row.get("started_at");
+            let completed_at: Option<chrono::DateTime<chrono::Utc>> = row.get("completed_at");
+            let error_message: Option<String> = row.get("error_message");
+            let progress: i32 = row.get("progress");
+            let completed_steps: i32 = row.get("completed_steps");
+            let total_steps: i32 = row.get("total_steps");
+            
+            let duration_ms = if let Some(end) = completed_at {
+                (end - started_at).num_milliseconds()
+            } else {
+                0
+            };
+
+            // Fetch steps
+            let steps_rows = sqlx::query("SELECT * FROM workflow_run_steps WHERE run_id = ? ORDER BY started_at ASC")
+                .bind(run_id)
+                .fetch_all(pool)
+                .await?;
+
+            let mut steps = Vec::new();
+            for s_row in steps_rows {
+                let step_id: String = s_row.get("step_id");
+                let status: String = s_row.get("status");
+                let started_at_step: chrono::DateTime<chrono::Utc> = s_row.get("started_at");
+                let completed_at_step: Option<chrono::DateTime<chrono::Utc>> = s_row.get("completed_at");
+                let error_msg_step: Option<String> = s_row.get("error_message");
+                let result_json: Option<String> = s_row.get("result_json");
+                
+                let result = if let Some(json_str) = result_json {
+                    serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null)
+                } else {
+                    serde_json::Value::Null
+                };
+
+                let duration_ms_step = if let Some(end) = completed_at_step {
+                    (end - started_at_step).num_milliseconds()
+                } else {
+                    0
+                };
+
+                steps.push(serde_json::json!({
+                    "step_id": step_id,
+                    "status": status,
+                    "started_at": started_at_step,
+                    "completed_at": completed_at_step,
+                    "duration_ms": duration_ms_step,
+                    "error_message": error_msg_step,
+                    "result": result
+                }));
+            }
+
+            Ok(Some(serde_json::json!({
+                "execution_id": id,
+                "workflow_id": workflow_id,
+                "workflow_name": workflow_name,
+                "version": version,
+                "status": status,
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "duration_ms": duration_ms,
+                "progress": progress,
+                "completed_steps": completed_steps,
+                "total_steps": total_steps,
+                "error_message": error_message,
+                "steps": steps
+            })))
         } else {
             Ok(None)
         }
@@ -190,11 +301,15 @@ impl DatabaseService {
 
         if let Some(row) = row {
             use sqlx::Row;
+            let graph_data_str: String = row.get("graph_data");
+            let graph: serde_json::Value = serde_json::from_str(&graph_data_str).unwrap_or(serde_json::json!({}));
+
             let val = serde_json::json!({
                 "id": row.get::<String, _>("id"),
                 "name": row.get::<String, _>("name"),
                 "description": row.get::<Option<String>, _>("description"),
-                "graph_data": row.get::<String, _>("graph_data"),
+                "graph_data": graph_data_str,
+                "graph": graph,
                 "is_template": row.get::<bool, _>("is_template"),
                 "is_tool": row.get::<bool, _>("is_tool"),
                 "category": row.get::<Option<String>, _>("category"),
@@ -220,7 +335,18 @@ impl DatabaseService {
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             use sqlx::Row;
-            out.push(serde_json::json!({
+            // 解析 graph_data 以获取节点定义
+            let graph_data_str: String = row.get("graph_data");
+            let graph: serde_json::Value = serde_json::from_str(&graph_data_str).unwrap_or(serde_json::json!({}));
+            
+            // 从 graph 中提取 nodes
+            let nodes = graph.get("nodes").cloned().unwrap_or(serde_json::json!([]));
+            
+            // 从 graph 中提取 input_schema 或 inputs（用于工具 schema 推断）
+            let input_schema = graph.get("input_schema").cloned();
+            let inputs = graph.get("inputs").cloned();
+            
+            let mut workflow_value = serde_json::json!({
                 "id": row.get::<String, _>("id"),
                 "name": row.get::<String, _>("name"),
                 "description": row.get::<Option<String>, _>("description"),
@@ -230,7 +356,20 @@ impl DatabaseService {
                 "tags": row.get::<Option<String>, _>("tags"),
                 "version": row.get::<String, _>("version"),
                 "updated_at": row.get::<String, _>("updated_at"),
-            }));
+                "graph": graph,
+                "nodes": nodes,
+            });
+            
+            // 添加 input_schema（如果存在）
+            if let Some(schema) = input_schema {
+                workflow_value.as_object_mut().unwrap().insert("input_schema".to_string(), schema);
+            }
+            // 添加 inputs（如果存在）
+            if let Some(inp) = inputs {
+                workflow_value.as_object_mut().unwrap().insert("inputs".to_string(), inp);
+            }
+            
+            out.push(workflow_value);
         }
         Ok(out)
     }
@@ -242,26 +381,48 @@ impl DatabaseService {
     }
 
     pub async fn list_workflow_tools_internal(&self) -> Result<Vec<serde_json::Value>> {
-        // 返回可用作工作流节点的工具列表，这通常包括插件和内置工具
-        // 这里简化实现，返回插件注册表中的插件
         let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT id, metadata FROM plugin_registry WHERE status = 'active'")
+        // 获取标记为工具的工作流
+        let rows = sqlx::query("SELECT * FROM workflow_definitions WHERE is_tool = 1 OR is_tool = true ORDER BY updated_at DESC")
             .fetch_all(pool)
             .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             use sqlx::Row;
-            let id: String = row.get("id");
-            let metadata_json: String = row.get("metadata");
-            if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_json) {
-                out.push(serde_json::json!({
-                    "id": format!("plugin::{}", id),
-                    "name": metadata.get("name").and_then(|v| v.as_str()).unwrap_or(&id),
-                    "description": metadata.get("description").and_then(|v| v.as_str()),
-                    "category": metadata.get("category").and_then(|v| v.as_str()).unwrap_or("plugin"),
-                }));
+            // 解析 graph_data 以获取节点定义
+            let graph_data_str: String = row.get("graph_data");
+            let graph: serde_json::Value = serde_json::from_str(&graph_data_str).unwrap_or(serde_json::json!({}));
+            
+            // 从 graph 中提取 nodes
+            let nodes = graph.get("nodes").cloned().unwrap_or(serde_json::json!([]));
+            
+            // 从 graph 中提取 input_schema 或 inputs（用于工具 schema 推断）
+            let input_schema = graph.get("input_schema").cloned();
+            let inputs = graph.get("inputs").cloned();
+            
+            let mut workflow_value = serde_json::json!({
+                "id": row.get::<String, _>("id"),
+                "name": row.get::<String, _>("name"),
+                "description": row.get::<Option<String>, _>("description"),
+                "tags": row.get::<Option<String>, _>("tags"),
+                "version": row.get::<String, _>("version"),
+                "updated_at": row.get::<String, _>("updated_at"),
+                "graph": graph,
+                "nodes": nodes,
+                "is_tool": true,
+            });
+            
+            // 添加 input_schema（如果存在）
+            if let Some(schema) = input_schema {
+                workflow_value.as_object_mut().unwrap().insert("input_schema".to_string(), schema);
             }
+            // 添加 inputs（如果存在）
+            if let Some(inp) = inputs {
+                workflow_value.as_object_mut().unwrap().insert("inputs".to_string(), inp);
+            }
+            
+            out.push(workflow_value);
         }
         Ok(out)
     }

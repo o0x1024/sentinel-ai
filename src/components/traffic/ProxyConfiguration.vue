@@ -54,14 +54,6 @@
             <table class="table table-sm w-full">
               <thead>
                 <tr>
-                  <th class="w-12">
-                    <input 
-                      type="checkbox" 
-                      class="checkbox checkbox-sm"
-                      @change="toggleAllListeners"
-                      :checked="selectedListeners.length === proxyListeners.length && proxyListeners.length > 0"
-                    />
-                  </th>
                   <th class="w-16">
                     {{ $t('trafficAnalysis.proxyConfiguration.running') }}
                   </th>
@@ -82,14 +74,6 @@
                   @dblclick="editListenerByIndex(index)"
                   class="cursor-pointer hover:bg-base-200"
                 >
-                  <td @click.stop>
-                    <input 
-                      type="checkbox" 
-                      class="checkbox checkbox-sm"
-                      :checked="selectedListeners.includes(index)"
-                      @change="toggleListenerSelection(index)"
-                    />
-                  </td>
                   <td @click.stop>
                     <input 
                       type="checkbox" 
@@ -1818,15 +1802,7 @@ const editingListener = ref({
   redirect: false
 })
 
-// Methods
-const toggleAllListeners = (event: Event) => {
-  const checked = (event.target as HTMLInputElement).checked
-  if (checked) {
-    selectedListeners.value = proxyListeners.value.map((_, index) => index)
-  } else {
-    selectedListeners.value = []
-  }
-}
+
 
 const toggleListenerSelection = (index: number) => {
   const idx = selectedListeners.value.indexOf(index)

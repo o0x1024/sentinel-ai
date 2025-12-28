@@ -2000,6 +2000,8 @@ export default {
     // 知识库引用
     knowledgeBaseCited: '已引用知识库 ({count} 处)',
     noKnowledgeBaseCitations: '未引用知识库',
+    selected: '已选',
+    all: '全部',
     // VisionExplorerProgress
     route: '路由',
     element: '元素',

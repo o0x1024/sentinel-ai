@@ -1218,7 +1218,81 @@ const build_graph = (): WorkflowGraph => {
         to_node: e.to_node,
         to_port: 'in'
       })))
-  return {
+  
+  // 生成 input_schema：从起始节点或第一个节点推断
+  // 这样 Agent 调用工作流工具时可以知道需要什么输入参数
+  const build_input_schema = (): Record<string, any> | null => {
+    // 优先从 start/trigger/input 类型节点提取
+    const startNode = node_defs.find(n => 
+      ['start', 'trigger', 'input', 'webhook', 'trigger_schedule'].includes(n.node_type)
+    )
+    const targetNode = startNode || node_defs[0]
+    
+    if (!targetNode) return null
+    
+    const properties: Record<string, any> = {}
+    const required: string[] = []
+    
+    // 从节点的 input_ports 构建 schema
+    const ports = targetNode.input_ports || []
+    for (const port of ports) {
+      // 跳过通用流控制端口
+      if (['in', 'flow', 'trigger', 'input'].includes(port.id)) continue
+      
+      // 将 port_type 转换为 JSON Schema 类型
+      const jsonType = (() => {
+        switch ((port.port_type || 'string').toLowerCase()) {
+          case 'integer':
+          case 'int':
+          case 'number':
+            return 'number'
+          case 'boolean':
+          case 'bool':
+            return 'boolean'
+          case 'array':
+            return 'array'
+          case 'object':
+          case 'json':
+            return 'object'
+          default:
+            return 'string'
+        }
+      })()
+      
+      properties[port.id] = {
+        type: jsonType,
+        description: port.name || port.id
+      }
+      
+      if (port.required) {
+        required.push(port.id)
+      }
+    }
+    
+    // 从节点的 params 中也可能有工作流输入参数定义
+    const params = targetNode.params || {}
+    if (params.input_schema) {
+      return params.input_schema
+    }
+    
+    // 如果找到了有效的参数，返回 schema
+    if (Object.keys(properties).length > 0) {
+      const schema: Record<string, any> = {
+        type: 'object',
+        properties
+      }
+      if (required.length > 0) {
+        schema.required = required
+      }
+      return schema
+    }
+    
+    return null
+  }
+  
+  const input_schema = build_input_schema()
+  
+  const graph: Record<string, any> = {
     id: workflow_id.value,
     name: workflow_name.value || t('trafficAnalysis.workflowStudio.defaults.unnamedWorkflow'),
     version: workflow_version.value || 'v1.0.0',
@@ -1227,6 +1301,13 @@ const build_graph = (): WorkflowGraph => {
     variables: [],
     credentials: []
   }
+  
+  // 添加 input_schema（如果有）
+  if (input_schema) {
+    graph.input_schema = input_schema
+  }
+  
+  return graph as WorkflowGraph
 }
 
 const add_log = (level: ExecutionLog['level'], message: string, node_id?: string, details?: string) => {
@@ -2375,18 +2456,7 @@ const handle_global_click = (e: MouseEvent) => {
     return
   }
 
-  // 处理参数编辑抽屉的关闭
-  if (drawer_open.value) {
-    if (ignore_close_once.value) { 
-      ignore_close_once.value = false
-    } else {
-        const drawer = drawer_ref.value
-        if (!drawer || !drawer.contains(e.target as Node)) {
-          drawer_open.value = false
-      }
-    }
-  }
-  
+
   // 处理执行历史面板的关闭
   if (show_execution_history.value) {
     if (ignore_execution_history_close_once.value) {
@@ -2408,6 +2478,17 @@ const handle_global_click = (e: MouseEvent) => {
       if (!panel || !panel.contains(e.target as Node)) {
         close_result_panel()
       }
+    }
+  }
+}
+
+const handle_global_mousedown = (e: MouseEvent) => {
+  // 处理参数编辑抽屉的关闭 (使用 mousedown 以避免选中文本拖拽到外部时意外关闭)
+  if (drawer_open.value) {
+    const drawer = drawer_ref.value
+    // 检查点击是否在抽屉内部
+    if (!drawer || !drawer.contains(e.target as Node)) {
+      drawer_open.value = false
     }
   }
 }
@@ -2443,6 +2524,7 @@ onMounted(async () => {
   }
   
   window.addEventListener('click', handle_global_click)
+  window.addEventListener('mousedown', handle_global_mousedown)
   window.addEventListener('keydown', handle_keydown)
 })
 
@@ -2453,6 +2535,7 @@ onUnmounted(() => {
     clearTimeout(auto_save_timer.value)
   }
   window.removeEventListener('click', handle_global_click)
+  window.removeEventListener('mousedown', handle_global_mousedown)
   window.removeEventListener('keydown', handle_keydown)
 })
 </script>
