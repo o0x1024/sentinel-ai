@@ -4,7 +4,7 @@ export default {
   vulnerabilities: '漏洞管理',
   tools: '工具&管理',
   settings: '系统设置',
-  workflowStudio: '工作流工作室',
+  workflowStudio: '工作流',
 
   // Sidebar section titles (used by Layout/Sidebar.vue)
   coreFeatures: '核心功能',

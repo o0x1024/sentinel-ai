@@ -225,6 +225,14 @@
       :code-error="codeError"
       :is-fullscreen-editor="isFullscreenEditor"
       :sub-categories="subCategories"
+      :show-ai-panel="showAiPanel"
+      :ai-messages="aiChatMessages"
+      :ai-streaming="aiChatStreaming"
+      :ai-streaming-content="aiChatStreamingContent"
+      :selected-code-ref="selectedCodeRef"
+      :selected-test-result-ref="selectedTestResultRef"
+      :plugin-testing="pluginTesting"
+      :is-preview-mode="isPreviewMode"
       @update:new-plugin-metadata="val => editPluginMetadata = val"
       @format-code="formatCode"
       @copy-plugin="copyPlugin"
@@ -233,6 +241,13 @@
       @cancel-editing="cancelEditing"
       @save-plugin="savePlugin"
       @close="closeCodeEditorDialog"
+      @toggle-ai-panel="showAiPanel = !showAiPanel"
+      @send-ai-message="sendAiChatMessage"
+      @clear-code-ref="selectedCodeRef = null"
+      @clear-test-result-ref="selectedTestResultRef = null"
+      @ai-quick-action="sendAiChatMessage"
+      @apply-ai-code="(code) => { pluginCode = code; if (codeEditorView) codeEditorView.dispatch({ changes: { from: 0, to: codeEditorView.state.doc.length, insert: code } }) }"
+      @exit-preview-mode="isPreviewMode = false"
     />
   </div>
 </template>
@@ -244,7 +259,7 @@ import { dialog } from '@/composables/useDialog'
 import { useI18n } from 'vue-i18n'
 import UnifiedToolTest from './UnifiedToolTest.vue'
 import PluginCodeEditorDialog from '@/components/PluginManagement/PluginCodeEditorDialog.vue'
-import { mainCategories, type SubCategory, type NewPluginMetadata } from '@/components/PluginManagement/types'
+import { mainCategories, type SubCategory, type NewPluginMetadata, type AiChatMessage, type CodeReference, type TestResultReference } from '@/components/PluginManagement/types'
 import { EditorView } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import { basicSetup } from 'codemirror'
@@ -451,6 +466,16 @@ const codeError = ref('')
 const isFullscreenEditor = ref(false)
 const pluginCode = ref('')
 const originalCode = ref('')
+
+// AI and Test related states for PluginCodeEditorDialog
+const showAiPanel = ref(false)
+const aiChatMessages = ref<AiChatMessage[]>([])
+const aiChatStreaming = ref(false)
+const aiChatStreamingContent = ref('')
+const selectedCodeRef = ref<CodeReference | null>(null)
+const selectedTestResultRef = ref<TestResultReference | null>(null)
+const pluginTesting = ref(false)
+const isPreviewMode = ref(false)
 
 let codeEditorView: EditorView | null = null
 let fullscreenCodeEditorView: EditorView | null = null
@@ -660,16 +685,6 @@ async function savePlugin() {
         tags: editPluginMetadata.value.tagsString.split(',').map(s=>s.trim())
      }
      
-     // Construct full code with comments like PluginManagement does?
-     // Or just send pluginCode if backend handles it?
-     // PluginManagement constructs `fullCode` with comment metadata.
-     // I should probably do the same or minimal.
-     // Let's assume pluginCode updates are enough if we don't change metadata.
-     // But update_plugin expects metadata too.
-     
-     // Simplest approach: Use pluginCode as is, maybe prepend metadata if missing?
-     // PluginManagement replaces metadata block.
-     
      const metadataComment = `/**
  * @plugin ${metadata.id}
  * @name ${metadata.name}
@@ -707,6 +722,18 @@ async function savePlugin() {
   } finally {
      isSavingWait.value = false
   }
+}
+
+// AI related methods
+async function sendAiChatMessage(message: string) {
+  if (!message.trim() || aiChatStreaming.value) return
+  
+  aiChatMessages.value.push({
+    role: 'user',
+    content: message
+  })
+  
+  dialog.toast.info('AI 助手功能暂未在工具标签页完全启用')
 }
 
 function viewPluginInfo(plugin: PluginRecord) {

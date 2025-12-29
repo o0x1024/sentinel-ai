@@ -10,7 +10,7 @@ export default {
   last24Hours: '最近24小时',
   searchPlaceholder: '搜索资产名称、值或标签...',
   assetType: '资产类型',
-  riskLevel: '风险等级',
+  riskLevelLabel: '风险等级',
   assetList: '资产列表',
   name: '名称',
   type: '类型',
@@ -30,5 +30,19 @@ export default {
   importSuccess: '资产导入成功',
   importFailed: '导入资产失败',
   tags: '标签',
-  metadata: '元数据'
+  metadata: '元数据',
+  allTypes: '全部类型',
+  allRiskLevels: '全部风险等级',
+  riskLevel: {
+    title: '风险等级',
+    high: '高',
+    medium: '中',
+    low: '低'
+  },
+  allStatuses: '全部状态',
+  status: {
+    active: '活跃',
+    inactive: '未激活'
+  },
+  noAssets: '暂无资产'
 }

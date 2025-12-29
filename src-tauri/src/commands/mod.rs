@@ -26,6 +26,7 @@ pub mod scan_task_commands;
 pub mod test_proxy;
 pub mod tool_commands;
 pub mod vision_explorer_v2;
+pub mod test_explorer_v1;
 pub mod window;
 
 // Re-export commands
@@ -53,6 +54,7 @@ pub use rag_commands::*;
 pub use role::*;
 pub use scan_session_commands::*;
 pub use scan_task_commands::*;
+pub use test_explorer_v1::*;
 pub use tool_commands::*;
 pub use window::*;
 

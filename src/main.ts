@@ -82,98 +82,98 @@ const NotificationManagement = () => import('./views/NotificationManagement.vue'
 
 // 创建路由配置
 const routes = [
-  { 
-    path: '/', 
+  {
+    path: '/',
     redirect: '/dashboard'
   },
-  { 
-    path: '/prompts', 
-    name: 'PromptManagement', 
+  {
+    path: '/prompts',
+    name: 'PromptManagement',
     component: PromptManagement,
     meta: { title: 'Prompt管理' }
   },
-  { 
-    path: '/dashboard', 
-    name: 'DashboardAlias', 
+  {
+    path: '/dashboard',
+    name: 'DashboardAlias',
     component: Dashboard,
     meta: { title: '总览' }
   },
-  { 
-    path: '/security-center', 
-    name: 'SecurityCenter', 
+  {
+    path: '/security-center',
+    name: 'SecurityCenter',
     component: SecurityCenter,
     meta: { title: '安全中心' }
   },
-  { 
-    path: '/mcp-tools', 
-    name: 'McpTools', 
+  {
+    path: '/mcp-tools',
+    name: 'McpTools',
     component: McpTools,
     meta: { title: 'MCP工具' }
   },
-  { 
-    path: '/dictionary', 
-    name: 'DictionaryManagement', 
+  {
+    path: '/dictionary',
+    name: 'DictionaryManagement',
     component: DictionaryManagement,
     meta: { title: '字典管理' }
   },
 
-  { 
-    path: '/ai-assistant', 
-    name: 'AIAssistant', 
+  {
+    path: '/ai-assistant',
+    name: 'AIAssistant',
     component: AIAssistant,
     meta: { title: 'AI助手' }
   },
-  { 
-    path: '/rag-management', 
-    name: 'RAGManagement', 
+  {
+    path: '/rag-management',
+    name: 'RAGManagement',
     component: RAGManagement,
     meta: { title: '知识库管理' }
   },
-  { 
-    path: '/workflow-studio', 
-    name: 'WorkflowStudio', 
+  {
+    path: '/workflow-studio',
+    name: 'WorkflowStudio',
     component: WorkflowStudio,
-    meta: { title: '工作流工作室' }
+    meta: { title: '工作流' }
   },
-  { 
-    path: '/traffic', 
-    name: 'TrafficAnalysis', 
+  {
+    path: '/traffic',
+    name: 'TrafficAnalysis',
     component: TrafficAnalysis,
     meta: { title: '流量分析' }
   },
-  { 
-    path: '/scan-tasks', 
-    name: 'ScanTasks', 
+  {
+    path: '/scan-tasks',
+    name: 'ScanTasks',
     component: SecurityCenter,
     meta: { title: '扫描任务' }
   },
-  { 
-    path: '/vulnerabilities', 
-    name: 'Vulnerabilities', 
+  {
+    path: '/vulnerabilities',
+    name: 'Vulnerabilities',
     component: SecurityCenter,
     meta: { title: '漏洞管理' }
   },
-  { 
-    path: '/plugins', 
-    name: 'PluginManagement', 
+  {
+    path: '/plugins',
+    name: 'PluginManagement',
     component: PluginManagement,
     meta: { title: '插件管理' }
   },
-  { 
-    path: '/settings', 
-    name: 'Settings', 
+  {
+    path: '/settings',
+    name: 'Settings',
     component: Settings,
     meta: { title: '系统设置' }
   },
-  { 
-    path: '/performance', 
-    name: 'PerformanceMonitor', 
+  {
+    path: '/performance',
+    name: 'PerformanceMonitor',
     component: PerformanceMonitor,
     meta: { title: '性能监控' }
   },
-  { 
-    path: '/notifications', 
-    name: 'NotificationManagement', 
+  {
+    path: '/notifications',
+    name: 'NotificationManagement',
     component: NotificationManagement,
     meta: { title: '通知管理' }
   },
@@ -193,10 +193,10 @@ router.beforeEach((to, _from, next) => {
   if (to.meta?.title) {
     document.title = `${to.meta.title} - Sentinel AI`;
   }
-  
+
   // 开始路由性能监控
   performanceService.markRouteStart(to.path);
-  
+
   // 开发环境日志 - 检查计时器是否已存在
   if (import.meta.env.DEV) {
     const timerKey = `Route: ${to.path}`;
@@ -205,14 +205,14 @@ router.beforeEach((to, _from, next) => {
       activeTimers.add(timerKey);
     }
   }
-  
+
   next();
 });
 
 router.afterEach((to) => {
   // 结束路由性能监控
   performanceService.markRouteEnd(to.path);
-  
+
   // 开发环境日志
   if (import.meta.env.DEV) {
     const timerKey = `Route: ${to.path}`;

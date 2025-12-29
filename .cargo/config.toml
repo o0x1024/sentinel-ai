@@ -25,5 +25,5 @@ INCLUDE = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\ucr
 LIB = "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\ucrt\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\um\\x64;C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.50.35717\\lib\\x64"
 
 # Protobuf 编译器路径 - 留空让系统自动查找
-PROTOC = "C:\\protoc\\bin\\protoc.exe"
-PROTOC_INCLUDE = "C:\\protoc\\include"
+# PROTOC = "C:\\protoc\\bin\\protoc.exe"
+# PROTOC_INCLUDE = "C:\\protoc\\include"

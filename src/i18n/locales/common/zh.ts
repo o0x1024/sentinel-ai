@@ -9,6 +9,10 @@ export default {
   success: '成功',
   cancel: '取消',
   confirm: '确认',
+  progress: '进度',
+  completed: '已完成',
+  cancelled: '已取消',
+
 
   // Common single-key aliases (compat with common/en.ts)
   refresh: '刷新',
@@ -38,7 +42,7 @@ export default {
   type: '类型',
   details: '详情',
   operations: '操作',
-  
+
   // Navigation
   nav: {
     home: '首页',
@@ -56,7 +60,7 @@ export default {
     register: '注册',
     forgotPassword: '忘记密码'
   },
-  
+
   // Actions (legacy nested map; prefer flat keys above)
   actionsMap: {
     save: '保存',
@@ -131,7 +135,7 @@ export default {
     editReport: '编辑报告',
     deleteReport: '删除报告'
   },
-  
+
   // Status (legacy nested map; prefer flat keys above)
   statusMap: {
     loading: '加载中...',
@@ -220,7 +224,7 @@ export default {
     current: '当前',
     expired: '已过期'
   },
-  
+
   // Time (legacy nested map; prefer flat keys above)
   timeMap: {
     now: '现在',
@@ -236,7 +240,7 @@ export default {
     thisYear: '今年',
     lastYear: '去年',
     nextYear: '明年',
-    
+
     seconds: '秒',
     minutes: '分钟',
     hours: '小时',
@@ -244,7 +248,7 @@ export default {
     weeks: '周',
     months: '月',
     years: '年',
-    
+
     second: '秒',
     minute: '分钟',
     hour: '小时',
@@ -252,11 +256,11 @@ export default {
     week: '周',
     month: '月',
     year: '年',
-    
+
     ago: '前',
     fromNow: '从现在开始',
     in: '在',
-    
+
     duration: '持续时间',
     interval: '间隔',
     period: '期间',
@@ -266,7 +270,7 @@ export default {
     expiration: '到期',
     timeout: '超时'
   },
-  
+
   // Numbers
   numbers: {
     zero: '零',
@@ -280,7 +284,7 @@ export default {
     eight: '八',
     nine: '九',
     ten: '十',
-    
+
     first: '第一',
     second: '第二',
     third: '第三',
@@ -291,7 +295,7 @@ export default {
     eighth: '第八',
     ninth: '第九',
     tenth: '第十',
-    
+
     total: '总计',
     count: '计数',
     amount: '数量',
@@ -320,7 +324,7 @@ export default {
     subtotal: '小计',
     grandTotal: '总计'
   },
-  
+
   // Colors
   colors: {
     red: '红色',
@@ -344,7 +348,7 @@ export default {
     teal: '蓝绿色',
     silver: '银色',
     gold: '金色',
-    
+
     light: '浅色',
     dark: '深色',
     bright: '明亮',
@@ -361,7 +365,7 @@ export default {
     opaque: '不透明',
     translucent: '半透明'
   },
-  
+
   // Sizes
   sizes: {
     tiny: '微小',
@@ -372,7 +376,7 @@ export default {
     enormous: '巨大',
     gigantic: '巨大',
     colossal: '巨大',
-    
+
     width: '宽度',
     height: '高度',
     depth: '深度',
@@ -386,7 +390,7 @@ export default {
     mass: '质量',
     density: '密度',
     thickness: '厚度',
-    
+
     pixel: '像素',
     point: '点',
     inch: '英寸',
@@ -397,7 +401,7 @@ export default {
     centimeter: '厘米',
     meter: '米',
     kilometer: '千米',
-    
+
     byte: '字节',
     kilobyte: 'KB',
     megabyte: 'MB',
@@ -405,7 +409,7 @@ export default {
     terabyte: 'TB',
     petabyte: 'PB'
   },
-  
+
   // Form validation
   validation: {
     required: '此字段是必需的',
@@ -452,96 +456,96 @@ export default {
     validationError: '验证错误',
     unknownError: '未知错误'
   },
-  
+
   // Notifications
   notifications: {
     success: '成功',
     error: '错误',
     warning: '警告',
     info: '信息',
-    
+
     saved: '保存成功',
     deleted: '删除成功',
     updated: '更新成功',
     created: '创建成功',
     added: '添加成功',
     removed: '移除成功',
-    
+
     saveFailed: '保存失败',
     deleteFailed: '删除失败',
     updateFailed: '更新失败',
     createFailed: '创建失败',
     addFailed: '添加失败',
     removeFailed: '移除失败',
-    
+
     operationCompleted: '操作完成',
     operationFailed: '操作失败',
     operationCancelled: '操作已取消',
     operationInProgress: '操作进行中',
     operationPending: '操作待处理',
-    
+
     connectionEstablished: '连接已建立',
     connectionLost: '连接已丢失',
     connectionFailed: '连接失败',
     connectionTimeout: '连接超时',
-    
+
     fileUploaded: '文件上传成功',
     fileDownloaded: '文件下载成功',
     fileSaved: '文件保存成功',
     fileDeleted: '文件删除成功',
-    
+
     scanStarted: '扫描开始',
     scanCompleted: '扫描完成',
     scanFailed: '扫描失败',
     scanCancelled: '扫描已取消',
     scanPaused: '扫描已暂停',
     scanResumed: '扫描已恢复',
-    
+
     vulnerabilityFound: '发现漏洞',
     vulnerabilityFixed: '漏洞已修复',
     vulnerabilityIgnored: '漏洞已忽略',
-    
+
     reportGenerated: '报告已生成',
     reportExported: '报告已导出',
     reportShared: '报告已分享',
-    
+
     settingsSaved: '设置已保存',
     settingsReset: '设置已重置',
     settingsApplied: '设置已应用',
-    
+
     userLoggedIn: '用户已登录',
     userLoggedOut: '用户已退出',
     userRegistered: '用户已注册',
     userUpdated: '用户信息已更新',
-    
+
     permissionGranted: '权限已授予',
     permissionDenied: '权限已拒绝',
     permissionRequired: '需要权限',
-    
+
     featureEnabled: '功能已启用',
     featureDisabled: '功能已禁用',
     featureUpdated: '功能已更新',
-    
+
     dataImported: '数据已导入',
     dataExported: '数据已导出',
     dataSynchronized: '数据已同步',
     dataUpdated: '数据已更新',
     dataDeleted: '数据已删除',
-    
+
     backupCreated: '备份已创建',
     backupRestored: '备份已恢复',
     backupDeleted: '备份已删除',
-    
+
     updateAvailable: '有可用更新',
     updateDownloaded: '更新已下载',
     updateInstalled: '更新已安装',
     updateInstallationFailed: '更新失败',
-    
+
     errorOccurred: '发生错误',
     warningIssued: '发出警告',
     informationProvided: '提供信息'
   },
-  
+
   // Error messages
   errors: {
     network: '网络错误',
@@ -559,14 +563,14 @@ export default {
     serviceUnavailable: '服务不可用',
     maintenance: '系统维护中',
     unknown: '未知错误',
-    
+
     connectionFailed: '连接失败',
     connectionTimeout: '连接超时',
     connectionLost: '连接丢失',
     connectionRefused: '连接被拒绝',
     connectionReset: '连接被重置',
     connectionAborted: '连接被中止',
-    
+
     fileNotFound: '文件未找到',
     fileAccessDenied: '文件访问被拒绝',
     fileCorrupted: '文件已损坏',
@@ -574,71 +578,71 @@ export default {
     fileTypeNotSupported: '文件类型不支持',
     fileUploadFailed: '文件上传失败',
     fileDownloadFailed: '文件下载失败',
-    
+
     invalidInput: '输入无效',
     invalidData: '数据无效',
     invalidFormat: '格式无效',
     invalidCredentials: '凭据无效',
     invalidToken: '令牌无效',
     invalidSession: '会话无效',
-    
+
     missingField: '缺少字段',
     missingParameter: '缺少参数',
     missingData: '缺少数据',
     missingFile: '缺少文件',
     missingPermission: '缺少权限',
-    
+
     operationFailed: '操作失败',
     operationCancelled: '操作已取消',
     operationTimeout: '操作超时',
     operationNotSupported: '操作不支持',
     operationNotAllowed: '操作不允许',
-    
+
     databaseError: '数据库错误',
     queryError: '查询错误',
     transactionError: '事务错误',
     constraintError: '约束错误',
-    
+
     externalServiceError: '外部服务错误',
     thirdPartyError: '第三方错误',
     apiError: 'API错误',
     integrationError: '集成错误',
-    
+
     configurationError: '配置错误',
     setupError: '设置错误',
     initializationError: '初始化错误',
-    
+
     securityError: '安全错误',
     encryptionError: '加密错误',
     decryptionError: '解密错误',
     authenticationError: '认证错误',
     authorizationError: '授权错误',
-    
+
     memoryError: '内存错误',
     diskError: '磁盘错误',
     cpuError: 'CPU错误',
     resourceError: '资源错误',
-    
+
     pluginError: '插件错误',
     extensionError: '扩展错误',
     moduleError: '模块错误',
-    
+
     parsingError: '解析错误',
     syntaxError: '语法错误',
     semanticError: '语义错误',
     runtimeError: '运行时错误',
     compileError: '编译错误',
-    
+
     userError: '用户错误',
     permissionError: '权限错误',
     accessError: '访问错误',
-    
+
     unexpectedError: '意外错误',
     internalError: '内部错误',
     systemError: '系统错误',
     applicationError: '应用程序错误'
   },
-  
+
   // Success messages
   successMessages: {
     operationCompleted: '操作完成',
@@ -647,185 +651,185 @@ export default {
     dataDeleted: '数据已删除',
     dataImported: '数据已导入',
     dataExported: '数据已导出',
-    
+
     fileUploaded: '文件上传成功',
     fileDownloaded: '文件下载成功',
     fileSaved: '文件保存成功',
     fileDeleted: '文件删除成功',
-    
+
     connectionEstablished: '连接已建立',
     connectionTested: '连接已测试',
     connectionConfigured: '连接已配置',
-    
+
     settingsSaved: '设置已保存',
     settingsApplied: '设置已应用',
     settingsReset: '设置已重置',
-    
+
     userCreated: '用户已创建',
     userUpdated: '用户已更新',
     userDeleted: '用户已删除',
-    
+
     scanStarted: '扫描已开始',
     scanCompleted: '扫描已完成',
     scanScheduled: '扫描已计划',
     scanCancelled: '扫描已取消',
-    
+
     vulnerabilityFound: '发现漏洞',
     vulnerabilityFixed: '漏洞已修复',
     vulnerabilityIgnored: '漏洞已忽略',
-    
+
     reportGenerated: '报告已生成',
     reportExported: '报告已导出',
     reportShared: '报告已分享',
-    
+
     backupCreated: '备份已创建',
     backupRestored: '备份已恢复',
     backupDeleted: '备份已删除',
-    
+
     updateInstalled: '更新已安装',
     updateDownloaded: '更新已下载',
     updateApplied: '更新已应用',
-    
+
     pluginInstalled: '插件已安装',
     pluginUninstalled: '插件已卸载',
     pluginUpdated: '插件已更新',
-    
+
     featureEnabled: '功能已启用',
     featureDisabled: '功能已禁用',
     featureConfigured: '功能已配置',
-    
+
     permissionGranted: '权限已授予',
     permissionRevoked: '权限已撤销',
     permissionUpdated: '权限已更新',
-    
+
     authenticationSuccessful: '认证成功',
     authorizationSuccessful: '授权成功',
     loginSuccessful: '登录成功',
     logoutSuccessful: '退出登录成功',
-    
+
     validationSuccessful: '验证成功',
     verificationSuccessful: '验证成功',
     testSuccessful: '测试成功',
-    
+
     configurationSaved: '配置已保存',
     configurationApplied: '配置已应用',
     configurationUpdated: '配置已更新',
-    
+
     applicationStarted: '应用程序已启动',
     applicationStopped: '应用程序已停止',
     applicationRestarted: '应用程序已重启',
-    
+
     serviceStarted: '服务已启动',
     serviceStopped: '服务已停止',
     serviceRestarted: '服务已重启',
-    
+
     databaseConnected: '数据库已连接',
     databaseDisconnected: '数据库已断开连接',
     databaseUpdated: '数据库已更新',
-    
+
     cacheCleared: '缓存已清除',
     cacheUpdated: '缓存已更新',
     cacheRefreshed: '缓存已刷新',
-    
+
     sessionCreated: '会话已创建',
     sessionUpdated: '会话已更新',
     sessionDeleted: '会话已删除',
     sessionExpired: '会话已过期',
-    
+
     taskCompleted: '任务已完成',
     taskCancelled: '任务已取消',
     taskScheduled: '任务已计划',
     taskExecuted: '任务已执行',
-    
+
     workflowCompleted: '工作流已完成',
     workflowCancelled: '工作流已取消',
     workflowExecuted: '工作流已执行',
-    
+
     integrationConfigured: '集成已配置',
     integrationTested: '集成已测试',
     integrationEnabled: '集成已启用',
     integrationDisabled: '集成已禁用',
-    
+
     securityApplied: '安全已应用',
     securityUpdated: '安全已更新',
     securityConfigured: '安全已配置',
-    
+
     encryptionApplied: '加密已应用',
     encryptionUpdated: '加密已更新',
     encryptionConfigured: '加密已配置',
-    
+
     monitoringStarted: '监控已开始',
     monitoringStopped: '监控已停止',
     monitoringConfigured: '监控已配置',
-    
+
     alertingConfigured: '警报已配置',
     alertingEnabled: '警报已启用',
     alertingDisabled: '警报已禁用',
-    
+
     notificationSent: '通知已发送',
     notificationReceived: '通知已接收',
     notificationConfigured: '通知已配置',
-    
+
     synchronizationCompleted: '同步已完成',
     synchronizationStarted: '同步已开始',
     synchronizationConfigured: '同步已配置',
-    
+
     deploymentCompleted: '部署已完成',
     deploymentStarted: '部署已开始',
     deploymentConfigured: '部署已配置',
-    
+
     installationCompleted: '安装已完成',
     installationStarted: '安装已开始',
     installationConfigured: '安装已配置',
-    
+
     uninstallationCompleted: '卸载已完成',
     uninstallationStarted: '卸载已开始',
-    
+
     cleanupCompleted: '清理已完成',
     cleanupStarted: '清理已开始',
     cleanupConfigured: '清理已配置',
-    
+
     optimizationCompleted: '优化已完成',
     optimizationStarted: '优化已开始',
     optimizationConfigured: '优化已配置',
-    
+
     indexingCompleted: '索引已完成',
     indexingStarted: '索引已开始',
     indexingConfigured: '索引已配置',
-    
+
     compressionCompleted: '压缩已完成',
     compressionStarted: '压缩已开始',
     compressionConfigured: '压缩已配置',
-    
+
     extractionCompleted: '提取已完成',
     extractionStarted: '提取已开始',
     extractionConfigured: '提取已配置',
-    
+
     conversionCompleted: '转换已完成',
     conversionStarted: '转换已开始',
     conversionConfigured: '转换已配置',
-    
+
     migrationCompleted: '迁移已完成',
     migrationStarted: '迁移已开始',
     migrationConfigured: '迁移已配置',
-    
+
     importCompleted: '导入已完成',
     importStarted: '导入已开始',
     importConfigured: '导入已配置',
-    
+
     exportCompleted: '导出已完成',
     exportStarted: '导出已开始',
     exportConfigured: '导出已配置',
-    
+
     archivingCompleted: '归档已完成',
     archivingStarted: '归档已开始',
     archivingConfigured: '归档已配置',
-    
+
     restorationCompleted: '恢复已完成',
     restorationStarted: '恢复已开始',
     restorationConfigured: '恢复已配置'
   },
-  
+
   // Missing keys
   noMore: '没有更多',
   endpoint: '端点',

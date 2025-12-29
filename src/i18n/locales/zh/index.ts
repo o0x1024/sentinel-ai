@@ -66,7 +66,7 @@ export default {
     title: '知识库管理'
   },
   workflow: {
-    title: '工作流工作室'
+    title: '工作流'
   },
 
   // Security Center section

@@ -73,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import RoleManagement from '@/components/RoleManagement.vue'
@@ -163,6 +163,14 @@ onUnmounted(() => {
     unlistenTraffic()
     unlistenTraffic = null
   }
+})
+
+// 当组件被 keep-alive 激活时，自动聚焦输入框
+onActivated(() => {
+  console.log('AIAssistant: Component activated, focusing input')
+  nextTick(() => {
+    agentViewRef.value?.focusInput()
+  })
 })
 </script>
 

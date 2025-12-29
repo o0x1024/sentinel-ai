@@ -86,5 +86,6 @@ export default {
     scanScheduled: '扫描已计划',
     scanTemplateSaved: '扫描模板已保存',
     scanTemplateLoaded: '扫描模板已加载'
-  }
+  },
+  noTasks: '暂无扫描任务'
 }

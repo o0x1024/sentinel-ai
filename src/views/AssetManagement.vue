@@ -88,7 +88,7 @@
           <!-- 风险等级筛选 -->
           <div class="form-control">
             <label class="label">
-              <span class="label-text">{{ $t('assetManagement.riskLevel', '风险等级') }}</span>
+              <span class="label-text">{{ $t('assetManagement.riskLevelLabel', '风险等级') }}</span>
             </label>
             <select v-model="selectedRiskLevel" class="select select-bordered select-sm" @change="applyFilters">
               <option value="">{{ $t('common.all', '全部') }}</option>
@@ -139,7 +139,7 @@
                 <th>{{ $t('assetManagement.name', '名称') }}</th>
                 <th>{{ $t('assetManagement.type', '类型') }}</th>
                 <th>{{ $t('assetManagement.value', '值') }}</th>
-                <th>{{ $t('assetManagement.riskLevel', '风险等级') }}</th>
+                <th>{{ $t('assetManagement.riskLevelLabel', '风险等级') }}</th>
                 <th>{{ $t('common.status', '状态') }}</th>
                 <th>{{ $t('assetManagement.lastSeen', '最后发现') }}</th>
                 <th>{{ $t('common.actions', '操作') }}</th>
@@ -270,7 +270,7 @@
             
             <div class="form-control">
               <label class="label">
-                <span class="label-text font-medium">{{ $t('assetManagement.riskLevel', '风险等级') }}</span>
+                <span class="label-text font-medium">{{ $t('assetManagement.riskLevelLabel', '风险等级') }}</span>
               </label>
               <span class="badge badge-lg" :class="getRiskLevelClass(selectedAsset.risk_level)">
                 {{ $t(`riskLevels.${selectedAsset.risk_level}`, selectedAsset.risk_level) }}

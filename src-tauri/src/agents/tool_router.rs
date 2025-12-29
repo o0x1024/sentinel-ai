@@ -274,6 +274,23 @@ impl ToolRouter {
                 cost_estimate: ToolCost::High,
                 always_available: false,
             },
+            // Test Explorer (unified tool)
+            ToolMetadata {
+                id: "test_explorer".to_string(),
+                name: "test_explorer".to_string(),
+                description: "Explore a website using text-based automation with LLM. Automatically navigates, interacts with elements, captures API requests, and completes exploration tasks.".to_string(),
+                category: ToolCategory::Network,
+                tags: vec![
+                    "browser".to_string(),
+                    "automation".to_string(),
+                    "web".to_string(),
+                    "api".to_string(),
+                    "crawl".to_string(),
+                    "exploration".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
         ]
     }
 

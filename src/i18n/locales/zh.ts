@@ -1359,7 +1359,7 @@ export default {
 
     remainingTimeDefault: '2小时15分钟',
     intelligentTest: '智能安全测试',
-    workflowStudio: '工作流工作室',
+    workflowStudio: '工作流',
     notifications: '通知',
   },
   rag: {
@@ -1367,7 +1367,7 @@ export default {
     description: '管理和检索知识库文档',
   },
   workflow: {
-    title: '工作流工作室',
+    title: '工作流',
     description: '设计和执行自动化工作流',
   },
   dictionary: {

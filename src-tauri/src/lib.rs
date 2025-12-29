@@ -27,6 +27,7 @@ use services::{ai::AiServiceManager, database::DatabaseService};
 
 use commands::{
     ai, aisettings, asset, config, database as db_commands, dictionary,
+    get_cache, set_cache, delete_cache, cleanup_expired_cache, get_all_cache_keys,
     traffic_analysis_commands::{self, TrafficAnalysisState},
     performance, prompt_commands,
     proxifier_commands::{self, ProxifierState},
@@ -271,6 +272,7 @@ pub fn run() {
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
                 handle.manage(commands::vision_explorer_v2::VisionExplorerV2State::default());
+                handle.manage(commands::test_explorer_v1::TestExplorerState::new());
 
                 // Initialize shell permission handler
                 if let Err(e) = tool_commands::init_shell_permission_handler(handle.clone()).await {
@@ -475,6 +477,12 @@ pub fn run() {
             db_commands::import_database_json,
             db_commands::get_database_statistics,
             db_commands::reset_database,
+            // Cache commands
+            get_cache,
+            set_cache,
+            delete_cache,
+            cleanup_expired_cache,
+            get_all_cache_keys,
             // Asset commands
 
             asset::init_asset_service,
@@ -798,6 +806,16 @@ pub fn run() {
             commands::vision_explorer_v2::get_vision_explorer_v2_status,
             commands::vision_explorer_v2::list_vision_explorer_v2_sessions,
 
+            // Test Explorer V1 commands
+            commands::test_explorer_v1::test_explorer_init,
+            commands::test_explorer_v1::test_explorer_execute_direct,
+            commands::test_explorer_v1::test_explorer_execute_planning,
+            commands::test_explorer_v1::test_explorer_execute_streaming,
+            commands::test_explorer_v1::test_explorer_get_apis,
+            commands::test_explorer_v1::test_explorer_get_history,
+            commands::test_explorer_v1::test_explorer_export_har,
+            commands::test_explorer_v1::test_explorer_close,
+
             // Shell Tool commands
             tool_commands::init_shell_permission_handler,
             tool_commands::get_shell_tool_config,
@@ -814,6 +832,16 @@ pub fn run() {
             tool_commands::create_ability_group,
             tool_commands::update_ability_group,
             tool_commands::delete_ability_group,
+            // Tool Server commands
+            tool_commands::tool_server::init_tool_server,
+            tool_commands::tool_server::list_tool_server_tools,
+            tool_commands::tool_server::list_tools_by_source,
+            tool_commands::tool_server::get_tool_server_tool,
+            tool_commands::tool_server::execute_tool_server_tool,
+            tool_commands::tool_server::get_tool_server_stats,
+            tool_commands::tool_server::register_mcp_tools_from_server,
+            tool_commands::tool_server::register_workflow_tools,
+            tool_commands::tool_server::refresh_all_dynamic_tools,
             // MCP commands
             commands::mcp_commands::mcp_get_connections,
             commands::mcp_commands::mcp_get_connection_status,
@@ -836,12 +864,6 @@ pub fn run() {
             commands::license_commands::get_machine_id,
             commands::license_commands::get_machine_id_full,
             commands::license_commands::deactivate_license,
-            // Cache commands (temporarily disabled)
-            // commands::cache_commands::get_cache,
-            // commands::cache_commands::set_cache,
-            // commands::cache_commands::delete_cache,
-            // commands::cache_commands::cleanup_expired_cache,
-            // commands::cache_commands::get_all_cache_keys,
             // Workflow commands
             sentinel_workflow::commands::start_workflow_run,
             sentinel_workflow::commands::stop_workflow_run,

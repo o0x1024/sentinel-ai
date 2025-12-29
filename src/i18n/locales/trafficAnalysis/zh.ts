@@ -910,7 +910,7 @@ export default {
       saving: '保存中...',
       unsaved: '有未保存的更改'
     },
-    title: '工作流工作室',
+    title: '工作流',
     header: {
       namePlaceholder: '工作流名称',
       editMetadataTooltip: '编辑工作流元数据'
@@ -944,7 +944,7 @@ export default {
       exportJson: '导出为JSON',
       importJson: '从JSON导入',
       exportImage: '导出为图片',
-      exportedBy: 'Sentinel AI 工作流工作室'
+      exportedBy: 'Sentinel AI 工作流'
     },
     sidebar: {
       nodeLibrary: '节点库',

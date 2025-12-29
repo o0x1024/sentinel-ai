@@ -256,14 +256,57 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         })),
     });
 
-    // Ensure it's in states
-    if !states.contains_key("vision_explorer") {
+    // Ensure vision_explorer and test_explorer are in states
+    let states = if !states.contains_key("vision_explorer") || !states.contains_key("test_explorer") {
         drop(states); // Release read lock
         let mut states_write = TOOL_STATES.write().await;
         states_write
             .entry("vision_explorer".to_string())
             .or_insert(true);
-    }
+        states_write
+            .entry("test_explorer".to_string())
+            .or_insert(true);
+        drop(states_write);
+        
+        // Re-read states
+        TOOL_STATES.read().await
+    } else {
+        states
+    };
+
+    // Add test_explorer (single unified tool)
+    tools.push(BuiltinToolInfo {
+        id: "test_explorer".to_string(),
+        name: "test_explorer".to_string(),
+        description: "Explore a website using text-based automation with LLM. Automatically navigates, interacts with elements, captures API requests, and completes exploration tasks.".to_string(),
+        category: "network".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("test_explorer").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to explore"
+                },
+                "task": {
+                    "type": "string",
+                    "description": "The exploration task description (e.g., 'Find login API', 'Explore user profile section')"
+                },
+                "max_steps": {
+                    "type": "integer",
+                    "description": "Maximum exploration steps (default: 50)",
+                    "default": 50
+                },
+                "use_planner": {
+                    "type": "boolean",
+                    "description": "Use LLM planner for intelligent task decomposition (default: true)",
+                    "default": true
+                }
+            },
+            "required": ["url"]
+        })),
+    });
 
     Ok(tools)
 }
@@ -1000,7 +1043,7 @@ pub async fn clear_tool_usage_stats() -> Result<(), String> {
     Ok(())
 }
 
-mod tool_server;
+pub mod tool_server;
 pub use tool_server::{
     execute_tool_server_tool, get_tool_server_stats, get_tool_server_tool, init_tool_server,
     list_tool_server_tools, list_tools_by_source, refresh_all_dynamic_tools,

@@ -449,6 +449,13 @@ const getTypeLabel = (type?: TrafficSendType): string => {
   }
 }
 
+// 聚焦输入框
+const focusInput = () => {
+  nextTick(() => {
+    textareaRef.value?.focus()
+  })
+}
+
 onMounted(() => {
   autoResize()
   // 同步父组件传入的初始值
@@ -484,6 +491,9 @@ onMounted(() => {
   window.addEventListener('resize', updatePopoverPosition)
   window.addEventListener('scroll', updatePopoverPosition, true)
   window.addEventListener('click', handleClickOutside, true)
+  
+  // 自动聚焦输入框
+  focusInput()
 })
 
 onUnmounted(() => {
@@ -513,6 +523,11 @@ watch(
     }
   }
 )
+
+// 暴露方法供父组件调用
+defineExpose({
+  focusInput,
+})
 
 // End script
 </script>

@@ -133,10 +133,10 @@
     <div v-else class="text-center p-8">
       <i class="fas fa-project-diagram text-4xl text-base-content/30 mb-4"></i>
       <p class="text-lg font-semibold">暂无工作流工具</p>
-      <p class="text-base-content/70 mt-2">在工作流工作室中创建工作流并将其设置为工具</p>
+      <p class="text-base-content/70 mt-2">在工作流中创建工作流并将其设置为工具</p>
       <button @click="goToWorkflowStudio" class="btn btn-primary mt-4">
         <i class="fas fa-plus mr-2"></i>
-        前往工作流工作室
+        前往工作流
       </button>
     </div>
 

@@ -174,7 +174,7 @@ const mainMenuItems = computed(() => [
 
   {
     path: '/workflow-studio',
-    name: t('sidebar.workflowStudio', '工作流工作室'),
+    name: t('sidebar.workflowStudio', '工作流'),
     icon: 'fas fa-project-diagram',
     badge: null,
     badgeClass: ''

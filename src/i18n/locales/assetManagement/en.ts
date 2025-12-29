@@ -34,6 +34,7 @@ export default {
   allTypes: 'All Types',
   allRiskLevels: 'All Risk Levels',
   riskLevel: {
+    title: 'Risk Level',
     high: 'High',
     medium: 'Medium',
     low: 'Low'

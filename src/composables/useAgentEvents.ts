@@ -138,7 +138,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
   const streamingContent = ref('')
   const contentBuffer = ref('')
   const ragMetaInfo = ref<RagMetaInfo | null>(null)
-  
+
   // Thinking content buffer for incremental display
   const thinkingBuffer = ref('')
   const currentThinkingMessageId = ref<string | null>(null)
@@ -308,7 +308,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       } else if (payload.chunk_type === 'reasoning') {
         // Reasoning content: accumulate in existing thinking message or create new one
         thinkingBuffer.value += payload.content
-        
+
         if (currentThinkingMessageId.value) {
           // Update existing thinking message
           const existingMsg = messages.value.find(m => m.id === currentThinkingMessageId.value)
@@ -708,6 +708,24 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         }
         contentBuffer.value += chunk.content
         streamingContent.value = contentBuffer.value
+        assistantSegmentBuffer.value += chunk.content
+
+        // Ensure there's a visible assistant message in the message list
+        if (!currentAssistantMessageId.value) {
+          const msgId = crypto.randomUUID()
+          currentAssistantMessageId.value = msgId
+          messages.value.push({
+            id: msgId,
+            type: 'final',
+            content: assistantSegmentBuffer.value,
+            timestamp: Date.now(),
+          })
+        } else {
+          const existingMsg = messages.value.find(m => m.id === currentAssistantMessageId.value)
+          if (existingMsg) {
+            existingMsg.content = assistantSegmentBuffer.value
+          }
+        }
         return
       }
 
@@ -715,7 +733,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         if (chunk.content.trim()) {
           // Accumulate thinking content
           thinkingBuffer.value += chunk.content
-          
+
           if (currentThinkingMessageId.value) {
             // Update existing thinking message
             const existingMsg = messages.value.find(m => m.id === currentThinkingMessageId.value)

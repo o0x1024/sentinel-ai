@@ -128,6 +128,7 @@
 
       <!-- {{ t('agent.inputArea') }} -->
       <InputAreaComponent
+        ref="inputAreaRef"
         v-model:input-message="inputValue"
         :is-loading="isExecuting"
         :allow-takeover="true"
@@ -210,6 +211,7 @@ const { t } = useI18n()
 // Refs
 const messageFlowRef = ref<InstanceType<typeof MessageFlow> | null>(null)
 const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(null)
+const inputAreaRef = ref<InstanceType<typeof InputAreaComponent> | null>(null)
 const inputValue = ref('')
 const localError = ref<string | null>(null)
 const conversationId = ref<string | null>(null)
@@ -794,6 +796,11 @@ onMounted(async () => {
     // Default load the last conversation
     await loadLatestConversation()
   }
+  
+  // 自动聚焦输入框
+  nextTick(() => {
+    inputAreaRef.value?.focusInput()
+  })
 })
 
 // Watch for conversation changes to update title
@@ -818,6 +825,7 @@ defineExpose({
   addReferencedTraffic,
   loadConversationHistory,
   conversationId,
+  focusInput: () => inputAreaRef.value?.focusInput(),
 })
 </script>
 
