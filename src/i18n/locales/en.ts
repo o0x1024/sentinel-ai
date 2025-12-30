@@ -346,12 +346,20 @@ export default {
     executionSuccess: 'Execution Successful',
     executionFailed: 'Execution Failed',
     shell: {
+      title: 'Shell Terminal',
       runCommand: 'Run command?',
       accept: 'Accept',
       reject: 'Reject',
       executing: 'Executing...',
       success: 'Success',
-      failed: 'Failed'
+      failed: 'Failed',
+      clear: 'Clear',
+      settings: 'Settings',
+      welcome: 'Sentinel AI Shell Terminal',
+      helpHint: 'Type commands and press Enter to execute. Type \'help\' for available commands.',
+      historyHint: 'Use ↑/↓ to navigate command history.',
+      enterCommand: 'Enter command...',
+      completed: 'Completed in {time}ms (exit code: {code})'
     },
   },
   positions: {

@@ -8,12 +8,14 @@ pub mod http_request;
 pub mod local_time;
 pub mod shell;
 pub mod subdomain_brute;
+pub mod task_planner;
 
 pub use port_scan::PortScanTool;
 pub use http_request::HttpRequestTool;
 pub use local_time::LocalTimeTool;
 pub use shell::ShellTool;
 pub use subdomain_brute::SubdomainBruteTool;
+pub use task_planner::TaskPlannerTool;
 
 use rig::tool::ToolSet;
 
@@ -25,6 +27,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(LocalTimeTool);
     toolset.add_tool(ShellTool::new());
     toolset.add_tool(SubdomainBruteTool);
+    toolset.add_tool(TaskPlannerTool);
     toolset
 }
 
@@ -36,6 +39,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(LocalTimeTool),
         Box::new(ShellTool::new()),
         Box::new(SubdomainBruteTool),
+        Box::new(TaskPlannerTool),
     ];
     
     let mut definitions = Vec::new();

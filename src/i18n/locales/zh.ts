@@ -388,12 +388,20 @@ export default {
     executionSuccess: '执行成功',
     executionFailed: '执行失败',
     shell: {
+      title: 'Shell 终端',
       runCommand: '运行命令？',
       accept: '接受',
       reject: '拒绝',
       executing: '执行中...',
       success: '成功',
-      failed: '失败'
+      failed: '失败',
+      clear: '清空',
+      settings: '设置',
+      welcome: 'Sentinel AI Shell 终端',
+      helpHint: '输入命令并按 Enter 执行。输入 help 查看可用命令。',
+      historyHint: '使用 ↑/↓ 浏览命令历史。',
+      enterCommand: '输入命令...',
+      completed: '完成于 {time}ms (退出码: {code})'
     },
   },
   positions: {

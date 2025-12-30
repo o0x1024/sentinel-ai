@@ -152,7 +152,11 @@ function handleFilterRuleAdded(rule: FilterRule) {
     console.log('[TrafficAnalysis] Filter rule added, removing matching records:', rule)
     
     if (proxyHistoryRef.value) {
-        proxyHistoryRef.value.removeMatchingRecords(rule)
+        proxyHistoryRef.value.removeMatchingRecords({
+            matchType: rule.matchType,
+            condition: rule.condition,
+            relationship: rule.relationship || 'matches'
+        })
     }
 }
 

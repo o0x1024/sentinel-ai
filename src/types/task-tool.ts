@@ -16,6 +16,7 @@ export interface ActiveToolInfo {
   avg_execution_time: number;
   last_execution_time?: string;
   error_count: number;
+  log_id?: string;
 }
 
 export interface ToolStatistics {

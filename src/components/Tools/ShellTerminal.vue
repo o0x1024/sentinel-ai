@@ -5,18 +5,18 @@
       <div class="flex justify-between items-center px-4 py-3 border-b border-base-300 bg-base-200">
         <div class="flex items-center gap-3">
           <div class="w-8 h-8 rounded bg-success/20 flex items-center justify-center">
-            <i class="fas fa-terminal text-success"></i>
+            <!-- <i class="fas fa-terminal text-success"></i> -->
           </div>
           <div>
-            <h3 class="font-bold text-lg">Shell Terminal</h3>
-            <span class="text-xs text-base-content/60">{{ cwd }}</span>
+            <h3 class="font-bold text-lg">{{ $t('tools.shell.title') }}</h3>
+            <!-- <span class="text-xs text-base-content/60">{{ cwd }}</span> -->
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button @click="clearTerminal" class="btn btn-sm btn-ghost" title="Clear">
+          <button @click="clearTerminal" class="btn btn-sm btn-ghost" :title="$t('tools.shell.clear')">
             <i class="fas fa-trash-alt"></i>
           </button>
-          <button @click="openSettings" class="btn btn-sm btn-ghost" title="Settings">
+          <button @click="openSettings" class="btn btn-sm btn-ghost" :title="$t('tools.shell.settings')">
             <i class="fas fa-cog"></i>
           </button>
           <button @click="close" class="btn btn-sm btn-ghost">
@@ -33,9 +33,9 @@
       >
         <!-- Welcome message -->
         <div v-if="history.length === 0" class="text-[#569cd6] mb-4">
-          <div>Sentinel AI Shell Terminal</div>
-          <div class="text-[#6a9955]">Type commands and press Enter to execute. Type 'help' for available commands.</div>
-          <div class="text-[#6a9955]">Use ↑/↓ to navigate command history.</div>
+          <div>{{ $t('tools.shell.welcome') }}</div>
+          <div class="text-[#6a9955]">{{ $t('tools.shell.helpHint') }}</div>
+          <div class="text-[#6a9955]">{{ $t('tools.shell.historyHint') }}</div>
         </div>
 
         <!-- Command history -->
@@ -43,13 +43,13 @@
           <!-- Command line -->
           <div class="flex items-start gap-2">
             <span class="text-[#4ec9b0] shrink-0">{{ item.prompt }}</span>
-            <span class="text-[#ce9178]">{{ item.command }}</span>
+            <span class="text-[#ce9178] break-all">{{ item.command }}</span>
           </div>
           <!-- Output -->
           <div v-if="item.output" class="mt-1 whitespace-pre-wrap break-all" :class="item.success ? 'text-[#d4d4d4]' : 'text-[#f14c4c]'">{{ item.output }}</div>
           <!-- Execution time -->
-          <div v-if="item.executionTime" class="text-[#6a9955] text-xs mt-1">
-            Completed in {{ item.executionTime }}ms (exit code: {{ item.exitCode ?? 'N/A' }})
+          <div v-if="item.executionTime !== undefined" class="text-[#6a9955] text-xs mt-1">
+            {{ $t('tools.shell.completed', { time: item.executionTime, code: item.exitCode ?? 'N/A' }) }}
           </div>
         </div>
 
@@ -68,8 +68,9 @@
             ref="inputRef"
             v-model="currentCommand"
             @keydown="handleKeyDown"
+            @paste="handlePaste"
             class="flex-1 bg-transparent border-none outline-none text-[#ce9178] text-sm"
-            :placeholder="isExecuting ? 'Executing...' : 'Enter command...'"
+            :placeholder="isExecuting ? $t('tools.shell.executing') : $t('tools.shell.enterCommand')"
             :disabled="isExecuting"
             autocomplete="off"
             spellcheck="false"
@@ -123,11 +124,68 @@ const inputRef = ref<HTMLInputElement | null>(null)
 
 // Computed
 const currentPrompt = computed(() => {
-  const user = 'user'
-  const host = 'sentinel'
-  const path = cwd.value.replace(/^\/Users\/[^/]+/, '~')
+  const user = getUsername()
+  const host = getHostname()
+  const path = formatPath(cwd.value)
   return `${user}@${host}:${path}$`
 })
+
+// Helper functions
+function getUsername(): string {
+  // Try to extract from cwd or use generic name
+  if (cwd.value.includes('/Users/')) {
+    const match = cwd.value.match(/\/Users\/([^/]+)/)
+    return match ? match[1] : 'user'
+  }
+  if (cwd.value.includes('/home/')) {
+    const match = cwd.value.match(/\/home\/([^/]+)/)
+    return match ? match[1] : 'user'
+  }
+  return 'user'
+}
+
+function getHostname(): string {
+  return 'sentinel'
+}
+
+function formatPath(path: string): string {
+  // Replace home directory with ~
+  if (path.includes('/Users/')) {
+    const match = path.match(/\/Users\/([^/]+)/)
+    if (match) {
+      return path.replace(`/Users/${match[1]}`, '~')
+    }
+  }
+  if (path.includes('/home/')) {
+    const match = path.match(/\/home\/([^/]+)/)
+    if (match) {
+      return path.replace(`/home/${match[1]}`, '~')
+    }
+  }
+  // Windows paths
+  if (path.match(/^[A-Z]:\\/)) {
+    return path
+  }
+  return path
+}
+
+function getHelpText(): string {
+  return `Available commands:
+  clear, cls    - Clear the terminal
+  help          - Show this help message
+  cd <path>     - Change directory
+  pwd           - Print working directory
+  exit          - Close the terminal
+  
+Any other command will be executed in the system shell.
+
+Keyboard shortcuts:
+  Enter         - Execute command
+  ↑/↓           - Navigate command history
+  Ctrl+C        - Cancel current input
+  Ctrl+L        - Clear screen
+  Tab           - (Future) Auto-completion`
+}
 
 // Methods
 function close() {
@@ -175,14 +233,7 @@ async function executeCommand() {
     history.value.push({
       prompt: currentPrompt.value,
       command: cmd,
-      output: `Available commands:
-  clear, cls    - Clear the terminal
-  help          - Show this help message
-  cd <path>     - Change directory
-  pwd           - Print working directory
-  exit          - Close the terminal
-  
-Any other command will be executed in the system shell.`,
+      output: getHelpText(),
       success: true,
       exitCode: 0,
       executionTime: 0
@@ -236,31 +287,8 @@ Any other command will be executed in the system shell.`,
         displayOutput += (displayOutput ? '\n' : '') + output.stderr
       }
 
-      // Handle cd command - update cwd
-      if (cmd.startsWith('cd ')) {
-        const newPath = cmd.substring(3).trim()
-        if (output.success) {
-          // Try to get the new cwd
-          try {
-            const pwdResult = await invoke<any>('unified_execute_tool', {
-              toolName: 'shell',
-              inputs: { command: 'pwd', cwd: cwd.value === '~' ? undefined : cwd.value },
-              context: null,
-              timeout: 10
-            })
-            if (pwdResult.success && pwdResult.output?.stdout) {
-              cwd.value = pwdResult.output.stdout.trim()
-            }
-          } catch {
-            // Ignore errors, keep current cwd
-          }
-        }
-      }
-
-      // Handle pwd command
-      if (cmd === 'pwd' && output.success && output.stdout) {
-        cwd.value = output.stdout.trim()
-      }
+      // Update working directory after command execution
+      await updateWorkingDirectory(cmd, output.success)
 
       history.value.push({
         prompt: currentPrompt.value,
@@ -324,6 +352,97 @@ function handleKeyDown(e: KeyboardEvent) {
     // Ctrl+L - clear screen
     e.preventDefault()
     clearTerminal()
+  } else if (e.key === 'Tab') {
+    // Tab - auto-completion (future feature)
+    e.preventDefault()
+    // TODO: Implement auto-completion
+  } else if (e.key === 'u' && e.ctrlKey) {
+    // Ctrl+U - clear line
+    e.preventDefault()
+    currentCommand.value = ''
+  } else if (e.key === 'd' && e.ctrlKey) {
+    // Ctrl+D - exit (if input is empty)
+    if (!currentCommand.value && !isExecuting.value) {
+      e.preventDefault()
+      close()
+    }
+  }
+}
+
+function handlePaste(e: ClipboardEvent) {
+  // Allow multi-line paste
+  const text = e.clipboardData?.getData('text')
+  if (text && text.includes('\n')) {
+    e.preventDefault()
+    const lines = text.split('\n').filter(line => line.trim())
+    if (lines.length > 1) {
+      // Execute multiple commands
+      executeMultipleCommands(lines)
+    } else if (lines.length === 1) {
+      currentCommand.value += lines[0]
+    }
+  }
+}
+
+async function executeMultipleCommands(commands: string[]) {
+  for (const cmd of commands) {
+    currentCommand.value = cmd
+    await executeCommand()
+    // Small delay between commands
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+}
+
+async function updateWorkingDirectory(cmd: string, success: boolean) {
+  // Handle cd command - update cwd
+  if (cmd.startsWith('cd ') && success) {
+    try {
+      const pwdResult = await invoke<any>('unified_execute_tool', {
+        toolName: 'shell',
+        inputs: { command: 'pwd', cwd: cwd.value === '~' ? undefined : cwd.value },
+        context: null,
+        timeout: 10
+      })
+      if (pwdResult.success && pwdResult.output?.stdout) {
+        cwd.value = pwdResult.output.stdout.trim()
+      }
+    } catch {
+      // Ignore errors, keep current cwd
+    }
+  }
+  
+  // Handle pwd command
+  if (cmd === 'pwd' && success) {
+    try {
+      const pwdResult = await invoke<any>('unified_execute_tool', {
+        toolName: 'shell',
+        inputs: { command: 'pwd', cwd: cwd.value === '~' ? undefined : cwd.value },
+        context: null,
+        timeout: 10
+      })
+      if (pwdResult.success && pwdResult.output?.stdout) {
+        cwd.value = pwdResult.output.stdout.trim()
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+}
+
+// Initialize working directory on mount
+async function initializeWorkingDirectory() {
+  try {
+    const pwdResult = await invoke<any>('unified_execute_tool', {
+      toolName: 'shell',
+      inputs: { command: 'pwd' },
+      context: null,
+      timeout: 10
+    })
+    if (pwdResult.success && pwdResult.output?.stdout) {
+      cwd.value = pwdResult.output.stdout.trim()
+    }
+  } catch {
+    // Keep default cwd
   }
 }
 
@@ -351,6 +470,10 @@ watch(() => props.modelValue, (val) => {
   if (val) {
     nextTick(() => {
       focusInput()
+      // Initialize working directory if not set
+      if (cwd.value === '~') {
+        initializeWorkingDirectory()
+      }
     })
   }
 })

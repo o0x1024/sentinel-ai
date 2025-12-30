@@ -50,6 +50,10 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     let tool_server = get_tool_server();
     tool_server.init_builtin_tools().await;
 
+    // 设置 task_planner 的 AppHandle 以便发射事件
+    use sentinel_tools::buildin_tools::task_planner::set_planner_app_handle;
+    set_planner_app_handle(app_handle.clone()).await;
+
     // 检查是否启用工具
     let tool_config = params.tool_config.clone().unwrap_or_default();
 
@@ -531,11 +535,17 @@ async fn execute_agent_with_tools(
     );
 
     // 4. Build final system prompt (with injected Ability instructions if any)
-    let final_system_prompt = if let Some(ref injected) = selection_plan.injected_system_prompt {
+    let mut final_system_prompt = if let Some(ref injected) = selection_plan.injected_system_prompt {
         format!("{}{}", params.system_prompt, injected)
     } else {
         params.system_prompt.clone()
     };
+
+    // Inject execution_id for task_planner tool
+    final_system_prompt.push_str(&format!(
+        "\n\n[SystemContext: Current Execution ID is '{}'. Use this for task_planner calls.]",
+        params.execution_id
+    ));
 
     // 5. 使用 rig-core 原生工具调用
     // rig 的 multi_turn() 会自动处理工具调用循环

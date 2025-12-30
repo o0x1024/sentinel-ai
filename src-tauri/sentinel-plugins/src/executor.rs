@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use deno_core::v8;
 
 /// Commands sent to the plugin executor thread

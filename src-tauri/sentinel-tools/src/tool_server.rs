@@ -313,6 +313,62 @@ impl ToolServer {
 
         self.registry.register(subdomain_brute_def).await;
 
+        // Register task_planner tool
+        let task_planner_def = DynamicToolBuilder::new("task_planner")
+            .description("Manage and track the agent's execution plan for autonomous goal fulfillment.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "execution_id": {
+                        "type": "string",
+                        "description": "The current execution ID (mandatory)"
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "Action: 'add_tasks', 'update_status', 'get_plan', 'reset'",
+                        "enum": ["add_tasks", "update_status", "get_plan", "reset"]
+                    },
+                    "tasks": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "List of task descriptions (for 'add_tasks')"
+                    },
+                    "task_index": {
+                        "type": "integer",
+                        "description": "Index of task to update (for 'update_status')"
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "New status (for 'update_status')",
+                        "enum": ["todo", "in_progress", "done", "failed"]
+                    },
+                    "result": {
+                        "type": "string",
+                        "description": "Observation or result to record"
+                    }
+                },
+                "required": ["execution_id", "action"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::task_planner::{TaskPlannerArgs, TaskPlannerTool};
+                use rig::tool::Tool;
+                
+                let tool_args: TaskPlannerArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = TaskPlannerTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Task planning failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build task_planner tool");
+
+        self.registry.register(task_planner_def).await;
+
         *initialized = true;
         tracing::info!("Builtin tools initialized");
     }

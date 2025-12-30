@@ -258,6 +258,16 @@ impl ToolRouter {
                 cost_estimate: ToolCost::Medium,
                 always_available: false,
             },
+            // Planning tool
+            ToolMetadata {
+                id: "task_planner".to_string(),
+                name: "task_planner".to_string(),
+                description: "Manage and track execution plans for complex tasks. Use this to maintain focus and structured progress.".to_string(),
+                category: ToolCategory::System,
+                tags: vec!["plan".to_string(), "task".to_string(), "autonomous".to_string(), "workflow".to_string()],
+                cost_estimate: ToolCost::Low,
+                always_available: true,
+            },
             // AI工具
             ToolMetadata {
                 id: "vision_explorer".to_string(),

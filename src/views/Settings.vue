@@ -173,7 +173,8 @@ const categories = [
 const settings = ref({
   ai: {
     temperature: 0.7,
-    maxTokens: 2000
+    maxTokens: 2000,
+    toolOutputLimit: 50000
   },
   database: {
     type: 'sqlite',
@@ -292,10 +293,18 @@ const ragConfig = ref({
   embedding_base_url: 'http://localhost:11434',
   chunk_size_chars: 1000,
   chunk_overlap_chars: 200,
+  chunking_strategy: 'RecursiveCharacter',
+  min_chunk_size_chars: 100,
+  max_chunk_size_chars: 3000,
   top_k: 5,
   mmr_lambda: 0.7,
+  similarity_threshold: 0.7,
   batch_size: 10,
-  max_concurrent: 4
+  max_concurrent: 4,
+  reranking_enabled: false,
+  reranking_provider: '',
+  reranking_model: '',
+  augmentation_enabled: false
 })
 
 const loadAiUsageStats = async () => {
@@ -445,7 +454,6 @@ const loadSettings = async () => {
       // tool_output_limit
       if (configMap.has('tool_output_limit')) {
          const limit = parseInt(configMap.get('tool_output_limit') || '50000')
-         if (!settings.value.ai) settings.value.ai = {}
          settings.value.ai.toolOutputLimit = limit
       }
     } catch (e) {
@@ -1434,6 +1442,8 @@ const resetRagConfig = () => {
     embedding_provider: 'ollama',
     embedding_model: 'nomic-embed-text',
     embedding_dimensions: null,
+    embedding_api_key: '',
+    embedding_base_url: 'http://localhost:11434',
     chunk_size_chars: 1000,
     chunk_overlap_chars: 200,
     chunking_strategy: 'RecursiveCharacter',

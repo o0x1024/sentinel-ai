@@ -484,8 +484,8 @@ onMounted(() => {
   } catch {
     // fallback to props on any error
     searchEnabled.value = !!props.webSearchEnabled
-    ragEnabled.value = !!props.ragEnabled
-    toolsEnabled.value = !!props.toolsEnabled
+    localRagEnabled.value = !!props.ragEnabled
+    localToolsEnabled.value = !!props.toolsEnabled
   }
   initialized.value = true
   window.addEventListener('resize', updatePopoverPosition)
