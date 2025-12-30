@@ -1,11 +1,10 @@
 //! Task planner for complex exploration scenarios
 
 use anyhow::{anyhow, Result};
-use sentinel_llm::{ChatMessage, LlmClient};
-use serde_json::json;
+use sentinel_llm::LlmClient;
 use tracing::{debug, info};
 
-use super::types::{Action, ActionType, PageState};
+use super::types::{Action, PageState};
 
 /// Task planner for decomposing complex goals
 pub struct TaskPlanner {

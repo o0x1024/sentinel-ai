@@ -11,105 +11,11 @@ import { EditorState, Compartment } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 import { defaultKeymap, indentWithTab, history, undo, redo } from '@codemirror/commands'
 import { StreamLanguage } from '@codemirror/language'
+import { http } from '@codemirror/legacy-modes/mode/http'
 import { oneDark } from '@codemirror/theme-one-dark'
 
-// HTTP 语法高亮定义
-const httpLanguage = StreamLanguage.define({
-  token(stream, state: any) {
-    // 请求行: GET /path HTTP/1.1
-    if (state.lineNumber === 0 || state.isFirstLine) {
-      state.isFirstLine = false
-      
-      // HTTP Method
-      if (stream.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CONNECT|TRACE)\b/)) {
-        return 'keyword'
-      }
-      // HTTP Version
-      if (stream.match(/HTTP\/[\d.]+/)) {
-        return 'atom'
-      }
-      // URL Path
-      if (stream.match(/\/[^\s]*/)) {
-        return 'string'
-      }
-      // Status code
-      if (stream.match(/\d{3}/)) {
-        return 'number'
-      }
-      // Status text
-      if (stream.match(/[A-Za-z\s]+$/)) {
-        return 'comment'
-      }
-      stream.next()
-      return null
-    }
-    
-    // Empty line - body starts
-    if (stream.sol() && stream.match(/^\s*$/)) {
-      state.inBody = true
-      stream.skipToEnd()
-      return null
-    }
-    
-    // Body content
-    if (state.inBody) {
-      // JSON key
-      if (stream.match(/"[^"]+"\s*:/)) {
-        return 'property'
-      }
-      // JSON string value
-      if (stream.match(/"[^"]*"/)) {
-        return 'string'
-      }
-      // JSON number
-      if (stream.match(/-?\d+\.?\d*/)) {
-        return 'number'
-      }
-      // JSON keywords
-      if (stream.match(/\b(true|false|null)\b/)) {
-        return 'keyword'
-      }
-      // HTML tag
-      if (stream.match(/<\/?[a-zA-Z][a-zA-Z0-9-]*/)) {
-        return 'tag'
-      }
-      // HTML attribute
-      if (stream.match(/\s[a-zA-Z-]+=/)) {
-        return 'attribute'
-      }
-      stream.next()
-      return null
-    }
-    
-    // Header name
-    if (stream.sol() && stream.match(/^[A-Za-z-]+(?=:)/)) {
-      return 'property'
-    }
-    
-    // Header colon
-    if (stream.match(/^:\s*/)) {
-      return 'punctuation'
-    }
-    
-    // Rest of header value
-    stream.skipToEnd()
-    return 'string'
-  },
-  startState() {
-    return { lineNumber: 0, isFirstLine: true, inBody: false }
-  },
-  blankLine(state: any) {
-    state.lineNumber++
-    state.inBody = true
-  },
-  copyState(state: any) {
-    return { 
-      lineNumber: state.lineNumber, 
-      isFirstLine: state.isFirstLine, 
-      inBody: state.inBody 
-    }
-  }
-})
+// 使用官方的 HTTP 语言模式
+const httpLanguage = StreamLanguage.define(http)
 
 const props = withDefaults(defineProps<{
   modelValue: string

@@ -85,7 +85,37 @@ export default {
     scanDeleted: '扫描已删除',
     scanScheduled: '扫描已计划',
     scanTemplateSaved: '扫描模板已保存',
-    scanTemplateLoaded: '扫描模板已加载'
+    scanTemplateLoaded: '扫描模板已加载',
+    loadFailed: '加载任务失败',
+    stopFailed: '停止任务失败',
+    deleteFailed: '删除任务失败',
+    confirmDelete: '确认删除此任务？'
   },
-  noTasks: '暂无扫描任务'
+  noTasks: '暂无扫描任务',
+  activeTools: '活跃工具',
+  toolsUsed: '使用的工具',
+  totalExecutions: '总执行次数',
+  successRate: '成功率',
+  toolExecution: '工具执行',
+  toolPerformance: '工具性能',
+  executionHistory: '执行历史',
+  noToolsActive: '当前没有活跃的工具',
+  noExecutionHistory: '暂无执行历史',
+  executions: '执行次数',
+  avgTime: '平均耗时',
+  errors: '错误',
+  lastRun: '最后运行',
+  toolStatus: {
+    idle: '空闲',
+    running: '运行中',
+    waiting: '等待中',
+    completed: '已完成',
+    error: '错误'
+  },
+  toolTypes: {
+    plugin: '插件',
+    mcpServer: 'MCP服务器',
+    builtin: '内置工具',
+    workflow: '工作流'
+  }
 }

@@ -4,6 +4,14 @@
     <div class="flex items-center justify-between">
       <h2 class="text-xl font-semibold">{{ $t('scanTasks.title') }}</h2>
       <div class="flex space-x-2">
+        <button 
+          @click="showTestPanel = !showTestPanel" 
+          class="btn btn-sm"
+          :class="showTestPanel ? 'btn-warning' : 'btn-outline btn-warning'"
+        >
+          <i class="fas fa-flask mr-2"></i>
+          {{ showTestPanel ? '隐藏测试面板' : '🧪 测试追踪功能' }}
+        </button>
         <button @click="showCreateModal = true" class="btn btn-primary btn-sm">
           <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
@@ -18,6 +26,9 @@
         </button>
       </div>
     </div>
+
+    <!-- 测试面板 -->
+    <TrackingTestPanel v-if="showTestPanel" />
 
     <!-- 筛选和搜索 -->
     <div class="bg-base-100 rounded-lg p-4 shadow-sm border border-base-300">
@@ -181,6 +192,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { dialog } from '@/composables/useDialog';
+import TrackingTestPanel from '@/components/ScanTasks/TrackingTestPanel.vue';
 
 const { t } = useI18n();
 const emit = defineEmits<{
@@ -205,6 +217,7 @@ const searchQuery = ref('');
 const statusFilter = ref('');
 const typeFilter = ref('');
 const showCreateModal = ref(false);
+const showTestPanel = ref(false);
 const showDetailsModal = ref(false);
 const selectedTask = ref<ScanTask | null>(null);
 

@@ -291,7 +291,7 @@ async fn op_fetch(
     #[string] url: String,
     #[serde] options: Option<FetchOptions>,
 ) -> FetchResponse {
-    debug!("[Plugin] Fetching URL: {}", url);
+    // info!("[Plugin] Fetching URL: {}", url);
 
     let opts = options.unwrap_or_else(|| FetchOptions {
         method: "GET".to_string(),

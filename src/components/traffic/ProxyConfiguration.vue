@@ -2401,6 +2401,15 @@ const saveConfiguration = async () => {
     } else {
       throw new Error(response.error || '保存失败')
     }
+    
+    // 保存请求和响应拦截规则到 localStorage
+    try {
+      localStorage.setItem('proxy_request_filter_rules', JSON.stringify(requestRules.value))
+      localStorage.setItem('proxy_response_filter_rules', JSON.stringify(responseRules.value))
+      console.log('[ProxyConfiguration] Filter rules saved to localStorage')
+    } catch (e) {
+      console.error('[ProxyConfiguration] Failed to save filter rules to localStorage:', e)
+    }
   } catch (error: any) {
     console.error('[ProxyConfiguration] Failed to save configuration:', error)
     dialog.toast.error(`保存配置失败: ${error}`)
@@ -2644,6 +2653,29 @@ const loadConfig = async () => {
       interceptResponses.value = responseInterceptResponse.data
       console.log('[ProxyConfiguration] Response intercept:', responseInterceptResponse.data)
     }
+    
+    // 从 localStorage 加载请求和响应拦截规则
+    try {
+      const savedRequestRules = localStorage.getItem('proxy_request_filter_rules')
+      if (savedRequestRules) {
+        const parsed = JSON.parse(savedRequestRules)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          requestRules.value = parsed
+          console.log('[ProxyConfiguration] Loaded request filter rules from localStorage:', parsed.length)
+        }
+      }
+      
+      const savedResponseRules = localStorage.getItem('proxy_response_filter_rules')
+      if (savedResponseRules) {
+        const parsed = JSON.parse(savedResponseRules)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          responseRules.value = parsed
+          console.log('[ProxyConfiguration] Loaded response filter rules from localStorage:', parsed.length)
+        }
+      }
+    } catch (e) {
+      console.error('[ProxyConfiguration] Failed to load filter rules from localStorage:', e)
+    }
   } catch (error) {
     console.error('[ProxyConfiguration] Failed to load config or status:', error)
     // 确保在出错时所有监听器的运行状态为 false
@@ -2849,6 +2881,35 @@ watch(responseRules, () => {
     syncFilterRulesToBackend()
   }
 }, { deep: true })
+
+// Emit declaration
+const emit = defineEmits<{
+  (e: 'filterRuleAdded', rule: { matchType: string; condition: string; relationship: string }): void
+}>()
+
+// Expose method to add filter rule from external components
+const addRequestFilterRule = (matchType: string, condition: string, relationship: string = 'matches') => {
+  const newRule = {
+    enabled: true,
+    operator: requestRules.value.length > 0 ? 'And' : '',
+    matchType,
+    relationship,
+    condition
+  }
+  requestRules.value.push(newRule)
+  selectedRequestRuleIndex.value = requestRules.value.length - 1
+  debouncedSave()
+  
+  // Emit event to notify parent component
+  emit('filterRuleAdded', { matchType, condition, relationship })
+  
+  // Show success message
+  dialog.toast.success(`Filter rule added: ${matchType} ${relationship} ${condition}`)
+}
+
+defineExpose({
+  addRequestFilterRule
+})
 </script>
 
 <style scoped>

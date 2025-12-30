@@ -167,12 +167,16 @@ pub struct Finding {
 
 impl Finding {
     /// 计算 Finding 签名（用于去重）
+    /// 签名基于: plugin_id + vuln_type + url + location + title
+    /// title 包含了注入类型等详细信息，确保同一参数的不同漏洞类型不会被去重
+    /// 注意：必须与 TrafficFinding::calculate_signature 保持一致
     pub fn calculate_signature(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.plugin_id.as_bytes());
+        hasher.update(self.vuln_type.as_bytes());
         hasher.update(self.url.as_bytes());
         hasher.update(self.location.as_bytes());
-        hasher.update(self.evidence.as_bytes());
+        hasher.update(self.title.as_bytes()); // 添加 title 以区分同一参数的不同漏洞类型
         format!("{:x}", hasher.finalize())
     }
 }

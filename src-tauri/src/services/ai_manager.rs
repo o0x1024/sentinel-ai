@@ -331,6 +331,12 @@ impl AiServiceManager {
     pub async fn init_default_services(&self) -> anyhow::Result<()> {
         debug!("Initializing default AI services...");
 
+        // Get global default model as fallback
+        let global_default_model = self.db.get_config("ai", "default_llm_model").await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+
         if let Ok(Some(config_str)) = self.db.get_config("ai", "providers_config").await {
             match serde_json::from_str::<HashMap<String, ProviderConfig>>(&config_str) {
                 Ok(providers) => {
@@ -348,7 +354,33 @@ impl AiServiceManager {
                             api_key.as_deref().unwrap_or(""),
                         );
 
-                        let default_model = provider_config.default_model.clone();
+                        // Use provider's default model, or fall back to global default model
+                        let mut default_model = provider_config.default_model.clone();
+                        
+                        // If provider model is empty, try to extract from global default
+                        if default_model.is_empty() && !global_default_model.is_empty() {
+                            // Check if global default is in format "provider/model"
+                            if let Some(slash_idx) = global_default_model.find('/') {
+                                let (model_provider, model_name) = global_default_model.split_at(slash_idx);
+                                let model_name = &model_name[1..]; // Skip the '/'
+                                
+                                // Use global default model if it matches this provider
+                                if model_provider.eq_ignore_ascii_case(&provider_config.name) 
+                                    || model_provider.eq_ignore_ascii_case(&provider_config.provider) {
+                                    default_model = model_name.to_string();
+                                    debug!("Using global default model for {}: {}", provider_config.name, model_name);
+                                }
+                            } else {
+                                // Global default doesn't have provider prefix, use it as-is
+                                default_model = global_default_model.clone();
+                                debug!("Using global default model for {}: {}", provider_config.name, default_model);
+                            }
+                        }
+                        
+                        if default_model.is_empty() {
+                            warn!("Provider {} has no default model configured, service may not work properly", provider_config.name);
+                        }
+                        
                         let api_base = provider_config
                             .api_base
                             .filter(|s| !s.is_empty());
@@ -362,8 +394,8 @@ impl AiServiceManager {
                             .unwrap_or_else(|| provider_config.provider.clone());
 
                         debug!(
-                            "Provider {} using rig_provider: {}",
-                            provider_config.name, rig_provider
+                            "Provider {} using rig_provider: {}, model: {}",
+                            provider_config.name, rig_provider, default_model
                         );
 
                         let config = AiConfig {
@@ -377,7 +409,9 @@ impl AiServiceManager {
                             rig_provider: Some(rig_provider),
                         };
 
-                        if let Err(e) = self.add_service(provider_config.name.clone(), config).await
+                        // Use lowercase name as service key for consistency
+                        let service_key = provider_config.name.to_lowercase();
+                        if let Err(e) = self.add_service(service_key.clone(), config).await
                         {
                             error!(
                                 "Failed to add service for provider {}: {}",
@@ -476,22 +510,19 @@ impl AiServiceManager {
 
     pub async fn set_default_alias_to(&self, provider: &str) -> anyhow::Result<()> {
         let provider_lc = provider.to_lowercase();
-        let service = {
+        
+        // First try to get service by lowercase name (our standard key format)
+        let service = self.get_service(&provider_lc);
+        
+        // If not found, search by provider field in config
+        let service = if service.is_some() {
+            service
+        } else {
             let services = self.services.read().unwrap();
-            if let Some((_name, svc)) = services
+            services
                 .iter()
                 .find(|(_n, svc)| svc.get_config().provider.to_lowercase() == provider_lc)
-            {
-                Some(svc.clone())
-            } else {
-                services.iter().find_map(|(n, svc)| {
-                    if n.to_lowercase() == provider_lc {
-                        Some(svc.clone())
-                    } else {
-                        None
-                    }
-                })
-            }
+                .map(|(_, svc)| svc.clone())
         };
 
         let Some(service) = service else {

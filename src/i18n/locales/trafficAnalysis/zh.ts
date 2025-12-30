@@ -166,7 +166,21 @@ export default {
     },
     toolbar: {
       filter: '过滤',
+      clear: '清空',
       refresh: '刷新',
+      export: '导出',
+      searchPlaceholder: '搜索请求...'
+    },
+    export: {
+      sendToAssistant: '发送到 AI 助手',
+      exportToFile: '导出到文件',
+      exportRequest: '导出请求',
+      exportResponse: '导出响应',
+      request: '请求',
+      response: '响应',
+      noSelection: '请先选择要导出的请求',
+      success: '成功导出 {count} 个{type}到文件',
+      failed: '导出失败：{error}'
     },
     filterDialog: {
       title: '过滤设置',
@@ -249,7 +263,12 @@ export default {
       copyUrl: '复制 URL',
       copyAsCurl: '复制为 cURL',
       openInBrowser: '在浏览器中打开',
-      clearHistory: '清空历史记录'
+      clearHistory: '清空历史记录',
+      addToFilter: '添加到过滤规则',
+      filterByDomain: '域名',
+      filterByUrl: 'URL',
+      filterByMethod: '请求方法',
+      filterByExtension: '文件扩展名'
     },
     certificateError: {
       title: '证书错误',

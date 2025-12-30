@@ -190,19 +190,13 @@ impl PluginExecutor {
 
                         match cmd {
                             PluginCommand::ScanTransaction(txn, reply) => {
-                                // Check if restart is needed
+                                // Check if restart threshold reached (for monitoring only)
                                 let current_count =
                                     current_instance_executions.load(Ordering::Relaxed);
                                 if current_count >= max_executions_before_restart {
-                                    info!(
-                                        "Restart threshold reached for plugin {} ({} executions)",
-                                        plugin_id_clone, current_count
-                                    );
-                                    // Don't restart here, let the external restart mechanism handle it
-                                    // This prevents the V8 HandleScope error
-                                    warn!(
-                                        "Plugin {} needs restart. Please call restart() externally.",
-                                        plugin_id_clone
+                                    debug!(
+                                        "Plugin {} execution count: {} (threshold: {}). Auto-restart should be triggered externally.",
+                                        plugin_id_clone, current_count, max_executions_before_restart
                                     );
                                 }
 
@@ -214,17 +208,13 @@ impl PluginExecutor {
                             }
 
                             PluginCommand::ExecuteAgent(input, reply) => {
-                                // Check if restart is needed
+                                // Check if restart threshold reached (for monitoring only)
                                 let current_count =
                                     current_instance_executions.load(Ordering::Relaxed);
                                 if current_count >= max_executions_before_restart {
-                                    info!(
-                                        "Restart threshold reached for plugin {} ({} executions)",
-                                        plugin_id_clone, current_count
-                                    );
-                                    warn!(
-                                        "Plugin {} needs restart. Please call restart() externally.",
-                                        plugin_id_clone
+                                    debug!(
+                                        "Plugin {} execution count: {} (threshold: {}). Auto-restart should be triggered externally.",
+                                        plugin_id_clone, current_count, max_executions_before_restart
                                     );
                                 }
 

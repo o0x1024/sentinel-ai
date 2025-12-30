@@ -29,7 +29,17 @@
             <td>
               <input type="checkbox" class="toggle toggle-sm toggle-success" :checked="connection.status === 'Connected'" @change="toggleServer(connection)" />
             </td>
-            <td>{{ connection.name }}</td>
+            <td>
+              <div class="flex items-center gap-2">
+                <span>{{ connection.name }}</span>
+                <div v-if="hasActiveTools(connection.db_id)" class="tooltip" data-tip="工具使用中">
+                  <div class="badge badge-success badge-sm gap-1">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    {{ getConnectionActiveCount(connection.db_id) }}
+                  </div>
+                </div>
+              </div>
+            </td>
             <td><span class="badge badge-ghost">{{ connection.transport_type }}</span></td>
             <td>
               <span :class="getStatusBadgeClass(connection.status)" class="flex items-center gap-1">
@@ -103,7 +113,15 @@
               </div>
             </div>
             <div class="flex-1">
-              <h3 class="card-title text-lg">{{ connection.name }}</h3>
+              <div class="flex items-center gap-2">
+                <h3 class="card-title text-lg">{{ connection.name }}</h3>
+                <div v-if="hasActiveTools(connection.db_id)" class="tooltip" data-tip="工具使用中">
+                  <div class="badge badge-success badge-sm gap-1">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    {{ getConnectionActiveCount(connection.db_id) }}
+                  </div>
+                </div>
+              </div>
               <span class="badge badge-ghost badge-sm">{{ connection.transport_type }}</span>
             </div>
             <div class="form-control">
@@ -178,11 +196,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { emit as tauriEmit } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
+import { useActiveTools } from '@/composables/useActiveTools'
 
 const { t } = useI18n()
 
@@ -208,6 +227,25 @@ defineEmits<{
 // 状态
 const connections = ref<McpConnection[]>([])
 const viewMode = ref('list')
+
+// Use active tools composable
+const { activeTools } = useActiveTools()
+
+// Get active tool count for a connection
+const getConnectionActiveCount = (connectionId: string) => {
+  let count = 0
+  activeTools.value.forEach((tools, toolId) => {
+    if (toolId.startsWith(`mcp:${connectionId}:`)) {
+      count += tools.length
+    }
+  })
+  return count
+}
+
+// Check if connection has active tools
+const hasActiveTools = (connectionId: string) => {
+  return getConnectionActiveCount(connectionId) > 0
+}
 
 // 方法
 function getStatusBadgeClass(status: string) {

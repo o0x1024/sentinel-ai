@@ -18,7 +18,7 @@ use super::types::{ApiRequest, InteractiveElement, PageState, TestExplorerV1Conf
 /// to perform browser automation actions.
 pub struct BrowserDriver {
     mcp_service: Arc<McpService>,
-    config: TestExplorerV1Config,
+    _config: TestExplorerV1Config,
 }
 
 impl BrowserDriver {
@@ -28,7 +28,7 @@ impl BrowserDriver {
 
         let mcp_service = Arc::new(McpService::new());
 
-        Ok(Self { mcp_service, config })
+        Ok(Self { mcp_service, _config: config })
     }
 
     /// Get the name of the connected Playwright MCP server

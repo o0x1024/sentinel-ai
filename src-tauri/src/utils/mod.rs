@@ -1,5 +1,8 @@
+pub mod builtin_tool_tracking;
 pub mod ordered_message;
 pub mod message_emitter;
+pub mod mcp_tracking;
+pub mod plugin_tracking;
 pub mod prompt_resolver;
 pub mod aliyun_oss;
 pub mod streaming_optimizer;

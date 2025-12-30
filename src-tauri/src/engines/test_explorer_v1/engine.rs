@@ -3,8 +3,7 @@
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 use super::driver::BrowserDriver;
 use super::planner::TaskPlanner;
@@ -52,7 +51,7 @@ impl TestExplorerV1Engine {
         let start_time = Instant::now();
 
         // Navigate to target URL first
-        let initial_state = self.driver.navigate(&self.config.target_url).await?;
+        let _initial_state = self.driver.navigate(&self.config.target_url).await?;
 
         // In direct mode, we don't execute actions here
         // Instead, the LLM will call tools directly through the tool system

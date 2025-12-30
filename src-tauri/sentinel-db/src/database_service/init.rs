@@ -3,6 +3,7 @@ use sqlx::sqlite::SqlitePool;
 use tracing::info;
 use chrono::Utc;
 use crate::database_service::service::DatabaseService;
+use crate::database_service::migrations::TaskToolIntegrationMigration;
 
 impl DatabaseService {
     pub async fn create_database_schema(&self, pool: &SqlitePool) -> Result<()> {
@@ -825,6 +826,10 @@ impl DatabaseService {
         }
 
         info!("Database schema creation completed");
+        
+        // Run task-tool integration migration
+        TaskToolIntegrationMigration::apply(pool).await?;
+        
         Ok(())
     }
 

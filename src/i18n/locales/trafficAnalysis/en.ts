@@ -178,7 +178,12 @@ export default {
       copyAsCurl: 'Copy as cURL',
       copyRequest: 'Copy Request',
       openInBrowser: 'Open in Browser',
-      clearHistory: 'Clear History'
+      clearHistory: 'Clear History',
+      addToFilter: 'Add to Filter',
+      filterByDomain: 'Domain',
+      filterByUrl: 'URL',
+      filterByMethod: 'Method',
+      filterByExtension: 'Extension'
     },
     certificateError: {
       title: 'Certificate Error',
@@ -335,6 +340,17 @@ export default {
       refresh: 'Refresh',
       export: 'Export',
       searchPlaceholder: 'Search requests...'
+    },
+    export: {
+      sendToAssistant: 'Send to AI Assistant',
+      exportToFile: 'Export to File',
+      exportRequest: 'Export Request',
+      exportResponse: 'Export Response',
+      request: 'request',
+      response: 'response',
+      noSelection: 'Please select requests to export first',
+      success: 'Successfully exported {count} {type}(s) to file',
+      failed: 'Export failed: {error}'
     }
   },
   // Proxy Repeater Component

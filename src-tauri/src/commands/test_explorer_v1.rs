@@ -2,7 +2,7 @@
 
 use crate::engines::test_explorer_v1::{
     engine::TestExplorerV1Engine, planner::TaskPlanner, tools::TestExplorerToolState,
-    tools::register_test_explorer_tools, types::*, BrowserDriver,
+    tools::register_test_explorer_tools, types::*,
 };
 use crate::engines::create_client;
 use crate::services::ai::AiService;
@@ -11,7 +11,7 @@ use serde_json::json;
 use sentinel_tools::ToolServer;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 
@@ -229,7 +229,7 @@ pub async fn test_explorer_get_history(
 #[tauri::command]
 pub async fn test_explorer_export_har(
     app_handle: AppHandle,
-    session_id: String,
+    _session_id: String,
 ) -> Result<serde_json::Value, String> {
     let state = app_handle.state::<TestExplorerState>();
 

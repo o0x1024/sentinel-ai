@@ -10,6 +10,7 @@ pub mod managers;
 pub mod models;
 pub mod services;
 pub mod tools;
+pub mod trackers;
 pub mod utils;
 
 use std::fs;
@@ -260,6 +261,7 @@ pub fn run() {
 
                 // Save a clone before manage() moves db_service
                 let db_service_for_mcp = db_service.clone();
+                let db_for_tracker = db_service.clone();
 
                 handle.manage(db_service);
                 handle.manage(ai_manager);
@@ -273,6 +275,10 @@ pub fn run() {
                 handle.manage(workflow_scheduler);
                 handle.manage(commands::vision_explorer_v2::VisionExplorerV2State::default());
                 handle.manage(commands::test_explorer_v1::TestExplorerState::new());
+
+                // Initialize tool execution tracker
+                crate::trackers::init_tracker(db_for_tracker, handle.clone());
+                tracing::info!("Tool execution tracker initialized");
 
                 // Initialize shell permission handler
                 if let Err(e) = tool_commands::init_shell_permission_handler(handle.clone()).await {
@@ -677,6 +683,8 @@ pub fn run() {
             traffic_analysis_commands::delete_traffic_vulnerability,
             traffic_analysis_commands::delete_traffic_vulnerabilities_batch,
             traffic_analysis_commands::delete_all_traffic_vulnerabilities,
+            traffic_analysis_commands::clear_vulnerability_dedupe_cache,
+            traffic_analysis_commands::get_vulnerability_dedupe_cache_info,
             traffic_analysis_commands::test_plugin_advanced,
             traffic_analysis_commands::test_agent_plugin,
             traffic_analysis_commands::get_plugin_input_schema,
@@ -815,6 +823,20 @@ pub fn run() {
             commands::test_explorer_v1::test_explorer_get_history,
             commands::test_explorer_v1::test_explorer_export_har,
             commands::test_explorer_v1::test_explorer_close,
+            
+            // Task Tool Integration commands
+            commands::task_tool_commands::get_task_active_tools,
+            commands::task_tool_commands::get_task_tool_statistics,
+            commands::task_tool_commands::get_tool_execution_history,
+            commands::task_tool_commands::record_tool_execution_start,
+            commands::task_tool_commands::record_tool_execution_complete,
+            commands::task_tool_commands::get_all_active_tools,
+            
+            // Test tracking commands
+            commands::test_tracking_commands::test_plugin_tracking,
+            commands::test_tracking_commands::test_mcp_tracking,
+            commands::test_tracking_commands::test_builtin_tracking,
+            commands::test_tracking_commands::test_error_tracking,
 
             // Shell Tool commands
             tool_commands::init_shell_permission_handler,

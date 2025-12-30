@@ -112,10 +112,21 @@
 
             <!-- Plugin Name -->
             <td>
-              <div class="font-bold">{{ plugin.metadata.name }}</div>
-              <div class="text-sm text-gray-500">{{ plugin.metadata.id }}</div>
-              <div v-if="plugin.metadata.description" class="text-xs text-gray-400 mt-1">
-                {{ plugin.metadata.description }}
+              <div class="flex items-center gap-2">
+                <div class="flex-1">
+                  <div class="font-bold">{{ plugin.metadata.name }}</div>
+                  <div class="text-sm text-gray-500">{{ plugin.metadata.id }}</div>
+                  <div v-if="plugin.metadata.description" class="text-xs text-gray-400 mt-1">
+                    {{ plugin.metadata.description }}
+                  </div>
+                </div>
+                <!-- Active Indicator -->
+                <div v-if="isToolActive(plugin.metadata.id)" class="tooltip" data-tip="使用中">
+                  <div class="badge badge-success badge-sm gap-1">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    {{ getActiveCount(plugin.metadata.id) }}
+                  </div>
+                </div>
               </div>
             </td>
 
@@ -230,6 +241,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import type { PluginRecord } from './types'
+import { useActiveTools } from '@/composables/useActiveTools'
 
 const props = defineProps<{
   selectedCategory: string
@@ -310,4 +322,7 @@ const visiblePages = computed(() => {
   }
   return pages
 })
+
+// Use active tools composable
+const { isToolActive, getActiveCount } = useActiveTools()
 </script>

@@ -114,6 +114,8 @@ pub struct TrafficAnalysisState {
     pub request_filter_rules: Arc<RwLock<Vec<TrafficInterceptFilterRule>>>,
     /// 响应拦截过滤规则
     pub response_filter_rules: Arc<RwLock<Vec<TrafficInterceptFilterRule>>>,
+    /// Finding去重缓存（用于删除漏洞时清理）
+    pub dedupe_cache: Arc<RwLock<std::collections::HashSet<String>>>,
 }
 
 /// 内部使用的拦截 WebSocket 消息结构（包含响应通道）
@@ -149,6 +151,7 @@ impl Clone for TrafficAnalysisState {
             history_cache: self.history_cache.clone(),
             request_filter_rules: self.request_filter_rules.clone(),
             response_filter_rules: self.response_filter_rules.clone(),
+            dedupe_cache: self.dedupe_cache.clone(),
         }
     }
 }
@@ -194,6 +197,7 @@ impl TrafficAnalysisState {
             history_cache: Arc::new(sentinel_traffic::ProxyHistoryCache::with_defaults()),
             request_filter_rules: Arc::new(RwLock::new(Vec::new())),
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
+            dedupe_cache: Arc::new(RwLock::new(std::collections::HashSet::new())),
         }
     }
 
@@ -462,6 +466,59 @@ pub async fn start_traffic_analysis_internal(
         *tx_guard = Some(intercept_websocket_pending_tx.clone());
     }
 
+    // 从数据库加载拦截过滤规则
+    let db_service = state.get_db_service();
+    let loaded_rules = match db_service.load_proxy_config("intercept_filter_rules").await {
+        Ok(Some(json)) => {
+            match serde_json::from_str::<InterceptFilterRules>(&json) {
+                Ok(rules) => {
+                    tracing::info!("Loaded {} intercept filter rules from database", rules.rules.len());
+                    rules.rules
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse intercept filter rules: {}", e);
+                    Vec::new()
+                }
+            }
+        }
+        _ => {
+            tracing::info!("No saved intercept filter rules found");
+            Vec::new()
+        }
+    };
+
+    // 将加载的规则转换为运行时规则并分类
+    let mut request_rules = Vec::new();
+    let mut response_rules = Vec::new();
+
+    for rule in loaded_rules {
+        let runtime_rule = TrafficInterceptFilterRule {
+            enabled: rule.enabled,
+            operator: "And".to_string(), // Default operator
+            match_type: rule.match_type.clone(),
+            relationship: rule.relationship.clone(),
+            condition: rule.condition.clone(),
+        };
+
+        if rule.rule_type == "request" {
+            request_rules.push(runtime_rule);
+        } else if rule.rule_type == "response" {
+            response_rules.push(runtime_rule);
+        }
+    }
+
+    // 更新 state 中的过滤规则
+    {
+        let mut req_rules = state.request_filter_rules.write().await;
+        *req_rules = request_rules;
+        tracing::info!("Loaded {} request filter rules", req_rules.len());
+    }
+    {
+        let mut resp_rules = state.response_filter_rules.write().await;
+        *resp_rules = response_rules;
+        tracing::info!("Loaded {} response filter rules", resp_rules.len());
+    }
+
     // 创建拦截状态
     let intercept_state = InterceptState {
         enabled: state.intercept_enabled.clone(),
@@ -498,6 +555,8 @@ pub async fn start_traffic_analysis_internal(
     let db_for_pipeline = db_service.clone();
     let cache_for_pipeline = history_cache.clone();
     let app_for_pipeline = app.clone();
+    let request_filter_rules = state.request_filter_rules.clone();
+    let response_filter_rules = state.response_filter_rules.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -511,7 +570,9 @@ pub async fn start_traffic_analysis_internal(
                     let pipeline = ScanPipeline::new(scan_rx, finding_tx)
                         .with_db_service(db_for_pipeline.clone())
                         .with_history_cache(cache_for_pipeline)
-                        .with_app_handle(app_for_pipeline);
+                        .with_app_handle(app_for_pipeline)
+                        .with_request_filter_rules(request_filter_rules)
+                        .with_response_filter_rules(response_filter_rules);
                     match pipeline
                         .load_enabled_plugins_from_db(&db_for_pipeline)
                         .await
@@ -529,9 +590,11 @@ pub async fn start_traffic_analysis_internal(
         });
     });
 
-    // 启动 Finding 去重服务（带数据库和事件发送）
+    // 启动 Finding 去重服务（带数据库和事件发送，使用共享缓存）
+    let dedupe_cache_for_dedup = state.dedupe_cache.clone();
     let deduplicator = FindingDeduplicator::with_database(finding_rx, db_service.clone())
-        .with_event_sender(event_tx);
+        .with_event_sender(event_tx)
+        .with_shared_cache(dedupe_cache_for_dedup);
     tokio::spawn(async move {
         if let Err(e) = deduplicator.start().await {
             tracing::error!("FindingDeduplicator error: {}", e);
@@ -900,10 +963,10 @@ pub async fn list_findings(
     let db_service = state.get_db_service();
     match db_service.list_traffic_vulnerabilities_with_evidence(filters).await {
         Ok(records) => {
-            tracing::info!(
-                "Loaded {} findings with evidence from database",
-                records.len()
-            );
+            // tracing::info!(
+            //     "Loaded {} findings with evidence from database",
+            //     records.len()
+            // );
             Ok(CommandResponse::ok(records))
         }
         Err(e) => {
@@ -927,7 +990,6 @@ pub async fn count_findings(
     let db_service = state.get_db_service();
     match db_service.count_traffic_vulnerabilities(filters).await {
         Ok(count) => {
-            tracing::info!("Total findings count: {}", count);
             Ok(CommandResponse::ok(count))
         }
         Err(e) => {
@@ -2992,11 +3054,24 @@ pub async fn delete_traffic_vulnerability(
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service();
 
-    db.delete_traffic_vulnerability(&vuln_id)
+    // Delete from database and get signature
+    let signature = db.delete_traffic_vulnerability(&vuln_id)
         .await
         .map_err(|e| format!("Failed to delete vulnerability: {}", e))?;
 
-    tracing::info!("Vulnerability deleted: {}", vuln_id);
+    // Clear from dedupe cache if signature exists
+    if let Some(sig) = signature {
+        let mut cache = state.dedupe_cache.write().await;
+        let removed = cache.remove(&sig);
+        tracing::info!(
+            "Vulnerability deleted: {} - Removed from dedupe cache: {} (signature: {})",
+            vuln_id,
+            removed,
+            &sig[..8.min(sig.len())]
+        );
+    } else {
+        tracing::info!("Vulnerability deleted: {} (no signature found)", vuln_id);
+    }
     Ok(CommandResponse::ok(()))
 }
 
@@ -3007,15 +3082,31 @@ pub async fn delete_traffic_vulnerabilities_batch(
     vuln_ids: Vec<String>,
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service();
+    let mut signatures_to_remove = Vec::new();
 
     let mut deleted_count = 0;
     for vuln_id in &vuln_ids {
         match db.delete_traffic_vulnerability(vuln_id).await {
-            Ok(_) => deleted_count += 1,
+            Ok(Some(sig)) => {
+                signatures_to_remove.push(sig);
+                deleted_count += 1;
+            }
+            Ok(None) => {
+                deleted_count += 1;
+            }
             Err(e) => {
                 tracing::warn!("Failed to delete vulnerability {}: {}", vuln_id, e);
             }
         }
+    }
+
+    // Clear signatures from dedupe cache
+    if !signatures_to_remove.is_empty() {
+        let mut cache = state.dedupe_cache.write().await;
+        for sig in &signatures_to_remove {
+            cache.remove(sig);
+        }
+        tracing::debug!("Removed {} signatures from dedupe cache", signatures_to_remove.len());
     }
 
     tracing::info!(
@@ -3037,8 +3128,48 @@ pub async fn delete_all_traffic_vulnerabilities(
         .await
         .map_err(|e| format!("Failed to delete all vulnerabilities: {}", e))?;
 
-    tracing::info!("All vulnerabilities deleted");
+    // Clear entire dedupe cache
+    let mut cache = state.dedupe_cache.write().await;
+    cache.clear();
+    tracing::info!("All vulnerabilities deleted and dedupe cache cleared");
+    
     Ok(CommandResponse::ok(()))
+}
+
+/// 清空漏洞去重缓存（用于手动刷新）
+#[tauri::command]
+pub async fn clear_vulnerability_dedupe_cache(
+    state: State<'_, TrafficAnalysisState>,
+) -> Result<CommandResponse<()>, String> {
+    let mut cache = state.dedupe_cache.write().await;
+    let size = cache.len();
+    cache.clear();
+    tracing::info!("Vulnerability dedupe cache cleared ({} entries)", size);
+    Ok(CommandResponse::ok(()))
+}
+
+/// 获取漏洞去重缓存状态（用于调试）
+#[tauri::command]
+pub async fn get_vulnerability_dedupe_cache_info(
+    state: State<'_, TrafficAnalysisState>,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    let cache = state.dedupe_cache.read().await;
+    let size = cache.len();
+    
+    // 获取前10个签名作为示例
+    let samples: Vec<String> = cache
+        .iter()
+        .take(10)
+        .map(|s| s[..8.min(s.len())].to_string())
+        .collect();
+    
+    let info = serde_json::json!({
+        "cache_size": size,
+        "sample_signatures": samples,
+    });
+    
+    tracing::debug!("Dedupe cache info: {} entries", size);
+    Ok(CommandResponse::ok(info))
 }
 
 /// 代理监听器配置
@@ -4121,7 +4252,7 @@ pub struct RuntimeInterceptRule {
     pub condition: String,
 }
 
-/// 更新运行时拦截过滤规则（直接应用到代理）
+/// 更新运行时拦截过滤规则（直接应用到代理并持久化）
 #[tauri::command]
 pub async fn update_runtime_filter_rules(
     state: State<'_, TrafficAnalysisState>,
@@ -4136,16 +4267,17 @@ pub async fn update_runtime_filter_rules(
 
     // Convert to TrafficInterceptFilterRule
     let traffic_rules: Vec<TrafficInterceptFilterRule> = rules
-        .into_iter()
+        .iter()
         .map(|r| TrafficInterceptFilterRule {
             enabled: r.enabled,
-            operator: r.operator,
-            match_type: r.match_type,
-            relationship: r.relationship,
-            condition: r.condition,
+            operator: r.operator.clone(),
+            match_type: r.match_type.clone(),
+            relationship: r.relationship.clone(),
+            condition: r.condition.clone(),
         })
         .collect();
 
+    // Update runtime rules in state
     if rule_type == "request" {
         let mut guard = state.request_filter_rules.write().await;
         *guard = traffic_rules;
@@ -4161,6 +4293,41 @@ pub async fn update_runtime_filter_rules(
         )));
     }
 
+    // Persist rules to database
+    let db = state.get_db_service();
+    
+    // Load existing rules from database
+    let mut all_rules = match db.load_proxy_config("intercept_filter_rules").await {
+        Ok(Some(json)) => {
+            serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default()
+        }
+        _ => InterceptFilterRules::default(),
+    };
+
+    // Remove old rules of this type and add new ones
+    all_rules.rules.retain(|r| r.rule_type != rule_type);
+    
+    // Convert runtime rules to persisted format
+    for rule in rules.iter() {
+        all_rules.rules.push(InterceptFilterRule {
+            id: uuid::Uuid::new_v4().to_string(),
+            rule_type: rule_type.clone(),
+            match_type: rule.match_type.clone(),
+            relationship: rule.relationship.clone(),
+            condition: rule.condition.clone(),
+            action: "exclude".to_string(), // Default action
+            enabled: rule.enabled,
+        });
+    }
+
+    // Save back to database
+    let json = serde_json::to_string(&all_rules)
+        .map_err(|e| format!("Failed to serialize rules: {}", e))?;
+    db.save_proxy_config("intercept_filter_rules", &json)
+        .await
+        .map_err(|e| format!("Failed to persist rules: {}", e))?;
+
+    tracing::info!("Filter rules persisted to database: {} {} rules", rules.len(), rule_type);
     Ok(CommandResponse::ok(()))
 }
 

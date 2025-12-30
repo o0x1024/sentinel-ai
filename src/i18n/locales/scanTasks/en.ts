@@ -85,7 +85,37 @@ export default {
     scanDeleted: 'Scan deleted',
     scanScheduled: 'Scan scheduled',
     scanTemplateSaved: 'Scan template saved',
-    scanTemplateLoaded: 'Scan template loaded'
+    scanTemplateLoaded: 'Scan template loaded',
+    loadFailed: 'Failed to load tasks',
+    stopFailed: 'Failed to stop task',
+    deleteFailed: 'Failed to delete task',
+    confirmDelete: 'Confirm delete this task?'
   },
-  noTasks: 'No scan tasks found'
+  noTasks: 'No scan tasks found',
+  activeTools: 'Active Tools',
+  toolsUsed: 'Tools Used',
+  totalExecutions: 'Total Executions',
+  successRate: 'Success Rate',
+  toolExecution: 'Tool Execution',
+  toolPerformance: 'Tool Performance',
+  executionHistory: 'Execution History',
+  noToolsActive: 'No active tools',
+  noExecutionHistory: 'No execution history',
+  executions: 'Executions',
+  avgTime: 'Avg Time',
+  errors: 'Errors',
+  lastRun: 'Last Run',
+  toolStatus: {
+    idle: 'Idle',
+    running: 'Running',
+    waiting: 'Waiting',
+    completed: 'Completed',
+    error: 'Error'
+  },
+  toolTypes: {
+    plugin: 'Plugin',
+    mcpServer: 'MCP Server',
+    builtin: 'Builtin Tool',
+    workflow: 'Workflow'
+  }
 }

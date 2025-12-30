@@ -10,7 +10,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use tracing::{debug, info};
 
 use super::service::DatabaseService;
@@ -297,9 +296,25 @@ impl DatabaseService {
     }
 
     /// Delete vulnerability and related evidence
-    pub async fn delete_traffic_vulnerability(&self, vuln_id: &str) -> Result<()> {
+    /// Returns the signature of the deleted vulnerability for cache cleanup
+    pub async fn delete_traffic_vulnerability(&self, vuln_id: &str) -> Result<Option<String>> {
         let pool = self.get_pool()?;
         
+        // First get the signature before deleting
+        let signature: Option<String> = sqlx::query_scalar(
+            r#"
+            SELECT signature FROM traffic_vulnerabilities WHERE id = ?
+            "#,
+        )
+        .bind(vuln_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if signature.is_none() {
+            return Err(anyhow::anyhow!("Vulnerability not found: {}", vuln_id));
+        }
+
+        // Delete the vulnerability
         let result = sqlx::query(
             r#"
             DELETE FROM traffic_vulnerabilities WHERE id = ?
@@ -314,18 +329,25 @@ impl DatabaseService {
         }
 
         info!("Vulnerability deleted: {}", vuln_id);
-        Ok(())
+        Ok(signature)
     }
 
     /// Delete all vulnerabilities
+    /// Also clears the deduplication index
     pub async fn delete_all_traffic_vulnerabilities(&self) -> Result<()> {
         let pool = self.get_pool()?;
         
+        // Delete all vulnerabilities
         sqlx::query("DELETE FROM traffic_vulnerabilities")
             .execute(pool)
             .await?;
 
-        info!("All vulnerabilities deleted");
+        // Clear deduplication index
+        sqlx::query("DELETE FROM traffic_dedupe_index")
+            .execute(pool)
+            .await?;
+
+        info!("All vulnerabilities and dedupe index deleted");
         Ok(())
     }
 

@@ -39,6 +39,12 @@ import {
   TextEncoderStream,
 } from 'ext:deno_web/08_text_encoding.js'
 import { URL, URLSearchParams } from 'ext:deno_web/00_url.js'
+import {
+  setTimeout,
+  setInterval,
+  clearTimeout,
+  clearInterval,
+} from 'ext:deno_web/02_timers.js'
 import { Event, EventTarget, ErrorEvent, CloseEvent, MessageEvent, CustomEvent, ProgressEvent } from 'ext:deno_web/02_event.js'
 import { AbortController, AbortSignal } from 'ext:deno_web/03_abort_signal.js'
 import { ReadableStream, WritableStream, TransformStream, ByteLengthQueuingStrategy, CountQueuingStrategy } from 'ext:deno_web/06_streams.js'
@@ -76,6 +82,78 @@ if (typeof globalThis.TextDecoderStream === 'undefined') globalThis.TextDecoderS
 // URL APIs
 if (typeof globalThis.URL === 'undefined') globalThis.URL = URL
 if (typeof globalThis.URLSearchParams === 'undefined') globalThis.URLSearchParams = URLSearchParams
+
+// Timer APIs (critical for plugins)
+if (typeof globalThis.setTimeout === 'undefined') globalThis.setTimeout = setTimeout
+if (typeof globalThis.setInterval === 'undefined') globalThis.setInterval = setInterval
+if (typeof globalThis.clearTimeout === 'undefined') globalThis.clearTimeout = clearTimeout
+if (typeof globalThis.clearInterval === 'undefined') globalThis.clearInterval = clearInterval
+// Note: queueMicrotask is provided by V8 directly, not from deno_web
+
+// Headers API - Custom implementation (deno_web doesn't export Headers directly)
+if (typeof globalThis.Headers === 'undefined') {
+  globalThis.Headers = class Headers {
+    constructor(init) {
+      this._headers = new Map();
+      if (init) {
+        if (init instanceof Headers) {
+          init.forEach((value, key) => this.set(key, value));
+        } else if (Array.isArray(init)) {
+          init.forEach(([key, value]) => this.set(key, value));
+        } else if (typeof init === 'object') {
+          Object.entries(init).forEach(([key, value]) => this.set(key, value));
+        }
+      }
+    }
+    
+    append(name, value) {
+      const existing = this._headers.get(name.toLowerCase());
+      if (existing) {
+        this._headers.set(name.toLowerCase(), `${existing}, ${value}`);
+      } else {
+        this._headers.set(name.toLowerCase(), String(value));
+      }
+    }
+    
+    delete(name) {
+      this._headers.delete(name.toLowerCase());
+    }
+    
+    get(name) {
+      return this._headers.get(name.toLowerCase()) || null;
+    }
+    
+    has(name) {
+      return this._headers.has(name.toLowerCase());
+    }
+    
+    set(name, value) {
+      this._headers.set(name.toLowerCase(), String(value));
+    }
+    
+    forEach(callback, thisArg) {
+      this._headers.forEach((value, key) => {
+        callback.call(thisArg, value, key, this);
+      });
+    }
+    
+    keys() {
+      return this._headers.keys();
+    }
+    
+    values() {
+      return this._headers.values();
+    }
+    
+    entries() {
+      return this._headers.entries();
+    }
+    
+    [Symbol.iterator]() {
+      return this._headers.entries();
+    }
+  };
+}
 
 // Base64
 if (typeof globalThis.atob === 'undefined') globalThis.atob = atob

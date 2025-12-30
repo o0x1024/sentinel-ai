@@ -8,7 +8,7 @@
 use crate::history_cache::{HttpRequestRecord, ProxyHistoryCache};
 use crate::{
     Finding, TrafficError, RequestContext, ResponseContext,
-    Result,
+    Result, InterceptFilterRule,
 };
 use sentinel_db::DatabaseService;
 use sentinel_plugins::{types::HttpTransaction, PluginExecutor};
@@ -45,6 +45,10 @@ pub struct ScanPipeline {
     history_cache: Option<Arc<ProxyHistoryCache>>,
     /// App Handle (用于发送事件到前端)
     app_handle: Option<tauri::AppHandle>,
+    /// 请求拦截过滤规则（用于过滤流量分析）
+    request_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
+    /// 响应拦截过滤规则（用于过滤流量分析）
+    response_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
 }
 
 impl ScanPipeline {
@@ -58,7 +62,21 @@ impl ScanPipeline {
             db_service: None,
             history_cache: None,
             app_handle: None,
+            request_filter_rules: Arc::new(RwLock::new(Vec::new())),
+            response_filter_rules: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// 设置请求过滤规则
+    pub fn with_request_filter_rules(mut self, rules: Arc<RwLock<Vec<InterceptFilterRule>>>) -> Self {
+        self.request_filter_rules = rules;
+        self
+    }
+
+    /// 设置响应过滤规则
+    pub fn with_response_filter_rules(mut self, rules: Arc<RwLock<Vec<InterceptFilterRule>>>) -> Self {
+        self.response_filter_rules = rules;
+        self
     }
 
     /// 设置数据库服务（用于加载插件和存储漏洞，不再用于请求历史）
@@ -135,6 +153,15 @@ impl ScanPipeline {
             return;
         }
 
+        // 检查请求是否应该被过滤（不进行流量分析）
+        if !self.should_scan_request(&req_ctx).await {
+            debug!(
+                "Request {} skipped by filter rules, not scanning with plugins",
+                req_ctx.url
+            );
+            return;
+        }
+
         let plugins = self.plugin_executors.read().await;
         if plugins.is_empty() {
             // 暂无插件，仅记录历史，不进行流量分析
@@ -175,8 +202,28 @@ impl ScanPipeline {
             for (plugin_id, executor) in executors {
                 let tx_clone = transaction.clone();
                 let finding_tx = finding_tx.clone();
+                let plugin_id_clone = plugin_id.clone();
+                let executor_clone = executor.clone();
 
                 tokio::spawn(async move {
+                    // Check if restart is needed before execution
+                    if let Ok(stats) = executor.get_stats().await {
+                        if stats.current_instance_executions >= executor.max_executions_before_restart() {
+                            info!(
+                                "Auto-restarting plugin {} (executions: {}/{})",
+                                plugin_id_clone,
+                                stats.current_instance_executions,
+                                executor.max_executions_before_restart()
+                            );
+                            
+                            if let Err(e) = executor_clone.restart().await {
+                                error!("Failed to auto-restart plugin {}: {}", plugin_id_clone, e);
+                            } else {
+                                info!("Plugin {} auto-restarted successfully", plugin_id_clone);
+                            }
+                        }
+                    }
+
                     match executor.scan_transaction(tx_clone).await {
                         Ok(findings) => {
                             if !findings.is_empty() {
@@ -186,15 +233,6 @@ impl ScanPipeline {
                                     findings.len()
                                 );
                                 for finding in findings {
-                                    // 注意：finding 里的 request/response body 需要在这里处理吗？
-                                    // Finding 结构体里有 request_headers 等字段，PluginEngine 生成的 Finding 可能已经填充了？
-                                    // 检查 PluginEngine 代码：
-                                    // 插件 JS 代码里 emitFinding(finding)。
-                                    // 可以在这里补充 request_headers 等证据字段，就像之前那样。
-
-                                    // 之前代码是在 loop 里处理 finding。
-                                    // 简单起见，我们应该尽量把 context 传给插件让插件自己填？
-                                    // 或者在这里补全。
                                     if let Err(e) = finding_tx.send(finding) {
                                         error!("Failed to send finding: {}", e);
                                     }
@@ -212,15 +250,6 @@ impl ScanPipeline {
 
     /// 处理响应上下文
     async fn process_response(&self, resp_ctx: ResponseContext) {
-        let plugins = self.plugin_executors.read().await;
-        let has_plugins = !plugins.is_empty();
-
-        let executors: Vec<(String, Arc<PluginExecutor>)> = plugins
-            .iter()
-            .map(|(id, exec)| (id.clone(), exec.clone()))
-            .collect();
-        drop(plugins);
-
         // 从缓存中获取请求上下文
         let req_ctx = {
             let cache = self.request_cache.read().await;
@@ -238,168 +267,28 @@ impl ScanPipeline {
             }
         };
 
-        // 记录请求到内存缓存
-        if let Some(cache) = &self.history_cache {
-            use url::Url;
-
-            let start_time = req_ctx.timestamp;
-            let end_time = resp_ctx.timestamp;
-            let response_time = (end_time - start_time).num_milliseconds().max(0) as i64;
-
+        // 检查响应是否应该被过滤（不进行流量分析）
+        if !self.should_scan_response(&req_ctx, &resp_ctx).await {
             debug!(
-                "Recording request to cache: url={}, req_body_len={}, resp_body_len={}",
-                req_ctx.url,
-                req_ctx.body.len(),
-                resp_ctx.body.len()
+                "Response for request {} skipped by filter rules, not scanning with plugins",
+                req_ctx.url
             );
-
-            // 解析 URL
-            let parsed_url = Url::parse(&req_ctx.url).ok();
-            let host = parsed_url
-                .as_ref()
-                .and_then(|u| u.host_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let protocol = parsed_url
-                .as_ref()
-                .map(|u| u.scheme())
-                .unwrap_or("http")
-                .to_string();
-
-            // 序列化请求头和响应头
-            let request_headers = serde_json::to_string(&req_ctx.headers).ok();
-            let response_headers = serde_json::to_string(&resp_ctx.headers).ok();
-
-            // 转换请求体和响应体为 String
-            // 对于二进制内容，使用 base64 编码
-            let request_body = if req_ctx.body.is_empty() {
-                None
-            } else {
-                // 尝试作为 UTF-8 字符串
-                match String::from_utf8(req_ctx.body.clone()) {
-                    Ok(s) => Some(s),
-                    Err(_) => {
-                        // 如果不是有效的 UTF-8，使用 base64 编码
-                        use base64::{engine::general_purpose, Engine as _};
-                        Some(format!(
-                            "[BASE64]{}",
-                            general_purpose::STANDARD.encode(&req_ctx.body)
-                        ))
-                    }
-                }
-            };
-
-            let response_body = if resp_ctx.body.is_empty() {
-                None
-            } else {
-                // 尝试作为 UTF-8 字符串
-                match String::from_utf8(resp_ctx.body.clone()) {
-                    Ok(s) => Some(s),
-                    Err(_) => {
-                        // 如果不是有效的 UTF-8，使用 base64 编码
-                        use base64::{engine::general_purpose, Engine as _};
-                        Some(format!(
-                            "[BASE64]{}",
-                            general_purpose::STANDARD.encode(&resp_ctx.body)
-                        ))
-                    }
-                }
-            };
-
-            let response_size = resp_ctx.body.len() as i64;
-
-            // 处理 edited 请求字段
-            let (
-                was_edited,
-                edited_method,
-                edited_url,
-                edited_request_headers,
-                edited_request_body,
-            ) = if req_ctx.was_edited {
-                let edited_headers_str = req_ctx.edited_headers.as_ref().map(|h| {
-                    h.iter()
-                        .map(|(k, v)| format!("{}: {}", k, v))
-                        .collect::<Vec<_>>()
-                        .join("\r\n")
-                });
-                let edited_body_str = req_ctx
-                    .edited_body
-                    .as_ref()
-                    .and_then(|b| String::from_utf8(b.clone()).ok());
-                (
-                    true,
-                    req_ctx.edited_method.clone(),
-                    req_ctx.edited_url.clone(),
-                    edited_headers_str,
-                    edited_body_str,
-                )
-            } else {
-                (false, None, None, None, None)
-            };
-
-            // 处理 edited 响应字段
-            let (edited_response_headers, edited_response_body, edited_status_code) =
-                if resp_ctx.was_edited {
-                    let edited_headers_str = resp_ctx.edited_headers.as_ref().map(|h| {
-                        h.iter()
-                            .map(|(k, v)| format!("{}: {}", k, v))
-                            .collect::<Vec<_>>()
-                            .join("\r\n")
-                    });
-                    let edited_body_str = resp_ctx
-                        .edited_body
-                        .as_ref()
-                        .and_then(|b| String::from_utf8(b.clone()).ok());
-                    (
-                        edited_headers_str,
-                        edited_body_str,
-                        resp_ctx.edited_status.map(|s| s as i32),
-                    )
-                } else {
-                    (None, None, None)
-                };
-
-            let record = HttpRequestRecord {
-                id: 0, // 将由缓存分配
-                url: req_ctx.url.clone(),
-                host,
-                protocol,
-                method: req_ctx.method.clone(),
-                status_code: resp_ctx.status as i32,
-                request_headers,
-                request_body,
-                response_headers,
-                response_body: response_body.clone(),
-                response_size,
-                response_time,
-                timestamp: req_ctx.timestamp,
-                was_edited,
-                edited_request_headers,
-                edited_request_body,
-                edited_method,
-                edited_url,
-                edited_response_headers,
-                edited_response_body,
-                edited_status_code,
-            };
-
-            let inserted_id = cache.add_http_request(record.clone()).await;
-            debug!(
-                "Successfully recorded request to cache: id={}, url={}, response_body_saved={}",
-                inserted_id,
-                req_ctx.url,
-                response_body.is_some()
-            );
-
-            // 发送事件通知前端更新流量历史记录，附带 ID
-            if let Some(ref app_handle) = self.app_handle {
-                let mut record_with_id = record;
-                record_with_id.id = inserted_id;
-                if let Err(e) = app_handle.emit("proxy:request", &record_with_id) {
-                    warn!("Failed to emit proxy:request event: {}", e);
-                }
-            }
+            // 仍然记录到历史缓存，但不进行插件扫描
+            self.record_to_history_cache(&req_ctx, &resp_ctx).await;
+            return;
         }
+
+        let plugins = self.plugin_executors.read().await;
+        let has_plugins = !plugins.is_empty();
+
+        let executors: Vec<(String, Arc<PluginExecutor>)> = plugins
+            .iter()
+            .map(|(id, exec)| (id.clone(), exec.clone()))
+            .collect();
+        drop(plugins);
+
+        // 记录请求到历史缓存
+        self.record_to_history_cache(&req_ctx, &resp_ctx).await;
 
         if !has_plugins {
             // 清理请求缓存
@@ -427,8 +316,28 @@ impl ScanPipeline {
             for (plugin_id, executor) in executors {
                 let tx_clone = transaction.clone();
                 let finding_tx = finding_tx.clone();
+                let plugin_id_clone = plugin_id.clone();
+                let executor_clone = executor.clone();
 
                 tokio::spawn(async move {
+                    // Check if restart is needed before execution
+                    if let Ok(stats) = executor.get_stats().await {
+                        if stats.current_instance_executions >= executor.max_executions_before_restart() {
+                            info!(
+                                "Auto-restarting plugin {} (executions: {}/{})",
+                                plugin_id_clone,
+                                stats.current_instance_executions,
+                                executor.max_executions_before_restart()
+                            );
+                            
+                            if let Err(e) = executor_clone.restart().await {
+                                error!("Failed to auto-restart plugin {}: {}", plugin_id_clone, e);
+                            } else {
+                                info!("Plugin {} auto-restarted successfully", plugin_id_clone);
+                            }
+                        }
+                    }
+
                     match executor.scan_transaction(tx_clone).await {
                         Ok(findings) => {
                             if !findings.is_empty() {
@@ -843,6 +752,310 @@ impl ScanPipeline {
     pub async fn request_cache_size(&self) -> usize {
         self.request_cache.read().await.len()
     }
+
+    /// 检查请求是否应该被扫描（应用过滤规则）
+    /// 返回 true 表示应该扫描，false 表示应该跳过
+    async fn should_scan_request(&self, req_ctx: &RequestContext) -> bool {
+        let rules = self.request_filter_rules.read().await;
+        if rules.is_empty() {
+            return true; // No rules, scan all
+        }
+
+        // Extract domain from URL
+        let domain = req_ctx
+            .url
+            .split("://")
+            .nth(1)
+            .and_then(|s| s.split('/').next())
+            .and_then(|s| s.split(':').next())
+            .unwrap_or("");
+
+        // Extract file extension from URL
+        let path = req_ctx.url.split('?').next().unwrap_or(&req_ctx.url);
+        let file_ext = path.rsplit('.').next().unwrap_or("");
+
+        // Evaluate rules (AND logic by default, rules with "does_not_match" exclude requests)
+        for rule in rules.iter() {
+            if !rule.enabled {
+                continue;
+            }
+
+            let value_to_match = match rule.match_type.as_str() {
+                "domain_name" | "domain" => domain,
+                "url" => &req_ctx.url,
+                "http_method" | "method" => &req_ctx.method,
+                "file_extension" | "fileExt" => file_ext,
+                _ => continue,
+            };
+
+            let matches = if rule.condition.is_empty() {
+                false
+            } else {
+                match regex::Regex::new(&rule.condition) {
+                    Ok(re) => re.is_match(value_to_match),
+                    Err(_) => {
+                        // Fallback to simple contains check
+                        value_to_match
+                            .to_lowercase()
+                            .contains(&rule.condition.to_lowercase())
+                    }
+                }
+            };
+
+            // "does_not_match" or "notMatches" means: if condition matches, skip scanning
+            if (rule.relationship == "does_not_match" || rule.relationship == "notMatches") && matches {
+                debug!(
+                    "Request {} skipped by filter rule: {} does_not_match {}",
+                    req_ctx.url, rule.match_type, rule.condition
+                );
+                return false;
+            }
+
+            // "matches" means: if condition doesn't match, skip scanning
+            if rule.relationship == "matches" && !matches {
+                debug!(
+                    "Request {} skipped by filter rule: {} matches {}",
+                    req_ctx.url, rule.match_type, rule.condition
+                );
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// 检查响应是否应该被扫描（应用过滤规则）
+    /// 返回 true 表示应该扫描，false 表示应该跳过
+    async fn should_scan_response(&self, req_ctx: &RequestContext, resp_ctx: &ResponseContext) -> bool {
+        let rules = self.response_filter_rules.read().await;
+        if rules.is_empty() {
+            return true; // No rules, scan all
+        }
+
+        // Extract domain from URL
+        let domain = req_ctx
+            .url
+            .split("://")
+            .nth(1)
+            .and_then(|s| s.split('/').next())
+            .and_then(|s| s.split(':').next())
+            .unwrap_or("");
+
+        // Extract file extension from URL
+        let path = req_ctx.url.split('?').next().unwrap_or(&req_ctx.url);
+        let file_ext = path.rsplit('.').next().unwrap_or("");
+
+        // Extract content type
+        let content_type = resp_ctx
+            .headers
+            .get("content-type")
+            .or_else(|| resp_ctx.headers.get("Content-Type"))
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        // Evaluate rules
+        for rule in rules.iter() {
+            if !rule.enabled {
+                continue;
+            }
+
+            let value_to_match = match rule.match_type.as_str() {
+                "domain_name" | "domain" => domain,
+                "url" => &req_ctx.url,
+                "http_method" | "method" => &req_ctx.method,
+                "file_extension" | "fileExt" => file_ext,
+                "status" | "status_code" => &resp_ctx.status.to_string(),
+                "contentType" | "content_type" => content_type,
+                _ => continue,
+            };
+
+            let matches = if rule.condition.is_empty() {
+                false
+            } else {
+                match regex::Regex::new(&rule.condition) {
+                    Ok(re) => re.is_match(value_to_match),
+                    Err(_) => {
+                        // Fallback to simple contains check
+                        value_to_match
+                            .to_lowercase()
+                            .contains(&rule.condition.to_lowercase())
+                    }
+                }
+            };
+
+            // "does_not_match" or "notMatches" means: if condition matches, skip scanning
+            if (rule.relationship == "does_not_match" || rule.relationship == "notMatches") && matches {
+                debug!(
+                    "Response for {} skipped by filter rule: {} does_not_match {}",
+                    req_ctx.url, rule.match_type, rule.condition
+                );
+                return false;
+            }
+
+            // "matches" means: if condition doesn't match, skip scanning
+            if rule.relationship == "matches" && !matches {
+                debug!(
+                    "Response for {} skipped by filter rule: {} matches {}",
+                    req_ctx.url, rule.match_type, rule.condition
+                );
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// 记录请求/响应到历史缓存
+    async fn record_to_history_cache(&self, req_ctx: &RequestContext, resp_ctx: &ResponseContext) {
+        if let Some(cache) = &self.history_cache {
+            use url::Url;
+
+            let start_time = req_ctx.timestamp;
+            let end_time = resp_ctx.timestamp;
+            let response_time = (end_time - start_time).num_milliseconds().max(0) as i64;
+
+            debug!(
+                "Recording request to cache: url={}, req_body_len={}, resp_body_len={}",
+                req_ctx.url,
+                req_ctx.body.len(),
+                resp_ctx.body.len()
+            );
+
+            // 解析 URL
+            let parsed_url = Url::parse(&req_ctx.url).ok();
+            let host = parsed_url
+                .as_ref()
+                .and_then(|u| u.host_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let protocol = parsed_url
+                .as_ref()
+                .map(|u| u.scheme())
+                .unwrap_or("http")
+                .to_string();
+
+            // 序列化请求头和响应头
+            let request_headers = serde_json::to_string(&req_ctx.headers).ok();
+            let response_headers = serde_json::to_string(&resp_ctx.headers).ok();
+
+            // 转换请求体和响应体为 String
+            let request_body = if req_ctx.body.is_empty() {
+                None
+            } else {
+                match String::from_utf8(req_ctx.body.clone()) {
+                    Ok(s) => Some(s),
+                    Err(_) => {
+                        use base64::{engine::general_purpose, Engine as _};
+                        Some(format!(
+                            "[BASE64]{}",
+                            general_purpose::STANDARD.encode(&req_ctx.body)
+                        ))
+                    }
+                }
+            };
+
+            let response_body = if resp_ctx.body.is_empty() {
+                None
+            } else {
+                match String::from_utf8(resp_ctx.body.clone()) {
+                    Ok(s) => Some(s),
+                    Err(_) => {
+                        use base64::{engine::general_purpose, Engine as _};
+                        Some(format!(
+                            "[BASE64]{}",
+                            general_purpose::STANDARD.encode(&resp_ctx.body)
+                        ))
+                    }
+                }
+            };
+
+            let response_size = resp_ctx.body.len() as i64;
+
+            // 处理 edited 字段
+            let (was_edited, edited_method, edited_url, edited_request_headers, edited_request_body) =
+                if req_ctx.was_edited {
+                    let edited_headers_str = req_ctx.edited_headers.as_ref().map(|h| {
+                        h.iter()
+                            .map(|(k, v)| format!("{}: {}", k, v))
+                            .collect::<Vec<_>>()
+                            .join("\r\n")
+                    });
+                    let edited_body_str = req_ctx
+                        .edited_body
+                        .as_ref()
+                        .and_then(|b| String::from_utf8(b.clone()).ok());
+                    (
+                        true,
+                        req_ctx.edited_method.clone(),
+                        req_ctx.edited_url.clone(),
+                        edited_headers_str,
+                        edited_body_str,
+                    )
+                } else {
+                    (false, None, None, None, None)
+                };
+
+            let (edited_response_headers, edited_response_body, edited_status_code) =
+                if resp_ctx.was_edited {
+                    let edited_headers_str = resp_ctx.edited_headers.as_ref().map(|h| {
+                        h.iter()
+                            .map(|(k, v)| format!("{}: {}", k, v))
+                            .collect::<Vec<_>>()
+                            .join("\r\n")
+                    });
+                    let edited_body_str = resp_ctx
+                        .edited_body
+                        .as_ref()
+                        .and_then(|b| String::from_utf8(b.clone()).ok());
+                    (
+                        edited_headers_str,
+                        edited_body_str,
+                        resp_ctx.edited_status.map(|s| s as i32),
+                    )
+                } else {
+                    (None, None, None)
+                };
+
+            let record = HttpRequestRecord {
+                id: 0,
+                url: req_ctx.url.clone(),
+                host,
+                protocol,
+                method: req_ctx.method.clone(),
+                status_code: resp_ctx.status as i32,
+                request_headers,
+                request_body,
+                response_headers,
+                response_body: response_body.clone(),
+                response_size,
+                response_time,
+                timestamp: req_ctx.timestamp,
+                was_edited,
+                edited_request_headers,
+                edited_request_body,
+                edited_method,
+                edited_url,
+                edited_response_headers,
+                edited_response_body,
+                edited_status_code,
+            };
+
+            let inserted_id = cache.add_http_request(record.clone()).await;
+            debug!(
+                "Successfully recorded request to cache: id={}, url={}",
+                inserted_id, req_ctx.url
+            );
+
+            // 发送事件通知前端
+            if let Some(ref app_handle) = self.app_handle {
+                let mut record_with_id = record;
+                record_with_id.id = inserted_id;
+                if let Err(e) = app_handle.emit("proxy:request", &record_with_id) {
+                    warn!("Failed to emit proxy:request event: {}", e);
+                }
+            }
+        }
+    }
 }
 
 /// Finding 去重服务
@@ -884,6 +1097,12 @@ impl FindingDeduplicator {
     /// 设置事件发送器（用于通知前端新 Finding）
     pub fn with_event_sender(mut self, event_tx: mpsc::UnboundedSender<Finding>) -> Self {
         self.event_tx = Some(event_tx);
+        self
+    }
+
+    /// 使用共享缓存（用于在删除漏洞时清理缓存）
+    pub fn with_shared_cache(mut self, cache: Arc<RwLock<std::collections::HashSet<String>>>) -> Self {
+        self.cache = cache;
         self
     }
 
@@ -930,6 +1149,11 @@ impl FindingDeduplicator {
                 let cache = self.cache.read().await;
                 if cache.contains(&signature) {
                     // 内存缓存命中，更新数据库命中次数
+                    info!(
+                        "Finding duplicate (memory cache hit): {} - signature: {}",
+                        finding.title,
+                        &signature[..8.min(signature.len())]
+                    );
                     if let Some(ref db) = self.db_service {
                         if let Err(e) = db.update_traffic_vulnerability_hit(&signature).await {
                             error!("Failed to update hit count: {}", e);
@@ -948,10 +1172,10 @@ impl FindingDeduplicator {
                             error!("Failed to update hit count: {}", e);
                         }
                         self.cache.write().await.insert(signature.clone());
-                        debug!(
+                        info!(
                             "Finding exists in DB, updated hit count: {} (signature: {})",
                             finding.title,
-                            &signature[..8]
+                            &signature[..8.min(signature.len())]
                         );
                         continue;
                     }
@@ -960,11 +1184,11 @@ impl FindingDeduplicator {
                         match self.insert_finding_to_db(&finding, db).await {
                             Ok(_) => {
                                 self.cache.write().await.insert(signature.clone());
-                                debug!(
+                                info!(
                                     "New finding inserted to DB: {} - {} (signature: {})",
                                     finding.title,
                                     finding.severity,
-                                    &signature[..8]
+                                    &signature[..8.min(signature.len())]
                                 );
                                 // 发送事件通知前端
                                 if let Some(ref tx) = self.event_tx {

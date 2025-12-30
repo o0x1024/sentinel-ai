@@ -108,6 +108,58 @@
         {{ $t('trafficAnalysis.history.contextMenu.openInBrowser') }}
       </button>
       <div class="divider my-1 h-0"></div>
+      <!-- 过滤规则子菜单 -->
+      <div 
+        class="relative"
+        @mouseenter="showFilterSubmenu = true"
+        @mouseleave="showFilterSubmenu = false"
+      >
+        <button 
+          class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center justify-between gap-2"
+        >
+          <div class="flex items-center gap-2">
+            <i class="fas fa-filter text-primary"></i>
+            {{ $t('trafficAnalysis.history.contextMenu.addToFilter') }}
+          </div>
+          <i class="fas fa-chevron-right text-xs"></i>
+        </button>
+        <!-- 子菜单 -->
+        <div 
+          v-if="showFilterSubmenu"
+          class="absolute left-full top-0 ml-1 bg-base-100 border border-base-300 rounded-lg shadow-xl py-1 min-w-40 z-50"
+          @click.stop
+        >
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="addFilterToDomain"
+          >
+            <i class="fas fa-globe text-xs"></i>
+            {{ $t('trafficAnalysis.history.contextMenu.filterByDomain') }}
+          </button>
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="addFilterToUrl"
+          >
+            <i class="fas fa-link text-xs"></i>
+            {{ $t('trafficAnalysis.history.contextMenu.filterByUrl') }}
+          </button>
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="addFilterToMethod"
+          >
+            <i class="fas fa-code text-xs"></i>
+            {{ $t('trafficAnalysis.history.contextMenu.filterByMethod') }}
+          </button>
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="addFilterToExtension"
+          >
+            <i class="fas fa-file text-xs"></i>
+            {{ $t('trafficAnalysis.history.contextMenu.filterByExtension') }}
+          </button>
+        </div>
+      </div>
+      <div class="divider my-1 h-0"></div>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2 text-error"
         @click="clearHistoryFromMenu"
@@ -504,7 +556,8 @@
               <span class="text-xs">{{ $t('trafficAnalysis.history.toolbar.export') }} ({{ selectedRequests.size }})</span>
               <i class="fas fa-chevron-down text-xs"></i>
             </label>
-            <ul tabindex="0" class="dropdown-content z-[100] menu p-2 shadow bg-base-100 rounded-box w-48">
+            <ul tabindex="0" class="dropdown-content z-[100] menu p-2 shadow bg-base-100 rounded-box w-56">
+              <li class="menu-title"><span>{{ $t('trafficAnalysis.history.export.sendToAssistant') }}</span></li>
               <li>
                 <a @click="sendSelectedToAssistant('request')" class="flex items-center gap-2">
                   <i class="fas fa-upload text-accent"></i>
@@ -515,6 +568,20 @@
                 <a @click="sendSelectedToAssistant('response')" class="flex items-center gap-2">
                   <i class="fas fa-download text-accent"></i>
                   {{ $t('trafficAnalysis.history.contextMenu.sendResponseToAssistant') }}
+                </a>
+              </li>
+              <div class="divider my-1"></div>
+              <li class="menu-title"><span>{{ $t('trafficAnalysis.history.export.exportToFile') }}</span></li>
+              <li>
+                <a @click="exportSelectedToFile('request')" class="flex items-center gap-2">
+                  <i class="fas fa-file-export text-info"></i>
+                  {{ $t('trafficAnalysis.history.export.exportRequest') }}
+                </a>
+              </li>
+              <li>
+                <a @click="exportSelectedToFile('response')" class="flex items-center gap-2">
+                  <i class="fas fa-file-download text-info"></i>
+                  {{ $t('trafficAnalysis.history.export.exportResponse') }}
                 </a>
               </li>
             </ul>
@@ -999,6 +1066,8 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch, inject } from '
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { useRouter } from 'vue-router';
 import { dialog } from '@/composables/useDialog';
 import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
@@ -1018,6 +1087,7 @@ defineOptions({
 const emit = defineEmits<{
   (e: 'sendToRepeater', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
   (e: 'sendToAssistant', requests: ProxyRequest[]): void
+  (e: 'addFilterRule', rule: { matchType: string; condition: string; relationship?: string }): void
 }>();
 
 // 多选状态
@@ -1032,6 +1102,7 @@ const contextMenu = ref({
   request: null as ProxyRequest | null,
 });
 const contextMenuRef = ref<HTMLElement | null>(null);
+const showFilterSubmenu = ref(false);
 
 // 请求详情区域右键菜单状态
 const detailContextMenu = ref({
@@ -2311,6 +2382,7 @@ function showContextMenu(event: MouseEvent, request: ProxyRequest) {
 function hideContextMenu() {
   contextMenu.value.visible = false;
   contextMenu.value.request = null;
+  showFilterSubmenu.value = false;
   document.removeEventListener('click', hideContextMenu);
   document.removeEventListener('contextmenu', hideContextMenu);
 }
@@ -2480,6 +2552,93 @@ function clearHistoryFromMenu() {
   clearHistory();
 }
 
+// 添加过滤规则到拦截配置
+function addFilterToDomain() {
+  if (!contextMenu.value.request) return;
+  
+  const req = contextMenu.value.request;
+  // Extract domain from URL
+  try {
+    const url = new URL(req.url);
+    const domain = url.hostname;
+    
+    emit('addFilterRule', {
+      matchType: 'domain_name',
+      condition: domain,
+      relationship: 'matches'
+    });
+    
+    dialog.toast.success(`Added domain filter: ${domain}`);
+  } catch (e) {
+    dialog.toast.error('Failed to parse URL');
+  }
+  
+  hideContextMenu();
+}
+
+function addFilterToUrl() {
+  if (!contextMenu.value.request) return;
+  
+  const req = contextMenu.value.request;
+  // Use the full URL or path as pattern
+  const urlPattern = req.url;
+  
+  emit('addFilterRule', {
+    matchType: 'url',
+    condition: urlPattern,
+    relationship: 'matches'
+  });
+  
+  dialog.toast.success(`Added URL filter: ${urlPattern}`);
+  hideContextMenu();
+}
+
+function addFilterToMethod() {
+  if (!contextMenu.value.request) return;
+  
+  const req = contextMenu.value.request;
+  const method = req.method.toLowerCase();
+  
+  emit('addFilterRule', {
+    matchType: 'http_method',
+    condition: method,
+    relationship: 'matches'
+  });
+  
+  dialog.toast.success(`Added method filter: ${method}`);
+  hideContextMenu();
+}
+
+function addFilterToExtension() {
+  if (!contextMenu.value.request) return;
+  
+  const req = contextMenu.value.request;
+  // Extract file extension from URL
+  try {
+    const url = new URL(req.url);
+    const pathname = url.pathname;
+    const lastDot = pathname.lastIndexOf('.');
+    
+    if (lastDot > 0) {
+      const extension = pathname.substring(lastDot + 1).split('?')[0]; // Remove query params
+      
+      emit('addFilterRule', {
+        matchType: 'file_extension',
+        condition: `^${extension}$`,
+        relationship: 'matches'
+      });
+      
+      dialog.toast.success(`Added extension filter: ${extension}`);
+    } else {
+      dialog.toast.warning('No file extension found in URL');
+    }
+  } catch (e) {
+    dialog.toast.error('Failed to parse URL');
+  }
+  
+  hideContextMenu();
+}
+
 // 多选相关方法
 function toggleMultiSelectMode() {
   isMultiSelectMode.value = !isMultiSelectMode.value;
@@ -2569,6 +2728,90 @@ function detailSendResponseToAssistant() {
   hideDetailContextMenu();
   if (!selectedRequest.value) return;
   sendSingleToAssistant(selectedRequest.value, 'response');
+}
+
+// Export selected requests/responses to file
+async function exportSelectedToFile(type: 'request' | 'response') {
+  const selected = filteredRequests.value.filter(req => selectedRequests.value.has(req.id));
+  if (selected.length === 0) {
+    dialog.toast.warning(t('trafficAnalysis.history.export.noSelection'));
+    return;
+  }
+  
+  try {
+    // Generate filename
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const defaultFilename = `${type}-export-${timestamp}.txt`;
+    
+    // Open save dialog
+    const filePath = await save({
+      defaultPath: defaultFilename,
+      filters: [{
+        name: 'Text Files',
+        extensions: ['txt']
+      }, {
+        name: 'HTTP Files',
+        extensions: ['http']
+      }, {
+        name: 'All Files',
+        extensions: ['*']
+      }]
+    });
+    
+    if (!filePath) {
+      return; // User cancelled
+    }
+    
+    // Format content
+    let content = '';
+    
+    for (let i = 0; i < selected.length; i++) {
+      const req = selected[i];
+      
+      if (i > 0) {
+        content += '\n\n' + '='.repeat(80) + '\n\n';
+      }
+      
+      // Add metadata header
+      content += `# ${type.toUpperCase()} ${i + 1}/${selected.length}\n`;
+      content += `# URL: ${req.url}\n`;
+      content += `# Method: ${req.method}\n`;
+      content += `# Status: ${req.status_code || 'N/A'}\n`;
+      content += `# Timestamp: ${req.timestamp}\n`;
+      if (req.was_edited) {
+        content += `# Modified: Yes\n`;
+      }
+      content += '\n';
+      
+      // Add request or response content
+      if (type === 'request') {
+        content += formatRequestRaw(req, 'edited');
+      } else {
+        content += formatResponseRaw(req, 'edited');
+      }
+    }
+    
+    // Write to file
+    await writeTextFile(filePath, content);
+    
+    const typeText = type === 'request' 
+      ? t('trafficAnalysis.history.export.request')
+      : t('trafficAnalysis.history.export.response');
+    dialog.toast.success(t('trafficAnalysis.history.export.success', { 
+      count: selected.length, 
+      type: typeText 
+    }));
+    
+    // Clear selection
+    selectedRequests.value.clear();
+    isMultiSelectMode.value = false;
+    
+  } catch (error) {
+    console.error('Export failed:', error);
+    dialog.toast.error(t('trafficAnalysis.history.export.failed', { 
+      error: String(error) 
+    }));
+  }
 }
 
 function formatRequest(request: ProxyRequest, tab: string, viewMode: 'original' | 'edited' = 'edited'): string {
@@ -3029,6 +3272,96 @@ onMounted(async () => {
 onUnmounted(() => {
   if (unlistenWsConnection) unlistenWsConnection();
   if (unlistenWsMessage) unlistenWsMessage();
+});
+
+// 根据过滤规则移除匹配的记录
+function removeMatchingRecords(rule: { matchType: string; condition: string; relationship: string }) {
+  const beforeCount = requests.value.length;
+  
+  requests.value = requests.value.filter(req => {
+    let shouldKeep = true;
+    
+    try {
+      switch (rule.matchType) {
+        case 'domain_name': {
+          // Extract domain from URL
+          const url = new URL(req.url);
+          const domain = url.hostname;
+          
+          if (rule.relationship === 'matches') {
+            shouldKeep = domain !== rule.condition;
+          } else if (rule.relationship === 'does_not_match') {
+            shouldKeep = domain === rule.condition;
+          }
+          break;
+        }
+        
+        case 'url': {
+          if (rule.relationship === 'matches') {
+            shouldKeep = req.url !== rule.condition;
+          } else if (rule.relationship === 'does_not_match') {
+            shouldKeep = req.url === rule.condition;
+          }
+          break;
+        }
+        
+        case 'http_method': {
+          const method = req.method.toLowerCase();
+          const conditionMethod = rule.condition.toLowerCase();
+          
+          if (rule.relationship === 'matches') {
+            shouldKeep = method !== conditionMethod;
+          } else if (rule.relationship === 'does_not_match') {
+            shouldKeep = method === conditionMethod;
+          }
+          break;
+        }
+        
+        case 'file_extension': {
+          // Extract file extension from URL
+          const url = new URL(req.url);
+          const pathname = url.pathname;
+          const lastDot = pathname.lastIndexOf('.');
+          
+          if (lastDot > 0) {
+            const extension = pathname.substring(lastDot + 1).split('?')[0];
+            // rule.condition is a regex pattern like ^js$
+            const regex = new RegExp(rule.condition);
+            
+            if (rule.relationship === 'matches') {
+              shouldKeep = !regex.test(extension);
+            } else if (rule.relationship === 'does_not_match') {
+              shouldKeep = regex.test(extension);
+            }
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      console.error('Error matching filter rule:', e);
+      // Keep the record if there's an error
+      shouldKeep = true;
+    }
+    
+    return shouldKeep;
+  });
+  
+  const removedCount = beforeCount - requests.value.length;
+  
+  if (removedCount > 0) {
+    console.log(`[ProxyHistory] Removed ${removedCount} matching records`);
+    dialog.toast.info(`Removed ${removedCount} matching record(s) from history`);
+    
+    // Clear selection if selected request was removed
+    if (selectedRequest.value && !requests.value.find(r => r.id === selectedRequest.value?.id)) {
+      selectedRequest.value = null;
+    }
+  }
+}
+
+// Expose methods for parent component
+defineExpose({
+  removeMatchingRecords
 });
 </script>
 

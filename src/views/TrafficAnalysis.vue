@@ -43,8 +43,10 @@
                 class="h-full absolute inset-0 overflow-auto"
             />
             <ProxyHistory 
+                ref="proxyHistoryRef"
                 v-show="activeTab === 'proxyhistory'" 
                 @sendToRepeater="handleSendToRepeater"
+                @addFilterRule="handleAddFilterRule"
                 class="h-full absolute inset-0 overflow-auto"
             />
             <ProxyRepeater 
@@ -61,7 +63,12 @@
                 v-show="activeTab === 'capture'" 
                 class="h-full absolute inset-0"
             />
-            <ProxyConfiguration v-show="activeTab === 'proxyconfig'" class="h-full absolute inset-0 overflow-auto" />
+            <ProxyConfiguration 
+                ref="proxyConfigRef"
+                v-show="activeTab === 'proxyconfig'" 
+                @filterRuleAdded="handleFilterRuleAdded"
+                class="h-full absolute inset-0 overflow-auto" 
+            />
         </div>
     </div>
 
@@ -89,6 +96,8 @@ const isDevelopment = ref(import.meta.env.DEV)
 const componentError = ref<string | null>(null)
 const refreshTrigger = ref(0)
 const repeaterRef = ref<InstanceType<typeof ProxyRepeater> | null>(null)
+const proxyConfigRef = ref<InstanceType<typeof ProxyConfiguration> | null>(null)
+const proxyHistoryRef = ref<InstanceType<typeof ProxyHistory> | null>(null)
 const pendingRepeaterRequest = ref<RepeaterRequest | undefined>(undefined)
 const repeaterCount = ref(0)
 
@@ -114,6 +123,37 @@ function handleSendToRepeater(request: RepeaterRequest) {
     }
     
     repeaterCount.value++
+}
+
+// 处理添加过滤规则
+interface FilterRule {
+    matchType: string;
+    condition: string;
+    relationship?: string;
+}
+
+function handleAddFilterRule(rule: FilterRule) {
+    console.log('[TrafficAnalysis] Adding filter rule:', rule)
+    
+    if (proxyConfigRef.value) {
+        proxyConfigRef.value.addRequestFilterRule(
+            rule.matchType,
+            rule.condition,
+            rule.relationship || 'matches'
+        )
+        // Don't switch to proxy config tab, stay on current tab
+    } else {
+        console.error('[TrafficAnalysis] ProxyConfiguration ref not available')
+    }
+}
+
+// 处理过滤规则添加完成事件
+function handleFilterRuleAdded(rule: FilterRule) {
+    console.log('[TrafficAnalysis] Filter rule added, removing matching records:', rule)
+    
+    if (proxyHistoryRef.value) {
+        proxyHistoryRef.value.removeMatchingRecords(rule)
+    }
 }
 
 // 监听 Tab 切换，清除待处理请求
