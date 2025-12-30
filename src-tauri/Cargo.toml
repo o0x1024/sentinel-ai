@@ -79,7 +79,10 @@ sqlx = { version = "0.8.6", features = [
 
 # HTTP 客户端配置
 # 强制 rustls 使用 ring 而不是 aws-lc-rs，以减少 Windows 编译负担
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+] }
 http = "1"
 
 # SSE客户端支持
@@ -187,8 +190,6 @@ rig-lancedb = "=0.2.29"
 arrow-array = "55.2.0"
 arrow-schema = "55.2.0"
 
-# Browser automation for test_explorer_v1
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
 
 # 针对非 Windows 平台使用 rustls
 [target.'cfg(not(target_os = "windows"))'.dependencies]

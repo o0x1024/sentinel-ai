@@ -279,7 +279,7 @@ impl ToolRouter {
                 id: "test_explorer".to_string(),
                 name: "test_explorer".to_string(),
                 description: "Explore a website using text-based automation with LLM. Automatically navigates, interacts with elements, captures API requests, and completes exploration tasks.".to_string(),
-                category: ToolCategory::Network,
+                category: ToolCategory::AI,
                 tags: vec![
                     "browser".to_string(),
                     "automation".to_string(),

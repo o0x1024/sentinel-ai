@@ -110,7 +110,25 @@ impl Agent for NavigatorAgent {
                     }
 
                     // Capture Context AFTER action
-                    let context = driver.capture_context().await?;
+                    let mut context = driver.capture_context().await?;
+                    
+                    // Fallback: If URL is empty but we just navigated, use the target URL
+                    if context.url.is_empty() {
+                         if let Some(payload_val) = payload {
+                            if let Ok(action) = serde_json::from_value::<
+                                crate::engines::vision_explorer_v2::core::SuggestedAction,
+                            >(payload_val.clone()) {
+                                if action.action_type == "navigate" {
+                                    log::warn!("NavigatorAgent: Captured URL is empty, falling back to action target: {}", action.selector);
+                                    context.url = action.selector.clone();
+                                }
+                            }
+                        } else if target_node_id.starts_with("http") {
+                             log::warn!("NavigatorAgent: Captured URL is empty, falling back to target_node_id: {}", target_node_id);
+                             context.url = target_node_id.clone();
+                        }
+                    }
+                    
                     Ok::<_, anyhow::Error>(context)
                 }.await;
 

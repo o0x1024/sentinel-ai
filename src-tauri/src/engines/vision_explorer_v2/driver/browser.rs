@@ -163,38 +163,86 @@ impl crate::engines::vision_explorer_v2::driver::BrowserActions for BrowserDrive
     }
 
     async fn capture_context(&self) -> Result<PageContext> {
-        // 1. Get info (URL, Title) using playwright_evaluate
-        let info_script = r#"
-            JSON.stringify({
-                url: window.location.href,
-                title: document.title
-            })
-        "#;
-        let info_val = self.evaluate_script(info_script).await?;
+        // 0. Wait for page load (check readyState)
+        for _ in 0..15 { // Increased wait time to 3s
+            let state_val = self.evaluate_script("document.readyState").await;
+            if let Ok(val) = state_val {
+                if let Some(state) = val.as_str() {
+                    if state == "complete" {
+                        // Extra stabilization wait
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        break;
+                    }
+                } else if let Some(state) = val.as_object().and_then(|o| o.get("text")).and_then(|t| t.as_str()) {
+                     if state == "complete" {
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
 
-        // Handle both string and parsed JSON responses
-        let info: serde_json::Value = if let Some(s) = info_val.as_str() {
-            serde_json::from_str(s).unwrap_or(json!({}))
-        } else {
-            info_val
-        };
+        // 1. Get info (URL, Title) with retry
+        let mut url = String::new();
+        let mut title = String::new();
+        let mut info_val = serde_json::Value::Null;
 
-        let url = info
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let title = info
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        for attempt in 0..5 { // Increased retries
+            let info_script = r#"
+                (function() {
+                    return JSON.stringify({
+                        url: window.location.href,
+                        title: document.title,
+                        readyState: document.readyState
+                    });
+                })()
+            "#;
+            
+            match self.evaluate_script(info_script).await {
+                Ok(val) => {
+                    info_val = val;
+                    let info: serde_json::Value = if let Some(s) = info_val.as_str() {
+                        // Look for JSON within the response (some MCP servers wrap it)
+                        if let Some(json_start) = s.find('{') {
+                            if let Some(json_end) = s.rfind('}') {
+                                let potential_json = &s[json_start..=json_end];
+                                serde_json::from_str(potential_json).unwrap_or(json!({}))
+                            } else {
+                                serde_json::from_str(s).unwrap_or(json!({}))
+                            }
+                        } else {
+                            serde_json::from_str(s).unwrap_or(json!({}))
+                        }
+                    } else {
+                        info_val.clone()
+                    };
 
-        log::debug!(
-            "BrowserDriver: Captured page info - URL: {}, Title: {}",
+                    url = info.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    title = info.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                    if !url.is_empty() && url != "about:blank" && !url.starts_with("data:") {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("BrowserDriver: Failed to get page info (attempt {}): {}", attempt, e);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        // Log at INFO level to debug missing URL issue
+        log::info!(
+            "BrowserDriver: Captured page info - URL: '{}', Title: '{}', Raw Info Type: {:?}",
             url,
-            title
+            title,
+            info_val
         );
+
+        if url.is_empty() {
+            log::warn!("BrowserDriver: WARNING - URL is empty after retries! Raw info_val: {:?}", info_val);
+        }
 
         // 2. Screenshot using playwright_screenshot
         // The tool requires a "name" parameter

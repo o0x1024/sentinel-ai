@@ -77,24 +77,28 @@ impl PlannerAgent {
 
                 if let Some(ctx) = ctx_opt {
                     // === HYBRID STRATEGY: Fast-Pass vs Deep-Dive ===
-                    // Heuristic: If DOM is very small (< 1KB) but screenshot exists,
-                    // or if we detect Canvas, assign VisualAnalyst.
-                    // Otherwise, default to StructuralAnalyst (Fast).
+                    // Heuristic: Use VisualAnalyst only when:
+                    // 1. DOM is extremely small (< 200 bytes) - likely a canvas/dynamic app
+                    // 2. DOM contains heavy canvas/SVG AND is small (< 2KB)
+                    // Otherwise, default to StructuralAnalyst (Fast) for better performance.
 
-                    let is_complex_visual = ctx.dom_snapshot.len() < 1000
-                        || ctx.dom_snapshot.contains("<canvas")
-                        || ctx.dom_snapshot.contains("<svg");
+                    let dom_size = ctx.dom_snapshot.len();
+                    let has_canvas = ctx.dom_snapshot.contains("<canvas");
+                    let has_svg = ctx.dom_snapshot.contains("<svg");
+                    
+                    let is_complex_visual = dom_size < 200 
+                        || (dom_size < 2000 && (has_canvas || has_svg));
 
                     let target_agent = if is_complex_visual {
                         log::info!(
-                            "Current node {} seems VISUALLY COMPLEX. Assigning VisualAnalyst.",
-                            current_id
+                            "Current node {} seems VISUALLY COMPLEX (DOM: {} bytes, Canvas: {}, SVG: {}). Assigning VisualAnalyst.",
+                            current_id, dom_size, has_canvas, has_svg
                         );
                         "visual_analyst"
                     } else {
                         log::info!(
-                            "Current node {} seems Standard. Assigning StructuralAnalyst.",
-                            current_id
+                            "Current node {} seems Standard (DOM: {} bytes). Assigning StructuralAnalyst.",
+                            current_id, dom_size
                         );
                         "structural_analyst"
                     };
@@ -242,6 +246,7 @@ impl Agent for PlannerAgent {
                     if let Some(data) = &result.data {
                         if let Ok(context) = serde_json::from_value::<PageContext>(data.clone()) {
                             let was_authenticated = self.blackboard.is_authenticated().await;
+                            let old_url = self.current_context.read().await.as_ref().map(|c| c.url.clone());
                             
                             // 1. Detect Auth Status Transitions
                             if let Some(old_ctx) = self.current_context.read().await.as_ref() {
@@ -261,6 +266,21 @@ impl Agent for PlannerAgent {
                             let fingerprint = context.fingerprint(self.blackboard.is_authenticated().await);
 
                             let mut graph = self.graph.write().await;
+                            
+                            // 2. Clear old actions if URL changed (page navigation occurred)
+                            if let (Some(old), new) = (old_url.as_ref(), &context.url) {
+                                if old != new {
+                                    log::info!(" Planner: URL changed from '{}' to '{}', clearing old actions queue", old, new);
+                                    // Clear actions from the old node
+                                    if let Some(old_node_id) = self.current_node_id.read().await.as_ref() {
+                                        if let Some(old_node) = graph.get_node_mut(old_node_id) {
+                                            old_node.possible_actions.clear();
+                                            log::debug!(" Planner: Cleared {} pending actions from old page", old_node.possible_actions.len());
+                                        }
+                                    }
+                                }
+                            }
+                            
                             // Check if node exists
                             if !graph.has_state(&fingerprint) {
                                 let node = PageStateNode {

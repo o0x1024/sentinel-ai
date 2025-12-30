@@ -698,10 +698,6 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
-        // Traffic analysis tables
-        // Migrate old table names first
-        self.migrate_traffic_old_tables(pool).await?;
-
         // Vulnerability table
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS traffic_vulnerabilities (

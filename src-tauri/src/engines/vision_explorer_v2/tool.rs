@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 #[derive(Deserialize)]
 pub struct VisionExplorerV2Args {
@@ -118,7 +118,7 @@ impl Tool for VisionExplorerV2Tool {
         }
 
         // Build V2 config
-        let ai_config = crate::engines::vision_explorer_v2::types::AIConfig {
+        let mut ai_config = crate::engines::vision_explorer_v2::types::AIConfig {
             fast_model_id: self.llm_config.model.clone(),
             vision_model_id: self.llm_config.model.clone(),
             fast_provider: self.llm_config.provider.clone(),
@@ -128,6 +128,33 @@ impl Tool for VisionExplorerV2Tool {
             fast_base_url: self.llm_config.base_url.clone(),
             vision_base_url: self.llm_config.base_url.clone(),
         };
+
+        // Try to override with global defaults if app_handle is available
+        if let Some(ref app_handle) = self.app_handle {
+            if let Some(ai_manager) = app_handle.try_state::<Arc<crate::services::ai::AiServiceManager>>() {
+                // Get default LLM (Fast model)
+                if let Ok(Some(model_info)) = ai_manager.get_default_model("llm").await {
+                    if let Ok(Some(provider_cfg)) = ai_manager.get_provider_config(&model_info.provider).await {
+                        log::info!("VisionExplorerV2: Using default LLM model {} ({})", model_info.name, provider_cfg.provider);
+                        ai_config.fast_model_id = model_info.name;
+                        ai_config.fast_provider = provider_cfg.provider;
+                        ai_config.fast_api_key = provider_cfg.api_key;
+                        ai_config.fast_base_url = provider_cfg.api_base;
+                    }
+                }
+                
+                // Get default VLM (Vision model)
+                if let Ok(Some(model_info)) = ai_manager.get_default_model("vlm").await {
+                    if let Ok(Some(provider_cfg)) = ai_manager.get_provider_config(&model_info.provider).await {
+                        log::info!("VisionExplorerV2: Using default VLM model {} ({})", model_info.name, provider_cfg.provider);
+                        ai_config.vision_model_id = model_info.name;
+                        ai_config.vision_provider = provider_cfg.provider;
+                        ai_config.vision_api_key = provider_cfg.api_key;
+                        ai_config.vision_base_url = provider_cfg.api_base;
+                    }
+                }
+            }
+        }
 
         let config = VisionExplorerV2Config {
             target_url: args.url.clone(),

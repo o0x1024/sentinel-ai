@@ -23,12 +23,11 @@ impl VisualAnalyst {
         }
     }
 
-    /// Build the visual analysis prompt
-    fn build_prompt(&self, context: &PageContext) -> String {
-        format!(
-            r#"You are a visual analyst for web application security testing.
+    /// Build the system prompt with fixed rules
+    fn build_system_prompt(&self) -> &'static str {
+        r#"You are a visual analyst for web application security testing.
 
-Analyze this webpage screenshot and identify:
+Analyze webpage screenshots and identify:
 1. **Login/Authentication Forms**: Any login, signup, or password forms
 2. **Navigation Elements**: Menus, sidebars, hamburger icons, tabs, breadcrumbs  
 3. **Interactive Widgets**: Buttons, dropdowns, modals, dialogs, date pickers
@@ -36,30 +35,35 @@ Analyze this webpage screenshot and identify:
 5. **Data Tables**: Tables with potentially sensitive data
 6. **API Indicators**: Elements suggesting API endpoints (fetch buttons, data loaders)
 
-Current Page:
-- URL: {url}
-- Title: {title}
-
 Return a JSON object with this exact structure:
-{{
+{
     "summary": "Brief description of what the page contains",
     "page_type": "login|dashboard|list|form|settings|error|other",
     "has_login_form": true/false,
     "login_form_fields": ["field1", "field2"],
     "suggested_actions": [
-        {{
+        {
             "description": "action description",
             "selector": "CSS selector or element description",
             "action_type": "click|type|scroll|hover",
             "value": "value to type if applicable",
             "confidence": 0.9
-        }}
+        }
     ],
     "detected_errors": ["error message 1", "error message 2"],
     "navigation_items": ["nav item 1", "nav item 2"]
-}}
+}
 
-IMPORTANT: Return ONLY valid JSON, no markdown code blocks or explanations."#,
+IMPORTANT: Return ONLY valid JSON, no markdown code blocks or explanations."#
+    }
+
+    /// Build the user prompt with page-specific context
+    fn build_user_prompt(&self, context: &PageContext) -> String {
+        format!(
+            r#"Analyze the following webpage:
+
+URL: {url}
+Title: {title}"#,
             url = context.url,
             title = context.title
         )
@@ -151,7 +155,8 @@ impl PerceptionEngine for VisualAnalyst {
             ));
         };
 
-        let prompt = self.build_prompt(context);
+        let system_prompt = self.build_system_prompt();
+        let user_prompt = self.build_user_prompt(context);
         let image = ImageAttachment::new(screenshot_base64, "png".to_string());
 
         log::info!(
@@ -162,7 +167,7 @@ impl PerceptionEngine for VisualAnalyst {
 
         let response = self
             .llm_client
-            .completion_with_image(None, &prompt, Some(&image))
+            .completion_with_image(Some(system_prompt), &user_prompt, Some(&image))
             .await?;
 
         log::debug!(

@@ -21,51 +21,56 @@ impl StructuralAnalyst {
         }
     }
 
-    fn build_prompt(&self, context: &PageContext) -> String {
-        format!(
-            r#"You are a structural analyst for web application security testing.
+    /// Build the system prompt with fixed rules
+    fn build_system_prompt(&self) -> &'static str {
+        r#"You are a structural analyst for web application security testing.
 
-Analyze this webpage DOM structure and identify:
+Analyze webpage DOM structure and identify:
 1. **Forms**: Login forms, search forms, data entry forms. For complete forms (like login), suggest a single "fill_form" action instead of multiple "type" actions if possible.
 2. **Navigation**: Links, buttons, menus, tabs
 3. **Interactive Elements**: Buttons, inputs, dropdowns, toggles
 4. **Authentication Indicators**: Login/signup links, user menus, logout buttons
 5. **Data Display**: Tables, lists, cards with data
 
-Current Page:
-- URL: {url}
-- Title: {title}
-
-DOM Structure (simplified):
-{dom}
-
 Return a JSON object with this exact structure:
-{{
+{
     "summary": "Brief description of the page structure",
     "page_type": "login|dashboard|list|form|settings|error|other",
     "has_login_form": true/false,
     "login_fields": [
-        {{"field_id": "username", "field_type": "text", "label": "Username", "selector": "CSS selector"}},
-        {{"field_id": "password", "field_type": "password", "label": "Password", "selector": "CSS selector"}}
+        {"field_id": "username", "field_type": "text", "label": "Username", "selector": "CSS selector"},
+        {"field_id": "password", "field_type": "password", "label": "Password", "selector": "CSS selector"}
     ],
     "navigation_links": [
-        {{"text": "Link text", "href": "/path", "is_menu": false}}
+        {"text": "Link text", "href": "/path", "is_menu": false}
     ],
     "suggested_actions": [
-        {{
+        {
             "description": "action description",
             "selector": "CSS selector or form selector",
             "action_type": "click|type|scroll|hover|submit|fill_form",
-            "value": "string value or JSON string for fill_form: {{\"field_selector\": \"value\", ...}}",
+            "value": "string value or JSON string for fill_form: {\"field_selector\": \"value\", ...}",
             "confidence": 0.9
-        }}
+        }
     ],
     "api_endpoints": ["/api/endpoint1", "/api/endpoint2"]
-}}
+}
 
 Note for "fill_form": Use it for login forms. The "selector" should be the form selector or a common parent. The "value" should be a JSON mapping selectors to values (use "[USERNAME]" and "[PASSWORD]" placeholders for credentials).
 
-IMPORTANT: Return ONLY valid JSON, no markdown code blocks."#,
+IMPORTANT: Return ONLY valid JSON, no markdown code blocks."#
+    }
+
+    /// Build the user prompt with page-specific context
+    fn build_user_prompt(&self, context: &PageContext) -> String {
+        format!(
+            r#"Analyze the following webpage:
+
+URL: {url}
+Title: {title}
+
+DOM Structure (simplified):
+{dom}"#,
             url = context.url,
             title = context.title,
             dom = &context.dom_snapshot[..context.dom_snapshot.len().min(10000)]
@@ -197,7 +202,8 @@ IMPORTANT: Return ONLY valid JSON, no markdown code blocks."#,
 #[async_trait]
 impl PerceptionEngine for StructuralAnalyst {
     async fn analyze(&self, context: &PageContext) -> Result<PerceptionResult> {
-        let prompt = self.build_prompt(context);
+        let system_prompt = self.build_system_prompt();
+        let user_prompt = self.build_user_prompt(context);
 
         log::info!(
             "StructuralAnalyst: Analyzing {} with model {}",
@@ -205,7 +211,7 @@ impl PerceptionEngine for StructuralAnalyst {
             self.model
         );
 
-        let response = self.llm_client.completion(None, &prompt).await?;
+        let response = self.llm_client.completion(Some(system_prompt), &user_prompt).await?;
 
         log::debug!(
             "StructuralAnalyst response: {}",

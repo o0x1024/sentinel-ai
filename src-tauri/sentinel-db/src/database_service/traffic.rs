@@ -17,37 +17,7 @@ use super::service::DatabaseService;
 
 impl DatabaseService {
     /// Migrate old table names
-    pub async fn migrate_traffic_old_tables(&self, pool: &SqlitePool) -> Result<()> {
-        let old_new_tables = vec![
-            ("passive_vulnerabilities", "traffic_vulnerabilities"),
-            ("passive_evidence", "traffic_evidence"),
-            ("passive_dedupe_index", "traffic_dedupe_index"),
-        ];
-
-        for (old_table, new_table) in old_new_tables {
-            let check_query = format!("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{}'", old_table);
-            let count: i64 = sqlx::query_scalar(&check_query)
-                .fetch_one(pool)
-                .await?;
-
-            if count > 0 {
-                info!("Migrating old table {} to {}", old_table, new_table);
-                let rename_query = format!("ALTER TABLE {} RENAME TO {}", old_table, new_table);
-                sqlx::query(&rename_query)
-                    .execute(pool)
-                    .await?;
-            }
-        }
-
-        // Migrate main_category field values
-        let update_category_query = "UPDATE plugin_registry SET main_category = 'traffic' WHERE main_category = 'traffic'";
-        let _ = sqlx::query(update_category_query)
-            .execute(pool)
-            .await;
-
-        Ok(())
-    }
-
+   
     // ============================================================
     // Vulnerability Operations
     // ============================================================

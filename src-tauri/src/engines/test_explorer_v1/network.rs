@@ -1,212 +1,59 @@
-//! Network listener for capturing API requests
+//! Network listener module for Test Explorer V1
+//!
+//! This module provides network request capture functionality.
+//! When using MCP backend, network capture is delegated to the Playwright MCP server.
 
-use anyhow::{anyhow, Result};
-use chromiumoxide::cdp::browser_protocol::network::{
-    EnableParams, EventRequestWillBeSent, EventResponseReceived,
-};
-use chromiumoxide::page::Page;
-use futures::StreamExt;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
-use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use std::time::Duration;
+use anyhow::Result;
+use tracing::{debug, info};
 
 use super::types::ApiRequest;
+use super::driver::BrowserDriver;
 
 /// Network listener for capturing HTTP requests/responses
+/// 
+/// This is a wrapper that delegates to BrowserDriver's MCP-based network capture.
 #[derive(Clone)]
 pub struct NetworkListener {
-    page: Arc<Page>,
-    requests: Arc<RwLock<Vec<ApiRequest>>>,
-    pending_requests: Arc<RwLock<HashMap<String, PendingRequest>>>,
-}
-
-/// Pending request waiting for response
-#[derive(Debug, Clone)]
-struct PendingRequest {
-    request_id: String,
-    method: String,
-    url: String,
-    headers: HashMap<String, String>,
-    request_body: Option<String>,
-    resource_type: String,
-    timestamp: SystemTime,
+    // No internal state needed - uses BrowserDriver
 }
 
 impl NetworkListener {
     /// Create a new network listener
-    pub async fn new(page: Arc<Page>) -> Result<Self> {
-        info!("Initializing NetworkListener");
-
-        // Enable network tracking
-        page.execute(EnableParams::default())
-            .await
-            .map_err(|e| anyhow!("Failed to enable network tracking: {}", e))?;
-
-        let listener = Self {
-            page: page.clone(),
-            requests: Arc::new(RwLock::new(Vec::new())),
-            pending_requests: Arc::new(RwLock::new(HashMap::new())),
-        };
-
-        // Start listening to network events
-        listener.start_listening().await?;
-
-        Ok(listener)
+    pub fn new() -> Self {
+        info!("Initializing NetworkListener (MCP backend)");
+        Self {}
     }
 
-    /// Start listening to network events
-    async fn start_listening(&self) -> Result<()> {
-        let page = self.page.clone();
-        let requests = self.requests.clone();
-        let pending_requests = self.pending_requests.clone();
-
-        // Listen for request events
-        let mut request_stream = page
-            .event_listener::<EventRequestWillBeSent>()
-            .await
-            .map_err(|e| anyhow!("Failed to create request listener: {}", e))?;
-
-        let pending_clone = pending_requests.clone();
-        tokio::spawn(async move {
-            while let Some(event) = request_stream.next().await {
-                let request_id = format!("{:?}", event.request_id);
-                let request = &event.request;
-
-                // Convert headers - chromiumoxide Headers is a HashMap-like structure
-                let mut headers = HashMap::new();
-                let headers_map = &request.headers;
-                // Headers in chromiumoxide is a serde_json::Map
-                if let serde_json::Value::Object(map) = serde_json::to_value(headers_map).unwrap_or(serde_json::json!({})) {
-                    for (key, value) in map.iter() {
-                        if let Some(v) = value.as_str() {
-                            headers.insert(key.clone(), v.to_string());
-                        }
-                    }
-                }
-
-                let pending = PendingRequest {
-                    request_id: request_id.clone(),
-                    method: request.method.clone(),
-                    url: request.url.clone(),
-                    headers,
-                    request_body: None, // TODO: chromiumoxide Binary type doesn't expose inner data
-                    resource_type: "XHR".to_string(), // Simplified: chromiumoxide doesn't expose resource type directly
-                    timestamp: SystemTime::now(),
-                };
-
-                pending_clone.write().await.insert(request_id, pending);
-            }
-        });
-
-        // Listen for response events
-        let mut response_stream = page
-            .event_listener::<EventResponseReceived>()
-            .await
-            .map_err(|e| anyhow!("Failed to create response listener: {}", e))?;
-
-        let page_clone = page.clone();
-        tokio::spawn(async move {
-            while let Some(event) = response_stream.next().await {
-                let request_id = format!("{:?}", event.request_id);
-                let response = &event.response;
-
-                // Get pending request
-                let pending = pending_requests.write().await.remove(&request_id);
-
-                if let Some(pending) = pending {
-                    // Convert response headers
-                    let mut response_headers = HashMap::new();
-                    if let serde_json::Value::Object(map) = serde_json::to_value(&response.headers).unwrap_or(serde_json::json!({})) {
-                        for (key, value) in map.iter() {
-                            if let Some(v) = value.as_str() {
-                                response_headers.insert(key.clone(), v.to_string());
-                            }
-                        }
-                    }
-
-                    // Try to get response body (may fail for some requests)
-                    // Note: We skip body retrieval for now as it requires proper RequestId handling
-                    let response_body: Option<String> = None;
-
-                    let api_request = ApiRequest {
-                        request_id: pending.request_id,
-                        method: pending.method,
-                        url: pending.url,
-                        headers: pending.headers,
-                        request_body: pending.request_body,
-                        response_status: Some(response.status as u16),
-                        response_headers: Some(response_headers),
-                        response_body,
-                        timestamp: pending.timestamp,
-                        resource_type: pending.resource_type,
-                    };
-
-                    // Filter: only capture XHR, Fetch, and Document requests
-                    if matches!(
-                        api_request.resource_type.as_str(),
-                        "XHR" | "Fetch" | "Document"
-                    ) {
-                        debug!(
-                            "Captured API request: {} {}",
-                            api_request.method, api_request.url
-                        );
-                        requests.write().await.push(api_request);
-                    }
-                }
-            }
-        });
-
-        info!("Network listener started");
-        Ok(())
+    /// Start listening to network events via the browser driver
+    pub async fn start(&self, driver: &BrowserDriver) -> Result<()> {
+        driver.start_network_capture().await
     }
 
-    /// Get all captured requests
-    pub async fn get_requests(&self) -> Vec<ApiRequest> {
-        self.requests.read().await.clone()
+    /// Get all captured requests via the browser driver
+    pub async fn get_requests(&self, driver: &BrowserDriver) -> Vec<ApiRequest> {
+        driver.get_captured_requests().await
     }
 
     /// Wait for a request matching the given URL pattern
     pub async fn wait_for_request(
         &self,
+        driver: &BrowserDriver,
         pattern: &str,
         timeout: Duration,
     ) -> Result<ApiRequest> {
-        let start = std::time::Instant::now();
-        let pattern = pattern.to_lowercase();
-
-        loop {
-            if start.elapsed() > timeout {
-                return Err(anyhow!(
-                    "Timeout waiting for request matching pattern: {}",
-                    pattern
-                ));
-            }
-
-            let requests = self.requests.read().await;
-            if let Some(request) = requests
-                .iter()
-                .find(|r| r.url.to_lowercase().contains(&pattern))
-            {
-                return Ok(request.clone());
-            }
-
-            drop(requests);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        driver.wait_for_request(pattern, timeout).await
     }
 
     /// Clear all captured requests
-    pub async fn clear(&self) {
-        self.requests.write().await.clear();
-        self.pending_requests.write().await.clear();
-        info!("Cleared all captured requests");
+    pub async fn clear(&self, _driver: &BrowserDriver) {
+        // Not directly supported via MCP, but we can log the intent
+        debug!("Clear captured requests (not supported in MCP mode)");
     }
 
     /// Export requests as HAR (HTTP Archive) format
-    pub async fn export_har(&self) -> serde_json::Value {
-        let requests = self.requests.read().await;
+    pub async fn export_har(&self, driver: &BrowserDriver) -> serde_json::Value {
+        let requests = driver.get_captured_requests().await;
 
         let entries: Vec<serde_json::Value> = requests
             .iter()
@@ -272,3 +119,8 @@ impl NetworkListener {
     }
 }
 
+impl Default for NetworkListener {
+    fn default() -> Self {
+        Self::new()
+    }
+}
