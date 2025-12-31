@@ -321,8 +321,8 @@ const validateForm = () => {
     return false
   }
   
-  if (formData.prompt.trim().length > 4000) {
-    formErrors.prompt = t('common.validation.maxLength', { max: 4000 })
+  if (formData.prompt.trim().length > 20000) {
+    formErrors.prompt = t('common.validation.maxLength', { max: 20000 })
     return false
   }
   

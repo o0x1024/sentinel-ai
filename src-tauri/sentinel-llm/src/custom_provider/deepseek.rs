@@ -166,6 +166,7 @@ pub async fn stream_deepseek<F>(
     chat_history: Vec<RigMessage>,
     tools_map: HashMap<String, DynamicTool>,
     tools_json: Vec<serde_json::Value>,
+    max_iterations: usize,
     mut on_content: F,
 ) -> Result<String>
 where
@@ -185,7 +186,6 @@ where
     current_messages.extend(convert_message(user_message));
     
     let mut final_content = String::new();
-    let max_iterations = 10;
     
     for _iteration in 0..max_iterations {
         let mut body = json!({

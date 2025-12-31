@@ -19,6 +19,8 @@ pub struct LlmConfig {
     pub rig_provider: Option<String>,
     /// 最大 token 数（用于 Anthropic 等需要显式设置 max_tokens 的提供商）
     pub max_tokens: Option<u32>,
+    /// 最大对话轮数（工具调用循环次数）
+    pub max_turns: Option<usize>,
 }
 
 impl Default for LlmConfig {
@@ -31,6 +33,7 @@ impl Default for LlmConfig {
             timeout_secs: 120,
             rig_provider: None,
             max_tokens: Some(4096),
+            max_turns: Some(100),
         }
     }
 }
@@ -78,6 +81,17 @@ impl LlmConfig {
     /// 获取最大 token 数（默认 4096）
     pub fn get_max_tokens(&self) -> u32 {
         self.max_tokens.unwrap_or(4096)
+    }
+
+    /// 设置最大对话轮数
+    pub fn with_max_turns(mut self, max_turns: usize) -> Self {
+        self.max_turns = Some(max_turns);
+        self
+    }
+
+    /// 获取最大对话轮数（默认 100）
+    pub fn get_max_turns(&self) -> usize {
+        self.max_turns.unwrap_or(100)
     }
 
     /// 获取实际使用的 rig provider（优先使用 rig_provider，否则使用 provider）

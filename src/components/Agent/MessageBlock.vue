@@ -8,8 +8,8 @@
     :status="message.metadata?.status"
   />
   
-  <!-- Tool Call Message - Collapsible Panel -->
-  <div v-else-if="message.type === 'tool_call'" class="tool-call-panel rounded-lg overflow-hidden my-2 bg-base-200 border-l-4" :class="toolPanelBorderClass">
+  <!-- Tool Call Message - Collapsible Panel (only render if has content) -->
+  <div v-else-if="message.type === 'tool_call' && hasToolCallContent" class="tool-call-panel rounded-lg overflow-hidden  bg-base-200 border-l-4" :class="toolPanelBorderClass">
     <!-- Panel Header (always visible) -->
     <div 
       @click="toggleToolPanel" 
@@ -74,8 +74,8 @@
     </div>
   </div>
 
-  <!-- Regular message block for non-tool-call messages -->
-  <div v-else class="message-container group relative max-w-full">
+  <!-- Regular message block for non-tool-call messages (only render if has content) -->
+  <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
     <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden', typeClass]">
       <!-- Actions (overlay) -->
       <div
@@ -206,9 +206,9 @@ const isExpanded = ref(false)
 const copySuccess = ref(false)
 
 // Tool panel collapse states
-const isToolPanelExpanded = ref(true)
+const isToolPanelExpanded = ref(false)
 const isArgsExpanded = ref(false)
-const isResultExpanded = ref(true)
+const isResultExpanded = ref(false)
 
 const toggleDetails = () => {
   isExpanded.value = !isExpanded.value
@@ -338,6 +338,33 @@ const hasToolArgs = computed(() => {
 // Has tool result (合并显示的结果)
 const hasToolResult = computed(() => {
   return !!props.message.metadata?.tool_result
+})
+
+// Check if tool_call message has any content to display
+const hasToolCallContent = computed(() => {
+  if (props.message.type !== 'tool_call') return false
+  
+  // Has content, args, result, or call_id
+  return !!(
+    props.message.content ||
+    hasToolArgs.value ||
+    hasToolResult.value ||
+    props.message.metadata?.tool_call_id
+  )
+})
+
+// Check if regular message has any content to display
+const hasRegularMessageContent = computed(() => {
+  // tool_call messages are handled separately
+  if (props.message.type === 'tool_call') return false
+  
+  // For tool_result, check if has content or args
+  if (props.message.type === 'tool_result') {
+    return !!(props.message.content || hasToolArgs.value)
+  }
+  
+  // For all other message types, check if content is not empty
+  return !!props.message.content && props.message.content.trim().length > 0
 })
 
 // Formatted args

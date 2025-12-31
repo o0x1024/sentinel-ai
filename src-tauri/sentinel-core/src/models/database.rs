@@ -42,6 +42,19 @@ pub struct ExecutionStatistics {
     pub average_execution_time: u64,
 }
 
+/// 记忆执行记录（用于记忆模块持久化）
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MemoryExecution {
+    pub id: String,
+    pub task: String,
+    pub environment: Option<String>,
+    pub tool_calls: Option<String>,
+    pub success: bool,
+    pub error: Option<String>,
+    pub response_excerpt: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// 表统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableStats {

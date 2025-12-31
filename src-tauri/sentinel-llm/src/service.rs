@@ -53,6 +53,9 @@ impl AiService {
         if let Some(ref rig_provider) = self.config.rig_provider {
             config = config.with_rig_provider(rig_provider);
         }
+        if let Some(max_turns) = self.config.max_turns {
+            config = config.with_max_turns(max_turns);
+        }
         config.with_timeout(120)
     }
 

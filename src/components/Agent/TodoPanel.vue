@@ -4,6 +4,13 @@
       <span class="todo-title font-bold">📋 To-dos</span>
       <span class="todo-count bg-base-300 px-1.5 py-0.5 rounded text-xs">{{ rootTodos.length }}</span>
       <span class="todo-progress ml-auto text-xs text-success" v-if="progress > 0">{{ progress }}%</span>
+      <button 
+        @click="$emit('close')"
+        class="btn btn-ghost btn-xs ml-2"
+        title="Close"
+      >
+        <i class="fas fa-times"></i>
+      </button>
     </div>
     
     <div class="todo-list flex flex-col gap-1">
@@ -27,6 +34,10 @@ import TodoItem from './TodoItem.vue'
 
 const props = defineProps<{
   todos: Todo[]
+}>()
+
+defineEmits<{
+  close: []
 }>()
 
 // Top-level tasks (no parent_id)

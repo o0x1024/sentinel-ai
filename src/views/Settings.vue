@@ -174,7 +174,8 @@ const settings = ref({
   ai: {
     temperature: 0.7,
     maxTokens: 2000,
-    toolOutputLimit: 50000
+    toolOutputLimit: 50000,
+    maxTurns: 100
   },
   database: {
     type: 'sqlite',
@@ -456,6 +457,12 @@ const loadSettings = async () => {
          const limit = parseInt(configMap.get('tool_output_limit') || '50000')
          settings.value.ai.toolOutputLimit = limit
       }
+      
+      // max_turns
+      if (configMap.has('max_turns')) {
+         const maxTurns = parseInt(configMap.get('max_turns') || '100')
+         settings.value.ai.maxTurns = maxTurns
+      }
     } catch (e) {
       console.warn('Failed to load extra AI configs', e)
       // 默认启用多模态
@@ -679,15 +686,17 @@ const saveAiConfig = async () => {
   try {
     await invoke('save_ai_config', { config: aiConfig.value })
     
-    // 保存 tool_output_limit
+    // 保存 tool_output_limit 和 max_turns
     try {
        const toolLimit = settings.value.ai?.toolOutputLimit || 50000
+       const maxTurns = settings.value.ai?.maxTurns || 100
        const configs = [
-          { category: 'ai', key: 'tool_output_limit', value: String(toolLimit), description: 'Max chars for tool output', is_encrypted: false }
+          { category: 'ai', key: 'tool_output_limit', value: String(toolLimit), description: 'Max chars for tool output', is_encrypted: false },
+          { category: 'ai', key: 'max_turns', value: String(maxTurns), description: 'Max conversation turns for tool calls', is_encrypted: false }
        ]
        await invoke('save_config_batch', { configs })
     } catch(e) {
-       console.error('Failed to save tool limit', e)
+       console.error('Failed to save tool limit and max turns', e)
     }
 
     dialog.toast.success('AI配置已保存')

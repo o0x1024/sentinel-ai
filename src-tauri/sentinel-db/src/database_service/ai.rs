@@ -407,6 +407,50 @@ impl DatabaseService {
         Ok(())
     }
 
+    /// Delete all messages after a specific message (by timestamp)
+    pub async fn delete_ai_messages_after_internal(&self, conversation_id: &str, message_id: &str) -> Result<u64> {
+        let pool = self.get_pool()?;
+        
+        // First get the timestamp of the target message
+        let timestamp: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT timestamp FROM ai_messages WHERE id = ? AND conversation_id = ?"
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await?;
+
+        let timestamp = match timestamp {
+            Some(ts) => ts,
+            None => return Err(anyhow::anyhow!("Message not found: {}", message_id)),
+        };
+
+        // Delete all messages with timestamp greater than the target message
+        let result = sqlx::query(
+            "DELETE FROM ai_messages WHERE conversation_id = ? AND timestamp > ?"
+        )
+        .bind(conversation_id)
+        .bind(timestamp)
+        .execute(pool)
+        .await?;
+
+        let deleted_count = result.rows_affected();
+
+        // Update conversation's message count
+        if deleted_count > 0 {
+            sqlx::query(
+                "UPDATE ai_conversations SET total_messages = total_messages - ?, updated_at = ? WHERE id = ?"
+            )
+            .bind(deleted_count as i64)
+            .bind(Utc::now())
+            .bind(conversation_id)
+            .execute(pool)
+            .await?;
+        }
+
+        Ok(deleted_count)
+    }
+
     pub async fn update_ai_usage_internal(
         &self,
         provider: &str,

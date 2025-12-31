@@ -3,7 +3,6 @@
 //! Provides LLM client utilities.
 //! Agent execution is now handled by rig-core.
 
-pub mod memory;
 pub mod types;
 pub mod vision_explorer_v2;
 pub mod test_explorer_v1;

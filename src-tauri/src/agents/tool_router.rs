@@ -234,6 +234,23 @@ impl ToolRouter {
                 cost_estimate: ToolCost::Medium,
                 always_available: false,
             },
+            ToolMetadata {
+                id: "web_search".to_string(),
+                name: "web_search".to_string(),
+                description: "Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups."
+                    .to_string(),
+                category: ToolCategory::Network,
+                tags: vec![
+                    "search".to_string(),
+                    "web".to_string(),
+                    "internet".to_string(),
+                    "information".to_string(),
+                    "research".to_string(),
+                    "tavily".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
             // 系统工具
             ToolMetadata {
                 id: "local_time".to_string(),

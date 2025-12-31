@@ -439,6 +439,8 @@ impl StreamingLlmClient {
             tools_map.insert(name, t);
         }
 
+        let max_turns = self.config.get_max_turns();
+        
         crate::custom_provider::stream_deepseek(
             http_client,
             self.config.base_url.clone().unwrap_or_else(|| "https://api.deepseek.com".to_string()),
@@ -449,6 +451,7 @@ impl StreamingLlmClient {
             chat_history,
             tools_map,
             tools_json,
+            max_turns,
             on_content
         ).await
     }
@@ -585,18 +588,21 @@ impl StreamingLlmClient {
         let mut tool_call_names: HashMap<String, String> = HashMap::new();
         info!("Starting stream iteration...");
 
+        let max_turns = self.config.get_max_turns();
+        info!("Using max_turns: {}", max_turns);
+
         let stream_result = if chat_history.is_empty() {
             info!("Using stream_prompt for empty chat history");
             tokio::time::timeout(
                 timeout,
-                agent.stream_prompt(user_message).multi_turn(100),
+                agent.stream_prompt(user_message).multi_turn(max_turns),
             )
             .await
         } else {
             info!("Using stream_chat with {} history messages", chat_history.len());
             tokio::time::timeout(
                 timeout,
-                agent.stream_chat(user_message, chat_history).multi_turn(100),
+                agent.stream_chat(user_message, chat_history).multi_turn(max_turns),
             )
             .await
         };

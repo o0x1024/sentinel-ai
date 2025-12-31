@@ -3,7 +3,7 @@ use async_trait::async_trait;
 
 use crate::core::models::ai::AiRole;
 use crate::core::models::database::{
-    AiConversation, AiMessage, Configuration, NotificationRule, ScanTask, Vulnerability, ToolExecution, DatabaseStats, ExecutionStatistics, McpServerConfig
+    AiConversation, AiMessage, Configuration, NotificationRule, ScanTask, Vulnerability, ToolExecution, DatabaseStats, ExecutionStatistics, McpServerConfig, MemoryExecution
 };
 use crate::core::models::agent::{
     AgentTask, AgentSessionData, AgentExecutionResult, SessionLog,
@@ -21,6 +21,8 @@ use crate::core::models::scan_session::{
     ScanSession, ScanStage, ScanProgress, CreateScanSessionRequest, UpdateScanSessionRequest,
     ScanSessionStatus,
 };
+use chrono::DateTime;
+use chrono::Utc;
 
 use crate::database_service::service::DatabaseService;
 use crate::database_service::traits::Database;
@@ -64,6 +66,9 @@ impl Database for DatabaseService {
     }
     async fn delete_ai_messages_by_conversation(&self, conversation_id: &str) -> Result<()> {
         Self::delete_ai_messages_by_conversation_internal(self, conversation_id).await
+    }
+    async fn delete_ai_messages_after(&self, conversation_id: &str, message_id: &str) -> Result<u64> {
+        Self::delete_ai_messages_after_internal(self, conversation_id, message_id).await
     }
     async fn update_ai_usage(&self, provider: &str, model: &str, input_tokens: i32, output_tokens: i32, cost: f64) -> Result<()> {
         Self::update_ai_usage_internal(self, provider, model, input_tokens, output_tokens, cost).await
@@ -235,6 +240,14 @@ impl Database for DatabaseService {
     }
     async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()> {
         Self::update_agent_execution_step_status_internal(self, step_id, status, started_at, completed_at, duration_ms, error_message).await
+    }
+
+    // Memory
+    async fn create_memory_execution(&self, record: &MemoryExecution) -> Result<()> {
+        Self::create_memory_execution_internal(self, record).await
+    }
+    async fn get_memory_executions_since(&self, since: Option<DateTime<Utc>>, limit: i64) -> Result<Vec<MemoryExecution>> {
+        Self::get_memory_executions_since_internal(self, since, limit).await
     }
 
     // Workflow Run

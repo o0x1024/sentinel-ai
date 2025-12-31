@@ -42,6 +42,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert("local_time".to_string(), true);
     map.insert("shell".to_string(), true);
     map.insert("subdomain_brute".to_string(), true);
+    map.insert("web_search".to_string(), true);
     RwLock::new(map)
 });
 
@@ -227,6 +228,35 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                     }
                 },
                 "required": ["domains"]
+            })),
+        },
+        BuiltinToolInfo {
+            id: "web_search".to_string(),
+            name: "web_search".to_string(),
+            description: "Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups.".to_string(),
+            category: "network".to_string(),
+            version: "1.0.0".to_string(),
+            enabled: *states.get("web_search").unwrap_or(&true),
+            input_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default: 5)",
+                        "default": 5
+                    },
+                    "search_depth": {
+                        "type": "string",
+                        "description": "Search depth: 'basic' or 'advanced' (default: 'basic')",
+                        "default": "basic",
+                        "enum": ["basic", "advanced"]
+                    }
+                },
+                "required": ["query"]
             })),
         },
     ];

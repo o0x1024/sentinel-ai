@@ -30,6 +30,7 @@ export interface UseTodosReturn {
   // 方法
   getChildren: (parentId: string) => Todo[]
   getIndicator: (status: TodoStatus) => string
+  clearTodos: () => void
   
   // 生命周期
   startListening: () => Promise<void>
@@ -82,6 +83,11 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     return getTodoIndicator(status)
   }
 
+  // 清空 todos
+  const clearTodos = (): void => {
+    todos.value = []
+  }
+
   // 开始监听事件
   const startListening = async (): Promise<void> => {
     if (unlisten) return // 已在监听
@@ -124,6 +130,7 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     currentTask,
     getChildren,
     getIndicator,
+    clearTodos,
     startListening,
     stopListening,
   }

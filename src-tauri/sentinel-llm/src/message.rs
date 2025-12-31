@@ -13,7 +13,7 @@ use serde_json::Value;
 /// 聊天消息（用于多轮对话历史）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    /// 角色：user 或 assistant
+    /// 角色：user 或 assistant 或 tool
     pub role: String,
     /// 消息内容
     pub content: String,
@@ -23,6 +23,9 @@ pub struct ChatMessage {
     /// 推理内容（deepseek-reasoner 模型需要）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
+    /// 工具调用 ID（仅 tool 消息）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 impl ChatMessage {
@@ -33,6 +36,7 @@ impl ChatMessage {
             content: content.into(),
             tool_calls: None,
             reasoning_content: None,
+            tool_call_id: None,
         }
     }
 
@@ -43,6 +47,7 @@ impl ChatMessage {
             content: content.into(),
             tool_calls: None,
             reasoning_content: None,
+            tool_call_id: None,
         }
     }
 
@@ -53,6 +58,18 @@ impl ChatMessage {
             content: content.into(),
             tool_calls: None,
             reasoning_content: None,
+            tool_call_id: None,
+        }
+    }
+
+    /// 创建工具消息
+    pub fn tool(content: impl Into<String>, tool_call_id: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            reasoning_content: None,
+            tool_call_id: Some(tool_call_id.into()),
         }
     }
 }
@@ -140,10 +157,10 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                     if content.is_empty() {
                         return None;
                     }
-                    // tool 消息需要 tool_call_id，可以从 metadata 或 tool_calls 中提取
-                    // 由于 rig 的 Message::tool_result 需要 id 和 content，我们简化处理
-                    // 实际上 tool 消息在当前实现中是通过 rig 自动处理的
-                    None
+                    // tool 消息必须有 tool_call_id
+                    let tool_call_id = msg.tool_call_id.as_ref()?.clone();
+                    
+                    Some(Message::tool_result(tool_call_id, content.to_string()))
                 },
                 _ => None,
             }

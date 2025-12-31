@@ -411,6 +411,21 @@
                   <span class="label-text-alt">{{ t('settings.ai.toolOutputLimitHint') }}</span>
                 </label>
               </div>
+
+              <!-- 最大对话轮数设置 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.maxTurns') }}</span>
+                </label>
+                <div class="flex items-center gap-4">
+                  <input v-model.number="settings.ai.maxTurns" type="range" min="10" max="200" step="10"
+                    class="range range-accent flex-1" @change="saveAiConfig" />
+                  <span class="text-sm min-w-[60px]">{{ settings.ai.maxTurns || 100 }}</span>
+                </div>
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.ai.maxTurnsHint') }}</span>
+                </label>
+              </div>
             </div>
           </div>
         </div>

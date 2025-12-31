@@ -1826,8 +1826,6 @@ export default {
     aiInputPlaceholder: 'Describe your changes...',
     contextMenuHint: 'Right-click code to quickly reference in AI assistant',
     fullCode: 'Full Code',
-    test: 'Test',
-    testPlugin: 'Test Plugin',
     editorMinimized: 'Editor minimized',
     codeFormatted: 'Code formatted',
     includeCodeContext: 'Include code context',
@@ -1840,7 +1838,6 @@ export default {
     cancelEdit: 'Cancel Edit',
     creating: 'Creating...',
     // Code selection
-    fullCode: 'Full Code',
     selectedLines: 'Selected Code',
     lines: 'Lines',
     addSelection: 'Add Selection',

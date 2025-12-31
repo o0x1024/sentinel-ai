@@ -5,6 +5,7 @@
 use anyhow::Result;
 use sentinel_db::Database;
 use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
+use sentinel_memory::{get_global_memory, ExecutionRecord, MemoryContextRequest, ToolCallSummary};
 use sentinel_tools::{get_tool_server, mcp_adapter, ToolServer};
 use serde_json::json;
 use std::sync::Arc;
@@ -46,6 +47,17 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
             .map(|c| c.enabled)
             .unwrap_or(false)
     );
+
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        if let Ok(client) = db.get_db() {
+            get_global_memory().set_database_client(client).await;
+        }
+        
+        // Load Tavily API key from database and set it globally
+        if let Ok(api_key) = db.get_config("ai", "tavily_api_key").await {
+            sentinel_tools::tool_server::set_tavily_api_key(api_key).await;
+        }
+    }
 
     // 初始化全局工具服务器
     let tool_server = get_tool_server();
@@ -257,6 +269,30 @@ async fn execute_agent_simple(
         config = config.with_base_url(api_base);
     }
 
+    let memory_context = match get_global_memory()
+        .build_context(MemoryContextRequest {
+            task: params.task.clone(),
+            environment: Some(rig_provider.clone()),
+            tool_names: Vec::new(),
+            max_results: 5,
+        })
+        .await
+    {
+        Ok(context) => context,
+        Err(e) => {
+            tracing::warn!("Failed to load memory context: {}", e);
+            None
+        }
+    };
+
+    let mut system_prompt = params.system_prompt.clone();
+    if let Some(context) = memory_context {
+        if !system_prompt.trim().is_empty() {
+            system_prompt.push_str("\n\n");
+        }
+        system_prompt.push_str(&context);
+    }
+
     // 创建流式客户端
     let client = StreamingLlmClient::new(config);
 
@@ -267,7 +303,7 @@ async fn execute_agent_simple(
     // 执行流式调用
     let result = client
         .stream_completion(
-            Some(&params.system_prompt),
+            Some(&system_prompt),
             &params.task,
             |content| {
                 if crate::commands::ai::is_conversation_cancelled(&execution_id) {
@@ -349,6 +385,28 @@ async fn execute_agent_simple(
                                 "output_tokens": output_tokens,
                             }),
                         );
+                        
+                        // 记录 token 使用统计到数据库
+                        if input_tokens > 0 || output_tokens > 0 {
+                            use tauri::Manager;
+                            if let Some(db) = app.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>() {
+                                let provider = params.rig_provider.clone();
+                                let model = params.model.clone();
+                                let cost = sentinel_llm::calculate_cost(&provider, &model, input_tokens, output_tokens);
+                                
+                                let db_clone = db.inner().clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = db_clone.update_ai_usage(&provider, &model, input_tokens as i32, output_tokens as i32, cost).await {
+                                        tracing::warn!("Failed to update AI usage stats: {}", e);
+                                    } else {
+                                        tracing::info!(
+                                            "Updated AI usage: provider={}, model={}, input={}, output={}, cost=${:.4}",
+                                            provider, model, input_tokens, output_tokens, cost
+                                        );
+                                    }
+                                });
+                            }
+                        }
                     }
                     StreamContent::Done => {
                         tracing::info!("Agent completed - execution_id: {}", execution_id);
@@ -370,6 +428,22 @@ async fn execute_agent_simple(
             // 保存助手消息到数据库（无工具调用）
             save_assistant_message(app_handle, &params.execution_id, &response, None, None).await;
 
+            if let Err(e) = get_global_memory()
+                .record_execution(ExecutionRecord {
+                    id: params.execution_id.clone(),
+                    task: params.task.clone(),
+                    environment: Some(rig_provider.clone()),
+                    tool_calls: Vec::new(),
+                    success: true,
+                    error: None,
+                    response_excerpt: Some(truncate_for_memory(&response, 400)),
+                    created_at: chrono::Utc::now().timestamp(),
+                })
+                .await
+            {
+                tracing::warn!("Failed to store memory record: {}", e);
+            }
+
             Ok(response)
         }
         Err(e) => {
@@ -378,6 +452,21 @@ async fn execute_agent_simple(
                 params.execution_id,
                 e
             );
+            if let Err(e) = get_global_memory()
+                .record_execution(ExecutionRecord {
+                    id: params.execution_id.clone(),
+                    task: params.task.clone(),
+                    environment: Some(rig_provider.clone()),
+                    tool_calls: Vec::new(),
+                    success: false,
+                    error: Some(e.to_string()),
+                    response_excerpt: None,
+                    created_at: chrono::Utc::now().timestamp(),
+                })
+                .await
+            {
+                tracing::warn!("Failed to store memory record: {}", e);
+            }
             Err(e)
         }
     }
@@ -541,6 +630,29 @@ async fn execute_agent_with_tools(
     } else {
         params.system_prompt.clone()
     };
+
+    let memory_context = match get_global_memory()
+        .build_context(MemoryContextRequest {
+            task: params.task.clone(),
+            environment: Some(rig_provider.clone()),
+            tool_names: selected_tool_ids.clone(),
+            max_results: 5,
+        })
+        .await
+    {
+        Ok(context) => context,
+        Err(e) => {
+            tracing::warn!("Failed to load memory context: {}", e);
+            None
+        }
+    };
+
+    if let Some(context) = memory_context {
+        if !final_system_prompt.trim().is_empty() {
+            final_system_prompt.push_str("\n\n");
+        }
+        final_system_prompt.push_str(&context);
+    }
 
     // Inject execution_id for task_planner tool
     final_system_prompt.push_str(&format!(
@@ -869,6 +981,28 @@ async fn execute_agent_with_tools(
                             "output_tokens": output_tokens,
                         }),
                     );
+                    
+                    // 记录 token 使用统计到数据库
+                    if input_tokens > 0 || output_tokens > 0 {
+                        use tauri::Manager;
+                        if let Some(db) = app.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>() {
+                            let provider = params.rig_provider.clone();
+                            let model = params.model.clone();
+                            let cost = sentinel_llm::calculate_cost(&provider, &model, input_tokens, output_tokens);
+                            
+                            let db_clone = db.inner().clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = db_clone.update_ai_usage(&provider, &model, input_tokens as i32, output_tokens as i32, cost).await {
+                                    tracing::warn!("Failed to update AI usage stats: {}", e);
+                                } else {
+                                    tracing::info!(
+                                        "Updated AI usage: provider={}, model={}, input={}, output={}, cost=${:.4}",
+                                        provider, model, input_tokens, output_tokens, cost
+                                    );
+                                }
+                            });
+                        }
+                    }
                 }
                 StreamContent::Done => {
                     tracing::info!("Stream completed - execution_id: {}", execution_id);
@@ -929,6 +1063,36 @@ async fn execute_agent_with_tools(
             // during streaming, to preserve strict event ordering when reloading history.
             // So we intentionally do NOT save a single aggregated assistant message here.
 
+            let tool_summaries = tool_calls_collector
+                .lock()
+                .map(|calls| {
+                    calls
+                        .iter()
+                        .map(|call| ToolCallSummary {
+                            name: call.name.clone(),
+                            success: call.success,
+                            duration_ms: Some(call.duration_ms),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            if let Err(e) = get_global_memory()
+                .record_execution(ExecutionRecord {
+                    id: params.execution_id.clone(),
+                    task: params.task.clone(),
+                    environment: Some(rig_provider.clone()),
+                    tool_calls: tool_summaries,
+                    success: true,
+                    error: None,
+                    response_excerpt: Some(truncate_for_memory(&response, 400)),
+                    created_at: chrono::Utc::now().timestamp(),
+                })
+                .await
+            {
+                tracing::warn!("Failed to store memory record: {}", e);
+            }
+
             // 记录工具使用（用于智能选择学习）
             // FIXME: record_tool_usage signature mismatch
             // for tool_id in &selected_tool_ids {
@@ -943,9 +1107,47 @@ async fn execute_agent_with_tools(
                 params.execution_id,
                 e
             );
+            let tool_summaries = tool_calls_collector
+                .lock()
+                .map(|calls| {
+                    calls
+                        .iter()
+                        .map(|call| ToolCallSummary {
+                            name: call.name.clone(),
+                            success: call.success,
+                            duration_ms: Some(call.duration_ms),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            if let Err(err) = get_global_memory()
+                .record_execution(ExecutionRecord {
+                    id: params.execution_id.clone(),
+                    task: params.task.clone(),
+                    environment: Some(rig_provider.clone()),
+                    tool_calls: tool_summaries,
+                    success: false,
+                    error: Some(e.to_string()),
+                    response_excerpt: None,
+                    created_at: chrono::Utc::now().timestamp(),
+                })
+                .await
+            {
+                tracing::warn!("Failed to store memory record: {}", err);
+            }
             Err(e)
         }
     }
+}
+
+fn truncate_for_memory(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        return text.to_string();
+    }
+    let mut out = text.chars().take(max_len).collect::<String>();
+    out.push_str("...");
+    out
 }
 
 /// 工具调用结构

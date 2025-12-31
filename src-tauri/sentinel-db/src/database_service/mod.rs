@@ -3,6 +3,7 @@ pub mod ai;
 pub mod config;
 pub mod init;
 pub mod migrations;
+pub mod memory;
 pub mod plugin;
 pub mod rag;
 pub mod scan;
@@ -27,6 +28,8 @@ pub use ai::*;
 pub use config::*;
 #[allow(unused_imports)]
 pub use init::*;
+#[allow(unused_imports)]
+pub use memory::*;
 #[allow(unused_imports)]
 pub use plugin::*;
 #[allow(unused_imports)]

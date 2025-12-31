@@ -450,6 +450,7 @@ function getToolIcon(toolName: string) {
     case 'vision_explorer': 
     case 'vision_explorer_v2': return 'fas fa-eye'
     case 'test_explorer': return 'fas fa-globe'
+    case 'web_search': return 'fas fa-search'
     default: return 'fas fa-tools'
   }
 }

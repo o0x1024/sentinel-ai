@@ -133,6 +133,38 @@ impl DatabaseService {
                 .await?;
         }
 
+        // Ensure memory_executions table exists
+        let memory_table_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_executions'",
+        )
+        .fetch_one(pool)
+        .await?;
+
+        if memory_table_exists == 0 {
+            info!("Creating memory_executions table...");
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS memory_executions (
+                    id TEXT PRIMARY KEY,
+                    task TEXT NOT NULL,
+                    environment TEXT,
+                    tool_calls TEXT,
+                    success BOOLEAN NOT NULL,
+                    error TEXT,
+                    response_excerpt TEXT,
+                    created_at TEXT NOT NULL
+                )"#,
+            )
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                r#"CREATE INDEX IF NOT EXISTS idx_memory_executions_created_at
+                   ON memory_executions(created_at)"#,
+            )
+            .execute(pool)
+            .await?;
+        }
+
         // 检查并创建字典相关表
         let table_exists: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='dictionaries'"

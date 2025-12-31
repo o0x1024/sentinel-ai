@@ -7,6 +7,8 @@ use sentinel_core::models::prompt::{
     PromptTemplate,
     PromptCategory, TemplateType,
 };
+use sentinel_core::models::database::MemoryExecution;
+use chrono::{DateTime, Utc};
 
 #[derive(Clone, Debug)]
 pub struct DatabaseClient {
@@ -135,6 +137,18 @@ impl DatabaseClient {
         conversation_id: &str,
     ) -> Result<Vec<sentinel_core::models::database::AiMessage>> {
         self.service.get_ai_messages_by_conversation(conversation_id).await
+    }
+
+    // Memory
+    pub async fn create_memory_execution(&self, record: &MemoryExecution) -> Result<()> {
+        self.service.create_memory_execution(record).await
+    }
+    pub async fn get_memory_executions_since(
+        &self,
+        since: Option<DateTime<Utc>>,
+        limit: i64,
+    ) -> Result<Vec<MemoryExecution>> {
+        self.service.get_memory_executions_since(since, limit).await
     }
 
     // Scan tasks

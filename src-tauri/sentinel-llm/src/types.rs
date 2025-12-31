@@ -16,6 +16,9 @@ pub struct AiConfig {
     /// rig 提供商类型（用于选择正确的 client）
     #[serde(default)]
     pub rig_provider: Option<String>,
+    /// 最大对话轮数（工具调用循环次数）
+    #[serde(default)]
+    pub max_turns: Option<usize>,
 }
 
 impl Default for AiConfig {
@@ -29,6 +32,7 @@ impl Default for AiConfig {
             temperature: Some(0.7),
             max_tokens: Some(4096),
             rig_provider: None,
+            max_turns: Some(100),
         }
     }
 }

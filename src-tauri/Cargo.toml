@@ -25,6 +25,7 @@ sentinel-core = { path = "sentinel-core" }
 sentinel-db = { path = "sentinel-db" }
 sentinel-prompt = { path = "sentinel-prompt" }
 sentinel-rag = { path = "sentinel-rag" }
+sentinel-memory = { path = "sentinel-memory" }
 sentinel-tools = { path = "sentinel-tools" }
 sentinel-services = { path = "sentinel-services" }
 sentinel-workflow = { path = "sentinel-workflow" }
@@ -252,6 +253,7 @@ members = [
     "sentinel-db",
     "sentinel-prompt",
     "sentinel-rag",
+    "sentinel-memory",
     "sentinel-tools",
     "sentinel-traffic",
     "sentinel-plugins",

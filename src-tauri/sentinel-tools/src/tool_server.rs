@@ -18,9 +18,24 @@ use crate::dynamic_tool::{
 /// Global tool server instance
 static TOOL_SERVER: Lazy<Arc<ToolServer>> = Lazy::new(|| Arc::new(ToolServer::new()));
 
+/// Global Tavily API key storage
+static TAVILY_API_KEY: Lazy<Arc<RwLock<Option<String>>>> = Lazy::new(|| Arc::new(RwLock::new(None)));
+
 /// Get the global tool server instance
 pub fn get_tool_server() -> Arc<ToolServer> {
     TOOL_SERVER.clone()
+}
+
+/// Set the Tavily API key for web search
+pub async fn set_tavily_api_key(api_key: Option<String>) {
+    let mut key = TAVILY_API_KEY.write().await;
+    *key = api_key;
+}
+
+/// Get the Tavily API key
+pub async fn get_tavily_api_key() -> Option<String> {
+    let key = TAVILY_API_KEY.read().await;
+    key.clone()
 }
 
 /// Tool execution result
@@ -369,6 +384,58 @@ impl ToolServer {
 
         self.registry.register(task_planner_def).await;
 
+        // Register web_search tool
+        let web_search_def = DynamicToolBuilder::new("web_search")
+            .description("Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results",
+                        "default": 5
+                    },
+                    "search_depth": {
+                        "type": "string",
+                        "description": "Search depth: 'basic' or 'advanced'",
+                        "default": "basic",
+                        "enum": ["basic", "advanced"]
+                    }
+                },
+                "required": ["query"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::web_search::WebSearchArgs;
+                use rig::tool::Tool;
+                
+                let tool_args: WebSearchArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                // Get API key from global storage
+                let api_key = get_tavily_api_key().await;
+                
+                let tool = if let Some(key) = api_key {
+                    crate::buildin_tools::WebSearchTool::with_api_key(key)
+                } else {
+                    crate::buildin_tools::WebSearchTool::default()
+                };
+                
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Web search failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build web_search tool");
+
+        self.registry.register(web_search_def).await;
+
         *initialized = true;
         tracing::info!("Builtin tools initialized");
     }
@@ -629,13 +696,16 @@ mod tests {
         let server = ToolServer::new();
         server.init_builtin_tools().await;
         
-        assert!(server.tool_count().await >= 4);
+        assert!(server.tool_count().await >= 7);
         
         // Check builtin tools exist
         assert!(server.get_tool("port_scan").await.is_some());
         assert!(server.get_tool("http_request").await.is_some());
         assert!(server.get_tool("local_time").await.is_some());
         assert!(server.get_tool("shell").await.is_some());
+        assert!(server.get_tool("subdomain_brute").await.is_some());
+        assert!(server.get_tool("task_planner").await.is_some());
+        assert!(server.get_tool("web_search").await.is_some());
     }
 
     #[tokio::test]

@@ -1939,12 +1939,8 @@ export default {
       custom: '自定义'
     },
     // AI Assistant in code editor
-    aiAssistant: 'AI 助手',
     aiAssistantHint: '描述你想要的修改，AI 将帮助你编辑代码',
-    aiInputPlaceholder: '描述你想要的修改...',
-    contextMenuHint: '右键点击代码可快速引用到 AI 助手',
-    test: '测试',
-    testPlugin: '测试插件',
+
     editorMinimized: '编辑器已最小化',
     codeFormatted: '代码已格式化',
     includeCodeContext: '包含代码上下文',
@@ -1957,7 +1953,6 @@ export default {
     cancelEdit: '取消编辑',
     creating: '创建中...',
     // Code selection
-    fullCode: '完整代码',
     selectedLines: '选中代码',
     lines: '行',
     addSelection: '添加选中',
@@ -1967,7 +1962,6 @@ export default {
     noCodeSelected: '请先在编辑器中选择代码',
     noCode: '没有代码',
     // Test result reference
-    testPlugin: '测试插件',
     testResultRef: '测试结果',
     addTestResult: '添加测试结果',
     noTestResult: '请先运行插件测试',

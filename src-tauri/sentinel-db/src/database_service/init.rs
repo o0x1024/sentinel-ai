@@ -311,6 +311,25 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
+        // Memory executions (agent memory persistence)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS memory_executions (
+                id TEXT PRIMARY KEY,
+                task TEXT NOT NULL,
+                environment TEXT,
+                tool_calls TEXT,
+                success BOOLEAN NOT NULL,
+                error TEXT,
+                response_excerpt TEXT,
+                created_at TEXT NOT NULL
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_memory_executions_created_at
+               ON memory_executions(created_at)"#
+        ).execute(pool).await?;
+
         // 插件和收藏表
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS plugin_registry (

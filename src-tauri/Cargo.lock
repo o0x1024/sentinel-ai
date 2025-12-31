@@ -10613,6 +10613,7 @@ dependencies = [
  "sentinel-db",
  "sentinel-license",
  "sentinel-llm",
+ "sentinel-memory",
  "sentinel-notify",
  "sentinel-plugins",
  "sentinel-prompt",
@@ -10740,6 +10741,20 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sentinel-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "sentinel-core",
+ "sentinel-db",
+ "serde",
+ "serde_json",
+ "tokio",
  "uuid",
 ]
 

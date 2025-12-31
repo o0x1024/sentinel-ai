@@ -459,6 +459,13 @@ pub async fn get_ai_config(
         }
     }
 
+    if let Ok(Some(max_turns_str)) = db.get_config_internal("ai", "max_turns").await {
+        if let Ok(max_turns) = max_turns_str.parse::<u32>() {
+            ai_config["max_turns"] =
+                serde_json::Value::Number(serde_json::Number::from(max_turns));
+        }
+    }
+
     tracing::info!("Successfully retrieved AI configuration");
     Ok(ai_config)
 }

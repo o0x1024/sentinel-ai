@@ -3,7 +3,7 @@ use async_trait::async_trait;
 
 use crate::core::models::ai::AiRole;
 use crate::core::models::database::{
-    AiConversation, AiMessage, Configuration, NotificationRule, ScanTask, Vulnerability, ToolExecution, DatabaseStats, ExecutionStatistics, McpServerConfig
+    AiConversation, AiMessage, Configuration, NotificationRule, ScanTask, Vulnerability, ToolExecution, DatabaseStats, ExecutionStatistics, McpServerConfig, MemoryExecution
 };
 use crate::core::models::agent::{
     AgentTask, AgentSessionData, AgentExecutionResult, SessionLog,
@@ -40,6 +40,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<AiMessage>>;
     async fn delete_ai_message(&self, message_id: &str) -> Result<()>;
     async fn delete_ai_messages_by_conversation(&self, conversation_id: &str) -> Result<()>;
+    async fn delete_ai_messages_after(&self, conversation_id: &str, message_id: &str) -> Result<u64>;
     async fn update_ai_usage(&self, provider: &str, model: &str, input_tokens: i32, output_tokens: i32, cost: f64) -> Result<()>;
     async fn get_ai_usage_stats(&self) -> Result<Vec<crate::core::models::database::AiUsageStats>>;
     async fn get_aggregated_ai_usage(&self) -> Result<std::collections::HashMap<String, crate::core::models::database::AiUsageStats>>;
@@ -109,6 +110,10 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn save_agent_execution_step(&self, session_id: &str, step: &WorkflowStepDetail) -> Result<()>;
     async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<WorkflowStepDetail>>;
     async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()>;
+
+    // Memory
+    async fn create_memory_execution(&self, record: &MemoryExecution) -> Result<()>;
+    async fn get_memory_executions_since(&self, since: Option<chrono::DateTime<chrono::Utc>>, limit: i64) -> Result<Vec<MemoryExecution>>;
 
     // Workflow相关方法
     async fn create_workflow_run(&self, id: &str, workflow_id: &str, workflow_name: &str, version: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()>;

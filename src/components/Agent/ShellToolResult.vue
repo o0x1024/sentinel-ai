@@ -1,26 +1,7 @@
 <template>
   <div class="shell-message-block rounded-lg overflow-hidden border border-base-300 my-3 bg-[#1e1e1e]">
-    <!-- Terminal Header -->
-    <div class="terminal-header flex items-center gap-2 px-3 py-2 bg-[#323233]">
-      <!-- Command with cwd -->
-      <div class="flex-1 font-mono text-sm text-[#a0a0a0] truncate">
-        <span v-if="cwd" class="text-[#6a9955]">{{ shortenPath(cwd) }}</span>
-        <span class="text-[#808080] mx-1">$</span>
-        <span class="text-[#d4d4d4]">{{ command }}</span>
-      </div>
-      
-      <!-- Copy button -->
-      <button 
-        @click.stop="copyCommand" 
-        class="btn btn-ghost btn-xs text-[#808080] hover:text-white"
-        :title="$t('agent.copy')"
-      >
-        <i :class="['fas', copied ? 'fa-check text-success' : 'fa-copy']"></i>
-      </button>
-    </div>
-    
     <!-- Pending Confirmation Bar -->
-    <div v-if="needsConfirmation" class="confirmation-bar flex items-center justify-between px-3 py-2 bg-[#2d2d2d] border-t border-[#404040]">
+    <div v-if="needsConfirmation" class="confirmation-bar flex items-center justify-between px-3 py-2 bg-[#2d2d2d] border-b border-[#404040]">
       <span class="text-sm text-[#a0a0a0]">{{ $t('tools.shell.runCommand') }}</span>
       <div class="flex items-center gap-2">
         <button 
@@ -48,12 +29,26 @@
     
     <!-- Terminal Body (clickable to expand/collapse) -->
     <div 
-      v-if="hasOutput || isCompleted"
       ref="terminalBodyRef"
       @click="toggleExpanded"
-      :class="['terminal-body bg-[#1e1e1e] p-3 font-mono text-xs overflow-y-auto cursor-pointer transition-all relative', 
-               isExpanded ? 'max-h-96' : 'max-h-32']"
+      :class="['terminal-body bg-[#1e1e1e] p-3 font-mono text-xs cursor-pointer transition-all relative', 
+               isExpanded ? 'max-h-96 overflow-y-auto' : 'max-h-32 overflow-hidden']"
     >
+      <!-- Command line with copy button -->
+      <div class="command-line flex items-start gap-2 mb-2 group">
+        <div class="flex-1 text-[#d4d4d4]">
+          <span class="text-[#808080]">$</span>
+          <span class="ml-2 inline-block" v-html="highlightedCommand"></span>
+        </div>
+        <button 
+          @click.stop="copyCommand" 
+          class="btn btn-ghost btn-xs text-[#808080] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+          :title="$t('agent.copy')"
+        >
+          <i :class="['fas', copied ? 'fa-check text-success' : 'fa-copy']"></i>
+        </button>
+      </div>
+      
       <!-- Output -->
       <div v-if="stdout" class="stdout text-[#d4d4d4] whitespace-pre-wrap break-all mb-1">{{ stdout }}</div>
       <div v-if="stderr" class="stderr text-[#f14c4c] whitespace-pre-wrap break-all">{{ stderr }}</div>
@@ -115,6 +110,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { highlightShellCommand } from '@/utils/shellHighlight'
 
 const props = defineProps<{
   args?: Record<string, any>
@@ -140,6 +136,11 @@ let unlisten: (() => void) | null = null
 // Extract command from args
 const command = computed(() => {
   return props.args?.command || ''
+})
+
+// Highlighted command
+const highlightedCommand = computed(() => {
+  return highlightShellCommand(command.value)
 })
 
 // Debug: log props changes
@@ -345,6 +346,23 @@ async function handleReject() {
   emit('rejected')
 }
 
+// Extract base command from full command line
+function extractBaseCommand(fullCommand: string): string {
+  // Remove leading/trailing whitespace
+  const trimmed = fullCommand.trim()
+  
+  // Handle pipes and redirects - get the first command
+  const pipeMatch = trimmed.match(/^([^|>&<]+)/)
+  const firstPart = pipeMatch ? pipeMatch[1].trim() : trimmed
+  
+  // Split by whitespace and get the first token (the actual command)
+  const parts = firstPart.split(/\s+/)
+  const baseCmd = parts[0]
+  
+  // Remove any quotes
+  return baseCmd.replace(/['"]/g, '')
+}
+
 // Handle always accept - add to allow list and accept
 async function handleAlwaysAccept() {
   console.log('handleAlwaysAccept called, pendingPermissionId:', pendingPermissionId.value)
@@ -352,28 +370,11 @@ async function handleAlwaysAccept() {
   // Store the permission ID before any async operation
   const permissionId = pendingPermissionId.value
   
-  // Get the command to add to allow list
-  const cmdToAdd = pendingCommand.value || command.value
+  // Get the full command and extract base command
+  const fullCommand = pendingCommand.value || command.value
+  const baseCommand = extractBaseCommand(fullCommand)
   
-  if (cmdToAdd) {
-    try {
-      // Get current agent config
-      const agentConfig = await invoke<{shell: {default_policy: string, allowed_commands: string[], denied_commands: string[]}}>('get_agent_config')
-      
-      // Add command to allowed_commands if not already there
-      if (!agentConfig.shell.allowed_commands.includes(cmdToAdd)) {
-        agentConfig.shell.allowed_commands.push(cmdToAdd)
-        
-        // Save updated config
-        await invoke('save_agent_config', { config: agentConfig })
-        console.log('Command added to allow list:', cmdToAdd)
-      }
-    } catch (e) {
-      console.error('Failed to add command to allow list:', e)
-    }
-  }
-  
-  // Use the stored permission ID in case it was modified during async operation
+  // First, respond to the current permission request to allow execution
   if (permissionId) {
     try {
       console.log('Responding to permission with stored ID:', permissionId)
@@ -386,6 +387,29 @@ async function handleAlwaysAccept() {
       console.error('Failed to respond permission:', e)
     }
   }
+  
+  // Then, add the base command to allow list for future executions
+  if (baseCommand) {
+    try {
+      // Get current agent config
+      const agentConfig = await invoke<{shell: {default_policy: string, allowed_commands: string[], denied_commands: string[]}}>('get_agent_config')
+      
+      // Add base command to allowed_commands if not already there
+      if (!agentConfig.shell.allowed_commands.includes(baseCommand)) {
+        agentConfig.shell.allowed_commands.push(baseCommand)
+        
+        // Save updated config
+        await invoke('save_agent_config', { config: agentConfig })
+        console.log('Base command added to allow list:', baseCommand, 'from:', fullCommand)
+        console.log('Future executions of', baseCommand, 'will be auto-approved')
+      } else {
+        console.log('Base command already in allow list:', baseCommand)
+      }
+    } catch (e) {
+      console.error('Failed to add command to allow list:', e)
+    }
+  }
+  
   emit('accepted')
 }
 
@@ -498,4 +522,26 @@ watch([stdout, stderr, () => props.error], () => {
 .terminal-body::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
+
+/* Shell syntax highlighting (CodeMirror oneDark theme colors) */
+:deep(.cm-keyword) { color: #c678dd; } /* Commands and keywords */
+:deep(.cm-operator) { color: #56b6c2; } /* Operators like |, >, <, & */
+:deep(.cm-string) { color: #98c379; } /* Single-quoted strings */
+:deep(.cm-string-2) { color: #98c379; } /* Double-quoted strings */
+:deep(.cm-comment) { color: #5c6370; font-style: italic; } /* Comments */
+:deep(.cm-variable) { color: #e06c75; } /* Variables like $VAR */
+:deep(.cm-variable-2) { color: #e5c07b; } /* Special variables */
+:deep(.cm-variable-3) { color: #d19a66; } /* Other variables */
+:deep(.cm-def) { color: #61afef; } /* Function definitions */
+:deep(.cm-atom) { color: #d19a66; } /* Atoms (true, false, null) */
+:deep(.cm-number) { color: #d19a66; } /* Numbers */
+:deep(.cm-property) { color: #61afef; } /* Properties */
+:deep(.cm-qualifier) { color: #e06c75; } /* Qualifiers */
+:deep(.cm-type) { color: #e5c07b; } /* Types */
+:deep(.cm-builtin) { color: #e5c07b; } /* Built-in commands */
+:deep(.cm-bracket) { color: #abb2bf; } /* Brackets */
+:deep(.cm-tag) { color: #e06c75; } /* Tags */
+:deep(.cm-attribute) { color: #d19a66; } /* Attributes */
+:deep(.cm-meta) { color: #61afef; } /* Meta information */
+:deep(.cm-link) { color: #61afef; text-decoration: underline; } /* Links */
 </style>

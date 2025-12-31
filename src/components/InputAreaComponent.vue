@@ -80,6 +80,8 @@
             :value="inputMessage"
             @input="onInput"
             @keydown="onKeydown"
+            @compositionstart="onCompositionStart"
+            @compositionend="onCompositionEnd"
             :disabled="isLoading && !allowTakeover"
             :placeholder="placeholderText"
             class="w-full bg-transparent outline-none resize-none leading-relaxed text-sm placeholder:text-base-content/50 max-h-40"
@@ -94,7 +96,6 @@
             <button class="icon-btn" title="附件" @click="triggerFileSelect"><i class="fas fa-paperclip"></i></button>
             <button class="icon-btn" :class="{ active: localToolsEnabled }" title="工具调用" @click="toggleTools"><i class="fas fa-tools"></i></button>
             <button v-if="localToolsEnabled" class="icon-btn" title="工具配置" @click="emit('open-tool-config')"><i class="fas fa-cog"></i></button>
-            <button class="icon-btn" :class="{ active: searchEnabled }" title="联网搜索" @click="toggleWebSearch"><i class="fas fa-globe"></i></button>
             <button 
               class="icon-btn" 
               :class="{ active: localRagEnabled }" 
@@ -172,7 +173,6 @@ const props = defineProps<{
   allowTakeover?: boolean
   ragEnabled?: boolean
   toolsEnabled?: boolean
-  webSearchEnabled?: boolean
   pendingAttachments?: any[]
   referencedTraffic?: ReferencedTraffic[]
 }>()
@@ -187,7 +187,6 @@ const emit = defineEmits<{
   (e: 'toggle-rag', enabled: boolean): void
   (e: 'toggle-tools', enabled: boolean): void
   (e: 'open-tool-config'): void
-  (e: 'toggle-web-search', enabled: boolean): void
   (e: 'add-attachments', files: string[]): void
   (e: 'remove-attachment', index: number): void
   (e: 'remove-traffic', index: number): void
@@ -205,7 +204,6 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // --- Persistence helpers ---
 const STORAGE_KEYS = {
-  search: 'sentinel:input:webSearchEnabled',
   rag: 'sentinel:input:ragEnabled',
   tools: 'sentinel:input:toolsEnabled',
 } as const
@@ -229,8 +227,6 @@ const setBool = (key: string, value: boolean) => {
 }
 
 // Feature states (controlled by parent via props, with persistence)
-const showSearch = ref(false)
-const searchEnabled = ref(false)
 const localRagEnabled = ref<boolean>(!!props.ragEnabled)
 const localToolsEnabled = ref<boolean>(!!props.toolsEnabled)
 
@@ -280,7 +276,23 @@ const handleStop = () => {
   emit('stop-execution')
 }
 
+// Track IME composition state
+const isComposing = ref(false)
+
+const onCompositionStart = () => {
+  isComposing.value = true
+}
+
+const onCompositionEnd = () => {
+  isComposing.value = false
+}
+
 const onKeydown = (e: KeyboardEvent) => {
+  // Ignore Enter key during IME composition
+  if (isComposing.value && e.key === 'Enter') {
+    return
+  }
+  
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     emitSend()
@@ -310,13 +322,6 @@ const clearConversation = () => {
   // 清空输入框
   emit('update:input-message', '')
   requestAnimationFrame(() => autoResize())
-}
-
-const toggleWebSearch = () => {
-  searchEnabled.value = !searchEnabled.value
-  setBool(STORAGE_KEYS.search, searchEnabled.value)
-  // 通知父组件Web Search状态变化
-  emit('toggle-web-search', searchEnabled.value)
 }
 
 const toggleRAG = () => {
@@ -461,13 +466,6 @@ onMounted(() => {
   // 同步父组件传入的初始值
   // Initialize persistent states (persisted values take precedence)
   try {
-    // Web Search: prefer persisted value if exists, otherwise use prop
-    const hasPersistedSearch = localStorage.getItem(STORAGE_KEYS.search) !== null
-    const savedSearch = hasPersistedSearch ? getBool(STORAGE_KEYS.search) : !!props.webSearchEnabled
-    searchEnabled.value = savedSearch
-    setBool(STORAGE_KEYS.search, savedSearch)
-    emit('toggle-web-search', savedSearch)
-
     // RAG: prefer persisted value if exists, otherwise use prop
     const hasPersistedRag = localStorage.getItem(STORAGE_KEYS.rag) !== null
     const savedRag = hasPersistedRag ? getBool(STORAGE_KEYS.rag) : !!props.ragEnabled
@@ -483,7 +481,6 @@ onMounted(() => {
     emit('toggle-tools', savedTools)
   } catch {
     // fallback to props on any error
-    searchEnabled.value = !!props.webSearchEnabled
     localRagEnabled.value = !!props.ragEnabled
     localToolsEnabled.value = !!props.toolsEnabled
   }

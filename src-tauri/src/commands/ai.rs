@@ -49,6 +49,7 @@ impl From<CommandAiConfig> for AiConfig {
             temperature: c.temperature,
             max_tokens: c.max_tokens,
             rig_provider: None,
+            max_turns: None,
         }
     }
 }
@@ -307,11 +308,9 @@ pub(crate) fn reconstruct_chat_history(
                 result.push(chat_msg);
                 
                 // 添加 tool result 消息
-                for (_tool_call_id, tool_result) in tool_results {
-                    let tool_msg = LlmChatMessage::new("tool", &tool_result);
-                    // Note: rig 的 Message::tool_result 需要 tool_call_id
-                    // 但 LlmChatMessage 没有 tool_call_id 字段
-                    // 我们需要在 metadata 中存储它，或者扩展 LlmChatMessage
+                for (tool_call_id, tool_result) in tool_results {
+                    let mut tool_msg = LlmChatMessage::new("tool", &tool_result);
+                    tool_msg.tool_call_id = Some(tool_call_id);
                     result.push(tool_msg);
                 }
                 
@@ -562,8 +561,17 @@ async fn stream_chat_with_llm(
             if input_tokens > 0 || output_tokens > 0 {
                 let provider = &service.config.provider;
                 let model = &service.config.model;
-                if let Err(e) = db.update_ai_usage(provider, model, input_tokens as i32, output_tokens as i32, 0.0).await {
+                
+                // 计算成本
+                let cost = sentinel_llm::calculate_cost(provider, model, input_tokens, output_tokens);
+                
+                if let Err(e) = db.update_ai_usage(provider, model, input_tokens as i32, output_tokens as i32, cost).await {
                     tracing::warn!("Failed to update AI usage stats: {}", e);
+                } else {
+                    tracing::info!(
+                        "Updated AI usage: provider={}, model={}, input={}, output={}, cost=${:.4}",
+                        provider, model, input_tokens, output_tokens, cost
+                    );
                 }
             }
 
@@ -1329,6 +1337,19 @@ pub async fn delete_ai_message(
         .map_err(|e: anyhow::Error| format!("Failed to delete AI message {}: {}", message_id, e))
 }
 
+// Delete all messages after a specific message
+#[tauri::command]
+pub async fn delete_ai_messages_after(
+    conversation_id: String,
+    message_id: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<u64, String> {
+    db_service
+        .delete_ai_messages_after(&conversation_id, &message_id)
+        .await
+        .map_err(|e: anyhow::Error| format!("Failed to delete messages after {}: {}", message_id, e))
+}
+
 // 获取会话的所有消息
 #[tauri::command]
 pub async fn get_ai_messages_by_conversation(
@@ -1796,7 +1817,6 @@ pub struct AgentExecuteConfig {
     pub conversation_id: Option<String>,
     pub message_id: Option<String>,
     pub enable_rag: Option<bool>,
-    pub enable_web_search: Option<bool>,
     pub attachments: Option<serde_json::Value>,
     #[serde(default)]
     pub tool_config: Option<crate::agents::ToolConfig>,
@@ -1840,7 +1860,6 @@ pub async fn agent_execute(
         conversation_id: None,
         message_id: None,
         enable_rag: Some(false),
-        enable_web_search: Some(false),
         attachments: None,
         tool_config: None,
         traffic_context: None,
@@ -1859,7 +1878,6 @@ pub async fn agent_execute(
         .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let enable_rag = config.enable_rag.unwrap_or(false);
-    let enable_web_search = config.enable_web_search.unwrap_or(false);
     let attachments = config.attachments.clone();
 
     // 获取工具配置：优先使用前端传递的配置，否则从数据库加载
@@ -1871,11 +1889,10 @@ pub async fn agent_execute(
     };
 
     tracing::info!(
-        "Agent execute: conv={}, msg={}, rag={}, search={}, tools={}",
+        "Agent execute: conv={}, msg={}, rag={}, tools={}",
         conversation_id,
         message_id,
         enable_rag,
-        enable_web_search,
         effective_tool_config
             .as_ref()
             .map(|c| c.enabled)
@@ -2072,31 +2089,7 @@ pub async fn agent_execute(
             };
         }
 
-        let mut augmented_task = task_clone.clone();
-
-        // 联网搜索增强
-        if enable_web_search {
-            match perform_web_search(&app_handle, &task_clone).await {
-                Ok(search_block) if !search_block.is_empty() => {
-                    augmented_task = format!(
-                        "{}\n\n请基于上面的搜索结果回答用户问题：{}",
-                        search_block, task_clone
-                    );
-                    let _ = app_handle.emit(
-                        "ai_meta_info",
-                        &serde_json::json!({
-                            "conversation_id": conv_id,
-                            "message_id": msg_id,
-                            "web_search_applied": true
-                        }),
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!("Web search failed: {}", e);
-                }
-                _ => {}
-            }
-        }
+        let augmented_task = task_clone.clone();
 
         // RAG 知识检索增强
         if enable_rag {
@@ -2238,79 +2231,6 @@ pub async fn agent_execute(
     Ok(message_id)
 }
 
-/// 执行联网搜索
-async fn perform_web_search(app_handle: &AppHandle, query: &str) -> Result<String, String> {
-    use std::time::Duration;
-
-    // 读取 Tavily API Key
-    let tavily_api_key = std::env::var("TAVILY_API_KEY")
-        .ok()
-        .or_else(|| {
-            if let Some(db) =
-                app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
-            {
-                futures::executor::block_on(db.get_config("ai", "tavily_api_key"))
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| "TAVILY_API_KEY not configured".to_string())?;
-
-    let client = {
-        let builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
-        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
-        builder
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {}", e))?
-    };
-
-    let payload = serde_json::json!({
-        "query": query,
-        "max_results": 5,
-        "include_answer": false,
-        "include_raw_content": false,
-        "search_depth": "basic"
-    });
-
-    let resp = client
-        .post("https://api.tavily.com/search")
-        .bearer_auth(tavily_api_key)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to call Tavily: {}", e))?;
-
-    if !resp.status().is_success() {
-        let err_txt = resp.text().await.unwrap_or_default();
-        return Err(format!("Tavily error: {}", err_txt));
-    }
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Tavily response: {}", e))?;
-
-    let mut lines: Vec<String> = Vec::new();
-    if let Some(results) = json.get("results").and_then(|r| r.as_array()) {
-        for (idx, item) in results.iter().enumerate() {
-            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
-            let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            lines.push(format!("{}. {}\n{}\n{}", idx + 1, title, url, content));
-        }
-    }
-
-    if lines.is_empty() {
-        return Ok(String::new());
-    }
-
-    Ok(format!(
-        "[Web Search]\nsource: Tavily\nresults:\n{}\n",
-        lines.join("\n\n")
-    ))
-}
 
 /// 从数据库加载全局工具配置
 async fn load_tool_config_from_db(app_handle: &AppHandle) -> Option<crate::agents::ToolConfig> {

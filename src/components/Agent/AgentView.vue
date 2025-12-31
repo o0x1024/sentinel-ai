@@ -97,7 +97,7 @@
         />
         
         <!-- Side Panel (Vision or Todo) -->
-        <div class="sidebar-container w-[420px] flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100" v-if="isVisionActive || hasTodos">
+        <div class="sidebar-container w-[350px] flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100" v-if="isVisionActive || hasTodos">
             <VisionExplorerPanel 
                v-if="isVisionActive"
                :steps="visionEvents.steps.value" 
@@ -122,6 +122,7 @@
               v-else-if="hasTodos" 
               :todos="todos" 
               class="h-full p-4 overflow-y-auto border-0 bg-transparent"
+              @close="handleCloseTodos"
             />
         </div>
       </div>
@@ -135,14 +136,12 @@
         :show-debug-info="false"
         :rag-enabled="ragEnabled"
         :tools-enabled="toolsEnabled"
-        :web-search-enabled="webSearchEnabled"
         :pending-attachments="pendingAttachments"
         :referenced-traffic="referencedTraffic"
         @send-message="handleSubmit"
         @stop-execution="handleStop"
         @toggle-rag="handleToggleRAG"
         @toggle-tools="handleToggleTools"
-        @toggle-web-search="handleToggleWebSearch"
         @add-attachments="handleAddAttachments"
         @remove-attachment="handleRemoveAttachment"
         @remove-traffic="handleRemoveTraffic"
@@ -222,7 +221,6 @@ const currentConversationTitle = ref(t('agent.newConversationTitle'))
 // Feature toggles
 const ragEnabled = ref(false)
 const toolsEnabled = ref(false)
-const webSearchEnabled = ref(false)
 const pendingAttachments = ref<any[]>([])
 const referencedTraffic = ref<ReferencedTraffic[]>([])
 
@@ -248,10 +246,15 @@ const streamingContent = computed(() => agentEvents.streamingContent.value)
 const visionEvents = useVisionEvents(agentEvents.currentExecutionId)
 const isVisionActive = computed(() => visionEvents.isVisionActive.value)
 
-// Todos
+// Todos management
 const todosComposable = useTodos()
 const todos = computed(() => todosComposable.todos.value)
 const hasTodos = computed(() => props.showTodos && todosComposable.hasTodos.value)
+
+// Handle close todos panel
+const handleCloseTodos = () => {
+  todosComposable.clearTodos()
+}
 
 // Combined error
 const error = computed(() => localError.value || agentEvents.error.value)
@@ -290,12 +293,6 @@ const handleToolConfigUpdate = async (config: any) => {
     console.error('[AgentView] Failed to save tool config:', e)
     localError.value = t('agent.failedToSaveToolConfig') + ': ' + e
   }
-}
-
-// Handle Web Search toggle
-const handleToggleWebSearch = (enabled: boolean) => {
-  webSearchEnabled.value = enabled
-  console.log('[AgentView] Web Search:', enabled ? 'enabled' : 'disabled')
 }
 
 // Handle attachments
@@ -471,8 +468,22 @@ const handleResendMessage = async (message: AgentMessage) => {
     return
   }
 
-  // Delete all messages after this message (keep the user message, delete LLM response and subsequent messages)
-  const messagesToKeep = messages.value.slice(0, messageIndex)
+  // Delete all messages after this message from database
+  if (conversationId.value) {
+    try {
+      const deletedCount = await invoke<number>('delete_ai_messages_after', {
+        conversationId: conversationId.value,
+        messageId: message.id
+      })
+      console.log(`[AgentView] Deleted ${deletedCount} messages from database`)
+    } catch (e) {
+      console.error('[AgentView] Failed to delete messages from database:', e)
+      // Continue anyway to update frontend
+    }
+  }
+
+  // Delete all messages after this message from frontend (keep the user message, delete LLM response and subsequent messages)
+  const messagesToKeep = messages.value.slice(0, messageIndex + 1)
   agentEvents.messages.value = messagesToKeep
 
   // Set user message content to input box
@@ -735,7 +746,6 @@ const handleSubmit = async () => {
         timeout_secs: 300,
         force_todos: props.showTodos,
         enable_rag: ragEnabled.value,
-        enable_web_search: webSearchEnabled.value,
         conversation_id: conversationId.value,
         message_id: null,
         attachments: usedAttachments.length > 0 ? usedAttachments : undefined,

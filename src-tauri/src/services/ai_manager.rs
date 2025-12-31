@@ -213,6 +213,7 @@ impl AiServiceManager {
                                     temperature: Some(0.7),
                                     max_tokens: Some(4096),
                                     rig_provider,
+                                    max_turns: None,
                                 }));
                             }
                         }
@@ -278,6 +279,7 @@ impl AiServiceManager {
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
                 rig_provider,
+                max_turns: None,
             }));
         }
 
@@ -398,6 +400,12 @@ impl AiServiceManager {
                             provider_config.name, rig_provider, default_model
                         );
 
+                        // Read max_turns from database
+                        let max_turns = self.db.get_config("ai", "max_turns").await
+                            .ok()
+                            .flatten()
+                            .and_then(|s| s.parse::<usize>().ok());
+
                         let config = AiConfig {
                             provider: rig_provider.clone(),
                             model: default_model,
@@ -407,6 +415,7 @@ impl AiServiceManager {
                             temperature: Some(0.7),
                             max_tokens: Some(4096),
                             rig_provider: Some(rig_provider),
+                            max_turns,
                         };
 
                         // Use lowercase name as service key for consistency
@@ -550,6 +559,7 @@ impl AiServiceManager {
             temperature: Some(0.7),
             max_tokens: Some(1000),
             rig_provider: None,
+            max_turns: None,
         };
         self.add_service("default".to_string(), config).await?;
         Ok(())
