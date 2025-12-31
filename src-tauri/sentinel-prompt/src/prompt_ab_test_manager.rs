@@ -783,7 +783,7 @@ impl PromptABTestManager {
         key.hash(&mut hasher);
         let hash_value = hasher.finish();
         
-        let normalized_hash = (hash_value as f64) / (f64::MAX as f64);
+        let normalized_hash = (hash_value as f64) / f64::MAX;
         
         let mut cumulative_weight = 0.0;
         for variant in variants {
@@ -902,7 +902,7 @@ impl StatisticalAnalyzer {
         let mut variant_executions: HashMap<String, Vec<&TestExecution>> = HashMap::new();
         for execution in executions {
             variant_executions.entry(execution.variant_id.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(execution);
         }
 
@@ -981,7 +981,7 @@ impl StatisticalAnalyzer {
             .sum::<f64>() / values.len() as f64;
         let std_dev = variance.sqrt();
         
-        let median = if sorted_values.len() % 2 == 0 {
+        let median = if sorted_values.len().is_multiple_of(2) {
             (sorted_values[sorted_values.len() / 2 - 1] + sorted_values[sorted_values.len() / 2]) / 2.0
         } else {
             sorted_values[sorted_values.len() / 2]

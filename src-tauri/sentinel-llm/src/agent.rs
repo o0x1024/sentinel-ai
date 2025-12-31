@@ -23,7 +23,7 @@ pub fn validate_config(config: &LlmConfig) -> Result<()> {
         _ => true,
     };
 
-    if api_key_required && config.api_key.as_ref().map_or(true, |k| k.is_empty()) {
+    if api_key_required && config.api_key.as_ref().is_none_or(|k| k.is_empty()) {
         return Err(anyhow!(
             "API key not configured for provider '{}'. Please check your AI configuration settings.",
             config.provider

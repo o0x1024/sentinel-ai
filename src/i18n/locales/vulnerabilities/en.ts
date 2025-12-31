@@ -8,9 +8,12 @@ export default {
   lowVulnerabilities: 'Low Vulnerabilities',
   infoVulnerabilities: 'Informational Vulnerabilities',
   vulnerabilityDetails: 'Vulnerability Details',
+  details: 'Details',
   vulnerabilityName: 'Vulnerability Name',
   vulnerabilityType: 'Vulnerability Type',
+  plugin: 'Plugin',
   severity: {
+    title: 'Severity',
     label: 'Severity',
     critical: 'Critical',
     high: 'High',

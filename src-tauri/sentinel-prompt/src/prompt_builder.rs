@@ -675,7 +675,7 @@ impl PromptBuilder {
                 for (key, value) in &doc.metadata {
                     formatted.push_str(&format!("{}={}, ", key, value));
                 }
-                formatted.push_str("\n");
+                formatted.push('\n');
             }
             
             formatted.push_str(&format!("**内容:**\n{}\n\n", doc.content));

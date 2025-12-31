@@ -42,6 +42,7 @@ export default {
   type: '类型',
   details: '详情',
   operations: '操作',
+  url: 'URL',
 
   // Navigation
   nav: {

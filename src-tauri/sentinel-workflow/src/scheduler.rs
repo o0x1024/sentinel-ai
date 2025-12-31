@@ -306,7 +306,7 @@ impl WorkflowScheduler {
     fn parse_weekdays(s: &str) -> Vec<u32> {
         s.split(',')
             .filter_map(|part| part.trim().parse::<u32>().ok())
-            .filter(|&d| d >= 1 && d <= 7)
+            .filter(|&d| (1..=7).contains(&d))
             .collect()
     }
 }

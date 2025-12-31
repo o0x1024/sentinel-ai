@@ -151,7 +151,7 @@
       :ai-generate-error="aiGenerateError"
       :testing="testing"
       :test-result="testResult"
-      :is-fullscreen-editor-mode="isFullscreenEditor"
+      :is-fullscreen-editor-mode="false"
       :advanced-plugin="advancedPlugin"
       :advanced-testing="advancedTesting"
       :advanced-error="advancedError"
@@ -181,76 +181,6 @@
       @close-advanced-dialog="closeAdvancedDialog"
       @refer-test-result-to-ai="referTestResultToAi"
     />
-
-    <!-- Code Editor Dialog -->
-    <PluginCodeEditorDialog
-      ref="codeEditorDialogRef"
-      :editing-plugin="editingPlugin"
-      :new-plugin-metadata="newPluginMetadata"
-      :is-editing="isEditing"
-      :saving="saving"
-      :code-error="codeError"
-      :is-fullscreen-editor="isFullscreenEditor"
-      :sub-categories="subCategories"
-      :show-ai-panel="showAiPanel"
-      :ai-messages="aiChatMessages"
-      :ai-streaming="aiChatStreaming"
-      :ai-streaming-content="aiChatStreamingContent"
-      :selected-code-ref="selectedCodeRef"
-      :selected-test-result-ref="selectedTestResultRef"
-      :plugin-testing="pluginTesting"
-      :is-preview-mode="isPreviewMode"
-      @update:new-plugin-metadata="newPluginMetadata = $event"
-      @insert-template="insertTemplate"
-      @format-code="formatCode"
-      @copy-plugin="copyPlugin"
-      @toggle-fullscreen="toggleFullscreenEditor"
-      @enable-editing="enableEditing"
-      @cancel-editing="cancelEditing"
-      @save-plugin="savePlugin"
-      @create-new-plugin="createNewPlugin"
-      @close="closeCodeEditorDialog"
-      @toggle-ai-panel="toggleAiPanel"
-      @send-ai-message="sendAiChatMessage"
-      @ai-quick-action="handleAiQuickAction"
-      @apply-ai-code="applyAiCode"
-      @preview-ai-code="previewAiCode"
-      @exit-preview-mode="exitPreviewMode"
-      @add-selected-code="addSelectedCodeToContext"
-      @add-full-code="addFullCodeToContext"
-      @clear-code-ref="clearCodeRef"
-      @clear-test-result-ref="clearTestResultRef"
-      @add-test-result-to-context="addTestResultToContext"
-      @test-current-plugin="testCurrentPlugin"
-    />
-
-    <!-- Editor Context Menu -->
-    <Teleport to="body">
-      <div 
-        v-if="showContextMenu" 
-        class="editor-context-menu"
-        :style="{ left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"
-      >
-        <div class="context-menu-header">
-          <i class="fas fa-robot text-primary text-xs mr-1"></i>
-          <span class="text-xs font-semibold">{{ $t('plugins.aiAssistant', 'AI 助手') }}</span>
-        </div>
-        <button 
-          v-if="contextMenuHasSelection"
-          class="context-menu-item" 
-          @click="handleContextMenuAddSelection"
-        >
-          <i class="fas fa-highlighter text-warning"></i>
-          <span>{{ $t('plugins.addSelection', '添加选中代码') }}</span>
-          <kbd class="kbd kbd-xs ml-auto">Ctrl+Shift+A</kbd>
-        </button>
-        <button class="context-menu-item" @click="handleContextMenuAddAll">
-          <i class="fas fa-file-code text-info"></i>
-          <span>{{ $t('plugins.addAll', '添加完整代码') }}</span>
-          <kbd class="kbd kbd-xs ml-auto">Ctrl+Shift+F</kbd>
-        </button>
-      </div>
-    </Teleport>
   </div>
 </template>
 
@@ -264,21 +194,20 @@ import { EditorState, Compartment } from '@codemirror/state'
 import { basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 
 import PluginListSection from '@/components/PluginManagement/PluginListSection.vue'
 import PluginReviewSection from '@/components/PluginManagement/PluginReviewSection.vue'
 import PluginStoreSection from '@/components/PluginManagement/PluginStoreSection.vue'
 import PluginDialogs from '@/components/PluginManagement/PluginDialogs.vue'
-import PluginCodeEditorDialog from '@/components/PluginManagement/PluginCodeEditorDialog.vue'
+import { usePluginEditorStore } from '@/stores/pluginEditor'
 import type {
   PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult,
-  CommandResponse, BatchToggleResult, NewPluginMetadata, AdvancedForm, SubCategory
+  CommandResponse, BatchToggleResult, NewPluginMetadata, AdvancedForm
 } from '@/components/PluginManagement/types'
-import { trafficCategories, agentsCategories, mainCategories } from '@/components/PluginManagement/types'
+import { trafficCategories, agentsCategories } from '@/components/PluginManagement/types'
 
 const { t } = useI18n()
+const pluginEditorStore = usePluginEditorStore()
 
 defineOptions({
   name: 'Plugin'
@@ -286,30 +215,15 @@ defineOptions({
 
 // Component refs
 const pluginDialogsRef = ref<InstanceType<typeof PluginDialogs>>()
-const codeEditorDialogRef = ref<InstanceType<typeof PluginCodeEditorDialog>>()
 const pluginStoreSectionRef = ref<InstanceType<typeof PluginStoreSection>>()
 
 // Component State
 const selectedCategory = ref('all')
 const plugins = ref<PluginRecord[]>([])
 
-// CodeMirror
-let codeEditorView: EditorView | null = null
+// Review Editor logic
 let reviewCodeEditorView: EditorView | null = null
-let fullscreenCodeEditorView: EditorView | null = null
-let diffEditorViewA: EditorView | null = null  // Original code in diff view
-let diffEditorViewB: EditorView | null = null  // Modified code in diff view
-const codeEditorReadOnly = new Compartment()
 const reviewCodeEditorReadOnly = new Compartment()
-
-// Diff preview state
-const isPreviewMode = ref(false)
-const previewCode = ref('')
-
-// Context menu state
-const showContextMenu = ref(false)
-const contextMenuPosition = ref({ x: 0, y: 0 })
-const contextMenuHasSelection = ref(false)
 
 // Review State
 const reviewPlugins = ref<ReviewPlugin[]>([])
@@ -340,25 +254,9 @@ const selectedFile = ref<File | null>(null)
 const uploading = ref(false)
 const uploadError = ref('')
 
-// Editor State
-const editingPlugin = ref<PluginRecord | null>(null)
-const pluginCode = ref('')
-const originalCode = ref('')
-const isEditing = ref(false)
-const saving = ref(false)
-const codeError = ref('')
-const isFullscreenEditor = ref(false)
-
 // Delete State
 const deletingPlugin = ref<PluginRecord | null>(null)
 const deleting = ref(false)
-
-// New Plugin Metadata
-const newPluginMetadata = ref<NewPluginMetadata>({
-  id: '', name: '', version: '1.0.0', author: '',
-  mainCategory: 'traffic', category: 'vulnerability',
-  default_severity: 'medium', description: '', tagsString: ''
-})
 
 // AI Generate State
 const aiPrompt = ref('')
@@ -366,53 +264,6 @@ const aiPluginType = ref('traffic')
 const aiSeverity = ref('medium')
 const aiGenerating = ref(false)
 const aiGenerateError = ref('')
-
-// Code reference type
-interface CodeReference {
-  code: string
-  preview: string
-  startLine: number
-  endLine: number
-  isFullCode: boolean
-}
-
-// Test result reference type
-interface TestResultReference {
-  success: boolean
-  message: string
-  preview: string
-  findings?: Array<{ title: string; description: string; severity: string }>
-  error?: string
-  executionTime?: number
-  timestamp: number
-}
-
-// AI Chat State (for code editor)
-interface AiChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  codeBlock?: string
-  codeBlocks?: string[] // Multiple code blocks from AI
-  codeRef?: CodeReference
-  testResultRef?: TestResultReference
-}
-const showAiPanel = ref(false)
-const aiChatMessages = ref<AiChatMessage[]>([])
-const aiChatStreaming = ref(false)
-const aiChatStreamingContent = ref('')
-const selectedCodeRef = ref<CodeReference | null>(null)
-const selectedTestResultRef = ref<TestResultReference | null>(null)
-const lastTestResult = ref<TestResultReference | null>(null)  // Store last test result for reference
-const pluginTesting = ref(false)  // Testing state for current editing plugin
-
-// Editor state preservation
-interface EditorViewState {
-  cursorPos: number
-  scrollTop: number
-  scrollLeft: number
-  selectionRanges: Array<{ from: number; to: number }>
-}
-let savedEditorState: EditorViewState | null = null
 
 // Test State
 const testing = ref(false)
@@ -437,37 +288,6 @@ const categories = computed(() => [
   { value: 'traffic', label: t('plugins.categories.trafficAnalysis', '流量分析插件'), icon: 'fas fa-shield-alt' },
   { value: 'agents', label: t('plugins.categories.agents', 'Agent工具插件'), icon: 'fas fa-robot' },
 ])
-
-const subCategories = computed<SubCategory[]>(() => {
-  if (newPluginMetadata.value.mainCategory === 'traffic') {
-    return [
-      { value: 'sqli', label: 'SQL注入', icon: 'fas fa-database' },
-      { value: 'command_injection', label: '命令注入', icon: 'fas fa-terminal' },
-      { value: 'xss', label: '跨站脚本', icon: 'fas fa-code' },
-      { value: 'idor', label: '越权访问', icon: 'fas fa-user-lock' },
-      { value: 'auth_bypass', label: '认证绕过', icon: 'fas fa-unlock' },
-      { value: 'csrf', label: 'CSRF', icon: 'fas fa-shield-alt' },
-      { value: 'info_leak', label: '信息泄露', icon: 'fas fa-eye-slash' },
-      { value: 'file_upload', label: '文件上传', icon: 'fas fa-file-upload' },
-      { value: 'file_inclusion', label: '文件包含', icon: 'fas fa-file-code' },
-      { value: 'path_traversal', label: '目录穿越', icon: 'fas fa-folder-open' },
-      { value: 'xxe', label: 'XXE', icon: 'fas fa-file-code' },
-      { value: 'ssrf', label: 'SSRF', icon: 'fas fa-server' },
-      { value: 'custom', label: '自定义', icon: 'fas fa-wrench' }
-    ]
-  } else if (newPluginMetadata.value.mainCategory === 'agent') {
-    return [
-      { value: 'scanner', label: '扫描工具', icon: 'fas fa-radar' },
-      { value: 'analyzer', label: '分析工具', icon: 'fas fa-microscope' },
-      { value: 'reporter', label: '报告工具', icon: 'fas fa-file-alt' },
-      { value: 'recon', label: '信息收集', icon: 'fas fa-search' },
-      { value: 'exploit', label: '漏洞利用', icon: 'fas fa-bomb' },
-      { value: 'utility', label: '实用工具', icon: 'fas fa-toolbox' },
-      { value: 'custom', label: '自定义', icon: 'fas fa-wrench' }
-    ]
-  }
-  return []
-})
 
 const filteredPlugins = computed(() => {
   let filtered = plugins.value
@@ -816,6 +636,31 @@ const viewReviewPluginDetail = async (plugin: ReviewPlugin) => {
   initReviewCodeEditor()
 }
 
+const initReviewCodeEditor = () => {
+  const container = pluginDialogsRef.value?.reviewCodeEditorContainerRef
+  if (!container) return
+
+  if (reviewCodeEditorView) {
+    reviewCodeEditorView.destroy()
+    reviewCodeEditorView = null
+  }
+
+  reviewCodeEditorView = new EditorView({
+    doc: selectedReviewPlugin.value?.code || '',
+    extensions: [
+      basicSetup,
+      javascript(),
+      oneDark,
+      EditorView.lineWrapping,
+      reviewCodeEditorReadOnly.of(EditorView.editable.of(reviewEditMode.value)),
+      EditorView.updateListener.of((update: ViewUpdate) => {
+        if (update.docChanged) editedReviewCode.value = update.state.doc.toString()
+      })
+    ],
+    parent: container
+  })
+}
+
 const closeReviewDetailDialog = () => {
   if (reviewCodeEditorView) {
     reviewCodeEditorView.destroy()
@@ -1026,7 +871,6 @@ const generatePluginWithAI = async () => {
     let streamCompleted = false
     let streamError = ''
 
-    // Listen to lightweight plugin generation events
     const unlistenDelta = await listen('plugin_gen_delta', (event: any) => {
       if (event.payload.stream_id === streamId) {
         generatedCode += event.payload.delta || ''
@@ -1073,7 +917,7 @@ const generatePluginWithAI = async () => {
 
       const pluginId = aiPrompt.value.toLowerCase().replace(/[^a-z0-9]+/g, '_').substring(0, 50) || 'ai_generated_plugin'
 
-      newPluginMetadata.value = {
+      const metadata: NewPluginMetadata = {
         id: pluginId,
         name: aiPrompt.value.substring(0, 50),
         version: '1.0.0',
@@ -1085,13 +929,8 @@ const generatePluginWithAI = async () => {
         tagsString: `ai-generated, ${aiPluginType.value}`
       }
 
-      pluginCode.value = generatedCode
-      editingPlugin.value = null
-
       pluginDialogsRef.value?.closeAIGenerateDialog()
-      codeEditorDialogRef.value?.showDialog()
-      await nextTick()
-      initCodeEditor()
+      pluginEditorStore.openEditor(null, generatedCode, metadata)
     } finally {
       unlistenDelta()
       unlistenComplete()
@@ -1106,43 +945,14 @@ const generatePluginWithAI = async () => {
 
 // Code Editor methods
 const openCreateDialog = async () => {
-  newPluginMetadata.value = {
-    id: '', name: '', version: '1.0.0', author: '',
-    mainCategory: 'traffic', category: 'vulnerability',
-    default_severity: 'medium', description: '', tagsString: ''
-  }
-  pluginCode.value = ''
-  editingPlugin.value = null
-  isEditing.value = false
-  codeError.value = ''
-  codeEditorDialogRef.value?.showDialog()
-  await nextTick()
-  initCodeEditor()
+  pluginEditorStore.openEditor()
 }
 
 const viewPluginCode = async (plugin: PluginRecord) => {
   try {
     const response = await invoke<CommandResponse<string>>('get_plugin_code', { pluginId: plugin.metadata.id })
     if (response.success) {
-      pluginCode.value = response.data || ''
-      originalCode.value = response.data || ''
-      editingPlugin.value = plugin
-      newPluginMetadata.value = {
-        id: plugin.metadata.id,
-        name: plugin.metadata.name,
-        version: plugin.metadata.version,
-        author: plugin.metadata.author || '',
-        mainCategory: plugin.metadata.main_category,
-        category: plugin.metadata.category,
-        default_severity: plugin.metadata.default_severity,
-        description: plugin.metadata.description || '',
-        tagsString: plugin.metadata.tags.join(', ')
-      }
-      isEditing.value = false
-      codeError.value = ''
-      codeEditorDialogRef.value?.showDialog()
-      await nextTick()
-      initCodeEditor()
+      pluginEditorStore.openEditor(plugin, response.data || '')
     } else {
       showToast(response.error || 'Failed to read code', 'error')
     }
@@ -1151,1046 +961,8 @@ const viewPluginCode = async (plugin: PluginRecord) => {
   }
 }
 
-const closeCodeEditorDialog = () => {
-  if (fullscreenCodeEditorView) {
-    fullscreenCodeEditorView.destroy()
-    fullscreenCodeEditorView = null
-  }
-  if (diffEditorViewA) {
-    diffEditorViewA.destroy()
-    diffEditorViewA = null
-  }
-  if (diffEditorViewB) {
-    diffEditorViewB.destroy()
-    diffEditorViewB = null
-  }
-  isFullscreenEditor.value = false
-  isPreviewMode.value = false
-  previewCode.value = ''
-  if (codeEditorView) {
-    codeEditorView.destroy()
-    codeEditorView = null
-  }
-  editingPlugin.value = null
-  pluginCode.value = ''
-  originalCode.value = ''
-  isEditing.value = false
-  codeError.value = ''
-  savedEditorState = null
-  // Reset AI chat state
-  showAiPanel.value = false
-  aiChatMessages.value = []
-  aiChatStreaming.value = false
-  aiChatStreamingContent.value = ''
-  selectedCodeRef.value = null
-}
-
-// AI Chat methods
-const toggleAiPanel = () => {
-  showAiPanel.value = !showAiPanel.value
-}
-
-// Get selected code from editor
-const getSelectedCode = (): { code: string; from: number; to: number } | null => {
-  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
-  if (!editorView) return null
-  
-  const selection = editorView.state.selection.main
-  if (selection.empty) return null
-  
-  const code = editorView.state.sliceDoc(selection.from, selection.to)
-  return { code, from: selection.from, to: selection.to }
-}
-
-// Get line numbers from position
-const getLineNumbers = (from: number, to: number): { startLine: number; endLine: number } => {
-  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
-  if (!editorView) return { startLine: 1, endLine: 1 }
-  
-  const doc = editorView.state.doc
-  const startLine = doc.lineAt(from).number
-  const endLine = doc.lineAt(to).number
-  return { startLine, endLine }
-}
-
-// Create preview with ellipsis for long code
-const createCodePreview = (code: string, maxLines: number = 5): string => {
-  const lines = code.split('\n')
-  if (lines.length <= maxLines) return code
-  return lines.slice(0, maxLines).join('\n') + '\n... (' + (lines.length - maxLines) + ' more lines)'
-}
-
-// Get current code from active editor (to ensure real-time accuracy)
-const getCurrentEditorCode = (): string => {
-  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
-  if (!editorView) return pluginCode.value
-  return editorView.state.doc.toString()
-}
-
-// Context menu handlers
-const handleContextMenuAddSelection = () => {
-  showContextMenu.value = false
-  addSelectedCodeToContext()
-  // Auto open AI panel if not open
-  if (!showAiPanel.value) {
-    showAiPanel.value = true
-  }
-}
-
-const handleContextMenuAddAll = () => {
-  showContextMenu.value = false
-  addFullCodeToContext()
-  // Auto open AI panel if not open
-  if (!showAiPanel.value) {
-    showAiPanel.value = true
-  }
-}
-
-// Add selected code to context (with real-time update)
-const addSelectedCodeToContext = () => {
-  // Get fresh code from editor
-  const currentCode = getCurrentEditorCode()
-  
-  const selected = getSelectedCode()
-  if (!selected || !selected.code.trim()) {
-    showToast(t('plugins.noCodeSelected', 'Please select code first'), 'warning')
-    return
-  }
-  
-  // Re-verify selection in current code (in case code changed)
-  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
-  if (editorView) {
-    const freshSelection = editorView.state.sliceDoc(selected.from, selected.to)
-    if (freshSelection) {
-      selected.code = freshSelection
-    }
-  }
-  
-  const { startLine, endLine } = getLineNumbers(selected.from, selected.to)
-  selectedCodeRef.value = {
-    code: selected.code,
-    preview: createCodePreview(selected.code),
-    startLine,
-    endLine,
-    isFullCode: false
-  }
-  
-  showToast(t('plugins.codeRefAdded', 'Selected code added to context'), 'success')
-}
-
-// Add full code to context (with real-time update)
-const addFullCodeToContext = () => {
-  // Always get fresh code from editor
-  const currentCode = getCurrentEditorCode()
-  
-  if (!currentCode.trim()) {
-    showToast(t('plugins.noCode', 'No code'), 'warning')
-    return
-  }
-  
-  // Update pluginCode ref to match editor state
-  pluginCode.value = currentCode
-  
-  const lines = currentCode.split('\n')
-  selectedCodeRef.value = {
-    code: currentCode,
-    preview: createCodePreview(currentCode),
-    startLine: 1,
-    endLine: lines.length,
-    isFullCode: true
-  }
-  
-  showToast(t('plugins.fullCodeRefAdded', 'Full code added to context'), 'success')
-}
-
-// Clear code reference
-const clearCodeRef = () => {
-  selectedCodeRef.value = null
-}
-
-// Clear test result reference
-const clearTestResultRef = () => {
-  selectedTestResultRef.value = null
-}
-
-// Format test result for preview
-const formatTestResultPreview = (result: TestResult): string => {
-  const lines: string[] = []
-  lines.push(`Status: ${result.success ? 'SUCCESS' : 'FAILED'}`)
-  if (result.message) lines.push(`Message: ${result.message}`)
-  if (result.error) lines.push(`Error: ${result.error}`)
-  if (result.findings && result.findings.length > 0) {
-    lines.push(`Findings (${result.findings.length}):`)
-    result.findings.slice(0, 3).forEach((f, i) => {
-      lines.push(`  ${i + 1}. [${f.severity}] ${f.title}`)
-    })
-    if (result.findings.length > 3) {
-      lines.push(`  ... and ${result.findings.length - 3} more`)
-    }
-  }
-  return lines.join('\n')
-}
-
-// Add test result to AI context
-const addTestResultToContext = () => {
-  if (!lastTestResult.value) {
-    showToast(t('plugins.noTestResult', 'Please run plugin test first'), 'warning')
-    return
-  }
-  selectedTestResultRef.value = lastTestResult.value
-}
-
-// Test current editing plugin
-const testCurrentPlugin = async () => {
-  if (!editingPlugin.value) return
-  
-  pluginTesting.value = true
-  
-  try {
-    const isAgentPlugin = editingPlugin.value.metadata.main_category === 'agent'
-    let result: TestResult
-    
-    if (isAgentPlugin) {
-      const resp = await invoke<CommandResponse<any>>('test_agent_plugin', { 
-        pluginId: editingPlugin.value.metadata.id,
-        inputs: {}
-      })
-      
-      if (resp.success && resp.data) {
-        const data = resp.data
-        result = {
-          success: data.success,
-          message: data.message || (data.success ? `Plugin executed (${data.execution_time_ms}ms)` : 'Test failed'),
-          findings: [{ 
-            title: 'Agent Tool Result', 
-            description: JSON.stringify(data.output ?? { error: data.error }, null, 2), 
-            severity: data.success ? 'info' : 'error' 
-          }],
-          error: data.error
-        }
-      } else {
-        result = {
-          success: false,
-          message: resp.error || 'Test failed',
-          error: resp.error
-        }
-      }
-    } else {
-      const resp = await invoke<CommandResponse<TestResult>>('test_plugin', { pluginId: editingPlugin.value.metadata.id })
-      if (resp.success && resp.data) {
-        result = resp.data
-      } else {
-        result = { success: false, message: resp.error || 'Test failed', error: resp.error }
-      }
-    }
-    
-    // Store the test result for display and potential AI reference
-    testResult.value = result
-    lastTestResult.value = {
-      success: result.success,
-      message: result.message || '',
-      preview: formatTestResultPreview(result),
-      findings: result.findings,
-      error: result.error,
-      timestamp: Date.now()
-    }
-    
-    // Show the test result dialog (same as normal test)
-    pluginDialogsRef.value?.showTestResultDialog()
-  } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : 'Test failed'
-    testResult.value = { success: false, message: errorMsg, error: errorMsg }
-    lastTestResult.value = {
-      success: false,
-      message: errorMsg,
-      preview: `Status: FAILED\nError: ${errorMsg}`,
-      error: errorMsg,
-      timestamp: Date.now()
-    }
-    pluginDialogsRef.value?.showTestResultDialog()
-  } finally {
-    pluginTesting.value = false
-  }
-}
-
-// Reference test result to AI assistant
 const referTestResultToAi = () => {
-  if (!lastTestResult.value) {
-    showToast(t('plugins.noTestResult', '请先运行插件测试'), 'warning')
-    return
-  }
-  
-  // Add test result to AI context
-  selectedTestResultRef.value = lastTestResult.value
-  
-  // Ensure AI panel is open
-  if (!showAiPanel.value) {
-    showAiPanel.value = true
-  }
-  
-  showToast(t('plugins.testResultAdded', '已添加测试结果到AI助手'), 'success')
-}
-
-const sendAiChatMessage = async (message: string) => {
-  if (!message.trim() || aiChatStreaming.value) return
-  
-  // Get current references
-  const codeRef = selectedCodeRef.value
-  const testResultRef = selectedTestResultRef.value
-  
-  // Refresh code reference if it exists (ensure real-time accuracy)
-  if (codeRef) {
-    const currentCode = getCurrentEditorCode()
-    if (codeRef.isFullCode) {
-      // Update full code reference
-      codeRef.code = currentCode
-      codeRef.preview = createCodePreview(currentCode)
-      codeRef.endLine = currentCode.split('\n').length
-    } else {
-      // For partial selection, try to maintain line range
-      const lines = currentCode.split('\n')
-      const startIdx = Math.max(0, codeRef.startLine - 1)
-      const endIdx = Math.min(lines.length, codeRef.endLine)
-      const refreshedCode = lines.slice(startIdx, endIdx).join('\n')
-      codeRef.code = refreshedCode
-      codeRef.preview = createCodePreview(refreshedCode)
-    }
-  }
-  
-  // Add user message with references
-  aiChatMessages.value.push({ 
-    role: 'user', 
-    content: message,
-    codeRef: codeRef || undefined,
-    testResultRef: testResultRef || undefined
-  })
-  aiChatStreaming.value = true
-  aiChatStreamingContent.value = ''
-  
-  const streamId = `plugin_edit_${Date.now()}`
-  
-  try {
-    // Build system prompt for code editing (Vibe Coding Agent Mode)
-    const isAgentPlugin = newPluginMetadata.value.mainCategory === 'agent'
-    const baseSystemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
-      pluginType: isAgentPlugin ? 'agent' : 'traffic',
-      vulnType: 'custom',
-      severity: newPluginMetadata.value.default_severity
-    })
-    
-    const agentInstructions = `
-you are a senior code editor Agent, writing a plugin for the "Sentinel AI" security testing platform.
-you are goal is to modify the TypeScript code directly and efficiently according to the user's needs.
-
-[Behavior Guidelines]:
-1. **Direct Modification**: If the user requires modifying the code, please provide the modified code block directly.
-2. **Partial vs Full**:
-   - If the user only wants to modify a specific function or add a small logic, you can only return the relevant code block (wrapped in \`\`\`typescript).
-   - If the user requires global structure adjustments or explicitly requests, please return the complete code.
-3. **Keep the Context**: When modifying, please refer to the user's [full code context] to ensure that the new code is compatible with the existing logic and type definitions.
-4. **Security First**: As a security plugin, the code must be robust and avoid injection risks and performance bottlenecks.
-5. **Simple Communication**: No need to add too many开场白, directly state what you have modified and then provide the code.
-
-[Special Instructions]:
-- User can send specific code snippets to you through the "right-click menu", please handle this part of content first.
-- If the user does not provide any code context, please answer as a general programming assistant.
-`
-    const systemPrompt = `${baseSystemPrompt}\n\n${agentInstructions}`
-    
-    // Get latest code from editor
-    const latestCode = getCurrentEditorCode()
-    
-    // Build user prompt with context - ONLY if user explicitly added code reference
-    let userPrompt = message
-    const contextParts: string[] = []
-    
-    // Check if user has explicitly provided context
-    const hasExplicitCodeRef = codeRef !== null
-    
-    if (hasExplicitCodeRef && codeRef) {
-      if (codeRef.isFullCode) {
-        contextParts.push(`[Current Full Plugin Code]:\n\`\`\`typescript\n${codeRef.code}\n\`\`\``)
-      } else {
-        contextParts.push(`[Current Focused Code Block] (Lines ${codeRef.startLine}-${codeRef.endLine}):\n\`\`\`typescript\n${codeRef.code}\n\`\`\``)
-        contextParts.push(`[Full Code Context] (仅供参考，请重点修改关注的片段):\n\`\`\`typescript\n${latestCode}\n\`\`\``)
-      }
-    }
-    
-    // Add test result context
-    if (testResultRef) {
-      const testInfo = [`[Latest Plugin Test Result]:`, `- Status: ${testResultRef.success ? 'Success' : 'Failed'}`]
-      if (testResultRef.message) testInfo.push(`- Message: ${testResultRef.message}`)
-      if (testResultRef.error) testInfo.push(`- Error: ${testResultRef.error}`)
-      if (testResultRef.findings && testResultRef.findings.length > 0) {
-        testInfo.push(`- Findings (${testResultRef.findings.length}):`)
-        testResultRef.findings.forEach((f, i) => {
-          testInfo.push(`  ${i + 1}. [${f.severity}] ${f.title}: ${f.description}`)
-        })
-      }
-      contextParts.push(testInfo.join('\n'))
-    }
-    
-    // Determine instruction based on context
-    let instruction = ""
-    if (hasExplicitCodeRef) {
-      instruction = "\n\nPlease modify the code according to the above code context and my needs. If the modification is small, you can only return the relevant code block; if the modification is large or involves structural adjustments, please return the complete code. Please return the code directly, without any unnecessary words."
-    } else {
-      instruction = "\n\nNote: I currently do not provide you with specific code context, please directly answer my questions or provide generic coding suggestions."
-    }
-    
-    // Combine context with user message
-    if (contextParts.length > 0) {
-      userPrompt = `${contextParts.join('\n\n')}\n\n[User Requirement]: ${message}${instruction}`
-    } else {
-      userPrompt = `${message}${instruction}`
-    }
-    
-    // Clear references after sending
-    selectedCodeRef.value = null
-    selectedTestResultRef.value = null
-    
-    let generatedContent = ''
-    
-    const unlistenDelta = await listen('plugin_gen_delta', (event: any) => {
-      if (event.payload.stream_id === streamId) {
-        const delta = event.payload.delta || ''
-        generatedContent += delta
-        aiChatStreamingContent.value = generatedContent
-      }
-    })
-    
-    const unlistenComplete = await listen('plugin_gen_complete', (event: any) => {
-      if (event.payload.stream_id === streamId) {
-        generatedContent = event.payload.content || generatedContent
-        finishAiChat(generatedContent)
-      }
-    })
-    
-    const unlistenError = await listen('plugin_gen_error', (event: any) => {
-      if (event.payload.stream_id === streamId) {
-        const errorMsg = event.payload.error || 'AI processing failed'
-        aiChatMessages.value.push({ role: 'assistant', content: `❌ ${errorMsg}` })
-        aiChatStreaming.value = false
-        aiChatStreamingContent.value = ''
-      }
-    })
-    
-    // Log request for debugging
-    console.log('[AI Chat] Sending message:', {
-      streamId,
-      messageLength: userPrompt.length,
-      hasCodeContext: !!codeRef,
-      hasTestContext: !!testResultRef,
-      serviceName: 'default'
-    })
-    
-    await invoke('generate_plugin_stream', {
-      request: {
-        stream_id: streamId,
-        message: userPrompt,
-        system_prompt: systemPrompt,
-        service_name: 'default',
-      }
-    })
-    
-    // Cleanup listeners after timeout
-    setTimeout(() => {
-      unlistenDelta()
-      unlistenComplete()
-      unlistenError()
-    }, 180000)
-    
-  } catch (error) {
-    aiChatMessages.value.push({ 
-      role: 'assistant', 
-      content: `❌ ${error instanceof Error ? error.message : 'AI 处理失败'}` 
-    })
-    aiChatStreaming.value = false
-    aiChatStreamingContent.value = ''
-  }
-}
-
-// Enhanced markdown rendering with marked library
-const renderMarkdown = (content: string): { html: string; codeBlocks: string[] } => {
-  const codeBlocks: string[] = []
-  
-  // Extract all code blocks before rendering (for Apply functionality)
-  const codeBlockRegex = /```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/g
-  let match
-  while ((match = codeBlockRegex.exec(content)) !== null) {
-    codeBlocks.push(match[1].trim())
-  }
-  
-  // Configure marked for better rendering
-  marked.setOptions({
-    breaks: true,
-    gfm: true,
-  })
-  
-  // Use marked to render markdown
-  const rawHtml = marked.parse(content) as string
-  
-  // Sanitize HTML to prevent XSS
-  const cleanHtml = DOMPurify.sanitize(rawHtml, {
-    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'a'],
-    ALLOWED_ATTR: ['href', 'class']
-  })
-  
-  return { html: cleanHtml, codeBlocks }
-}
-
-// Escape HTML for safe rendering
-const escapeHtml = (text: string): string => {
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;'
-  }
-  return text.replace(/[&<>"']/g, m => map[m])
-}
-
-const finishAiChat = (content: string) => {
-  aiChatStreaming.value = false
-  aiChatStreamingContent.value = ''
-  
-  // Use enhanced markdown rendering
-  const { html, codeBlocks } = renderMarkdown(content)
-  
-  aiChatMessages.value.push({ 
-    role: 'assistant', 
-    content: html,
-    codeBlock: codeBlocks[0],
-    codeBlocks: codeBlocks
-  })
-}
-
-const handleAiQuickAction = async (action: string) => {
-  const actions: Record<string, string> = {
-    'explain': '请解释这段插件代码的功能和工作原理',
-    'optimize': '请优化这段代码，提高性能和可读性',
-    'fix': '请检查并修复这段代码中可能存在的问题'
-  }
-  const message = actions[action] || action
-  await sendAiChatMessage(message)
-}
-
-// Smart code application: detect if it's a partial or full replacement
-const detectCodeApplicationMode = (aiCode: string, currentCode: string): 'full' | 'partial' | 'append' => {
-  // If AI code contains typical plugin structure markers AND is long, treat as full replacement
-  const fullReplacementMarkers = [
-    'export interface ToolInput',
-    'export async function analyze',
-    'globalThis.analyze',
-    '@plugin'
-  ]
-  
-  const hasMarkers = fullReplacementMarkers.every(marker => aiCode.includes(marker))
-  const aiLines = aiCode.split('\n').length
-  const currentLines = currentCode.split('\n').length
-  
-  if (hasMarkers && aiLines > currentLines * 0.7) {
-    return 'full'
-  }
-  
-  // If it's a single function or small block
-  if (aiCode.includes('function ') || aiCode.includes('const ') || aiCode.includes('interface ')) {
-    return 'partial'
-  }
-  
-  return 'append'
-}
-
-// Attempt to smart merge partial code into current document
-const smartMergeCode = (snippet: string, currentCode: string): string => {
-  // 1. Try to find if the snippet starts with a function/const that already exists
-  const funcMatch = snippet.match(/(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_]+)/)
-  if (funcMatch) {
-    const funcName = funcMatch[1]
-    const escapedName = funcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    // Regex to match the existing function body (simple version)
-    const existingFuncRegex = new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${escapedName}\\s*\\([\\s\\S]*?\\)\\s*\\{[\\s\\S]*?\\}`, 'g')
-    
-    if (currentCode.match(existingFuncRegex)) {
-      console.log(`[Smart Merge] Found existing function: ${funcName}, replacing it.`)
-      return currentCode.replace(existingFuncRegex, snippet)
-    }
-  }
-  
-  // 2. Try to find if it's a ToolInput/ToolOutput interface
-  const interfaceMatch = snippet.match(/interface\s+(ToolInput|ToolOutput|HttpRequest|HttpResponse|PluginContext)/)
-  if (interfaceMatch) {
-    const interfaceName = interfaceMatch[1]
-    const existingInterfaceRegex = new RegExp(`interface\\s+${interfaceName}\\s*\\{[\\s\\S]*?\\}`, 'g')
-    if (currentCode.match(existingInterfaceRegex)) {
-      console.log(`[Smart Merge] Found existing interface: ${interfaceName}, replacing it.`)
-      return currentCode.replace(existingInterfaceRegex, snippet)
-    }
-  }
-  
-  // 3. Fallback: Append or Full Replace based on size
-  if (snippet.length > currentCode.length * 0.8) {
-    return snippet
-  }
-  
-  return currentCode + '\n\n' + snippet
-}
-
-const applyAiCode = (code: string, context?: CodeReference | null) => {
-  if (!code) return
-  
-  const currentCode = getCurrentEditorCode()
-  const codeToApply = isPreviewMode.value ? previewCode.value : code
-  
-  // 1. Detect application mode
-  const mode = detectCodeApplicationMode(codeToApply, currentCode)
-  
-  let finalCode = currentCode
-  let message = ''
-  
-  if (mode === 'full') {
-    finalCode = codeToApply
-    message = '代码已全量替换'
-  } else {
-    // Partial or Append mode
-    let replaced = false
-    
-    // 2. Try context-based replacement if available
-    // Only if context code is not the whole file
-    if (context && context.code && !context.isFullCode) {
-      if (currentCode.includes(context.code)) {
-        finalCode = currentCode.replace(context.code, codeToApply)
-        replaced = true
-        message = '选中代码已替换'
-      }
-    }
-    
-    // 3. Fallback to smart merge if context replacement failed or no context
-    if (!replaced) {
-      if (mode === 'partial') {
-        finalCode = smartMergeCode(codeToApply, currentCode)
-        message = '代码已智能合并'
-      } else {
-        finalCode = currentCode + '\n\n' + codeToApply
-        message = '代码已追加到末尾'
-      }
-    }
-  }
-  
-  pluginCode.value = finalCode
-  updateCodeEditorContent(finalCode)
-  updateFullscreenCodeEditorContent(finalCode)
-  
-  if (isPreviewMode.value) {
-    exitPreviewMode()
-  }
-  
-  if (!isEditing.value && editingPlugin.value) {
-    enableEditing()
-  }
-  showToast(message, 'success')
-}
-
-const previewAiCode = (code: string) => {
-  if (!code || !isFullscreenEditor.value) {
-    showToast('请在全屏模式下使用预览功能', 'warning')
-    return
-  }
-  
-  previewCode.value = code
-  isPreviewMode.value = true
-  
-  nextTick(() => {
-    initDiffEditor()
-  })
-}
-
-const exitPreviewMode = () => {
-  // Cleanup diff editors
-  if (diffEditorViewA) {
-    diffEditorViewA.destroy()
-    diffEditorViewA = null
-  }
-  if (diffEditorViewB) {
-    diffEditorViewB.destroy()
-    diffEditorViewB = null
-  }
-  
-  isPreviewMode.value = false
-  previewCode.value = ''
-  
-  // Re-init fullscreen editor
-  nextTick(() => {
-    if (!fullscreenCodeEditorView && isFullscreenEditor.value) {
-      initFullscreenCodeEditor()
-    }
-  })
-}
-
-const initDiffEditor = () => {
-  const container = codeEditorDialogRef.value?.fullscreenDiffEditorContainerRef
-  if (!container) return
-  
-  // Clear container first to avoid multiple wrappers
-  container.innerHTML = ''
-  
-  // Clear existing diff editors
-  if (diffEditorViewA) {
-    diffEditorViewA.destroy()
-    diffEditorViewA = null
-  }
-  if (diffEditorViewB) {
-    diffEditorViewB.destroy()
-    diffEditorViewB = null
-  }
-  
-  // Create a wrapper for side-by-side layout
-  const wrapper = document.createElement('div')
-  wrapper.className = 'diff-editor-wrapper'
-  wrapper.style.cssText = 'display: flex; height: calc(100% - 3rem); width: 100%;'
-  
-  const leftContainer = document.createElement('div')
-  leftContainer.className = 'diff-left'
-  leftContainer.style.cssText = 'flex: 1; border-right: 2px solid oklch(var(--bc) / 0.2);'
-  
-  const rightContainer = document.createElement('div')
-  rightContainer.className = 'diff-right'
-  rightContainer.style.cssText = 'flex: 1;'
-  
-  wrapper.appendChild(leftContainer)
-  wrapper.appendChild(rightContainer)
-  container.appendChild(wrapper)
-  
-  // Create original code editor (read-only)
-  diffEditorViewA = new EditorView({
-    doc: pluginCode.value,
-    extensions: [
-      basicSetup,
-      javascript(),
-      oneDark,
-      EditorView.lineWrapping,
-      EditorView.editable.of(false),
-    ],
-    parent: leftContainer
-  })
-  
-  // Create modified code editor (editable)
-  diffEditorViewB = new EditorView({
-    doc: previewCode.value,
-    extensions: [
-      basicSetup,
-      javascript(),
-      oneDark,
-      EditorView.lineWrapping,
-      EditorView.updateListener.of((update: ViewUpdate) => {
-        if (update.docChanged) {
-          previewCode.value = update.state.doc.toString()
-        }
-      })
-    ],
-    parent: rightContainer
-  })
-}
-
-const enableEditing = () => {
-  isEditing.value = true
-  updateCodeEditorReadonly(false)
-  updateFullscreenCodeEditorReadonly(false)
-}
-
-const cancelEditing = () => {
-  pluginCode.value = originalCode.value
-  updateCodeEditorContent(originalCode.value)
-  updateFullscreenCodeEditorContent(originalCode.value)
-  isEditing.value = false
-  codeError.value = ''
-  updateCodeEditorReadonly(true)
-  updateFullscreenCodeEditorReadonly(true)
-
-  if (editingPlugin.value) {
-    newPluginMetadata.value = {
-      id: editingPlugin.value.metadata.id,
-      name: editingPlugin.value.metadata.name,
-      version: editingPlugin.value.metadata.version,
-      author: editingPlugin.value.metadata.author || '',
-      mainCategory: editingPlugin.value.metadata.main_category,
-      category: editingPlugin.value.metadata.category,
-      default_severity: editingPlugin.value.metadata.default_severity,
-      description: editingPlugin.value.metadata.description || '',
-      tagsString: editingPlugin.value.metadata.tags.join(', ')
-    }
-  }
-}
-
-// Save editor state (cursor, scroll, selection)
-const saveEditorState = (editorView: EditorView | null): EditorViewState | null => {
-  if (!editorView) return null
-  
-  const selection = editorView.state.selection.main
-  const allSelections = editorView.state.selection.ranges.map(r => ({ from: r.from, to: r.to }))
-  
-  return {
-    cursorPos: selection.head,
-    scrollTop: editorView.scrollDOM.scrollTop,
-    scrollLeft: editorView.scrollDOM.scrollLeft,
-    selectionRanges: allSelections
-  }
-}
-
-// Restore editor state
-const restoreEditorState = (editorView: EditorView | null, state: EditorViewState | null) => {
-  if (!editorView || !state) return
-  
-  nextTick(() => {
-    // Restore selection and cursor
-    editorView.dispatch({
-      selection: {
-        anchor: state.selectionRanges[0]?.from || state.cursorPos,
-        head: state.selectionRanges[0]?.to || state.cursorPos
-      },
-      scrollIntoView: true
-    })
-    
-    // Restore scroll position
-    setTimeout(() => {
-      editorView.scrollDOM.scrollTop = state.scrollTop
-      editorView.scrollDOM.scrollLeft = state.scrollLeft
-    }, 10)
-  })
-}
-
-const toggleFullscreenEditor = () => {
-  if (!isFullscreenEditor.value) {
-    // Save current editor state before switching
-    savedEditorState = saveEditorState(codeEditorView)
-    
-    // 进入全屏模式时，临时关闭 dialog 的 modal 状态，让其离开 top layer
-    // 这样全屏编辑器覆盖层才能正确接收事件
-    codeEditorDialogRef.value?.hideModalTemporary()
-    isFullscreenEditor.value = true
-    nextTick(() => {
-      initFullscreenCodeEditor()
-      // Restore state to fullscreen editor
-      restoreEditorState(fullscreenCodeEditorView, savedEditorState)
-    })
-  } else {
-    exitFullscreenEditor()
-  }
-}
-
-const savePlugin = async () => {
-  if (!editingPlugin.value) return
-  saving.value = true
-  codeError.value = ''
-
-  try {
-    const tags = newPluginMetadata.value.tagsString.split(',').map(t => t.trim()).filter(t => t.length > 0)
-    const backendCategory = newPluginMetadata.value.category
-
-    const metadataComment = `/**
- * @plugin ${newPluginMetadata.value.id}
- * @name ${newPluginMetadata.value.name}
- * @version ${newPluginMetadata.value.version}
- * @author ${newPluginMetadata.value.author || 'Unknown'}
- * @category ${backendCategory}
- * @default_severity ${newPluginMetadata.value.default_severity}
- * @tags ${tags.join(', ')}
- * @description ${newPluginMetadata.value.description || ''}
- */
-`
-
-    const codeWithoutMetadata = pluginCode.value.replace(/\/\*\*\s*[\s\S]*?\*\/\s*/, '')
-    const fullCode = metadataComment + '\n' + codeWithoutMetadata
-
-    // 构建完整元数据用于全量更新
-    const metadata = {
-      id: newPluginMetadata.value.id,
-      name: newPluginMetadata.value.name,
-      version: newPluginMetadata.value.version,
-      author: newPluginMetadata.value.author || 'Unknown',
-      main_category: newPluginMetadata.value.mainCategory,
-      category: backendCategory,
-      description: newPluginMetadata.value.description || '',
-      default_severity: newPluginMetadata.value.default_severity,
-      tags: tags
-    }
-
-    const response = await invoke<CommandResponse<void>>('update_plugin', {
-      metadata,
-      pluginCode: fullCode
-    })
-
-    if (response.success) {
-      originalCode.value = pluginCode.value
-      isEditing.value = false
-      updateCodeEditorReadonly(true)
-      updateFullscreenCodeEditorReadonly(true)
-      await refreshPlugins()
-      showToast('插件已保存', 'success')
-    } else {
-      codeError.value = response.error || '保存失败'
-    }
-  } catch (error) {
-    codeError.value = error instanceof Error ? error.message : '保存失败'
-  } finally {
-    saving.value = false
-  }
-}
-
-const createNewPlugin = async () => {
-  saving.value = true
-  codeError.value = ''
-
-  try {
-    const tags = newPluginMetadata.value.tagsString.split(',').map(t => t.trim()).filter(t => t.length > 0)
-    const backendCategory = newPluginMetadata.value.category
-
-    const metadataComment = `/**
- * @plugin ${newPluginMetadata.value.id}
- * @name ${newPluginMetadata.value.name}
- * @version ${newPluginMetadata.value.version}
- * @author ${newPluginMetadata.value.author || 'Unknown'}
- * @category ${backendCategory}
- * @default_severity ${newPluginMetadata.value.default_severity}
- * @tags ${tags.join(', ')}
- * @description ${newPluginMetadata.value.description || ''}
- */
-`
-
-    const fullCode = metadataComment + '\n' + pluginCode.value
-
-    const metadata = {
-      id: newPluginMetadata.value.id,
-      name: newPluginMetadata.value.name,
-      version: newPluginMetadata.value.version,
-      author: newPluginMetadata.value.author || 'Unknown',
-      main_category: newPluginMetadata.value.mainCategory,
-      category: backendCategory,
-      description: newPluginMetadata.value.description || '',
-      default_severity: newPluginMetadata.value.default_severity,
-      tags: tags
-    }
-
-    const response = await invoke<CommandResponse<string>>('create_plugin_in_db', {
-      metadata,
-      pluginCode: fullCode
-    })
-
-    if (response.success) {
-      codeEditorDialogRef.value?.closeDialog()
-      await refreshPlugins()
-      showToast('插件创建成功', 'success')
-    } else {
-      codeError.value = response.error || '创建失败'
-    }
-  } catch (error) {
-    codeError.value = error instanceof Error ? error.message : '创建失败'
-  } finally {
-    saving.value = false
-  }
-}
-
-const insertTemplate = async () => {
-  const isAgentPlugin = newPluginMetadata.value.mainCategory === 'agent'
-  try {
-    const templateType = isAgentPlugin ? 'agent' : 'traffic'
-    const combinedTemplate = await invoke<string>('get_combined_plugin_prompt_api', {
-      pluginType: templateType,
-      vulnType: newPluginMetadata.value.category || 'custom',
-      severity: newPluginMetadata.value.default_severity || 'medium'
-    })
-
-    let codeTemplate = ''
-    const patterns = [/```typescript\n([\s\S]*?)\n```/, /```ts\n([\s\S]*?)\n```/, /```javascript\n([\s\S]*?)\n```/]
-    for (const pattern of patterns) {
-      const match = combinedTemplate.match(pattern)
-      if (match) {
-        codeTemplate = match[1].trim()
-        break
-      }
-    }
-
-    if (!codeTemplate) {
-      codeTemplate = isAgentPlugin ? getAgentFallbackTemplate() : getTrafficFallbackTemplate()
-    }
-
-    pluginCode.value = codeTemplate
-    updateCodeEditorContent(codeTemplate)
-    updateFullscreenCodeEditorContent(codeTemplate)
-    showToast('已插入模板代码', 'success')
-  } catch (error) {
-    const fallback = isAgentPlugin ? getAgentFallbackTemplate() : getTrafficFallbackTemplate()
-    pluginCode.value = fallback
-    updateCodeEditorContent(fallback)
-    updateFullscreenCodeEditorContent(fallback)
-    showToast('使用内置模板', 'info')
-  }
-}
-
-const getAgentFallbackTemplate = () => `export interface ToolInput { [key: string]: any; }
-export interface ToolOutput { success: boolean; data?: any; error?: string; }
-
-export async function analyze(input: ToolInput): Promise<ToolOutput> {
-  try {
-    // TODO: Implement your Agent tool logic
-    return { success: true, data: {} };
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-  }
-}
-
-globalThis.analyze = analyze;`
-
-const getTrafficFallbackTemplate = () => `export interface HttpRequest { method: string; url: string; headers: Record<string, string>; body?: string; }
-export interface HttpResponse { status: number; headers: Record<string, string>; body?: string; }
-export interface PluginContext { request: HttpRequest; response: HttpResponse; }
-export interface Finding { title: string; description: string; severity: 'info' | 'low' | 'medium' | 'high' | 'critical'; }
-
-export async function analyze(context: PluginContext): Promise<Finding[]> {
-  const findings: Finding[] = [];
-  // TODO: Implement your traffic analysis logic
-  return findings;
-}
-
-globalThis.analyze = analyze;`
-
-const formatCode = () => {
-  try {
-    const lines = pluginCode.value.split('\n')
-    const formatted = lines.map(line => line.trimEnd()).join('\n').replace(/\n{3,}/g, '\n\n')
-    pluginCode.value = formatted
-    updateCodeEditorContent(formatted)
-    updateFullscreenCodeEditorContent(formatted)
-    showToast('代码已格式化', 'success')
-  } catch (error) {
-    showToast('格式化失败', 'error')
-  }
-}
-
-const copyPlugin = async () => {
-  try {
-    const tags = newPluginMetadata.value.tagsString.split(',').map(t => t.trim()).filter(t => t.length > 0)
-    const backendCategory = newPluginMetadata.value.category
-    const metadataComment = `/**
- * @plugin ${newPluginMetadata.value.id}
- * @name ${newPluginMetadata.value.name}
- * @version ${newPluginMetadata.value.version}
- * @author ${newPluginMetadata.value.author || 'Unknown'}
- * @category ${backendCategory}
- * @default_severity ${newPluginMetadata.value.default_severity}
- * @tags ${tags.join(', ')}
- * @description ${newPluginMetadata.value.description || ''}
- */
-`
-    const codeWithoutMetadata = pluginCode.value.replace(/\/\*\*\s*[\s\S]*?\*\/\s*/, '')
-    const fullCode = metadataComment + '\n' + codeWithoutMetadata
-    await navigator.clipboard.writeText(fullCode)
-    showToast(t('plugins.copySuccess', '已复制'), 'success')
-  } catch (error) {
-    console.error('Failed to copy plugin:', error)
-    showToast(t('plugins.copyFailed', '复制失败'), 'error')
-  }
+  // Not implemented here anymore, handled by store/GlobalPluginEditor
 }
 
 // Test methods
@@ -2268,7 +1040,6 @@ const openAdvancedDialog = async (plugin: PluginRecord) => {
   const isAgent = plugin.metadata.main_category === 'agent'
   if (isAgent) {
     try {
-      // 从后端获取插件的输入参数 schema
       const schemaResp = await invoke<CommandResponse<any>>('get_plugin_input_schema', {
         pluginId: plugin.metadata.id
       })
@@ -2401,207 +1172,6 @@ const runAdvancedTest = async () => {
   }
 }
 
-// Setup context menu for editor
-const setupEditorContextMenu = (editorView: EditorView) => {
-  const editorDom = editorView.dom
-  
-  const handleContextMenu = (e: MouseEvent) => {
-    // Only show context menu if AI panel is open
-    if (!showAiPanel.value) return
-    
-    e.preventDefault()
-    e.stopPropagation()
-    
-    // Check if there's a selection
-    const selection = editorView.state.selection.main
-    contextMenuHasSelection.value = !selection.empty
-    
-    // Position context menu
-    contextMenuPosition.value = { x: e.clientX, y: e.clientY }
-    showContextMenu.value = true
-    
-    // Close menu on any click outside
-    const closeMenu = () => {
-      showContextMenu.value = false
-      document.removeEventListener('click', closeMenu)
-      document.removeEventListener('contextmenu', closeMenu)
-    }
-    
-    setTimeout(() => {
-      document.addEventListener('click', closeMenu)
-      document.addEventListener('contextmenu', closeMenu)
-    }, 0)
-  }
-  
-  // Keyboard shortcuts
-  const handleKeydown = (e: KeyboardEvent) => {
-    // Ctrl+Shift+A: Add selection to AI context
-    if (e.ctrlKey && e.shiftKey && e.key === 'A') {
-      e.preventDefault()
-      const selection = editorView.state.selection.main
-      if (!selection.empty) {
-        handleContextMenuAddSelection()
-      }
-    }
-    
-    // Ctrl+Shift+F: Add full code to AI context
-    if (e.ctrlKey && e.shiftKey && e.key === 'F') {
-      e.preventDefault()
-      handleContextMenuAddAll()
-    }
-  }
-  
-  editorDom.addEventListener('contextmenu', handleContextMenu)
-  editorDom.addEventListener('keydown', handleKeydown)
-}
-
-// CodeMirror initialization
-const initCodeEditor = () => {
-  const container = codeEditorDialogRef.value?.codeEditorContainerRef
-  if (!container) return
-
-  if (codeEditorView) {
-    codeEditorView.destroy()
-    codeEditorView = null
-  }
-
-  const isReadOnly = editingPlugin.value ? !isEditing.value : false
-
-  codeEditorView = new EditorView({
-    doc: pluginCode.value,
-    extensions: [
-      basicSetup,
-      javascript(),
-      oneDark,
-      EditorView.lineWrapping,
-      codeEditorReadOnly.of(EditorView.editable.of(!isReadOnly)),
-      EditorView.updateListener.of((update: ViewUpdate) => {
-        if (update.docChanged) pluginCode.value = update.state.doc.toString()
-      })
-    ],
-    parent: container
-  })
-  
-  // Setup context menu
-  setupEditorContextMenu(codeEditorView)
-}
-
-const initReviewCodeEditor = () => {
-  const container = pluginDialogsRef.value?.reviewCodeEditorContainerRef
-  if (!container) return
-
-  if (reviewCodeEditorView) {
-    reviewCodeEditorView.destroy()
-    reviewCodeEditorView = null
-  }
-
-  reviewCodeEditorView = new EditorView({
-    doc: selectedReviewPlugin.value?.code || '',
-    extensions: [
-      basicSetup,
-      javascript(),
-      oneDark,
-      EditorView.lineWrapping,
-      reviewCodeEditorReadOnly.of(EditorView.editable.of(reviewEditMode.value)),
-      EditorView.updateListener.of((update: ViewUpdate) => {
-        if (update.docChanged) editedReviewCode.value = update.state.doc.toString()
-      })
-    ],
-    parent: container
-  })
-}
-
-const initFullscreenCodeEditor = () => {
-  const container = codeEditorDialogRef.value?.fullscreenCodeEditorContainerRef
-  if (!container) return
-
-  if (fullscreenCodeEditorView) {
-    fullscreenCodeEditorView.destroy()
-    fullscreenCodeEditorView = null
-  }
-
-  const isReadOnly = editingPlugin.value ? !isEditing.value : false
-
-  fullscreenCodeEditorView = new EditorView({
-    doc: pluginCode.value,
-    extensions: [
-      basicSetup,
-      javascript(),
-      oneDark,
-      EditorView.lineWrapping,
-      codeEditorReadOnly.of(EditorView.editable.of(!isReadOnly)),
-      EditorView.updateListener.of((update: ViewUpdate) => {
-        if (update.docChanged) pluginCode.value = update.state.doc.toString()
-      })
-    ],
-    parent: container
-  })
-  
-  // Setup context menu
-  setupEditorContextMenu(fullscreenCodeEditorView)
-}
-
-const exitFullscreenEditor = () => {
-  if (fullscreenCodeEditorView) {
-    // Save state before exiting fullscreen
-    savedEditorState = saveEditorState(fullscreenCodeEditorView)
-    
-    const content = fullscreenCodeEditorView.state.doc.toString()
-    pluginCode.value = content
-    
-    fullscreenCodeEditorView.destroy()
-    fullscreenCodeEditorView = null
-  }
-  
-  isFullscreenEditor.value = false
-  // 恢复 dialog 的 modal 状态
-  codeEditorDialogRef.value?.restoreModal()
-  
-  // Restore state to normal editor
-  nextTick(() => {
-    if (codeEditorView && savedEditorState) {
-      // Update content first
-      codeEditorView.dispatch({ 
-        changes: { from: 0, to: codeEditorView.state.doc.length, insert: pluginCode.value } 
-      })
-      // Then restore state
-      restoreEditorState(codeEditorView, savedEditorState)
-    }
-  })
-}
-
-const updateCodeEditorContent = (content: string) => {
-  if (codeEditorView) {
-    codeEditorView.dispatch({ changes: { from: 0, to: codeEditorView.state.doc.length, insert: content } })
-  }
-}
-
-const updateFullscreenCodeEditorContent = (content: string) => {
-  if (fullscreenCodeEditorView) {
-    fullscreenCodeEditorView.dispatch({ changes: { from: 0, to: fullscreenCodeEditorView.state.doc.length, insert: content } })
-  }
-}
-
-const updateCodeEditorReadonly = (readonly: boolean) => {
-  if (codeEditorView) {
-    codeEditorView.dispatch({ effects: codeEditorReadOnly.reconfigure(EditorView.editable.of(!readonly)) })
-  }
-}
-
-const updateFullscreenCodeEditorReadonly = (readonly: boolean) => {
-  if (fullscreenCodeEditorView) {
-    fullscreenCodeEditorView.dispatch({ effects: codeEditorReadOnly.reconfigure(EditorView.editable.of(!readonly)) })
-  }
-}
-
-const onFullscreenKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape' && isFullscreenEditor.value) {
-    e.preventDefault()
-    e.stopPropagation()
-    exitFullscreenEditor()
-  }
-}
-
 // Event listeners
 const setupEventListeners = async () => {
   pluginChangedUnlisten = await listen('plugin:changed', () => refreshPlugins())
@@ -2611,16 +1181,6 @@ const setupEventListeners = async () => {
 watch(reviewEditMode, (newValue) => {
   if (reviewCodeEditorView) {
     reviewCodeEditorView.dispatch({ effects: reviewCodeEditorReadOnly.reconfigure(EditorView.editable.of(newValue)) })
-  }
-})
-
-watch(isFullscreenEditor, (enabled) => {
-  if (enabled) {
-    document.body.style.overflow = 'hidden'
-    window.addEventListener('keydown', onFullscreenKeydown, true)
-  } else {
-    window.removeEventListener('keydown', onFullscreenKeydown, true)
-    document.body.style.overflow = ''
   }
 })
 
@@ -2637,13 +1197,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (pluginChangedUnlisten) pluginChangedUnlisten()
-  if (codeEditorView) { codeEditorView.destroy(); codeEditorView = null }
   if (reviewCodeEditorView) { reviewCodeEditorView.destroy(); reviewCodeEditorView = null }
-  if (fullscreenCodeEditorView) { fullscreenCodeEditorView.destroy(); fullscreenCodeEditorView = null }
-  if (diffEditorViewA) { diffEditorViewA.destroy(); diffEditorViewA = null }
-  if (diffEditorViewB) { diffEditorViewB.destroy(); diffEditorViewB = null }
-  window.removeEventListener('keydown', onFullscreenKeydown, true)
-  document.body.style.overflow = ''
 })
 </script>
 
@@ -2674,70 +1228,5 @@ onUnmounted(() => {
   background-color: #282c34;
   color: #5c6370;
   border: none;
-}
-
-/* Editor Context Menu */
-.editor-context-menu {
-  position: fixed;
-  min-width: 240px;
-  background: oklch(var(--b1));
-  border: 1px solid oklch(var(--bc) / 0.2);
-  border-radius: 0.5rem;
-  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.3), 0 8px 10px -6px rgb(0 0 0 / 0.2);
-  z-index: 999999;
-  padding: 0.25rem;
-  animation: contextMenuFadeIn 0.15s ease-out;
-}
-
-@keyframes contextMenuFadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.context-menu-header {
-  display: flex;
-  align-items: center;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid oklch(var(--bc) / 0.1);
-  margin-bottom: 0.25rem;
-  color: oklch(var(--bc) / 0.7);
-}
-
-.context-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  background: transparent;
-  border: none;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  color: oklch(var(--bc));
-  font-size: 0.875rem;
-  transition: all 0.15s;
-}
-
-.context-menu-item:hover {
-  background: oklch(var(--b3));
-}
-
-.context-menu-item i {
-  width: 1rem;
-  font-size: 0.875rem;
-}
-
-.context-menu-item .kbd {
-  background: oklch(var(--b3));
-  border-color: oklch(var(--bc) / 0.2);
-  font-size: 0.7rem;
-  padding: 0.125rem 0.375rem;
 }
 </style>

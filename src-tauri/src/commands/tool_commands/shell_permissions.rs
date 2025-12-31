@@ -6,6 +6,7 @@ use std::sync::Arc;
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use tokio::sync::RwLock;
+use tauri::Manager;
 
 use sentinel_tools::buildin_tools::shell::{
     get_shell_config, set_permission_handler, set_shell_config, ShellConfig, ShellPermissionHandler,
@@ -101,9 +102,20 @@ impl ShellPermissionHandler for ShellPermissionImpl {
     }
 }
 
-/// Initialize the shell permission handler
+/// Initialize the shell permission handler and load config from database
 pub async fn init_shell_permission_handler(app: tauri::AppHandle) -> Result<(), String> {
-    set_permission_handler(Arc::new(ShellPermissionImpl { app })).await;
+    set_permission_handler(Arc::new(ShellPermissionImpl { app: app.clone() })).await;
+    
+    // Load shell config from database
+    if let Some(db) = app.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        let db_ref: &sentinel_db::DatabaseService = db.inner();
+        let config = crate::commands::tool_commands::agent_config::load_shell_config_from_db(db_ref).await;
+        set_shell_config(config).await;
+        tracing::info!("Shell config loaded from database on startup");
+    } else {
+        tracing::warn!("Database service not available, using default shell config");
+    }
+    
     Ok(())
 }
 

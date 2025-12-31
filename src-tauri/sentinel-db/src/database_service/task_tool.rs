@@ -28,7 +28,7 @@ impl DatabaseService {
         )
         .bind(&request.task_id)
         .bind(&request.tool_id)
-        .fetch_optional(&*pool)
+        .fetch_optional(pool)
         .await?;
 
         if let Some(row) = existing {
@@ -78,7 +78,7 @@ impl DatabaseService {
         .bind(ToolExecutionStatus::Idle.to_string())
         .bind(now.to_rfc3339())
         .bind(now.to_rfc3339())
-        .execute(&*pool)
+        .execute(pool)
         .await?;
 
         info!("Created task tool execution record: {} for task: {}, tool: {}", 
@@ -132,7 +132,7 @@ impl DatabaseService {
         .bind(ToolExecutionStatus::Running.to_string())
         .bind(now.to_rfc3339())
         .bind(&task_tool_exec.id)
-        .execute(&*pool)
+        .execute(pool)
         .await?;
 
         // Create execution log
@@ -154,7 +154,7 @@ impl DatabaseService {
         .bind(now.to_rfc3339())
         .bind(input_json)
         .bind(now.to_rfc3339())
-        .execute(&*pool)
+        .execute(pool)
         .await?;
 
         debug!("Recorded tool execution start: {} for task: {}, tool: {}", 
@@ -179,7 +179,7 @@ impl DatabaseService {
             "SELECT task_tool_execution_id, started_at FROM task_tool_execution_logs WHERE id = ?"
         )
         .bind(&log_id)
-        .fetch_one(&*pool)
+        .fetch_one(pool)
         .await?;
 
         let task_tool_exec_id: String = log.get("task_tool_execution_id");
@@ -210,7 +210,7 @@ impl DatabaseService {
         .bind(output_json)
         .bind(&error_message)
         .bind(&log_id)
-        .execute(&*pool)
+        .execute(pool)
         .await?;
 
         // Update aggregated task tool execution record
@@ -219,7 +219,7 @@ impl DatabaseService {
                total_execution_time_ms FROM task_tool_executions WHERE id = ?"#
         )
         .bind(&task_tool_exec_id)
-        .fetch_one(&*pool)
+        .fetch_one(pool)
         .await?;
 
         let mut exec_count: i64 = exec_record.get("execution_count");
@@ -259,7 +259,7 @@ impl DatabaseService {
         .bind(&error_message)
         .bind(now.to_rfc3339())
         .bind(&task_tool_exec_id)
-        .execute(&*pool)
+        .execute(pool)
         .await?;
 
         debug!("Recorded tool execution complete: {} (success: {})", log_id, success);
@@ -281,7 +281,7 @@ impl DatabaseService {
                ORDER BY l.started_at DESC"#
         )
         .bind(&task_id)
-        .fetch_all(&*pool)
+        .fetch_all(pool)
         .await?;
 
         let mut tools = Vec::new();
@@ -318,14 +318,14 @@ impl DatabaseService {
                WHERE task_id = ?"#
         )
         .bind(&task_id)
-        .fetch_one(&*pool)
+        .fetch_one(pool)
         .await?;
 
         let tools_used = sqlx::query(
             "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = ?"
         )
         .bind(&task_id)
-        .fetch_all(&*pool)
+        .fetch_all(pool)
         .await?
         .iter()
         .map(|r| r.get::<String, _>("tool_name"))
@@ -370,7 +370,7 @@ impl DatabaseService {
             query = query.bind(tid);
         }
 
-        let rows = query.fetch_all(&*pool).await?;
+        let rows = query.fetch_all(pool).await?;
 
         let mut records = Vec::new();
         for row in rows {
@@ -402,7 +402,7 @@ impl DatabaseService {
             "DELETE FROM task_tool_execution_logs WHERE created_at < ?"
         )
         .bind(cutoff_date.to_rfc3339())
-        .execute(&*pool)
+        .execute(pool)
         .await?;
 
         info!("Cleaned up {} old execution logs", result.rows_affected());
@@ -423,7 +423,7 @@ impl DatabaseService {
                WHERE l.status = 'running'
                ORDER BY l.started_at DESC"#
         )
-        .fetch_all(&*pool)
+        .fetch_all(pool)
         .await?;
 
         let mut active_tools = Vec::new();

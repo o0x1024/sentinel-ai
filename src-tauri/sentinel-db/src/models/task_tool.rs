@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use std::fmt;
 
 /// Tool type enumeration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -11,14 +12,15 @@ pub enum ToolType {
     Workflow,
 }
 
-impl ToString for ToolType {
-    fn to_string(&self) -> String {
-        match self {
-            ToolType::Plugin => "plugin".to_string(),
-            ToolType::McpServer => "mcp_server".to_string(),
-            ToolType::Builtin => "builtin".to_string(),
-            ToolType::Workflow => "workflow".to_string(),
-        }
+impl fmt::Display for ToolType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ToolType::Plugin => "plugin",
+            ToolType::McpServer => "mcp_server",
+            ToolType::Builtin => "builtin",
+            ToolType::Workflow => "workflow",
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -47,15 +49,16 @@ pub enum ToolExecutionStatus {
     Error,
 }
 
-impl ToString for ToolExecutionStatus {
-    fn to_string(&self) -> String {
-        match self {
-            ToolExecutionStatus::Idle => "idle".to_string(),
-            ToolExecutionStatus::Running => "running".to_string(),
-            ToolExecutionStatus::Waiting => "waiting".to_string(),
-            ToolExecutionStatus::Completed => "completed".to_string(),
-            ToolExecutionStatus::Error => "error".to_string(),
-        }
+impl fmt::Display for ToolExecutionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ToolExecutionStatus::Idle => "idle",
+            ToolExecutionStatus::Running => "running",
+            ToolExecutionStatus::Waiting => "waiting",
+            ToolExecutionStatus::Completed => "completed",
+            ToolExecutionStatus::Error => "error",
+        };
+        write!(f, "{}", s)
     }
 }
 

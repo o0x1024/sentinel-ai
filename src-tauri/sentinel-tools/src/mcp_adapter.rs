@@ -223,11 +223,11 @@ pub async fn refresh_mcp_tools(tool_server: &ToolServer) {
 
                 tool_server
                     .register_mcp_tool(
-                        &server_name,
-                        &tool_meta.tool_name,
-                        &tool_meta.description.as_deref().unwrap_or_default(),
-                        tool_meta.input_schema.clone(),
-                        executor,
+                       &server_name,
+                       &tool_meta.tool_name,
+                       tool_meta.description.as_deref().unwrap_or_default(),
+                       tool_meta.input_schema.clone(),
+                       executor,
                     )
                     .await;
             }

@@ -842,7 +842,7 @@ impl FileExtractor {
         // 2. Process each stream with multiple extraction methods
         for (stream_key, stream_packets) in &streams {
             // Sort by packet id
-            let mut sorted: Vec<_> = stream_packets.iter().copied().collect();
+            let mut sorted: Vec<_> = stream_packets.to_vec();
             sorted.sort_by_key(|p| p.id);
 
             // HTTP extraction
@@ -985,8 +985,8 @@ impl FileExtractor {
             }
             
             // FTP data port (usually high port, binary data)
-            let src_port: u16 = pkt.src.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(0);
-            let dst_port: u16 = pkt.dst.split(':').last().and_then(|p| p.parse().ok()).unwrap_or(0);
+            let src_port: u16 = pkt.src.split(':').next_back().and_then(|p| p.parse().ok()).unwrap_or(0);
+            let dst_port: u16 = pkt.dst.split(':').next_back().and_then(|p| p.parse().ok()).unwrap_or(0);
             
             if (src_port == 20 || dst_port == 20 || src_port > 1024 && dst_port > 1024) 
                 && pkt.protocol == "TCP" && pkt.raw.len() > 60 {
@@ -1364,7 +1364,7 @@ impl FileExtractor {
         let eth_type = if raw.len() > 13 { ((raw[12] as u16) << 8) | raw[13] as u16 } else { 0 };
         
         let ip_start = 14;
-        if eth_type != 0x0800 && eth_type != 0x86DD { return &raw; } // Not IP
+        if eth_type != 0x0800 && eth_type != 0x86DD { return raw; } // Not IP
         
         let ip_header_len = if raw.len() > ip_start { ((raw[ip_start] & 0x0F) as usize) * 4 } else { 20 };
         let transport_start = ip_start + ip_header_len;
@@ -1388,14 +1388,13 @@ impl FileExtractor {
 
     fn detect_file_at_offset(data: &[u8], offset: usize) -> Option<(&'static FileMagic, Vec<u8>)> {
         for magic in FILE_MAGICS {
-            if offset + magic.magic.len() <= data.len() {
-                if &data[offset..offset + magic.magic.len()] == magic.magic {
+            if offset + magic.magic.len() <= data.len()
+                && &data[offset..offset + magic.magic.len()] == magic.magic {
                     let end = Self::estimate_file_end(data, offset, magic);
                     if end > offset {
                         return Some((magic, data[offset..end].to_vec()));
                     }
                 }
-            }
         }
         None
     }
@@ -1474,17 +1473,13 @@ impl FileExtractor {
         }
         
         // For files without end markers, try to estimate size from header or use reasonable default
-        match magic.ext {
-            "bmp" => {
-                if data.len() >= start + 6 {
-                    let size = u32::from_le_bytes([data[start + 2], data[start + 3], data[start + 4], data[start + 5]]) as usize;
-                    if size > 0 && size < max_size {
-                        return (start + size).min(data.len());
-                    }
+        if magic.ext == "bmp"
+            && data.len() >= start + 6 {
+                let size = u32::from_le_bytes([data[start + 2], data[start + 3], data[start + 4], data[start + 5]]) as usize;
+                if size > 0 && size < max_size {
+                    return (start + size).min(data.len());
                 }
             }
-            _ => {}
-        }
         
         // Default: reasonable chunk
         (start + max_size.min(1024 * 512)).min(data.len())

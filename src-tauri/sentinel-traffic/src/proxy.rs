@@ -502,10 +502,17 @@ pub struct ProxyConfig {
     /// Upstream proxy 配置
     #[serde(default)]
     pub upstream_proxy: Option<UpstreamProxyConfig>,
+    /// 是否排除本应用流量的扫描（默认 true）
+    #[serde(default = "default_exclude_self_traffic")]
+    pub exclude_self_traffic: bool,
 }
 
 fn default_bypass_threshold() -> u32 {
     1
+}
+
+fn default_exclude_self_traffic() -> bool {
+    true
 }
 
 impl Default for ProxyConfig {
@@ -518,6 +525,7 @@ impl Default for ProxyConfig {
             max_response_body_size: 2 * 1024 * 1024,
             mitm_bypass_fail_threshold: 3,
             upstream_proxy: None,
+            exclude_self_traffic: true,
         }
     }
 }
@@ -665,7 +673,7 @@ impl TrafficProxyHandler {
             if let Some(start) = debug_str.find("dst: ") {
                 let rest = &debug_str[start + 5..];
                 // 可能是结尾的 } 或者逗号
-                if let Some(end) = rest.find(|c| c == ',' || c == '}') {
+                if let Some(end) = rest.find([',', '}']) {
                     return rest[..end].trim().to_string();
                 }
             }
@@ -1435,7 +1443,7 @@ impl HttpHandler for TrafficProxyHandler {
         let conn_key = Self::generate_connection_key(ctx);
 
         // 提前解析 host（在 async 块外）
-        let host_opt = Self::parse_connect_host(&req);
+        let host_opt = Self::parse_connect_host(req);
         let is_connect = req.method() == hyper::Method::CONNECT;
 
         async move {
@@ -1536,7 +1544,8 @@ impl HttpHandler for TrafficProxyHandler {
                         }
                     }
 
-                    // 发送到扫描器
+                    // 始终发送到扫描器（用于保存历史记录）
+                    // 扫描器会根据配置决定是否进行插件扫描
                     if let Err(e) = tx.send(ScanTask::Request(req_ctx.clone())) {
                         warn!("Failed to send request to scanner: {}", e);
                     }
@@ -2046,7 +2055,8 @@ impl HttpHandler for TrafficProxyHandler {
                                 }
                             }
 
-                            // 发送到扫描器
+                            // 始终发送到扫描器（用于保存历史记录）
+                            // 扫描器会根据配置决定是否进行插件扫描
                             if let Err(e) = tx.send(ScanTask::Response(resp_ctx)) {
                                 warn!("Failed to send response to scanner: {}", e);
                             }
@@ -2643,7 +2653,7 @@ impl ProxyService {
 
                 // 包装 connector 以返回 hyper_util::rt::TokioIo
                 let http_connector = ServiceBuilder::new()
-                    .map_response(|stream| hyper_util::rt::TokioIo::new(stream))
+                    .map_response(hyper_util::rt::TokioIo::new)
                     .service(proxy_connector.clone());
 
                 // WebSocket 连接器: tokio-tungstenite 0.28 不再使用 Connector enum

@@ -18,7 +18,7 @@ use deno_core::v8;
 
 /// Commands sent to the plugin executor thread
 enum PluginCommand {
-    ScanTransaction(HttpTransaction, oneshot::Sender<Result<Vec<Finding>>>),
+    ScanTransaction(Box<HttpTransaction>, oneshot::Sender<Result<Vec<Finding>>>),
     ExecuteAgent(serde_json::Value, oneshot::Sender<Result<(Vec<Finding>, Option<serde_json::Value>)>>),
     Restart(oneshot::Sender<Result<()>>),
     GetStats(oneshot::Sender<ExecutorStats>),
@@ -189,7 +189,8 @@ impl PluginExecutor {
                         }
 
                         match cmd {
-                            PluginCommand::ScanTransaction(txn, reply) => {
+                            PluginCommand::ScanTransaction(boxed_txn, reply) => {
+                                let txn = *boxed_txn;
                                 // Check if restart threshold reached (for monitoring only)
                                 let current_count =
                                     current_instance_executions.load(Ordering::Relaxed);
@@ -282,7 +283,7 @@ impl PluginExecutor {
         let (reply_tx, reply_rx) = oneshot::channel();
 
         sender
-            .send(PluginCommand::ScanTransaction(transaction, reply_tx))
+            .send(PluginCommand::ScanTransaction(Box::new(transaction), reply_tx))
             .await
             .map_err(|e| PluginError::Execution(format!("Executor channel closed: {}", e)))?;
 

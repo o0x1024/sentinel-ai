@@ -37,10 +37,14 @@ pub struct RagConfig {
     pub chunk_expansion_after: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ChunkingStrategy { FixedSize, RecursiveCharacter, Semantic, StructureAware }
-
-impl Default for ChunkingStrategy { fn default() -> Self { Self::RecursiveCharacter } }
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum ChunkingStrategy { 
+    FixedSize, 
+    #[default]
+    RecursiveCharacter, 
+    Semantic, 
+    StructureAware 
+}
 
 fn default_context_window() -> usize { 1 }
 fn default_min_chunk_size() -> usize { 100 }

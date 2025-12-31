@@ -4,6 +4,7 @@ use crate::database_service::service::DatabaseService;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 impl DatabaseService {
     /// 创建资产
@@ -142,7 +143,7 @@ impl DatabaseService {
 
         if let Some(confidence) = request.confidence {
             if has_updates { query_builder.push(", "); }
-            query_builder.push("confidence = ").push_bind(confidence as f64);
+            query_builder.push("confidence = ").push_bind(confidence);
             has_updates = true;
         }
 
@@ -583,7 +584,7 @@ impl DatabaseService {
         };
 
         let risk_level_str: String = row.try_get("risk_level")?;
-        let risk_level = RiskLevel::from_str(&risk_level_str);
+        let risk_level = RiskLevel::from_str(&risk_level_str).unwrap_or(RiskLevel::Unknown);
 
         let last_seen_str: String = row.try_get("last_seen")?;
         let last_seen = DateTime::parse_from_rfc3339(&last_seen_str)

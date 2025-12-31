@@ -634,12 +634,11 @@ impl StreamingLlmClient {
                     StreamedAssistantContent::Reasoning(r),
                 )) => {
                     let piece = r.reasoning.join("");
-                    if !piece.is_empty() {
-                        if !on_content(StreamContent::Reasoning(piece)) {
+                    if !piece.is_empty()
+                        && !on_content(StreamContent::Reasoning(piece)) {
                             info!("Stream cancelled by callback");
                             break;
                         }
-                    }
                 }
                 // 完整的工具调用
                 Ok(MultiTurnStreamItem::StreamAssistantItem(

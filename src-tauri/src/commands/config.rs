@@ -93,13 +93,10 @@ pub async fn set_global_proxy_config(
 pub async fn get_global_proxy_config(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<GlobalProxyConfig, String> {
-    match db.get_config("network", "global_proxy").await {
-        Ok(Some(json)) => {
-            if let Ok(cfg) = serde_json::from_str::<GlobalProxyConfig>(&json) {
-                return Ok(cfg);
-            }
+    if let Ok(Some(json)) = db.get_config("network", "global_proxy").await {
+        if let Ok(cfg) = serde_json::from_str::<GlobalProxyConfig>(&json) {
+            return Ok(cfg);
         }
-        _ => {}
     }
     Ok(GlobalProxyConfig { enabled: false, scheme: None, host: None, port: None, username: None, password: None, no_proxy: None })
 }

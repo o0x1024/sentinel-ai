@@ -99,6 +99,12 @@ pub struct PluginManager {
     code_cache: Arc<RwLock<HashMap<String, String>>>,
 }
 
+impl Default for PluginManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PluginManager {
     /// 创建插件管理器（不再依赖文件系统目录）。
     pub fn new() -> Self {

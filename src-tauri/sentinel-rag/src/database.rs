@@ -226,7 +226,7 @@ impl LanceDbManager {
         if let Ok(existing_table) = conn.open_table(collection_name).execute().await {
             // Validate embedding dimensions
             let existing_schema = existing_table.schema().await?;
-            if let Some(embedding_field) = existing_schema.field_with_name("embedding").ok() {
+            if let Ok(embedding_field) = existing_schema.field_with_name("embedding") {
                 if let DataType::FixedSizeList(_, existing_dim) = embedding_field.data_type() {
                     if *existing_dim != list_size_i32 {
                         return Err(anyhow!(
@@ -276,7 +276,7 @@ impl LanceDbManager {
         let mut retry_count = 0;
         let max_retries = 3;
         loop {
-            let response = client.post(&format!("{}/v1/embeddings", base_url))
+            let response = client.post(format!("{}/v1/embeddings", base_url))
                 .headers(headers.clone())
                 .json(&payload)
                 .send()
@@ -393,7 +393,7 @@ impl LanceDbManager {
             let existing_schema = existing_table.schema().await?;
             
             // Extract embedding dimension from existing schema
-            if let Some(embedding_field) = existing_schema.field_with_name("embedding").ok() {
+            if let Ok(embedding_field) = existing_schema.field_with_name("embedding") {
                 if let DataType::FixedSizeList(_, existing_dim) = embedding_field.data_type() {
                     if *existing_dim != list_size_i32 {
                         return Err(anyhow!(

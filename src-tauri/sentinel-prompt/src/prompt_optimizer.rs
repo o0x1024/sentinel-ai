@@ -980,7 +980,7 @@ impl PromptOptimizer {
             .count() as f64 / total_requests as f64;
         
         let avg_response_time_ms = filtered_data.iter()
-            .map(|r| r.system_metrics.response_time_ms as f64)
+            .map(|r| r.system_metrics.response_time_ms)
             .sum::<f64>() / total_requests as f64;
         
         let avg_accuracy = filtered_data.iter()
@@ -1581,6 +1581,12 @@ impl std::fmt::Debug for OptimizationRule {
     }
 }
 
+impl Default for RuleBasedStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RuleBasedStrategy {
     pub fn new() -> Self {
         Self {
@@ -1663,7 +1669,7 @@ impl RuleBasedStrategy {
             .map(|r| r.system_metrics.response_time_ms)
             .sum();
         
-        Some(total as f64 / performance_data.len() as f64)
+        Some(total / performance_data.len() as f64)
     }
     
     fn simplify_template(&self, template: &str) -> String {
@@ -1685,6 +1691,12 @@ pub struct GeneticAlgorithmStrategy {
     generations: usize,
     #[allow(unused)]
     mutation_rate: f32,
+}
+
+impl Default for GeneticAlgorithmStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GeneticAlgorithmStrategy {
@@ -1729,6 +1741,12 @@ pub struct ReinforcementLearningStrategy {
     learning_rate: f32,
     #[allow(unused)]
     exploration_rate: f32,
+}
+
+impl Default for ReinforcementLearningStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ReinforcementLearningStrategy {

@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core'
 import TopNavbar from './components/Layout/TopNavbar.vue'
 import Sidebar from './components/Layout/Sidebar.vue'
 import LicenseActivation from './components/LicenseActivation.vue'
+import GlobalPluginEditor from './components/PluginManagement/GlobalPluginEditor.vue'
 
 import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
@@ -259,7 +260,7 @@ window.updateUIScale = (newScale: number) => {
       }">
         <!-- 使用 keep-alive 保持组件活跃，确保事件监听器不会丢失 -->
         <router-view v-slot="{ Component }">
-          <keep-alive :include="['TrafficAnalysis', 'AIAssistant', 'Vulnerabilities','settings','Plugin']">
+          <keep-alive :include="['TrafficAnalysis', 'AIAssistant', 'Vulnerabilities','Settings','Plugin']">
             <component :is="Component" class="min-h-full" />
           </keep-alive>
         </router-view>
@@ -267,6 +268,7 @@ window.updateUIScale = (newScale: number) => {
     </div>
 
     <Toast />
+    <GlobalPluginEditor />
   </div>
 </template>
 

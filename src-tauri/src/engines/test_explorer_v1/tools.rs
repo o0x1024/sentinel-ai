@@ -15,6 +15,12 @@ pub struct TestExplorerToolState {
     pub driver: Arc<RwLock<Option<Arc<BrowserDriver>>>>,
 }
 
+impl Default for TestExplorerToolState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestExplorerToolState {
     pub fn new() -> Self {
         Self {

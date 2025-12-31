@@ -131,7 +131,7 @@ impl BatchProgressManager {
     pub async fn unregister_progress_listener(&self, progress_token: &str) { self.progress_listeners.write().await.remove(progress_token); }
     pub async fn get_batch_status(&self, batch_id: Uuid) -> Option<BatchExecutionInfo> { self.batch_executions.read().await.get(&batch_id).cloned() }
     pub async fn get_all_batch_status(&self) -> Vec<BatchExecutionInfo> { self.batch_executions.read().await.values().cloned().collect() }
-    pub async fn cancel_batch(&self, batch_id: Uuid) -> Result<()> { if let Some(_) = self.batch_executions.read().await.get(&batch_id) { self.update_batch_status(batch_id, BatchStatus::Cancelled, Some("Batch cancelled by user".to_string())).await; info!("Cancelled batch: {}", batch_id); Ok(()) } else { Err(anyhow!("Batch not found: {}", batch_id)) } }
+    pub async fn cancel_batch(&self, batch_id: Uuid) -> Result<()> { if self.batch_executions.read().await.get(&batch_id).is_some() { self.update_batch_status(batch_id, BatchStatus::Cancelled, Some("Batch cancelled by user".to_string())).await; info!("Cancelled batch: {}", batch_id); Ok(()) } else { Err(anyhow!("Batch not found: {}", batch_id)) } }
     pub async fn cleanup_completed_batches(&self, older_than_hours: f64) { let cutoff = chrono::Utc::now() - chrono::Duration::hours(older_than_hours as i64); let mut to_remove = Vec::new(); { let executions = self.batch_executions.read().await; for (id, info) in executions.iter() { if let Some(completed_at) = info.completed_at { if completed_at < cutoff { to_remove.push(*id); } } } } if !to_remove.is_empty() { let mut executions = self.batch_executions.write().await; for id in to_remove { executions.remove(&id); } info!("Cleaned up {} completed batches", executions.len()); } }
 }
 

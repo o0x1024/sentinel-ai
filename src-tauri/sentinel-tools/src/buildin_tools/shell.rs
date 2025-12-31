@@ -52,17 +52,13 @@ pub enum ShellError {
 
 /// Shell default policy
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Default)]
 pub enum ShellDefaultPolicy {
     /// Always proceed without asking (except denied commands)
     AlwaysProceed,
     /// Always ask for confirmation (except allowed commands)
+    #[default]
     RequestReview,
-}
-
-impl Default for ShellDefaultPolicy {
-    fn default() -> Self {
-        Self::RequestReview
-    }
 }
 
 /// Shell configuration (Cursor-style)

@@ -89,21 +89,18 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .on_window_event(|window, event| {
-            match event {
-                WindowEvent::CloseRequested { api, .. } => {
-                    let app_handle = window.app_handle();
-                    let _ = app_handle.save_window_state(StateFlags::all());
-                    
-                    // Hide taskbar icon on Windows/Linux before hiding window
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        let _ = window.set_skip_taskbar(true);
-                    }
-                    
-                    let _ = window.hide();
-                    api.prevent_close();
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let app_handle = window.app_handle();
+                let _ = app_handle.save_window_state(StateFlags::all());
+                
+                // Hide taskbar icon on Windows/Linux before hiding window
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = window.set_skip_taskbar(true);
                 }
-                _ => {}
+                
+                let _ = window.hide();
+                api.prevent_close();
             }
         })
         .setup(move |app| {
@@ -147,30 +144,27 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    match event {
-                        TrayIconEvent::Click {
+                    if let TrayIconEvent::Click {
                             button,
                             button_state,
                             ..
-                        } => {
-                            // Left click: show main window
-                            if button == tauri::tray::MouseButton::Left
-                                && button_state == tauri::tray::MouseButtonState::Up
-                            {
-                                let app = tray.app_handle();
-                                if let Some(window) = app.get_webview_window("main") {
-                                    #[cfg(not(target_os = "macos"))]
-                                    {
-                                        let _ = window.set_skip_taskbar(false);
-                                    }
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                    let _ = window.unminimize();
+                        } = event {
+                        // Left click: show main window
+                        if button == tauri::tray::MouseButton::Left
+                            && button_state == tauri::tray::MouseButtonState::Up
+                        {
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    let _ = window.set_skip_taskbar(false);
                                 }
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = window.unminimize();
                             }
-                            // Right click menu is handled automatically by .menu()
                         }
-                        _ => {}
+                        // Right click menu is handled automatically by .menu()
                     }
                 })
                 .icon(app.default_window_icon().unwrap().clone())
@@ -285,10 +279,6 @@ pub fn run() {
                     tracing::error!("Failed to init shell permission handler: {}", e);
                 }
 
-                match commands::prompt_api::initialize_default_prompts().await {
-                    Ok(msg) => tracing::info!("Prompt initialization: {}", msg),
-                    Err(e) => tracing::warn!("Failed to initialize default prompts: {}", e),
-                }
 
                 let prompt_service_state: commands::prompt_commands::PromptServiceState =
                     Arc::new(tokio::sync::RwLock::new(None));
@@ -463,6 +453,8 @@ pub fn run() {
             ai::generate_workflow_from_nl,
             ai::generate_plugin_stream,
             ai::cancel_plugin_generation,
+            ai::plugin_assistant_chat_stream,
+            ai::cancel_plugin_assistant_chat,
             commands::get_active_rag_collections,
             commands::set_rag_collection_active,
             // Database commands
@@ -620,7 +612,6 @@ pub fn run() {
             commands::prompt_api::get_plugin_generation_prompt_api,
             commands::prompt_api::get_combined_plugin_prompt_api,
             commands::prompt_api::get_default_prompt_content,
-            commands::prompt_api::initialize_default_prompts,
             // RAG commands
             rag_commands::rag_ingest_source,
             rag_commands::rag_ingest_text,

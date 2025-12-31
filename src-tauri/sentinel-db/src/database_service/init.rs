@@ -802,6 +802,25 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
+        // Repeater tabs table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS repeater_tabs (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                target_host TEXT NOT NULL,
+                target_port INTEGER NOT NULL,
+                use_tls BOOLEAN NOT NULL DEFAULT 1,
+                override_sni BOOLEAN NOT NULL DEFAULT 0,
+                sni_host TEXT,
+                raw_request TEXT NOT NULL,
+                request_tab TEXT NOT NULL DEFAULT 'pretty',
+                response_tab TEXT NOT NULL DEFAULT 'pretty',
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
         // Create traffic-related indices
         let traffic_indices = vec![
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_plugin ON traffic_vulnerabilities(plugin_id)",
@@ -817,6 +836,8 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_plugin_registry_category ON plugin_registry(main_category, category)",
             "CREATE INDEX IF NOT EXISTS idx_plugin_registry_enabled ON plugin_registry(enabled)",
             "CREATE INDEX IF NOT EXISTS idx_plugin_registry_created ON plugin_registry(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_repeater_tabs_sort_order ON repeater_tabs(sort_order)",
+            "CREATE INDEX IF NOT EXISTS idx_repeater_tabs_updated ON repeater_tabs(updated_at DESC)",
         ];
 
         for index_sql in traffic_indices {

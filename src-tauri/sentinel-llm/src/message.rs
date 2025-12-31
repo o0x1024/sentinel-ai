@@ -94,7 +94,7 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                             .map(|r| r.trim())
                             .filter(|r| !r.is_empty())
                             .unwrap_or("");
-                        contents.push(AssistantContent::reasoning(reasoning.to_string()));
+                        contents.push(AssistantContent::reasoning(reasoning));
                     } else if let Some(ref reasoning) = msg.reasoning_content {
                         // 没有 tool_calls 但有 reasoning_content 的情况
                         if !reasoning.trim().is_empty() {

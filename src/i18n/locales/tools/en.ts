@@ -156,7 +156,10 @@ Any other command will be executed in the system shell.`,
     alwaysAccept: 'Always Accept',
     alwaysAcceptHint: 'Add this command to allow list and execute',
     success: 'Success',
-    failed: 'Failed'
+    failed: 'Failed',
+    clickToExpand: 'Click to expand',
+    expand: 'Expand',
+    collapse: 'Collapse'
   },
 
   // Legacy fields

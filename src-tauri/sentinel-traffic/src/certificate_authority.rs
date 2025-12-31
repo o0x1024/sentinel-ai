@@ -106,8 +106,7 @@ impl SniCertResolver {
             }
             
             // 如果主机名包含通配符，也添加非通配符版本
-            if host.starts_with("*.") {
-                let base_domain = &host[2..];
+            if let Some(base_domain) = host.strip_prefix("*.") {
                 if let Ok(ia5) = hudsucker::rcgen::string::Ia5String::try_from(base_domain) {
                     params.subject_alt_names.push(SanType::DnsName(ia5));
                 }

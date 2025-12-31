@@ -687,33 +687,135 @@
               <i class="fas fa-chart-bar"></i>
               {{ t('settings.ai.usageStats') }}
             </h3>
-            <button class="btn btn-ghost btn-xs text-error" @click="clearUsageStats">
-              <i class="fas fa-trash-alt mr-1"></i>
-              {{ t('settings.ai.clearStats', 'Clear Stats') }}
-            </button>
+            <div class="flex gap-2">
+              <button class="btn btn-ghost btn-sm" @click="loadDetailedStats">
+                <i class="fas fa-sync-alt mr-1"></i>
+                {{ t('settings.ai.refresh') }}
+              </button>
+              <button class="btn btn-ghost btn-sm text-error" @click="clearUsageStats">
+                <i class="fas fa-trash-alt mr-1"></i>
+                {{ t('settings.ai.clearStats', 'Clear Stats') }}
+              </button>
+            </div>
           </div>
 
-          <div class="overflow-x-auto">
+          <!-- 统计概览 -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="stat bg-base-200 rounded-lg">
+              <div class="stat-title">{{ t('settings.ai.totalRequests') }}</div>
+              <div class="stat-value text-primary">{{ totalRequests }}</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+              <div class="stat-title">{{ t('settings.ai.totalTokens') }}</div>
+              <div class="stat-value text-secondary">{{ totalTokensFormatted }}</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+              <div class="stat-title">{{ t('settings.ai.totalCost') }}</div>
+              <div class="stat-value text-accent">${{ totalCost.toFixed(2) }}</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+              <div class="stat-title">{{ t('settings.ai.avgCostPerRequest') }}</div>
+              <div class="stat-value text-info">${{ avgCostPerRequest }}</div>
+            </div>
+          </div>
+
+          <!-- 切换视图：按提供商 / 按模型 -->
+          <div class="tabs tabs-boxed mb-4">
+            <a class="tab" :class="{ 'tab-active': statsView === 'provider' }" @click="statsView = 'provider'">
+              <i class="fas fa-server mr-2"></i>
+              {{ t('settings.ai.byProvider') }}
+            </a>
+            <a class="tab" :class="{ 'tab-active': statsView === 'model' }" @click="statsView = 'model'">
+              <i class="fas fa-brain mr-2"></i>
+              {{ t('settings.ai.byModel') }}
+            </a>
+          </div>
+
+          <!-- 按提供商统计 -->
+          <div v-if="statsView === 'provider'" class="overflow-x-auto">
             <table class="table table-compact w-full">
               <thead>
                 <tr>
                   <th>{{ t('settings.providers') }}</th>
-                  <th>{{ t('settings.ai.inputTokens') }}</th>
-                  <th>{{ t('settings.ai.outputTokens') }}</th>
-                  <th>{{ t('settings.ai.totalTokens') }}</th>
-                  <th>{{ t('settings.ai.estimatedCost') }}</th>
+                  <th class="text-right">{{ t('settings.ai.inputTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.outputTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.totalTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.estimatedCost') }}</th>
+                  <th class="text-right">{{ t('settings.ai.percentage') }}</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(usage, provider) in aiUsageStats" :key="provider">
-                  <td>{{ getProviderName(String(provider)) }}</td>
-                  <td>{{ usage.input_tokens?.toLocaleString() }}</td>
-                  <td>{{ usage.output_tokens?.toLocaleString() }}</td>
-                  <td>{{ usage.total_tokens?.toLocaleString() }}</td>
-                  <td>${{ (usage.cost || 0).toFixed(4) }}</td>
+                <tr v-for="(usage, provider) in aiUsageStats" :key="provider" class="hover">
+                  <td>
+                    <div class="flex items-center gap-2">
+                      <i :class="getProviderIcon(String(provider))"></i>
+                      <span class="font-semibold">{{ getProviderName(String(provider)) }}</span>
+                    </div>
+                  </td>
+                  <td class="text-right">{{ usage.input_tokens?.toLocaleString() }}</td>
+                  <td class="text-right">{{ usage.output_tokens?.toLocaleString() }}</td>
+                  <td class="text-right font-semibold">{{ usage.total_tokens?.toLocaleString() }}</td>
+                  <td class="text-right">${{ (usage.cost || 0).toFixed(4) }}</td>
+                  <td class="text-right">
+                    <div class="flex items-center gap-2 justify-end">
+                      <progress class="progress progress-primary w-20" :value="usage.total_tokens" :max="maxTokens"></progress>
+                      <span class="text-sm">{{ ((usage.total_tokens / maxTokens) * 100).toFixed(1) }}%</span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot v-if="Object.keys(aiUsageStats).length > 0">
+                <tr class="font-bold">
+                  <td>{{ t('settings.ai.total') }}</td>
+                  <td class="text-right">{{ totalInputTokens.toLocaleString() }}</td>
+                  <td class="text-right">{{ totalOutputTokens.toLocaleString() }}</td>
+                  <td class="text-right">{{ (totalInputTokens + totalOutputTokens).toLocaleString() }}</td>
+                  <td class="text-right">${{ totalCost.toFixed(4) }}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <!-- 按模型统计 -->
+          <div v-if="statsView === 'model'" class="overflow-x-auto">
+            <table class="table table-compact w-full">
+              <thead>
+                <tr>
+                  <th>{{ t('settings.ai.provider') }}</th>
+                  <th>{{ t('settings.ai.model') }}</th>
+                  <th class="text-right">{{ t('settings.ai.inputTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.outputTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.totalTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.estimatedCost') }}</th>
+                  <th class="text-right">{{ t('settings.ai.lastUsed') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="stat in detailedStats" :key="`${stat.provider}-${stat.model}`" class="hover">
+                  <td>
+                    <div class="flex items-center gap-2">
+                      <i :class="getProviderIcon(stat.provider)"></i>
+                      <span>{{ getProviderName(stat.provider) }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge badge-ghost">{{ stat.model }}</span>
+                  </td>
+                  <td class="text-right">{{ stat.input_tokens?.toLocaleString() }}</td>
+                  <td class="text-right">{{ stat.output_tokens?.toLocaleString() }}</td>
+                  <td class="text-right font-semibold">{{ stat.total_tokens?.toLocaleString() }}</td>
+                  <td class="text-right">${{ (stat.cost || 0).toFixed(4) }}</td>
+                  <td class="text-right text-sm">{{ formatLastUsed(stat.last_used) }}</td>
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <!-- 空状态 -->
+          <div v-if="Object.keys(aiUsageStats).length === 0 && detailedStats.length === 0" class="text-center py-8 text-base-content/60">
+            <i class="fas fa-chart-line text-4xl mb-4"></i>
+            <p>{{ t('settings.ai.noUsageData') }}</p>
           </div>
         </div>
       </div>
@@ -742,6 +844,20 @@ const useGuiMode = ref(true)
 const manualConfigText = ref('')
 const configError = ref('')
 const configValid = ref(false)
+
+// 统计视图状态
+const statsView = ref<'provider' | 'model'>('provider')
+const detailedStats = ref<any[]>([])
+
+// 加载详细统计
+const loadDetailedStats = async () => {
+  try {
+    const stats = await invoke('get_detailed_ai_usage_stats') as any[]
+    detailedStats.value = stats || []
+  } catch (e) {
+    console.warn('Failed to load detailed AI usage stats', e)
+  }
+}
 
 // CodeMirror 相关
 const editorContainer = ref<HTMLDivElement | null>(null)
@@ -1368,9 +1484,60 @@ const applyAndExitFullscreen = () => {
   exitFullscreen()
 }
 
+// 统计计算属性
+const totalInputTokens = computed(() => {
+  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.input_tokens || 0), 0)
+})
+
+const totalOutputTokens = computed(() => {
+  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.output_tokens || 0), 0)
+})
+
+const totalCost = computed(() => {
+  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.cost || 0), 0)
+})
+
+const maxTokens = computed(() => {
+  return Math.max(...Object.values(props.aiUsageStats).map((usage: any) => usage.total_tokens || 0), 1)
+})
+
+const totalRequests = computed(() => {
+  return detailedStats.value.length
+})
+
+const totalTokensFormatted = computed(() => {
+  const total = totalInputTokens.value + totalOutputTokens.value
+  if (total >= 1_000_000) {
+    return `${(total / 1_000_000).toFixed(2)}M`
+  } else if (total >= 1_000) {
+    return `${(total / 1_000).toFixed(2)}K`
+  }
+  return total.toLocaleString()
+})
+
+const avgCostPerRequest = computed(() => {
+  if (totalRequests.value === 0) return '0.0000'
+  return (totalCost.value / totalRequests.value).toFixed(4)
+})
+
+// 格式化最后使用时间
+const formatLastUsed = (timestamp: string | null) => {
+  if (!timestamp) return '-'
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  
+  if (diff < 60000) return t('settings.ai.justNow')
+  if (diff < 3600000) return t('settings.ai.minutesAgo', { n: Math.floor(diff / 60000) })
+  if (diff < 86400000) return t('settings.ai.hoursAgo', { n: Math.floor(diff / 3600000) })
+  if (diff < 604800000) return t('settings.ai.daysAgo', { n: Math.floor(diff / 86400000) })
+  return date.toLocaleDateString()
+}
+
 onMounted(() => {
   loadTavilyConfig()
   loadAliyunConfig()
+  loadDetailedStats()
 })
 
 onUnmounted(() => {

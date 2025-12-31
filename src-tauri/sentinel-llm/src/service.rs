@@ -22,6 +22,7 @@ use crate::config::LlmConfig;
 use crate::log::{log_request, log_response};
 use crate::message::{ChatMessage, ImageAttachment};
 use crate::types::AiConfig;
+use crate::usage::TokenUsage;
 
 /// AI 服务 - 无应用依赖版本
 #[derive(Clone)]
@@ -55,10 +56,71 @@ impl AiService {
         config.with_timeout(120)
     }
 
+    /// 流式发送消息（带 token 统计）
+    ///
+    /// 返回完整响应和 token 使用信息
+    pub async fn send_message_stream_with_usage<F>(
+        &self,
+        user_prompt: &str,
+        system_prompt: Option<&str>,
+        history: &[ChatMessage],
+        image_attachment: Option<ImageAttachment>,
+        execution_id: &str,
+        conversation_id: Option<&str>,
+        mut on_chunk: F,
+    ) -> Result<CompletionResponse>
+    where
+        F: FnMut(StreamChunk) -> bool,
+    {
+        let mut usage = TokenUsage::default();
+        let content = self.send_message_stream_internal(
+            user_prompt,
+            system_prompt,
+            history,
+            image_attachment,
+            execution_id,
+            conversation_id,
+            &mut |chunk| {
+                if let StreamChunk::Usage { input_tokens, output_tokens } = chunk {
+                    usage = TokenUsage::new(input_tokens, output_tokens);
+                    usage.estimate_cost(&self.config.provider, &self.config.model);
+                }
+                on_chunk(chunk)
+            },
+        ).await?;
+
+        Ok(CompletionResponse { content, usage })
+    }
+
     /// 流式发送消息
     ///
     /// 返回 (完整响应, 流式回调)
     pub async fn send_message_stream<F>(
+        &self,
+        user_prompt: &str,
+        system_prompt: Option<&str>,
+        history: &[ChatMessage],
+        image_attachment: Option<ImageAttachment>,
+        execution_id: &str,
+        conversation_id: Option<&str>,
+        on_chunk: F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk) -> bool,
+    {
+        self.send_message_stream_internal(
+            user_prompt,
+            system_prompt,
+            history,
+            image_attachment,
+            execution_id,
+            conversation_id,
+            on_chunk,
+        ).await
+    }
+
+    /// 内部流式发送消息实现
+    async fn send_message_stream_internal<F>(
         &self,
         user_prompt: &str,
         system_prompt: Option<&str>,
@@ -579,11 +641,10 @@ impl AiService {
                     StreamedAssistantContent::Reasoning(r),
                 )) => {
                     let piece = r.reasoning.join("");
-                    if !piece.is_empty() {
-                        if !on_chunk(StreamChunk::Reasoning(piece)) {
+                    if !piece.is_empty()
+                        && !on_chunk(StreamChunk::Reasoning(piece)) {
                             break;
                         }
-                    }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall(_),
@@ -673,4 +734,13 @@ pub enum StreamChunk {
     },
     /// 完成
     Done,
+}
+
+/// 带 token 使用信息的响应
+#[derive(Debug, Clone)]
+pub struct CompletionResponse {
+    /// 响应内容
+    pub content: String,
+    /// Token 使用统计
+    pub usage: TokenUsage,
 }

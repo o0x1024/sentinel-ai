@@ -103,7 +103,7 @@ impl IntelligentMemory {
         let mut embedding = vec![0.0; self.config.vector_dimensions];
         let words: Vec<&str> = text.split_whitespace().collect();
         
-        for (_i, word) in words.iter().enumerate() {
+        for word in words.iter() {
             let hash = word.chars().map(|c| c as u32).sum::<u32>() as usize;
             let index = hash % self.config.vector_dimensions;
             embedding[index] += 1.0 / (words.len() as f32);

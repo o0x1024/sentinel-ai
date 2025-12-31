@@ -44,7 +44,7 @@ pub async fn save_agent_config(
 }
 
 /// Load shell config from database
-async fn load_shell_config_from_db(db: &sentinel_db::DatabaseService) -> ShellConfig {
+pub async fn load_shell_config_from_db(db: &sentinel_db::DatabaseService) -> ShellConfig {
     let mut config = ShellConfig::default();
 
     // Load default_policy

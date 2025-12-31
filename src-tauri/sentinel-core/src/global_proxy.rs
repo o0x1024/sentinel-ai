@@ -90,11 +90,22 @@ pub async fn create_client_with_proxy() -> Result<reqwest::Client, reqwest::Erro
 /// - https: HTTPS代理  
 /// - socks5: SOCKS5代理（本地DNS解析）
 /// - socks5h: SOCKS5代理（远程DNS解析，更安全）
+/// 
+/// 自动为所有请求添加 X-Sentinel-Internal header，用于在代理中识别本应用流量
 pub async fn apply_proxy_to_client(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let config = get_global_proxy().await;
     
+    // 添加标识 Header，用于在代理中识别本应用的流量
+    let mut default_headers = reqwest::header::HeaderMap::new();
+    default_headers.insert(
+        reqwest::header::HeaderName::from_static("x-sentinel-internal"),
+        reqwest::header::HeaderValue::from_static("true"),
+    );
+    
+    let builder = builder.default_headers(default_headers);
+    
     if !config.enabled {
-        debug!("Global proxy not enabled, returning unmodified client builder");
+        debug!("Global proxy not enabled, returning client builder with sentinel headers");
         return builder;
     }
 
@@ -115,7 +126,7 @@ pub async fn apply_proxy_to_client(builder: reqwest::ClientBuilder) -> reqwest::
             }
         }
     } else {
-        debug!("No valid proxy URL, returning unmodified client builder");
+        debug!("No valid proxy URL, returning client builder with sentinel headers");
         builder
     }
 }

@@ -40,7 +40,7 @@ impl DatabaseService {
         .bind(&finding.id)
         .bind(&finding.plugin_id)
         .bind(&finding.vuln_type)
-        .bind(format!("{}", finding.severity))
+        .bind(finding.severity.to_string())
         .bind(format!("{:?}", finding.confidence))
         .bind(&finding.title)
         .bind(&finding.description)
@@ -48,8 +48,8 @@ impl DatabaseService {
         .bind(&finding.owasp)
         .bind(&finding.remediation)
         .bind(&signature)
-        .bind(&finding.created_at)
-        .bind(&finding.created_at)
+        .bind(finding.created_at)
+        .bind(finding.created_at)
         .execute(pool)
         .await?;
 
@@ -376,10 +376,10 @@ impl DatabaseService {
         .bind(&evidence.evidence_snippet)
         .bind(&evidence.request_headers)
         .bind(&evidence.request_body)
-        .bind(&evidence.response_status)
+        .bind(evidence.response_status)
         .bind(&evidence.response_headers)
         .bind(&evidence.response_body)
-        .bind(&evidence.timestamp)
+        .bind(evidence.timestamp)
         .execute(pool)
         .await?;
 
@@ -425,7 +425,7 @@ impl DatabaseService {
         .bind(&plugin.main_category)
         .bind(&plugin.category)
         .bind(&plugin.description)
-        .bind(format!("{}", plugin.default_severity))
+        .bind(plugin.default_severity.to_string())
         .bind(&tags_json)
         .bind(plugin_code)
         .bind(quality_score)
@@ -649,7 +649,7 @@ impl DatabaseService {
         .bind(&request.response_body)
         .bind(request.response_size)
         .bind(request.response_time)
-        .bind(&request.timestamp)
+        .bind(request.timestamp)
         .execute(pool)
         .await?;
 

@@ -49,6 +49,8 @@ pub struct ScanPipeline {
     request_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
     /// 响应拦截过滤规则（用于过滤流量分析）
     response_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
+    /// 是否排除本应用流量的扫描
+    exclude_self_traffic: Arc<RwLock<bool>>,
 }
 
 impl ScanPipeline {
@@ -64,6 +66,7 @@ impl ScanPipeline {
             app_handle: None,
             request_filter_rules: Arc::new(RwLock::new(Vec::new())),
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
+            exclude_self_traffic: Arc::new(RwLock::new(true)),
         }
     }
 
@@ -76,6 +79,12 @@ impl ScanPipeline {
     /// 设置响应过滤规则
     pub fn with_response_filter_rules(mut self, rules: Arc<RwLock<Vec<InterceptFilterRule>>>) -> Self {
         self.response_filter_rules = rules;
+        self
+    }
+
+    /// 设置是否排除本应用流量的扫描
+    pub fn with_exclude_self_traffic(mut self, exclude: Arc<RwLock<bool>>) -> Self {
+        self.exclude_self_traffic = exclude;
         self
     }
 
@@ -753,9 +762,42 @@ impl ScanPipeline {
         self.request_cache.read().await.len()
     }
 
+    /// 检查请求是否来自本应用
+    /// 通过检测特殊的 Header 标识（X-Sentinel-Internal）
+    fn is_self_traffic(headers: &std::collections::HashMap<String, String>) -> bool {
+        // 检查所有可能的 header 名称变体（HTTP headers 是大小写不敏感的）
+        let header_value = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("x-sentinel-internal"))
+            .map(|(_, v)| v.as_str());
+        
+        if let Some(value) = header_value {
+            info!("Found x-sentinel-internal header with value: {}", value);
+            value == "true" || value == "1"
+        } else {
+            info!("x-sentinel-internal header not found. Available headers: {:?}", 
+                headers.keys().collect::<Vec<_>>());
+            false
+        }
+    }
+
     /// 检查请求是否应该被扫描（应用过滤规则）
     /// 返回 true 表示应该扫描，false 表示应该跳过
     async fn should_scan_request(&self, req_ctx: &RequestContext) -> bool {
+        // 检查是否为本应用流量且配置了排除
+        let exclude_self = *self.exclude_self_traffic.read().await;
+        let is_self = Self::is_self_traffic(&req_ctx.headers);
+        
+        info!(
+            "Checking request scan: url={}, exclude_self_config={}, is_self_traffic={}", 
+            req_ctx.url, exclude_self, is_self
+        );
+        
+        if exclude_self && is_self {
+            info!("✓ Skipping plugin scan for self traffic: url={}", req_ctx.url);
+            return false;
+        }
+
         let rules = self.request_filter_rules.read().await;
         if rules.is_empty() {
             return true; // No rules, scan all
@@ -827,6 +869,20 @@ impl ScanPipeline {
     /// 检查响应是否应该被扫描（应用过滤规则）
     /// 返回 true 表示应该扫描，false 表示应该跳过
     async fn should_scan_response(&self, req_ctx: &RequestContext, resp_ctx: &ResponseContext) -> bool {
+        // 检查是否为本应用流量且配置了排除
+        let exclude_self = *self.exclude_self_traffic.read().await;
+        let is_self = Self::is_self_traffic(&req_ctx.headers);
+        
+        info!(
+            "Checking response scan: url={}, exclude_self_config={}, is_self_traffic={}", 
+            req_ctx.url, exclude_self, is_self
+        );
+        
+        if exclude_self && is_self {
+            info!("✓ Skipping plugin scan for self traffic response: url={}", req_ctx.url);
+            return false;
+        }
+        
         let rules = self.response_filter_rules.read().await;
         if rules.is_empty() {
             return true; // No rules, scan all
@@ -912,7 +968,7 @@ impl ScanPipeline {
 
             let start_time = req_ctx.timestamp;
             let end_time = resp_ctx.timestamp;
-            let response_time = (end_time - start_time).num_milliseconds().max(0) as i64;
+            let response_time = (end_time - start_time).num_milliseconds().max(0);
 
             debug!(
                 "Recording request to cache: url={}, req_body_len={}, resp_body_len={}",

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use std::fmt;
 use uuid::Uuid;
 
 /// 字典类型枚举
@@ -31,22 +32,23 @@ pub enum DictionaryType {
     Custom(String),
 }
 
-impl ToString for DictionaryType {
-    fn to_string(&self) -> String {
-        match self {
-            DictionaryType::Subdomain => "subdomain".to_string(),
-            DictionaryType::Username => "username".to_string(),
-            DictionaryType::Password => "password".to_string(),
-            DictionaryType::Path => "path".to_string(),
-            DictionaryType::HttpParam => "http_param".to_string(),
-            DictionaryType::XssPayload => "xss_payload".to_string(),
-            DictionaryType::SqlInjectionPayload => "sql_injection_payload".to_string(),
-            DictionaryType::Filename => "filename".to_string(),
-            DictionaryType::Extension => "extension".to_string(),
-            DictionaryType::Port => "port".to_string(),
-            DictionaryType::ApiEndpoint => "api_endpoint".to_string(),
-            DictionaryType::Custom(name) => format!("custom_{}", name),
-        }
+impl fmt::Display for DictionaryType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            DictionaryType::Subdomain => "subdomain",
+            DictionaryType::Username => "username",
+            DictionaryType::Password => "password",
+            DictionaryType::Path => "path",
+            DictionaryType::HttpParam => "http_param",
+            DictionaryType::XssPayload => "xss_payload",
+            DictionaryType::SqlInjectionPayload => "sql_injection_payload",
+            DictionaryType::Filename => "filename",
+            DictionaryType::Extension => "extension",
+            DictionaryType::Port => "port",
+            DictionaryType::ApiEndpoint => "api_endpoint",
+            DictionaryType::Custom(name) => return write!(f, "custom_{}", name),
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -95,19 +97,20 @@ pub enum ServiceType {
     Custom(String),
 }
 
-impl ToString for ServiceType {
-    fn to_string(&self) -> String {
-        match self {
-            ServiceType::Web => "web".to_string(),
-            ServiceType::Ssh => "ssh".to_string(),
-            ServiceType::Database => "database".to_string(),
-            ServiceType::Ftp => "ftp".to_string(),
-            ServiceType::Mail => "mail".to_string(),
-            ServiceType::Dns => "dns".to_string(),
-            ServiceType::Api => "api".to_string(),
-            ServiceType::General => "general".to_string(),
-            ServiceType::Custom(name) => name.clone(),
-        }
+impl fmt::Display for ServiceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ServiceType::Web => "web",
+            ServiceType::Ssh => "ssh",
+            ServiceType::Database => "database",
+            ServiceType::Ftp => "ftp",
+            ServiceType::Mail => "mail",
+            ServiceType::Dns => "dns",
+            ServiceType::Api => "api",
+            ServiceType::General => "general",
+            ServiceType::Custom(name) => return write!(f, "{}", name),
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -382,17 +385,13 @@ pub struct DictionaryImportOptions {
 
 /// 合并模式
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum MergeMode {
     /// 替换现有字典
     Replace,
     /// 合并到现有字典
+    #[default]
     Merge,
     /// 创建新字典
     CreateNew,
-}
-
-impl Default for MergeMode {
-    fn default() -> Self {
-        MergeMode::Merge
-    }
 }

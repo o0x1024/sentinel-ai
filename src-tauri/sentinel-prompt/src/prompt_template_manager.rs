@@ -321,7 +321,7 @@ impl PromptTemplateManager {
         
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "yaml" || ext == "yml") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "yaml" || ext == "yml") {
                 if let Some(stem) = path.file_stem() {
                     if let Some(template_id) = stem.to_str() {
                         templates.push(template_id.to_string());
@@ -633,7 +633,7 @@ impl TemplateVersionManager {
 
         // 更新内存中的版本历史
         self.version_history.entry(template_id.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(template_version);
 
         // 清理旧版本

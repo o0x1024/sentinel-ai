@@ -386,6 +386,13 @@ export default {
       render: 'Render',
       clickSendToSendRequest: 'Click "Send Request" to send the request'
     },
+    tabContextMenu: {
+      closeTab: 'Close Tab',
+      closeOthers: 'Close Other Tabs',
+      closeAll: 'Close All Tabs',
+      closeLeft: 'Close Tabs to the Left',
+      closeRight: 'Close Tabs to the Right'
+    },
     messages: {
       requestCancelled: 'Request cancelled',
       fillTargetAndRequest: 'Please fill in target host and request content',
@@ -407,8 +414,11 @@ export default {
       invalidUrl: 'Invalid URL format',
       confirmCloseTab: 'Confirm close tab?',
       confirmCloseTabMessage: 'This tab has unsaved content. Are you sure you want to close it?',
+      confirmCloseAllTabs: 'Confirm close all tabs?',
+      confirmCloseAllTabsMessage: 'Some tabs have unsaved content. Are you sure you want to close all tabs?',
       tabRestored: 'Restored {count} tab(s)',
-      tabsSaved: 'Tabs auto-saved'
+      tabsSaved: 'Tabs auto-saved',
+      saveTabsFailed: 'Failed to save tabs'
     },
     types: {
       request: 'request',
@@ -636,6 +646,8 @@ export default {
     proxyListenersDescription: 'Configure proxy listeners to receive HTTP requests from browsers. You need to configure your browser to use one of these listeners as a proxy server.',
     autoStartProxy: 'Auto-start proxy on application launch',
     autoStartProxyDesc: 'When enabled, the proxy listener will start automatically when the application launches, without requiring manual intervention',
+    excludeSelfTraffic: 'Exclude self traffic from scanning',
+    excludeSelfTrafficDesc: 'When enabled, HTTP requests from this application will not be scanned by traffic analysis plugins, but will still appear in traffic history',
     running: 'Running',
     interface: 'Interface',
     invisible: 'Invisible',

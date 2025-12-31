@@ -208,7 +208,7 @@ impl PerformanceMonitor {
         let mut timings = self.timings.lock().unwrap();
         timings
             .entry(operation.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(duration);
 
         // 只保留最近100个记录

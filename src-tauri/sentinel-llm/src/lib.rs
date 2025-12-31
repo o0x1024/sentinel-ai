@@ -40,6 +40,7 @@ mod message;
 pub mod service;
 mod streaming;
 pub mod types;
+pub mod usage;
 
 pub use agent::{get_rig_provider, needs_gemini_config, validate_config};
 pub use client::LlmClient;
@@ -53,6 +54,7 @@ pub use types::{
     AiConfig, AiToolCall, SchedulerConfig, SchedulerStage, StreamError, StreamMessage,
     TaskProgressMessage, TaskStreamMessage, ToolCallResultMessage,
 };
+pub use usage::{calculate_cost, TokenUsage};
 
 // Re-export rig types for convenience
 pub use rig::completion::Message;

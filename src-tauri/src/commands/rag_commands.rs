@@ -331,7 +331,7 @@ pub async fn rag_batch_ingest_sources(
             let _permit = permit; // 持有许可直到任务完成
             
             let current = index + 1;
-            let file_name = file_path.split('/').last().unwrap_or(&file_path).to_string();
+            let file_name = file_path.split('/').next_back().unwrap_or(&file_path).to_string();
             
             // 发送进度事件
             let progress = BatchIngestProgress {

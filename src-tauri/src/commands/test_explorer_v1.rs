@@ -21,6 +21,12 @@ pub struct TestExplorerState {
     tool_state: Arc<TestExplorerToolState>,
 }
 
+impl Default for TestExplorerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestExplorerState {
     pub fn new() -> Self {
         Self {

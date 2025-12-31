@@ -428,7 +428,7 @@ impl IntelligentMemory {
                 "tool_name": "unknown", // StepExecutionResult没有tool_name字段
                 "parameters": {}, // StepExecutionResult没有parameters字段
                 "execution_time_ms": result.completed_at.and_then(|end| 
-                    Some((end.duration_since(result.started_at).ok()?.as_millis() as i64))
+                    Some(end.duration_since(result.started_at).ok()?.as_millis() as i64)
                 ).unwrap_or(0),
                 "output": result.result_data
             }))

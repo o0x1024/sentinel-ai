@@ -644,7 +644,7 @@ if (typeof get_metadata === 'function') {
             fn_name,
         );
 
-        let exec_result: Result<()> = (|| async {
+        let exec_result: Result<()> = async {
             let result = self
             .runtime
             .execute_script("call_plugin", FastString::from(call_script))
@@ -666,7 +666,7 @@ if (typeof get_metadata === 'function') {
             debug!("Plugin function {} executed successfully", fn_name);
 
             Ok(())
-        })().await;
+        }.await;
 
         // If termination was requested, ensure we clear it before next run.
         self.cancel_terminate_execution();

@@ -116,6 +116,8 @@ pub struct TrafficAnalysisState {
     pub response_filter_rules: Arc<RwLock<Vec<TrafficInterceptFilterRule>>>,
     /// Finding去重缓存（用于删除漏洞时清理）
     pub dedupe_cache: Arc<RwLock<std::collections::HashSet<String>>>,
+    /// 是否排除本应用流量的扫描
+    pub exclude_self_traffic: Arc<RwLock<bool>>,
 }
 
 /// 内部使用的拦截 WebSocket 消息结构（包含响应通道）
@@ -152,6 +154,7 @@ impl Clone for TrafficAnalysisState {
             request_filter_rules: self.request_filter_rules.clone(),
             response_filter_rules: self.response_filter_rules.clone(),
             dedupe_cache: self.dedupe_cache.clone(),
+            exclude_self_traffic: self.exclude_self_traffic.clone(),
         }
     }
 }
@@ -198,6 +201,7 @@ impl TrafficAnalysisState {
             request_filter_rules: Arc::new(RwLock::new(Vec::new())),
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
             dedupe_cache: Arc::new(RwLock::new(std::collections::HashSet::new())),
+            exclude_self_traffic: Arc::new(RwLock::new(true)),
         }
     }
 
@@ -557,6 +561,7 @@ pub async fn start_traffic_analysis_internal(
     let app_for_pipeline = app.clone();
     let request_filter_rules = state.request_filter_rules.clone();
     let response_filter_rules = state.response_filter_rules.clone();
+    let exclude_self_traffic = state.exclude_self_traffic.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -572,7 +577,8 @@ pub async fn start_traffic_analysis_internal(
                         .with_history_cache(cache_for_pipeline)
                         .with_app_handle(app_for_pipeline)
                         .with_request_filter_rules(request_filter_rules)
-                        .with_response_filter_rules(response_filter_rules);
+                        .with_response_filter_rules(response_filter_rules)
+                        .with_exclude_self_traffic(exclude_self_traffic);
                     match pipeline
                         .load_enabled_plugins_from_db(&db_for_pipeline)
                         .await
@@ -2126,6 +2132,7 @@ pub async fn clear_all_history(
 /// 在数据库中创建插件（存储代码）
 #[tauri::command]
 pub async fn create_plugin_in_db(
+    app: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     metadata: serde_json::Value,
     plugin_code: String,
@@ -2137,6 +2144,7 @@ pub async fn create_plugin_in_db(
         serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
 
     let plugin_id = plugin.id.clone();
+    let plugin_name = plugin.name.clone();
 
     // Convert to TrafficPluginMetadata
     use sentinel_db::TrafficPluginMetadata;
@@ -2173,12 +2181,23 @@ pub async fn create_plugin_in_db(
         }
     }
 
+    // 发送插件变更事件，通知前端刷新列表
+    emit_plugin_changed(
+        &app,
+        PluginChangedEvent {
+            plugin_id: plugin_id.clone(),
+            enabled: true,
+            name: plugin_name,
+        },
+    );
+
     Ok(CommandResponse::ok(plugin_id))
 }
 
 /// 全量更新插件（元数据 + 代码）
 #[tauri::command]
 pub async fn update_plugin(
+    app: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     metadata: serde_json::Value,
     plugin_code: String,
@@ -2323,6 +2342,16 @@ pub async fn update_plugin(
 
         tracing::info!("Plugin tool re-registered to ToolServer: {}", tool_name);
     }
+
+    // 发送插件变更事件，通知前端刷新列表
+    emit_plugin_changed(
+        &app,
+        PluginChangedEvent {
+            plugin_id: plugin_id.clone(),
+            enabled: true,
+            name: plugin_name,
+        },
+    );
 
     Ok(CommandResponse::ok(()))
 }
@@ -3229,6 +3258,7 @@ pub async fn start_proxy_listener(
                     max_response_body_size: 2 * 1024 * 1024,
                     mitm_bypass_fail_threshold: 3,
                     upstream_proxy: None,
+                    exclude_self_traffic: true,
                 }
             }
         },
@@ -3242,6 +3272,7 @@ pub async fn start_proxy_listener(
                 max_response_body_size: 2 * 1024 * 1024,
                 mitm_bypass_fail_threshold: 3,
                 upstream_proxy: None,
+                exclude_self_traffic: true,
             }
         }
         Err(e) => {
@@ -3254,6 +3285,7 @@ pub async fn start_proxy_listener(
                 max_response_body_size: 2 * 1024 * 1024,
                 mitm_bypass_fail_threshold: 3,
                 upstream_proxy: None,
+                exclude_self_traffic: true,
             }
         }
     };
@@ -3338,6 +3370,13 @@ pub async fn save_proxy_config(
             tracing::error!("Failed to save config to database: {}", e);
             format!("Failed to save config: {}", e)
         })?;
+
+    // 更新 state 中的 exclude_self_traffic 配置
+    {
+        let mut exclude_self = state.exclude_self_traffic.write().await;
+        *exclude_self = config.exclude_self_traffic;
+        tracing::info!("Updated exclude_self_traffic to: {}", config.exclude_self_traffic);
+    }
 
     tracing::info!("Proxy configuration saved successfully");
     Ok(CommandResponse::ok(()))

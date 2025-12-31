@@ -27,6 +27,22 @@
           </label>
         </div>
 
+        <!-- Exclude self traffic from scanning -->
+        <div class="form-control mb-4">
+          <label class="label cursor-pointer justify-start gap-3 py-2">
+            <input 
+              type="checkbox" 
+              class="checkbox checkbox-primary"
+              v-model="proxyConfig.exclude_self_traffic"
+              @change="debouncedSave"
+            />
+            <div>
+              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTraffic') }}</span>
+              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTrafficDesc') }}</p>
+            </div>
+          </label>
+        </div>
+
         <div class="flex gap-4">
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
@@ -1468,6 +1484,7 @@ const proxyConfig = ref({
   max_request_body_size: 2 * 1024 * 1024,
   max_response_body_size: 2 * 1024 * 1024,
   upstream_proxy: null as UpstreamProxyConfig | null,
+  exclude_self_traffic: true,
 })
 
 // 辅助变量：请求/响应体大小（MB）
@@ -2426,6 +2443,7 @@ const resetToDefaults = () => {
     max_request_body_size: 2 * 1024 * 1024,
     max_response_body_size: 2 * 1024 * 1024,
     upstream_proxy: null,
+    exclude_self_traffic: true,
   }
   requestBodySizeMB.value = 2
   responseBodySizeMB.value = 2

@@ -245,7 +245,7 @@
       @send-ai-message="sendAiChatMessage"
       @clear-code-ref="selectedCodeRef = null"
       @clear-test-result-ref="selectedTestResultRef = null"
-      @ai-quick-action="sendAiChatMessage"
+      @ai-quick-action="handleAiQuickAction"
       @apply-ai-code="(code) => { pluginCode = code; if (codeEditorView) codeEditorView.dispatch({ changes: { from: 0, to: codeEditorView.state.doc.length, insert: code } }) }"
       @exit-preview-mode="isPreviewMode = false"
     />
@@ -255,6 +255,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
 import { useI18n } from 'vue-i18n'
 import UnifiedToolTest from './UnifiedToolTest.vue'
@@ -725,15 +726,170 @@ async function savePlugin() {
 }
 
 // AI related methods
+async function handleAiQuickAction(action: string) {
+  const actions: Record<string, string> = {
+    'explain': '请解释这段插件代码的功能和工作原理',
+    'optimize': '请优化这段代码，提高性能和可读性',
+    'fix': '请检查并修复这段代码中可能存在的问题'
+  }
+  const message = actions[action] || action
+  await sendAiChatMessage(message)
+}
+
 async function sendAiChatMessage(message: string) {
   if (!message.trim() || aiChatStreaming.value) return
   
-  aiChatMessages.value.push({
-    role: 'user',
-    content: message
+  // Get current references
+  const codeRef = selectedCodeRef.value
+  const testResultRef = selectedTestResultRef.value
+  
+  // Get latest code from editor for default context
+  const editorView = isFullscreenEditor.value ? fullscreenCodeEditorView : codeEditorView
+  const latestCode = editorView ? editorView.state.doc.toString() : pluginCode.value
+  
+  // Determine code reference to use (explicit or default to full code)
+  const finalCodeRef: CodeReference = codeRef || {
+    code: latestCode,
+    preview: latestCode.split('\n').slice(0, 5).join('\n') + (latestCode.split('\n').length > 5 ? '\n...' : ''),
+    startLine: 1,
+    endLine: latestCode.split('\n').length,
+    isFullCode: true
+  }
+  
+  // Build history for backend
+  const history = aiChatMessages.value.map(msg => ({
+    role: msg.role,
+    content: msg.content
+  }))
+
+  // Add user message with references to UI
+  aiChatMessages.value.push({ 
+    role: 'user', 
+    content: message,
+    codeRef: finalCodeRef,
+    testResultRef: testResultRef || undefined
   })
   
-  dialog.toast.info('AI 助手功能暂未在工具标签页完全启用')
+  aiChatStreaming.value = true
+  aiChatStreamingContent.value = ''
+  
+  const streamId = `plugin_edit_${Date.now()}`
+  
+  try {
+    // Build system prompt
+    const isAgentPlugin = editPluginMetadata.value.mainCategory === 'agent'
+    const baseSystemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
+      pluginType: isAgentPlugin ? 'agent' : 'traffic',
+      vulnType: 'custom',
+      severity: 'medium'
+    })
+    
+    const agentInstructions = `
+you are a senior code editor Agent, writing a plugin for the "Sentinel AI" security testing platform.
+you are goal is to modify the TypeScript code directly and efficiently according to the user's needs.
+
+[Behavior Guidelines]:
+1. **Direct Modification**: If the user requires modifying the code, please provide the modified code block directly.
+2. **Partial vs Full**:
+   - If the user only wants to modify a specific function or add a small logic, you can only return the relevant code block (wrapped in \`\`\`typescript).
+   - If the user requires global structure adjustments or explicitly requests, please return the complete code.
+3. **Keep the Context**: When modifying, please refer to the user's [full code context] to ensure that the new code is compatible with the existing logic and type definitions.
+4. **Security First**: As a security plugin, the code must be robust and avoid injection risks and performance bottlenecks.
+5. **Simple Communication**: No need to add too many开场白, directly state what you have modified and then provide the code.
+`
+    const systemPrompt = `${baseSystemPrompt}\n\n${agentInstructions}`
+    
+    // Build user prompt with context
+    let userPrompt = message
+    const contextParts: string[] = []
+    
+    if (finalCodeRef.isFullCode) {
+      contextParts.push(`[Current Full Plugin Code]:\n\`\`\`typescript\n${finalCodeRef.code}\n\`\`\``)
+    } else {
+      contextParts.push(`[Current Focused Code Block] (Lines ${finalCodeRef.startLine}-${finalCodeRef.endLine}):\n\`\`\`typescript\n${finalCodeRef.code}\n\`\`\``)
+      contextParts.push(`[Full Code Context]:\n\`\`\`typescript\n${latestCode}\n\`\`\``)
+    }
+    
+    if (testResultRef) {
+      contextParts.push(`[Latest Plugin Test Result]:\n${testResultRef.preview}`)
+    }
+    
+    const instruction = "\n\nPlease modify the code according to the above code context and my needs. Please return the code directly."
+    
+    if (contextParts.length > 0) {
+      userPrompt = `${contextParts.join('\n\n')}\n\n[User Requirement]: ${message}${instruction}`
+    } else {
+      userPrompt = `${message}${instruction}`
+    }
+    
+    // Clear references after sending
+    selectedCodeRef.value = null
+    selectedTestResultRef.value = null
+    
+    let generatedContent = ''
+    
+    const unlistenDelta = await listen('plugin_gen_delta', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        generatedContent += event.payload.delta || ''
+        aiChatStreamingContent.value = generatedContent
+      }
+    })
+    
+    const unlistenComplete = await listen('plugin_gen_complete', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        generatedContent = event.payload.content || generatedContent
+        aiChatStreaming.value = false
+        aiChatStreamingContent.value = ''
+        
+        // Simple markdown extraction
+        const codeBlocks: string[] = []
+        const codeBlockRegex = /```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/g
+        let match
+        while ((match = codeBlockRegex.exec(generatedContent)) !== null) {
+          codeBlocks.push(match[1].trim())
+        }
+        
+        aiChatMessages.value.push({ 
+          role: 'assistant', 
+          content: generatedContent,
+          codeBlock: codeBlocks[0],
+          codeBlocks: codeBlocks
+        })
+      }
+    })
+    
+    const unlistenError = await listen('plugin_gen_error', (event: any) => {
+      if (event.payload.stream_id === streamId) {
+        aiChatMessages.value.push({ role: 'assistant', content: `❌ ${event.payload.error || 'AI 处理失败'}` })
+        aiChatStreaming.value = false
+        aiChatStreamingContent.value = ''
+      }
+    })
+    
+    await invoke('generate_plugin_stream', {
+      request: {
+        stream_id: streamId,
+        message: userPrompt,
+        system_prompt: systemPrompt,
+        service_name: 'default',
+        history: history
+      }
+    })
+    
+    setTimeout(() => {
+      unlistenDelta()
+      unlistenComplete()
+      unlistenError()
+    }, 180000)
+    
+  } catch (error) {
+    aiChatMessages.value.push({ 
+      role: 'assistant', 
+      content: `❌ ${error instanceof Error ? error.message : 'AI 处理失败'}` 
+    })
+    aiChatStreaming.value = false
+    aiChatStreamingContent.value = ''
+  }
 }
 
 function viewPluginInfo(plugin: PluginRecord) {

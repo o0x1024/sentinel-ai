@@ -510,6 +510,10 @@ const loadConversationHistory = async (convId: string) => {
       messages.forEach((row: any) => {
         const parsedMetadata =
           row.metadata && typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata
+        const parsedStructured =
+          row.structured_data && typeof row.structured_data === 'string'
+            ? JSON.parse(row.structured_data)
+            : row.structured_data
         const ts = toMillis(row.timestamp)
 
         if (row.role === 'tool') {
@@ -531,11 +535,15 @@ const loadConversationHistory = async (convId: string) => {
         }
 
         const messageType = row.role === 'user' ? 'user' : 'final'
+        const displayContent =
+          row.role === 'user' && parsedStructured?.display_content
+            ? parsedStructured.display_content
+            : row.content
         timeline.push({
           msg: {
             id: row.id,
             type: messageType as any,
-            content: row.content,
+            content: displayContent,
             timestamp: ts,
             metadata: parsedMetadata,
           },

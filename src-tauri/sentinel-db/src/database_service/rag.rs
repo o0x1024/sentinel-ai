@@ -499,12 +499,8 @@ impl DatabaseService {
         // Build query with optional search
         let (query_str, count_str) = if let Some(_search) = search_query {
             (
-                format!(
-                    "SELECT * FROM rag_document_sources WHERE collection_id = ? AND (file_name LIKE ? OR file_path LIKE ?) ORDER BY created_at DESC LIMIT ? OFFSET ?"
-                ),
-                format!(
-                    "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = ? AND (file_name LIKE ? OR file_path LIKE ?)"
-                )
+                "SELECT * FROM rag_document_sources WHERE collection_id = ? AND (file_name LIKE ? OR file_path LIKE ?) ORDER BY created_at DESC LIMIT ? OFFSET ?".to_string(),
+                "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = ? AND (file_name LIKE ? OR file_path LIKE ?)".to_string()
             )
         } else {
             (

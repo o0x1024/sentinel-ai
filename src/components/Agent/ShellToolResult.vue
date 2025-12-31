@@ -1,14 +1,7 @@
 <template>
-  <div class="shell-tool-result rounded-lg overflow-hidden border border-base-300 my-2">
+  <div class="shell-message-block rounded-lg overflow-hidden border border-base-300 my-3 bg-[#1e1e1e]">
     <!-- Terminal Header -->
     <div class="terminal-header flex items-center gap-2 px-3 py-2 bg-[#323233]">
-      <!-- macOS style window controls -->
-      <div class="window-controls flex gap-1.5">
-        <span class="w-3 h-3 rounded-full bg-[#ff5f56]"></span>
-        <span class="w-3 h-3 rounded-full bg-[#ffbd2e]"></span>
-        <span class="w-3 h-3 rounded-full bg-[#27c93f]"></span>
-      </div>
-      
       <!-- Command with cwd -->
       <div class="flex-1 font-mono text-sm text-[#a0a0a0] truncate">
         <span v-if="cwd" class="text-[#6a9955]">{{ shortenPath(cwd) }}</span>
@@ -18,7 +11,7 @@
       
       <!-- Copy button -->
       <button 
-        @click="copyCommand" 
+        @click.stop="copyCommand" 
         class="btn btn-ghost btn-xs text-[#808080] hover:text-white"
         :title="$t('agent.copy')"
       >
@@ -26,7 +19,7 @@
       </button>
     </div>
     
-    <!-- Pending Confirmation Bar (inline like Cursor) -->
+    <!-- Pending Confirmation Bar -->
     <div v-if="needsConfirmation" class="confirmation-bar flex items-center justify-between px-3 py-2 bg-[#2d2d2d] border-t border-[#404040]">
       <span class="text-sm text-[#a0a0a0]">{{ $t('tools.shell.runCommand') }}</span>
       <div class="flex items-center gap-2">
@@ -53,13 +46,19 @@
       </div>
     </div>
     
-    <!-- Terminal Body (shown when has output or completed) -->
-    <div v-if="hasOutput || isCompleted" class="terminal-body bg-[#1e1e1e] p-2 font-mono text-xs max-h-20 overflow-y-auto">
+    <!-- Terminal Body (clickable to expand/collapse) -->
+    <div 
+      v-if="hasOutput || isCompleted"
+      ref="terminalBodyRef"
+      @click="toggleExpanded"
+      :class="['terminal-body bg-[#1e1e1e] p-3 font-mono text-xs overflow-y-auto cursor-pointer transition-all relative', 
+               isExpanded ? 'max-h-96' : 'max-h-32']"
+    >
       <!-- Output -->
       <div v-if="stdout" class="stdout text-[#d4d4d4] whitespace-pre-wrap break-all mb-1">{{ stdout }}</div>
       <div v-if="stderr" class="stderr text-[#f14c4c] whitespace-pre-wrap break-all">{{ stderr }}</div>
       
-      <!-- Error message (if tool execution failed) -->
+      <!-- Error message -->
       <div v-if="error && !stderr" class="error text-[#f14c4c] whitespace-pre-wrap break-all">{{ error }}</div>
       
       <!-- No output indicator -->
@@ -71,6 +70,11 @@
       <div v-if="isRunning && !needsConfirmation" class="running flex items-center gap-2 text-[#569cd6]">
         <i class="fas fa-spinner fa-spin"></i>
         <span>{{ $t('tools.shell.executing') }}</span>
+      </div>
+      
+      <!-- Expand hint overlay (shown when collapsed and content overflows) -->
+      <div v-if="!isExpanded && hasOverflow" class="expand-hint absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#1e1e1e] to-transparent flex items-end justify-center pb-1 pointer-events-none">
+        <span class="text-[#808080] text-xs">{{ $t('tools.shell.clickToExpand') }}</span>
       </div>
     </div>
     
@@ -89,15 +93,26 @@
           (exit {{ exitCode }})
         </span>
       </div>
-      <span v-if="executionTime" class="text-[#808080]">
-        {{ executionTime }}ms
-      </span>
+      
+      <div class="flex items-center gap-2">
+        <span v-if="executionTime" class="text-[#808080]">
+          {{ executionTime }}ms
+        </span>
+        <!-- Collapse/Expand button -->
+        <button 
+          @click.stop="toggleExpanded"
+          class="btn btn-ghost btn-xs text-[#808080] hover:text-white"
+          :title="isExpanded ? $t('tools.shell.collapse') : $t('tools.shell.expand')"
+        >
+          <i :class="['fas', isExpanded ? 'fa-chevron-up' : 'fa-chevron-down']"></i>
+        </button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
@@ -117,6 +132,9 @@ const emit = defineEmits<{
 const copied = ref(false)
 const pendingPermissionId = ref<string | null>(null)
 const pendingCommand = ref<string>('')
+const isExpanded = ref(false)
+const hasOverflow = ref(false)
+const terminalBodyRef = ref<HTMLElement | null>(null)
 let unlisten: (() => void) | null = null
 
 // Extract command from args
@@ -371,6 +389,20 @@ async function handleAlwaysAccept() {
   emit('accepted')
 }
 
+// Toggle expand/collapse
+function toggleExpanded() {
+  isExpanded.value = !isExpanded.value
+}
+
+// Check if content overflows
+function checkOverflow() {
+  nextTick(() => {
+    if (terminalBodyRef.value) {
+      hasOverflow.value = terminalBodyRef.value.scrollHeight > terminalBodyRef.value.clientHeight
+    }
+  })
+}
+
 // Poll for pending permission requests
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
@@ -418,6 +450,10 @@ onMounted(async () => {
       pendingCommand.value = payload.command
     }
   }) as unknown as () => void
+  
+  // Check overflow on mount and when content changes
+  checkOverflow()
+  window.addEventListener('keydown', handleKeyDown)
 })
 
 onUnmounted(() => {
@@ -427,6 +463,7 @@ onUnmounted(() => {
   if (pollInterval) {
     clearInterval(pollInterval)
   }
+  window.removeEventListener('keydown', handleKeyDown)
 })
 
 // Handle keyboard shortcut
@@ -437,12 +474,9 @@ function handleKeyDown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
-  window.addEventListener('keydown', handleKeyDown)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeyDown)
+// Watch for content changes to check overflow
+watch([stdout, stderr, () => props.error], () => {
+  checkOverflow()
 })
 </script>
 

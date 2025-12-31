@@ -128,6 +128,12 @@ pub struct WorkflowEngine {
     workflow_cache: RwLock<HashMap<String, WorkflowDefinition>>, 
 }
 
+impl Default for WorkflowEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WorkflowEngine {
     pub fn new() -> Self {
         Self { 

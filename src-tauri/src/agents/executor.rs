@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::tool_router::{ToolConfig, ToolRouter};
+use crate::commands::ai::reconstruct_chat_history;
 
 /// Agent 执行配置
 #[derive(Debug, Clone)]
@@ -547,7 +548,29 @@ async fn execute_agent_with_tools(
         params.execution_id
     ));
 
-    // 5. 使用 rig-core 原生工具调用
+    // 5. Reuse the same history reconstruction logic as stream_chat_with_llm.
+    let history_messages = match db_service
+        .inner()
+        .get_ai_messages_by_conversation(&params.execution_id)
+        .await
+    {
+        Ok(msgs) => msgs,
+        Err(e) => {
+            tracing::warn!("Failed to get conversation history: {}", e);
+            Vec::new()
+        }
+    };
+    let mut history = reconstruct_chat_history(&history_messages);
+
+    // 移除历史记录中最后一条用户消息，避免与当前任务重复发送
+    // 因为 stream_chat_with_dynamic_tools 会自动将 user_prompt 添加到对话末尾
+    if let Some(last) = history.last() {
+        if last.role == "user" {
+            history.pop();
+        }
+    }
+
+    // 6. 使用 rig-core 原生工具调用
     // rig 的 multi_turn() 会自动处理工具调用循环
     let client = StreamingLlmClient::new(llm_config);
     let execution_id = params.execution_id.clone();
@@ -572,12 +595,12 @@ async fn execute_agent_with_tools(
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
 
-    // 6. 调用带动态工具的流式方法
+    // 7. 调用带动态工具的流式方法
     let result = client
         .stream_chat_with_dynamic_tools(
             Some(&final_system_prompt),
             &params.task,
-            &[],  // 空的历史记录
+            &history,
             None, // 无图片
             dynamic_tools,
             |content| {

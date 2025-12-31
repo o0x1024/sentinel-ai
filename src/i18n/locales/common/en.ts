@@ -68,6 +68,7 @@ export default {
   disconnected: 'Disconnected',
   other: 'Other',
   operations: 'Operations',
+  url: 'URL',
   confirmDelete: 'Are you sure you want to delete this?',
   yes: 'Yes',
   no: 'No',

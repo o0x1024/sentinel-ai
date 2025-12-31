@@ -155,16 +155,13 @@ impl LlmConfig {
             );
         } else {
             // 为特定提供商设置默认 base URL
-            match provider.as_str() {
-                "deepseek" => {
-                    // DeepSeek 使用 OpenAI 兼容模式，需要设置正确的 base URL
-                    let deepseek_base = "https://api.deepseek.com";
-                    std::env::set_var("OPENAI_API_BASE", deepseek_base);
-                    std::env::set_var("OPENAI_BASE_URL", deepseek_base);
-                    std::env::set_var("OPENAI_BASE", deepseek_base);
-                    tracing::debug!("Set DeepSeek default base URL: {}", deepseek_base);
-                }
-                _ => {}
+            if provider.as_str() == "deepseek" {
+                // DeepSeek 使用 OpenAI 兼容模式，需要设置正确的 base URL
+                let deepseek_base = "https://api.deepseek.com";
+                std::env::set_var("OPENAI_API_BASE", deepseek_base);
+                std::env::set_var("OPENAI_BASE_URL", deepseek_base);
+                std::env::set_var("OPENAI_BASE", deepseek_base);
+                tracing::debug!("Set DeepSeek default base URL: {}", deepseek_base);
             }
         }
     }

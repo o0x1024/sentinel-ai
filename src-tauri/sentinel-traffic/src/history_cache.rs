@@ -589,11 +589,11 @@ impl ProxyHistoryCache {
         let include_http = filters
             .protocol_type
             .as_ref()
-            .map_or(true, |t| t == "all" || t == "http");
+            .is_none_or(|t| t == "all" || t == "http");
         let include_ws = filters
             .protocol_type
             .as_ref()
-            .map_or(true, |t| t == "all" || t == "websocket");
+            .is_none_or(|t| t == "all" || t == "websocket");
 
         // 获取 HTTP 请求
         if include_http {

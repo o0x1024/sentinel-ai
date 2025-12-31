@@ -118,7 +118,7 @@ impl Tool for DynamicTool {
         let executor = self.def.executor.clone();
         executor(args)
             .await
-            .map_err(|e| DynamicToolError::ExecutionFailed(e))
+            .map_err(DynamicToolError::ExecutionFailed)
     }
 }
 
@@ -191,7 +191,7 @@ impl ToolRegistry {
 
         (def.executor)(args)
             .await
-            .map_err(|e| DynamicToolError::ExecutionFailed(e))
+            .map_err(DynamicToolError::ExecutionFailed)
     }
 
     /// Create a ToolSet from registered tools

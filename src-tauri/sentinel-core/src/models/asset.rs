@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use uuid::Uuid;
 
 /// 资产类型
@@ -58,25 +59,29 @@ impl AssetType {
             AssetType::Directory => "directory",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for AssetType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "domain" => Some(AssetType::Domain),
-            "subdomain" => Some(AssetType::Subdomain),
-            "ip" => Some(AssetType::Ip),
-            "port" => Some(AssetType::Port),
-            "service" => Some(AssetType::Service),
-            "website" => Some(AssetType::Website),
-            "api" => Some(AssetType::Api),
-            "certificate" => Some(AssetType::Certificate),
-            "fingerprint" => Some(AssetType::Fingerprint),
-            "vulnerability" => Some(AssetType::Vulnerability),
-            "technology" => Some(AssetType::Technology),
-            "email" => Some(AssetType::Email),
-            "phone" => Some(AssetType::Phone),
-            "file" => Some(AssetType::File),
-            "directory" => Some(AssetType::Directory),
-            _ => None,
+            "domain" => Ok(AssetType::Domain),
+            "subdomain" => Ok(AssetType::Subdomain),
+            "ip" => Ok(AssetType::Ip),
+            "port" => Ok(AssetType::Port),
+            "service" => Ok(AssetType::Service),
+            "website" => Ok(AssetType::Website),
+            "api" => Ok(AssetType::Api),
+            "certificate" => Ok(AssetType::Certificate),
+            "fingerprint" => Ok(AssetType::Fingerprint),
+            "vulnerability" => Ok(AssetType::Vulnerability),
+            "technology" => Ok(AssetType::Technology),
+            "email" => Ok(AssetType::Email),
+            "phone" => Ok(AssetType::Phone),
+            "file" => Ok(AssetType::File),
+            "directory" => Ok(AssetType::Directory),
+            _ => Err(()),
         }
     }
 }
@@ -130,14 +135,18 @@ impl RiskLevel {
             RiskLevel::Unknown => "unknown",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
+impl FromStr for RiskLevel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "low" => RiskLevel::Low,
-            "medium" => RiskLevel::Medium,
-            "high" => RiskLevel::High,
-            "critical" => RiskLevel::Critical,
-            _ => RiskLevel::Unknown,
+            "low" => Ok(RiskLevel::Low),
+            "medium" => Ok(RiskLevel::Medium),
+            "high" => Ok(RiskLevel::High),
+            "critical" => Ok(RiskLevel::Critical),
+            _ => Ok(RiskLevel::Unknown),
         }
     }
 }

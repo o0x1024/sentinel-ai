@@ -247,8 +247,9 @@ impl DatabaseService {
                 .await?;
 
             if exists.is_some() {
-                sqlx::query("UPDATE ai_messages SET content = content || ?, token_count = ?, cost = ?, timestamp = ? WHERE id = ?")
+                sqlx::query("UPDATE ai_messages SET content = content || ?, metadata = ?, token_count = ?, cost = ?, timestamp = ? WHERE id = ?")
                     .bind(&msg.content)
+                    .bind(&msg.metadata)
                     .bind(msg.token_count)
                     .bind(msg.cost)
                     .bind(msg.timestamp)

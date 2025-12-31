@@ -73,7 +73,13 @@ impl DocumentChunker {
         while cursor < total_len {
             let target_end = std::cmp::min(cursor + max_chunk_chars, total_len);
             let mut end_char = cursor;
-            for &(_, s_end) in &sentences { if s_end > cursor && s_end <= target_end { end_char = s_end; } if s_end > target_end { break; } }
+            for &(_, s_end) in &sentences { 
+                if s_end > cursor && s_end <= target_end { 
+                    end_char = s_end; 
+                } else if s_end > target_end { 
+                    break; 
+                } 
+            }
             if end_char <= cursor { end_char = target_end; }
             if end_char <= cursor { end_char = std::cmp::min(cursor + max_chunk_chars, total_len); if end_char <= cursor { break; } }
             let chunk_str: String = chars[cursor..end_char].iter().collect();
@@ -235,5 +241,11 @@ impl DocumentChunker {
 }
 
 pub struct TextCleaner { whitespace_regex: Regex, special_chars_regex: Regex }
+impl Default for TextCleaner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TextCleaner { pub fn new() -> Self { Self { whitespace_regex: Regex::new(r"\s+").unwrap(), special_chars_regex: Regex::new(r"[^\w\s\u4e00-\u9fff.,;:()\x22\x27\-/=&%+#@\[\]{}!?！？。，；：（）【】《》\u201c\u201d\u2018\u2019—…]").unwrap() } } pub fn clean_text(&self, text: &str) -> String { let mut cleaned = text.to_string(); cleaned = self.whitespace_regex.replace_all(&cleaned, " ").to_string(); cleaned = self.special_chars_regex.replace_all(&cleaned, "").to_string(); cleaned = cleaned.trim().to_string(); debug!("文本清洗完成，原长度: {}, 清洗后长度: {}", text.len(), cleaned.len()); cleaned } }
 

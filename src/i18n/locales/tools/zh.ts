@@ -198,6 +198,9 @@ export default {
     alwaysAccept: '始终接受',
     alwaysAcceptHint: '将此命令添加到允许列表并执行',
     success: '成功',
-    failed: '失败'
+    failed: '失败',
+    clickToExpand: '点击展开',
+    expand: '展开',
+    collapse: '折叠'
   }
 }

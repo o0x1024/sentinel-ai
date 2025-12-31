@@ -8,9 +8,12 @@ export default {
   lowVulnerabilities: '低危漏洞',
   infoVulnerabilities: '信息性漏洞',
   vulnerabilityDetails: '漏洞详情',
+  details: '详情',
   vulnerabilityName: '漏洞名称',
   vulnerabilityType: '漏洞类型',
+  plugin: '插件',
   severity: {
+    title: '严重程度',
     label: '严重程度',
     critical: '严重',
     high: '高危',

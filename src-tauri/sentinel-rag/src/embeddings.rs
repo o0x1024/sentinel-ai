@@ -37,6 +37,12 @@ pub struct EmbeddingManager {
     providers: HashMap<String, Box<dyn EmbeddingProvider>>,
     current_provider: Option<String>,
 }
+impl Default for EmbeddingManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EmbeddingManager {
     pub fn new() -> Self {
         Self {
@@ -174,7 +180,7 @@ impl EmbeddingProvider for LmStudioEmbeddingProvider {
         };
         let payload = serde_json::json!({ "model": self.model_name, "input": input });
         let response = client
-            .post(&format!("{}/v1/embeddings", self.base_url))
+            .post(format!("{}/v1/embeddings", self.base_url))
             .headers(headers)
             .json(&payload)
             .send()
@@ -256,7 +262,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
         for text in texts {
             let payload = serde_json::json!({ "model": self.model_name, "prompt": text });
             let response = client
-                .post(&format!("{}/api/embeddings", self.base_url))
+                .post(format!("{}/api/embeddings", self.base_url))
                 .json(&payload)
                 .send()
                 .await?;
@@ -348,7 +354,7 @@ impl RerankingProvider for LmStudioRerankingProvider {
         );
         let payload = serde_json::json!({ "model": self.model_name, "messages": [ {"role":"system","content":system_prompt}, {"role":"user","content":user_prompt} ], "temperature": 0.1, "max_tokens": 2000, "stream": false });
         let response = client
-            .post(&format!("{}/v1/chat/completions", self.base_url))
+            .post(format!("{}/v1/chat/completions", self.base_url))
             .headers(headers)
             .json(&payload)
             .send()
@@ -407,6 +413,12 @@ impl RerankingProvider for LmStudioRerankingProvider {
 pub struct RerankingManager {
     provider: Option<Box<dyn RerankingProvider>>,
 }
+impl Default for RerankingManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RerankingManager {
     pub fn new() -> Self {
         Self { provider: None }

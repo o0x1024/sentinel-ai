@@ -277,8 +277,10 @@ mod tests {
 
     #[test]
     fn test_auto_reject_low_quality() {
-        let mut config = PluginAutoApprovalConfig::default();
-        config.auto_regenerate_on_low_quality = false;
+        let config = PluginAutoApprovalConfig {
+            auto_regenerate_on_low_quality: false,
+            ..Default::default()
+        };
         let engine = PluginAutoApprovalEngine::new(config);
 
         let decision = engine.evaluate_plugin(40.0, "Passed", "// Low quality code", 0);

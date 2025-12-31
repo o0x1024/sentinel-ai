@@ -147,7 +147,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         let id = uuid::Uuid::new_v4().to_string();
 
-        let url = format!("http://localhost:8080");
+        let url = "http://localhost:8080".to_string();
         let connection_type = "stdio";
 
         sqlx::query(

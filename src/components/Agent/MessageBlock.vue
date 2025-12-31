@@ -1,6 +1,82 @@
 <template>
-  <div class="message-container group relative  max-w-full ">
-    <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden ', typeClass]">
+  <!-- Shell Tool - Render as independent message block -->
+  <ShellToolResult
+    v-if="isShellTool && message.type === 'tool_call'"
+    :args="message.metadata?.tool_args"
+    :result="message.metadata?.tool_result"
+    :error="message.metadata?.error"
+    :status="message.metadata?.status"
+  />
+  
+  <!-- Tool Call Message - Collapsible Panel -->
+  <div v-else-if="message.type === 'tool_call'" class="tool-call-panel rounded-lg overflow-hidden my-2 bg-base-200 border-l-4" :class="toolPanelBorderClass">
+    <!-- Panel Header (always visible) -->
+    <div 
+      @click="toggleToolPanel" 
+      class="tool-panel-header flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-base-300/50 transition-colors"
+    >
+      <!-- Expand/Collapse Icon -->
+      <i :class="['fas transition-transform text-xs', isToolPanelExpanded ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
+      
+      <!-- Tool Name -->
+      <span class="font-mono text-sm font-semibold">{{ toolName || 'Tool' }}</span>
+      
+      <!-- Status Badge -->
+      <span v-if="toolStatus" :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium ml-auto', toolStatusClass]">
+        {{ toolStatusText }}
+      </span>
+      
+      <!-- Duration -->
+      <span v-if="duration" class="text-xs text-base-content/60">{{ duration }}</span>
+    </div>
+    
+    <!-- Panel Content (collapsible) -->
+    <div v-show="isToolPanelExpanded" class="tool-panel-content">
+      <!-- Tool Description/Content -->
+      <div v-if="message.content" class="px-4 py-3 border-t border-base-300 bg-base-100">
+        <MarkdownRenderer :content="formattedContent" />
+      </div>
+      
+      <!-- Tool Arguments -->
+      <div v-if="hasToolArgs" class="border-t border-base-300">
+        <button 
+          @click="toggleArgs" 
+          class="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-base-200/50 transition-colors"
+        >
+          <i :class="['fas text-xs transition-transform', isArgsExpanded ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
+          <span class="text-sm text-base-content/70">📥 {{ t('agent.inputParameters') }}</span>
+        </button>
+        <div v-show="isArgsExpanded" class="px-4 py-3 bg-base-100">
+          <pre class="text-xs font-mono text-base-content/70 whitespace-pre-wrap break-words overflow-x-auto max-h-48 overflow-y-auto">{{ formattedArgs }}</pre>
+        </div>
+      </div>
+      
+      <!-- Tool Result -->
+      <div v-if="hasToolResult" class="border-t border-base-300">
+        <button 
+          @click="toggleResult" 
+          class="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-base-200/50 transition-colors"
+        >
+          <i :class="['fas text-xs transition-transform', isResultExpanded ? 'fa-chevron-down' : 'fa-chevron-right']"></i>
+          <span class="text-sm text-base-content/70">📤 {{ t('agent.executionResult') }}</span>
+        </button>
+        <div v-show="isResultExpanded" class="px-4 py-3 bg-base-100">
+          <pre class="text-xs font-mono text-base-content/70 whitespace-pre-wrap break-words overflow-x-auto max-h-64 overflow-y-auto">{{ message.metadata?.tool_result }}</pre>
+        </div>
+      </div>
+      
+      <!-- Tool Call ID -->
+      <div v-if="message.metadata?.tool_call_id" class="px-4 py-2 border-t border-base-300 bg-base-100">
+        <span class="text-xs text-base-content/50">
+          {{ t('agent.toolCallId') }}: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Regular message block for non-tool-call messages -->
+  <div v-else class="message-container group relative max-w-full">
+    <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden', typeClass]">
       <!-- Actions (overlay) -->
       <div
         v-if="message.type === 'user' || message.type === 'final'"
@@ -46,8 +122,9 @@
           </ul>
         </details>
       </div>
+      
       <!-- Header with type indicator -->
-      <div class="message-header flex items-center gap-2 mb-23 text-sm" v-if="showHeader">
+      <div class="message-header flex items-center gap-2 mb-2 text-sm" v-if="showHeader">
         <span class="message-type font-semibold text-base-content/70">{{ typeName }}</span>
         <span v-if="toolName" class="tool-name font-mono text-xs text-primary">`{{ toolName }}`</span>
         <!-- Tool Status Indicator -->
@@ -72,7 +149,6 @@
       </div>
       
       <!-- Content -->
-      <!-- Content -->
       <div class="message-content text-base-content break-words overflow-hidden">
         <div v-if="shouldHideContent" class="text-xs text-base-content/50 italic py-1 flex items-center gap-2">
           <i class="fas fa-external-link-alt"></i>
@@ -81,17 +157,8 @@
         <MarkdownRenderer v-else :content="formattedContent" :citations="ragInfo?.citations" />
       </div>
       
-      <!-- Shell Tool - Special Terminal Display -->
-      <ShellToolResult
-        v-if="isShellTool && message.type === 'tool_call'"
-        :args="message.metadata?.tool_args"
-        :result="message.metadata?.tool_result"
-        :error="message.metadata?.error"
-        :status="message.metadata?.status"
-      />
-      
-      <!-- Tool details (collapsible) - Non-shell tools -->
-      <div v-else-if="message.type === 'tool_call' && !isShellTool && (hasToolArgs || hasToolResult)" class="tool-details mt-2 pt-2 border-t border-base-300">
+      <!-- Tool Result details (for standalone tool_result messages) -->
+      <div v-if="message.type === 'tool_result' && (hasToolArgs || message.content)" class="tool-details mt-2 pt-2 border-t border-base-300">
         <button @click="toggleDetails" class="toggle-btn text-xs text-base-content/60 bg-transparent border-none cursor-pointer p-0 underline hover:text-base-content">
           {{ isExpanded ? t('agent.collapseDetails') : t('agent.expandDetails') }}
         </button>
@@ -101,35 +168,12 @@
             <div class="text-xs text-base-content/60 mb-1 font-medium">📥 {{ t('agent.inputParameters') }}:</div>
             <pre class="tool-args p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-48 overflow-y-auto">{{ formattedArgs }}</pre>
           </div>
-          <!-- Tool Result (merged display) -->
-          <div v-if="hasToolResult" class="tool-result-section">
-            <div class="text-xs text-base-content/60 mb-1 font-medium">📤 {{ t('agent.executionResult') }}:</div>
-            <pre class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap">{{ message.metadata?.tool_result }}</pre>
-          </div>
-          <!-- Tool Call ID -->
-          <div v-if="message.metadata?.tool_call_id" class="text-xs text-base-content/50">
-            {{ t('agent.toolCallId') }}: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
-          </div>
-        </div>
-      </div>
-      
-      <!-- 兜底：独立的 tool_result 消息显示（当无法合并时） -->
-      <div v-else-if="message.type === 'tool_result' && (hasToolArgs || message.content)" class="tool-details mt-2 pt-2 border-t border-base-300">
-        <button @click="toggleDetails" class="toggle-btn text-xs text-base-content/60 bg-transparent border-none cursor-pointer p-0 underline hover:text-base-content">
-          {{ isExpanded ? t('agent.collapseDetails') : t('agent.expandDetails') }}
-        </button>
-        <div v-if="isExpanded" class="mt-2 space-y-3">
-          <!-- 工具参数 -->
-          <div v-if="hasToolArgs" class="tool-args-section">
-            <div class="text-xs text-base-content/60 mb-1 font-medium">📥 {{ t('agent.inputParameters') }}:</div>
-            <pre class="tool-args p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-48 overflow-y-auto">{{ formattedArgs }}</pre>
-          </div>
-          <!-- 工具结果 -->
+          <!-- Tool Result -->
           <div v-if="message.content" class="tool-result-section">
             <div class="text-xs text-base-content/60 mb-1 font-medium">📤 {{ t('agent.executionResult') }}:</div>
             <pre class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap">{{ message.content }}</pre>
           </div>
-          <!-- 工具调用 ID -->
+          <!-- Tool Call ID -->
           <div v-if="message.metadata?.tool_call_id" class="text-xs text-base-content/50">
             {{ t('agent.toolCallId') }}: <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
           </div>
@@ -161,8 +205,25 @@ const emit = defineEmits<{
 const isExpanded = ref(false)
 const copySuccess = ref(false)
 
+// Tool panel collapse states
+const isToolPanelExpanded = ref(true)
+const isArgsExpanded = ref(false)
+const isResultExpanded = ref(true)
+
 const toggleDetails = () => {
   isExpanded.value = !isExpanded.value
+}
+
+const toggleToolPanel = () => {
+  isToolPanelExpanded.value = !isToolPanelExpanded.value
+}
+
+const toggleArgs = () => {
+  isArgsExpanded.value = !isArgsExpanded.value
+}
+
+const toggleResult = () => {
+  isResultExpanded.value = !isResultExpanded.value
 }
 
 // 复制消息内容
@@ -260,7 +321,12 @@ const duration = computed(() => {
 
 // Whether to show header
 const showHeader = computed(() => {
-  return ['tool_call', 'tool_result', 'progress'].includes(props.message.type)
+  return ['tool_result', 'progress'].includes(props.message.type)
+})
+
+// Tool panel styling - left border color (always orange/warning)
+const toolPanelBorderClass = computed(() => {
+  return 'border-l-warning' // Always use orange/warning color for tool calls
 })
 
 // Has tool args
@@ -365,8 +431,6 @@ const shouldHideContent = computed(() => {
   white-space: pre-wrap;
 }
 
-
-
 .action-btn {
   min-height: 1.5rem;
   height: 1.5rem;
@@ -375,5 +439,33 @@ const shouldHideContent = computed(() => {
 
 .action-btn i {
   font-size: 0.75rem;
+}
+
+/* Tool panel styles */
+.tool-call-panel {
+  transition: all 0.2s ease;
+}
+
+.tool-panel-header {
+  user-select: none;
+}
+
+.tool-panel-header:active {
+  transform: scale(0.99);
+}
+
+.tool-panel-content {
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 1000px;
+  }
 }
 </style>

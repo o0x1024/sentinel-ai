@@ -17,6 +17,7 @@ pub mod ability;
 pub mod prompt;
 pub mod scan_session;
 pub mod traffic;
+pub mod repeater;
 
 #[allow(unused_imports)]
 pub use agent::*;

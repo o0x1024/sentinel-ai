@@ -1155,8 +1155,8 @@ impl<D: RagDatabase> RagService<D> {
         info!("获取RAG状态");
         
         let collections = self.database.get_rag_collections().await?;
-        let total_documents: usize = collections.iter().map(|c| c.document_count as usize).sum();
-        let total_chunks: usize = collections.iter().map(|c| c.chunk_count as usize).sum();
+        let total_documents: usize = collections.iter().map(|c| c.document_count).sum();
+        let total_chunks: usize = collections.iter().map(|c| c.chunk_count).sum();
         
         // Already CollectionInfo from database
         let collection_infos: Vec<CollectionInfo> = collections;

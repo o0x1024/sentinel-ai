@@ -41,16 +41,15 @@ pub struct RagConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ChunkingStrategy {
     FixedSize,
+    #[default]
     RecursiveCharacter,
     Semantic,
     StructureAware,
 }
 
-impl Default for ChunkingStrategy {
-    fn default() -> Self { Self::RecursiveCharacter }
-}
 
 impl Default for RagConfig {
     fn default() -> Self {

@@ -157,7 +157,7 @@ impl PageContext {
                     if in_tag && !tag_content.is_empty() {
                         // Split tag name and attributes
                         let parts: Vec<&str> = tag_content.split_whitespace().collect();
-                        if let Some(tag_name_raw) = parts.get(0) {
+                        if let Some(tag_name_raw) = parts.first() {
                             let normalized = tag_name_raw.to_lowercase();
 
                             // Skip script/style content and dynamic elements

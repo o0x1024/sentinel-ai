@@ -224,7 +224,9 @@ async fn perform_rag_enhancement(
 /// DeepSeek API 期望格式：
 /// - role=assistant: 包含 reasoning_content 和 tool_calls
 /// - role=tool: 工具执行结果
-fn reconstruct_chat_history(messages: &[sentinel_core::models::database::AiMessage]) -> Vec<LlmChatMessage> {
+pub(crate) fn reconstruct_chat_history(
+    messages: &[sentinel_core::models::database::AiMessage],
+) -> Vec<LlmChatMessage> {
     use serde_json::Value;
     
     let mut result = Vec::new();
@@ -252,34 +254,36 @@ fn reconstruct_chat_history(messages: &[sentinel_core::models::database::AiMessa
                     if let Some(ref metadata_str) = messages[j].metadata {
                         if let Ok(metadata) = serde_json::from_str::<Value>(metadata_str) {
                             if metadata.get("kind").and_then(|v| v.as_str()) == Some("tool_call") {
-                                // 这是一个工具调用
-                                let tool_call_id = metadata.get("tool_call_id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let tool_name = metadata.get("tool_name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let tool_args = metadata.get("tool_args")
-                                    .cloned()
-                                    .unwrap_or(Value::Object(serde_json::Map::new()));
                                 let tool_result = metadata.get("tool_result")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
-                                
-                                // 构建 tool_call JSON
-                                tool_calls_json.push(serde_json::json!({
-                                    "id": tool_call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": tool_args
-                                    }
-                                }));
-                                
-                                // 如果有结果，保存为 tool result 消息
+
+                                // 只在存在工具结果时才加入 tool_calls，避免 DeepSeek 要求的 tool_result 不足
                                 if let Some(result_str) = tool_result {
+                                    // 这是一个完成的工具调用
+                                    let tool_call_id = metadata.get("tool_call_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let tool_name = metadata.get("tool_name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let tool_args = metadata.get("tool_args")
+                                        .cloned()
+                                        .unwrap_or(Value::Object(serde_json::Map::new()));
+
+                                    // 构建 tool_call JSON
+                                    tool_calls_json.push(serde_json::json!({
+                                        "id": tool_call_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_name,
+                                            "arguments": tool_args
+                                        }
+                                    }));
+
+                                    // 保存为 tool result 消息
                                     tool_results.push((tool_call_id, result_str));
                                 }
                             }
@@ -364,7 +368,15 @@ async fn stream_chat_with_llm(
     let image = parse_image_from_json(attachments.as_ref());
 
     // 转换历史消息，重新组合 assistant + tool 消息以符合 DeepSeek API 要求
-    let history: Vec<LlmChatMessage> = reconstruct_chat_history(&history_messages);
+    let mut history: Vec<LlmChatMessage> = reconstruct_chat_history(&history_messages);
+
+    // 移除历史记录中最后一条用户消息，避免与当前消息重复发送
+    // 因为 stream_chat 会自动将 user_message 添加到对话末尾
+    if let Some(last) = history.last() {
+        if last.role == "user" {
+            history.pop();
+        }
+    }
 
     // 创建 LLM 客户端
     let llm_config = service.service.to_llm_config();
@@ -694,6 +706,7 @@ pub struct GenerateStreamRequest {
     pub message: String,
     pub system_prompt: Option<String>,
     pub service_name: Option<String>,
+    pub history: Option<Vec<LlmChatMessage>>,
 }
 
 // 轻量级流式生成（插件生成专用，不保存消息）
@@ -735,6 +748,7 @@ pub async fn generate_plugin_stream(
     let _cancellation_token = create_cancellation_token(&stream_id);
     let app_clone = app_handle.clone();
     let sid = stream_id.clone();
+    let history = request.history.unwrap_or_default();
 
     tokio::spawn(async move {
         let _guard = CancellationGuard(sid.clone());
@@ -751,7 +765,7 @@ pub async fn generate_plugin_stream(
             .stream_chat(
                 system_prompt.as_deref(),
                 &user_message,
-                &[], // No history for one-shot generation
+                &history,
                 None,
                 move |chunk| {
                     if is_conversation_cancelled(&sid_for_callback) {
@@ -818,6 +832,146 @@ pub async fn cancel_plugin_generation(
     cancel_conversation_stream(&stream_id);
     let _ = app_handle.emit(
         "plugin_gen_cancelled",
+        &serde_json::json!({ "stream_id": stream_id }),
+    );
+    Ok(())
+}
+
+// AI 助手对话请求（专门用于编辑器内的 AI 助手面板）
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginAssistantRequest {
+    pub stream_id: String,
+    pub message: String,
+    pub system_prompt: Option<String>,
+    pub service_name: Option<String>,
+    pub history: Option<Vec<LlmChatMessage>>,
+    pub current_code: Option<String>,  // 当前编辑的代码
+    pub code_context: Option<String>,  // 代码上下文（选中的代码片段）
+}
+
+// AI 助手对话流式响应（专门用于编辑器 AI 助手）
+#[tauri::command]
+pub async fn plugin_assistant_chat_stream(
+    request: PluginAssistantRequest,
+    app_handle: AppHandle,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<String, String> {
+    // Get actual default LLM provider from database config
+    let mut service_name = request.service_name.clone().unwrap_or_else(|| "default".to_string());
+    
+    // If using default, try to get the actual provider name from config
+    if service_name == "default" {
+        if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+            if let Ok(Some(default_llm_provider)) = db.get_config("ai", "default_llm_provider").await {
+                let provider_lc = default_llm_provider.to_lowercase();
+                if ai_manager.get_service(&provider_lc).is_some() {
+                    service_name = provider_lc;
+                    tracing::debug!("Using default LLM provider from config: {}", service_name);
+                }
+            }
+        }
+    }
+
+    let service = ai_manager
+        .get_service(&service_name)
+        .or_else(|| ai_manager.get_service("default"))
+        .ok_or_else(|| format!("AI service '{}' not found", service_name))?;
+    
+    tracing::info!("Plugin assistant chat using provider: {}, model: {}", 
+        service.get_config().provider, service.get_config().model);
+
+    let stream_id = request.stream_id.clone();
+    let user_message = request.message.clone();
+    let system_prompt = request.system_prompt.clone();
+    let service_clone = service.clone();
+
+    let _cancellation_token = create_cancellation_token(&stream_id);
+    let app_clone = app_handle.clone();
+    let sid = stream_id.clone();
+    let history = request.history.unwrap_or_default();
+
+    tokio::spawn(async move {
+        let _guard = CancellationGuard(sid.clone());
+        // Start event
+        let _ = app_clone.emit("plugin_assistant_start", &serde_json::json!({ "stream_id": sid }));
+
+        // Create LLM client and stream
+        let llm_config = service_clone.service.to_llm_config();
+        let streaming_client = StreamingLlmClient::new(llm_config);
+        let app_for_callback = app_clone.clone();
+        let sid_for_callback = sid.clone();
+
+        let result = streaming_client
+            .stream_chat(
+                system_prompt.as_deref(),
+                &user_message,
+                &history,
+                None,
+                move |chunk| {
+                    if is_conversation_cancelled(&sid_for_callback) {
+                        return false;
+                    }
+                    match chunk {
+                        StreamContent::Text(text) => {
+                            let _ = app_for_callback.emit(
+                                "plugin_assistant_delta",
+                                serde_json::json!({
+                                    "stream_id": sid_for_callback,
+                                    "delta": text
+                                }),
+                            );
+                        }
+                        StreamContent::Reasoning(text) => {
+                            let _ = app_for_callback.emit(
+                                "plugin_assistant_thinking",
+                                serde_json::json!({
+                                    "stream_id": sid_for_callback,
+                                    "delta": text
+                                }),
+                            );
+                        }
+                        StreamContent::Done => {}
+                        _ => {}
+                    }
+                    true
+                },
+            )
+            .await;
+
+        match result {
+            Ok(content) => {
+                let _ = app_clone.emit(
+                    "plugin_assistant_complete",
+                    serde_json::json!({
+                        "stream_id": sid,
+                        "content": content
+                    }),
+                );
+            }
+            Err(e) => {
+                let _ = app_clone.emit(
+                    "plugin_assistant_error",
+                    serde_json::json!({
+                        "stream_id": sid,
+                        "error": e.to_string()
+                    }),
+                );
+            }
+        }
+    });
+
+    Ok(stream_id)
+}
+
+// 取消 AI 助手对话
+#[tauri::command]
+pub async fn cancel_plugin_assistant_chat(
+    stream_id: String,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    cancel_conversation_stream(&stream_id);
+    let _ = app_handle.emit(
+        "plugin_assistant_cancelled",
         &serde_json::json!({ "stream_id": stream_id }),
     );
     Ok(())
@@ -1835,15 +1989,21 @@ pub async fn agent_execute(
             use sentinel_core::models::database as core_db;
             let user_msg_id = Uuid::new_v4().to_string();
             let display_text = display_content_clone.as_ref().unwrap_or(&task_clone);
+            let structured_data = display_content_clone.as_ref().map(|content| {
+                serde_json::json!({
+                    "display_content": content,
+                })
+                .to_string()
+            });
             let user_msg = core_db::AiMessage {
                 id: user_msg_id.clone(),
                 conversation_id: conv_id.clone(),
                 role: "user".to_string(),
-                content: display_text.clone(),
+                content: task_clone.clone(),
                 metadata: attachments
                     .as_ref()
                     .and_then(|v| serde_json::to_string(v).ok()),
-                token_count: Some(display_text.len() as i32),
+                token_count: Some(task_clone.len() as i32),
                 cost: None,
                 tool_calls: None,
                 attachments: attachments
@@ -1853,7 +2013,7 @@ pub async fn agent_execute(
                 timestamp: chrono::Utc::now(),
                 architecture_type: None,
                 architecture_meta: None,
-                structured_data: None,
+                structured_data,
             };
             if let Err(e) = db.create_ai_message(&user_msg).await {
                 tracing::warn!("Failed to save user message: {}", e);

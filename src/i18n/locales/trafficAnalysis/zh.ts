@@ -329,6 +329,13 @@ export default {
       render: '渲染',
       clickSendToSendRequest: '点击"发送请求"以发送请求'
     },
+    tabContextMenu: {
+      closeTab: '关闭标签页',
+      closeOthers: '关闭其他标签页',
+      closeAll: '关闭所有标签页',
+      closeLeft: '关闭左侧标签页',
+      closeRight: '关闭右侧标签页'
+    },
     messages: {
       requestCancelled: '请求已取消',
       fillTargetAndRequest: '请填写目标 Host 和请求内容',
@@ -350,8 +357,11 @@ export default {
       invalidUrl: 'URL 格式不正确',
       confirmCloseTab: '确认关闭标签页？',
       confirmCloseTabMessage: '此标签页有未保存的内容，确认关闭吗？',
+      confirmCloseAllTabs: '确认关闭所有标签页？',
+      confirmCloseAllTabsMessage: '部分标签页有未保存的内容，确认全部关闭吗？',
       tabRestored: '已恢复 {count} 个标签页',
-      tabsSaved: '标签页已自动保存'
+      tabsSaved: '标签页已自动保存',
+      saveTabsFailed: '保存标签页失败'
     },
     types: {
       request: '请求',
@@ -576,6 +586,8 @@ export default {
     proxyListenersDescription: '配置代理监听器以接收来自浏览器的 HTTP 请求。需要配置浏览器使用其中一个监听器作为代理服务器。',
     autoStartProxy: '应用启动时自动开启代理',
     autoStartProxyDesc: '启用后，应用启动时将自动开启代理监听器，无需手动操作',
+    excludeSelfTraffic: '排除本应用流量的扫描',
+    excludeSelfTrafficDesc: '启用后，本应用自己发出的 HTTP 请求将不会被流量分析插件扫描，但仍会显示在流量历史中',
     running: '运行中',
     interface: '接口',
     invisible: '不可见',
