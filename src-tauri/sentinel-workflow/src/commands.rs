@@ -78,6 +78,8 @@ pub struct WorkflowGraph {
     pub edges: Vec<EdgeDef>,
     pub variables: Vec<VariableDef>,
     pub credentials: Vec<CredentialRef>,
+    pub input_schema: Option<serde_json::Value>,
+    pub output_schema: Option<serde_json::Value>,
 }
 
 pub fn graph_to_definition(graph: &WorkflowGraph) -> WorkflowDefinition {
@@ -943,6 +945,8 @@ pub async fn save_workflow_definition(
             "is_tool": true,
             "nodes": graph.nodes,
             "edges": graph.edges,
+            "input_schema": graph.input_schema,
+            "output_schema": graph.output_schema,
         });
         
         // 提取 input schema
@@ -950,6 +954,7 @@ pub async fn save_workflow_definition(
             &workflow_json, 
             Some(&tool_server)
         ).await;
+        let output_schema = sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_output_schema(&workflow_json);
         
         // 创建执行器
         let workflow_id = graph.id.clone();
@@ -961,6 +966,7 @@ pub async fn save_workflow_definition(
             &graph.name,
             description.as_deref().unwrap_or("Workflow tool"),
             input_schema,
+            output_schema,
             executor,
         ).await;
         
@@ -1297,5 +1303,3 @@ pub async fn get_workflow_schedule(
 ) -> Result<Option<ScheduleInfo>, String> {
     Ok(scheduler.get_schedule(&workflow_id).await)
 }
-
-

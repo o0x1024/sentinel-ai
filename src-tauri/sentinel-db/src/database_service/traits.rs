@@ -14,7 +14,7 @@ use crate::core::models::rag_config::RagConfig;
 use crate::core::models::asset::*;
 use crate::database_service::rag::{RagCollectionRow, RagDocumentSourceRow, RagChunkRow};
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
-use crate::database_service::ability::{AbilityGroup, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup};
+use crate::database_service::ability::{AbilityGroup, AbilityGroupDetail, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup};
 use crate::core::models::prompt::PromptTemplate;
 use crate::core::models::prompt::{PromptCategory, TemplateType};
 use crate::core::models::scan_session::{
@@ -246,6 +246,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     // 能力组相关方法
     async fn list_ability_groups_summary(&self) -> Result<Vec<AbilityGroupSummary>>;
     async fn list_ability_groups_summary_by_ids(&self, ids: &[String]) -> Result<Vec<AbilityGroupSummary>>;
+    async fn get_ability_group_detail(&self, id: &str) -> Result<Option<AbilityGroupDetail>>;
     async fn get_ability_group(&self, id: &str) -> Result<Option<AbilityGroup>>;
     async fn get_ability_group_by_name(&self, name: &str) -> Result<Option<AbilityGroup>>;
     async fn list_all_ability_groups(&self) -> Result<Vec<AbilityGroup>>;

@@ -235,6 +235,22 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
+                id: "subdomain_brute".to_string(),
+                name: "subdomain_brute".to_string(),
+                description: "High-performance subdomain brute-force scanner. Discovers subdomains using dictionary attack with DNS resolution, HTTP/HTTPS verification, and wildcard detection.".to_string(),
+                category: ToolCategory::Network,
+                tags: vec![
+                    "subdomain".to_string(),
+                    "brute".to_string(),
+                    "dns".to_string(),
+                    "scan".to_string(),
+                    "network".to_string(),
+                    "security".to_string(),
+                ],
+                cost_estimate: ToolCost::High,
+                always_available: false,
+            },
+            ToolMetadata {
                 id: "web_search".to_string(),
                 name: "web_search".to_string(),
                 description: "Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups."
@@ -317,6 +333,24 @@ impl ToolRouter {
                 ],
                 cost_estimate: ToolCost::Medium,
                 always_available: false,
+            },
+            // Memory Manager
+            ToolMetadata {
+                id: "memory_manager".to_string(),
+                name: "memory_manager".to_string(),
+                description: "Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "memory".to_string(),
+                    "store".to_string(),
+                    "retrieve".to_string(),
+                    "remember".to_string(),
+                    "recall".to_string(),
+                    "vector".to_string(),
+                    "knowledge".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: true,
             },
         ]
     }
@@ -524,6 +558,14 @@ impl ToolRouter {
                 || task_lower.contains("execute"))
                 && tool.id == "shell" {
                     score += 15;
+                }
+            if (task_lower.contains("memory")
+                || task_lower.contains("remember")
+                || task_lower.contains("recall")
+                || task_lower.contains("store")
+                || task_lower.contains("save"))
+                && tool.id == "memory_manager" {
+                    score += 25; // High priority for memory operations
                 }
 
             // 工作流工具匹配
@@ -1287,16 +1329,25 @@ Return ONLY the ability group name (one line, no explanation)."#,
         }
 
         // Build injected system prompt
+        let mut injected_content = full_group.instructions.clone();
+        
+        // Append additional_notes if present
+        if !full_group.additional_notes.is_empty() {
+            injected_content.push_str("\n\n");
+            injected_content.push_str(&full_group.additional_notes);
+        }
+        
         let injected = format!(
             "\n\n[AbilityInstructionsBegin: {}]\n{}\n[AbilityInstructionsEnd]",
-            full_group.name, full_group.instructions
+            full_group.name, injected_content
         );
 
         tracing::info!(
-            "Ability selection: group='{}', tools={:?}, instructions_len={}",
+            "Ability selection: group='{}', tools={:?}, instructions_len={}, additional_notes_len={}",
             full_group.name,
             final_tools,
-            full_group.instructions.len()
+            full_group.instructions.len(),
+            full_group.additional_notes.len()
         );
 
         Ok(ToolSelectionPlan {

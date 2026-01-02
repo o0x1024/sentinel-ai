@@ -118,6 +118,8 @@ pub struct TrafficAnalysisState {
     pub dedupe_cache: Arc<RwLock<std::collections::HashSet<String>>>,
     /// 是否排除本应用流量的扫描
     pub exclude_self_traffic: Arc<RwLock<bool>>,
+    /// 是否启用流量分析插件扫描
+    pub plugin_scanning_enabled: Arc<RwLock<bool>>,
 }
 
 /// 内部使用的拦截 WebSocket 消息结构（包含响应通道）
@@ -155,6 +157,7 @@ impl Clone for TrafficAnalysisState {
             response_filter_rules: self.response_filter_rules.clone(),
             dedupe_cache: self.dedupe_cache.clone(),
             exclude_self_traffic: self.exclude_self_traffic.clone(),
+            plugin_scanning_enabled: self.plugin_scanning_enabled.clone(),
         }
     }
 }
@@ -202,6 +205,7 @@ impl TrafficAnalysisState {
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
             dedupe_cache: Arc::new(RwLock::new(std::collections::HashSet::new())),
             exclude_self_traffic: Arc::new(RwLock::new(true)),
+            plugin_scanning_enabled: Arc::new(RwLock::new(true)), // 默认启用
         }
     }
 
@@ -523,6 +527,17 @@ pub async fn start_traffic_analysis_internal(
         tracing::info!("Loaded {} response filter rules", resp_rules.len());
     }
 
+    // 从数据库加载流量分析插件扫描开关
+    let plugin_scanning_enabled = match db_service.load_proxy_config("traffic_analysis_plugin_enabled").await {
+        Ok(Some(value)) => value.parse::<bool>().unwrap_or(true),
+        _ => true, // 默认启用
+    };
+    {
+        let mut plugin_scanning = state.plugin_scanning_enabled.write().await;
+        *plugin_scanning = plugin_scanning_enabled;
+        tracing::info!("Loaded traffic analysis plugin scanning enabled: {}", plugin_scanning_enabled);
+    }
+
     // 创建拦截状态
     let intercept_state = InterceptState {
         enabled: state.intercept_enabled.clone(),
@@ -562,6 +577,7 @@ pub async fn start_traffic_analysis_internal(
     let request_filter_rules = state.request_filter_rules.clone();
     let response_filter_rules = state.response_filter_rules.clone();
     let exclude_self_traffic = state.exclude_self_traffic.clone();
+    let plugin_scanning_enabled = state.plugin_scanning_enabled.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -578,7 +594,8 @@ pub async fn start_traffic_analysis_internal(
                         .with_app_handle(app_for_pipeline)
                         .with_request_filter_rules(request_filter_rules)
                         .with_response_filter_rules(response_filter_rules)
-                        .with_exclude_self_traffic(exclude_self_traffic);
+                        .with_exclude_self_traffic(exclude_self_traffic)
+                        .with_plugin_scanning_enabled(plugin_scanning_enabled);
                     match pipeline
                         .load_enabled_plugins_from_db(&db_for_pipeline)
                         .await
@@ -2336,6 +2353,7 @@ pub async fn update_plugin(
                 &plugin_name,
                 &plugin_description,
                 input_schema,
+                None,
                 executor,
             )
             .await;
@@ -3451,6 +3469,48 @@ pub async fn get_proxy_auto_start(
     let enabled = match db.load_proxy_config("proxy_auto_start_enabled").await {
         Ok(Some(value)) => value.parse::<bool>().unwrap_or(false),
         _ => false,
+    };
+
+    Ok(CommandResponse::ok(enabled))
+}
+
+/// 设置流量分析插件扫描开关
+#[tauri::command]
+pub async fn set_traffic_analysis_plugin_enabled(
+    state: State<'_, TrafficAnalysisState>,
+    enabled: bool,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Setting traffic analysis plugin scanning to: {}", enabled);
+
+    // 更新运行时状态
+    {
+        let mut plugin_scanning = state.plugin_scanning_enabled.write().await;
+        *plugin_scanning = enabled;
+    }
+
+    // 保存到数据库
+    let db = state.get_db_service();
+    db.save_proxy_config("traffic_analysis_plugin_enabled", &enabled.to_string())
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to save traffic analysis plugin enabled config: {}", e);
+            format!("Failed to save config: {}", e)
+        })?;
+
+    tracing::info!("Traffic analysis plugin enabled configuration saved successfully");
+    Ok(CommandResponse::ok(()))
+}
+
+/// 获取流量分析插件扫描开关状态
+#[tauri::command]
+pub async fn get_traffic_analysis_plugin_enabled(
+    state: State<'_, TrafficAnalysisState>,
+) -> Result<CommandResponse<bool>, String> {
+    let db = state.get_db_service();
+
+    let enabled = match db.load_proxy_config("traffic_analysis_plugin_enabled").await {
+        Ok(Some(value)) => value.parse::<bool>().unwrap_or(true), // 默认为 true（启用）
+        _ => true, // 如果配置不存在，默认启用
     };
 
     Ok(CommandResponse::ok(enabled))

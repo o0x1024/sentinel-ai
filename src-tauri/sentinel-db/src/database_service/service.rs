@@ -250,6 +250,27 @@ impl DatabaseService {
             info!("Dictionaries tables created successfully");
         }
 
+        // 确保 ability_groups 表有 additional_notes 字段
+        let ability_groups_rows = sqlx::query("PRAGMA table_info(ability_groups)")
+            .fetch_all(pool)
+            .await?;
+        
+        let mut has_additional_notes = false;
+        for row in ability_groups_rows {
+            let name: String = sqlx::Row::get(&row, "name");
+            if name == "additional_notes" {
+                has_additional_notes = true;
+                break;
+            }
+        }
+
+        if !has_additional_notes {
+            info!("Adding additional_notes column to ability_groups table");
+            sqlx::query("ALTER TABLE ability_groups ADD COLUMN additional_notes TEXT DEFAULT ''")
+                .execute(pool)
+                .await?;
+        }
+
         // 检查并创建缓存表
         let cache_table_exists: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cache_storage'"

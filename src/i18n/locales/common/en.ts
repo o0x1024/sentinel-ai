@@ -13,6 +13,8 @@ export default {
   refresh: 'Refresh',
   close: 'Close',
   minimize: 'Minimize',
+  fullscreen: 'Fullscreen',
+  exitFullscreen: 'Exit Fullscreen',
   settings: 'Settings',
   position: 'Position',
   dragMode: 'Drag Mode',

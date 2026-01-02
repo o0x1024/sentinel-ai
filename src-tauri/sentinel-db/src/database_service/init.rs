@@ -518,6 +518,7 @@ impl DatabaseService {
                 name TEXT NOT NULL UNIQUE,
                 description TEXT NOT NULL DEFAULT '',
                 instructions TEXT NOT NULL DEFAULT '',
+                additional_notes TEXT NOT NULL DEFAULT '',
                 tool_ids TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL

@@ -55,6 +55,8 @@ export interface WorkflowGraph {
   edges: EdgeDef[]
   variables: VariableDef[]
   credentials: CredentialRef[]
+  input_schema?: JsonSchema
+  output_schema?: JsonSchema
 }
 
 export interface NodeCatalogItem {

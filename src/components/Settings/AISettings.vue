@@ -152,9 +152,10 @@
                     <span class="badge badge-sm badge-ghost">{{ t('settings.ai.fastModel') }}</span>
                   </span>
                 </label>
-                <SearchableSelect v-model="defaultChatModelLocal" :options="chatModelOptions"
-                  :placeholder="t('settings.ai.selectModel')" :search-placeholder="t('settings.ai.searchModel')"
-                  :disabled="!defaultProviderLocal || !getProviderModels(defaultProviderLocal).length"
+                <EditableSelect v-model="defaultChatModelLocal" :options="chatModelOptions"
+                  :placeholder="t('settings.ai.selectOrInputModel')" 
+                  :custom-value-text="t('settings.ai.useCustomModel')"
+                  :disabled="!defaultProviderLocal"
                   @change="onChangeDefaultChatModel" />
               </div>
 
@@ -180,9 +181,10 @@
                     <span class="badge badge-sm badge-ghost">{{ t('settings.ai.smartModel') }}</span>
                   </span>
                 </label>
-                <SearchableSelect v-model="defaultVlmModelLocal" :options="vlmModelOptions"
-                  :placeholder="t('settings.ai.selectModel')" :search-placeholder="t('settings.ai.searchModel')"
-                  :disabled="!defaultVlmProviderLocal || !getProviderModels(defaultVlmProviderLocal).length"
+                <EditableSelect v-model="defaultVlmModelLocal" :options="vlmModelOptions"
+                  :placeholder="t('settings.ai.selectOrInputModel')" 
+                  :custom-value-text="t('settings.ai.useCustomModel')"
+                  :disabled="!defaultVlmProviderLocal"
                   @change="onChangeDefaultVisionModel" />
                 <label class="label">
                   <span class="label-text-alt text-base-content/60">
@@ -357,9 +359,41 @@
                 <label class="label">
                   <span class="label-text">{{ t('settings.ai.defaultModel') }}</span>
                 </label>
-                <SearchableSelect v-model="selectedProviderDefaultModel" :options="selectedProviderModelOptions"
-                  :placeholder="t('settings.ai.selectModel')" :search-placeholder="t('settings.ai.searchModel')"
+                <EditableSelect v-model="selectedProviderDefaultModel" :options="selectedProviderModelOptions"
+                  :placeholder="t('settings.ai.selectOrInputModel')" 
+                  :custom-value-text="t('settings.ai.useCustomModel')"
+                  :allow-custom="true"
                   @change="onSelectedProviderModelChange" />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.canInputCustomModel') }}
+                  </span>
+                </label>
+              </div>
+
+              <!-- 自定义请求头 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text flex items-center gap-2">
+                    {{ t('settings.ai.customHeaders') }}
+                    <span class="badge badge-sm badge-info">{{ t('settings.ai.optional') }}</span>
+                  </span>
+                </label>
+                <textarea 
+                  class="textarea textarea-bordered font-mono text-sm h-24"
+                  :placeholder="t('settings.ai.customHeadersPlaceholder')"
+                  v-model="customHeadersJson"
+                  @blur="saveCustomHeaders"
+                ></textarea>
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.customHeadersDescription') }}
+                  </span>
+                </label>
+                <div v-if="customHeadersError" class="alert alert-error mt-2">
+                  <i class="fas fa-exclamation-triangle"></i>
+                  <span>{{ customHeadersError }}</span>
+                </div>
               </div>
             </div>
 
@@ -845,6 +879,7 @@ import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import SearchableSelect from '@/components/SearchableSelect.vue'
+import EditableSelect from '@/components/EditableSelect.vue'
 import { EditorView, basicSetup } from 'codemirror'
 import { EditorState } from '@codemirror/state'
 import { json } from '@codemirror/lang-json'
@@ -996,19 +1031,78 @@ const rigProviderLocal = computed({
   set: (value: string) => {
     const providerKey = selectedAiProvider.value
     if (providerKey && props.aiConfig.providers && props.aiConfig.providers[providerKey]) {
-      emit('update:aiConfig', {
-        ...props.aiConfig,
-        providers: {
-          ...props.aiConfig.providers,
-          [providerKey]: {
-            ...props.aiConfig.providers[providerKey],
-            rig_provider: value
-          }
-        }
-      })
+      // 直接修改对象属性，Vue 3 的响应式系统会检测到变化
+      props.aiConfig.providers[providerKey].rig_provider = value
     }
   }
 })
+
+// 自定义请求头
+const customHeadersJson = ref('')
+const customHeadersError = ref('')
+
+// 加载自定义 headers
+const loadCustomHeaders = () => {
+  customHeadersError.value = ''
+  const provider = selectedProviderConfig.value
+  if (provider && provider.extra_headers) {
+    try {
+      customHeadersJson.value = JSON.stringify(provider.extra_headers, null, 2)
+    } catch (e) {
+      customHeadersJson.value = ''
+    }
+  } else {
+    customHeadersJson.value = ''
+  }
+}
+
+// 保存自定义 headers
+const saveCustomHeaders = () => {
+  customHeadersError.value = ''
+  const providerKey = selectedAiProvider.value
+  
+  if (!providerKey || !props.aiConfig.providers || !props.aiConfig.providers[providerKey]) {
+    return
+  }
+
+  // 如果为空，清除 extra_headers
+  if (!customHeadersJson.value.trim()) {
+    props.aiConfig.providers[providerKey].extra_headers = undefined
+    saveAiConfig()
+    return
+  }
+
+  // 验证 JSON 格式
+  try {
+    const headers = JSON.parse(customHeadersJson.value)
+    
+    // 验证是否为对象
+    if (typeof headers !== 'object' || headers === null || Array.isArray(headers)) {
+      customHeadersError.value = t('settings.ai.customHeadersMustBeObject')
+      return
+    }
+
+    // 验证所有值都是字符串
+    for (const [key, value] of Object.entries(headers)) {
+      if (typeof value !== 'string') {
+        customHeadersError.value = `${t('settings.ai.customHeadersValueMustBeString').replace('{key}', key)}`
+        return
+      }
+    }
+
+    // 保存到配置
+    props.aiConfig.providers[providerKey].extra_headers = headers
+    saveAiConfig()
+    
+  } catch (e) {
+    customHeadersError.value = t('settings.ai.invalidJsonFormat') + ': ' + (e as Error).message
+  }
+}
+
+// 监听选中的提供商变化，加载其自定义 headers
+watch(() => props.selectedAiProvider, () => {
+  loadCustomHeaders()
+}, { immediate: true })
 
 // 默认 Provider 选择
 const defaultProviderLocal = ref('')

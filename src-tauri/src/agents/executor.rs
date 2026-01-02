@@ -269,20 +269,45 @@ async fn execute_agent_simple(
         config = config.with_base_url(api_base);
     }
 
-    let memory_context = match get_global_memory()
-        .build_context(MemoryContextRequest {
-            task: params.task.clone(),
-            environment: Some(rig_provider.clone()),
-            tool_names: Vec::new(),
-            max_results: 5,
-        })
-        .await
-    {
-        Ok(context) => context,
-        Err(e) => {
-            tracing::warn!("Failed to load memory context: {}", e);
-            None
+    // Build memory context from RAG (Semantic Memory)
+    let memory_context = if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+        let mut filters = std::collections::HashMap::new();
+        filters.insert("type".to_string(), "agent_memory".to_string());
+        
+        // Use the current task as query
+        let request = sentinel_rag::models::RagQueryRequest {
+            query: params.task.clone(),
+            collection_id: None,
+            top_k: Some(5), // Retrieve top 5 relevant memories
+            use_mmr: Some(true),
+            mmr_lambda: None,
+            filters: Some(filters),
+            use_embedding: Some(true),
+            reranking_enabled: Some(true),
+            similarity_threshold: Some(0.45), // Strict threshold to avoid noise
+        };
+        
+        match rag_service.query(request).await {
+            Ok(response) => {
+                if response.results.is_empty() {
+                    None
+                } else {
+                    let mut lines = Vec::new();
+                    lines.push("[Memory Context (Recall from past experiences):]".to_string());
+                    for (i, res) in response.results.iter().enumerate() {
+                         lines.push(format!("{}. {}", i + 1, res.chunk.content.trim()));
+                    }
+                    tracing::info!("Injected {} semantic memories into context", response.results.len());
+                    Some(lines.join("\n"))
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to query RAG memory: {}", e);
+                None
+            }
         }
+    } else {
+        None
     };
 
     let mut system_prompt = params.system_prompt.clone();
@@ -428,21 +453,7 @@ async fn execute_agent_simple(
             // 保存助手消息到数据库（无工具调用）
             save_assistant_message(app_handle, &params.execution_id, &response, None, None).await;
 
-            if let Err(e) = get_global_memory()
-                .record_execution(ExecutionRecord {
-                    id: params.execution_id.clone(),
-                    task: params.task.clone(),
-                    environment: Some(rig_provider.clone()),
-                    tool_calls: Vec::new(),
-                    success: true,
-                    error: None,
-                    response_excerpt: Some(truncate_for_memory(&response, 400)),
-                    created_at: chrono::Utc::now().timestamp(),
-                })
-                .await
-            {
-                tracing::warn!("Failed to store memory record: {}", e);
-            }
+            // Legacy memory recording removed. Agent now consciously stores memories via tools.
 
             Ok(response)
         }
@@ -452,21 +463,7 @@ async fn execute_agent_simple(
                 params.execution_id,
                 e
             );
-            if let Err(e) = get_global_memory()
-                .record_execution(ExecutionRecord {
-                    id: params.execution_id.clone(),
-                    task: params.task.clone(),
-                    environment: Some(rig_provider.clone()),
-                    tool_calls: Vec::new(),
-                    success: false,
-                    error: Some(e.to_string()),
-                    response_excerpt: None,
-                    created_at: chrono::Utc::now().timestamp(),
-                })
-                .await
-            {
-                tracing::warn!("Failed to store memory record: {}", e);
-            }
+            // Legacy memory recording removed.
             Err(e)
         }
     }
@@ -631,20 +628,44 @@ async fn execute_agent_with_tools(
         params.system_prompt.clone()
     };
 
-    let memory_context = match get_global_memory()
-        .build_context(MemoryContextRequest {
-            task: params.task.clone(),
-            environment: Some(rig_provider.clone()),
-            tool_names: selected_tool_ids.clone(),
-            max_results: 5,
-        })
-        .await
-    {
-        Ok(context) => context,
-        Err(e) => {
-            tracing::warn!("Failed to load memory context: {}", e);
-            None
+    // Build memory context from RAG (Semantic Memory)
+    let memory_context = if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
+        let mut filters = std::collections::HashMap::new();
+        filters.insert("type".to_string(), "agent_memory".to_string());
+        
+        let request = sentinel_rag::models::RagQueryRequest {
+            query: params.task.clone(),
+            collection_id: None,
+            top_k: Some(5),
+            use_mmr: Some(true),
+            mmr_lambda: None,
+            filters: Some(filters),
+            use_embedding: Some(true),
+            reranking_enabled: Some(true),
+            similarity_threshold: Some(0.45),
+        };
+        
+        match rag_service.query(request).await {
+            Ok(response) => {
+                if response.results.is_empty() {
+                    None
+                } else {
+                    let mut lines = Vec::new();
+                    lines.push("[Memory Context (Recall from past experiences):]".to_string());
+                    for (i, res) in response.results.iter().enumerate() {
+                         lines.push(format!("{}. {}", i + 1, res.chunk.content.trim()));
+                    }
+                    tracing::info!("Injected {} semantic memories into context", response.results.len());
+                    Some(lines.join("\n"))
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to query RAG memory: {}", e);
+                None
+            }
         }
+    } else {
+        None
     };
 
     if let Some(context) = memory_context {

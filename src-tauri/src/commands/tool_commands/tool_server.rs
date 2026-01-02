@@ -187,6 +187,8 @@ pub async fn register_workflow_tools(
         // Extract input schema from workflow definition
         let input_schema =
             sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(&workflow, Some(&server)).await;
+        let output_schema =
+            sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_output_schema(&workflow);
 
         // Create executor
         let workflow_id = id.to_string();
@@ -204,7 +206,7 @@ pub async fn register_workflow_tools(
         });
 
         server
-            .register_workflow_tool(id, name, description, input_schema, executor)
+            .register_workflow_tool(id, name, description, input_schema, output_schema, executor)
             .await;
         count += 1;
     }
@@ -237,5 +239,4 @@ pub async fn refresh_all_dynamic_tools(
         "message": "Dynamic tools refreshed. MCP and plugin tools will be registered when connected/enabled."
     }))
 }
-
 

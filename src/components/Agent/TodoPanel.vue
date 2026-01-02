@@ -1,5 +1,5 @@
 <template>
-  <div class="todo-panel border border-base-300 rounded-lg p-3 my-4 bg-base-200 " v-if="hasTodos">
+  <div class="todo-panel border border-base-300 rounded-lg p-3 my-4 bg-base-200" v-if="isActive && hasTodos">
     <div class="todo-header flex items-center gap-2 text-sm font-semibold text-base-content/70 mb-2">
       <span class="todo-title font-bold">📋 To-dos</span>
       <span class="todo-count bg-base-300 px-1.5 py-0.5 rounded text-xs">{{ rootTodos.length }}</span>
@@ -34,6 +34,7 @@ import TodoItem from './TodoItem.vue'
 
 const props = defineProps<{
   todos: Todo[]
+  isActive?: boolean
 }>()
 
 defineEmits<{

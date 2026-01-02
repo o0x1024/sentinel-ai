@@ -27,22 +27,6 @@
           </label>
         </div>
 
-        <!-- Exclude self traffic from scanning -->
-        <div class="form-control mb-4">
-          <label class="label cursor-pointer justify-start gap-3 py-2">
-            <input 
-              type="checkbox" 
-              class="checkbox checkbox-primary"
-              v-model="proxyConfig.exclude_self_traffic"
-              @change="debouncedSave"
-            />
-            <div>
-              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTraffic') }}</span>
-              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTrafficDesc') }}</p>
-            </div>
-          </label>
-        </div>
-
         <div class="flex gap-4">
           <!-- Left side: buttons -->
           <div class="flex flex-col gap-2 shrink-0">
@@ -264,6 +248,51 @@
         <button>{{ $t('trafficAnalysis.proxyConfiguration.close') }}</button>
       </form>
     </dialog>
+
+    <!-- Traffic Analysis Settings -->
+    <div class="card bg-base-100 shadow-xl">
+      <div class="card-body">
+        <h2 class="card-title text-base mb-3">
+          <i class="fas fa-chart-line mr-2"></i>
+          {{ $t('trafficAnalysis.proxyConfiguration.trafficAnalysisSettings') }}
+        </h2>
+        <p class="text-sm text-base-content/70 mb-4">
+          {{ $t('trafficAnalysis.proxyConfiguration.trafficAnalysisSettingsDesc') }}
+        </p>
+
+        <!-- Exclude self traffic from scanning -->
+        <div class="form-control mb-4">
+          <label class="label cursor-pointer justify-start gap-3 py-2">
+            <input 
+              type="checkbox" 
+              class="checkbox checkbox-primary"
+              v-model="proxyConfig.exclude_self_traffic"
+              @change="debouncedSave"
+            />
+            <div>
+              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTraffic') }}</span>
+              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.excludeSelfTrafficDesc') }}</p>
+            </div>
+          </label>
+        </div>
+
+        <!-- Enable traffic analysis plugin scanning -->
+        <div class="form-control">
+          <label class="label cursor-pointer justify-start gap-3 py-2">
+            <input 
+              type="checkbox" 
+              class="checkbox checkbox-primary"
+              v-model="trafficAnalysisPluginEnabled"
+              @change="saveTrafficAnalysisPluginEnabled"
+            />
+            <div>
+              <span class="label-text font-medium">{{ $t('trafficAnalysis.proxyConfiguration.enableTrafficAnalysisPlugin') }}</span>
+              <p class="text-xs text-base-content/60 mt-1">{{ $t('trafficAnalysis.proxyConfiguration.enableTrafficAnalysisPluginDesc') }}</p>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
 
     <!-- Request Interception Rules -->
     <div class="card bg-base-100 shadow-xl">
@@ -1494,6 +1523,9 @@ const responseBodySizeMB = ref(2)
 // 代理自动启动开关
 const proxyAutoStart = ref(false)
 
+// 流量分析插件开关
+const trafficAnalysisPluginEnabled = ref(true)
+
 // Proxy listeners
 const proxyListeners = ref([
   {
@@ -2608,6 +2640,28 @@ const saveProxyAutoStart = async () => {
   }
 }
 
+// 保存流量分析插件开关配置
+const saveTrafficAnalysisPluginEnabled = async () => {
+  try {
+    console.log('[ProxyConfiguration] Saving traffic analysis plugin enabled:', trafficAnalysisPluginEnabled.value)
+    const response = await invoke<any>('set_traffic_analysis_plugin_enabled', { 
+      enabled: trafficAnalysisPluginEnabled.value 
+    })
+    
+    if (response.success) {
+      console.log('[ProxyConfiguration] Traffic analysis plugin enabled saved successfully')
+      dialog.toast.success(trafficAnalysisPluginEnabled.value ? '已启用流量分析插件扫描' : '已禁用流量分析插件扫描')
+    } else {
+      throw new Error(response.error || '保存失败')
+    }
+  } catch (error: any) {
+    console.error('[ProxyConfiguration] Failed to save traffic analysis plugin enabled:', error)
+    dialog.toast.error(`保存配置失败: ${error}`)
+    // 回滚状态
+    trafficAnalysisPluginEnabled.value = !trafficAnalysisPluginEnabled.value
+  }
+}
+
 // 加载配置的通用函数
 const loadConfig = async () => {
   try {
@@ -2634,6 +2688,13 @@ const loadConfig = async () => {
     if (autoStartResponse.success) {
       proxyAutoStart.value = autoStartResponse.data || false
       console.log('[ProxyConfiguration] Loaded proxy auto-start:', proxyAutoStart.value)
+    }
+    
+    // 加载流量分析插件开关配置
+    const pluginEnabledResponse = await invoke<any>('get_traffic_analysis_plugin_enabled')
+    if (pluginEnabledResponse.success) {
+      trafficAnalysisPluginEnabled.value = pluginEnabledResponse.data !== false // 默认为 true
+      console.log('[ProxyConfiguration] Loaded traffic analysis plugin enabled:', trafficAnalysisPluginEnabled.value)
     }
     
     // 检查代理实际运行状态

@@ -14,7 +14,7 @@ use crate::core::models::rag_config::RagConfig;
 use crate::core::models::asset::*;
 use crate::database_service::rag::{RagCollectionRow, RagDocumentSourceRow, RagChunkRow};
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
-use crate::database_service::ability::{AbilityGroup, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup};
+use crate::database_service::ability::{AbilityGroup, AbilityGroupDetail, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup};
 use crate::core::models::prompt::PromptTemplate;
 use crate::core::models::prompt::{PromptCategory, TemplateType};
 use crate::core::models::scan_session::{
@@ -532,6 +532,9 @@ impl Database for DatabaseService {
     }
     async fn list_ability_groups_summary_by_ids(&self, ids: &[String]) -> Result<Vec<AbilityGroupSummary>> {
         Self::list_ability_groups_summary_by_ids_internal(self, ids).await
+    }
+    async fn get_ability_group_detail(&self, id: &str) -> Result<Option<AbilityGroupDetail>> {
+        Self::get_ability_group_detail_internal(self, id).await
     }
     async fn get_ability_group(&self, id: &str) -> Result<Option<AbilityGroup>> {
         Self::get_ability_group_internal(self, id).await

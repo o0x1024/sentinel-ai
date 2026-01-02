@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use crate::database_service::service::DatabaseService;
 
-/// AbilityGroup summary (for LLM selection phase 1)
+/// Level 1: Basic metadata (for LLM selection phase 1 - initial discovery)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AbilityGroupSummary {
     pub id: String,
@@ -12,13 +12,27 @@ pub struct AbilityGroupSummary {
     pub description: String,
 }
 
-/// Full AbilityGroup (for phase 2 and management)
+/// Level 2: Detailed information (for LLM selection phase 2 - understanding purpose)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbilityGroupDetail {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub instructions: String,
+    pub additional_notes: String,
+    pub tool_count: usize,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Level 3: Full details (for phase 3 - execution and management)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AbilityGroup {
     pub id: String,
     pub name: String,
     pub description: String,
     pub instructions: String,
+    pub additional_notes: String,
     pub tool_ids: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -30,6 +44,7 @@ pub struct CreateAbilityGroup {
     pub name: String,
     pub description: String,
     pub instructions: String,
+    pub additional_notes: String,
     pub tool_ids: Vec<String>,
 }
 
@@ -39,6 +54,7 @@ pub struct UpdateAbilityGroup {
     pub name: Option<String>,
     pub description: Option<String>,
     pub instructions: Option<String>,
+    pub additional_notes: Option<String>,
     pub tool_ids: Option<Vec<String>>,
 }
 
@@ -97,7 +113,40 @@ impl DatabaseService {
         Ok(groups)
     }
 
-    /// Get full group by ID
+    /// Get Level 2 detail by ID (without tool_ids)
+    pub async fn get_ability_group_detail_internal(&self, id: &str) -> Result<Option<AbilityGroupDetail>> {
+        let pool = self.get_pool()?;
+        let row = sqlx::query("SELECT id, name, description, instructions, additional_notes, tool_ids, created_at, updated_at FROM ability_groups WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(row.map(|r| {
+            let tool_ids_str: String = r.get("tool_ids");
+            let tool_ids: Vec<String> = serde_json::from_str(&tool_ids_str).unwrap_or_default();
+            let tool_count = tool_ids.len();
+
+            let created_at_str: String = r.get("created_at");
+            let updated_at_str: String = r.get("updated_at");
+
+            AbilityGroupDetail {
+                id: r.get("id"),
+                name: r.get("name"),
+                description: r.get("description"),
+                instructions: r.get("instructions"),
+                additional_notes: r.get("additional_notes"),
+                tool_count,
+                created_at: DateTime::parse_from_rfc3339(&created_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                updated_at: DateTime::parse_from_rfc3339(&updated_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+            }
+        }))
+    }
+
+    /// Get Level 3 full group by ID (with tool_ids)
     pub async fn get_ability_group_internal(&self, id: &str) -> Result<Option<AbilityGroup>> {
         let pool = self.get_pool()?;
         let row = sqlx::query("SELECT * FROM ability_groups WHERE id = ?")
@@ -137,13 +186,14 @@ impl DatabaseService {
         let tool_ids_json = serde_json::to_string(&payload.tool_ids)?;
 
         sqlx::query(
-            "INSERT INTO ability_groups (id, name, description, instructions, tool_ids, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ability_groups (id, name, description, instructions, additional_notes, tool_ids, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&payload.name)
         .bind(&payload.description)
         .bind(&payload.instructions)
+        .bind(&payload.additional_notes)
         .bind(&tool_ids_json)
         .bind(now.to_rfc3339())
         .bind(now.to_rfc3339())
@@ -155,6 +205,7 @@ impl DatabaseService {
             name: payload.name.clone(),
             description: payload.description.clone(),
             instructions: payload.instructions.clone(),
+            additional_notes: payload.additional_notes.clone(),
             tool_ids: payload.tool_ids.clone(),
             created_at: now,
             updated_at: now,
@@ -180,16 +231,21 @@ impl DatabaseService {
             .instructions
             .as_ref()
             .unwrap_or(&existing.instructions);
+        let additional_notes = payload
+            .additional_notes
+            .as_ref()
+            .unwrap_or(&existing.additional_notes);
         let tool_ids = payload.tool_ids.as_ref().unwrap_or(&existing.tool_ids);
         let tool_ids_json = serde_json::to_string(tool_ids)?;
         let now = Utc::now();
 
         sqlx::query(
-            "UPDATE ability_groups SET name = ?, description = ?, instructions = ?, tool_ids = ?, updated_at = ? WHERE id = ?",
+            "UPDATE ability_groups SET name = ?, description = ?, instructions = ?, additional_notes = ?, tool_ids = ?, updated_at = ? WHERE id = ?",
         )
         .bind(name)
         .bind(description)
         .bind(instructions)
+        .bind(additional_notes)
         .bind(&tool_ids_json)
         .bind(now.to_rfc3339())
         .bind(id)
@@ -223,6 +279,7 @@ impl DatabaseService {
             name: row.get("name"),
             description: row.get("description"),
             instructions: row.get("instructions"),
+            additional_notes: row.get("additional_notes"),
             tool_ids,
             created_at: DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))

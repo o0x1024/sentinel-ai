@@ -19,6 +19,7 @@ pub struct WorkflowToolMeta {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    pub output_schema: Option<Value>,
     pub is_tool: bool,
 }
 
@@ -139,6 +140,7 @@ pub async fn load_workflow_tools_to_server(
                 &workflow_meta.name,
                 &workflow_meta.description,
                 workflow_meta.input_schema,
+                workflow_meta.output_schema,
                 executor,
             )
             .await;
@@ -166,6 +168,7 @@ impl WorkflowToolAdapter {
             name: full_name,
             description: meta.description.clone(),
             input_schema: meta.input_schema.clone(),
+            output_schema: meta.output_schema.clone(),
             source: ToolSource::Workflow {
                 workflow_id: workflow_id.clone(),
             },
@@ -575,6 +578,125 @@ impl WorkflowToolAdapter {
         })
     }
 
+    /// Extract output schema from workflow definition
+    pub fn extract_output_schema(definition: &Value) -> Option<Value> {
+        if let Some(schema) = definition.get("output_schema") {
+            return Some(schema.clone());
+        }
+
+        let nodes = definition.get("nodes")?.as_array()?;
+        let edges = definition
+            .get("edges")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut outgoing: HashMap<String, usize> = HashMap::new();
+        for node in nodes {
+            if let Some(id) = node.get("id").and_then(|v| v.as_str()) {
+                outgoing.insert(id.to_string(), 0);
+            }
+        }
+
+        for edge in edges {
+            if let Some(from) = edge.get("from_node").and_then(|v| v.as_str()) {
+                if let Some(count) = outgoing.get_mut(from) {
+                    *count += 1;
+                }
+            }
+        }
+
+        let mut schemas = Vec::new();
+
+        for node in nodes {
+            let node_id = match node.get("id").and_then(|v| v.as_str()) {
+                Some(id) => id,
+                None => continue,
+            };
+            if outgoing.get(node_id).copied().unwrap_or(0) != 0 {
+                continue;
+            }
+
+            if let Some(params) = node.get("params").and_then(|v| v.as_object()) {
+                if let Some(schema) = params.get("output_schema") {
+                    schemas.push(schema.clone());
+                    continue;
+                }
+            }
+
+            let output_ports = node
+                .get("output_ports")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let input_ports = node
+                .get("input_ports")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let ports = if output_ports.is_empty() { input_ports } else { output_ports };
+
+            let mut properties = serde_json::Map::new();
+            let mut required = Vec::new();
+
+            for port in ports {
+                let port_id = match port.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => continue,
+                };
+                if port_id == "out" || port_id == "flow" {
+                    continue;
+                }
+                let port_name = port.get("name").and_then(|v| v.as_str()).unwrap_or(port_id);
+                let port_type = port
+                    .get("port_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("string");
+                let json_type = match port_type.to_lowercase().as_str() {
+                    "integer" | "int" | "number" => "number",
+                    "boolean" | "bool" => "boolean",
+                    "array" => "array",
+                    "object" | "json" => "object",
+                    _ => "string",
+                };
+
+                properties.insert(
+                    port_id.to_string(),
+                    serde_json::json!({
+                        "type": json_type,
+                        "description": port_name
+                    }),
+                );
+
+                if port.get("required").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    required.push(port_id.to_string());
+                }
+            }
+
+            if !properties.is_empty() {
+                let mut schema = serde_json::json!({
+                    "type": "object",
+                    "properties": properties
+                });
+                if !required.is_empty() {
+                    schema
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("required".to_string(), serde_json::json!(required));
+                }
+                schemas.push(schema);
+            }
+        }
+
+        if schemas.is_empty() {
+            return None;
+        }
+        if schemas.len() == 1 {
+            return Some(schemas.remove(0));
+        }
+        Some(serde_json::json!({ "oneOf": schemas }))
+    }
+
     /// Extract workflow tags for search/matching
     pub fn extract_tags(name: &str, description: &str) -> Vec<String> {
         let mut tags = Vec::new();
@@ -657,6 +779,7 @@ where
                 }
 
                 let input_schema = WorkflowToolAdapter::extract_input_schema(&workflow, Some(tool_server)).await;
+                let output_schema = WorkflowToolAdapter::extract_output_schema(&workflow);
 
                 // Register workflow context
                 let ctx = WorkflowContext {
@@ -669,7 +792,7 @@ where
                 // Register as tool
                 let executor = create_workflow_executor(id.to_string());
                 tool_server
-                    .register_workflow_tool(id, name, description, input_schema, executor)
+                    .register_workflow_tool(id, name, description, input_schema, output_schema, executor)
                     .await;
 
                 count += 1;

@@ -43,6 +43,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert("shell".to_string(), true);
     map.insert("subdomain_brute".to_string(), true);
     map.insert("web_search".to_string(), true);
+    map.insert("memory_manager".to_string(), true);
     RwLock::new(map)
 });
 
@@ -257,6 +258,39 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                     }
                 },
                 "required": ["query"]
+            })),
+        },
+        BuiltinToolInfo {
+            id: "memory_manager".to_string(),
+            name: "memory_manager".to_string(),
+            description: "Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.".to_string(),
+            category: "ai".to_string(),
+            version: "1.0.0".to_string(),
+            enabled: *states.get("memory_manager").unwrap_or(&true),
+            input_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "The action to perform: 'store' or 'retrieve'",
+                        "enum": ["store", "retrieve"]
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to store (if action='store') or query to retrieve (if action='retrieve')"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Tags to categorize the memory (only for 'store')"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max number of results to return (only for 'retrieve'), default 5",
+                        "default": 5
+                    }
+                },
+                "required": ["action", "content"]
             })),
         },
     ];
@@ -1192,6 +1226,14 @@ pub async fn list_ability_groups_full(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<sentinel_db::AbilityGroup>, String> {
     ability_groups::list_ability_groups_full(db_service).await
+}
+
+#[tauri::command]
+pub async fn get_ability_group_detail(
+    id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Option<sentinel_db::AbilityGroupDetail>, String> {
+    ability_groups::get_ability_group_detail(id, db_service).await
 }
 
 #[tauri::command]

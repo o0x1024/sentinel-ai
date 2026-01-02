@@ -51,6 +51,8 @@ pub struct ScanPipeline {
     response_filter_rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
     /// 是否排除本应用流量的扫描
     exclude_self_traffic: Arc<RwLock<bool>>,
+    /// 是否启用流量分析插件扫描
+    plugin_scanning_enabled: Arc<RwLock<bool>>,
 }
 
 impl ScanPipeline {
@@ -67,6 +69,7 @@ impl ScanPipeline {
             request_filter_rules: Arc::new(RwLock::new(Vec::new())),
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
             exclude_self_traffic: Arc::new(RwLock::new(true)),
+            plugin_scanning_enabled: Arc::new(RwLock::new(true)),
         }
     }
 
@@ -85,6 +88,12 @@ impl ScanPipeline {
     /// 设置是否排除本应用流量的扫描
     pub fn with_exclude_self_traffic(mut self, exclude: Arc<RwLock<bool>>) -> Self {
         self.exclude_self_traffic = exclude;
+        self
+    }
+
+    /// 设置是否启用流量分析插件扫描
+    pub fn with_plugin_scanning_enabled(mut self, enabled: Arc<RwLock<bool>>) -> Self {
+        self.plugin_scanning_enabled = enabled;
         self
     }
 
@@ -159,6 +168,16 @@ impl ScanPipeline {
         // 跳过 CONNECT 请求（HTTPS 隧道），不记录也不扫描
         if req_ctx.method == "CONNECT" {
             debug!("Skipping CONNECT request: {}", req_ctx.url);
+            return;
+        }
+
+        // 检查流量分析插件扫描是否启用
+        let plugin_scanning_enabled = *self.plugin_scanning_enabled.read().await;
+        if !plugin_scanning_enabled {
+            debug!(
+                "Traffic analysis plugin scanning is disabled, skipping request scan: {}",
+                req_ctx.url
+            );
             return;
         }
 
@@ -275,6 +294,18 @@ impl ScanPipeline {
                 return;
             }
         };
+
+        // 检查流量分析插件扫描是否启用
+        let plugin_scanning_enabled = *self.plugin_scanning_enabled.read().await;
+        if !plugin_scanning_enabled {
+            debug!(
+                "Traffic analysis plugin scanning is disabled, skipping response scan: {}",
+                req_ctx.url
+            );
+            // 仍然记录到历史缓存，但不进行插件扫描
+            self.record_to_history_cache(&req_ctx, &resp_ctx).await;
+            return;
+        }
 
         // 检查响应是否应该被过滤（不进行流量分析）
         if !self.should_scan_response(&req_ctx, &resp_ctx).await {

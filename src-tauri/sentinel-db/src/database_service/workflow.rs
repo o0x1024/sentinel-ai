@@ -342,8 +342,9 @@ impl DatabaseService {
             // 从 graph 中提取 nodes
             let nodes = graph.get("nodes").cloned().unwrap_or(serde_json::json!([]));
             
-            // 从 graph 中提取 input_schema 或 inputs（用于工具 schema 推断）
+            // 从 graph 中提取 input_schema/output_schema 或 inputs（用于工具 schema 推断）
             let input_schema = graph.get("input_schema").cloned();
+            let output_schema = graph.get("output_schema").cloned();
             let inputs = graph.get("inputs").cloned();
             
             let mut workflow_value = serde_json::json!({
@@ -363,6 +364,10 @@ impl DatabaseService {
             // 添加 input_schema（如果存在）
             if let Some(schema) = input_schema {
                 workflow_value.as_object_mut().unwrap().insert("input_schema".to_string(), schema);
+            }
+            // 添加 output_schema（如果存在）
+            if let Some(schema) = output_schema {
+                workflow_value.as_object_mut().unwrap().insert("output_schema".to_string(), schema);
             }
             // 添加 inputs（如果存在）
             if let Some(inp) = inputs {
@@ -397,8 +402,9 @@ impl DatabaseService {
             // 从 graph 中提取 nodes
             let nodes = graph.get("nodes").cloned().unwrap_or(serde_json::json!([]));
             
-            // 从 graph 中提取 input_schema 或 inputs（用于工具 schema 推断）
+            // 从 graph 中提取 input_schema/output_schema 或 inputs（用于工具 schema 推断）
             let input_schema = graph.get("input_schema").cloned();
+            let output_schema = graph.get("output_schema").cloned();
             let inputs = graph.get("inputs").cloned();
             
             let mut workflow_value = serde_json::json!({
@@ -416,6 +422,10 @@ impl DatabaseService {
             // 添加 input_schema（如果存在）
             if let Some(schema) = input_schema {
                 workflow_value.as_object_mut().unwrap().insert("input_schema".to_string(), schema);
+            }
+            // 添加 output_schema（如果存在）
+            if let Some(schema) = output_schema {
+                workflow_value.as_object_mut().unwrap().insert("output_schema".to_string(), schema);
             }
             // 添加 inputs（如果存在）
             if let Some(inp) = inputs {

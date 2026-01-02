@@ -135,11 +135,13 @@
           class="modal"
           @close="showAbilityManager = false"
         >
-          <div class="modal-box max-w-2xl">
+          <div :class="['modal-box', isAbilityManagerFullscreen ? 'max-w-full w-screen h-screen' : 'max-w-6xl w-11/12']">
             <AbilityGroupManager 
               v-if="showAbilityManager"
+              :is-fullscreen="isAbilityManagerFullscreen"
               @close="showAbilityManager = false"
               @changed="loadAbilityGroups"
+              @toggle-fullscreen="isAbilityManagerFullscreen = !isAbilityManagerFullscreen"
             />
           </div>
           <form method="dialog" class="modal-backdrop" @submit.prevent="showAbilityManager = false">
@@ -543,6 +545,7 @@ const searchQuery = ref('')
 const abilityGroups = ref<AbilityGroupSummary[]>([])
 const loadingAbilityGroups = ref(false)
 const showAbilityManager = ref(false)
+const isAbilityManagerFullscreen = ref(false)
 const abilityDialogRef = ref<HTMLDialogElement | null>(null)
 
 watch(showAbilityManager, async open => {

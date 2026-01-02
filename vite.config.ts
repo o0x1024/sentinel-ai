@@ -55,7 +55,26 @@ export default defineConfig({
   clearScreen: false,
 
   optimizeDeps: {
-    include: ['vue', 'vue-router', 'pinia'],
-    exclude: ['@tauri-apps/api']
+    include: [
+      'vue', 
+      'vue-router', 
+      'pinia',
+      'vue-i18n',
+      '@headlessui/vue',
+      '@heroicons/vue',
+      'chart.js',
+      'vue-chartjs',
+      '@vueuse/core',
+      'date-fns',
+      'axios',
+      'uuid',
+      'codemirror',
+      '@codemirror/view',
+      '@codemirror/state',
+      '@codemirror/commands',
+      '@codemirror/language',
+      '@codemirror/autocomplete'
+    ],
+    exclude: ['@tauri-apps/api', '@tauri-apps/plugin-dialog', '@tauri-apps/plugin-fs', '@tauri-apps/plugin-shell']
   }
 }); 

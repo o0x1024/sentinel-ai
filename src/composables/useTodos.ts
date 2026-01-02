@@ -25,12 +25,16 @@ export interface UseTodosReturn {
   stats: ComputedRef<TodoStats>
   progress: ComputedRef<number>
   hasTodos: ComputedRef<boolean>
+  hasHistory: ComputedRef<boolean>
+  isTodosPanelActive: Ref<boolean>
   currentTask: ComputedRef<Todo | undefined>
   
   // 方法
   getChildren: (parentId: string) => Todo[]
   getIndicator: (status: TodoStatus) => string
   clearTodos: () => void
+  open: () => void
+  close: () => void
   
   // 生命周期
   startListening: () => Promise<void>
@@ -43,6 +47,7 @@ export interface UseTodosReturn {
  */
 export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
   const todos = ref<Todo[]>([])
+  const isTodosPanelActive = ref(false)
   let unlisten: UnlistenFn | null = null
 
   // 获取当前 executionId
@@ -65,8 +70,11 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
   // 完成进度
   const progress = computed(() => calculateProgress(todos.value))
 
-  // 是否有 todos
+  // 是否有 todos（实时数据）
   const hasTodos = computed(() => todos.value.length > 0)
+
+  // 是否有历史记录（用于判断是否可以重新打开面板）
+  const hasHistory = computed(() => todos.value.length > 0)
 
   // 当前进行中的任务
   const currentTask = computed(() => 
@@ -88,6 +96,18 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     todos.value = []
   }
 
+  // 打开面板
+  const open = (): void => {
+    if (hasHistory.value) {
+      isTodosPanelActive.value = true
+    }
+  }
+
+  // 关闭面板
+  const close = (): void => {
+    isTodosPanelActive.value = false
+  }
+
   // 开始监听事件
   const startListening = async (): Promise<void> => {
     if (unlisten) return // 已在监听
@@ -101,6 +121,10 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
       }
 
       todos.value = event.payload.todos
+      // 当有新 todos 时自动打开面板
+      if (event.payload.todos.length > 0) {
+        isTodosPanelActive.value = true
+      }
     })
   }
 
@@ -127,10 +151,14 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     stats,
     progress,
     hasTodos,
+    hasHistory,
+    isTodosPanelActive,
     currentTask,
     getChildren,
     getIndicator,
     clearTodos,
+    open,
+    close,
     startListening,
     stopListening,
   }

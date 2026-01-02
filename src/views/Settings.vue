@@ -439,7 +439,7 @@ const loadSettings = async () => {
     const aiConfigData = await invoke('get_ai_config')
     aiConfig.value = aiConfigData as any
     
-    // 加载 enable_multimodal 和 tool_output_limit 配置
+    // 加载高级AI配置参数
     try {
       const configs = await invoke('get_config', { request: { category: 'ai', key: null } }) as Array<{ key: string, value: string }>
       
@@ -450,6 +450,18 @@ const loadSettings = async () => {
         aiConfig.value.enable_multimodal = configMap.get('enable_multimodal') === 'true'
       } else {
         aiConfig.value.enable_multimodal = true
+      }
+      
+      // temperature
+      if (configMap.has('temperature')) {
+         const temp = parseFloat(configMap.get('temperature') || '0.7')
+         settings.value.ai.temperature = temp
+      }
+      
+      // max_tokens
+      if (configMap.has('max_tokens')) {
+         const tokens = parseInt(configMap.get('max_tokens') || '2000')
+         settings.value.ai.maxTokens = tokens
       }
       
       // tool_output_limit
@@ -566,9 +578,13 @@ const testConnection = async (provider: string) => {
       return
     }
 
+    // 使用 rig_provider 来调用后端 API，如果没有配置则使用 provider 名称的小写形式
+    const rigProvider = providerConfig.rig_provider || provider.toLowerCase()
+    console.log(`Testing connection for ${provider} using rig_provider: ${rigProvider}`)
+
     // 构建请求参数
     const request = {
-      provider: provider,
+      provider: rigProvider,
       api_key: providerConfig.api_key,
       api_base: providerConfig.api_base,
       organization: providerConfig.organization,
@@ -594,9 +610,13 @@ const refreshModels = async (provider: string) => {
       return
     }
 
+    // 使用 rig_provider 来调用后端 API，如果没有配置则使用 provider 名称的小写形式
+    const rigProvider = providerConfig.rig_provider || provider.toLowerCase()
+    console.log(`Refreshing models for ${provider} using rig_provider: ${rigProvider}`)
+
     // 调用新的API获取实时模型列表
     const modelIds = await invoke('get_provider_models', {
-      provider: provider,
+      provider: rigProvider,
       apiKey: providerConfig.api_key,
       apiBase: providerConfig.api_base,
       organization: providerConfig.organization
@@ -686,17 +706,21 @@ const saveAiConfig = async () => {
   try {
     await invoke('save_ai_config', { config: aiConfig.value })
     
-    // 保存 tool_output_limit 和 max_turns
+    // 保存高级配置参数到数据库
     try {
+       const temperature = settings.value.ai?.temperature ?? 0.7
+       const maxTokens = settings.value.ai?.maxTokens ?? 2000
        const toolLimit = settings.value.ai?.toolOutputLimit || 50000
        const maxTurns = settings.value.ai?.maxTurns || 100
        const configs = [
+          { category: 'ai', key: 'temperature', value: String(temperature), description: 'Temperature for AI responses', is_encrypted: false },
+          { category: 'ai', key: 'max_tokens', value: String(maxTokens), description: 'Max tokens for AI generation', is_encrypted: false },
           { category: 'ai', key: 'tool_output_limit', value: String(toolLimit), description: 'Max chars for tool output', is_encrypted: false },
           { category: 'ai', key: 'max_turns', value: String(maxTurns), description: 'Max conversation turns for tool calls', is_encrypted: false }
        ]
        await invoke('save_config_batch', { configs })
     } catch(e) {
-       console.error('Failed to save tool limit and max turns', e)
+       console.error('Failed to save AI advanced configs', e)
     }
 
     dialog.toast.success('AI配置已保存')

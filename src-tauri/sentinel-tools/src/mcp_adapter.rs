@@ -328,6 +328,7 @@ impl McpToolAdapter {
                 format!("MCP tool '{}' from server '{}'", tool_name, server_name)
             }),
             input_schema: meta.input_schema.clone(),
+            output_schema: None,
             source: ToolSource::Mcp {
                 server_name: server_name.clone(),
             },

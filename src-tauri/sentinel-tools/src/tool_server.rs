@@ -54,6 +54,7 @@ pub struct ToolInfo {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    pub output_schema: Option<Value>,
     pub source: String,
     pub category: String,
     pub enabled: bool,
@@ -330,7 +331,7 @@ impl ToolServer {
 
         // Register task_planner tool
         let task_planner_def = DynamicToolBuilder::new("task_planner")
-            .description("Manage and track the agent's execution plan for autonomous goal fulfillment.")
+            .description("Manage and track the agent's execution plan. Actions: add_tasks (append), update_status (change status), get_plan (view), reset (clear all), replan (replace all tasks), update_task (modify description), delete_task (remove), insert_task (add at position). Mandatory for complex multi-step security tasks.")
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -340,26 +341,30 @@ impl ToolServer {
                     },
                     "action": {
                         "type": "string",
-                        "description": "Action: 'add_tasks', 'update_status', 'get_plan', 'reset'",
-                        "enum": ["add_tasks", "update_status", "get_plan", "reset"]
+                        "description": "Action to perform",
+                        "enum": ["add_tasks", "update_status", "get_plan", "reset", "replan", "update_task", "delete_task", "insert_task"]
                     },
                     "tasks": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "List of task descriptions (for 'add_tasks')"
+                        "description": "List of task descriptions (required for 'add_tasks' and 'replan')"
                     },
                     "task_index": {
                         "type": "integer",
-                        "description": "Index of task to update (for 'update_status')"
+                        "description": "Index of task (required for 'update_status', 'update_task', 'delete_task', 'insert_task')"
                     },
                     "status": {
                         "type": "string",
-                        "description": "New status (for 'update_status')",
-                        "enum": ["todo", "in_progress", "done", "failed"]
+                        "description": "New status (required for 'update_status')",
+                        "enum": ["pending", "in_progress", "completed", "failed"]
                     },
                     "result": {
                         "type": "string",
-                        "description": "Observation or result to record"
+                        "description": "Optional observation or result to record"
+                    },
+                    "new_description": {
+                        "type": "string",
+                        "description": "New task description (required for 'update_task' and 'insert_task')"
                     }
                 },
                 "required": ["execution_id", "action"]
@@ -383,6 +388,54 @@ impl ToolServer {
             .expect("Failed to build task_planner tool");
 
         self.registry.register(task_planner_def).await;
+
+        // Register memory_manager tool
+        let memory_manager_def = DynamicToolBuilder::new("memory_manager")
+            .description("Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "The action to perform: 'store' or 'retrieve'",
+                        "enum": ["store", "retrieve"]
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to store (if action='store') or query to retrieve (if action='retrieve')"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Tags to categorize the memory (only for 'store')"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max number of results to return (only for 'retrieve'), default 5",
+                        "default": 5
+                    }
+                },
+                "required": ["action", "content"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::memory::{MemoryManagerTool, MemoryManagerArgs};
+                use rig::tool::Tool;
+                
+                let tool_args: MemoryManagerArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = MemoryManagerTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Memory operation failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build memory_manager tool");
+
+        self.registry.register(memory_manager_def).await;
 
         // Register web_search tool
         let web_search_def = DynamicToolBuilder::new("web_search")
@@ -482,6 +535,7 @@ impl ToolServer {
                 name: def.name.clone(),
                 description: def.description.clone(),
                 input_schema: def.input_schema.clone(),
+                output_schema: def.output_schema.clone(),
                 source: match &def.source {
                     ToolSource::Builtin => "builtin".to_string(),
                     ToolSource::Mcp { server_name } => format!("mcp::{}", server_name),
@@ -505,6 +559,7 @@ impl ToolServer {
             name: def.name.clone(),
             description: def.description.clone(),
             input_schema: def.input_schema.clone(),
+            output_schema: def.output_schema.clone(),
             source: match &def.source {
                 ToolSource::Builtin => "builtin".to_string(),
                 ToolSource::Mcp { server_name } => format!("mcp::{}", server_name),
@@ -551,6 +606,7 @@ impl ToolServer {
             name: full_name,
             description: description.to_string(),
             input_schema,
+            output_schema: None,
             source: ToolSource::Mcp {
                 server_name: server_name.to_string(),
             },
@@ -567,6 +623,7 @@ impl ToolServer {
         _tool_name: &str,
         description: &str,
         input_schema: Value,
+        output_schema: Option<Value>,
         executor: ToolExecutor,
     ) {
         let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
@@ -576,6 +633,7 @@ impl ToolServer {
             name: full_name,
             description: description.to_string(),
             input_schema,
+            output_schema,
             source: ToolSource::Plugin {
                 plugin_id: plugin_id.to_string(),
             },
@@ -592,6 +650,7 @@ impl ToolServer {
         _workflow_name: &str,
         description: &str,
         input_schema: Value,
+        output_schema: Option<Value>,
         executor: ToolExecutor,
     ) {
         let full_name = format!("workflow__{}", workflow_id);
@@ -600,6 +659,7 @@ impl ToolServer {
             name: full_name,
             description: description.to_string(),
             input_schema,
+            output_schema,
             source: ToolSource::Workflow {
                 workflow_id: workflow_id.to_string(),
             },
@@ -663,6 +723,7 @@ impl ToolServer {
                 name: def.name.clone(),
                 description: def.description.clone(),
                 input_schema: def.input_schema.clone(),
+                output_schema: def.output_schema.clone(),
                 source: match &def.source {
                     ToolSource::Builtin => "builtin".to_string(),
                     ToolSource::Mcp { server_name } => format!("mcp::{}", server_name),

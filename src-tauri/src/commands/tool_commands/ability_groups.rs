@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use sentinel_db::{
-    AbilityGroup, AbilityGroupSummary, CreateAbilityGroup, Database, UpdateAbilityGroup,
+    AbilityGroup, AbilityGroupDetail, AbilityGroupSummary, CreateAbilityGroup, Database, UpdateAbilityGroup,
 };
 
 /// List all ability groups (summary only)
@@ -26,7 +26,18 @@ pub async fn list_ability_groups_full(
         .map_err(|e| e.to_string())
 }
 
-/// Get a single ability group by ID
+/// Get ability group detail (Level 2) by ID
+pub async fn get_ability_group_detail(
+    id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Option<AbilityGroupDetail>, String> {
+    db_service
+        .get_ability_group_detail(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Get a single ability group (Level 3) by ID
 pub async fn get_ability_group(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,

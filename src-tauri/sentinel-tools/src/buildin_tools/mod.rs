@@ -1,8 +1,3 @@
-//! Rig-core Tool implementations
-//!
-//! All tools implement the `rig::tool::Tool` trait for type-safe integration
-//! with rig Agent framework.
-
 pub mod port_scan;
 pub mod http_request;
 pub mod local_time;
@@ -10,6 +5,7 @@ pub mod shell;
 pub mod subdomain_brute;
 pub mod task_planner;
 pub mod web_search;
+pub mod memory;
 
 pub use port_scan::PortScanTool;
 pub use http_request::HttpRequestTool;
@@ -18,6 +14,7 @@ pub use shell::ShellTool;
 pub use subdomain_brute::SubdomainBruteTool;
 pub use task_planner::TaskPlannerTool;
 pub use web_search::WebSearchTool;
+pub use memory::MemoryManagerTool;
 
 use rig::tool::ToolSet;
 
@@ -31,6 +28,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(SubdomainBruteTool);
     toolset.add_tool(TaskPlannerTool);
     toolset.add_tool(WebSearchTool::default());
+    toolset.add_tool(MemoryManagerTool);
     toolset
 }
 
@@ -44,6 +42,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(SubdomainBruteTool),
         Box::new(TaskPlannerTool),
         Box::new(WebSearchTool::default()),
+        Box::new(MemoryManagerTool),
     ];
     
     let mut definitions = Vec::new();

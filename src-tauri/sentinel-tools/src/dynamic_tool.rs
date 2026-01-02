@@ -43,6 +43,8 @@ pub struct DynamicToolDef {
     pub description: String,
     /// JSON Schema for input parameters
     pub input_schema: Value,
+    /// JSON Schema for output
+    pub output_schema: Option<Value>,
     /// Tool source
     pub source: ToolSource,
     /// Tool executor function
@@ -66,6 +68,8 @@ pub enum DynamicToolError {
     ExecutionFailed(String),
     #[error("Invalid arguments: {0}")]
     InvalidArguments(String),
+    #[error("Invalid output: {0}")]
+    InvalidOutput(String),
     #[error("Tool not found: {0}")]
     NotFound(String),
 }
@@ -116,9 +120,23 @@ impl Tool for DynamicTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let executor = self.def.executor.clone();
-        executor(args)
+        if should_validate_schema(&self.def.input_schema) {
+            validate_schema(&self.def.input_schema, &args)
+                .map_err(DynamicToolError::InvalidArguments)?;
+        }
+
+        let result = executor(args)
             .await
-            .map_err(DynamicToolError::ExecutionFailed)
+            .map_err(DynamicToolError::ExecutionFailed)?;
+
+        if let Some(schema) = &self.def.output_schema {
+            if should_validate_schema(schema) {
+                validate_schema(schema, &result)
+                    .map_err(DynamicToolError::InvalidOutput)?;
+            }
+        }
+
+        Ok(result)
     }
 }
 
@@ -270,6 +288,7 @@ pub struct DynamicToolBuilder {
     name: String,
     description: String,
     input_schema: Value,
+    output_schema: Option<Value>,
     source: ToolSource,
     executor: Option<ToolExecutor>,
 }
@@ -283,6 +302,7 @@ impl DynamicToolBuilder {
                 "type": "object",
                 "properties": {}
             }),
+            output_schema: None,
             source: ToolSource::Builtin,
             executor: None,
         }
@@ -295,6 +315,11 @@ impl DynamicToolBuilder {
 
     pub fn input_schema(mut self, schema: Value) -> Self {
         self.input_schema = schema;
+        self
+    }
+
+    pub fn output_schema(mut self, schema: Option<Value>) -> Self {
+        self.output_schema = schema;
         self
     }
 
@@ -324,10 +349,38 @@ impl DynamicToolBuilder {
             name: self.name,
             description: self.description,
             input_schema: self.input_schema,
+            output_schema: self.output_schema,
             source: self.source,
             executor,
         })
     }
+}
+
+fn should_validate_schema(schema: &Value) -> bool {
+    match schema {
+        Value::Null => false,
+        Value::Object(map) => !map.is_empty(),
+        Value::Array(arr) => !arr.is_empty(),
+        _ => true,
+    }
+}
+
+fn validate_schema(schema: &Value, instance: &Value) -> Result<(), String> {
+    let compiled = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft7)
+        .compile(schema)
+        .map_err(|e| format!("schema compile failed: {}", e))?;
+
+    if let Err(errors) = compiled.validate(instance) {
+        let details = errors
+            .into_iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(details);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

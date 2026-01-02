@@ -24,7 +24,7 @@ pub struct ShellArgs {
     pub timeout_secs: u64,
 }
 
-fn default_timeout() -> u64 { 60 }
+fn default_timeout() -> u64 { 180 }
 
 /// Shell command result
 #[derive(Debug, Clone, Serialize)]

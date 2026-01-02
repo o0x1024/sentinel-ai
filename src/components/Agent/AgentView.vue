@@ -72,6 +72,18 @@
             <span>{{ t('agent.explore') }}</span>
             <span class="badge badge-xs badge-primary">{{ visionEvents.steps.value.length }}</span>
           </button>
+          <!-- Todos Button - shows when there's todos history -->
+          <button 
+            v-if="todosComposable.hasHistory.value"
+            @click="todosComposable.open()"
+            class="btn btn-sm gap-1"
+            :class="isTodosPanelActive ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="isTodosPanelActive ? t('agent.todosPanelOpen') : t('agent.viewTodos')"
+          >
+            <i class="fas fa-tasks"></i>
+            <span>{{ t('agent.todos') }}</span>
+            <span class="badge badge-xs badge-primary">{{ todosComposable.rootTodos.value.length }}</span>
+          </button>
           <button 
             @click="handleCreateConversation()"
             class="btn btn-sm btn-ghost gap-1"
@@ -97,7 +109,7 @@
         />
         
         <!-- Side Panel (Vision or Todo) -->
-        <div class="sidebar-container w-[350px] flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100" v-if="isVisionActive || hasTodos">
+        <div class="sidebar-container w-[350px] flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100" v-if="isVisionActive || isTodosPanelActive">
             <VisionExplorerPanel 
                v-if="isVisionActive"
                :steps="visionEvents.steps.value" 
@@ -119,8 +131,9 @@
                @close="visionEvents.close()"
             />
             <TodoPanel 
-              v-else-if="hasTodos" 
-              :todos="todos" 
+              v-else-if="isTodosPanelActive" 
+              :todos="todos"
+              :is-active="isTodosPanelActive"
               class="h-full p-4 overflow-y-auto border-0 bg-transparent"
               @close="handleCloseTodos"
             />
@@ -161,7 +174,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onActivated, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
@@ -250,10 +263,11 @@ const isVisionActive = computed(() => visionEvents.isVisionActive.value)
 const todosComposable = useTodos()
 const todos = computed(() => todosComposable.todos.value)
 const hasTodos = computed(() => props.showTodos && todosComposable.hasTodos.value)
+const isTodosPanelActive = computed(() => todosComposable.isTodosPanelActive.value)
 
 // Handle close todos panel
 const handleCloseTodos = () => {
-  todosComposable.clearTodos()
+  todosComposable.close()
 }
 
 // Combined error
@@ -468,22 +482,29 @@ const handleResendMessage = async (message: AgentMessage) => {
     return
   }
 
-  // Delete all messages after this message from database
+  // Delete this message and all messages after it from database
   if (conversationId.value) {
     try {
+      // First delete all messages after this message
       const deletedCount = await invoke<number>('delete_ai_messages_after', {
         conversationId: conversationId.value,
         messageId: message.id
       })
-      console.log(`[AgentView] Deleted ${deletedCount} messages from database`)
+      console.log(`[AgentView] Deleted ${deletedCount} messages after the original message from database`)
+      
+      // Then delete the message itself from database
+      await invoke('delete_ai_message', {
+        messageId: message.id
+      })
+      console.log(`[AgentView] Deleted the original message from database`)
     } catch (e) {
       console.error('[AgentView] Failed to delete messages from database:', e)
       // Continue anyway to update frontend
     }
   }
 
-  // Delete all messages after this message from frontend (keep the user message, delete LLM response and subsequent messages)
-  const messagesToKeep = messages.value.slice(0, messageIndex + 1)
+  // Delete this message and all messages after it from frontend
+  const messagesToKeep = messages.value.slice(0, messageIndex)
   agentEvents.messages.value = messagesToKeep
 
   // Set user message content to input box
@@ -604,6 +625,11 @@ const loadConversationHistory = async (convId: string) => {
       agentEvents.messages.value = timeline.map(x => x.msg)
 
       console.log('[AgentView] Loaded', messages.length, 'messages from conversation:', convId)
+      
+      // Scroll to bottom after loading messages
+      nextTick(() => {
+        messageFlowRef.value?.scrollToBottom()
+      })
     } else {
       console.log('[AgentView] No messages found for conversation:', convId)
     }
@@ -638,6 +664,11 @@ const handleCreateConversation = async (newConvId?: string) => {
     conversationId.value = newConvId
     currentConversationTitle.value = t('agent.newConversationTitle')
     agentEvents.clearMessages()
+    
+    // Focus input after creating conversation
+    nextTick(() => {
+      inputAreaRef.value?.focusInput()
+    })
   } else {
     // Create new conversation
     try {
@@ -653,6 +684,11 @@ const handleCreateConversation = async (newConvId?: string) => {
       
       // Refresh conversation list
       conversationListRef.value?.loadConversations()
+      
+      // Focus input after creating conversation
+      nextTick(() => {
+        inputAreaRef.value?.focusInput()
+      })
     } catch (e) {
       console.error('[AgentView] Failed to create conversation:', e)
     }
@@ -818,6 +854,15 @@ onMounted(async () => {
   // 自动聚焦输入框
   nextTick(() => {
     inputAreaRef.value?.focusInput()
+  })
+})
+
+// When component is activated (e.g., switching back from another page)
+onActivated(() => {
+  console.log('[AgentView] Activated, scrolling to bottom')
+  // Scroll to bottom when returning to this page
+  nextTick(() => {
+    messageFlowRef.value?.scrollToBottom()
   })
 })
 

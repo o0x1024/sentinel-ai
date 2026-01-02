@@ -35,6 +35,8 @@ export default {
   edit: '编辑',
   export: '导出',
   duplicate: '复制',
+  fullscreen: '全屏',
+  exitFullscreen: '退出全屏',
   info: '信息',
   low: '低',
   medium: '中',

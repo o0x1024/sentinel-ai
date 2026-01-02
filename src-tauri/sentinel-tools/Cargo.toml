@@ -48,3 +48,4 @@ sqlx = { version = "0.8.6", features = [
 rig-core = { workspace = true }
 schemars = "1.1.0"
 rsubdomain = "1.2.6"
+jsonschema = "0.17.1"

@@ -207,7 +207,81 @@ pub fn run() {
                         .await
                 {
                     tracing::error!("Failed to initialize global RAG service: {}", e);
+                } else {
+                    // Initialize Memory Tool hooks via existing RAG service
+                    let store_fn = Box::new(|content: String, tags: Vec<String>| {
+                        Box::pin(async move {
+                            let service = crate::commands::rag_commands::get_global_rag_service()
+                                .await
+                                .map_err(|e| anyhow::anyhow!(e))?;
+
+                            let mut meta = std::collections::HashMap::new();
+                            if !tags.is_empty() {
+                                meta.insert("tags".to_string(), tags.join(","));
+                            }
+                            meta.insert("type".to_string(), "agent_memory".to_string());
+
+                            service
+                                .ingest_text(
+                                    "Agent Memory",
+                                    &content,
+                                    None,
+                                    Some(meta),
+                                )
+                                .await
+                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+                            Ok(())
+                        })
+                            as std::pin::Pin<
+                                Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>,
+                            >
+                    });
+
+                    let retrieve_fn = Box::new(|query: String, limit: usize| {
+                        Box::pin(async move {
+                            let service = crate::commands::rag_commands::get_global_rag_service()
+                                .await
+                                .map_err(|e| anyhow::anyhow!(e))?;
+
+                            let request = sentinel_rag::models::RagQueryRequest {
+                                query,
+                                collection_id: None,
+                                top_k: Some(limit),
+                                use_mmr: Some(true),
+                                mmr_lambda: None,
+                                filters: None,
+                                use_embedding: Some(true),
+                                reranking_enabled: Some(true),
+                                similarity_threshold: None,
+                            };
+
+                            let response = service
+                                .query(request)
+                                .await
+                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+                            let results = response
+                                .results
+                                .into_iter()
+                                .map(|r| r.chunk.content)
+                                .collect();
+                            Ok(results)
+                        })
+                            as std::pin::Pin<
+                                Box<
+                                    dyn std::future::Future<Output = anyhow::Result<Vec<String>>>
+                                        + Send,
+                                >,
+                            >
+                    });
+
+                    sentinel_tools::buildin_tools::memory::register_memory_functions(
+                        store_fn,
+                        retrieve_fn,
+                    );
                 }
+
 
                 let traffic_state = Arc::new(TrafficAnalysisState::new(db_service.clone()));
                 let traffic_state_for_manage = (*traffic_state).clone();
@@ -685,6 +759,8 @@ pub fn run() {
             traffic_analysis_commands::get_proxy_config,
             traffic_analysis_commands::set_proxy_auto_start,
             traffic_analysis_commands::get_proxy_auto_start,
+            traffic_analysis_commands::set_traffic_analysis_plugin_enabled,
+            traffic_analysis_commands::get_traffic_analysis_plugin_enabled,
             traffic_analysis_commands::set_intercept_enabled,
             traffic_analysis_commands::get_intercept_enabled,
             traffic_analysis_commands::get_intercepted_requests,
@@ -841,6 +917,7 @@ pub fn run() {
             // Ability group commands
             tool_commands::list_ability_groups,
             tool_commands::list_ability_groups_full,
+            tool_commands::get_ability_group_detail,
             tool_commands::get_ability_group,
             tool_commands::create_ability_group,
             tool_commands::update_ability_group,

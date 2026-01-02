@@ -210,6 +210,7 @@ pub async fn load_plugin_tools_to_server(
             &plugin_meta.name,
             &plugin_meta.description,
             plugin_meta.input_schema,
+            None,
             executor,
         ).await;
         
@@ -236,6 +237,7 @@ impl PluginToolAdapter {
             name: full_name,
             description: meta.description.clone(),
             input_schema: meta.input_schema.clone(),
+            output_schema: None,
             source: ToolSource::Plugin { plugin_id: plugin_id.clone() },
             executor: create_plugin_executor(plugin_id),
         }

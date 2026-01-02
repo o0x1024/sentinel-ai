@@ -173,7 +173,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
-                <button class="btn btn-xs btn-ghost absolute right-1 top-1/2 -translate-y-1/2" @click="search_in_canvas" :title="t('trafficAnalysis.workflowStudio.sidebar.searchInCanvasTooltip')" :disabled="!search_query">
+                <button class="btn btn-xs btn-ghost absolute right-1 top-1" @click="search_in_canvas" :title="t('trafficAnalysis.workflowStudio.sidebar.searchInCanvasTooltip')" :disabled="!search_query">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
@@ -1077,14 +1077,19 @@ const get_schedule_config = () => {
   const nodes = flow_ref.value?.getFlowchartNodes() || []
   const triggerNode = nodes.find((n: any) => n.type === 'trigger_schedule')
   if (!triggerNode?.params) return null
-  
+
+  const to_number_or_default = (value: any, default_value: number) => {
+    const num = Number(value)
+    return Number.isFinite(num) ? num : default_value
+  }
+
   // 确保数值类型正确
   return {
     trigger_type: String(triggerNode.params.trigger_type || 'interval'),
-    interval_seconds: Number(triggerNode.params.interval_seconds) || 60,
-    hour: Number(triggerNode.params.hour) || 9,
-    minute: Number(triggerNode.params.minute) || 0,
-    second: Number(triggerNode.params.second) || 0,
+    interval_seconds: to_number_or_default(triggerNode.params.interval_seconds, 60),
+    hour: to_number_or_default(triggerNode.params.hour, 9),
+    minute: to_number_or_default(triggerNode.params.minute, 0),
+    second: to_number_or_default(triggerNode.params.second, 0),
     weekdays: String(triggerNode.params.weekdays || '1,2,3,4,5'),
   }
 }
@@ -1222,42 +1227,43 @@ const build_graph = (): WorkflowGraph => {
   // 生成 input_schema：从起始节点或第一个节点推断
   // 这样 Agent 调用工作流工具时可以知道需要什么输入参数
   const build_input_schema = (): Record<string, any> | null => {
+    const to_json_schema_type = (port_type?: string) => {
+      switch ((port_type || 'string').toLowerCase()) {
+        case 'integer':
+        case 'int':
+        case 'number':
+          return 'number'
+        case 'boolean':
+        case 'bool':
+          return 'boolean'
+        case 'array':
+          return 'array'
+        case 'object':
+        case 'json':
+          return 'object'
+        default:
+          return 'string'
+      }
+    }
+
     // 优先从 start/trigger/input 类型节点提取
-    const startNode = node_defs.find(n => 
+    const startNode = node_defs.find(n =>
       ['start', 'trigger', 'input', 'webhook', 'trigger_schedule'].includes(n.node_type)
     )
-    const targetNode = startNode || node_defs[0]
-    
-    if (!targetNode) return null
+
+    if (!startNode) return null
     
     const properties: Record<string, any> = {}
     const required: string[] = []
     
     // 从节点的 input_ports 构建 schema
-    const ports = targetNode.input_ports || []
+    const ports = startNode.input_ports || []
     for (const port of ports) {
       // 跳过通用流控制端口
       if (['in', 'flow', 'trigger', 'input'].includes(port.id)) continue
       
       // 将 port_type 转换为 JSON Schema 类型
-      const jsonType = (() => {
-        switch ((port.port_type || 'string').toLowerCase()) {
-          case 'integer':
-          case 'int':
-          case 'number':
-            return 'number'
-          case 'boolean':
-          case 'bool':
-            return 'boolean'
-          case 'array':
-            return 'array'
-          case 'object':
-          case 'json':
-            return 'object'
-          default:
-            return 'string'
-        }
-      })()
+      const jsonType = to_json_schema_type(port.port_type)
       
       properties[port.id] = {
         type: jsonType,
@@ -1270,7 +1276,7 @@ const build_graph = (): WorkflowGraph => {
     }
     
     // 从节点的 params 中也可能有工作流输入参数定义
-    const params = targetNode.params || {}
+    const params = startNode.params || {}
     if (params.input_schema) {
       return params.input_schema
     }
@@ -1289,8 +1295,82 @@ const build_graph = (): WorkflowGraph => {
     
     return null
   }
+
+  const build_output_schema = (): Record<string, any> | null => {
+    const to_json_schema_type = (port_type?: string) => {
+      switch ((port_type || 'string').toLowerCase()) {
+        case 'integer':
+        case 'int':
+        case 'number':
+          return 'number'
+        case 'boolean':
+        case 'bool':
+          return 'boolean'
+        case 'array':
+          return 'array'
+        case 'object':
+        case 'json':
+          return 'object'
+        default:
+          return 'string'
+      }
+    }
+
+    const node_outgoing = new Map<string, number>()
+    node_defs.forEach(n => node_outgoing.set(n.id, 0))
+    edge_defs.forEach(e => {
+      node_outgoing.set(e.from_node, (node_outgoing.get(e.from_node) || 0) + 1)
+    })
+
+    const terminal_nodes = node_defs.filter(n => (node_outgoing.get(n.id) || 0) === 0)
+    const schemas: Record<string, any>[] = []
+
+    for (const node of terminal_nodes) {
+      const params = node.params || {}
+      if (params.output_schema && typeof params.output_schema === 'object') {
+        schemas.push(params.output_schema)
+        continue
+      }
+
+      const properties: Record<string, any> = {}
+      const required: string[] = []
+      const ports = node.output_ports?.length ? node.output_ports : (node.input_ports || [])
+
+      for (const port of ports) {
+        if (['out', 'flow'].includes(port.id)) continue
+        properties[port.id] = {
+          type: to_json_schema_type(port.port_type),
+          description: port.name || port.id
+        }
+        if (port.required) {
+          required.push(port.id)
+        }
+      }
+
+      if (Object.keys(properties).length > 0) {
+        const schema: Record<string, any> = {
+          type: 'object',
+          properties
+        }
+        if (required.length > 0) {
+          schema.required = required
+        }
+        schemas.push(schema)
+      }
+    }
+
+    if (schemas.length === 1) {
+      return schemas[0]
+    }
+    if (schemas.length > 1) {
+      return { oneOf: schemas }
+    }
+
+    return null
+  }
   
   const input_schema = build_input_schema()
+  const output_schema = build_output_schema()
   
   const graph: Record<string, any> = {
     id: workflow_id.value,
@@ -1306,8 +1386,40 @@ const build_graph = (): WorkflowGraph => {
   if (input_schema) {
     graph.input_schema = input_schema
   }
+  if (output_schema) {
+    graph.output_schema = output_schema
+  }
   
   return graph as WorkflowGraph
+}
+
+const has_nonempty_schema = (schema: any): boolean => {
+  if (!schema || typeof schema !== 'object') return false
+  if (Array.isArray(schema)) return schema.length > 0
+  return Object.keys(schema).length > 0
+}
+
+const validate_tool_schemas = (graph: WorkflowGraph, silent: boolean): boolean => {
+  if (!workflow_is_tool.value) return true
+
+  const missing: string[] = []
+  if (!has_nonempty_schema(graph.input_schema)) missing.push('input')
+  if (!has_nonempty_schema(graph.output_schema)) missing.push('output')
+
+  if (!missing.length) return true
+
+  const toast = useToast()
+  const message = missing.length === 2
+    ? '缺少工具输入/输出 schema'
+    : missing[0] === 'input'
+      ? '缺少工具输入 schema'
+      : '缺少工具输出 schema'
+
+  add_log('ERROR', t('trafficAnalysis.workflowStudio.logs.validationFailed', { message }))
+  if (!silent) {
+    toast.error(t('trafficAnalysis.workflowStudio.toasts.validationFailed', { message }))
+  }
+  return false
 }
 
 const add_log = (level: ExecutionLog['level'], message: string, node_id?: string, details?: string) => {
@@ -1350,7 +1462,7 @@ const format_result = (result: any) => {
 
 const copy_result_to_clipboard = async () => {
   const toast = useToast()
-  if (!selected_step_result.value?.result) return
+  if (!selected_step_result.value || selected_step_result.value.result === undefined) return
   
   try {
     const text = format_result(selected_step_result.value.result)
@@ -1800,6 +1912,7 @@ const save_workflow = async (silent = false) => {
   const graph = build_graph()
   graph.id = workflow_id.value
   graph.name = workflow_name.value
+  if (!validate_tool_schemas(graph, silent)) return
   
   try {
     await invoke('save_workflow_definition', {
@@ -2131,8 +2244,8 @@ const setup_event_listeners = async () => {
       flow_ref.value?.updateNodeStatus(step_id, 'completed')
       
       // 保存步骤结果到当前执行和执行历史
-      const result = p?.result
-      if (result) {
+      if (p && Object.prototype.hasOwnProperty.call(p, 'result')) {
+        const result = p.result
         step_results.value[step_id] = result
         update_execution_step_result(step_id, result)
         
@@ -2162,7 +2275,9 @@ const setup_event_listeners = async () => {
     
     // 延迟清除节点执行状态
     setTimeout(() => {
-      reset_node_status()
+      if (!workflow_running.value && !current_exec_id.value) {
+        reset_node_status()
+      }
     }, 1500)
   })
   
